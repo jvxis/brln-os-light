@@ -27,6 +27,11 @@ const (
 	OperationAppLifecycle     Operation = "app.compose.lifecycle"
 	OperationAppInspect       Operation = "app.compose.inspect"
 	OperationAppRemove        Operation = "app.compose.remove"
+	OperationDockerEnsure     Operation = "docker.runtime.ensure"
+	OperationDockerStatus     Operation = "docker.runtime.status"
+	OperationAppImagePrepare  Operation = "app.image.prepare"
+	OperationAppImageStatus   Operation = "app.image.status"
+	OperationAppImageProbe    Operation = "app.image.probe"
 )
 
 type Request struct {
@@ -77,6 +82,23 @@ type AppInspectParams struct {
 
 type AppRemoveParams struct {
 	AppID string `json:"app_id"`
+}
+
+type AppImageParams struct {
+	AppID   string                           `json:"app_id"`
+	Variant appmanifest.CPUMinerImageVariant `json:"variant"`
+}
+
+type AppImageState struct {
+	Status string `json:"status"`
+}
+
+type AppImageProbe struct {
+	Runnable bool `json:"runnable"`
+}
+
+type DockerRuntimeState struct {
+	Status string `json:"status"`
 }
 
 type AppInspection struct {
@@ -218,8 +240,50 @@ func ValidateRequest(request Request) error {
 		if params.AppID != appmanifest.CPUMinerID {
 			return errors.New("app manifest is not allowed")
 		}
+	case OperationDockerEnsure:
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid docker.runtime.ensure params: %w", err)
+		}
+	case OperationDockerStatus:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for docker.runtime.status")
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid docker.runtime.status params: %w", err)
+		}
+	case OperationAppImagePrepare, OperationAppImageProbe:
+		var params AppImageParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
+		if err := validateAppImageParams(params); err != nil {
+			return err
+		}
+	case OperationAppImageStatus:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for app.image.status")
+		}
+		var params AppImageParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.image.status params: %w", err)
+		}
+		if err := validateAppImageParams(params); err != nil {
+			return err
+		}
 	default:
 		return errors.New("unknown operation")
+	}
+	return nil
+}
+
+func validateAppImageParams(params AppImageParams) error {
+	if params.AppID != appmanifest.CPUMinerID {
+		return errors.New("app manifest is not allowed")
+	}
+	if _, err := appmanifest.CPUMinerImageForVariant(params.Variant); err != nil {
+		return errors.New("app image variant is not allowed")
 	}
 	return nil
 }

@@ -7,29 +7,47 @@ import (
 )
 
 type fakePrivilegedServiceClient struct {
-	mode          string
-	calls         int
-	unit          string
-	noBlock       bool
-	dryRun        bool
-	err           error
-	fileCalls     int
-	fileDryRun    bool
-	fileErr       error
-	appCalls      int
-	appID         string
-	action        string
-	appDryRun     bool
-	appErr        error
-	inspectCalls  int
-	inspectAppID  string
-	inspectStatus string
-	inspectCPU    float64
-	inspectErr    error
-	removeCalls   int
-	removeAppID   string
-	removeDryRun  bool
-	removeErr     error
+	mode               string
+	calls              int
+	unit               string
+	noBlock            bool
+	dryRun             bool
+	err                error
+	fileCalls          int
+	fileDryRun         bool
+	fileErr            error
+	appCalls           int
+	appID              string
+	action             string
+	appDryRun          bool
+	appErr             error
+	inspectCalls       int
+	inspectAppID       string
+	inspectStatus      string
+	inspectCPU         float64
+	inspectErr         error
+	removeCalls        int
+	removeAppID        string
+	removeDryRun       bool
+	removeErr          error
+	dockerCalls        int
+	dockerStatusCalls  int
+	dockerDryRun       bool
+	dockerErr          error
+	dockerStatus       string
+	dockerStatusValues []string
+	prepareCalls       int
+	imageAppID         string
+	imageVariant       string
+	imageDryRun        bool
+	prepareStatus      string
+	prepareErr         error
+	statusCalls        int
+	statusValues       []string
+	statusErr          error
+	probeCalls         int
+	probeRunnable      bool
+	probeErr           error
 }
 
 func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID string, action string, dryRun bool) error {
@@ -51,6 +69,56 @@ func (client *fakePrivilegedServiceClient) RemoveApp(_ context.Context, appID st
 	client.removeAppID = appID
 	client.removeDryRun = dryRun
 	return client.removeErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureDockerRuntime(_ context.Context, dryRun bool) (string, error) {
+	client.dockerCalls++
+	client.dockerDryRun = dryRun
+	return client.dockerStatus, client.dockerErr
+}
+
+func (client *fakePrivilegedServiceClient) DockerRuntimeStatus(_ context.Context) (string, error) {
+	client.dockerStatusCalls++
+	if client.dockerErr != nil {
+		return "", client.dockerErr
+	}
+	if len(client.dockerStatusValues) == 0 {
+		return client.dockerStatus, nil
+	}
+	status := client.dockerStatusValues[0]
+	client.dockerStatusValues = client.dockerStatusValues[1:]
+	return status, nil
+}
+
+func (client *fakePrivilegedServiceClient) PrepareAppImage(_ context.Context, appID string, variant string, dryRun bool) (string, error) {
+	client.prepareCalls++
+	client.imageAppID = appID
+	client.imageVariant = variant
+	client.imageDryRun = dryRun
+	return client.prepareStatus, client.prepareErr
+}
+
+func (client *fakePrivilegedServiceClient) AppImageStatus(_ context.Context, appID string, variant string) (string, error) {
+	client.statusCalls++
+	client.imageAppID = appID
+	client.imageVariant = variant
+	if client.statusErr != nil {
+		return "", client.statusErr
+	}
+	if len(client.statusValues) == 0 {
+		return "absent", nil
+	}
+	status := client.statusValues[0]
+	client.statusValues = client.statusValues[1:]
+	return status, nil
+}
+
+func (client *fakePrivilegedServiceClient) ProbeAppImage(_ context.Context, appID string, variant string, dryRun bool) (bool, error) {
+	client.probeCalls++
+	client.imageAppID = appID
+	client.imageVariant = variant
+	client.imageDryRun = dryRun
+	return client.probeRunnable, client.probeErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -251,6 +319,108 @@ func TestRemoveAppWithBrokerModes(t *testing.T) {
 			}
 			if test.wantCalls == 1 && client.removeAppID != "cpuminer" {
 				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestEnsureDockerRuntimeWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		mode         string
+		dockerErr    error
+		dockerStatus string
+		wantHandled  bool
+		wantError    bool
+		wantCalls    int
+		wantDryRun   bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", dockerErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", dockerStatus: "ready", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", dockerErr: errors.New("missing"), wantHandled: true, wantError: true, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, dockerErr: test.dockerErr, dockerStatus: test.dockerStatus}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := EnsureDockerRuntimeWithBroker(context.Background())
+			if handled != test.wantHandled || (err != nil) != test.wantError || client.dockerCalls != test.wantCalls || client.dockerDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+		})
+	}
+}
+
+func TestPrepareAppImageWithBrokerWaitsForReady(t *testing.T) {
+	client := &fakePrivilegedServiceClient{mode: "enforce", prepareStatus: "preparing", statusValues: []string{"preparing", "ready"}}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+	handled, err := PrepareAppImageWithBroker(context.Background(), "cpuminer", "baseline")
+	if !handled || err != nil || client.prepareCalls != 1 || client.statusCalls != 2 || client.imageAppID != "cpuminer" || client.imageVariant != "baseline" {
+		t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+	}
+}
+
+func TestEnsureDockerRuntimeWithBrokerWaitsForReady(t *testing.T) {
+	client := &fakePrivilegedServiceClient{mode: "enforce", dockerStatus: "starting", dockerStatusValues: []string{"starting", "ready"}}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+	handled, err := EnsureDockerRuntimeWithBroker(context.Background())
+	if !handled || err != nil || client.dockerCalls != 1 || client.dockerStatusCalls != 2 {
+		t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+	}
+}
+
+func TestPrepareAppImageWithBrokerModesAndFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		prepare     string
+		status      []string
+		wantHandled bool
+		wantError   bool
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", prepare: "validated", wantDryRun: true},
+		{name: "ready", mode: "enforce", prepare: "ready", wantHandled: true},
+		{name: "failed", mode: "enforce", prepare: "preparing", status: []string{"failed"}, wantHandled: true, wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, prepareStatus: test.prepare, statusValues: test.status}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := PrepareAppImageWithBroker(context.Background(), "cpuminer", "baseline")
+			if handled != test.wantHandled || (err != nil) != test.wantError || client.imageDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+		})
+	}
+}
+
+func TestProbeAppImageWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		mode         string
+		runnable     bool
+		wantHandled  bool
+		wantRunnable bool
+		wantCalls    int
+		wantDryRun   bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", runnable: true, wantHandled: true, wantRunnable: true, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, probeRunnable: test.runnable}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, runnable, err := ProbeAppImageWithBroker(context.Background(), "cpuminer", "fast_pinned")
+			if err != nil || handled != test.wantHandled || runnable != test.wantRunnable || client.probeCalls != test.wantCalls || client.imageDryRun != test.wantDryRun {
+				t.Fatalf("handled/runnable/error/client=%v/%v/%v/%#v", handled, runnable, err, client)
 			}
 		})
 	}

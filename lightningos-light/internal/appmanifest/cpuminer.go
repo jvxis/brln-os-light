@@ -15,15 +15,40 @@ const (
 	CPUMinerEnvFile     = ".env"
 )
 
+type CPUMinerImageVariant string
+
+const (
+	CPUMinerImageBaseline   CPUMinerImageVariant = "baseline"
+	CPUMinerImageFastPinned CPUMinerImageVariant = "fast_pinned"
+	CPUMinerImageFastLatest CPUMinerImageVariant = "fast_latest"
+)
+
 var (
 	cpuminerWorkerPattern  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 	cpuminerAddressPattern = regexp.MustCompile(`^[A-Za-z0-9]{14,100}$`)
-	cpuminerImages         = map[string]struct{}{
-		"jvx1971/cpu-lottery-miner:v1": {},
-		"cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b": {},
-		"cniweb/cpuminer-opt:latest": {},
+	cpuminerImages         = map[CPUMinerImageVariant]string{
+		CPUMinerImageBaseline:   "jvx1971/cpu-lottery-miner:v1",
+		CPUMinerImageFastPinned: "cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b",
+		CPUMinerImageFastLatest: "cniweb/cpuminer-opt:latest",
 	}
 )
+
+func CPUMinerImageForVariant(variant CPUMinerImageVariant) (string, error) {
+	image, ok := cpuminerImages[variant]
+	if !ok {
+		return "", errors.New("cpuminer image variant is not allowed")
+	}
+	return image, nil
+}
+
+func CPUMinerVariantForImage(image string) (CPUMinerImageVariant, error) {
+	for variant, allowedImage := range cpuminerImages {
+		if image == allowedImage {
+			return variant, nil
+		}
+	}
+	return "", errors.New("cpuminer image is not allowed")
+}
 
 // CPUMinerCompose is the only Compose document the privileged broker accepts
 // for the first App Store migration slice. Keeping it in a dependency shared
@@ -108,7 +133,7 @@ func parseCPUMinerEnv(raw []byte) (map[string]string, error) {
 			return nil, fmt.Errorf("cpuminer environment key %s is missing", key)
 		}
 	}
-	if _, ok := cpuminerImages[values["CPUMINER_IMAGE"]]; !ok {
+	if _, err := CPUMinerVariantForImage(values["CPUMINER_IMAGE"]); err != nil {
 		return nil, errors.New("cpuminer image is not allowed")
 	}
 	switch values["POOL_MODE"] {

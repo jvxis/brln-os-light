@@ -173,7 +173,11 @@ func (s *Server) publicPoolRunning(ctx context.Context) bool {
 }
 
 func (s *Server) installCpuMiner(ctx context.Context) error {
-	if err := ensureDocker(ctx); err != nil {
+	if handled, err := system.EnsureDockerRuntimeWithBroker(ctx); handled {
+		if err != nil {
+			return err
+		}
+	} else if err := ensureDocker(ctx); err != nil {
 		return err
 	}
 	paths := cpuMinerAppPaths()
@@ -196,7 +200,7 @@ func (s *Server) installCpuMiner(ctx context.Context) error {
 	if err := writeCpuMinerEnv(paths, cfg); err != nil {
 		return err
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
+	return applyCpuMinerCompose(ctx, paths)
 }
 
 func (s *Server) startCpuMiner(ctx context.Context) error {
@@ -282,7 +286,7 @@ func (s *Server) ensureCpuMinerAddress(ctx context.Context, paths cpuMinerPaths)
 func (s *Server) selectCpuMinerImage(ctx context.Context) (string, error) {
 	if cpuinfoHasFlag("avx") {
 		for _, image := range cpuMinerFastImages {
-			if err := ensureDockerImage(ctx, image); err != nil {
+			if err := prepareCpuMinerImage(ctx, image); err != nil {
 				continue
 			}
 			if s.probeCpuMinerImage(ctx, image) {
@@ -293,15 +297,33 @@ func (s *Server) selectCpuMinerImage(ctx context.Context) (string, error) {
 			}
 		}
 	}
-	if err := ensureDockerImage(ctx, cpuMinerBaselineImage); err != nil {
+	if err := prepareCpuMinerImage(ctx, cpuMinerBaselineImage); err != nil {
 		return "", fmt.Errorf("cpuminer baseline image %s unavailable: %w", cpuMinerBaselineImage, err)
 	}
 	return cpuMinerBaselineImage, nil
 }
 
+func prepareCpuMinerImage(ctx context.Context, image string) error {
+	variant, err := appmanifest.CPUMinerVariantForImage(image)
+	if err != nil {
+		return err
+	}
+	if handled, err := system.PrepareAppImageWithBroker(ctx, cpuMinerAppID, string(variant)); handled {
+		return err
+	}
+	return ensureDockerImage(ctx, image)
+}
+
 // probeCpuMinerImage runs a brief benchmark to confirm the binary executes on
 // this CPU. A SIGILL from a too-modern build makes docker run exit non-zero.
 func (s *Server) probeCpuMinerImage(ctx context.Context, image string) bool {
+	variant, variantErr := appmanifest.CPUMinerVariantForImage(image)
+	if variantErr != nil {
+		return false
+	}
+	if handled, runnable, err := system.ProbeAppImageWithBroker(ctx, cpuMinerAppID, string(variant)); handled {
+		return err == nil && runnable
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 	_, err := system.RunCommandWithSudo(probeCtx, "docker", "run", "--rm", image,

@@ -38,6 +38,176 @@ func NewComposeAppManager(runner CommandRunner) *ComposeAppManager {
 	return &ComposeAppManager{Runner: runner, AppsRoot: defaultAppsRoot}
 }
 
+func (manager *ComposeAppManager) EnsureDockerRuntime(ctx context.Context, dryRun bool) (DockerRuntimeState, error) {
+	var state DockerRuntimeState
+	if manager == nil || manager.Runner == nil {
+		return state, errors.New("compose app manager is unavailable")
+	}
+	if dryRun {
+		return DockerRuntimeState{Status: "validated"}, nil
+	}
+	state, err := manager.DockerRuntimeStatus(ctx)
+	if err != nil || state.Status == "ready" {
+		return state, err
+	}
+	if state.Status == "failed" {
+		return state, errors.New("docker runtime is unavailable")
+	}
+	if state.Status == "starting" {
+		return state, nil
+	}
+	if _, err := manager.Runner.Run(ctx, systemctlPath, "start", "--no-block", "docker"); err != nil {
+		return state, errors.New("docker runtime is unavailable")
+	}
+	return DockerRuntimeState{Status: "starting"}, nil
+}
+
+func (manager *ComposeAppManager) DockerRuntimeStatus(ctx context.Context) (DockerRuntimeState, error) {
+	var state DockerRuntimeState
+	if manager == nil || manager.Runner == nil {
+		return state, errors.New("compose app manager is unavailable")
+	}
+	if _, err := manager.Runner.Run(ctx, dockerPath, "info"); err == nil {
+		if _, _, composeErr := manager.resolveCompose(ctx); composeErr != nil {
+			return state, composeErr
+		}
+		return DockerRuntimeState{Status: "ready"}, nil
+	}
+	output, err := manager.Runner.Run(ctx, systemctlPath, "is-active", "docker")
+	switch strings.TrimSpace(output) {
+	case "active", "activating":
+		return DockerRuntimeState{Status: "starting"}, nil
+	case "inactive":
+		return DockerRuntimeState{Status: "stopped"}, nil
+	case "failed":
+		return DockerRuntimeState{Status: "failed"}, nil
+	default:
+		if err != nil {
+			return DockerRuntimeState{Status: "failed"}, nil
+		}
+		return state, errors.New("docker runtime state is invalid")
+	}
+}
+
+func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageState, error) {
+	var state AppImageState
+	image, unit, err := validatedCPUMinerImage(appID, variant)
+	if err != nil {
+		return state, err
+	}
+	if manager == nil || manager.Runner == nil {
+		return state, errors.New("compose app manager is unavailable")
+	}
+	if dryRun {
+		return AppImageState{Status: "validated"}, nil
+	}
+	state, err = manager.imageStatus(ctx, image, unit)
+	if err != nil || state.Status == "ready" || state.Status == "preparing" {
+		return state, err
+	}
+	if state.Status == "failed" {
+		return state, errors.New("app image preparation previously failed")
+	}
+	args := []string{
+		"--quiet",
+		"--collect",
+		"--unit=" + unit,
+		"--property=Type=exec",
+		"--property=RuntimeMaxSec=10min",
+		dockerPath,
+		"pull",
+		image,
+	}
+	if _, err := manager.Runner.Run(ctx, systemdRunPath, args...); err != nil {
+		return state, errors.New("app image preparation could not be scheduled")
+	}
+	return AppImageState{Status: "preparing"}, nil
+}
+
+func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant) (AppImageState, error) {
+	var state AppImageState
+	image, unit, err := validatedCPUMinerImage(appID, variant)
+	if err != nil {
+		return state, err
+	}
+	if manager == nil || manager.Runner == nil {
+		return state, errors.New("compose app manager is unavailable")
+	}
+	return manager.imageStatus(ctx, image, unit)
+}
+
+func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageProbe, error) {
+	var probe AppImageProbe
+	image, _, err := validatedCPUMinerImage(appID, variant)
+	if err != nil {
+		return probe, err
+	}
+	if manager == nil || manager.Runner == nil {
+		return probe, errors.New("compose app manager is unavailable")
+	}
+	if dryRun {
+		return probe, nil
+	}
+	if _, err := manager.Runner.Run(ctx, dockerPath, "image", "inspect", image); err != nil {
+		return probe, errors.New("app image is not available locally")
+	}
+	_, err = manager.Runner.Run(ctx, dockerPath, "run", "--rm", image,
+		"cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2")
+	probe.Runnable = err == nil
+	return probe, nil
+}
+
+func (manager *ComposeAppManager) imageStatus(ctx context.Context, image string, unit string) (AppImageState, error) {
+	if _, err := manager.Runner.Run(ctx, dockerPath, "image", "inspect", image); err == nil {
+		return AppImageState{Status: "ready"}, nil
+	}
+	output, showErr := manager.Runner.Run(ctx, systemctlPath, "show",
+		"--property=LoadState", "--property=ActiveState", "--property=SubState", "--property=Result", "--no-pager", unit)
+	values := parseSystemdProperties(output)
+	if values["LoadState"] == "not-found" || (showErr != nil && values["LoadState"] == "") {
+		return AppImageState{Status: "absent"}, nil
+	}
+	switch values["ActiveState"] {
+	case "active", "activating", "reloading":
+		return AppImageState{Status: "preparing"}, nil
+	case "failed", "inactive", "deactivating":
+		return AppImageState{Status: "failed"}, nil
+	default:
+		return AppImageState{}, errors.New("app image preparation state is invalid")
+	}
+}
+
+func validatedCPUMinerImage(appID string, variant appmanifest.CPUMinerImageVariant) (string, string, error) {
+	if appID != appmanifest.CPUMinerID {
+		return "", "", errors.New("app manifest is not allowed")
+	}
+	image, err := appmanifest.CPUMinerImageForVariant(variant)
+	if err != nil {
+		return "", "", err
+	}
+	units := map[appmanifest.CPUMinerImageVariant]string{
+		appmanifest.CPUMinerImageBaseline:   "lightningos-cpuminer-image-baseline",
+		appmanifest.CPUMinerImageFastPinned: "lightningos-cpuminer-image-fast-pinned",
+		appmanifest.CPUMinerImageFastLatest: "lightningos-cpuminer-image-fast-latest",
+	}
+	unit, ok := units[variant]
+	if !ok {
+		return "", "", errors.New("app image variant is not allowed")
+	}
+	return image, unit, nil
+}
+
+func parseSystemdProperties(output string) map[string]string {
+	values := make(map[string]string)
+	for _, line := range strings.Split(output, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && key != "" {
+			values[key] = value
+		}
+	}
+	return values
+}
+
 // Lifecycle validates the selected catalog manifest and its environment,
 // snapshots both into a broker-owned directory, and executes one fixed Docker
 // Compose action. No path, service name, image, or argument comes from the

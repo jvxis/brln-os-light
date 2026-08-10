@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 const (
@@ -141,6 +143,104 @@ func (client *Client) EnableLogin(ctx context.Context, dryRun bool) error {
 		}
 	}
 	return err
+}
+
+func (client *Client) EnsureDockerRuntime(ctx context.Context, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationDockerEnsure, struct{}{}, dryRun)
+	status := ""
+	if err == nil {
+		status, err = decodeDockerRuntimeState(response, dryRun)
+	}
+	if dryRun && client != nil && client.logger != nil {
+		if err != nil {
+			client.logger.Printf("privileged broker shadow validation rejected docker.runtime.ensure: %v", err)
+		} else {
+			client.logger.Printf("privileged broker shadow validation accepted docker.runtime.ensure")
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	return status, nil
+}
+
+func (client *Client) DockerRuntimeStatus(ctx context.Context) (string, error) {
+	response, err := client.call(ctx, OperationDockerStatus, struct{}{}, false)
+	if err != nil {
+		return "", err
+	}
+	return decodeDockerRuntimeState(response, false)
+}
+
+func decodeDockerRuntimeState(response Response, dryRun bool) (string, error) {
+	var result DockerRuntimeState
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return "", errors.New("invalid broker docker runtime state response")
+	}
+	if dryRun && result.Status == "validated" {
+		return result.Status, nil
+	}
+	switch result.Status {
+	case "ready", "starting", "stopped", "failed":
+		return result.Status, nil
+	default:
+		return "", errors.New("invalid broker docker runtime state")
+	}
+}
+
+func (client *Client) PrepareAppImage(ctx context.Context, appID string, variant string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationAppImagePrepare, AppImageParams{AppID: appID, Variant: appmanifest.CPUMinerImageVariant(variant)}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeAppImageState(response, dryRun)
+	if dryRun && client != nil && client.logger != nil {
+		if err != nil {
+			client.logger.Printf("privileged broker shadow validation rejected app.image.prepare: %v", err)
+		} else {
+			client.logger.Printf("privileged broker shadow validation accepted app.image.prepare for %s/%s", appID, variant)
+		}
+	}
+	return state, err
+}
+
+func (client *Client) AppImageStatus(ctx context.Context, appID string, variant string) (string, error) {
+	response, err := client.call(ctx, OperationAppImageStatus, AppImageParams{AppID: appID, Variant: appmanifest.CPUMinerImageVariant(variant)}, false)
+	if err != nil {
+		return "", err
+	}
+	return decodeAppImageState(response, false)
+}
+
+func (client *Client) ProbeAppImage(ctx context.Context, appID string, variant string, dryRun bool) (bool, error) {
+	response, err := client.call(ctx, OperationAppImageProbe, AppImageParams{AppID: appID, Variant: appmanifest.CPUMinerImageVariant(variant)}, dryRun)
+	if err != nil {
+		return false, err
+	}
+	var result AppImageProbe
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return false, errors.New("invalid broker app image probe response")
+	}
+	if dryRun && client != nil && client.logger != nil {
+		client.logger.Printf("privileged broker shadow validation accepted app.image.probe for %s/%s", appID, variant)
+	}
+	return result.Runnable, nil
+}
+
+func decodeAppImageState(response Response, dryRun bool) (string, error) {
+	var result AppImageState
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return "", errors.New("invalid broker app image state response")
+	}
+	if dryRun && result.Status == "validated" {
+		return result.Status, nil
+	}
+	switch result.Status {
+	case "ready", "preparing", "absent", "failed":
+		return result.Status, nil
+	default:
+		return "", errors.New("invalid broker app image state")
+	}
 }
 
 func (client *Client) AppLifecycle(ctx context.Context, appID string, action string, dryRun bool) error {

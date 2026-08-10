@@ -22,10 +22,16 @@ type composeRecordingRunner struct {
 	cpuPercent      string
 	statsErr        error
 	imageErr        error
+	hook            func(path string, args []string) (string, error, bool)
 }
 
 func (runner *composeRecordingRunner) Run(_ context.Context, path string, args ...string) (string, error) {
 	runner.commands = append(runner.commands, recordedCommand{path: path, args: append([]string(nil), args...)})
+	if runner.hook != nil {
+		if output, err, handled := runner.hook(path, args); handled {
+			return output, err
+		}
+	}
 	if path == dockerPath && reflect.DeepEqual(args, []string{"compose", "version"}) {
 		if runner.standalone {
 			return "", errors.New("compose plugin unavailable")
@@ -58,6 +64,146 @@ func (runner *composeRecordingRunner) Run(_ context.Context, path string, args .
 		return runner.cpuPercent, runner.statsErr
 	}
 	return "", nil
+}
+
+func TestComposeAppEnsureDockerRuntimeUsesFixedCommands(t *testing.T) {
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.EnsureDockerRuntime(context.Background(), false)
+	if err != nil || state.Status != "ready" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	want := []recordedCommand{
+		{path: dockerPath, args: []string{"info"}},
+		{path: dockerPath, args: []string{"compose", "version"}},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands=%#v want=%#v", runner.commands, want)
+	}
+}
+
+func TestComposeAppEnsureDockerRuntimeStartsInstalledDaemon(t *testing.T) {
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && reflect.DeepEqual(args, []string{"info"}) {
+			return "", errors.New("inactive"), true
+		}
+		if path == systemctlPath && reflect.DeepEqual(args, []string{"is-active", "docker"}) {
+			return "inactive\n", errors.New("inactive"), true
+		}
+		return "", nil, false
+	}}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.EnsureDockerRuntime(context.Background(), false)
+	if err != nil || state.Status != "starting" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	if len(runner.commands) != 3 || runner.commands[2].path != systemctlPath || !reflect.DeepEqual(runner.commands[2].args, []string{"start", "--no-block", "docker"}) {
+		t.Fatalf("unexpected runtime command sequence: %#v", runner.commands)
+	}
+}
+
+func TestComposeAppEnsureDockerRuntimeDryRunExecutesNothing(t *testing.T) {
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.EnsureDockerRuntime(context.Background(), true)
+	if err != nil || state.Status != "validated" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("dry run executed commands: %#v", runner.commands)
+	}
+}
+
+func TestComposeAppPrepareImageSchedulesFixedTransientPull(t *testing.T) {
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && len(args) == 3 && args[0] == "image" && args[1] == "inspect" {
+			return "", errors.New("missing"), true
+		}
+		if path == systemctlPath && len(args) > 0 && args[0] == "show" {
+			return "LoadState=not-found\nActiveState=inactive\n", errors.New("not found"), true
+		}
+		return "", nil, false
+	}}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.PrepareImage(context.Background(), "cpuminer", appmanifest.CPUMinerImageBaseline, false)
+	if err != nil || state.Status != "preparing" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	if len(runner.commands) != 3 {
+		t.Fatalf("commands=%#v", runner.commands)
+	}
+	want := recordedCommand{path: systemdRunPath, args: []string{
+		"--quiet", "--collect", "--unit=lightningos-cpuminer-image-baseline",
+		"--property=Type=exec", "--property=RuntimeMaxSec=10min",
+		dockerPath, "pull", "jvx1971/cpu-lottery-miner:v1",
+	}}
+	if !reflect.DeepEqual(runner.commands[2], want) {
+		t.Fatalf("pull command=%#v want=%#v", runner.commands[2], want)
+	}
+}
+
+func TestComposeAppPrepareImageReturnsCachedOrInProgressState(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		inspectErr error
+		show       string
+		want       string
+		wantCalls  int
+	}{
+		{name: "ready", want: "ready", wantCalls: 1},
+		{name: "preparing", inspectErr: errors.New("missing"), show: "LoadState=loaded\nActiveState=active\nSubState=running\n", want: "preparing", wantCalls: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+				if path == dockerPath && len(args) == 3 && args[0] == "image" && args[1] == "inspect" {
+					return "", test.inspectErr, true
+				}
+				if path == systemctlPath {
+					return test.show, nil, true
+				}
+				return "", nil, false
+			}}
+			manager := &ComposeAppManager{Runner: runner}
+			state, err := manager.PrepareImage(context.Background(), "cpuminer", appmanifest.CPUMinerImageFastLatest, false)
+			if err != nil || state.Status != test.want || len(runner.commands) != test.wantCalls {
+				t.Fatalf("state=%#v err=%v commands=%#v", state, err, runner.commands)
+			}
+		})
+	}
+}
+
+func TestComposeAppImageStatusAndProbeUseAllowlistedImage(t *testing.T) {
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.ImageStatus(context.Background(), "cpuminer", appmanifest.CPUMinerImageFastPinned)
+	if err != nil || state.Status != "ready" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	probe, err := manager.ProbeImage(context.Background(), "cpuminer", appmanifest.CPUMinerImageFastPinned, false)
+	if err != nil || !probe.Runnable {
+		t.Fatalf("probe/error=%#v/%v", probe, err)
+	}
+	image := "cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b"
+	if len(runner.commands) != 3 || !reflect.DeepEqual(runner.commands[2], recordedCommand{path: dockerPath, args: []string{"run", "--rm", image, "cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2"}}) {
+		t.Fatalf("unexpected image commands: %#v", runner.commands)
+	}
+}
+
+func TestComposeAppImageOperationsRejectUntrustedInputsBeforeCommand(t *testing.T) {
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner}
+	if _, err := manager.PrepareImage(context.Background(), "mempool", appmanifest.CPUMinerImageBaseline, false); err == nil {
+		t.Fatal("expected unknown app to fail")
+	}
+	if _, err := manager.ImageStatus(context.Background(), "cpuminer", "../../evil"); err == nil {
+		t.Fatal("expected unknown image variant to fail")
+	}
+	if _, err := manager.ProbeImage(context.Background(), "cpuminer", "latest;reboot", false); err == nil {
+		t.Fatal("expected injected image variant to fail")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("rejected image input executed commands: %#v", runner.commands)
+	}
 }
 
 func hasArgsSuffix(args []string, suffix ...string) bool {

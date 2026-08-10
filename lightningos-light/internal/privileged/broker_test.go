@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 type recordedCommand struct {
@@ -59,14 +61,57 @@ type recordingConfigFiles struct {
 }
 
 type recordingApps struct {
-	calls        int
-	inspectCalls int
-	removeCalls  int
-	appID        string
-	action       AppLifecycleAction
-	dryRun       bool
-	inspection   AppInspection
-	err          error
+	calls             int
+	inspectCalls      int
+	removeCalls       int
+	dockerCalls       int
+	dockerStatusCalls int
+	prepareCalls      int
+	statusCalls       int
+	probeCalls        int
+	appID             string
+	action            AppLifecycleAction
+	dryRun            bool
+	inspection        AppInspection
+	err               error
+	imageState        AppImageState
+	imageProbe        AppImageProbe
+	dockerState       DockerRuntimeState
+	variant           appmanifest.CPUMinerImageVariant
+}
+
+func (apps *recordingApps) EnsureDockerRuntime(_ context.Context, dryRun bool) (DockerRuntimeState, error) {
+	apps.dockerCalls++
+	apps.dryRun = dryRun
+	return apps.dockerState, apps.err
+}
+
+func (apps *recordingApps) DockerRuntimeStatus(_ context.Context) (DockerRuntimeState, error) {
+	apps.dockerStatusCalls++
+	return apps.dockerState, apps.err
+}
+
+func (apps *recordingApps) PrepareImage(_ context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageState, error) {
+	apps.prepareCalls++
+	apps.appID = appID
+	apps.variant = variant
+	apps.dryRun = dryRun
+	return apps.imageState, apps.err
+}
+
+func (apps *recordingApps) ImageStatus(_ context.Context, appID string, variant appmanifest.CPUMinerImageVariant) (AppImageState, error) {
+	apps.statusCalls++
+	apps.appID = appID
+	apps.variant = variant
+	return apps.imageState, apps.err
+}
+
+func (apps *recordingApps) ProbeImage(_ context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageProbe, error) {
+	apps.probeCalls++
+	apps.appID = appID
+	apps.variant = variant
+	apps.dryRun = dryRun
+	return apps.imageProbe, apps.err
 }
 
 func (apps *recordingApps) Inspect(_ context.Context, appID string) (AppInspection, error) {
@@ -302,6 +347,17 @@ func TestBrokerAppLifecycleDryRunDoesNotLock(t *testing.T) {
 	}
 }
 
+func TestBrokerDockerStatusDoesNotLock(t *testing.T) {
+	apps := &recordingApps{dockerState: DockerRuntimeState{Status: "starting"}}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	response := broker.Handle(context.Background(), emptyParamsRequest(t, OperationDockerStatus, false))
+	if !response.OK || apps.dockerStatusCalls != 1 || locker.locks != 0 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+}
+
 func TestBrokerAppLifecycleFailureIsGeneric(t *testing.T) {
 	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
 	broker.Apps = &recordingApps{err: errors.New("sensitive compose output")}
@@ -407,6 +463,72 @@ func TestBrokerAppRemoveFailureIsGeneric(t *testing.T) {
 		Version: ProtocolVersion, RequestID: "app_remove_failure_1", Operation: OperationAppRemove, Params: params,
 	})
 	if response.OK || response.Error == nil || response.Error.Code != "app_remove_failed" || response.Error.Message != "app remove operation failed" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestBrokerDockerEnsureUsesTypedManagerAndLock(t *testing.T) {
+	apps := &recordingApps{dockerState: DockerRuntimeState{Status: "ready"}}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	response := broker.Handle(context.Background(), emptyParamsRequest(t, OperationDockerEnsure, false))
+	if !response.OK || apps.dockerCalls != 1 || apps.dryRun || locker.locks != 1 || locker.unlocks != 1 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+}
+
+func TestBrokerDockerEnsureDryRunDoesNotLock(t *testing.T) {
+	apps := &recordingApps{dockerState: DockerRuntimeState{Status: "validated"}}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	response := broker.Handle(context.Background(), emptyParamsRequest(t, OperationDockerEnsure, true))
+	if !response.OK || apps.dockerCalls != 1 || !apps.dryRun || locker.locks != 0 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+}
+
+func TestBrokerAppImageOperationsUseTypedManagerAndLocks(t *testing.T) {
+	params, err := MarshalParams(AppImageParams{AppID: "cpuminer", Variant: appmanifest.CPUMinerImageBaseline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name      string
+		operation Operation
+		state     AppImageState
+		probe     AppImageProbe
+		wantLock  int
+		wantCall  func(*recordingApps) int
+	}{
+		{name: "prepare", operation: OperationAppImagePrepare, state: AppImageState{Status: "preparing"}, wantLock: 1, wantCall: func(apps *recordingApps) int { return apps.prepareCalls }},
+		{name: "status", operation: OperationAppImageStatus, state: AppImageState{Status: "ready"}, wantCall: func(apps *recordingApps) int { return apps.statusCalls }},
+		{name: "probe", operation: OperationAppImageProbe, probe: AppImageProbe{Runnable: true}, wantLock: 1, wantCall: func(apps *recordingApps) int { return apps.probeCalls }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			apps := &recordingApps{imageState: test.state, imageProbe: test.probe}
+			locker := &recordingLocker{}
+			broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+			broker.Apps = apps
+			response := broker.Handle(context.Background(), Request{Version: ProtocolVersion, RequestID: "image_1", Operation: test.operation, Params: params})
+			if !response.OK || test.wantCall(apps) != 1 || apps.appID != "cpuminer" || apps.variant != appmanifest.CPUMinerImageBaseline || locker.locks != test.wantLock {
+				t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+			}
+		})
+	}
+}
+
+func TestBrokerAppImageFailureIsGeneric(t *testing.T) {
+	params, err := MarshalParams(AppImageParams{AppID: "cpuminer", Variant: appmanifest.CPUMinerImageBaseline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Apps = &recordingApps{err: errors.New("sensitive registry output")}
+	response := broker.Handle(context.Background(), Request{Version: ProtocolVersion, RequestID: "image_failure_1", Operation: OperationAppImagePrepare, Params: params})
+	if response.OK || response.Error == nil || response.Error.Code != "app_image_prepare_failed" || response.Error.Message != "app image preparation failed" {
 		t.Fatalf("unexpected response: %#v", response)
 	}
 }

@@ -13,16 +13,30 @@ import (
 )
 
 type cpuMinerPrivilegedClient struct {
-	mode         string
-	appCalls     int
-	appID        string
-	action       string
-	dryRun       bool
-	lifecycleErr error
-	removeCalls  int
-	removeAppID  string
-	removeDryRun bool
-	removeErr    error
+	mode              string
+	appCalls          int
+	appID             string
+	action            string
+	dryRun            bool
+	lifecycleErr      error
+	removeCalls       int
+	removeAppID       string
+	removeDryRun      bool
+	removeErr         error
+	dockerCalls       int
+	dockerStatusCalls int
+	dockerDryRun      bool
+	dockerErr         error
+	dockerStatus      string
+	prepareCalls      int
+	imageVariant      string
+	imageDryRun       bool
+	imageStatus       string
+	imageErr          error
+	statusCalls       int
+	probeCalls        int
+	probeResult       bool
+	probeErr          error
 }
 
 func (client *cpuMinerPrivilegedClient) Mode() string { return client.mode }
@@ -46,6 +60,40 @@ func (client *cpuMinerPrivilegedClient) RemoveApp(_ context.Context, appID strin
 	client.removeAppID = appID
 	client.removeDryRun = dryRun
 	return client.removeErr
+}
+
+func (client *cpuMinerPrivilegedClient) EnsureDockerRuntime(_ context.Context, dryRun bool) (string, error) {
+	client.dockerCalls++
+	client.dockerDryRun = dryRun
+	return client.dockerStatus, client.dockerErr
+}
+
+func (client *cpuMinerPrivilegedClient) DockerRuntimeStatus(_ context.Context) (string, error) {
+	client.dockerStatusCalls++
+	return client.dockerStatus, client.dockerErr
+}
+
+func (client *cpuMinerPrivilegedClient) PrepareAppImage(_ context.Context, appID string, variant string, dryRun bool) (string, error) {
+	client.prepareCalls++
+	client.appID = appID
+	client.imageVariant = variant
+	client.imageDryRun = dryRun
+	return client.imageStatus, client.imageErr
+}
+
+func (client *cpuMinerPrivilegedClient) AppImageStatus(_ context.Context, appID string, variant string) (string, error) {
+	client.statusCalls++
+	client.appID = appID
+	client.imageVariant = variant
+	return client.imageStatus, client.imageErr
+}
+
+func (client *cpuMinerPrivilegedClient) ProbeAppImage(_ context.Context, appID string, variant string, dryRun bool) (bool, error) {
+	client.probeCalls++
+	client.appID = appID
+	client.imageVariant = variant
+	client.imageDryRun = dryRun
+	return client.probeResult, client.probeErr
 }
 
 func TestApplyCpuMinerComposeEnforceUsesBroker(t *testing.T) {
@@ -114,6 +162,59 @@ func TestRemoveCpuMinerAppEnforceFailsClosedAndPreservesFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(paths.ComposePath); err != nil {
 		t.Fatalf("app files were removed after broker failure: %v", err)
+	}
+}
+
+func TestPrepareCpuMinerImageEnforceUsesBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	if err := prepareCpuMinerImage(context.Background(), cpuMinerBaselineImage); err != nil {
+		t.Fatal(err)
+	}
+	if client.prepareCalls != 1 || client.appID != cpuMinerAppID || client.imageVariant != "baseline" || client.imageDryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
+func TestPrepareCpuMinerImageEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageErr: errors.New("pull failed")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	if err := prepareCpuMinerImage(context.Background(), cpuMinerBaselineImage); err == nil {
+		t.Fatal("expected broker failure")
+	}
+	if client.prepareCalls != 1 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+}
+
+func TestProbeCpuMinerImageEnforceUsesBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", probeResult: true}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	server := &Server{}
+	if !server.probeCpuMinerImage(context.Background(), cpuMinerFastImages[0]) {
+		t.Fatal("expected typed probe to report runnable")
+	}
+	if client.probeCalls != 1 || client.imageVariant != "fast_pinned" || client.imageDryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
+func TestCpuMinerImageBrokerHelpersRejectUnknownImage(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready", probeResult: true}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	if err := prepareCpuMinerImage(context.Background(), "evil/root:latest"); err == nil {
+		t.Fatal("expected unknown image to fail")
+	}
+	server := &Server{}
+	if server.probeCpuMinerImage(context.Background(), "evil/root:latest") {
+		t.Fatal("expected unknown image probe to fail")
+	}
+	if client.prepareCalls != 0 || client.probeCalls != 0 {
+		t.Fatalf("unknown image reached broker: %#v", client)
 	}
 }
 

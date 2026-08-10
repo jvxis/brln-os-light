@@ -46,6 +46,33 @@ func TestCPUMinerImageRequiresValidatedEnvironment(t *testing.T) {
 	}
 }
 
+func TestCPUMinerImageVariantsAreClosedMappings(t *testing.T) {
+	tests := []struct {
+		variant CPUMinerImageVariant
+		image   string
+	}{
+		{variant: CPUMinerImageBaseline, image: "jvx1971/cpu-lottery-miner:v1"},
+		{variant: CPUMinerImageFastPinned, image: "cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b"},
+		{variant: CPUMinerImageFastLatest, image: "cniweb/cpuminer-opt:latest"},
+	}
+	for _, test := range tests {
+		image, err := CPUMinerImageForVariant(test.variant)
+		if err != nil || image != test.image {
+			t.Fatalf("CPUMinerImageForVariant(%q)=%q/%v", test.variant, image, err)
+		}
+		variant, err := CPUMinerVariantForImage(test.image)
+		if err != nil || variant != test.variant {
+			t.Fatalf("CPUMinerVariantForImage(%q)=%q/%v", test.image, variant, err)
+		}
+	}
+	if _, err := CPUMinerImageForVariant("../../evil"); err == nil {
+		t.Fatal("expected unknown variant to fail")
+	}
+	if _, err := CPUMinerVariantForImage("evil/root:latest"); err == nil {
+		t.Fatal("expected unknown image to fail")
+	}
+}
+
 func replaceEnvValue(raw string, key string, value string) string {
 	oldStart := key + "="
 	start := 0

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 const (
@@ -31,9 +33,14 @@ type ConfigFileManager interface {
 }
 
 type AppManager interface {
+	EnsureDockerRuntime(ctx context.Context, dryRun bool) (DockerRuntimeState, error)
+	DockerRuntimeStatus(ctx context.Context) (DockerRuntimeState, error)
 	Lifecycle(ctx context.Context, appID string, action AppLifecycleAction, dryRun bool) error
 	Inspect(ctx context.Context, appID string) (AppInspection, error)
 	Remove(ctx context.Context, appID string, dryRun bool) error
+	PrepareImage(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageState, error)
+	ImageStatus(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant) (AppImageState, error)
+	ProbeImage(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageProbe, error)
 }
 
 type AuditEvent struct {
@@ -175,6 +182,24 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "file_update_failed", errors.New("enable login config update failed")
 		}
 		return map[string]any{"validated": true, "changed": changed}, "", nil
+	case OperationDockerEnsure:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
+		}
+		state, err := broker.Apps.EnsureDockerRuntime(ctx, request.DryRun)
+		if err != nil {
+			return nil, "docker_runtime_unavailable", errors.New("docker runtime is unavailable")
+		}
+		return state, "", nil
+	case OperationDockerStatus:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
+		}
+		state, err := broker.Apps.DockerRuntimeStatus(ctx)
+		if err != nil {
+			return nil, "docker_runtime_status_failed", errors.New("docker runtime status failed")
+		}
+		return state, "", nil
 	case OperationAppLifecycle:
 		if broker.Apps == nil {
 			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
@@ -212,6 +237,45 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "app_remove_failed", errors.New("app remove operation failed")
 		}
 		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationAppImagePrepare:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
+		}
+		var params AppImageParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.image.prepare params")
+		}
+		state, err := broker.Apps.PrepareImage(ctx, params.AppID, params.Variant, request.DryRun)
+		if err != nil {
+			return nil, "app_image_prepare_failed", errors.New("app image preparation failed")
+		}
+		return state, "", nil
+	case OperationAppImageStatus:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
+		}
+		var params AppImageParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.image.status params")
+		}
+		state, err := broker.Apps.ImageStatus(ctx, params.AppID, params.Variant)
+		if err != nil {
+			return nil, "app_image_status_failed", errors.New("app image status failed")
+		}
+		return state, "", nil
+	case OperationAppImageProbe:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
+		}
+		var params AppImageParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.image.probe params")
+		}
+		probe, err := broker.Apps.ProbeImage(ctx, params.AppID, params.Variant, request.DryRun)
+		if err != nil {
+			return nil, "app_image_probe_failed", errors.New("app image probe failed")
+		}
+		return probe, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -248,7 +312,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe:
 		return true
 	default:
 		return false
@@ -257,7 +321,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationAppImagePrepare, OperationAppImageProbe:
 		return true
 	default:
 		return false

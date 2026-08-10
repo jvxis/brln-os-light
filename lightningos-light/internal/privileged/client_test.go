@@ -110,6 +110,59 @@ func TestClientRemoveAppBuildsTypedRequest(t *testing.T) {
 	}
 }
 
+func TestClientDockerRuntimeBuildsEmptyTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: DockerRuntimeState{Status: "validated"}}
+	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)
+	status, err := client.EnsureDockerRuntime(context.Background(), true)
+	if err != nil || status != "validated" {
+		t.Fatalf("status/error=%q/%v", status, err)
+	}
+	if transport.request.Operation != OperationDockerEnsure || !transport.request.DryRun || string(transport.request.Params) != "{}" {
+		t.Fatalf("unexpected request: %#v", transport.request)
+	}
+	transport.result = DockerRuntimeState{Status: "ready"}
+	status, err = client.DockerRuntimeStatus(context.Background())
+	if err != nil || status != "ready" || transport.request.Operation != OperationDockerStatus || transport.request.DryRun {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+}
+
+func TestClientAppImageOperationsBuildTypedRequests(t *testing.T) {
+	transport := &fakeTransport{result: AppImageState{Status: "preparing"}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	status, err := client.PrepareAppImage(context.Background(), "cpuminer", "baseline", false)
+	if err != nil || status != "preparing" || transport.request.Operation != OperationAppImagePrepare {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+	var params AppImageParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.AppID != "cpuminer" || params.Variant != "baseline" {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+
+	transport.result = AppImageState{Status: "ready"}
+	status, err = client.AppImageStatus(context.Background(), "cpuminer", "baseline")
+	if err != nil || status != "ready" || transport.request.Operation != OperationAppImageStatus || transport.request.DryRun {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+
+	transport.result = AppImageProbe{Runnable: true}
+	runnable, err := client.ProbeAppImage(context.Background(), "cpuminer", "fast_pinned", false)
+	if err != nil || !runnable || transport.request.Operation != OperationAppImageProbe {
+		t.Fatalf("runnable/error/request=%v/%v/%#v", runnable, err, transport.request)
+	}
+}
+
+func TestClientAppImageRejectsInvalidState(t *testing.T) {
+	transport := &fakeTransport{result: AppImageState{Status: "root-shell"}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	if _, err := client.AppImageStatus(context.Background(), "cpuminer", "baseline"); err == nil {
+		t.Fatal("expected invalid image state to fail")
+	}
+}
+
 func TestClientInspectAppBuildsTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: AppInspection{Status: "running", CPUPercentRaw: 123.4}}
 	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)

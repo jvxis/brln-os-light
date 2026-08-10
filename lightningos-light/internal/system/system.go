@@ -23,6 +23,140 @@ type PrivilegedClient interface {
 	AppLifecycle(ctx context.Context, appID string, action string, dryRun bool) error
 	InspectApp(ctx context.Context, appID string) (status string, cpuPercentRaw float64, err error)
 	RemoveApp(ctx context.Context, appID string, dryRun bool) error
+	EnsureDockerRuntime(ctx context.Context, dryRun bool) (status string, err error)
+	DockerRuntimeStatus(ctx context.Context) (status string, err error)
+	PrepareAppImage(ctx context.Context, appID string, variant string, dryRun bool) (status string, err error)
+	AppImageStatus(ctx context.Context, appID string, variant string) (status string, err error)
+	ProbeAppImage(ctx context.Context, appID string, variant string, dryRun bool) (runnable bool, err error)
+}
+
+func EnsureDockerRuntimeWithBroker(ctx context.Context) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		status, err := client.EnsureDockerRuntime(ctx, false)
+		if err != nil {
+			return true, err
+		}
+		if status == "ready" {
+			return true, nil
+		}
+		if status != "starting" {
+			return true, errors.New("docker runtime returned an invalid state")
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-waitCtx.Done():
+				return true, errors.New("docker runtime did not become ready")
+			case <-ticker.C:
+				status, err = client.DockerRuntimeStatus(waitCtx)
+				if err != nil {
+					return true, err
+				}
+				switch status {
+				case "ready":
+					return true, nil
+				case "starting":
+					continue
+				case "stopped", "failed":
+					return true, errors.New("docker runtime failed to start")
+				default:
+					return true, errors.New("docker runtime returned an invalid state")
+				}
+			}
+		}
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = client.EnsureDockerRuntime(shadowCtx, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func PrepareAppImageWithBroker(ctx context.Context, appID string, variant string) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		status, err := client.PrepareAppImage(ctx, appID, variant, false)
+		if err != nil {
+			return true, err
+		}
+		if status == "ready" {
+			return true, nil
+		}
+		if status != "preparing" {
+			return true, errors.New("app image preparation returned an invalid state")
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		defer cancel()
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-waitCtx.Done():
+				return true, errors.New("app image preparation did not complete")
+			case <-ticker.C:
+				status, err = client.AppImageStatus(waitCtx, appID, variant)
+				if err != nil {
+					return true, err
+				}
+				switch status {
+				case "ready":
+					return true, nil
+				case "preparing":
+					continue
+				case "absent", "failed":
+					return true, errors.New("app image preparation failed")
+				default:
+					return true, errors.New("app image preparation returned an invalid state")
+				}
+			}
+		}
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = client.PrepareAppImage(shadowCtx, appID, variant, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func ProbeAppImageWithBroker(ctx context.Context, appID string, variant string) (bool, bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		runnable, err := client.ProbeAppImage(ctx, appID, variant, false)
+		return true, runnable, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = client.ProbeAppImage(shadowCtx, appID, variant, true)
+		return false, false, nil
+	default:
+		return false, false, nil
+	}
 }
 
 func InspectAppWithBroker(ctx context.Context, appID string) (handled bool, status string, cpuPercentRaw float64, err error) {

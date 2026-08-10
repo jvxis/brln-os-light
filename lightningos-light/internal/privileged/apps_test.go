@@ -2,12 +2,19 @@ package privileged
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"lightningos-light/internal/appmanifest"
 )
@@ -249,6 +256,158 @@ func TestComposeAppLifecycleStartRequiresLocalImage(t *testing.T) {
 	}
 	if len(runner.commands) != 1 || !reflect.DeepEqual(runner.commands[0].args, []string{"image", "inspect", "jvx1971/cpu-lottery-miner:v1"}) {
 		t.Fatalf("missing image reached Compose: %#v", runner.commands)
+	}
+}
+
+func TestComposeAppRoboSatsLifecycleUsesBrokerOwnedProxySnapshot(t *testing.T) {
+	appsRoot := writeTestRoboSatsApp(t)
+	privilegedAppsRoot := t.TempDir()
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, PrivilegedAppsRoot: privilegedAppsRoot}
+	if err := manager.Lifecycle(context.Background(), appmanifest.RoboSatsID, AppLifecycleStart, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 5 {
+		t.Fatalf("commands = %#v", runner.commands)
+	}
+	for index, image := range appmanifest.RoboSatsImages() {
+		want := recordedCommand{path: dockerPath, args: []string{"image", "inspect", image}}
+		if !reflect.DeepEqual(runner.commands[index], want) {
+			t.Fatalf("image probe %d = %#v want %#v", index, runner.commands[index], want)
+		}
+	}
+	lifecycle := runner.commands[4]
+	if lifecycle.path != dockerPath || !hasArgsSuffix(lifecycle.args, "up", "-d") {
+		t.Fatalf("unexpected lifecycle command: %#v", lifecycle)
+	}
+	appRoot := filepath.Join(appsRoot, appmanifest.RoboSatsID)
+	if strings.Contains(runner.composeSnapshot, appRoot) {
+		t.Fatalf("manager-owned proxy path reached execution manifest:\n%s", runner.composeSnapshot)
+	}
+	if !strings.Contains(runner.composeSnapshot, "robosats-data:/usr/src/robosats/data") {
+		t.Fatalf("execution manifest did not use the named data volume:\n%s", runner.composeSnapshot)
+	}
+	if !strings.Contains(runner.composeSnapshot, appmanifest.RoboSatsCaddyfileFile+":/etc/caddy/Caddyfile:ro") ||
+		!strings.Contains(runner.composeSnapshot, appmanifest.RoboSatsTLSDir+":/etc/caddy/tls:ro") {
+		t.Fatalf("broker snapshot proxy mounts missing:\n%s", runner.composeSnapshot)
+	}
+	for _, arg := range lifecycle.args {
+		if strings.Contains(arg, appsRoot) {
+			t.Fatalf("manager-controlled path reached Docker arguments: %q", arg)
+		}
+	}
+	if !strings.Contains(runner.composeSnapshot, privilegedAppsRoot) {
+		t.Fatalf("execution manifest did not use the persistent privileged root:\n%s", runner.composeSnapshot)
+	}
+	for _, path := range []string{
+		filepath.Join(privilegedAppsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsComposeFile),
+		filepath.Join(privilegedAppsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsCaddyfileFile),
+		filepath.Join(privilegedAppsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsTLSDir, "server.crt"),
+		filepath.Join(privilegedAppsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsTLSDir, "server.key"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("persistent broker asset missing after lifecycle call: %s: %v", path, err)
+		}
+	}
+}
+
+func TestComposeAppRoboSatsInspectUsesPrimaryServiceWithoutDockerStats(t *testing.T) {
+	appsRoot := writeTestRoboSatsApp(t)
+	runner := &composeRecordingRunner{runningServices: "tor\nrobosats\nproxy\n"}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, PrivilegedAppsRoot: t.TempDir()}
+	inspection, err := manager.Inspect(context.Background(), appmanifest.RoboSatsID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Status != "running" || inspection.CPUPercentRaw != 0 || len(runner.commands) != 2 {
+		t.Fatalf("inspection=%#v commands=%#v", inspection, runner.commands)
+	}
+	if !hasArgsSuffix(runner.commands[1].args, "ps", "--services", "--filter", "status=running") {
+		t.Fatalf("unexpected status command: %#v", runner.commands[1])
+	}
+}
+
+func TestComposeAppRoboSatsRejectsTamperedAssetsBeforeCommand(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, appsRoot string)
+	}{
+		{name: "compose", mutate: func(t *testing.T, appsRoot string) {
+			path := filepath.Join(appsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsComposeFile)
+			mustWriteTestFile(t, path, []byte("services:\n  proxy:\n    privileged: true\n"), 0600)
+		}},
+		{name: "caddyfile", mutate: func(t *testing.T, appsRoot string) {
+			path := filepath.Join(appsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsCaddyfileFile)
+			mustWriteTestFile(t, path, []byte(":12596 { reverse_proxy attacker:80 }\n"), 0600)
+		}},
+		{name: "mismatched TLS key", mutate: func(t *testing.T, appsRoot string) {
+			_, privateKey := testTLSKeyPair(t)
+			path := filepath.Join(appsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsTLSDir, "server.key")
+			mustWriteTestFile(t, path, privateKey, 0600)
+		}},
+		{name: "symlinked Caddyfile", mutate: func(t *testing.T, appsRoot string) {
+			path := filepath.Join(appsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsCaddyfileFile)
+			target := filepath.Join(appsRoot, "Caddyfile-copy")
+			mustWriteTestFile(t, target, []byte(appmanifest.RoboSatsCaddyfile()), 0600)
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			appsRoot := writeTestRoboSatsApp(t)
+			test.mutate(t, appsRoot)
+			runner := &composeRecordingRunner{}
+			manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, PrivilegedAppsRoot: t.TempDir()}
+			if err := manager.Lifecycle(context.Background(), appmanifest.RoboSatsID, AppLifecycleStart, true); err == nil {
+				t.Fatal("expected validation error")
+			}
+			if len(runner.commands) != 0 {
+				t.Fatalf("rejected assets executed commands: %#v", runner.commands)
+			}
+		})
+	}
+}
+
+func TestComposeAppRoboSatsRejectsSymlinkedPrivilegedRoot(t *testing.T) {
+	appsRoot := writeTestRoboSatsApp(t)
+	parent := t.TempDir()
+	target := filepath.Join(parent, "target")
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	privilegedAppsRoot := filepath.Join(parent, "privileged-apps")
+	if err := os.Symlink(target, privilegedAppsRoot); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, PrivilegedAppsRoot: privilegedAppsRoot}
+	if err := manager.Lifecycle(context.Background(), appmanifest.RoboSatsID, AppLifecycleStart, false); err == nil {
+		t.Fatal("expected symlinked privileged root to fail")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("symlinked privileged root executed commands: %#v", runner.commands)
+	}
+}
+
+func TestWriteAtomicRegularFileReplacesExistingContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "asset")
+	if err := writeAtomicRegularFile(path, []byte("first"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomicRegularFile(path, []byte("second"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "second" {
+		t.Fatalf("atomic replacement wrote %q", raw)
 	}
 }
 
@@ -520,4 +679,50 @@ func writeTestCPUMinerApp(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	return appsRoot, validEnv
+}
+
+func writeTestRoboSatsApp(t *testing.T) string {
+	t.Helper()
+	appsRoot := t.TempDir()
+	appRoot := filepath.Join(appsRoot, appmanifest.RoboSatsID)
+	tlsDir := filepath.Join(appRoot, appmanifest.RoboSatsTLSDir)
+	if err := os.MkdirAll(tlsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	caddyfilePath := filepath.Join(appRoot, appmanifest.RoboSatsCaddyfileFile)
+	mustWriteTestFile(t, filepath.Join(appRoot, appmanifest.RoboSatsComposeFile), []byte(appmanifest.RoboSatsCompose(caddyfilePath, tlsDir)), 0600)
+	mustWriteTestFile(t, caddyfilePath, []byte(appmanifest.RoboSatsCaddyfile()), 0600)
+	certificate, privateKey := testTLSKeyPair(t)
+	mustWriteTestFile(t, filepath.Join(tlsDir, "server.crt"), certificate, 0600)
+	mustWriteTestFile(t, filepath.Join(tlsDir, "server.key"), privateKey, 0600)
+	return appsRoot
+}
+
+func testTLSKeyPair(t *testing.T) ([]byte, []byte) {
+	t.Helper()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-robosats"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+	}
+	certificateDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER})
+	key := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	return certificate, key
+}
+
+func mustWriteTestFile(t *testing.T, path string, data []byte, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, data, mode); err != nil {
+		t.Fatal(err)
+	}
 }

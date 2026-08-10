@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
@@ -25,18 +26,18 @@ const (
 	// order screen never leaves the loading spinner even though the coordinator
 	// returns the order plus its bond invoice. Bump this only after verifying a
 	// newer tag actually renders the make/take flow self-hosted.
-	robosatsImage    = "recksato/robosats-client:v0.8.4-alpha"
-	robosatsTorImage = "osminogin/tor-simple:0.4.9.5"
+	robosatsImage    = appmanifest.RoboSatsImage
+	robosatsTorImage = appmanifest.RoboSatsTorImage
 	// robosatsProxyImage terminates TLS/HTTP2 in front of the RoboSats client.
 	// The client is served plain HTTP/1.1, which caps the browser at 6
 	// connections per host; over Tor each coordinator poll takes many seconds,
 	// so the polls pile up and starve the Nostr relay WebSockets the order flow
 	// depends on. HTTP/2 multiplexes them over a single connection and removes
 	// that limit.
-	robosatsProxyImage = "caddy:2.8-alpine"
+	robosatsProxyImage = appmanifest.RoboSatsProxyImage
 	// robosatsPort is both the external HTTPS port (Caddy) and the internal
 	// port the client's own nginx listens on inside its container.
-	robosatsPort = 12596
+	robosatsPort = appmanifest.RoboSatsPort
 )
 
 type robosatsPaths struct {
@@ -78,7 +79,13 @@ func (a robosatsApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "robosats")
+	status := "unknown"
+	handled, brokerStatus, _, err := system.InspectAppWithBroker(ctx, appmanifest.RoboSatsID)
+	if handled {
+		status = brokerStatus
+	} else {
+		status, err = getComposeStatus(ctx, paths.Root, paths.ComposePath, "robosats")
+	}
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
@@ -157,6 +164,14 @@ func (s *Server) uninstallRobosats(ctx context.Context) error {
 
 func (s *Server) startRobosats(ctx context.Context) error {
 	paths := robosatsAppPaths()
+	if fileExists(paths.ComposePath) {
+		if err := prepareRoboSatsCatalogAssets(paths); err != nil {
+			return err
+		}
+	}
+	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.RoboSatsID, "start"); handled {
+		return err
+	}
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
@@ -183,6 +198,14 @@ func (s *Server) startRobosats(ctx context.Context) error {
 
 func (s *Server) stopRobosats(ctx context.Context) error {
 	paths := robosatsAppPaths()
+	if fileExists(paths.ComposePath) {
+		if err := prepareRoboSatsCatalogAssets(paths); err != nil {
+			return err
+		}
+	}
+	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.RoboSatsID, "stop"); handled {
+		return err
+	}
 	if !fileExists(paths.ComposePath) {
 		return errors.New("RoboSats is not installed")
 	}
@@ -190,42 +213,15 @@ func (s *Server) stopRobosats(ctx context.Context) error {
 }
 
 func robosatsComposeContents(paths robosatsPaths) string {
-	return fmt.Sprintf(`services:
-  tor:
-    image: %s
-    restart: unless-stopped
-    volumes:
-      - tor-data:/var/lib/tor
-      - tor-log:/var/log/tor
-  robosats:
-    image: %s
-    user: "0:0"
-    restart: unless-stopped
-    depends_on:
-      - tor
-    environment:
-      TOR_PROXY_IP: tor
-      TOR_PROXY_PORT: 9050
-    volumes:
-      - %s:/usr/src/robosats/data
-  proxy:
-    image: %s
-    restart: unless-stopped
-    depends_on:
-      - robosats
-    ports:
-      - "%d:%d"
-    volumes:
-      - %s:/etc/caddy/Caddyfile:ro
-      - %s:/etc/caddy/tls:ro
-      - caddy-data:/data
-      - caddy-config:/config
-volumes:
-  tor-data:
-  tor-log:
-  caddy-data:
-  caddy-config:
-`, robosatsTorImage, robosatsImage, paths.DataDir, robosatsProxyImage, robosatsPort, robosatsPort, paths.CaddyfilePath, paths.TLSDir)
+	return appmanifest.RoboSatsCompose(paths.CaddyfilePath, paths.TLSDir)
+}
+
+func prepareRoboSatsCatalogAssets(paths robosatsPaths) error {
+	if err := ensureRobosatsProxyAssets(paths); err != nil {
+		return err
+	}
+	_, err := ensureFileWithChange(paths.ComposePath, robosatsComposeContents(paths))
+	return err
 }
 
 // robosatsCaddyfileContents serves the client over TLS/HTTP2 and reverse-proxies
@@ -240,20 +236,7 @@ volumes:
 // cascades down and cancels the Tor attempt, freeing it for the live ones. It
 // only bounds time-to-first-header, so established WebSockets stream freely.
 func robosatsCaddyfileContents() string {
-	return fmt.Sprintf(`{
-	admin off
-	auto_https off
-}
-
-https://:%d {
-	tls /etc/caddy/tls/server.crt /etc/caddy/tls/server.key
-	reverse_proxy robosats:%d {
-		transport http {
-			response_header_timeout 8s
-		}
-	}
-}
-`, robosatsPort, robosatsPort)
+	return appmanifest.RoboSatsCaddyfile()
 }
 
 func ensureRobosatsProxyAssets(paths robosatsPaths) error {

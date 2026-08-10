@@ -1,11 +1,53 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/system"
 )
+
+func TestRoboSatsStartAndStopEnforceUseBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	server := &Server{}
+
+	if err := server.startRobosats(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.appCalls != 1 || client.appID != appmanifest.RoboSatsID || client.action != "start" || client.dryRun {
+		t.Fatalf("unexpected start broker call: %#v", client)
+	}
+	if err := server.stopRobosats(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.appCalls != 2 || client.appID != appmanifest.RoboSatsID || client.action != "stop" || client.dryRun {
+		t.Fatalf("unexpected stop broker call: %#v", client)
+	}
+}
+
+func TestRoboSatsLifecycleEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", lifecycleErr: errors.New("rejected")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	server := &Server{}
+
+	if err := server.startRobosats(context.Background()); err == nil {
+		t.Fatal("expected broker rejection to fail start")
+	}
+	if err := server.stopRobosats(context.Background()); err == nil {
+		t.Fatal("expected broker rejection to fail stop")
+	}
+	if client.appCalls != 2 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+}
 
 func TestRobosatsComposeContentsUsesPinnedTorImageAndVolumes(t *testing.T) {
 	got := robosatsComposeContents(robosatsPaths{
@@ -20,12 +62,12 @@ func TestRobosatsComposeContentsUsesPinnedTorImageAndVolumes(t *testing.T) {
 		"image: osminogin/tor-simple:0.4.9.5",
 		"- tor-data:/var/lib/tor",
 		"- tor-log:/var/log/tor",
-		"- /tmp/robosats-data:/usr/src/robosats/data",
+		"- robosats-data:/usr/src/robosats/data",
 		// The client is no longer published directly; the TLS/HTTP2 proxy fronts it.
 		"image: caddy:2.8-alpine",
 		"- /tmp/robosats/Caddyfile:/etc/caddy/Caddyfile:ro",
 		"- /tmp/robosats/tls:/etc/caddy/tls:ro",
-		"volumes:\n  tor-data:\n  tor-log:\n  caddy-data:\n  caddy-config:\n",
+		"volumes:\n  robosats-data:\n  tor-data:\n  tor-log:\n  caddy-data:\n  caddy-config:\n",
 	}
 	for _, want := range checks {
 		if !strings.Contains(got, want) {

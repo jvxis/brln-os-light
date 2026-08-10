@@ -3,8 +3,12 @@ package privileged
 import (
 	"bytes"
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,15 +19,17 @@ import (
 )
 
 const (
-	defaultAppsRoot   = "/var/lib/lightningos/apps"
-	dockerPath        = "/usr/bin/docker"
-	dockerComposePath = "/usr/bin/docker-compose"
+	defaultAppsRoot           = "/var/lib/lightningos/apps"
+	defaultPrivilegedAppsRoot = "/var/lib/lightningos-privileged/apps"
+	dockerPath                = "/usr/bin/docker"
+	dockerComposePath         = "/usr/bin/docker-compose"
 )
 
 type ComposeAppManager struct {
-	Runner   CommandRunner
-	AppsRoot string
-	TempRoot string
+	Runner             CommandRunner
+	AppsRoot           string
+	PrivilegedAppsRoot string
+	TempRoot           string
 }
 
 type composeAppSnapshot struct {
@@ -32,10 +38,17 @@ type composeAppSnapshot struct {
 	envPath     string
 }
 
+type roboSatsValidatedFiles struct {
+	composeRaw     []byte
+	caddyfileRaw   []byte
+	certificateRaw []byte
+	privateKeyRaw  []byte
+}
+
 var dockerCPUPercentPattern = regexp.MustCompile(`^([0-9]+(?:[.,][0-9]+)?)[[:space:]]*%$`)
 
 func NewComposeAppManager(runner CommandRunner) *ComposeAppManager {
-	return &ComposeAppManager{Runner: runner, AppsRoot: defaultAppsRoot}
+	return &ComposeAppManager{Runner: runner, AppsRoot: defaultAppsRoot, PrivilegedAppsRoot: defaultPrivilegedAppsRoot}
 }
 
 func (manager *ComposeAppManager) EnsureDockerRuntime(ctx context.Context, dryRun bool) (DockerRuntimeState, error) {
@@ -216,42 +229,71 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	if manager == nil || manager.Runner == nil {
 		return errors.New("compose app manager is unavailable")
 	}
-	if appID != appmanifest.CPUMinerID {
+	manifest, err := appmanifest.ComposeManifestForApp(appID)
+	if err != nil {
 		return errors.New("app manifest is not allowed")
 	}
 	if action != AppLifecycleStart && action != AppLifecycleStop {
 		return errors.New("app lifecycle action is not allowed")
 	}
-	composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
-	if err != nil {
-		return err
-	}
-	if dryRun {
-		return nil
-	}
-	if action == AppLifecycleStart {
+
+	var snapshot composeAppSnapshot
+	var cleanup func()
+	var images []string
+	switch manifest.ID {
+	case appmanifest.CPUMinerID:
+		composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
+		if err != nil {
+			return err
+		}
 		image, err := appmanifest.CPUMinerImage(envRaw)
 		if err != nil {
 			return errors.New("app image selection is invalid")
 		}
-		if _, err := manager.Runner.Run(ctx, dockerPath, "image", "inspect", image); err != nil {
-			return errors.New("app image is not available locally")
+		images = []string{image}
+		if dryRun {
+			return nil
 		}
-	}
-
-	snapshot, cleanup, err := manager.createSnapshot(composeRaw, envRaw)
-	if err != nil {
-		return err
+		snapshot, cleanup, err = manager.createSnapshot(manifest, composeRaw, envRaw)
+		if err != nil {
+			return err
+		}
+	case appmanifest.RoboSatsID:
+		files, err := manager.validatedRoboSatsFiles()
+		if err != nil {
+			return err
+		}
+		images = appmanifest.RoboSatsImages()
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createRoboSatsSnapshot(manifest, files)
+		if err != nil {
+			return err
+		}
+	default:
+		return errors.New("app manifest is not allowed")
 	}
 	defer cleanup()
+
+	if action == AppLifecycleStart {
+		for _, image := range images {
+			if _, err := manager.Runner.Run(ctx, dockerPath, "image", "inspect", image); err != nil {
+				return errors.New("app image is not available locally")
+			}
+		}
+	}
 
 	commandPath, prefix, err := manager.resolveCompose(ctx)
 	if err != nil {
 		return err
 	}
-	args := append(prefix,
-		"--env-file", snapshot.envPath,
-		"--project-name", appmanifest.CPUMinerProject,
+	args := append([]string(nil), prefix...)
+	if snapshot.envPath != "" {
+		args = append(args, "--env-file", snapshot.envPath)
+	}
+	args = append(args,
+		"--project-name", manifest.Project,
 		"--project-directory", snapshot.root,
 		"-f", snapshot.composePath,
 	)
@@ -259,10 +301,7 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	case AppLifecycleStart:
 		args = append(args, "up", "-d")
 	case AppLifecycleStop:
-		// Compose defaults to a ten-second graceful-stop window, which exceeds
-		// the broker client's five-second default. CPU Miner holds no mutable
-		// container state, so this manifest uses a bounded two-second window.
-		args = append(args, "stop", "--timeout", "2")
+		args = append(args, "stop", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds))
 	}
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		return errors.New("app lifecycle command failed")
@@ -280,6 +319,10 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 	if appID != appmanifest.CPUMinerID {
 		return errors.New("app manifest is not allowed")
 	}
+	manifest, err := appmanifest.ComposeManifestForApp(appID)
+	if err != nil {
+		return errors.New("app manifest is not allowed")
+	}
 	composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
 	if err != nil {
 		return err
@@ -288,7 +331,7 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 		return nil
 	}
 
-	snapshot, cleanup, err := manager.createSnapshot(composeRaw, envRaw)
+	snapshot, cleanup, err := manager.createSnapshot(manifest, composeRaw, envRaw)
 	if err != nil {
 		return err
 	}
@@ -298,12 +341,12 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 	if err != nil {
 		return err
 	}
-	args := append(prefix,
+	args := append(append([]string(nil), prefix...),
 		"--env-file", snapshot.envPath,
-		"--project-name", appmanifest.CPUMinerProject,
+		"--project-name", manifest.Project,
 		"--project-directory", snapshot.root,
 		"-f", snapshot.composePath,
-		"down", "--remove-orphans", "--timeout", "2",
+		"down", "--remove-orphans", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds),
 	)
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		return errors.New("app remove command failed")
@@ -316,16 +359,34 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 	if manager == nil || manager.Runner == nil {
 		return inspection, errors.New("compose app manager is unavailable")
 	}
-	if appID != appmanifest.CPUMinerID {
+	manifest, err := appmanifest.ComposeManifestForApp(appID)
+	if err != nil {
 		return inspection, errors.New("app manifest is not allowed")
 	}
-	composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
-	if err != nil {
-		return inspection, err
-	}
-	snapshot, cleanup, err := manager.createSnapshot(composeRaw, envRaw)
-	if err != nil {
-		return inspection, err
+
+	var snapshot composeAppSnapshot
+	var cleanup func()
+	switch manifest.ID {
+	case appmanifest.CPUMinerID:
+		composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
+		if err != nil {
+			return inspection, err
+		}
+		snapshot, cleanup, err = manager.createSnapshot(manifest, composeRaw, envRaw)
+		if err != nil {
+			return inspection, err
+		}
+	case appmanifest.RoboSatsID:
+		files, err := manager.validatedRoboSatsFiles()
+		if err != nil {
+			return inspection, err
+		}
+		snapshot, cleanup, err = manager.createRoboSatsSnapshot(manifest, files)
+		if err != nil {
+			return inspection, err
+		}
+	default:
+		return inspection, errors.New("app manifest is not allowed")
 	}
 	defer cleanup()
 
@@ -333,9 +394,12 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 	if err != nil {
 		return inspection, err
 	}
-	baseArgs := append(prefix,
-		"--env-file", snapshot.envPath,
-		"--project-name", appmanifest.CPUMinerProject,
+	baseArgs := append([]string(nil), prefix...)
+	if snapshot.envPath != "" {
+		baseArgs = append(baseArgs, "--env-file", snapshot.envPath)
+	}
+	baseArgs = append(baseArgs,
+		"--project-name", manifest.Project,
 		"--project-directory", snapshot.root,
 		"-f", snapshot.composePath,
 	)
@@ -345,7 +409,7 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 	}
 	inspection.Status = "stopped"
 	for _, line := range strings.Split(output, "\n") {
-		if strings.TrimSpace(line) == appmanifest.CPUMinerID {
+		if strings.TrimSpace(line) == manifest.PrimaryService {
 			inspection.Status = "running"
 			break
 		}
@@ -353,8 +417,11 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 	if inspection.Status != "running" {
 		return inspection, nil
 	}
+	if manifest.ID != appmanifest.CPUMinerID {
+		return inspection, nil
+	}
 
-	output, err = manager.Runner.Run(ctx, commandPath, append(append([]string(nil), baseArgs...), "ps", "-q", appmanifest.CPUMinerID)...)
+	output, err = manager.Runner.Run(ctx, commandPath, append(append([]string(nil), baseArgs...), "ps", "-q", manifest.PrimaryService)...)
 	if err != nil {
 		return inspection, errors.New("app container lookup failed")
 	}
@@ -392,7 +459,60 @@ func (manager *ComposeAppManager) validatedCPUMinerFiles() ([]byte, []byte, erro
 	return composeRaw, envRaw, nil
 }
 
-func (manager *ComposeAppManager) createSnapshot(composeRaw []byte, envRaw []byte) (composeAppSnapshot, func(), error) {
+func (manager *ComposeAppManager) validatedRoboSatsFiles() (roboSatsValidatedFiles, error) {
+	var files roboSatsValidatedFiles
+	appsRoot := manager.AppsRoot
+	if appsRoot == "" {
+		appsRoot = defaultAppsRoot
+	}
+	appRoot := filepath.Join(appsRoot, appmanifest.RoboSatsID)
+	tlsDir := filepath.Join(appRoot, appmanifest.RoboSatsTLSDir)
+	if err := validateRegularDirectory(appRoot); err != nil {
+		return files, errors.New("app directory is unavailable")
+	}
+	fail := func(message string) (roboSatsValidatedFiles, error) {
+		return roboSatsValidatedFiles{}, errors.New(message)
+	}
+	if err := validateRegularDirectory(tlsDir); err != nil {
+		return fail("app TLS directory is unavailable")
+	}
+
+	composePath := filepath.Join(appRoot, appmanifest.RoboSatsComposeFile)
+	caddyfilePath := filepath.Join(appRoot, appmanifest.RoboSatsCaddyfileFile)
+	composeRaw, err := readRegularFile(composePath, 64*1024)
+	if err != nil {
+		return fail("app compose manifest is unavailable")
+	}
+	expectedCompose := appmanifest.RoboSatsCompose(caddyfilePath, tlsDir)
+	if !bytes.Equal(composeRaw, []byte(expectedCompose)) {
+		return fail("app compose manifest does not match the catalog")
+	}
+	caddyfileRaw, err := readRegularFile(caddyfilePath, 16*1024)
+	if err != nil {
+		return fail("app proxy configuration is unavailable")
+	}
+	if !bytes.Equal(caddyfileRaw, []byte(appmanifest.RoboSatsCaddyfile())) {
+		return fail("app proxy configuration does not match the catalog")
+	}
+	certificateRaw, err := readRegularFile(filepath.Join(tlsDir, "server.crt"), 64*1024)
+	if err != nil {
+		return fail("app TLS certificate is unavailable")
+	}
+	privateKeyRaw, err := readRegularFile(filepath.Join(tlsDir, "server.key"), 64*1024)
+	if err != nil {
+		return fail("app TLS private key is unavailable")
+	}
+	if err := validateTLSKeyPair(certificateRaw, privateKeyRaw); err != nil {
+		return fail("app TLS key pair is invalid")
+	}
+	files.composeRaw = composeRaw
+	files.caddyfileRaw = caddyfileRaw
+	files.certificateRaw = certificateRaw
+	files.privateKeyRaw = privateKeyRaw
+	return files, nil
+}
+
+func (manager *ComposeAppManager) createSnapshot(manifest appmanifest.ComposeManifest, composeRaw []byte, envRaw []byte) (composeAppSnapshot, func(), error) {
 	var snapshot composeAppSnapshot
 	snapshotRoot, err := os.MkdirTemp(manager.TempRoot, "lightningos-compose-")
 	if err != nil {
@@ -405,18 +525,177 @@ func (manager *ComposeAppManager) createSnapshot(composeRaw []byte, envRaw []byt
 	}
 	snapshot = composeAppSnapshot{
 		root:        snapshotRoot,
-		composePath: filepath.Join(snapshotRoot, appmanifest.CPUMinerComposeFile),
-		envPath:     filepath.Join(snapshotRoot, appmanifest.CPUMinerEnvFile),
+		composePath: filepath.Join(snapshotRoot, manifest.ComposeFile),
+	}
+	if manifest.EnvFile != "" {
+		snapshot.envPath = filepath.Join(snapshotRoot, manifest.EnvFile)
 	}
 	if err := os.WriteFile(snapshot.composePath, composeRaw, 0600); err != nil {
 		cleanup()
 		return composeAppSnapshot{}, func() {}, errors.New("failed to snapshot app compose manifest")
 	}
-	if err := os.WriteFile(snapshot.envPath, envRaw, 0600); err != nil {
-		cleanup()
-		return composeAppSnapshot{}, func() {}, errors.New("failed to snapshot app environment")
+	if snapshot.envPath != "" {
+		if err := os.WriteFile(snapshot.envPath, envRaw, 0600); err != nil {
+			cleanup()
+			return composeAppSnapshot{}, func() {}, errors.New("failed to snapshot app environment")
+		}
 	}
 	return snapshot, cleanup, nil
+}
+
+func (manager *ComposeAppManager) createRoboSatsSnapshot(manifest appmanifest.ComposeManifest, files roboSatsValidatedFiles) (composeAppSnapshot, func(), error) {
+	var snapshot composeAppSnapshot
+	privilegedAppsRoot := manager.PrivilegedAppsRoot
+	if privilegedAppsRoot == "" {
+		privilegedAppsRoot = defaultPrivilegedAppsRoot
+	}
+	if err := ensureDirectoryTreeNoSymlink(privilegedAppsRoot, 0700); err != nil {
+		return snapshot, func() {}, errors.New("failed to secure privileged app root")
+	}
+	snapshotRoot := filepath.Join(privilegedAppsRoot, manifest.ID)
+	if err := ensureDirectoryTreeNoSymlink(snapshotRoot, 0700); err != nil {
+		return snapshot, func() {}, errors.New("failed to secure app execution snapshot")
+	}
+	cleanup := func() {}
+	tlsDir := filepath.Join(snapshotRoot, appmanifest.RoboSatsTLSDir)
+	if err := ensureDirectoryTreeNoSymlink(tlsDir, 0700); err != nil {
+		return snapshot, func() {}, errors.New("failed to create app TLS snapshot")
+	}
+	caddyfilePath := filepath.Join(snapshotRoot, appmanifest.RoboSatsCaddyfileFile)
+	certificatePath := filepath.Join(tlsDir, "server.crt")
+	privateKeyPath := filepath.Join(tlsDir, "server.key")
+	for _, file := range []struct {
+		path string
+		data []byte
+		err  string
+	}{
+		{caddyfilePath, files.caddyfileRaw, "failed to snapshot app proxy configuration"},
+		{certificatePath, files.certificateRaw, "failed to snapshot app TLS certificate"},
+		{privateKeyPath, files.privateKeyRaw, "failed to snapshot app TLS private key"},
+	} {
+		if err := writeAtomicRegularFile(file.path, file.data, 0600); err != nil {
+			return composeAppSnapshot{}, func() {}, errors.New(file.err)
+		}
+	}
+	executionCompose := []byte(appmanifest.RoboSatsCompose(caddyfilePath, tlsDir))
+	snapshot = composeAppSnapshot{
+		root:        snapshotRoot,
+		composePath: filepath.Join(snapshotRoot, manifest.ComposeFile),
+	}
+	if err := writeAtomicRegularFile(snapshot.composePath, executionCompose, 0600); err != nil {
+		return composeAppSnapshot{}, func() {}, errors.New("failed to snapshot app compose manifest")
+	}
+	return snapshot, cleanup, nil
+}
+
+func validateRegularDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("invalid directory")
+	}
+	return nil
+}
+
+func ensureDirectoryTreeNoSymlink(path string, mode os.FileMode) error {
+	cleanPath := filepath.Clean(path)
+	if err := os.MkdirAll(cleanPath, mode); err != nil {
+		return err
+	}
+	for current := cleanPath; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("directory tree contains an invalid component")
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+	return os.Chmod(cleanPath, mode)
+}
+
+func writeAtomicRegularFile(path string, data []byte, mode os.FileMode) error {
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, ".lightningos-write-")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	cleanup := func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+	}
+	if err := temporary.Chmod(mode); err != nil {
+		cleanup()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
+	}
+	return nil
+}
+
+func validateTLSKeyPair(certificateRaw []byte, privateKeyRaw []byte) error {
+	certificateBlock, certificateRest := pem.Decode(certificateRaw)
+	if certificateBlock == nil || certificateBlock.Type != "CERTIFICATE" || len(bytes.TrimSpace(certificateRest)) != 0 {
+		return errors.New("invalid certificate PEM")
+	}
+	certificate, err := x509.ParseCertificate(certificateBlock.Bytes)
+	if err != nil {
+		return err
+	}
+	certificateKey, ok := certificate.PublicKey.(*rsa.PublicKey)
+	if !ok {
+		return errors.New("certificate key is not RSA")
+	}
+
+	privateKeyBlock, privateKeyRest := pem.Decode(privateKeyRaw)
+	if privateKeyBlock == nil || len(bytes.TrimSpace(privateKeyRest)) != 0 {
+		return errors.New("invalid private key PEM")
+	}
+	var privateKey *rsa.PrivateKey
+	switch privateKeyBlock.Type {
+	case "RSA PRIVATE KEY":
+		privateKey, err = x509.ParsePKCS1PrivateKey(privateKeyBlock.Bytes)
+	case "PRIVATE KEY":
+		var parsed any
+		parsed, err = x509.ParsePKCS8PrivateKey(privateKeyBlock.Bytes)
+		if err == nil {
+			var ok bool
+			privateKey, ok = parsed.(*rsa.PrivateKey)
+			if !ok {
+				return errors.New("private key is not RSA")
+			}
+		}
+	default:
+		return errors.New("unsupported private key PEM")
+	}
+	if err != nil {
+		return err
+	}
+	if err := privateKey.Validate(); err != nil {
+		return err
+	}
+	if certificateKey.E != privateKey.PublicKey.E || certificateKey.N.Cmp(privateKey.PublicKey.N) != 0 {
+		return errors.New("certificate and private key do not match")
+	}
+	return nil
 }
 
 func parseDockerContainerID(output string) string {
@@ -477,11 +756,21 @@ func readRegularFile(path string, maxBytes int64) ([]byte, error) {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() < 1 || info.Size() > maxBytes {
 		return nil, fmt.Errorf("invalid regular file")
 	}
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) != info.Size() {
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return nil, errors.New("file changed before reading")
+	}
+	data := make([]byte, info.Size())
+	if _, err := io.ReadFull(file, data); err != nil {
+		return nil, err
+	}
+	finalInfo, err := file.Stat()
+	if err != nil || !os.SameFile(openedInfo, finalInfo) || finalInfo.Size() != info.Size() {
 		return nil, errors.New("file changed while reading")
 	}
 	return data, nil

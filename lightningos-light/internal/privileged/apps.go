@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -140,6 +141,9 @@ func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string
 	if dryRun {
 		return AppImageState{Status: "validated"}, nil
 	}
+	if appID == appmanifest.BitcoinCoreID {
+		return manager.prepareBitcoinCoreImage(ctx, unit)
+	}
 	state, err = manager.imageStatus(ctx, image, unit)
 	if err != nil || state.Status == "ready" || state.Status == "preparing" {
 		return state, err
@@ -171,6 +175,13 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 	}
 	if manager == nil || manager.Runner == nil {
 		return state, errors.New("compose app manager is unavailable")
+	}
+	if appID == appmanifest.BitcoinCoreID {
+		artifact, artifactErr := appmanifest.BitcoinCoreArtifactForGOARCH(runtime.GOARCH)
+		if artifactErr != nil {
+			return state, artifactErr
+		}
+		return manager.bitcoinCoreImageStatus(ctx, artifact, unit)
 	}
 	return manager.imageStatus(ctx, image, unit)
 }

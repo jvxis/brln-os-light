@@ -45,6 +45,24 @@ func TestEnsureBitcoinCoreImageFailsClosedOnBrokerError(t *testing.T) {
 	}
 }
 
+func TestEnsureBitcoinCoreImageFailsClosedOutsideEnforce(t *testing.T) {
+	for _, mode := range []string{"", "disabled", "shadow"} {
+		t.Run(mode, func(t *testing.T) {
+			if mode == "" {
+				system.ConfigurePrivilegedClient(nil)
+			} else {
+				system.ConfigurePrivilegedClient(&cpuMinerPrivilegedClient{mode: mode})
+			}
+			t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+			err := ensureBitcoinCoreImage(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "requires privileged broker enforce mode") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestNormalizeBitcoinCoreDataDir(t *testing.T) {
 	tests := []struct {
 		name    string

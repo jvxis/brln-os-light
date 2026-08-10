@@ -597,16 +597,5 @@ func ensureBitcoinCoreImage(ctx context.Context) error {
 		}
 		return nil
 	}
-	if _, err := system.RunCommandWithSudo(ctx, "docker", "image", "inspect", bitcoinCoreImage); err == nil {
-		return nil
-	}
-	out, err := system.RunCommandWithSudo(ctx, "docker", "pull", bitcoinCoreImage)
-	if err != nil {
-		msg := strings.TrimSpace(out)
-		if msg == "" {
-			return fmt.Errorf("failed to pull %s: %w", bitcoinCoreImage, err)
-		}
-		return fmt.Errorf("failed to pull %s: %s", bitcoinCoreImage, msg)
-	}
-	return nil
+	return errors.New("verified Bitcoin Core image requires privileged broker enforce mode")
 }

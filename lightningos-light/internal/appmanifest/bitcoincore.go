@@ -1,21 +1,119 @@
 package appmanifest
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 const (
-	BitcoinCoreID = "bitcoincore"
+	BitcoinCoreID      = "bitcoincore"
+	BitcoinCoreRelease = "31.1"
 
-	// BitcoinCoreImage is deliberately pinned to an explicit Bitcoin Core
-	// release. The upstream `latest` tag tracks major releases and is therefore
-	// not a stable privileged execution contract.
-	BitcoinCoreImage = "bitcoin/bitcoin:31.1"
+	// BitcoinCoreImage is built locally by the privileged broker from the
+	// official bitcoincore.org release archive after checksum and multisignature
+	// verification. It is never pulled from a container registry.
+	BitcoinCoreImage = "lightningos/bitcoin-core:31.1"
 
 	BitcoinCoreImageNode AppImageVariant = "node"
+
+	BitcoinCoreSignatureThreshold = 3
 )
+
+type BitcoinCoreReleaseArtifact struct {
+	GOARCH        string
+	Archive       string
+	ArchiveSHA256 string
+	BaseImage     string
+}
+
+type BitcoinCoreTrustedBuilder struct {
+	Name        string
+	Fingerprint string
+}
+
+var bitcoinCoreReleaseArtifacts = map[string]BitcoinCoreReleaseArtifact{
+	"amd64": {
+		GOARCH:        "amd64",
+		Archive:       "bitcoin-31.1-x86_64-linux-gnu.tar.gz",
+		ArchiveSHA256: "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+		BaseImage:     "debian:bookworm-slim@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143",
+	},
+	"arm64": {
+		GOARCH:        "arm64",
+		Archive:       "bitcoin-31.1-aarch64-linux-gnu.tar.gz",
+		ArchiveSHA256: "dcf1873f2208ba4f962f3398d47e154c39c0084be8f4553e05c940d0ace3d004",
+		BaseImage:     "debian:bookworm-slim@sha256:817e6cf99d6fc127ff4ffe8580049b60deba0adfbbb2bd65ddc3ef8fbb7aade0",
+	},
+	"arm": {
+		GOARCH:        "arm",
+		Archive:       "bitcoin-31.1-arm-linux-gnueabihf.tar.gz",
+		ArchiveSHA256: "66b2b45359efa161031a49898f96aa7cf1455db46ca6102acd16a7197dc3b96f",
+		BaseImage:     "debian:bookworm-slim@sha256:67275dca5c395b1010017c291799bdb3e2d31bfdc4786c400f502e2ad3187c07",
+	},
+}
+
+var bitcoinCoreTrustedBuilders = []BitcoinCoreTrustedBuilder{
+	{Name: "achow101", Fingerprint: "152812300785C96444D3334D17565732E08E5E41"},
+	{Name: "benthecarman", Fingerprint: "0AD83877C1F0CD1EE9BD660AD7CC770B81FD22A8"},
+	{Name: "Sjors", Fingerprint: "ED9BDF7AD6A55E232E84524257FF9BDBCC301009"},
+	{Name: "guggero", Fingerprint: "F4FC70F07310028424EFC20A8E4256593F177720"},
+	{Name: "hebasto", Fingerprint: "D1DBF2C4B96F2DEBF4C16654410108112E7EA81F"},
+	{Name: "marcofleon", Fingerprint: "5B286407E1EA6FE01CF9AF48BF131C2D0536F8AC"},
+	{Name: "pinheadmz", Fingerprint: "E61773CD6E01040E2F1BD78CE7E2984B6289C93A"},
+}
 
 func BitcoinCoreImageForVariant(variant AppImageVariant) (string, error) {
 	if variant != BitcoinCoreImageNode {
 		return "", errors.New("bitcoin core image variant is not allowed")
 	}
 	return BitcoinCoreImage, nil
+}
+
+func BitcoinCoreArtifactForGOARCH(goarch string) (BitcoinCoreReleaseArtifact, error) {
+	artifact, ok := bitcoinCoreReleaseArtifacts[goarch]
+	if !ok {
+		return BitcoinCoreReleaseArtifact{}, fmt.Errorf("bitcoin core does not support architecture %s", goarch)
+	}
+	return artifact, nil
+}
+
+func BitcoinCoreTrustedBuilders() []BitcoinCoreTrustedBuilder {
+	return append([]BitcoinCoreTrustedBuilder(nil), bitcoinCoreTrustedBuilders...)
+}
+
+func BitcoinCoreDockerfile(baseImage string) string {
+	return fmt.Sprintf(`FROM %s
+RUN groupadd --gid 101 bitcoin \
+    && useradd --uid 101 --gid 101 --home-dir /home/bitcoin --create-home --shell /usr/sbin/nologin bitcoin
+COPY bitcoin-%s/bin/ /usr/local/bin/
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod 0755 /entrypoint.sh /usr/local/bin/bitcoin* \
+    && chown -R 101:101 /home/bitcoin
+ENV HOME=/home/bitcoin BITCOIN_DATA=/home/bitcoin/.bitcoin
+WORKDIR /home/bitcoin
+EXPOSE 8332 8333 28332 28333
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bitcoind"]
+`, baseImage, BitcoinCoreRelease)
+}
+
+func BitcoinCoreEntrypoint() string {
+	return `#!/bin/sh
+set -eu
+
+data_dir="${BITCOIN_DATA:-/home/bitcoin/.bitcoin}"
+if [ "$#" -eq 0 ]; then
+  set -- bitcoind
+elif [ "${1#-}" != "$1" ]; then
+  set -- bitcoind "$@"
+fi
+
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p "$data_dir"
+  chown 101:101 "$data_dir"
+  exec /usr/bin/setpriv --reuid=101 --regid=101 --init-groups "$@"
+fi
+
+exec "$@"
+`
 }

@@ -242,28 +242,41 @@ func TestComposeAppPrepareRoboSatsImagesUsesFixedTransientPulls(t *testing.T) {
 	}
 }
 
-func TestComposeAppPrepareBitcoinCoreImageUsesFixedTransientPull(t *testing.T) {
+func TestComposeAppPrepareBitcoinCoreImageUsesVerifiedLocalBuild(t *testing.T) {
 	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
-		if path == dockerPath && len(args) == 3 && args[0] == "image" && args[1] == "inspect" {
-			return "", errors.New("missing"), true
-		}
 		if path == systemctlPath && len(args) > 0 && args[0] == "show" {
 			return "LoadState=not-found\nActiveState=inactive\n", errors.New("not found"), true
 		}
 		return "", nil, false
 	}}
-	manager := &ComposeAppManager{Runner: runner}
+	manager := &ComposeAppManager{Runner: runner, PrivilegedAppsRoot: filepath.Join(t.TempDir(), "privileged-apps")}
 	state, err := manager.PrepareImage(context.Background(), appmanifest.BitcoinCoreID, appmanifest.BitcoinCoreImageNode, false)
-	if err != nil || state.Status != "preparing" || len(runner.commands) != 3 {
+	if err != nil || state.Status != "preparing" || len(runner.commands) != 2 {
 		t.Fatalf("state=%#v err=%v commands=%#v", state, err, runner.commands)
 	}
-	want := recordedCommand{path: systemdRunPath, args: []string{
-		"--quiet", "--collect", "--unit=lightningos-bitcoincore-image-node",
-		"--property=Type=exec", "--property=RuntimeMaxSec=10min",
-		dockerPath, "pull", appmanifest.BitcoinCoreImage,
-	}}
-	if !reflect.DeepEqual(runner.commands[2], want) {
-		t.Fatalf("pull command=%#v want=%#v", runner.commands[2], want)
+	command := runner.commands[1]
+	if command.path != systemdRunPath || len(command.args) != 8 || command.args[0] != "--quiet" || command.args[2] != "--unit=lightningos-bitcoincore-image-node" || command.args[5] != "/bin/sh" || command.args[6] != "-c" {
+		t.Fatalf("unexpected build command=%#v", command)
+	}
+	script := command.args[7]
+	for _, expected := range []string{
+		"https://bitcoincore.org/bin/bitcoin-core-31.1/SHA256SUMS",
+		"b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+		"--status-fd 1 --verify",
+		"signature_count",
+		"-ge 3",
+		"docker build --pull --no-cache --network=none",
+		"lightningos/bitcoin-core:31.1",
+		"image-attestation",
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("verified build script missing %q:\n%s", expected, script)
+		}
+	}
+	for _, forbidden := range []string{"docker pull bitcoin/bitcoin", "bitcoin/bitcoin:31.1", "latest"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("verified build script contains %q:\n%s", forbidden, script)
+		}
 	}
 }
 

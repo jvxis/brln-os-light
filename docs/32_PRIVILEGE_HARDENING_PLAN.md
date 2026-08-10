@@ -9,6 +9,14 @@ Date: 2026-08-10.
 
 Tracking issue: [#32](https://github.com/jvxis/brln-os-light/issues/32).
 
+Target release: `0.5.3`.
+
+Implementation branch: `agent/0.5.3-privilege-hardening`.
+
+All privilege-hardening implementation commits must remain on this branch until
+the complete cutover and regression matrix is ready for review. Release `0.5.2`
+continues on `main` without partial broker or privilege-removal changes.
+
 ## Objective
 
 Keep the LightningOS Manager unprivileged even when it manages LND, host

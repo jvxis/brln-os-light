@@ -231,10 +231,25 @@ a manager-writable host bind to a Docker named volume. A disposable Ubuntu
 24.04 gate passed two stop/start cycles, broker status, and HTTPS 200 while the
 live manager lacked the Docker GID and direct Docker access returned failure.
 The gate rejected an earlier temporary-snapshot design before the persistent
-model was adopted. Install/image preparation, UFW, and uninstall remain on the
-reviewed legacy path and are not claimed by this slice. `LOS-TEST2` was not
-mutated. Evidence is stored in
+model was adopted. At that gate, install/image preparation, UFW, and uninstall
+remained on the reviewed legacy path. `LOS-TEST2` was not mutated. Evidence is
+stored in
 `docs/baselines/privilege-hardening-phase2-robosats-lifecycle-enforce-2026-08-10.json`.
+
+RoboSats install and image preparation have now joined that typed boundary.
+The manager selects only the closed `client`, `tor`, and `proxy` variants; the
+broker maps them to three pinned images and fixed asynchronous transient units.
+The install path reuses typed Docker package/runtime readiness, writes only the
+manager-owned catalog assets, and delegates first-container creation to the
+typed lifecycle. The Ubuntu 24.04 `enforce` gate began with those images and
+containers removed, completed install in 15.6 seconds, returned HTTPS 200, and
+passed stop/start/final-stop while the live manager lacked the Docker GID. An
+extra caller-supplied image field was rejected and all pull units were
+collected. The pre-existing named volume and firewall rule were retained, so
+RoboSats UFW and uninstall remain open. The gate VM was powered off, its prior
+roots remain as recoverable backups, and `LOS-TEST2` was untouched. Evidence is
+stored in
+`docs/baselines/privilege-hardening-phase2-robosats-image-install-enforce-2026-08-10.json`.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

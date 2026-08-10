@@ -54,9 +54,10 @@ fail-closed rejection of an invalid retained pool mode. The gate also fixed the
 catalog service grace period at two seconds so config-driven recreation stays
 inside the broker deadline.
 
-CPU Miner install, uninstall, image probes, and first-container creation remain
-on the reviewed legacy path. The legacy status/stats/apply implementation is
-retained for `disabled` and `shadow` compatibility.
+CPU Miner install, uninstall, image probes/preparation, and first-container
+creation have also moved behind typed broker operations. Its migrated lifecycle
+is complete for the current app contract. The legacy implementation is retained
+only for `disabled` and `shadow` compatibility while Phase 2 continues.
 
 ## Shared Compose catalog and RoboSats
 
@@ -76,8 +77,14 @@ The first generalized Compose slice moves RoboSats `status`, `start`, and
   against symlinks; directories are root-only and file replacement is atomic.
 - Existing manager-owned catalog files are refreshed before typed start/stop,
   allowing an installed legacy manifest to converge without Docker access.
-- All three images must already exist locally before typed start. Image pulls,
-  install, firewall changes, and uninstall remain separate future capabilities.
+- All three images must already exist locally before typed start. Install now
+  uses the closed Docker package/runtime feature, prepares the three catalog
+  images asynchronously through fixed transient units, and creates the first
+  containers through typed lifecycle start.
+- The manager never supplies an image name, unit name, executable, or pull
+  argument. The broker maps only the `client`, `tor`, and `proxy` variants to
+  the three pinned images and fixed unit names.
+- RoboSats firewall changes and uninstall remain separate future capabilities.
 
 The disposable Ubuntu 24.04 gate deliberately caught and rejected an initial
 temporary `/proc/<pid>/fd` design: Docker container creation can outlive the
@@ -85,6 +92,15 @@ broker process, and restart policies require bind sources to remain present.
 The persistent root-owned snapshot plus named-volume design then passed two
 start/stop cycles, broker status, and HTTPS checks with direct manager Docker
 access denied.
+
+A follow-up gate removed the three images and preserved the previous app roots
+as recoverable backups before calling the install API. Typed Docker readiness,
+three asynchronous image pulls, manager-owned catalog asset generation, and
+brokered first-container creation completed in `enforce`. A request containing
+a caller-supplied image field was rejected, all transient units were collected,
+and stop/start plus HTTPS passed without the manager Docker GID. The pre-existing
+firewall rule and named volume were deliberately retained, so this slice does
+not claim firewall migration or clean-data provisioning.
 
 This slice still does not authorize global removal of Docker access from the
 manager; other App Store handlers retain explicit Phase 2 work.
@@ -96,10 +112,11 @@ manager; other App Store handlers retain explicit Phase 2 work.
    Completed on Ubuntu 24.04 with the manager process verified without the
    Docker GID; see the inspection enforce baseline.
 3. Add typed install, uninstall, image probe, and first-container creation
-   capabilities to complete CPU Miner. Config and thread apply are complete.
+   capabilities to complete CPU Miner. Completed.
 4. Generalize the catalog schema for simple whole-project Compose apps.
-   The shared schema and first RoboSats status/start/stop onboarding are
-   complete; install/image/firewall/uninstall remain open.
+   The shared schema plus RoboSats status/start/stop, image preparation, install,
+   and first-container creation are complete; firewall and uninstall remain
+   open.
 5. Add service-specific and dependency capabilities for complex Compose apps.
 6. Separate Docker package installation, image management, networking,
    firewall, storage, and LND compatibility operations.
@@ -127,3 +144,6 @@ manager; other App Store handlers retain explicit Phase 2 work.
 - RoboSats execution files persist under a root-only tree, data uses a named
   volume, no manager-writable path reaches Docker, all three fixed images are
   local, and repeated stop/start plus HTTPS survive without the Docker GID.
+- RoboSats install prepares only the three closed image variants through fixed
+  transient units, creates the first containers through the typed lifecycle,
+  rejects caller-supplied image fields, and leaves no transient unit loaded.

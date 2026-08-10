@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T19:07:31Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "fd5fa73bc307b9af5c3cb0bb4485363f69bcc952",
+  "tested_source": "source_head_before_slice plus the uncommitted generic image catalog and RoboSats install slice",
+  "scope": "RoboSats typed Docker readiness, three-image preparation, catalog asset generation, and first-container creation in enforce mode",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "codename": "noble",
+    "architecture": "amd64"
+  },
+  "binary_sha256": {
+    "lightningos_manager": "ff6d427cb8533a981e1bd2af58d2e557f4a755cd72c81a60f03480ecd7b3aa72",
+    "lightningos_privileged": "7e1b8c4572faa34485fa3903458155801724d9157460c83374b3dc4565149a4f"
+  },
+  "preconditions": {
+    "broker_mode": "enforce",
+    "manager_user_docker_group_removed": true,
+    "manager_unit_docker_supplementary_group_removed": true,
+    "manager_process_groups": [984, 999, 1002],
+    "docker_gid": 982,
+    "direct_docker_as_manager_exit_code": 1,
+    "robosats_containers_removed": true,
+    "robosats_images_removed": [
+      "recksato/robosats-client:v0.8.4-alpha",
+      "osminogin/tor-simple:0.4.9.5",
+      "caddy:2.8-alpine"
+    ],
+    "previous_manager_root_backup": "/var/lib/lightningos/apps/robosats.pre-image-gate-20260810",
+    "previous_execution_root_backup": "/var/lib/lightningos-privileged/apps/robosats.pre-image-gate-20260810",
+    "existing_named_volume_retained": true,
+    "existing_firewall_rule_retained": true
+  },
+  "catalog_boundary": {
+    "request_fields": ["app_id", "variant"],
+    "app_id": "robosats",
+    "variants": ["client", "tor", "proxy"],
+    "images": [
+      "recksato/robosats-client:v0.8.4-alpha",
+      "osminogin/tor-simple:0.4.9.5",
+      "caddy:2.8-alpine"
+    ],
+    "transient_units": [
+      "lightningos-robosats-image-client",
+      "lightningos-robosats-image-tor",
+      "lightningos-robosats-image-proxy"
+    ],
+    "caller_supplied_image": false,
+    "caller_supplied_unit": false,
+    "caller_supplied_executable": false,
+    "caller_supplied_arguments": false,
+    "compatibility_image_probe_limited_to_cpuminer": true,
+    "persistent_execution_root": "/var/lib/lightningos-privileged/apps/robosats",
+    "manager_writable_bind_mounts": 0
+  },
+  "api_gate": {
+    "initial_installed": false,
+    "install_http_status": 200,
+    "install_duration_seconds": 15.6,
+    "installed_after_install": true,
+    "status_after_install": "running",
+    "https_status_after_install": 200,
+    "stop_http_status": 200,
+    "status_after_stop": "stopped",
+    "start_http_status": 200,
+    "status_after_restart": "running",
+    "https_status_after_restart": 200,
+    "final_stop_http_status": 200,
+    "final_status": "stopped",
+    "final_running_containers": 0
+  },
+  "broker_audit_gate_window": {
+    "packages.feature.ensure_success": 2,
+    "docker.runtime.ensure_success": 1,
+    "app.image.prepare_success": 3,
+    "app.image.status_success": 22,
+    "app.compose.lifecycle_success": 3,
+    "app.compose.inspect_success": 1
+  },
+  "image_gate": {
+    "all_three_images_present_after_install": true,
+    "transient_units_final_load_state": "not-found",
+    "negative_request_extra_image_field": {
+      "accepted": false,
+      "code": "invalid_request",
+      "message_sanitized": true
+    }
+  },
+  "filesystem_gate": {
+    "manager_catalog_root_present": true,
+    "root_owned_execution_root_present": true,
+    "unused_manager_data_directory_created": false,
+    "previous_roots_preserved_as_recoverable_backups": true
+  },
+  "local_validation": {
+    "focused_appmanifest_privileged_server_tests": "passed",
+    "linux_amd64_manager_and_broker_build": "passed",
+    "go_vet_all": "passed",
+    "app_registry_validation": "passed",
+    "full_go_test_all": "only the two pre-existing Windows CRLF-sensitive installer tests failed"
+  },
+  "remaining_legacy_scope": [
+    "robosats UFW rule",
+    "robosats uninstall"
+  ],
+  "final_state": {
+    "gate_vm": "powered_off_by_acpi",
+    "los_test2": "running_and_untouched",
+    "temporary_host_build_artifacts": "removed",
+    "recoverable_gate_backups": "preserved"
+  }
+}

@@ -198,8 +198,8 @@ image preparation/status, fixed compatibility probes, and the brokered
 first-container creation when Docker is already installed. Its Ubuntu 24.04
 gate completed a 90-second pull plus install/start/stop/uninstall with the live
 manager lacking the Docker GID; all transient pull units were collected.
-Docker package installation, the remaining apps, Ubuntu 26, and final
-Docker-group removal remain open; Phase 2 is not complete. Evidence is stored in
+The remaining apps, Ubuntu 26 execution, and final Docker-group removal remain
+open; Phase 2 is not complete. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-cpuminer-inspect-enforce-2026-08-10.json`
 and
 `docs/baselines/privilege-hardening-phase2-cpuminer-config-enforce-2026-08-10.json`,
@@ -207,6 +207,21 @@ plus
 `docs/baselines/privilege-hardening-phase2-cpuminer-remove-enforce-2026-08-10.json`
 and
 `docs/baselines/privilege-hardening-phase2-cpuminer-image-install-enforce-2026-08-10.json`.
+
+The next shared slice moved CPU Miner's remaining Docker package installation
+behind `packages.feature.ensure/status`. The manager can select only the
+closed `docker_runtime` feature; the broker maps it to `docker.io` and
+`docker-compose-v2` on Ubuntu 24.04/26.04, executes fixed asynchronous
+index/install units with a package lock and 15-minute bounds, and reports a
+small staged state machine. Local contract tests and a harmless Ubuntu 24.04
+transient-unit check passed. A clean `brln-os-basica` clone then passed the full
+`enforce` API gate starting without Docker: both packages installed, the units
+were collected, CPU Miner reached `running`, stop/start/uninstall returned 200,
+and no app files or containers remained. The manager user and live process had
+no Docker GID, direct Docker access failed, and an injected package list was
+rejected. `LOS-TEST2` was untouched and the successful gate clone was powered
+off. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-docker-package-install-enforce-2026-08-10.json`.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

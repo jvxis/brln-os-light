@@ -220,6 +220,54 @@ allowing selection to continue to the next catalog variant. Prepare and probe
 are serialized mutating operations and support validation-only `dry_run`;
 status is read-only.
 
+### `packages.feature.ensure` and `packages.feature.status`
+
+The first shared package capability accepts only this closed request:
+
+```json
+{"feature":"docker_runtime"}
+```
+
+The feature maps inside the broker to the fixed Ubuntu package set
+`docker.io` plus `docker-compose-v2`. Package names, repositories, versions,
+executables, arguments, environment variables, unit names, and lock paths are
+never supplied by the manager. Unknown features and fields are rejected. The
+catalog currently admits only Ubuntu 24.04 and Ubuntu 26.04; every other OS or
+version fails closed before a command runs.
+
+Preparation is a two-stage asynchronous state machine. The broker schedules a
+fixed `apt-get update` unit, reports `indexing` until its root-owned transient
+unit reaches `active/exited`, and then schedules a separate fixed `apt-get
+install -y docker.io docker-compose-v2` unit. Both commands run through a
+fixed `flock` lock under `/run/lock/lightningos`, use dpkg's bounded lock wait,
+have a 15-minute runtime ceiling, and receive only the fixed noninteractive
+environment. The manager polls the read-only status operation and never holds
+an HTTP broker process open while apt runs.
+
+Successful oneshot units use `RemainAfterExit=yes`, making completion
+observable without shell scripts or writable marker files. The next typed
+ensure call stops completed units so `--collect` removes them. A failed fixed
+stage remains observable as `failed`; a later ensure request may clear and
+retry only that same catalog stage. Readiness requires both catalog packages
+to report `installed` through fixed `/usr/bin/dpkg-query` arguments.
+
+CPU Miner install invokes this capability before typed Docker-runtime
+readiness. In `enforce`, missing Docker packages can therefore be installed
+without any direct `apt-get`, `systemd-run`, package name, or repository choice
+in manager code. In `shadow`, the request is validation-only and the reviewed
+legacy installer remains responsible for compatibility.
+
+The clean Ubuntu 24.04 gate began without either catalog package and with both
+the manager user and live process lacking the Docker GID. The API install
+returned 200, installed the Noble `docker.io` and `docker-compose-v2` packages,
+collected both transient package units, and completed image preparation plus
+first-container creation. CPU Miner reported `running`; typed stop, start, and
+uninstall each returned 200 and left no app files or containers. Direct Docker
+access as `lightningos` failed, while a request that injected a `packages`
+array was rejected as `invalid_request`. `LOS-TEST2` was not changed and the
+successful disposable gate clone was powered off. Secret-free evidence is in
+`docs/baselines/privilege-hardening-phase2-docker-package-install-enforce-2026-08-10.json`.
+
 ### `app.compose.lifecycle`
 
 The first Phase 2 manifest admits only this request shape:
@@ -262,10 +310,9 @@ legacy Compose path. In `enforce`, it executes only through the broker and
 fails closed. CPU Miner config and thread updates now reuse this typed start
 operation after the manager updates its non-root app files. In `enforce`, their
 Compose apply therefore has no direct Docker call or fallback in the manager.
-CPU Miner install now uses typed runtime readiness, image preparation/status,
-compatibility probes, and this lifecycle operation for first-container
-creation in `enforce`. Only Docker package installation remains on the reviewed
-legacy path for this app.
+CPU Miner install now uses the closed package feature above, typed runtime
+readiness, image preparation/status, compatibility probes, and this lifecycle
+operation for first-container creation in `enforce`.
 
 ### `app.compose.remove`
 

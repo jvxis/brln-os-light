@@ -263,6 +263,20 @@ powered off. The legacy global UFW sudo wildcard remains for other unmigrated
 apps; RoboSats itself now has only uninstall open. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-robosats-firewall-enforce-2026-08-10.json`.
 
+RoboSats uninstall now completes the app's current typed contract. The existing
+`app.compose.remove` operation admits RoboSats through the closed catalog,
+validates the exact Compose/Caddy/TLS assets, executes fixed
+`down --remove-orphans --timeout 2`, and deliberately omits `--volumes` to
+preserve the legacy data-retention behavior. The broker removes its root-owned
+execution tree only after Compose succeeds; the manager then removes its own
+catalog files. The Ubuntu 24.04 `enforce` gate returned HTTP 200 in 622 ms,
+removed three stopped containers and the project network, removed both roots,
+and preserved all five named volumes. A marker in the data volume survived and
+was cleaned after verification. A caller-supplied `volumes: true` field was
+rejected with a sanitized response. The gate VM was powered off and `LOS-TEST2`
+was untouched. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-robosats-remove-enforce-2026-08-10.json`.
+
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.
 3. Run install/start/stop/restart/uninstall tests for every app on disposable

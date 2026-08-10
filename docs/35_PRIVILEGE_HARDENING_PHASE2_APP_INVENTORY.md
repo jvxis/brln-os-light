@@ -85,7 +85,7 @@ The first generalized Compose slice moves RoboSats `status`, `start`, and
   argument. The broker maps only the `client`, `tor`, and `proxy` variants to
   the three pinned images and fixed unit names.
 - RoboSats external firewall access now uses a typed `app.firewall.ensure`
-  operation. Uninstall remains its final open capability.
+  operation. Typed uninstall now completes its current app contract.
 
 The disposable Ubuntu 24.04 gate deliberately caught and rejected an initial
 temporary `/proc/<pid>/fd` design: Docker container creation can outlive the
@@ -117,6 +117,16 @@ still depend on it. This slice removes direct UFW execution from the RoboSats
 `enforce` path; global privilege removal is intentionally deferred until every
 consumer is migrated.
 
+RoboSats uninstall now reuses `app.compose.remove` with the same strict asset
+validation and persistent root-owned execution snapshot. The broker executes a
+fixed `down --remove-orphans --timeout 2`, never admits `--volumes`, and removes
+its execution snapshot only after Compose succeeds. The manager then removes
+only its own catalog directory. A failed Compose call preserves both trees for
+retry. The disposable gate removed three stopped containers and the project
+network, removed both catalog/execution roots, and left all five named volumes
+intact. A marker in `robosats_robosats-data` survived uninstall and was removed
+after the proof; a caller-supplied `volumes: true` field was rejected.
+
 This slice still does not authorize global removal of Docker access from the
 manager; other App Store handlers retain explicit Phase 2 work.
 
@@ -130,7 +140,7 @@ manager; other App Store handlers retain explicit Phase 2 work.
    capabilities to complete CPU Miner. Completed.
 4. Generalize the catalog schema for simple whole-project Compose apps.
    The shared schema plus RoboSats status/start/stop, image preparation, install,
-   first-container creation, and firewall are complete; uninstall remains open.
+   first-container creation, firewall, and uninstall are complete.
 5. Add service-specific and dependency capabilities for complex Compose apps.
 6. Separate Docker package installation, image management, networking,
    firewall, storage, and LND compatibility operations.
@@ -164,3 +174,6 @@ manager; other App Store handlers retain explicit Phase 2 work.
 - RoboSats active/inactive firewall behavior passes through a fixed broker
   command, port injection is rejected, and the gate restores its original UFW
   state after proving external HTTPS access.
+- RoboSats uninstall removes containers, network, and both execution/catalog
+  roots without `--volumes`; named data survives, injected volume deletion is
+  rejected, and a failed broker removal preserves retry state.

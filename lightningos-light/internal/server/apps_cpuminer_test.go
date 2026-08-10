@@ -1,11 +1,67 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/system"
 )
+
+type cpuMinerPrivilegedClient struct {
+	mode         string
+	appCalls     int
+	appID        string
+	action       string
+	dryRun       bool
+	lifecycleErr error
+}
+
+func (client *cpuMinerPrivilegedClient) Mode() string { return client.mode }
+func (client *cpuMinerPrivilegedClient) RestartService(context.Context, string, bool, bool) error {
+	return nil
+}
+func (client *cpuMinerPrivilegedClient) EnableLogin(context.Context, bool) error { return nil }
+func (client *cpuMinerPrivilegedClient) InspectApp(context.Context, string) (string, float64, error) {
+	return "stopped", 0, nil
+}
+func (client *cpuMinerPrivilegedClient) AppLifecycle(_ context.Context, appID, action string, dryRun bool) error {
+	client.appCalls++
+	client.appID = appID
+	client.action = action
+	client.dryRun = dryRun
+	return client.lifecycleErr
+}
+
+func TestApplyCpuMinerComposeEnforceUsesBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	paths := cpuMinerPaths{Root: t.TempDir(), ComposePath: filepath.Join(t.TempDir(), "untrusted.yaml")}
+	if err := applyCpuMinerCompose(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	if client.appCalls != 1 || client.appID != cpuMinerAppID || client.action != "start" || client.dryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
+func TestApplyCpuMinerComposeEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", lifecycleErr: errors.New("rejected")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := applyCpuMinerCompose(context.Background(), cpuMinerPaths{}); err == nil {
+		t.Fatal("expected broker rejection to fail closed")
+	}
+	if client.appCalls != 1 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+}
 
 func TestCpuMinerComposeContents(t *testing.T) {
 	contents := cpuMinerComposeContents()

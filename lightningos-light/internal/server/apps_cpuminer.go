@@ -204,6 +204,10 @@ func (s *Server) startCpuMiner(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("CPU Lottery Miner is not installed")
 	}
+	return applyCpuMinerCompose(ctx, paths)
+}
+
+func applyCpuMinerCompose(ctx context.Context, paths cpuMinerPaths) error {
 	if handled, err := system.AppLifecycleWithBroker(ctx, cpuMinerAppID, "start"); handled {
 		return err
 	}
@@ -393,7 +397,7 @@ func (s *Server) setCpuMinerThreads(ctx context.Context, threads int) error {
 	if err := ensureCpuMinerCompose(paths); err != nil {
 		return err
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
+	return applyCpuMinerCompose(ctx, paths)
 }
 
 type cpuMinerConfig struct {
@@ -506,7 +510,7 @@ func (s *Server) setCpuMinerConfig(ctx context.Context, poolMode, address, worke
 	if err := writeCpuMinerEnv(paths, cfg); err != nil {
 		return err
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
+	return applyCpuMinerCompose(ctx, paths)
 }
 
 // sanitizeCpuMinerWorker keeps the worker name to characters a stratum user

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -82,7 +83,7 @@ func fetchBitcoinVerboseBlockRPC(ctx context.Context, host, user, pass, hash str
 		return bitcoinVerboseBlock{}, err
 	}
 	if payload.Error != nil {
-		return bitcoinVerboseBlock{}, fmt.Errorf(strings.TrimSpace(payload.Error.Message))
+		return bitcoinVerboseBlock{}, errors.New(strings.TrimSpace(payload.Error.Message))
 	}
 	if payload.Result == nil {
 		return bitcoinVerboseBlock{}, fmt.Errorf("bitcoin getblock returned empty result")
@@ -108,7 +109,7 @@ func fetchBitcoinVerboseTransactionRPC(ctx context.Context, host, user, pass, tx
 		return bitcoinVerboseTransaction{}, err
 	}
 	if payload.Error != nil {
-		return bitcoinVerboseTransaction{}, fmt.Errorf(strings.TrimSpace(payload.Error.Message))
+		return bitcoinVerboseTransaction{}, errors.New(strings.TrimSpace(payload.Error.Message))
 	}
 	if payload.Result == nil {
 		return bitcoinVerboseTransaction{}, fmt.Errorf("bitcoin getrawtransaction returned empty result")

@@ -622,7 +622,7 @@ func parseBitcoinBlockHeaderRPC(body []byte) (bitcoinCLIBlockHeader, error) {
 		return bitcoinCLIBlockHeader{}, err
 	}
 	if payload.Error != nil {
-		return bitcoinCLIBlockHeader{}, fmt.Errorf(payload.Error.Message)
+		return bitcoinCLIBlockHeader{}, errors.New(payload.Error.Message)
 	}
 	return payload.Result, nil
 }

@@ -4957,7 +4957,7 @@ func parseBitcoinInfo(body []byte) (bitcoinInfo, error) {
 		return bitcoinInfo{}, err
 	}
 	if payload.Error != nil {
-		return bitcoinInfo{}, fmt.Errorf(payload.Error.Message)
+		return bitcoinInfo{}, errors.New(payload.Error.Message)
 	}
 	return payload.Result, nil
 }
@@ -4968,7 +4968,7 @@ func parseBitcoinNetworkInfo(body []byte) (bitcoinNetworkInfo, error) {
 		return bitcoinNetworkInfo{}, err
 	}
 	if payload.Error != nil {
-		return bitcoinNetworkInfo{}, fmt.Errorf(payload.Error.Message)
+		return bitcoinNetworkInfo{}, errors.New(payload.Error.Message)
 	}
 	return payload.Result, nil
 }

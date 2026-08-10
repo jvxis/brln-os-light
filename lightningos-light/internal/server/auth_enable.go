@@ -29,14 +29,20 @@ func (s *Server) handleAuthEnableLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	configPath := authConfigPath(s.cfg.Path)
-	if err := enableLoginInConfigFile(configPath); err != nil {
+	handledByBroker, err := system.EnableLoginConfigWithBroker(r.Context(), configPath)
+	if !handledByBroker {
+		err = enableLoginInConfigFile(configPath)
+	}
+	if err != nil {
 		retryErr := err
-		compatCtx, compatCancel := context.WithTimeout(r.Context(), 15*time.Second)
-		defer compatCancel()
-		if compatFixErr := ensureAuthEnableCompat(compatCtx, configPath); compatFixErr == nil {
-			retryErr = enableLoginInConfigFile(configPath)
-		} else if s.logger != nil {
-			s.logger.Printf("auth enable compat fix failed: %v", compatFixErr)
+		if !handledByBroker {
+			compatCtx, compatCancel := context.WithTimeout(r.Context(), 15*time.Second)
+			defer compatCancel()
+			if compatFixErr := ensureAuthEnableCompat(compatCtx, configPath); compatFixErr == nil {
+				retryErr = enableLoginInConfigFile(configPath)
+			} else if s.logger != nil {
+				s.logger.Printf("auth enable compat fix failed: %v", compatFixErr)
+			}
 		}
 		if retryErr != nil {
 			if s.logger != nil {

@@ -21,6 +21,8 @@ func TestDecodeRequestStrictValidation(t *testing.T) {
 		{name: "missing params", payload: `{"version":1,"request_id":"request_1","operation":"self_test"}`, wantErr: true},
 		{name: "null params", payload: `{"version":1,"request_id":"request_1","operation":"self_test","params":null}`, wantErr: true},
 		{name: "unknown params", payload: `{"version":1,"request_id":"request_1","operation":"service.restart","params":{"unit":"lnd","args":["; reboot"]}}`, wantErr: true},
+		{name: "file path injection", payload: `{"version":1,"request_id":"request_1","operation":"files.enable_login","params":{"path":"/etc/shadow"}}`, wantErr: true},
+		{name: "file content injection", payload: `{"version":1,"request_id":"request_1","operation":"files.enable_login","params":{"content":"root shell"}}`, wantErr: true},
 		{name: "shell unit", payload: `{"version":1,"request_id":"request_1","operation":"service.restart","params":{"unit":"lnd;reboot"}}`, wantErr: true},
 		{name: "path unit", payload: `{"version":1,"request_id":"request_1","operation":"service.restart","params":{"unit":"../../lnd"}}`, wantErr: true},
 		{name: "unknown unit", payload: `{"version":1,"request_id":"request_1","operation":"service.restart","params":{"unit":"ssh"}}`, wantErr: true},

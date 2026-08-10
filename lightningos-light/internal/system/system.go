@@ -14,20 +14,23 @@ import (
 	"time"
 )
 
-type PrivilegedServiceClient interface {
+const installedManagerConfigPath = "/etc/lightningos/config.yaml"
+
+type PrivilegedClient interface {
 	Mode() string
 	RestartService(ctx context.Context, unit string, noBlock bool, dryRun bool) error
+	EnableLogin(ctx context.Context, dryRun bool) error
 }
 
-var privilegedServiceState struct {
+var privilegedState struct {
 	sync.RWMutex
-	client PrivilegedServiceClient
+	client PrivilegedClient
 }
 
-func ConfigurePrivilegedServiceClient(client PrivilegedServiceClient) {
-	privilegedServiceState.Lock()
-	privilegedServiceState.client = client
-	privilegedServiceState.Unlock()
+func ConfigurePrivilegedClient(client PrivilegedClient) {
+	privilegedState.Lock()
+	privilegedState.client = client
+	privilegedState.Unlock()
 }
 
 type DiskUsage struct {
@@ -398,9 +401,9 @@ func SystemctlRestartNoBlock(ctx context.Context, service string) error {
 }
 
 func restartServiceWithBroker(ctx context.Context, service string, noBlock bool) (bool, error) {
-	privilegedServiceState.RLock()
-	client := privilegedServiceState.client
-	privilegedServiceState.RUnlock()
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
 	if client == nil {
 		return false, nil
 	}
@@ -411,6 +414,32 @@ func restartServiceWithBroker(ctx context.Context, service string, noBlock bool)
 		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		_ = client.RestartService(shadowCtx, service, noBlock, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func EnableLoginConfigWithBroker(ctx context.Context, configPath string) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	if configPath != installedManagerConfigPath {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker supports only the installed manager config path")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, client.EnableLogin(ctx, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_ = client.EnableLogin(shadowCtx, true)
 		return false, nil
 	default:
 		return false, nil

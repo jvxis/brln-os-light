@@ -25,6 +25,10 @@
 - The migration to a validated privileged broker and removal of wildcard sudo
   permissions is tracked in `docs/32_PRIVILEGE_HARDENING_PLAN.md` and GitHub
   issue #32.
+- The `0.5.3-Beta` hardening branch currently runs its typed broker in `shadow`
+  on the integration node. Service actions and `files.enable_login` have typed
+  schemas; `shadow` validates without removing the legacy boundary. This is a
+  migration checkpoint, not yet the final containment boundary.
 
 ## LND access
 - Manager reads TLS cert and admin macaroon via group access.

@@ -49,6 +49,7 @@ func main() {
 		Runner:  &privileged.ExecCommandRunner{},
 		Locker:  locker,
 		Audit:   audit,
+		Files:   privileged.NewAtomicConfigFiles(privileged.DefaultManagerConfigPath),
 		Caller:  caller,
 		Timeout: 15 * time.Second,
 	}

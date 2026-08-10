@@ -23,6 +23,10 @@ type AuditSink interface {
 	Write(event AuditEvent) error
 }
 
+type ConfigFileManager interface {
+	EnableLogin(ctx context.Context, dryRun bool) (changed bool, err error)
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -39,6 +43,7 @@ type Broker struct {
 	Runner  CommandRunner
 	Locker  Locker
 	Audit   AuditSink
+	Files   ConfigFileManager
 	Caller  string
 	Timeout time.Duration
 	Now     func() time.Time
@@ -72,7 +77,7 @@ func (broker *Broker) Handle(ctx context.Context, request Request) Response {
 	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if request.Operation == OperationServiceRestart && !request.DryRun {
+	if mutatingOperation(request.Operation) && !request.DryRun {
 		if broker.Locker == nil {
 			broker.writeCompletionAudit(startedAt, request, false, "lock_unavailable")
 			return ErrorResponse(request.RequestID, "lock_unavailable", "privileged operation lock is unavailable")
@@ -135,6 +140,15 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "execution_failed", errors.New("service restart failed")
 		}
 		return map[string]any{"started": true}, "", nil
+	case OperationFilesEnableLogin:
+		if broker.Files == nil {
+			return nil, "broker_unavailable", errors.New("privileged config file manager is unavailable")
+		}
+		changed, err := broker.Files.EnableLogin(ctx, request.DryRun)
+		if err != nil {
+			return nil, "file_update_failed", errors.New("enable login config update failed")
+		}
+		return map[string]any{"validated": true, "changed": changed}, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -171,7 +185,16 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin:
+		return true
+	default:
+		return false
+	}
+}
+
+func mutatingOperation(operation Operation) bool {
+	switch operation {
+	case OperationServiceRestart, OperationFilesEnableLogin:
 		return true
 	default:
 		return false

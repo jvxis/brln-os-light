@@ -127,6 +127,29 @@ Autofee, Elements, Peerswap, PSWeb, terminal, and the fixed upgrade units.
 Shell syntax, paths, arbitrary unit suffixes, options, and unknown units are
 rejected before execution.
 
+### `files.enable_login`
+
+Enables login protection in the single fixed destination
+`/etc/lightningos/config.yaml`. Parameters must be `{}`: the caller cannot
+provide a path, content, owner, group, or mode. The broker:
+
+- rejects a symlink, non-regular file, non-root owner, group/world-writable
+  file, unsafe parent directory, malformed YAML, duplicate keys, and input over
+  1 MiB;
+- changes only `features.enable_login` to the YAML boolean `true` and preserves
+  the other configuration values;
+- stages the result in the same root-owned directory, preserves the original
+  owner/group/mode, fsyncs the file, revalidates the original inode, atomically
+  renames the result, and fsyncs the directory;
+- serializes the real update with the broker mutation lock;
+- in `dry_run`, performs target and YAML validation but creates no temporary
+  file and acquires no mutation lock.
+
+In `shadow`, the existing compatibility writer remains responsible for the
+actual update. In `enforce`, failure of this typed operation does not fall back
+to `sudo tee` or runtime sudoers creation. Non-default manager config paths are
+unsupported in `enforce` and fail closed.
+
 ## Manager modes and rollback
 
 The `privileged` configuration block supports:

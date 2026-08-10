@@ -92,7 +92,7 @@ func runServer(args []string) {
 	if err != nil {
 		logger.Fatalf("privileged broker config failed: %v", err)
 	}
-	system.ConfigurePrivilegedServiceClient(privilegedClient)
+	system.ConfigurePrivilegedClient(privilegedClient)
 	if privilegedClient.Mode() != string(privileged.ModeDisabled) {
 		selfTestCtx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Privileged.TimeoutSeconds)*time.Second)
 		if err := privilegedClient.SelfTest(selfTestCtx); err != nil {

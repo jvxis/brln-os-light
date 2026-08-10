@@ -22,6 +22,13 @@ argument list is not a wildcard and is guarded by a regression test. All 35
 legacy wildcard constructors remain frozen at the Phase 0 ceiling until their
 own operation families are migrated and removed.
 
+The first fixed-file replacement is `files.enable_login`. Its request contains
+no destination or content fields; the broker owns the fixed manager config
+path, YAML transformation, owner/group/mode preservation, atomic rename, and
+durability checks. The legacy `sudo tee` and runtime compatibility sudoers
+paths remain only for `disabled` and `shadow` until this operation completes
+its node validation and selective `enforce` review.
+
 ## Static inventory totals
 
 The reviewed manager boundary contains:

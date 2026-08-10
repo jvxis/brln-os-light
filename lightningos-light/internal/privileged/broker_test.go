@@ -50,6 +50,19 @@ type recordingLocker struct {
 	err     error
 }
 
+type recordingConfigFiles struct {
+	calls   int
+	dryRun  bool
+	changed bool
+	err     error
+}
+
+func (files *recordingConfigFiles) EnableLogin(ctx context.Context, dryRun bool) (bool, error) {
+	files.calls++
+	files.dryRun = dryRun
+	return files.changed, files.err
+}
+
 func (locker *recordingLocker) Lock(ctx context.Context) (func(), error) {
 	if locker.err != nil {
 		return nil, locker.err
@@ -143,6 +156,42 @@ func TestBrokerReportsExecutionTimeout(t *testing.T) {
 	}
 }
 
+func TestBrokerEnableLoginUsesTypedFileManagerAndLock(t *testing.T) {
+	files := &recordingConfigFiles{changed: true}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Files = files
+	request := emptyParamsRequest(t, OperationFilesEnableLogin, false)
+	response := broker.Handle(context.Background(), request)
+	if !response.OK {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+	if files.calls != 1 || files.dryRun || locker.locks != 1 || locker.unlocks != 1 {
+		t.Fatalf("files=%#v locker=%#v", files, locker)
+	}
+}
+
+func TestBrokerEnableLoginDryRunDoesNotLock(t *testing.T) {
+	files := &recordingConfigFiles{changed: true}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Files = files
+	response := broker.Handle(context.Background(), emptyParamsRequest(t, OperationFilesEnableLogin, true))
+	if !response.OK || files.calls != 1 || !files.dryRun || locker.locks != 0 {
+		t.Fatalf("response=%#v files=%#v locker=%#v", response, files, locker)
+	}
+}
+
+func TestBrokerEnableLoginFailureIsGeneric(t *testing.T) {
+	files := &recordingConfigFiles{err: errors.New("sensitive internal detail")}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Files = files
+	response := broker.Handle(context.Background(), emptyParamsRequest(t, OperationFilesEnableLogin, false))
+	if response.OK || response.Error == nil || response.Error.Code != "file_update_failed" || response.Error.Message != "enable login config update failed" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
 func testBroker(runner CommandRunner, audit AuditSink, locker Locker) *Broker {
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	return &Broker{
@@ -163,4 +212,13 @@ func serviceRestartRequest(t *testing.T, dryRun bool, noBlock bool) Request {
 	return Request{
 		Version: ProtocolVersion, RequestID: "restart_1", Operation: OperationServiceRestart, DryRun: dryRun, Params: params,
 	}
+}
+
+func emptyParamsRequest(t *testing.T, operation Operation, dryRun bool) Request {
+	t.Helper()
+	params, err := MarshalParams(struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Request{Version: ProtocolVersion, RequestID: "empty_params_1", Operation: operation, DryRun: dryRun, Params: params}
 }

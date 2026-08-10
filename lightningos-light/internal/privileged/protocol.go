@@ -18,9 +18,10 @@ const (
 type Operation string
 
 const (
-	OperationSelfTest       Operation = "self_test"
-	OperationServiceStatus  Operation = "service.status"
-	OperationServiceRestart Operation = "service.restart"
+	OperationSelfTest         Operation = "self_test"
+	OperationServiceStatus    Operation = "service.status"
+	OperationServiceRestart   Operation = "service.restart"
+	OperationFilesEnableLogin Operation = "files.enable_login"
 )
 
 type Request struct {
@@ -148,6 +149,11 @@ func ValidateRequest(request Request) error {
 		}
 		if err := ValidateServiceUnit(params.Unit); err != nil {
 			return err
+		}
+	case OperationFilesEnableLogin:
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid files.enable_login params: %w", err)
 		}
 	default:
 		return errors.New("unknown operation")

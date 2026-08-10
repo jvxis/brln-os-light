@@ -14,7 +14,7 @@ Install and configure the LightningOS stack:
 
 ## Installer inputs (environment overrides)
 - LND_VERSION (default 0.21.1-beta)
-- GO_VERSION (default 1.22.7)
+- GO_VERSION (default 1.24.12)
 - NODE_VERSION (default current, fallback 20)
 - GOTTY_VERSION (default 1.0.1)
 - POSTGRES_VERSION (default latest)

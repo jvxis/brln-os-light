@@ -62,3 +62,14 @@ func TestClientRejectsDisabledAndBrokerErrors(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestClientEnableLoginBuildsEmptyTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: map[string]bool{"validated": true}}
+	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)
+	if err := client.EnableLogin(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if transport.request.Operation != OperationFilesEnableLogin || !transport.request.DryRun || string(transport.request.Params) != "{}" {
+		t.Fatalf("unexpected request: %#v", transport.request)
+	}
+}

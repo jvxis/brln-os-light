@@ -131,6 +131,18 @@ func (client *Client) RestartService(ctx context.Context, unit string, noBlock b
 	return err
 }
 
+func (client *Client) EnableLogin(ctx context.Context, dryRun bool) error {
+	_, err := client.call(ctx, OperationFilesEnableLogin, struct{}{}, dryRun)
+	if dryRun && client != nil && client.logger != nil {
+		if err != nil {
+			client.logger.Printf("privileged broker shadow validation rejected files.enable_login: %v", err)
+		} else {
+			client.logger.Printf("privileged broker shadow validation accepted files.enable_login")
+		}
+	}
+	return err
+}
+
 func (client *Client) call(ctx context.Context, operation Operation, params any, dryRun bool) (Response, error) {
 	var response Response
 	if client == nil || client.transport == nil {

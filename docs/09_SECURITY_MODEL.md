@@ -19,7 +19,12 @@
 ## Users and permissions
 - lnd runs as user lnd.
 - lightningos runs the manager and owns app data.
-- lightningos uses sudoers to run a small allow list of systemctl and docker commands.
+- Current releases grant the manager root-equivalent Docker access and broad
+  passwordless host-management commands. Network and application authentication
+  reduce exposure but do not contain a compromised manager process.
+- The migration to a validated privileged broker and removal of wildcard sudo
+  permissions is tracked in `docs/32_PRIVILEGE_HARDENING_PLAN.md` and GitHub
+  issue #32.
 
 ## LND access
 - Manager reads TLS cert and admin macaroon via group access.

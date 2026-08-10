@@ -634,6 +634,68 @@ func TestComposeAppRemoveDryRunAndTamperFailBeforeCommand(t *testing.T) {
 	}
 }
 
+func TestComposeAppRoboSatsRemoveUsesPersistentSnapshotAndPreservesVolumes(t *testing.T) {
+	appsRoot := writeTestRoboSatsApp(t)
+	privilegedAppsRoot := t.TempDir()
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, PrivilegedAppsRoot: privilegedAppsRoot}
+	if err := manager.Remove(context.Background(), appmanifest.RoboSatsID, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 2 || !hasArgsSuffix(runner.commands[1].args, "down", "--remove-orphans", "--timeout", "2") {
+		t.Fatalf("unexpected remove commands: %#v", runner.commands)
+	}
+	for _, arg := range runner.commands[1].args {
+		if arg == "--volumes" {
+			t.Fatalf("RoboSats remove unexpectedly deletes named volumes: %#v", runner.commands[1])
+		}
+		if strings.Contains(arg, appsRoot) {
+			t.Fatalf("manager-writable path reached Docker command: %q", arg)
+		}
+	}
+	if !strings.Contains(runner.composeSnapshot, privilegedAppsRoot) {
+		t.Fatalf("remove did not use the privileged snapshot:\n%s", runner.composeSnapshot)
+	}
+	if _, err := os.Stat(filepath.Join(privilegedAppsRoot, appmanifest.RoboSatsID)); !os.IsNotExist(err) {
+		t.Fatalf("privileged execution snapshot still exists or stat failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(appsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsComposeFile)); err != nil {
+		t.Fatalf("broker removed manager-owned files: %v", err)
+	}
+}
+
+func TestComposeAppRoboSatsRemoveFailurePreservesSnapshotForRetry(t *testing.T) {
+	appsRoot := writeTestRoboSatsApp(t)
+	privilegedAppsRoot := t.TempDir()
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if hasArgsSuffix(args, "down", "--remove-orphans", "--timeout", "2") {
+			return "sensitive compose failure", errors.New("failed"), true
+		}
+		return "", nil, false
+	}}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, PrivilegedAppsRoot: privilegedAppsRoot}
+	if err := manager.Remove(context.Background(), appmanifest.RoboSatsID, false); err == nil {
+		t.Fatal("expected remove failure")
+	}
+	if _, err := os.Stat(filepath.Join(privilegedAppsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsComposeFile)); err != nil {
+		t.Fatalf("retry snapshot was not preserved: %v", err)
+	}
+}
+
+func TestComposeAppRoboSatsRemoveRejectsTamperedManifestBeforeCommand(t *testing.T) {
+	appsRoot := writeTestRoboSatsApp(t)
+	path := filepath.Join(appsRoot, appmanifest.RoboSatsID, appmanifest.RoboSatsComposeFile)
+	mustWriteTestFile(t, path, []byte("services:\n  attacker:\n    privileged: true\n"), 0600)
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, PrivilegedAppsRoot: t.TempDir()}
+	if err := manager.Remove(context.Background(), appmanifest.RoboSatsID, false); err == nil {
+		t.Fatal("expected tampered manifest to fail")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("tampered remove executed commands: %#v", runner.commands)
+	}
+}
+
 func TestComposeAppInspectStoppedUsesValidatedSnapshot(t *testing.T) {
 	appsRoot, validEnv := writeTestCPUMinerApp(t)
 	runner := &composeRecordingRunner{}

@@ -353,24 +353,42 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 	if manager == nil || manager.Runner == nil {
 		return errors.New("compose app manager is unavailable")
 	}
-	if appID != appmanifest.CPUMinerID {
-		return errors.New("app manifest is not allowed")
-	}
 	manifest, err := appmanifest.ComposeManifestForApp(appID)
 	if err != nil {
 		return errors.New("app manifest is not allowed")
 	}
-	composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
-	if err != nil {
-		return err
-	}
-	if dryRun {
-		return nil
-	}
 
-	snapshot, cleanup, err := manager.createSnapshot(manifest, composeRaw, envRaw)
-	if err != nil {
-		return err
+	var snapshot composeAppSnapshot
+	var cleanup func()
+	removePersistentSnapshot := false
+	switch appID {
+	case appmanifest.CPUMinerID:
+		composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createSnapshot(manifest, composeRaw, envRaw)
+		if err != nil {
+			return err
+		}
+	case appmanifest.RoboSatsID:
+		files, err := manager.validatedRoboSatsFiles()
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createRoboSatsSnapshot(manifest, files)
+		if err != nil {
+			return err
+		}
+		removePersistentSnapshot = true
+	default:
+		return errors.New("app manifest is not allowed")
 	}
 	defer cleanup()
 
@@ -378,8 +396,11 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 	if err != nil {
 		return err
 	}
-	args := append(append([]string(nil), prefix...),
-		"--env-file", snapshot.envPath,
+	args := append([]string(nil), prefix...)
+	if snapshot.envPath != "" {
+		args = append(args, "--env-file", snapshot.envPath)
+	}
+	args = append(args,
 		"--project-name", manifest.Project,
 		"--project-directory", snapshot.root,
 		"-f", snapshot.composePath,
@@ -388,7 +409,27 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		return errors.New("app remove command failed")
 	}
+	if removePersistentSnapshot {
+		if err := manager.removeRoboSatsExecutionSnapshot(snapshot.root); err != nil {
+			return errors.New("failed to remove app execution snapshot")
+		}
+	}
 	return nil
+}
+
+func (manager *ComposeAppManager) removeRoboSatsExecutionSnapshot(snapshotRoot string) error {
+	privilegedAppsRoot := manager.PrivilegedAppsRoot
+	if privilegedAppsRoot == "" {
+		privilegedAppsRoot = defaultPrivilegedAppsRoot
+	}
+	expectedRoot := filepath.Join(filepath.Clean(privilegedAppsRoot), appmanifest.RoboSatsID)
+	if filepath.Clean(snapshotRoot) != expectedRoot {
+		return errors.New("invalid app execution snapshot")
+	}
+	if err := validateRegularDirectory(expectedRoot); err != nil {
+		return errors.New("invalid app execution snapshot")
+	}
+	return os.RemoveAll(expectedRoot)
 }
 
 func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (AppInspection, error) {

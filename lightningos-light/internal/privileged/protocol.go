@@ -260,7 +260,7 @@ func ValidateRequest(request Request) error {
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid app.compose.remove params: %w", err)
 		}
-		if params.AppID != appmanifest.CPUMinerID {
+		if _, err := appmanifest.ComposeManifestForApp(params.AppID); err != nil {
 			return errors.New("app manifest is not allowed")
 		}
 	case OperationDockerEnsure:

@@ -138,9 +138,18 @@ func (s *Server) installRobosats(ctx context.Context) error {
 }
 
 func (s *Server) uninstallRobosats(ctx context.Context) error {
-	paths := robosatsAppPaths()
+	return removeRoboSatsApp(ctx, robosatsAppPaths())
+}
+
+func removeRoboSatsApp(ctx context.Context, paths robosatsPaths) error {
 	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		if handled, err := system.RemoveAppWithBroker(ctx, appmanifest.RoboSatsID); handled {
+			if err != nil {
+				return err
+			}
+		} else {
+			_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		}
 	}
 	if err := os.RemoveAll(paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)

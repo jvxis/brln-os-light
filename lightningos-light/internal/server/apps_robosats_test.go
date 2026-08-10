@@ -76,6 +76,48 @@ func TestRoboSatsLifecycleEnforceFailsClosed(t *testing.T) {
 	}
 }
 
+func TestRemoveRoboSatsAppEnforceUsesBrokerBeforeDeletingFiles(t *testing.T) {
+	root := t.TempDir()
+	paths := robosatsPaths{Root: root, ComposePath: filepath.Join(root, appmanifest.RoboSatsComposeFile)}
+	if err := os.WriteFile(paths.ComposePath, []byte("manager-owned"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := removeRoboSatsApp(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	if client.removeCalls != 1 || client.removeAppID != appmanifest.RoboSatsID || client.removeDryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("app files still exist or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestRemoveRoboSatsAppEnforceFailsClosedAndPreservesFiles(t *testing.T) {
+	root := t.TempDir()
+	paths := robosatsPaths{Root: root, ComposePath: filepath.Join(root, appmanifest.RoboSatsComposeFile)}
+	if err := os.WriteFile(paths.ComposePath, []byte("manager-owned"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := &cpuMinerPrivilegedClient{mode: "enforce", removeErr: errors.New("rejected")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := removeRoboSatsApp(context.Background(), paths); err == nil {
+		t.Fatal("expected broker rejection")
+	}
+	if client.removeCalls != 1 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+	if _, err := os.Stat(paths.ComposePath); err != nil {
+		t.Fatalf("manager files were removed after broker failure: %v", err)
+	}
+}
+
 func TestEnsureRoboSatsImagesEnforceUsesClosedBrokerVariants(t *testing.T) {
 	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
 	system.ConfigurePrivilegedClient(client)

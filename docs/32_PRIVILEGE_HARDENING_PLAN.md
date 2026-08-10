@@ -178,9 +178,14 @@ mismatch. The app was removed after the test, the broker mode returned to
 The next typed slice adds CPU Miner status and CPU metrics inspection through
 the broker. In `enforce`, the manager receives only `running`/`stopped` and a
 raw CPU percentage; hashrate/shares remain on the unprivileged localhost miner
-API. Its disposable-node gate is still required before acceptance. Install,
-uninstall, configuration changes, image probes, the remaining apps, Ubuntu 26,
-and Docker-group removal remain open; Phase 2 is not complete.
+API. The disposable Ubuntu 24.04 gate passed with the manager's Docker
+supplementary group temporarily removed: dedicated status, App Store status,
+typed start/stop, negative requests, and manifest tampering behaved as
+designed. The exact config and Docker group were restored, the app was removed,
+and Docker was left inactive. Install, uninstall, configuration changes, image
+probes, first-container creation, the remaining apps, Ubuntu 26, and final
+Docker-group removal remain open; Phase 2 is not complete. Evidence is stored
+in `docs/baselines/privilege-hardening-phase2-cpuminer-inspect-enforce-2026-08-10.json`.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

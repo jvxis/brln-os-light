@@ -56,6 +56,8 @@ remain explicit Phase 2 work.
 
 1. Prove CPU Miner start/stop and negative validation on a disposable node.
 2. Prove the fixed CPU Miner status/inspection capability on a disposable node.
+   Completed on Ubuntu 24.04 with the manager process verified without the
+   Docker GID; see the inspection enforce baseline.
 3. Add typed install, uninstall, config apply, thread update, and image probe
    capabilities to complete CPU Miner.
 4. Generalize the catalog schema for simple whole-project Compose apps.
@@ -67,12 +69,17 @@ remain explicit Phase 2 work.
 8. Remove direct Docker calls and manager Docker-group membership only after
    every supported app passes.
 
-## Acceptance gates for this slice
+## Acceptance gates for the CPU Miner slices
 
 - strict protocol rejection of unknown apps, actions, fields, paths, and args;
 - manifest/environment tampering and symlink rejection before command execution;
 - mutation lock and paired audit events for real lifecycle calls;
 - no command execution or mutation lock in `dry_run`;
 - fixed executable and arguments operating only on validated snapshots;
+- status and lifecycle success in `enforce` while the manager process has no
+  Docker supplementary group;
+- fail-closed inspection of a tampered manifest and strict rejection of an
+  unknown app and caller-supplied argument array;
 - full Go tests, vet, registry validation, and privilege-boundary budgets;
-- disposable-VM start/stop with final state restored.
+- disposable-VM start/stop/status with final config, group, app, and Docker
+  service state restored.

@@ -231,6 +231,29 @@ typed inspection with no direct Docker command from the manager. Hashrate and
 share counters continue to use the miner's unprivileged localhost TCP API, and
 pool statistics continue to use their existing HTTP endpoints.
 
+The disposable Ubuntu 24.04 inspection gate installed commit `32f7053`, then
+temporarily reset the manager unit's supplementary groups to `lnd` and
+`systemd-journal` and removed the `lightningos` user's Docker group membership.
+The running manager process was verified not to contain the Docker GID. In
+`enforce`, the dedicated status endpoint and App Store status still reported
+the app correctly; typed stop/start produced three successful lifecycle audit
+completions, and four inspections completed successfully. Unknown app and
+argument-array requests were rejected, while an altered Compose document
+failed closed with one expected `app_inspection_failed` audit completion.
+
+The base clone has no initialized LND wallet, so it cannot exercise the legacy
+install path that generates a payout address. The gate instead staged the exact
+catalog files with a public discard address and reproduced the current install
+postcondition by creating and stopping the container in `disabled` before the
+broker cutover. An attempted broker `start` before that postcondition exceeded
+the five-second client deadline while first-container setup was occurring; it
+was rejected as outside the accepted lifecycle state rather than hidden. First
+container creation remains explicitly owned by the pending typed install/image
+capabilities. After acceptance, the temporary unit override was removed, the
+Docker group and `disabled` mode were restored, the app was uninstalled, Docker
+was stopped, and the VM was powered off. Secret-free evidence is in
+`docs/baselines/privilege-hardening-phase2-cpuminer-inspect-enforce-2026-08-10.json`.
+
 The first disposable Ubuntu 24.04 gate exposed the timeout mismatch described
 above: the manager returned HTTP 500 after five seconds while the original
 ten-second Compose stop continued and produced a successful completion audit

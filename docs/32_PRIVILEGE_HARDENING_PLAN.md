@@ -182,10 +182,16 @@ API. The disposable Ubuntu 24.04 gate passed with the manager's Docker
 supplementary group temporarily removed: dedicated status, App Store status,
 typed start/stop, negative requests, and manifest tampering behaved as
 designed. The exact config and Docker group were restored, the app was removed,
-and Docker was left inactive. Install, uninstall, configuration changes, image
-probes, first-container creation, the remaining apps, Ubuntu 26, and final
-Docker-group removal remain open; Phase 2 is not complete. Evidence is stored
-in `docs/baselines/privilege-hardening-phase2-cpuminer-inspect-enforce-2026-08-10.json`.
+and Docker was left inactive. CPU Miner thread and pool/address/worker updates
+then passed a separate `enforce` gate without the Docker GID in the manager;
+the broker rejected an invalid retained pool mode. That gate exposed Compose's
+ten-second grace period during config-driven recreation, so the exact catalog
+manifest now fixes `stop_grace_period: 2s`. Install, uninstall, image probes,
+first-container creation, the remaining apps, Ubuntu 26, and final Docker-group
+removal remain open; Phase 2 is not complete. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-cpuminer-inspect-enforce-2026-08-10.json`
+and
+`docs/baselines/privilege-hardening-phase2-cpuminer-config-enforce-2026-08-10.json`.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

@@ -46,11 +46,19 @@ broker uses validated snapshots, fixed status/container queries, and a strictly
 validated container ID for the fixed stats command. Hashrate/share counters
 already come from the miner's localhost TCP API and require no privilege.
 
-CPU Miner install, uninstall, config apply, thread updates, and image probes
-remain on the reviewed legacy path. The legacy status/stats implementation is
-also retained for `disabled` and `shadow` compatibility. This therefore does
-not yet authorize removal of Docker access from the manager; those surfaces
-remain explicit Phase 2 work.
+CPU Miner config and thread updates now write only their existing manager-owned
+catalog files and reuse the typed start operation for Compose apply. In
+`enforce`, they make no direct Docker call from the manager. Their disposable
+gate passed without the manager Docker GID, including worker sanitization and
+fail-closed rejection of an invalid retained pool mode. The gate also fixed the
+catalog service grace period at two seconds so config-driven recreation stays
+inside the broker deadline.
+
+CPU Miner install, uninstall, image probes, and first-container creation remain
+on the reviewed legacy path. The legacy status/stats/apply implementation is
+retained for `disabled` and `shadow` compatibility. This therefore does not yet
+authorize removal of Docker access from the manager; those surfaces remain
+explicit Phase 2 work.
 
 ## Migration order
 
@@ -58,8 +66,8 @@ remain explicit Phase 2 work.
 2. Prove the fixed CPU Miner status/inspection capability on a disposable node.
    Completed on Ubuntu 24.04 with the manager process verified without the
    Docker GID; see the inspection enforce baseline.
-3. Add typed install, uninstall, config apply, thread update, and image probe
-   capabilities to complete CPU Miner.
+3. Add typed install, uninstall, image probe, and first-container creation
+   capabilities to complete CPU Miner. Config and thread apply are complete.
 4. Generalize the catalog schema for simple whole-project Compose apps.
 5. Add service-specific and dependency capabilities for complex Compose apps.
 6. Separate Docker package installation, image management, networking,
@@ -80,6 +88,8 @@ remain explicit Phase 2 work.
   Docker supplementary group;
 - fail-closed inspection of a tampered manifest and strict rejection of an
   unknown app and caller-supplied argument array;
+- thread and config apply without the Docker GID, bounded config recreation,
+  worker sanitization, and fail-closed rejection of an invalid retained pool;
 - full Go tests, vet, registry validation, and privilege-boundary budgets;
 - disposable-VM start/stop/status with final config, group, app, and Docker
   service state restored.

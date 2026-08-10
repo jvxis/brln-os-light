@@ -196,13 +196,17 @@ mutation lock.
 The CPU Miner stop manifest fixes its graceful timeout at two seconds. Compose's
 ten-second default exceeds the manager client's five-second broker deadline;
 CPU Miner keeps no mutable container state, so the shorter bounded stop is safe
-for this app and leaves time for audit completion.
+for this app and leaves time for audit completion. The catalog service also
+sets `stop_grace_period: 2s`, applying the same bound when `compose up`
+recreates a running container after a configuration change.
 
 In `shadow`, CPU Miner start/stop validates this operation and then uses the
 legacy Compose path. In `enforce`, it executes only through the broker and
-fails closed. CPU Miner install, uninstall, configuration updates, and image
-probes remain on the reviewed legacy path until their own typed capabilities
-are implemented.
+fails closed. CPU Miner config and thread updates now reuse this typed start
+operation after the manager updates its non-root app files. In `enforce`, their
+Compose apply therefore has no direct Docker call or fallback in the manager.
+CPU Miner install, uninstall, image probes, and first-container creation remain
+on the reviewed legacy path until their own typed capabilities are implemented.
 
 ### `app.compose.inspect`
 
@@ -253,6 +257,19 @@ capabilities. After acceptance, the temporary unit override was removed, the
 Docker group and `disabled` mode were restored, the app was uninstalled, Docker
 was stopped, and the VM was powered off. Secret-free evidence is in
 `docs/baselines/privilege-hardening-phase2-cpuminer-inspect-enforce-2026-08-10.json`.
+
+The follow-up config gate exercised the thread and pool/address/worker endpoints
+with the manager still lacking the Docker GID. The first config-driven recreate
+reproduced the ten-second Compose grace-period mismatch and returned HTTP 500
+after the client killed the broker transport. This fail-ambiguous result was
+rejected. Commit `60371ea` added the catalog `stop_grace_period: 2s`; the rerun
+then completed thread and config apply, kept the miner running, preserved one
+thread, and returned the sanitized worker. A retained invalid `POOL_MODE` was
+rejected with the expected `app_lifecycle_failed` audit completion. The gate
+recorded three successful typed lifecycle completions and two successful typed
+inspections, restored all temporary privilege changes, removed the app, stopped
+Docker, and powered off the VM. Secret-free evidence is in
+`docs/baselines/privilege-hardening-phase2-cpuminer-config-enforce-2026-08-10.json`.
 
 The first disposable Ubuntu 24.04 gate exposed the timeout mismatch described
 above: the manager returned HTTP 500 after five seconds while the original

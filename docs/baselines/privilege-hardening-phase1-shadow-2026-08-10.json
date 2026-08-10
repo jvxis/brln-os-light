@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T10:52:07Z",
+  "node_alias": "los-test2",
+  "secret_free": true,
+  "architecture": "x86_64",
+  "source": {
+    "branch": "agent/0.5.3-privilege-hardening",
+    "branch_head_at_rollout": "2254287980d69508d3bd874dee1ff0c586004204",
+    "binary_source_commit": "a107193e6e217a4c1a101fbffcad85d836656802",
+    "previous_runtime_version": "0.5.2-Beta"
+  },
+  "deployment": {
+    "mode": "shadow",
+    "manager_user": "lightningos",
+    "manager_group": "lightningos",
+    "manager_sha256": "7f3e9f4633cbb9afa2d5f1376533362f77f06f839c00191b11d961674d4b71bb",
+    "broker_sha256": "74e3253ae07a1474ca7f679b7e6f8af274e3fabcb2b3c76ac71cadc3be34ed1d",
+    "broker_file": "root:root:0755",
+    "sudoers_file": "root:root:0440",
+    "audit_directory": "root:root:0750",
+    "audit_file": "root:root:0600",
+    "lock_directory": "root:root:0750",
+    "mutation_lock_created": false,
+    "sudoers_syntax_valid": true
+  },
+  "rollback": {
+    "backup_directory": "/var/lib/lightningos/privilege-hardening-backups/2254287-20260810T105207Z",
+    "script": "/var/lib/lightningos/privilege-hardening-backups/2254287-20260810T105207Z/rollback.sh",
+    "script_mode": "root:root:0700",
+    "previous_manager_config_and_sudoers_preserved": true
+  },
+  "validation": {
+    "root_self_test": "passed",
+    "manager_caller_self_test": "passed",
+    "manager_startup_self_test": "passed",
+    "service_restart_dry_run": "accepted",
+    "unknown_operation": "rejected",
+    "shell_syntax_in_unit": "rejected",
+    "sudo_command_arguments": "rejected",
+    "manager_health_endpoint": "ok",
+    "manager_service": "active",
+    "lnd_service": "active",
+    "postgresql_service": "active",
+    "audit_event_count": 10,
+    "audit_callers": [
+      "lightningos",
+      "root-direct"
+    ],
+    "audit_operations": [
+      "request.invalid",
+      "self_test",
+      "service.restart"
+    ],
+    "audit_rejected_completion_count": 2,
+    "service_mutation_executed_by_broker": false
+  },
+  "first_attempt": {
+    "result": "automatically_rolled_back",
+    "cause": "direct-root self-test inherited SUDO_USER from the outer installer sudo session",
+    "fix_commit": "2254287980d69508d3bd874dee1ff0c586004204",
+    "post_rollback_manager_health": "ok",
+    "post_rollback_services": "active",
+    "post_rollback_config": "baseline",
+    "post_rollback_broker_and_sudoers": "absent"
+  },
+  "excluded": [
+    "ip_addresses",
+    "hostnames",
+    "credentials",
+    "configuration_contents",
+    "sudoers_contents",
+    "audit_request_parameters"
+  ]
+}

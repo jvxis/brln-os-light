@@ -148,3 +148,21 @@ When the manager starts in `shadow` or `enforce`, it performs `self_test`
 through the real sudo transport and records the result in the manager log. A
 failure is visible but does not prevent read-only manager/API availability;
 migrated mutations still fail closed in `enforce`.
+
+## First shadow rollout
+
+The `los-test2` node entered `shadow` on 2026-08-10. Root, manager-caller, and
+manager-startup self-tests passed. A `service.restart` dry-run for LND was
+validated without creating the mutation lock or calling systemctl. An unknown
+operation, shell syntax in a unit, and sudo command-line arguments were
+rejected. Manager, LND, Postgres, and the HTTPS health endpoint remained
+healthy. No broker service mutation was executed.
+
+The first installation attempt intentionally exercised the rollback trap. It
+revealed that a direct-root self-test inside an operator's sudo shell inherited
+`SUDO_USER`; the broker denied that ambiguous caller before creating its audit
+file. The previous manager/config/sudoers were restored automatically. Commit
+`2254287` fixed the installer boundary by clearing inherited `SUDO_*` variables
+only for the direct-root self-test. The subsequent rollout passed. Full
+secret-free evidence is in
+`docs/baselines/privilege-hardening-phase1-shadow-2026-08-10.json`.

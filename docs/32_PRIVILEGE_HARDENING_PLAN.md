@@ -125,10 +125,13 @@ test strategy.
 Status: implementation in progress on 2026-08-10. Protocol version 1, the
 deny-by-default broker, root-only audit and lock files, manager client modes,
 installer self-test, and the first `service.restart` family are implemented.
-The integration node remains on `0.5.2` until the branch passes the complete
-local suite and the helper is installed first in `disabled`, then exercised in
-`shadow`. The protocol and rollback contract are recorded in
-`docs/34_PRIVILEGED_BROKER_PROTOCOL.md`.
+The integration node began from `0.5.2-Beta`; the helper was installed and
+exercised in `shadow` on 2026-08-10 with manager, LND, and Postgres remaining
+active. The secret-free result is stored in
+`docs/baselines/privilege-hardening-phase1-shadow-2026-08-10.json`. The phase
+remains open for the fixed-file family, soak observation, and an explicit
+review before any `enforce` cutover. The protocol and rollback contract are
+recorded in `docs/34_PRIVILEGED_BROKER_PROTOCOL.md`.
 
 1. Implement the broker protocol, authorization, validation, structured logs,
    locking, and timeouts.

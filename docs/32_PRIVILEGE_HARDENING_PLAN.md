@@ -209,6 +209,64 @@ unrecognized layouts must stop before the cutover with actionable diagnostics.
 - Verification that no seed, macaroon, password, RPC credential, or token enters
   broker arguments or logs.
 
+## Test-node preservation protocol
+
+The existing LightningOS test node is the integration target, not a disposable
+fixture. It remains on the stable `0.5.2` line until the Phase 1 broker can run
+in shadow mode without removing any existing privilege. Merely creating this
+branch is not a reason to deploy `0.5.3` to that node.
+
+The following state must be preserved throughout hardening work:
+
+- Bitcoin Core and LND blockchain, graph, wallet, and channel data;
+- the configured local/remote Bitcoin source and storage targets;
+- installed app data, configuration, and the operator's running/stopped choice;
+- TLS, local CA, hostname discovery, LAN/Tailscale access, and firewall policy;
+- Postgres databases, reports, notifications, audit history, and UI settings.
+
+Before the first runtime hardening deployment, capture a secret-free baseline:
+
+- LightningOS version, commit, install type, Ubuntu version, architecture, and
+  active systemd units;
+- `lightningos` user/group membership and effective sudo command list;
+- manager, LND, terminal, Docker, Postgres, UFW, and Tailscale service state;
+- Docker containers, images, networks, volumes, and App Store running/stopped
+  state;
+- LND `GetInfo`, wallet/channel totals, and Bitcoin synchronization height;
+- owner, group, mode, and path metadata for managed files without reading secret
+  contents.
+
+Immediately before privilege cutover, create a root-only, timestamped rollback
+bundle containing the previous manager binary, systemd units, sudoers files,
+group membership, broker files, and non-secret configuration. LND, Bitcoin,
+Postgres, and app data directories are never copied, deleted, reset, reindexed,
+or ownership-rewritten as part of this rollback bundle.
+
+Test checkpoints:
+
+1. **T0 — baseline:** current manager and apps pass health checks unchanged.
+2. **T1 — shadow broker:** broker is installed and self-tested; all legacy
+   privileges remain available and the manager behavior is unchanged.
+3. **T2 — selective migration:** one operation family at a time uses the broker;
+   the previous path remains available for immediate rollback.
+4. **T3 — App Store cutover:** every installed and uninstalled catalog app passes
+   lifecycle tests before direct Docker access is removed.
+5. **T4 — privilege removal:** wildcard sudo and Docker group access are removed
+   only after broker and rollback verification in the same maintenance window.
+6. **T5 — confinement:** stronger systemd restrictions are applied individually,
+   with health and regression checks after each restriction.
+
+Operations that can interrupt LND, Bitcoin, Docker, the network, or the host
+require an announced test window. Bitcoin must never be deliberately stopped for
+hardening tests. LND and the manager may be restarted when the checkpoint calls
+for it. Apps may be stopped only when required for their own lifecycle test and
+must finish in their original running/stopped state.
+
+Destructive and failure-injection tests run first on a fresh disposable VM. The
+preserved integration node receives only a phase that has already passed that
+VM gate. No credential, IP address, token, macaroon, password, or private node
+identifier is stored in this plan, Git history, PR comments, or test output.
+
 ## Completion criteria
 
 This issue is complete only when:

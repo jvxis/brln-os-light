@@ -135,3 +135,29 @@ func TestBitcoinCoreStorageRequestUsesCanonicalClosedPath(t *testing.T) {
 		}
 	}
 }
+
+func TestBitcoinCoreConfigRequestsAreClosedAndSecretBounded(t *testing.T) {
+	valid := []string{
+		`{"version":1,"request_id":"bitcoin_config_1","operation":"app.bitcoincore.config.read","params":{"data_dir":"/mnt/bitcoin-ssd/bitcoin"}}`,
+		`{"version":1,"request_id":"bitcoin_config_2","operation":"app.bitcoincore.config.ensure","params":{"data_dir":"/mnt/bitcoin-ssd/bitcoin","content":"server=1\nrpcpassword=secret\n"}}`,
+		`{"version":1,"request_id":"bitcoin_config_3","operation":"app.bitcoincore.config.write","dry_run":true,"params":{"data_dir":"/data/bitcoin","content":"server=1\n"}}`,
+	}
+	for _, payload := range valid {
+		if _, err := DecodeRequest(strings.NewReader(payload)); err != nil {
+			t.Fatalf("valid bitcoin config request rejected: %v", err)
+		}
+	}
+
+	invalid := []string{
+		`{"version":1,"request_id":"bitcoin_config_4","operation":"app.bitcoincore.config.read","dry_run":true,"params":{"data_dir":"/data/bitcoin"}}`,
+		`{"version":1,"request_id":"bitcoin_config_5","operation":"app.bitcoincore.config.read","params":{"data_dir":"/etc/bitcoin"}}`,
+		`{"version":1,"request_id":"bitcoin_config_6","operation":"app.bitcoincore.config.ensure","params":{"data_dir":"/data/bitcoin","content":"server=1"}}`,
+		`{"version":1,"request_id":"bitcoin_config_7","operation":"app.bitcoincore.config.write","params":{"data_dir":"/data/bitcoin","content":"server=1\r\n"}}`,
+		`{"version":1,"request_id":"bitcoin_config_8","operation":"app.bitcoincore.config.write","params":{"data_dir":"/data/bitcoin","content":"server=1\n","path":"/etc/passwd"}}`,
+	}
+	for _, payload := range invalid {
+		if _, err := DecodeRequest(strings.NewReader(payload)); err == nil {
+			t.Fatalf("unsafe bitcoin config request accepted: %s", payload)
+		}
+	}
+}

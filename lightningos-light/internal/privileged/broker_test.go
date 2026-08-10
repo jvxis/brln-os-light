@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,37 @@ type recordingBitcoinStorage struct {
 	dryRun  bool
 	state   BitcoinCoreStorageState
 	err     error
+}
+
+type recordingBitcoinConfig struct {
+	operation string
+	dataDir   string
+	content   string
+	dryRun    bool
+	state     BitcoinCoreConfigState
+	err       error
+}
+
+func (config *recordingBitcoinConfig) Ensure(_ context.Context, dataDir string, content string, dryRun bool) (BitcoinCoreConfigState, error) {
+	config.operation = "ensure"
+	config.dataDir = dataDir
+	config.content = content
+	config.dryRun = dryRun
+	return config.state, config.err
+}
+
+func (config *recordingBitcoinConfig) Read(_ context.Context, dataDir string) (BitcoinCoreConfigState, error) {
+	config.operation = "read"
+	config.dataDir = dataDir
+	return config.state, config.err
+}
+
+func (config *recordingBitcoinConfig) Write(_ context.Context, dataDir string, content string, dryRun bool) (BitcoinCoreConfigState, error) {
+	config.operation = "write"
+	config.dataDir = dataDir
+	config.content = content
+	config.dryRun = dryRun
+	return config.state, config.err
 }
 
 func (storage *recordingBitcoinStorage) Ensure(_ context.Context, dataDir string, dryRun bool) (BitcoinCoreStorageState, error) {
@@ -639,6 +671,70 @@ func TestBrokerBitcoinStorageEnrollmentIsTypedLockedAndSanitized(t *testing.T) {
 				t.Fatalf("unsanitized failure response: %#v", response)
 			}
 		})
+	}
+}
+
+func TestBrokerBitcoinConfigOperationsLockMutationsAndNeverAuditSecrets(t *testing.T) {
+	const content = "server=1\nrpcpassword=never-audit-me\n"
+	for _, test := range []struct {
+		name      string
+		operation Operation
+		dryRun    bool
+		state     BitcoinCoreConfigState
+		wantCall  string
+		wantLocks int
+	}{
+		{name: "ensure", operation: OperationBitcoinConfigEnsure, state: BitcoinCoreConfigState{Status: "ready"}, wantCall: "ensure", wantLocks: 1},
+		{name: "ensure dry run", operation: OperationBitcoinConfigEnsure, dryRun: true, state: BitcoinCoreConfigState{Status: "validated"}, wantCall: "ensure"},
+		{name: "read", operation: OperationBitcoinConfigRead, state: BitcoinCoreConfigState{Status: "ready", Content: content}, wantCall: "read"},
+		{name: "write", operation: OperationBitcoinConfigWrite, state: BitcoinCoreConfigState{Status: "ready"}, wantCall: "write", wantLocks: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			audit := &recordingAudit{}
+			locker := &recordingLocker{}
+			config := &recordingBitcoinConfig{state: test.state}
+			broker := testBroker(&recordingRunner{}, audit, locker)
+			broker.BitcoinConfig = config
+			var params json.RawMessage
+			var err error
+			if test.operation == OperationBitcoinConfigRead {
+				params, err = MarshalParams(BitcoinCoreConfigTargetParams{DataDir: "/data/bitcoin"})
+			} else {
+				params, err = MarshalParams(BitcoinCoreConfigWriteParams{DataDir: "/data/bitcoin", Content: content})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := broker.Handle(context.Background(), Request{
+				Version: ProtocolVersion, RequestID: "bitcoin_config_1", Operation: test.operation, DryRun: test.dryRun, Params: params,
+			})
+			if !response.OK || config.operation != test.wantCall || config.dataDir != "/data/bitcoin" || locker.locks != test.wantLocks {
+				t.Fatalf("response/config/locker=%#v/%#v/%#v", response, config, locker)
+			}
+			encodedAudit, err := json.Marshal(audit.events)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encodedAudit), "never-audit-me") {
+				t.Fatalf("secret leaked into audit: %s", encodedAudit)
+			}
+		})
+	}
+}
+
+func TestBrokerBitcoinConfigFailureIsGeneric(t *testing.T) {
+	const secret = "rpcpassword=do-not-echo\n"
+	params, err := MarshalParams(BitcoinCoreConfigWriteParams{DataDir: "/data/bitcoin", Content: secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.BitcoinConfig = &recordingBitcoinConfig{err: errors.New("failed while handling " + secret)}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "bitcoin_config_failure", Operation: OperationBitcoinConfigWrite, Params: params,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != "bitcoin_config_failed" || response.Error.Message != "bitcoin config update failed" || strings.Contains(response.Error.Message, "do-not-echo") {
+		t.Fatalf("unexpected response: %#v", response)
 	}
 }
 

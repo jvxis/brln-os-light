@@ -7,7 +7,11 @@ document.
 
 Date: 2026-08-10.
 
-Tracking issue: [#32](https://github.com/jvxis/brln-os-light/issues/32).
+Tracking issues:
+
+- privilege-boundary hardening: [#32](https://github.com/jvxis/brln-os-light/issues/32);
+- installer and upgrade supply-chain hardening:
+  [#34](https://github.com/jvxis/brln-os-light/issues/34).
 
 Target release: `0.5.3`.
 
@@ -318,7 +322,28 @@ idempotent enrollment, ownership/mode checks, negative requests, audit privacy,
 and complete cleanup without starting Bitcoin or creating blockchain data.
 Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-bitcoincore-storage-enforce-2026-08-10.json`.
-Secret-bearing `bitcoin.conf` handling remains the next Bitcoin slice.
+
+Secret-bearing `bitcoin.conf` handling now uses three separate typed broker
+operations: `app.bitcoincore.config.ensure`, `.read`, and `.write`. The caller
+supplies only the enrolled `data_dir` and, for mutations, bounded config
+content; it cannot select the destination filename. The broker verifies the
+root-only enrollment metadata and storage marker, rejects symlinks, reads only
+the fixed config, and commits updates atomically as `root:101` mode `0640`.
+The manager's root-container read/write ladder and manager-side temporary
+secret file have been removed. Existing `101:101` configs are tightened
+atomically without changing their contents, and the old manager-owned seed is
+used only to preserve credentials before being removed after broker success.
+
+The disposable Ubuntu 24.04 gate passed dry-run without creation, config
+ensure/read/write round trips, legacy-owner migration, target/field/content
+negative cases, symlink resistance, and audit privacy. The gate exposed and
+repaired an initially over-strict pre-rename legacy-owner check. All temporary
+storage and remote gate artifacts were removed, the official image and
+attestation were preserved, and no Bitcoin process or blockchain data was
+created. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-config-enforce-2026-08-10.json`.
+Typed Compose lifecycle and dependent-app compatibility are the next Bitcoin
+slice.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.
@@ -331,13 +356,32 @@ in the `docker` group.
 
 ### Phase 3 — Packages, firewall, storage, and upgrades
 
+Issue [#34](https://github.com/jvxis/brln-os-light/issues/34) is accepted into
+the required `0.5.3` work plan as a dedicated supply-chain track. It complements
+the privilege boundary: code downloaded by a root installer or upgrade path
+must be authenticated before it is extracted, installed, or executed. This
+track applies consistently to fresh installs, existing-node installs, and
+upgrades; it is not deferred to a later release.
+
 1. Replace arbitrary package arguments with fixed dependency sets.
 2. Replace direct UFW access with the manager-access policy operation.
 3. Replace ownership and permission shell commands with typed storage actions.
 4. Move LND, Tor, and LightningOS upgrades to verified broker operations.
+5. Verify LND archives against an authenticated official signed manifest and
+   an explicitly trusted release-signing key before extraction.
+6. Verify Go toolchain archives against the expected official checksum and pin
+   each supported GoTTY version, architecture, artifact name, and checksum.
+7. Replace direct NodeSource and i2pd `curl | bash` execution with explicit APT
+   repository definitions and dedicated `signed-by` keyrings; any unavoidable
+   downloaded helper must be authenticated before execution.
+8. Add negative tests proving that altered artifacts, checksums, manifests,
+   signatures, keys, architectures, and repository helpers fail closed before
+   privileged execution or installation.
 
 Exit criterion: no manager code path invokes `apt`, `dpkg`, `ufw`,
-`systemd-run`, or a privileged shell directly.
+`systemd-run`, or a privileged shell directly, and no root install or upgrade
+path executes or installs a downloaded artifact before its required
+authenticity/integrity verification succeeds.
 
 ### Phase 4 — Privilege removal and systemd confinement
 

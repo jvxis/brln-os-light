@@ -36,6 +36,9 @@ const (
 	OperationAppImageProbe        Operation = "app.image.probe"
 	OperationAppFirewallEnsure    Operation = "app.firewall.ensure"
 	OperationBitcoinStorageEnsure Operation = "app.bitcoincore.storage.ensure"
+	OperationBitcoinConfigEnsure  Operation = "app.bitcoincore.config.ensure"
+	OperationBitcoinConfigRead    Operation = "app.bitcoincore.config.read"
+	OperationBitcoinConfigWrite   Operation = "app.bitcoincore.config.write"
 )
 
 type Request struct {
@@ -115,6 +118,20 @@ type BitcoinCoreStorageParams struct {
 
 type BitcoinCoreStorageState struct {
 	Status string `json:"status"`
+}
+
+type BitcoinCoreConfigTargetParams struct {
+	DataDir string `json:"data_dir"`
+}
+
+type BitcoinCoreConfigWriteParams struct {
+	DataDir string `json:"data_dir"`
+	Content string `json:"content"`
+}
+
+type BitcoinCoreConfigState struct {
+	Status  string `json:"status"`
+	Content string `json:"content,omitempty"`
 }
 
 type DockerRuntimeState struct {
@@ -348,8 +365,38 @@ func ValidateRequest(request Request) error {
 		if err != nil || normalized != params.DataDir {
 			return errors.New("bitcoin storage target is not allowed")
 		}
+	case OperationBitcoinConfigRead:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for app.bitcoincore.config.read")
+		}
+		var params BitcoinCoreConfigTargetParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.bitcoincore.config.read params: %w", err)
+		}
+		if err := validateBitcoinCoreConfigDataDir(params.DataDir); err != nil {
+			return err
+		}
+	case OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite:
+		var params BitcoinCoreConfigWriteParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
+		if err := validateBitcoinCoreConfigDataDir(params.DataDir); err != nil {
+			return err
+		}
+		if err := validateBitcoinCoreConfigContent(params.Content); err != nil {
+			return err
+		}
 	default:
 		return errors.New("unknown operation")
+	}
+	return nil
+}
+
+func validateBitcoinCoreConfigDataDir(dataDir string) error {
+	normalized, err := appmanifest.NormalizeBitcoinCoreDataDir(dataDir)
+	if err != nil || normalized != dataDir {
+		return errors.New("bitcoin config target is not allowed")
 	}
 	return nil
 }

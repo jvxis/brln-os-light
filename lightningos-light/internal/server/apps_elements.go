@@ -1016,15 +1016,10 @@ func writeElementsMainchainSource(paths elementsPaths, source string) error {
 
 func readLocalBitcoinRPCConfigFromFile(ctx context.Context) (bitcoinRPCConfig, error) {
 	paths := bitcoinCoreAppPaths()
-	content, err := os.ReadFile(paths.ConfigPath)
+	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
 	if err != nil {
-		out, runErr := runSystemd(ctx, "/bin/sh", "-c", "cat "+paths.ConfigPath)
-		if runErr != nil {
-			return bitcoinRPCConfig{}, fmt.Errorf("failed to read local bitcoin.conf: %w", err)
-		}
-		content = []byte(out)
+		return bitcoinRPCConfig{}, fmt.Errorf("failed to read local bitcoin.conf: %w", err)
 	}
-	raw := string(content)
 	user, pass, _, _ := parseBitcoinCoreRPCConfig(raw)
 	if user == "" || pass == "" {
 		return bitcoinRPCConfig{}, errors.New("local RPC credentials missing")

@@ -53,6 +53,12 @@ type BitcoinStorageManager interface {
 	Ensure(ctx context.Context, dataDir string, dryRun bool) (BitcoinCoreStorageState, error)
 }
 
+type BitcoinConfigManager interface {
+	Ensure(ctx context.Context, dataDir string, content string, dryRun bool) (BitcoinCoreConfigState, error)
+	Read(ctx context.Context, dataDir string) (BitcoinCoreConfigState, error)
+	Write(ctx context.Context, dataDir string, content string, dryRun bool) (BitcoinCoreConfigState, error)
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -73,6 +79,7 @@ type Broker struct {
 	Apps           AppManager
 	Packages       PackageManager
 	BitcoinStorage BitcoinStorageManager
+	BitcoinConfig  BitcoinConfigManager
 	Caller         string
 	Timeout        time.Duration
 	Now            func() time.Time
@@ -340,6 +347,38 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "bitcoin_storage_failed", errors.New("bitcoin storage enrollment failed")
 		}
 		return state, "", nil
+	case OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite:
+		if broker.BitcoinConfig == nil {
+			return nil, "broker_unavailable", errors.New("bitcoin config manager is unavailable")
+		}
+		var params BitcoinCoreConfigWriteParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid bitcoin config params")
+		}
+		var state BitcoinCoreConfigState
+		var err error
+		if request.Operation == OperationBitcoinConfigEnsure {
+			state, err = broker.BitcoinConfig.Ensure(ctx, params.DataDir, params.Content, request.DryRun)
+		} else {
+			state, err = broker.BitcoinConfig.Write(ctx, params.DataDir, params.Content, request.DryRun)
+		}
+		if err != nil {
+			return nil, "bitcoin_config_failed", errors.New("bitcoin config update failed")
+		}
+		return state, "", nil
+	case OperationBitcoinConfigRead:
+		if broker.BitcoinConfig == nil {
+			return nil, "broker_unavailable", errors.New("bitcoin config manager is unavailable")
+		}
+		var params BitcoinCoreConfigTargetParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid bitcoin config params")
+		}
+		state, err := broker.BitcoinConfig.Read(ctx, params.DataDir)
+		if err != nil {
+			return nil, "bitcoin_config_failed", errors.New("bitcoin config read failed")
+		}
+		return state, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -376,7 +415,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite:
 		return true
 	default:
 		return false
@@ -385,7 +424,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite:
 		return true
 	default:
 		return false

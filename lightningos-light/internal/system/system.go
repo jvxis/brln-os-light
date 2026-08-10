@@ -34,6 +34,98 @@ type PrivilegedClient interface {
 	EnsureBitcoinCoreStorage(ctx context.Context, dataDir string, dryRun bool) (status string, err error)
 }
 
+type bitcoinCoreConfigPrivilegedClient interface {
+	EnsureBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (status string, err error)
+	ReadBitcoinCoreConfig(ctx context.Context, dataDir string) (content string, err error)
+	WriteBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (status string, err error)
+}
+
+func EnsureBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string, content string) (bool, error) {
+	client, configClient := configuredBitcoinCoreConfigClient()
+	if client == nil {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		if configClient == nil {
+			return true, errors.New("bitcoin config broker capability is unavailable")
+		}
+		status, err := configClient.EnsureBitcoinCoreConfig(ctx, dataDir, content, false)
+		if err != nil {
+			return true, err
+		}
+		if status != "ready" {
+			return true, errors.New("bitcoin config ensure returned an invalid state")
+		}
+		return true, nil
+	case "shadow":
+		if configClient != nil {
+			shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			_, _ = configClient.EnsureBitcoinCoreConfig(shadowCtx, dataDir, content, true)
+		}
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func ReadBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string) (string, bool, error) {
+	client, configClient := configuredBitcoinCoreConfigClient()
+	if client == nil {
+		return "", false, nil
+	}
+	if client.Mode() != "enforce" {
+		return "", false, nil
+	}
+	if configClient == nil {
+		return "", true, errors.New("bitcoin config broker capability is unavailable")
+	}
+	content, err := configClient.ReadBitcoinCoreConfig(ctx, dataDir)
+	return content, true, err
+}
+
+func WriteBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string, content string) (bool, error) {
+	client, configClient := configuredBitcoinCoreConfigClient()
+	if client == nil {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		if configClient == nil {
+			return true, errors.New("bitcoin config broker capability is unavailable")
+		}
+		status, err := configClient.WriteBitcoinCoreConfig(ctx, dataDir, content, false)
+		if err != nil {
+			return true, err
+		}
+		if status != "ready" {
+			return true, errors.New("bitcoin config write returned an invalid state")
+		}
+		return true, nil
+	case "shadow":
+		if configClient != nil {
+			shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			_, _ = configClient.WriteBitcoinCoreConfig(shadowCtx, dataDir, content, true)
+		}
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func configuredBitcoinCoreConfigClient() (PrivilegedClient, bitcoinCoreConfigPrivilegedClient) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return nil, nil
+	}
+	configClient, _ := client.(bitcoinCoreConfigPrivilegedClient)
+	return client, configClient
+}
+
 func EnsureBitcoinCoreStorageWithBroker(ctx context.Context, dataDir string) (bool, error) {
 	privilegedState.RLock()
 	client := privilegedState.client

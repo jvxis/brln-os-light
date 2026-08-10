@@ -265,6 +265,34 @@ preserve the identity. `dry_run` validates path, mount, and capacity without
 creating metadata, directories, or markers. Audit records operation outcome
 but never the path or identity.
 
+### `app.bitcoincore.config.ensure`, `.read`, and `.write`
+
+These operations bind secret-bearing `bitcoin.conf` handling to the storage
+target previously enrolled by `app.bitcoincore.storage.ensure`. Every request
+contains only the canonical `data_dir`; `ensure` and `write` additionally carry
+bounded `content`. The destination is always the fixed `bitcoin.conf` basename.
+Caller-supplied filenames, owners, modes, identities, commands, and extra fields
+are rejected. Config content must be non-empty valid UTF-8, at most 8 KiB,
+contain neither NUL nor carriage-return bytes, and end with a newline.
+
+Before any access the broker verifies the root-owned enrollment metadata, the
+UID/GID 101 data directory, and the matching `root:101` storage marker. It opens
+the directory and files without following symlinks. Reads accept only a bounded
+regular `root:101` mode `0640` config. Mutations create a random same-directory
+temporary file, set `root:101` mode `0640`, fsync it, revalidate the original
+inode immediately before rename, atomically replace the fixed config, and fsync
+the directory. `write` requires an existing canonical config. `ensure` creates
+only when absent and also tightens the legacy `101:101` owner atomically while
+preserving content. Its `dry_run` validates the same boundary without creating
+or replacing a file; `read` is non-mutating and rejects `dry_run`.
+
+The manager no longer reads the config through a running/root Docker container
+or writes it through a manager-side temporary secret file. An old manager-owned
+seed is read only to preserve existing credentials during migration and is
+removed only after broker ensure succeeds. All three operations fail closed
+outside broker `enforce` mode. Audit events contain operation outcomes but no
+path, config content, RPC username, or RPC password.
+
 ### `packages.feature.ensure` and `packages.feature.status`
 
 The first shared package capability accepts only this closed request:

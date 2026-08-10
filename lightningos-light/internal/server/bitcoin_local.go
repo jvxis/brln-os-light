@@ -10,8 +10,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -283,9 +281,6 @@ func (s *Server) handleBitcoinLocalConfigPost(w http.ResponseWriter, r *http.Req
 	if err := writeBitcoinCoreConfig(ctx, paths, updated); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to write bitcoin.conf")
 		return
-	}
-	if err := writeFile(paths.SeedConfigPath, updated, 0640); err != nil {
-		s.logger.Printf("bitcoin local: failed to update seed config: %v", err)
 	}
 
 	if req.ApplyNow {
@@ -884,99 +879,24 @@ func readBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) (string,
 }
 
 func readBitcoinCoreConfigRaw(ctx context.Context, paths bitcoinCorePaths) (string, error) {
-	if fileExists(paths.ConfigPath) {
-		raw, err := os.ReadFile(paths.ConfigPath)
-		if err == nil {
-			return string(raw), nil
+	content, handled, err := system.ReadBitcoinCoreConfigWithBroker(ctx, paths.DataDir)
+	if handled {
+		if err != nil {
+			return "", fmt.Errorf("read bitcoin.conf failed: %w", err)
 		}
+		return content, nil
 	}
-
-	containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind")
-	if err == nil && containerID != "" {
-		out, execErr := system.RunCommandWithSudo(ctx, "docker", "exec", "-i", containerID, "sh", "-c", "cat "+bitcoinCoreConfigPathInContainer)
-		if execErr == nil {
-			return out, nil
-		}
-	}
-
-	if err := ensureBitcoinCoreImage(ctx); err != nil {
-		return "", err
-	}
-	out, err := system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"run",
-		"--rm",
-		"--entrypoint",
-		"sh",
-		"--user",
-		"0:0",
-		"-v",
-		fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
-		bitcoinCoreImage,
-		"-c",
-		"cat "+bitcoinCoreConfigPathInContainer,
-	)
-	if err == nil {
-		return out, nil
-	}
-	if strings.Contains(strings.ToLower(out), "no such file") {
-		if fileExists(paths.SeedConfigPath) {
-			raw, readErr := os.ReadFile(paths.SeedConfigPath)
-			if readErr == nil {
-				return string(raw), nil
-			}
-		}
-	}
-	msg := strings.TrimSpace(out)
-	if msg == "" {
-		return "", fmt.Errorf("read bitcoin.conf failed: %w", err)
-	}
-	return "", fmt.Errorf("read bitcoin.conf failed: %s", msg)
+	return "", errors.New("read bitcoin.conf requires privileged broker enforce mode")
 }
 
 func writeBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths, content string) error {
-	tmpPath := filepath.Join(paths.Root, "bitcoin.conf.tmp")
-	if err := writeFile(tmpPath, ensureTrailingNewline(content), 0640); err != nil {
-		return err
-	}
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-
-	cmd := strings.Join([]string{
-		"cp /tmp/bitcoin.conf " + bitcoinCoreConfigPathInContainer,
-		"chown 101:101 " + bitcoinCoreConfigPathInContainer,
-		"chmod 640 " + bitcoinCoreConfigPathInContainer,
-	}, " && ")
-	if err := ensureBitcoinCoreImage(ctx); err != nil {
-		return err
-	}
-	out, err := system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"run",
-		"--rm",
-		"--entrypoint",
-		"sh",
-		"--user",
-		"0:0",
-		"-v",
-		fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
-		"-v",
-		fmt.Sprintf("%s:/tmp/bitcoin.conf:ro", tmpPath),
-		bitcoinCoreImage,
-		"-c",
-		cmd,
-	)
-	if err != nil {
-		msg := strings.TrimSpace(out)
-		if msg == "" {
+	if handled, err := system.WriteBitcoinCoreConfigWithBroker(ctx, paths.DataDir, ensureTrailingNewline(content)); handled {
+		if err != nil {
 			return fmt.Errorf("write bitcoin.conf failed: %w", err)
 		}
-		return fmt.Errorf("write bitcoin.conf failed: %s", msg)
+		return nil
 	}
-	return nil
+	return errors.New("write bitcoin.conf requires privileged broker enforce mode")
 }
 
 func parseBitcoinCorePrune(raw string) (bool, int) {
@@ -1227,7 +1147,6 @@ func syncBitcoinCoreRPCAllowList(ctx context.Context, paths bitcoinCorePaths) (s
 	if err := writeBitcoinCoreConfig(ctx, paths, updated); err != nil {
 		return "", false, err
 	}
-	_ = writeFile(paths.SeedConfigPath, updated, 0640)
 	return updated, true, nil
 }
 

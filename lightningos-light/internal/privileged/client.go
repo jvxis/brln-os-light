@@ -311,6 +311,54 @@ func (client *Client) EnsureBitcoinCoreStorage(ctx context.Context, dataDir stri
 	return result.Status, nil
 }
 
+func (client *Client) EnsureBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBitcoinConfigEnsure, BitcoinCoreConfigWriteParams{DataDir: dataDir, Content: content}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	return client.decodeBitcoinCoreConfigUpdate(response, dryRun, OperationBitcoinConfigEnsure)
+}
+
+func (client *Client) ReadBitcoinCoreConfig(ctx context.Context, dataDir string) (string, error) {
+	response, err := client.call(ctx, OperationBitcoinConfigRead, BitcoinCoreConfigTargetParams{DataDir: dataDir}, false)
+	if err != nil {
+		return "", err
+	}
+	var result BitcoinCoreConfigState
+	if err := decodeStrict(response.Result, &result); err != nil || result.Status != "ready" {
+		return "", errors.New("invalid broker bitcoin config response")
+	}
+	if err := validateBitcoinCoreConfigContent(result.Content); err != nil {
+		return "", errors.New("invalid broker bitcoin config content")
+	}
+	return result.Content, nil
+}
+
+func (client *Client) WriteBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBitcoinConfigWrite, BitcoinCoreConfigWriteParams{DataDir: dataDir, Content: content}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	return client.decodeBitcoinCoreConfigUpdate(response, dryRun, OperationBitcoinConfigWrite)
+}
+
+func (client *Client) decodeBitcoinCoreConfigUpdate(response Response, dryRun bool, operation Operation) (string, error) {
+	var result BitcoinCoreConfigState
+	if err := decodeStrict(response.Result, &result); err != nil || result.Content != "" {
+		return "", errors.New("invalid broker bitcoin config state response")
+	}
+	if dryRun && result.Status == "validated" {
+		if client != nil && client.logger != nil {
+			client.logger.Printf("privileged broker shadow validation accepted %s", operation)
+		}
+		return result.Status, nil
+	}
+	if result.Status != "ready" {
+		return "", errors.New("invalid broker bitcoin config state")
+	}
+	return result.Status, nil
+}
+
 func decodeAppImageState(response Response, dryRun bool) (string, error) {
 	var result AppImageState
 	if err := decodeStrict(response.Result, &result); err != nil {

@@ -63,6 +63,37 @@ func TestClientRejectsDisabledAndBrokerErrors(t *testing.T) {
 	}
 }
 
+func TestClientBitcoinCoreConfigRequestsKeepSecretInTypedPayload(t *testing.T) {
+	const dataDir = "/mnt/bitcoin-ssd/bitcoin"
+	const content = "server=1\nrpcpassword=top-secret\n"
+	transport := &fakeTransport{result: BitcoinCoreConfigState{Status: "ready"}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+
+	status, err := client.EnsureBitcoinCoreConfig(context.Background(), dataDir, content, false)
+	if err != nil || status != "ready" || transport.request.Operation != OperationBitcoinConfigEnsure {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+	var writeParams BitcoinCoreConfigWriteParams
+	if err := json.Unmarshal(transport.request.Params, &writeParams); err != nil {
+		t.Fatal(err)
+	}
+	if writeParams.DataDir != dataDir || writeParams.Content != content {
+		t.Fatalf("unexpected config params: %#v", writeParams)
+	}
+
+	transport.result = BitcoinCoreConfigState{Status: "ready", Content: content}
+	read, err := client.ReadBitcoinCoreConfig(context.Background(), dataDir)
+	if err != nil || read != content || transport.request.Operation != OperationBitcoinConfigRead || transport.request.DryRun {
+		t.Fatalf("read/error/request=%q/%v/%#v", read, err, transport.request)
+	}
+
+	transport.result = BitcoinCoreConfigState{Status: "ready"}
+	status, err = client.WriteBitcoinCoreConfig(context.Background(), dataDir, content, false)
+	if err != nil || status != "ready" || transport.request.Operation != OperationBitcoinConfigWrite {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+}
+
 func TestClientEnableLoginBuildsEmptyTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: map[string]bool{"validated": true}}
 	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)

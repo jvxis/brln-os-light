@@ -2,10 +2,116 @@ package server
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"lightningos-light/internal/system"
 )
+
+type bitcoinConfigTestClient struct {
+	*cpuMinerPrivilegedClient
+	operation   string
+	dataDir     string
+	content     string
+	readContent string
+	dryRun      bool
+	err         error
+}
+
+func (client *bitcoinConfigTestClient) EnsureBitcoinCoreConfig(_ context.Context, dataDir string, content string, dryRun bool) (string, error) {
+	client.recordConfig("ensure", dataDir, content, dryRun)
+	return "ready", client.err
+}
+
+func (client *bitcoinConfigTestClient) ReadBitcoinCoreConfig(_ context.Context, dataDir string) (string, error) {
+	client.recordConfig("read", dataDir, "", false)
+	return client.readContent, client.err
+}
+
+func (client *bitcoinConfigTestClient) WriteBitcoinCoreConfig(_ context.Context, dataDir string, content string, dryRun bool) (string, error) {
+	client.recordConfig("write", dataDir, content, dryRun)
+	return "ready", client.err
+}
+
+func (client *bitcoinConfigTestClient) recordConfig(operation string, dataDir string, content string, dryRun bool) {
+	client.operation = operation
+	client.dataDir = dataDir
+	client.content = content
+	client.dryRun = dryRun
+}
+
+func TestBitcoinCoreConfigServerPathsRequireTypedBroker(t *testing.T) {
+	const dataDir = "/data/bitcoin"
+	const legacy = "server=1\nrpcpassword=preserve-me\n"
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, bitcoinCoreConfigFile), []byte(legacy), 0640); err != nil {
+		t.Fatal(err)
+	}
+	client := &bitcoinConfigTestClient{
+		cpuMinerPrivilegedClient: &cpuMinerPrivilegedClient{mode: "enforce"},
+		readContent:              legacy,
+	}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	paths := bitcoinCorePaths{Root: root, DataDir: dataDir}
+
+	if err := ensureBitcoinCoreConfig(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	if client.operation != "ensure" || client.dataDir != dataDir || client.content != legacy || client.dryRun {
+		t.Fatalf("unexpected ensure request: %#v", client)
+	}
+	if _, err := os.Lstat(filepath.Join(root, bitcoinCoreConfigFile)); !os.IsNotExist(err) {
+		t.Fatalf("legacy seed was not removed after broker success: %v", err)
+	}
+
+	read, err := readBitcoinCoreConfigRaw(context.Background(), paths)
+	if err != nil || read != legacy || client.operation != "read" {
+		t.Fatalf("read/error/client=%q/%v/%#v", read, err, client)
+	}
+	const updated = "server=1\nrpcpassword=preserve-me\nprune=2048\n"
+	if err := writeBitcoinCoreConfig(context.Background(), paths, updated); err != nil {
+		t.Fatal(err)
+	}
+	if client.operation != "write" || client.content != updated || client.dataDir != dataDir {
+		t.Fatalf("unexpected write request: %#v", client)
+	}
+}
+
+func TestLegacyBitcoinCoreSeedCleanupUsesOnlyRegularExactFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, bitcoinCoreConfigFile)
+	const content = "server=1\nrpcpassword=legacy\n"
+	if err := os.WriteFile(path, []byte(content), 0640); err != nil {
+		t.Fatal(err)
+	}
+	read, exists, err := readLegacyBitcoinCoreSeedConfig(root)
+	if err != nil || !exists || read != content {
+		t.Fatalf("read/exists/error=%q/%v/%v", read, exists, err)
+	}
+	if err := removeLegacyBitcoinCoreSeedConfig(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("legacy seed still exists: %v", err)
+	}
+}
+
+func TestLegacyBitcoinCoreSeedRejectsDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, bitcoinCoreConfigFile), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readLegacyBitcoinCoreSeedConfig(root); err == nil {
+		t.Fatal("expected directory seed to be rejected")
+	}
+	if err := removeLegacyBitcoinCoreSeedConfig(root); err == nil {
+		t.Fatal("expected directory cleanup target to be rejected")
+	}
+}
 
 func TestRPCAllowListContainsIPCoveredByCIDR(t *testing.T) {
 	lines := []string{

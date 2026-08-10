@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -17,7 +18,6 @@ type bitcoinCorePaths struct {
 	Root             string
 	DataDir          string
 	ConfigPath       string
-	SeedConfigPath   string
 	ComposePath      string
 	StorageIDPath    string
 	StorageGuardPath string
@@ -35,7 +35,9 @@ const (
 	bitcoinCoreStorageIDFile    = "storage_id"
 	bitcoinCoreStorageMarker    = appmanifest.BitcoinCoreStorageMarker
 	bitcoinCoreStorageGuardFile = "storage-guard.sh"
+	bitcoinCoreConfigFile       = "bitcoin.conf"
 	bitcoinCoreMinFreeKiB       = 10 * 1024 * 1024
+	bitcoinCoreLegacySeedMax    = 8 * 1024
 )
 
 type bitcoinCoreInstallOptions struct {
@@ -100,7 +102,6 @@ func bitcoinCoreAppPaths() bitcoinCorePaths {
 		Root:             root,
 		DataDir:          dataDir,
 		ConfigPath:       filepath.Join(dataDir, "bitcoin.conf"),
-		SeedConfigPath:   filepath.Join(root, "bitcoin.conf"),
 		ComposePath:      filepath.Join(root, "docker-compose.yaml"),
 		StorageIDPath:    appmanifest.BitcoinCoreStorageIDPath,
 		StorageGuardPath: filepath.Join(root, bitcoinCoreStorageGuardFile),
@@ -213,13 +214,10 @@ func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoin
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
-	if err := ensureBitcoinCoreSeedConfig(paths); err != nil {
-		return err
-	}
-	if err := syncBitcoinCoreConfig(ctx, paths); err != nil {
-		return err
-	}
 	if err := ensureBitcoinCoreStorageGuard(ctx, paths); err != nil {
+		return err
+	}
+	if err := ensureBitcoinCoreConfig(ctx, paths); err != nil {
 		return err
 	}
 	if _, err := ensureFileWithChange(paths.ComposePath, bitcoinCoreComposeContents(paths)); err != nil {
@@ -343,13 +341,10 @@ func (s *Server) startBitcoinCore(ctx context.Context) error {
 	if err := ensureBitcoinCoreImage(ctx); err != nil {
 		return err
 	}
-	if err := ensureBitcoinCoreSeedConfig(paths); err != nil {
-		return err
-	}
-	if err := syncBitcoinCoreConfig(ctx, paths); err != nil {
-		return err
-	}
 	if err := ensureBitcoinCoreStorageGuard(ctx, paths); err != nil {
+		return err
+	}
+	if err := ensureBitcoinCoreConfig(ctx, paths); err != nil {
 		return err
 	}
 	if _, err := ensureFileWithChange(paths.ComposePath, bitcoinCoreComposeContents(paths)); err != nil {
@@ -425,22 +420,70 @@ exec /entrypoint.sh "$@"
 `
 }
 
-func ensureBitcoinCoreSeedConfig(paths bitcoinCorePaths) error {
-	info, err := os.Stat(paths.SeedConfigPath)
-	if err == nil {
-		if info.IsDir() {
-			return fmt.Errorf("%s is a directory", paths.SeedConfigPath)
-		}
-		return nil
-	}
-	if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to stat %s: %w", paths.SeedConfigPath, err)
-	}
+func ensureBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) error {
 	content, err := defaultBitcoinCoreConfig()
 	if err != nil {
 		return err
 	}
-	return writeFile(paths.SeedConfigPath, content, 0640)
+	legacyContent, legacyExists, err := readLegacyBitcoinCoreSeedConfig(paths.Root)
+	if err != nil {
+		return err
+	}
+	if legacyExists {
+		content = ensureTrailingNewline(legacyContent)
+	}
+	if handled, err := system.EnsureBitcoinCoreConfigWithBroker(ctx, paths.DataDir, content); handled {
+		if err != nil {
+			return fmt.Errorf("failed to ensure bitcoin.conf: %w", err)
+		}
+		if legacyExists {
+			if err := removeLegacyBitcoinCoreSeedConfig(paths.Root); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return errors.New("bitcoin.conf management requires privileged broker enforce mode")
+}
+
+func readLegacyBitcoinCoreSeedConfig(root string) (string, bool, error) {
+	path := filepath.Join(root, bitcoinCoreConfigFile)
+	before, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil || before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() || before.Size() <= 0 || before.Size() > bitcoinCoreLegacySeedMax {
+		return "", false, errors.New("legacy bitcoin.conf seed is unsafe")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", false, errors.New("legacy bitcoin.conf seed is unreadable")
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(before, after) || !after.Mode().IsRegular() || after.Size() <= 0 || after.Size() > bitcoinCoreLegacySeedMax {
+		return "", false, errors.New("legacy bitcoin.conf seed changed during read")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, bitcoinCoreLegacySeedMax+1))
+	if err != nil || len(raw) > bitcoinCoreLegacySeedMax {
+		return "", false, errors.New("legacy bitcoin.conf seed read failed")
+	}
+	return string(raw), true, nil
+}
+
+func removeLegacyBitcoinCoreSeedConfig(root string) error {
+	path := filepath.Join(root, bitcoinCoreConfigFile)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return errors.New("legacy bitcoin.conf seed cleanup target is unsafe")
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.New("legacy bitcoin.conf seed cleanup failed")
+	}
+	return nil
 }
 
 func defaultBitcoinCoreConfig() (string, error) {
@@ -462,41 +505,6 @@ func defaultBitcoinCoreConfig() (string, error) {
 		"",
 	}
 	return strings.Join(lines, "\n"), nil
-}
-
-func syncBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) error {
-	if !fileExists(paths.SeedConfigPath) {
-		return fmt.Errorf("missing seed config %s", paths.SeedConfigPath)
-	}
-	if err := ensureBitcoinCoreImage(ctx); err != nil {
-		return err
-	}
-	cmd := "if [ ! -f /home/bitcoin/.bitcoin/bitcoin.conf ]; then cp /tmp/bitcoin.conf /home/bitcoin/.bitcoin/bitcoin.conf; chmod 640 /home/bitcoin/.bitcoin/bitcoin.conf; fi"
-	out, err := system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"run",
-		"--rm",
-		"--entrypoint",
-		"sh",
-		"--user",
-		"0:0",
-		"-v",
-		fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
-		"-v",
-		fmt.Sprintf("%s:/tmp/bitcoin.conf:ro", paths.SeedConfigPath),
-		bitcoinCoreImage,
-		"-c",
-		cmd,
-	)
-	if err != nil {
-		msg := strings.TrimSpace(out)
-		if msg == "" {
-			return fmt.Errorf("failed to seed bitcoin.conf: %w", err)
-		}
-		return fmt.Errorf("failed to seed bitcoin.conf: %s", msg)
-	}
-	return nil
 }
 
 func ensureBitcoinCoreImage(ctx context.Context) error {

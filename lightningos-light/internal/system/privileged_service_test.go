@@ -66,6 +66,13 @@ type fakePrivilegedServiceClient struct {
 	storageDryRun       bool
 	storageStatus       string
 	storageErr          error
+	configCalls         int
+	configOperation     string
+	configDataDir       string
+	configContent       string
+	configDryRun        bool
+	configStatus        string
+	configErr           error
 }
 
 func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID string, action string, dryRun bool) error {
@@ -196,6 +203,40 @@ func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreStorage(_ context.Co
 		}
 	}
 	return status, client.storageErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreConfig(_ context.Context, dataDir string, content string, dryRun bool) (string, error) {
+	client.recordBitcoinCoreConfig("ensure", dataDir, content, dryRun)
+	return client.bitcoinCoreConfigStatus(dryRun), client.configErr
+}
+
+func (client *fakePrivilegedServiceClient) ReadBitcoinCoreConfig(_ context.Context, dataDir string) (string, error) {
+	content := client.configContent
+	client.recordBitcoinCoreConfig("read", dataDir, "", false)
+	return content, client.configErr
+}
+
+func (client *fakePrivilegedServiceClient) WriteBitcoinCoreConfig(_ context.Context, dataDir string, content string, dryRun bool) (string, error) {
+	client.recordBitcoinCoreConfig("write", dataDir, content, dryRun)
+	return client.bitcoinCoreConfigStatus(dryRun), client.configErr
+}
+
+func (client *fakePrivilegedServiceClient) recordBitcoinCoreConfig(operation string, dataDir string, content string, dryRun bool) {
+	client.configCalls++
+	client.configOperation = operation
+	client.configDataDir = dataDir
+	client.configContent = content
+	client.configDryRun = dryRun
+}
+
+func (client *fakePrivilegedServiceClient) bitcoinCoreConfigStatus(dryRun bool) string {
+	if client.configStatus != "" {
+		return client.configStatus
+	}
+	if dryRun {
+		return "validated"
+	}
+	return "ready"
 }
 
 func (client *fakePrivilegedServiceClient) RestartService(_ context.Context, unit string, noBlock bool, dryRun bool) error {
@@ -574,4 +615,33 @@ func TestEnsureBitcoinCoreStorageWithBrokerModes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBitcoinCoreConfigBrokerHelpersAreEnforceOnly(t *testing.T) {
+	const dataDir = "/mnt/bitcoin-ssd/bitcoin"
+	const content = "server=1\nrpcpassword=secret\n"
+
+	t.Run("shadow validates ensure without handling", func(t *testing.T) {
+		client := &fakePrivilegedServiceClient{mode: "shadow"}
+		ConfigurePrivilegedClient(client)
+		t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+		handled, err := EnsureBitcoinCoreConfigWithBroker(context.Background(), dataDir, content)
+		if err != nil || handled || client.configCalls != 1 || client.configOperation != "ensure" || !client.configDryRun || client.configContent != content {
+			t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+		}
+	})
+
+	t.Run("enforce reads and writes", func(t *testing.T) {
+		client := &fakePrivilegedServiceClient{mode: "enforce", configContent: content}
+		ConfigurePrivilegedClient(client)
+		t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+		read, handled, err := ReadBitcoinCoreConfigWithBroker(context.Background(), dataDir)
+		if err != nil || !handled || read != content || client.configOperation != "read" {
+			t.Fatalf("read/handled/error/client=%q/%v/%v/%#v", read, handled, err, client)
+		}
+		handled, err = WriteBitcoinCoreConfigWithBroker(context.Background(), dataDir, content)
+		if err != nil || !handled || client.configOperation != "write" || client.configDryRun || client.configContent != content {
+			t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+		}
+	})
 }

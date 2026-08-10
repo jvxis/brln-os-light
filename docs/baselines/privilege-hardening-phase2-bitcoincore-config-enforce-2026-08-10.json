@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T22:21:42Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "80491a9cefbf8c31af012d821c0afc9cb5a57515",
+  "tested_source": "source_head_before_slice plus the uncommitted Bitcoin Core config broker slice",
+  "scope": "secret-safe bitcoin.conf ensure/read/write and legacy ownership/seed migration; no Compose lifecycle, Bitcoin process, or blockchain data",
+  "integration_node_mutated": false,
+  "integration_node_read_only_probe": "hostname and uid only before the disposable clone IP was identified by its VirtualBox MAC",
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {"id": "ubuntu", "version_id": "24.04", "architecture": "amd64"},
+  "broker_binary_sha256": "2dec7ae3197eb28d5e1cd74744ba33712b98cf9130f8b0f535090beffed0d917",
+  "contract": {
+    "operations": [
+      "app.bitcoincore.config.ensure",
+      "app.bitcoincore.config.read",
+      "app.bitcoincore.config.write"
+    ],
+    "target_field": "data_dir",
+    "content_field_on_mutations": "content",
+    "caller_supplied_path": false,
+    "maximum_content_bytes": 8192,
+    "storage_enrollment_required": true,
+    "storage_identity_match_required": true,
+    "symlinks_allowed": false,
+    "data_directory_open": "openat2 RESOLVE_NO_SYMLINKS|RESOLVE_NO_MAGICLINKS",
+    "canonical_owner_mode": "0:101:0640",
+    "atomic_replace": true,
+    "directory_fsync": true
+  },
+  "manager_migration": {
+    "root_docker_config_reader_removed": true,
+    "root_docker_config_writer_removed": true,
+    "manager_temporary_secret_file_removed": true,
+    "legacy_seed_preserves_existing_credentials": true,
+    "legacy_seed_removed_only_after_broker_success": true,
+    "legacy_101_101_owner_migrated_to_root_101": true,
+    "disabled_or_shadow_fallback": false
+  },
+  "gate_execution": {
+    "storage_type": "tmpfs",
+    "mount_options": ["nodev", "nosuid", "noexec"],
+    "requests": 12,
+    "operation_families": 4,
+    "dry_run_created_config": false,
+    "ensure_status": "ready",
+    "read_round_trip": true,
+    "write_round_trip": true,
+    "legacy_owner_migration_preserved_updated_content": true,
+    "final_config_owner_mode": "0:101:0640",
+    "first_attempt": {
+      "result": "failed_at_legacy_owner_migration",
+      "cause": "pre-rename revalidation required the new root owner before the atomic replacement",
+      "secret_exposed": false
+    },
+    "corrected_attempt": "passed"
+  },
+  "negative_gate": {
+    "different_target_after_enrollment": "bitcoin_config_failed",
+    "caller_supplied_path_field": "invalid_request",
+    "missing_trailing_newline": "invalid_request",
+    "oversized_content": "invalid_request",
+    "symlinked_config_read": "bitcoin_config_failed",
+    "symlinked_config_write": "bitcoin_config_failed",
+    "symlink_target_unchanged": true,
+    "responses_sanitized": true
+  },
+  "audit": {
+    "broker_requests_checked": 12,
+    "secret_values_logged": 0,
+    "data_dir_values_logged": 0,
+    "content_fields_logged": 0
+  },
+  "local_validation": {
+    "privileged_tests": "passed",
+    "system_broker_tests": "passed",
+    "focused_server_bitcoin_core_tests": "passed",
+    "linux_cross_compile": "passed",
+    "go_vet_relevant_packages": "passed",
+    "windows_full_suite": "only the two pre-existing CRLF-sensitive installer asset tests failed",
+    "linux_target_privileged_suite": "passed",
+    "linux_target_system_suite": "passed",
+    "linux_target_focused_server_suite": "passed",
+    "linux_target_full_server_binary": "source-relative asset tests require a staged source tree and were not evaluated from the standalone test binary"
+  },
+  "remaining_bitcoin_core_scope": [
+    "typed Compose lifecycle and inspection",
+    "mainnet P2P firewall",
+    "dependent app compatibility"
+  ],
+  "final_state": {
+    "tmpfs_unmounted": true,
+    "storage_metadata_removed": true,
+    "test_config_and_marker_removed": true,
+    "remote_gate_binaries_and_scripts_removed": true,
+    "official_image_and_attestation_preserved": true,
+    "bitcoin_process_started": false,
+    "blockchain_data_created": false,
+    "gate_vm": "powered_off_by_acpi",
+    "los_test2_mutated": false
+  }
+}

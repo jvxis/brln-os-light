@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T21:49:58Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "6c21dc47361f36714c8c7aa54a5a0a1597541c13",
+  "tested_source": "source_head_before_slice plus the uncommitted Bitcoin Core storage enrollment slice",
+  "scope": "typed Bitcoin Core storage enrollment and persistent identity; no bitcoin.conf mutation, Compose lifecycle, Bitcoin process, or blockchain data",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {"id": "ubuntu", "version_id": "24.04", "architecture": "amd64"},
+  "broker_binary_sha256": "5ad544ce34ecea87a07c6a7eb4bace3d5adcf7cebc856005c5557c71af3f95a1",
+  "contract": {
+    "operation": "app.bitcoincore.storage.ensure",
+    "request_fields": ["data_dir"],
+    "caller_supplied_storage_id": false,
+    "minimum_free_kib": 10485760,
+    "custom_target_requires_non_root_mount": true,
+    "symlink_components_allowed": false,
+    "metadata_root": "/var/lib/lightningos-privileged/apps/bitcoincore",
+    "identity_bytes": 24
+  },
+  "dry_run": {
+    "status": "validated",
+    "data_directory_created": false,
+    "marker_created": false,
+    "metadata_created": false,
+    "mutation_lock_acquired": false
+  },
+  "real_gate": {
+    "storage_type": "tmpfs",
+    "mount_options": ["nodev", "nosuid", "noexec"],
+    "status": "ready",
+    "identity_hex_length": 48,
+    "metadata_root_owner_mode": "0:0:0700",
+    "metadata_file_owner_mode": "0:0:0600",
+    "data_directory_owner_mode": "101:101:0750",
+    "marker_owner_mode": "0:101:0640",
+    "marker_matches_root_identity": true,
+    "repeated_enrollment_status": "ready",
+    "repeated_enrollment_preserved_identity": true
+  },
+  "negative_gate": {
+    "custom_target_on_root_filesystem": "bitcoin_storage_failed",
+    "symlinked_path_component": "bitcoin_storage_failed",
+    "different_target_after_enrollment": "bitcoin_storage_failed",
+    "caller_supplied_storage_id_field": "invalid_request",
+    "responses_sanitized": true,
+    "rejected_target_directories_created": false
+  },
+  "audit": {
+    "matching_events": 12,
+    "data_dir_or_param_fields_logged": 0
+  },
+  "local_validation": {
+    "focused_tests": "passed",
+    "go_vet_relevant_packages": "passed",
+    "privilege_boundary_and_registry_tests": "passed"
+  },
+  "remaining_bitcoin_core_scope": [
+    "secret-bearing bitcoin.conf read/write",
+    "typed Compose lifecycle and inspection",
+    "mainnet P2P firewall",
+    "dependent app compatibility"
+  ],
+  "final_state": {
+    "tmpfs_unmounted": true,
+    "storage_metadata_removed": true,
+    "test_marker_removed": true,
+    "official_image_and_attestation_preserved": true,
+    "bitcoin_process_started": false,
+    "blockchain_data_created": false,
+    "gate_vm": "powered_off_by_acpi",
+    "los_test2": "untouched"
+  }
+}

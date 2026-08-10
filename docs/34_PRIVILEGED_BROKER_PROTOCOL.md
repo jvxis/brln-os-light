@@ -247,6 +247,24 @@ the attested image ID. A local same-tag image without the attestation is
 untrusted. Bitcoin Core image preparation has no disabled/shadow legacy pull;
 the manager fails closed unless the broker operates in `enforce` mode.
 
+### `app.bitcoincore.storage.ensure`
+
+This mutating operation accepts only `{"data_dir":"<canonical-linux-path>"}`.
+The default `/data/bitcoin` is allowed; a custom path must be outside blocked
+system/data trees, contain only the closed path character set, resolve through
+non-symlink directory components, live on a mounted filesystem distinct from
+`/`, and expose at least 10 GiB free. The caller cannot provide an identity,
+owner, mode, marker, executable, mount command, or cleanup instruction.
+
+For a real request the broker first rejects any target that differs from
+existing root-owned metadata, then creates only the validated directory as
+UID/GID 101 mode `0750`. It generates a 24-byte random identity, stores the
+identity and canonical target as root-owned `0600` files under its Bitcoin app
+tree, and writes the matching marker as `root:101` mode `0640`. Repeated calls
+preserve the identity. `dry_run` validates path, mount, and capacity without
+creating metadata, directories, or markers. Audit records operation outcome
+but never the path or identity.
+
 ### `packages.feature.ensure` and `packages.feature.status`
 
 The first shared package capability accepts only this closed request:

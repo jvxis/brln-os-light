@@ -307,6 +307,19 @@ superseded pin-only gate is recorded in
 the official-provenance gate is recorded in
 `docs/baselines/privilege-hardening-phase2-bitcoincore-official-image-enforce-2026-08-10.json`.
 
+Bitcoin Core storage enrollment now uses the typed
+`app.bitcoincore.storage.ensure` operation. The broker accepts only one
+canonical data path, rejects system paths, symlinks, root-filesystem fallback
+for custom storage, insufficient space, and target changes after enrollment,
+then generates and retains the identity in its root-only tree. The manager no
+longer supplies the identity or invokes Docker root containers to write/remove
+the storage marker. The disposable Ubuntu 24.04 gate passed dry-run, real and
+idempotent enrollment, ownership/mode checks, negative requests, audit privacy,
+and complete cleanup without starting Bitcoin or creating blockchain data.
+Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-storage-enforce-2026-08-10.json`.
+Secret-bearing `bitcoin.conf` handling remains the next Bitcoin slice.
+
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.
 3. Run install/start/stop/restart/uninstall tests for every app on disposable

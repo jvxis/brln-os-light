@@ -166,10 +166,23 @@ preparation can be separated safely from those contracts.
   removed, the verified image was retained, the unofficial image was removed,
   and no App Store root or persistent blockchain data was created.
 
-Storage enrollment/configuration is the next Bitcoin Core slice. Lifecycle
-admission follows only after the broker can independently validate the selected
-mount, persistent storage identity, secret-bearing config, and fixed Compose
-mounts.
+Bitcoin Core storage enrollment is now typed separately as
+`app.bitcoincore.storage.ensure`. The only caller field is a canonical
+`data_dir`; custom targets must resolve to a mounted non-root filesystem with
+at least 10 GiB free, and every existing path component must be a real
+directory rather than a symlink. The broker creates the data directory as
+UID/GID 101, generates the identity itself, persists the target and identity
+under its root-only app tree, and writes only the matching marker into the
+selected storage. A second target, root-filesystem fallback, symlink, partial
+metadata, or caller-supplied identity fails closed before target mutation.
+
+The Ubuntu 24.04 gate passed mutation-free dry-run, real and repeated
+enrollment on an isolated `nodev,nosuid,noexec` tmpfs, identity/mode checks,
+all negative requests, sanitized responses, and parameter-free audit events.
+Cleanup removed the tmpfs, marker, and storage metadata while preserving the
+official image attestation; Bitcoin never started and LOS-TEST2 was untouched.
+Secret-bearing `bitcoin.conf` read/write is the next slice. Lifecycle admission
+follows only after config and fixed Compose mounts are independently validated.
 
 ## Migration order
 

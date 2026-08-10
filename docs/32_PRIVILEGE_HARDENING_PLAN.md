@@ -131,9 +131,14 @@ active. The secret-free result is stored in
 `docs/baselines/privilege-hardening-phase1-shadow-2026-08-10.json`. The phase
 now includes the first fixed-file operation, `files.enable_login`, which has no
 caller-controlled path or content and atomically targets only the installed
-manager config. It remains open for fixed-file shadow validation, soak
-observation, and an explicit review before any `enforce` cutover. The protocol
-and rollback contract are recorded in `docs/34_PRIVILEGED_BROKER_PROTOCOL.md`.
+manager config. Its shadow validation passed on 2026-08-10: the dry-run was
+accepted, caller-controlled path/content fields were rejected, the config hash
+was unchanged, and no mutation lock was created. The secret-free evidence is
+stored in
+`docs/baselines/privilege-hardening-phase1-files-shadow-2026-08-10.json`.
+The phase remains open for soak observation and an explicit review before any
+`enforce` cutover. The protocol and rollback contract are recorded in
+`docs/34_PRIVILEGED_BROKER_PROTOCOL.md`.
 
 1. Implement the broker protocol, authorization, validation, structured logs,
    locking, and timeouts.

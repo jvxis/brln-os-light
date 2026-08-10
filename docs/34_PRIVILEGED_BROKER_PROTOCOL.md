@@ -189,3 +189,11 @@ file. The previous manager/config/sudoers were restored automatically. Commit
 only for the direct-root self-test. The subsequent rollout passed. Full
 secret-free evidence is in
 `docs/baselines/privilege-hardening-phase1-shadow-2026-08-10.json`.
+
+The first fixed-file shadow checkpoint followed on 2026-08-10 using commit
+`ee0cb9e`. A real manager-caller request validated `files.enable_login` in
+dry-run mode. Requests attempting to add either a path or content were denied,
+the manager config hash remained unchanged, and the mutation lock was not
+created. Manager, LND, and Postgres remained active. Full secret-free evidence
+is in
+`docs/baselines/privilege-hardening-phase1-files-shadow-2026-08-10.json`.

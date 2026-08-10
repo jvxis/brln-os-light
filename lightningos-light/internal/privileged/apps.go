@@ -98,7 +98,10 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	case AppLifecycleStart:
 		args = append(args, "up", "-d")
 	case AppLifecycleStop:
-		args = append(args, "stop")
+		// Compose defaults to a ten-second graceful-stop window, which exceeds
+		// the broker client's five-second default. CPU Miner holds no mutable
+		// container state, so this manifest uses a bounded two-second window.
+		args = append(args, "stop", "--timeout", "2")
 	}
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		return errors.New("app lifecycle command failed")

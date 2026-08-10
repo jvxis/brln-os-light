@@ -193,6 +193,11 @@ receives the manager-writable source paths. Output and validation details are
 not returned to the API. `dry_run` validates only, without a Docker command or
 mutation lock.
 
+The CPU Miner stop manifest fixes its graceful timeout at two seconds. Compose's
+ten-second default exceeds the manager client's five-second broker deadline;
+CPU Miner keeps no mutable container state, so the shorter bounded stop is safe
+for this app and leaves time for audit completion.
+
 In `shadow`, CPU Miner start/stop validates this operation and then uses the
 legacy Compose path. In `enforce`, it executes only through the broker and
 fails closed. CPU Miner install, uninstall, status, configuration updates,

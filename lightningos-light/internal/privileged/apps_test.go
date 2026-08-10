@@ -77,7 +77,12 @@ func TestComposeAppLifecycleSupportsFixedStandaloneBinary(t *testing.T) {
 	if err := manager.Lifecycle(context.Background(), "cpuminer", AppLifecycleStop, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.commands) != 3 || runner.commands[2].path != dockerComposePath || runner.commands[2].args[len(runner.commands[2].args)-1] != "stop" {
+	wantTail := []string{"stop", "--timeout", "2"}
+	if len(runner.commands) != 3 {
+		t.Fatalf("unexpected standalone command sequence: %#v", runner.commands)
+	}
+	gotArgs := runner.commands[2].args
+	if runner.commands[2].path != dockerComposePath || len(gotArgs) < len(wantTail) || !reflect.DeepEqual(gotArgs[len(gotArgs)-len(wantTail):], wantTail) {
 		t.Fatalf("unexpected standalone command sequence: %#v", runner.commands)
 	}
 }

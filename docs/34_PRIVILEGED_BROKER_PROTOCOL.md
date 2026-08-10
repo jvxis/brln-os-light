@@ -193,6 +193,13 @@ receives the manager-writable source paths. Output and validation details are
 not returned to the API. `dry_run` validates only, without a Docker command or
 mutation lock.
 
+Before `start`, the broker extracts the image only from the already validated
+environment and requires `/usr/bin/docker image inspect <allowlisted-image>`
+to succeed. A missing image fails closed before Compose, so lifecycle start
+cannot turn into an implicit, potentially long-running image pull. Explicit
+image preparation and first-container creation remain separate pending install
+capabilities.
+
 The CPU Miner stop manifest fixes its graceful timeout at two seconds. Compose's
 ten-second default exceeds the manager client's five-second broker deadline;
 CPU Miner keeps no mutable container state, so the shorter bounded stop is safe
@@ -205,8 +212,42 @@ legacy Compose path. In `enforce`, it executes only through the broker and
 fails closed. CPU Miner config and thread updates now reuse this typed start
 operation after the manager updates its non-root app files. In `enforce`, their
 Compose apply therefore has no direct Docker call or fallback in the manager.
-CPU Miner install, uninstall, image probes, and first-container creation remain
-on the reviewed legacy path until their own typed capabilities are implemented.
+CPU Miner install, explicit image preparation/probes, and first-container
+creation remain on the reviewed legacy path until their own typed capabilities
+are implemented.
+
+### `app.compose.remove`
+
+CPU Miner uninstall admits only `{"app_id":"cpuminer"}`. Unknown apps,
+fields, paths, arguments, and caller-selected Compose options are rejected.
+The broker validates and privately snapshots the exact catalog Compose and
+environment files, then runs one fixed teardown shape:
+
+```text
+/usr/bin/docker compose <fixed snapshot/project options> \
+  down --remove-orphans --timeout 2
+```
+
+The standalone `/usr/bin/docker-compose` fallback uses the same fixed tail.
+Real removal is serialized by the mutation lock; `dry_run` validates without
+a Docker command or lock. In `enforce`, a broker failure is returned before the
+manager deletes its own app directory. Only after successful typed teardown
+does the unprivileged manager remove those files. Disabled and shadow modes
+retain the reviewed compatibility behavior.
+
+The disposable Ubuntu 24.04 gate installed commit `c5ba28d` and found that
+removing the service user's Docker group membership alone was insufficient:
+the systemd unit still injected `SupplementaryGroups=docker`. The accepted run
+therefore reset that unit property temporarily and verified both the service
+user and live manager process lacked the Docker GID. Direct Docker access as
+`lightningos` was denied, while HTTP API start and uninstall returned success.
+The broker recorded a successful `app.compose.remove` completion and no app
+files or Compose containers remained. A separate negative start using an
+allowlisted but absent image failed before Compose and did not pull or start a
+container. The original unit, group, config, binaries, disabled mode, and login
+setting were restored; Docker was stopped and the VM was powered off.
+Secret-free evidence is in
+`docs/baselines/privilege-hardening-phase2-cpuminer-remove-enforce-2026-08-10.json`.
 
 ### `app.compose.inspect`
 

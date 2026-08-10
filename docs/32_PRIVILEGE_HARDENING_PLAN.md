@@ -186,12 +186,21 @@ and Docker was left inactive. CPU Miner thread and pool/address/worker updates
 then passed a separate `enforce` gate without the Docker GID in the manager;
 the broker rejected an invalid retained pool mode. That gate exposed Compose's
 ten-second grace period during config-driven recreation, so the exact catalog
-manifest now fixes `stop_grace_period: 2s`. Install, uninstall, image probes,
-first-container creation, the remaining apps, Ubuntu 26, and final Docker-group
-removal remain open; Phase 2 is not complete. Evidence is stored in
+manifest now fixes `stop_grace_period: 2s`. CPU Miner uninstall has also moved
+to the typed broker and passed an `enforce` gate with both the service user's
+Docker membership and the running manager process's Docker GID removed. The
+manager's direct Docker access was denied, while typed start and uninstall
+succeeded and left no app files or Compose containers. Lifecycle start now
+fails closed before Compose if the selected allowlisted image is not already
+local, preventing an implicit pull from crossing the synchronous broker
+deadline. Install, explicit image preparation/probes, first-container creation,
+the remaining apps, Ubuntu 26, and final Docker-group removal remain open;
+Phase 2 is not complete. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-cpuminer-inspect-enforce-2026-08-10.json`
 and
-`docs/baselines/privilege-hardening-phase2-cpuminer-config-enforce-2026-08-10.json`.
+`docs/baselines/privilege-hardening-phase2-cpuminer-config-enforce-2026-08-10.json`,
+plus
+`docs/baselines/privilege-hardening-phase2-cpuminer-remove-enforce-2026-08-10.json`.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

@@ -205,13 +205,20 @@ func TestBIP110SourceStatusKeepsZeroScoreInJSON(t *testing.T) {
 func TestBuildBIP110ForkScoreUsesRealBranchTips(t *testing.T) {
 	status := buildBIP110ForkScore(
 		961725, nil, "https://mempool.space/api/blocks/tip/height",
-		961633, nil, "https://mempool.guide/api/blocks/tip/height",
+		961633, nil, "https://bip110.mempool.guide/api/blocks/tip/height",
 	)
 	if !status.Available {
 		t.Fatalf("expected fork score available: %+v", status)
 	}
 	if status.SplitHeight != 961631 || status.NonEnforcingBlocks != 94 || status.EnforcingBlocks != 2 {
 		t.Fatalf("unexpected fork score: %+v", status)
+	}
+}
+
+func TestBIP110EnforcingTipUsesDedicatedExplorer(t *testing.T) {
+	const expected = "https://bip110.mempool.guide/api/blocks/tip/height"
+	if bip110EnforcingTipURL != expected {
+		t.Fatalf("enforcing tip URL = %q, want %q", bip110EnforcingTipURL, expected)
 	}
 }
 

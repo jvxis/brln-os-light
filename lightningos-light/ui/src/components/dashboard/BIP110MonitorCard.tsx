@@ -146,7 +146,7 @@ function EnforcingSourcePanel({ score, locale }: EnforcingSourcePanelProps) {
       <div className="flex min-w-0 items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-fog/90">{t('bip110.enforcingPublicSource')}</p>
-          <p className="mt-0.5 truncate text-[10px] text-fog/40">{score?.enforcing_source || 'mempool.guide'}</p>
+          <p className="mt-0.5 truncate text-[10px] text-fog/40">{score?.enforcing_source || 'bip110.mempool.guide'}</p>
         </div>
         <StatusBadge
           label={available ? t('bip110.available') : t('common.unavailable')}

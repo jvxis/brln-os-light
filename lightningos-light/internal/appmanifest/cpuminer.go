@@ -33,6 +33,7 @@ func CPUMinerCompose() string {
   cpuminer:
     image: ${CPUMINER_IMAGE}
     restart: unless-stopped
+    stop_grace_period: 2s
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

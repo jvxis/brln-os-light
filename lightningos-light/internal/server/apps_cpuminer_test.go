@@ -67,6 +67,7 @@ func TestCpuMinerComposeContents(t *testing.T) {
 	contents := cpuMinerComposeContents()
 	checks := []string{
 		"image: ${CPUMINER_IMAGE}",
+		"stop_grace_period: 2s",
 		"127.0.0.1:4048:4048",
 		"stratum+tcp://${STRATUM_HOST}:${STRATUM_PORT}",
 		"${MINING_ADDRESS}.${WORKER_NAME}",

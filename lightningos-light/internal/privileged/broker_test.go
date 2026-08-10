@@ -60,6 +60,21 @@ type recordingConfigFiles struct {
 	err     error
 }
 
+type recordingBitcoinStorage struct {
+	calls   int
+	dataDir string
+	dryRun  bool
+	state   BitcoinCoreStorageState
+	err     error
+}
+
+func (storage *recordingBitcoinStorage) Ensure(_ context.Context, dataDir string, dryRun bool) (BitcoinCoreStorageState, error) {
+	storage.calls++
+	storage.dataDir = dataDir
+	storage.dryRun = dryRun
+	return storage.state, storage.err
+}
+
 type recordingApps struct {
 	calls             int
 	inspectCalls      int
@@ -590,6 +605,40 @@ func TestBrokerAppImageFailureIsGeneric(t *testing.T) {
 	response := broker.Handle(context.Background(), Request{Version: ProtocolVersion, RequestID: "image_failure_1", Operation: OperationAppImagePrepare, Params: params})
 	if response.OK || response.Error == nil || response.Error.Code != "app_image_prepare_failed" || response.Error.Message != "app image preparation failed" {
 		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestBrokerBitcoinStorageEnrollmentIsTypedLockedAndSanitized(t *testing.T) {
+	params, err := MarshalParams(BitcoinCoreStorageParams{DataDir: "/mnt/bitcoin-ssd/bitcoin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		dryRun    bool
+		storage   *recordingBitcoinStorage
+		wantOK    bool
+		wantLocks int
+	}{
+		{name: "real", storage: &recordingBitcoinStorage{state: BitcoinCoreStorageState{Status: "ready"}}, wantOK: true, wantLocks: 1},
+		{name: "dry run", dryRun: true, storage: &recordingBitcoinStorage{state: BitcoinCoreStorageState{Status: "validated"}}, wantOK: true},
+		{name: "failure", storage: &recordingBitcoinStorage{err: errors.New("sensitive mount detail")}, wantLocks: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			locker := &recordingLocker{}
+			broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+			broker.BitcoinStorage = test.storage
+			response := broker.Handle(context.Background(), Request{
+				Version: ProtocolVersion, RequestID: "bitcoin_storage_1", Operation: OperationBitcoinStorageEnsure,
+				DryRun: test.dryRun, Params: params,
+			})
+			if response.OK != test.wantOK || locker.locks != test.wantLocks || test.storage.calls != 1 || test.storage.dataDir != "/mnt/bitcoin-ssd/bitcoin" || test.storage.dryRun != test.dryRun {
+				t.Fatalf("response/locker/storage=%#v/%#v/%#v", response, locker, test.storage)
+			}
+			if !test.wantOK && (response.Error == nil || response.Error.Code != "bitcoin_storage_failed" || response.Error.Message != "bitcoin storage enrollment failed") {
+				t.Fatalf("unsanitized failure response: %#v", response)
+			}
+		})
 	}
 }
 

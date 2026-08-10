@@ -240,3 +240,24 @@ func TestClientInspectAppRejectsInvalidResult(t *testing.T) {
 		}
 	}
 }
+
+func TestClientBitcoinStorageBuildsClosedTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: BitcoinCoreStorageState{Status: "ready"}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	status, err := client.EnsureBitcoinCoreStorage(context.Background(), "/mnt/bitcoin-ssd/bitcoin", false)
+	if err != nil || status != "ready" || transport.request.Operation != OperationBitcoinStorageEnsure || transport.request.DryRun {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+	var params BitcoinCoreStorageParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.DataDir != "/mnt/bitcoin-ssd/bitcoin" {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+
+	transport.result = BitcoinCoreStorageState{Status: "root-shell"}
+	if _, err := client.EnsureBitcoinCoreStorage(context.Background(), "/mnt/bitcoin-ssd/bitcoin", false); err == nil {
+		t.Fatal("expected invalid storage state to fail")
+	}
+}

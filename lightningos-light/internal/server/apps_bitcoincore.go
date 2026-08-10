@@ -30,10 +30,10 @@ type bitcoinCoreApp struct {
 const (
 	bitcoinCoreAppID            = appmanifest.BitcoinCoreID
 	bitcoinCoreImage            = appmanifest.BitcoinCoreImage
-	bitcoinCoreDefaultDataDir   = "/data/bitcoin"
+	bitcoinCoreDefaultDataDir   = appmanifest.BitcoinCoreDefaultDataDir
 	bitcoinCoreDataDirStateFile = "data_dir"
 	bitcoinCoreStorageIDFile    = "storage_id"
-	bitcoinCoreStorageMarker    = ".lightningos-storage-id"
+	bitcoinCoreStorageMarker    = appmanifest.BitcoinCoreStorageMarker
 	bitcoinCoreStorageGuardFile = "storage-guard.sh"
 	bitcoinCoreMinFreeKiB       = 10 * 1024 * 1024
 )
@@ -102,7 +102,7 @@ func bitcoinCoreAppPaths() bitcoinCorePaths {
 		ConfigPath:       filepath.Join(dataDir, "bitcoin.conf"),
 		SeedConfigPath:   filepath.Join(root, "bitcoin.conf"),
 		ComposePath:      filepath.Join(root, "docker-compose.yaml"),
-		StorageIDPath:    filepath.Join(bitcoinCoreAppDataDir(), bitcoinCoreStorageIDFile),
+		StorageIDPath:    appmanifest.BitcoinCoreStorageIDPath,
 		StorageGuardPath: filepath.Join(root, bitcoinCoreStorageGuardFile),
 	}
 }
@@ -139,35 +139,7 @@ func writeBitcoinCoreDataDir(dataDir string) error {
 }
 
 func normalizeBitcoinCoreDataDir(dataDir string) (string, error) {
-	trimmed := strings.TrimSpace(dataDir)
-	if trimmed == "" {
-		return bitcoinCoreDefaultDataDir, nil
-	}
-	if strings.Contains(trimmed, "\\") {
-		return "", errors.New("bitcoin data_dir must be a Linux absolute path")
-	}
-	if !strings.HasPrefix(trimmed, "/") {
-		return "", errors.New("bitcoin data_dir must be an absolute path")
-	}
-	cleaned := path.Clean(trimmed)
-	if cleaned == "." || cleaned == "/" {
-		return "", errors.New("bitcoin data_dir cannot be the filesystem root")
-	}
-	if cleaned == "/data" {
-		return "", errors.New("bitcoin data_dir cannot be /data")
-	}
-	if !linuxPathHasSafeChars(cleaned) {
-		return "", errors.New("bitcoin data_dir may only contain letters, numbers, slash, dot, underscore, and hyphen")
-	}
-	if cleaned == bitcoinCoreDefaultDataDir {
-		return cleaned, nil
-	}
-	for _, blocked := range bitcoinCoreBlockedDataDirPrefixes() {
-		if cleaned == blocked || strings.HasPrefix(cleaned, blocked+"/") {
-			return "", fmt.Errorf("bitcoin data_dir cannot be inside %s", blocked)
-		}
-	}
-	return cleaned, nil
+	return appmanifest.NormalizeBitcoinCoreDataDir(dataDir)
 }
 
 func bitcoinCoreBlockedDataDirPrefixes() []string {
@@ -289,6 +261,12 @@ func validateBitcoinCoreInstallDataDir(ctx context.Context, dataDir string) erro
 	normalized, err := normalizeBitcoinCoreDataDir(dataDir)
 	if err != nil {
 		return err
+	}
+	if handled, err := system.EnsureBitcoinCoreStorageWithBroker(ctx, normalized); handled {
+		if err != nil {
+			return fmt.Errorf("bitcoin storage enrollment failed: %w", err)
+		}
+		return nil
 	}
 	parent := path.Dir(normalized)
 	script := fmt.Sprintf(`set -e
@@ -419,85 +397,16 @@ func bitcoinCoreComposeContents(paths bitcoinCorePaths) string {
 }
 
 func ensureBitcoinCoreStorageGuard(ctx context.Context, paths bitcoinCorePaths) error {
-	if err := os.MkdirAll(bitcoinCoreAppDataDir(), 0750); err != nil {
-		return fmt.Errorf("failed to create Bitcoin Core app data directory: %w", err)
-	}
-	storageID := ""
-	if raw, err := os.ReadFile(paths.StorageIDPath); err == nil {
-		storageID = strings.TrimSpace(string(raw))
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read Bitcoin Core storage identity: %w", err)
-	}
-	if storageID == "" {
-		generated, err := randomToken(24)
-		if err != nil {
-			return fmt.Errorf("failed to generate Bitcoin Core storage identity: %w", err)
-		}
-		storageID = generated
-		if err := writeFile(paths.StorageIDPath, storageID+"\n", 0600); err != nil {
-			return fmt.Errorf("failed to persist Bitcoin Core storage identity: %w", err)
-		}
-	}
-
 	if _, err := ensureFileWithChange(paths.StorageGuardPath, bitcoinCoreStorageGuardContents()); err != nil {
 		return fmt.Errorf("failed to write Bitcoin Core storage guard: %w", err)
 	}
-
-	markerPath := filepath.Join(paths.DataDir, bitcoinCoreStorageMarker)
-	cmd := "cp /lightningos-expected-storage-id /home/bitcoin/.bitcoin/" + bitcoinCoreStorageMarker +
-		" && chmod 640 /home/bitcoin/.bitcoin/" + bitcoinCoreStorageMarker
-	out, err := system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"run",
-		"--rm",
-		"--entrypoint",
-		"sh",
-		"--user",
-		"0:0",
-		"-v",
-		fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
-		"-v",
-		fmt.Sprintf("%s:/lightningos-expected-storage-id:ro", paths.StorageIDPath),
-		bitcoinCoreImage,
-		"-c",
-		cmd,
-	)
-	if err != nil {
-		msg := strings.TrimSpace(out)
-		if msg == "" {
-			return fmt.Errorf("failed to mark Bitcoin Core storage at %s: %w", markerPath, err)
+	if handled, err := system.EnsureBitcoinCoreStorageWithBroker(ctx, paths.DataDir); handled {
+		if err != nil {
+			return fmt.Errorf("bitcoin storage enrollment failed: %w", err)
 		}
-		return fmt.Errorf("failed to mark Bitcoin Core storage at %s: %s", markerPath, msg)
+		return nil
 	}
-	if paths.DataDir != bitcoinCoreDefaultDataDir {
-		if err := validateBitcoinCoreInstallDataDir(ctx, paths.DataDir); err != nil {
-			cleanupOut, cleanupErr := system.RunCommandWithSudo(
-				ctx,
-				"docker",
-				"run",
-				"--rm",
-				"--entrypoint",
-				"rm",
-				"--user",
-				"0:0",
-				"-v",
-				fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
-				bitcoinCoreImage,
-				"-f",
-				"/home/bitcoin/.bitcoin/"+bitcoinCoreStorageMarker,
-			)
-			if cleanupErr != nil {
-				cleanupMsg := strings.TrimSpace(cleanupOut)
-				if cleanupMsg == "" {
-					cleanupMsg = cleanupErr.Error()
-				}
-				return fmt.Errorf("bitcoin storage became unavailable while enabling its startup guard: %w; failed to remove the fallback marker: %s", err, cleanupMsg)
-			}
-			return fmt.Errorf("bitcoin storage became unavailable while enabling its startup guard: %w", err)
-		}
-	}
-	return nil
+	return errors.New("Bitcoin Core storage enrollment requires privileged broker enforce mode")
 }
 
 func bitcoinCoreStorageGuardContents() string {

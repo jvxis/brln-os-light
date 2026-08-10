@@ -29,6 +29,30 @@ func TestBitcoinCoreReleaseArtifactsAreClosedByArchitecture(t *testing.T) {
 	}
 }
 
+func TestNormalizeBitcoinCoreDataDirUsesClosedPathPolicy(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  string
+		ok    bool
+	}{
+		{input: "", want: BitcoinCoreDefaultDataDir, ok: true},
+		{input: "/data/bitcoin", want: BitcoinCoreDefaultDataDir, ok: true},
+		{input: "/mnt/bitcoin-ssd/bitcoin", want: "/mnt/bitcoin-ssd/bitcoin", ok: true},
+		{input: "/mnt/bitcoin/../bitcoin-data", want: "/mnt/bitcoin-data", ok: true},
+		{input: "/"}, {input: "/data"}, {input: "/data/bitcoin/child"},
+		{input: "/etc/bitcoin"}, {input: "/home/admin/bitcoin"},
+		{input: "/mnt/bitcoin data"}, {input: "mnt/bitcoin"}, {input: `C:\bitcoin`},
+	} {
+		got, err := NormalizeBitcoinCoreDataDir(test.input)
+		if test.ok && (err != nil || got != test.want) {
+			t.Fatalf("NormalizeBitcoinCoreDataDir(%q)=%q/%v want %q", test.input, got, err, test.want)
+		}
+		if !test.ok && err == nil {
+			t.Fatalf("NormalizeBitcoinCoreDataDir(%q) unexpectedly returned %q", test.input, got)
+		}
+	}
+}
+
 func TestBitcoinCoreUsesLocalImageAndIndependentTrustedBuilderList(t *testing.T) {
 	if BitcoinCoreImage != "lightningos/bitcoin-core:31.1" || strings.Contains(BitcoinCoreImage, "bitcoin/bitcoin") {
 		t.Fatalf("unexpected Bitcoin Core image: %q", BitcoinCoreImage)

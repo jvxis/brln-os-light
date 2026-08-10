@@ -31,6 +31,34 @@ type PrivilegedClient interface {
 	AppImageStatus(ctx context.Context, appID string, variant string) (status string, err error)
 	ProbeAppImage(ctx context.Context, appID string, variant string, dryRun bool) (runnable bool, err error)
 	EnsureAppFirewall(ctx context.Context, appID string, dryRun bool) (status string, err error)
+	EnsureBitcoinCoreStorage(ctx context.Context, dataDir string, dryRun bool) (status string, err error)
+}
+
+func EnsureBitcoinCoreStorageWithBroker(ctx context.Context, dataDir string) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		status, err := client.EnsureBitcoinCoreStorage(ctx, dataDir, false)
+		if err != nil {
+			return true, err
+		}
+		if status != "ready" {
+			return true, errors.New("bitcoin storage enrollment returned an invalid state")
+		}
+		return true, nil
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = client.EnsureBitcoinCoreStorage(shadowCtx, dataDir, true)
+		return false, nil
+	default:
+		return false, nil
+	}
 }
 
 func EnsurePackageFeatureWithBroker(ctx context.Context, feature string) (bool, error) {

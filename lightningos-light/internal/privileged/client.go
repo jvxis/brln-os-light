@@ -290,6 +290,27 @@ func (client *Client) EnsureAppFirewall(ctx context.Context, appID string, dryRu
 	}
 }
 
+func (client *Client) EnsureBitcoinCoreStorage(ctx context.Context, dataDir string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBitcoinStorageEnsure, BitcoinCoreStorageParams{DataDir: dataDir}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	var result BitcoinCoreStorageState
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return "", errors.New("invalid broker bitcoin storage state response")
+	}
+	if dryRun && result.Status == "validated" {
+		if client != nil && client.logger != nil {
+			client.logger.Printf("privileged broker shadow validation accepted app.bitcoincore.storage.ensure")
+		}
+		return result.Status, nil
+	}
+	if result.Status != "ready" {
+		return "", errors.New("invalid broker bitcoin storage state")
+	}
+	return result.Status, nil
+}
+
 func decodeAppImageState(response Response, dryRun bool) (string, error) {
 	var result AppImageState
 	if err := decodeStrict(response.Result, &result); err != nil {

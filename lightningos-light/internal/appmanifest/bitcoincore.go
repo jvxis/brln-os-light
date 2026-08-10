@@ -3,6 +3,9 @@ package appmanifest
 import (
 	"errors"
 	"fmt"
+	"path"
+	"regexp"
+	"strings"
 )
 
 const (
@@ -17,7 +20,19 @@ const (
 	BitcoinCoreImageNode AppImageVariant = "node"
 
 	BitcoinCoreSignatureThreshold = 3
+
+	BitcoinCoreDefaultDataDir = "/data/bitcoin"
+	BitcoinCoreStorageIDPath  = "/var/lib/lightningos-privileged/apps/bitcoincore/storage-id"
+	BitcoinCoreStorageMarker  = ".lightningos-storage-id"
 )
+
+var bitcoinCoreDataDirPattern = regexp.MustCompile(`^[A-Za-z0-9/._-]+$`)
+
+var bitcoinCoreBlockedDataDirPrefixes = []string{
+	"/bin", "/boot", "/data/bitcoin", "/data/elements", "/data/lnd",
+	"/dev", "/etc", "/home", "/lib", "/lib64", "/proc", "/root",
+	"/run", "/sbin", "/sys", "/tmp", "/usr", "/var",
+}
 
 type BitcoinCoreReleaseArtifact struct {
 	GOARCH        string
@@ -79,6 +94,32 @@ func BitcoinCoreArtifactForGOARCH(goarch string) (BitcoinCoreReleaseArtifact, er
 
 func BitcoinCoreTrustedBuilders() []BitcoinCoreTrustedBuilder {
 	return append([]BitcoinCoreTrustedBuilder(nil), bitcoinCoreTrustedBuilders...)
+}
+
+func NormalizeBitcoinCoreDataDir(dataDir string) (string, error) {
+	trimmed := strings.TrimSpace(dataDir)
+	if trimmed == "" {
+		return BitcoinCoreDefaultDataDir, nil
+	}
+	if strings.Contains(trimmed, `\`) || !strings.HasPrefix(trimmed, "/") {
+		return "", errors.New("bitcoin data directory must be a Linux absolute path")
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "." || cleaned == "/" || cleaned == "/data" {
+		return "", errors.New("bitcoin data directory is not allowed")
+	}
+	if !bitcoinCoreDataDirPattern.MatchString(cleaned) {
+		return "", errors.New("bitcoin data directory contains invalid characters")
+	}
+	if cleaned == BitcoinCoreDefaultDataDir {
+		return cleaned, nil
+	}
+	for _, blocked := range bitcoinCoreBlockedDataDirPrefixes {
+		if cleaned == blocked || strings.HasPrefix(cleaned, blocked+"/") {
+			return "", errors.New("bitcoin data directory is inside a blocked system path")
+		}
+	}
+	return cleaned, nil
 }
 
 func BitcoinCoreDockerfile(baseImage string) string {

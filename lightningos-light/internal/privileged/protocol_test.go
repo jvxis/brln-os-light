@@ -119,3 +119,19 @@ func FuzzDecodeRequest(f *testing.F) {
 		}
 	})
 }
+
+func TestBitcoinCoreStorageRequestUsesCanonicalClosedPath(t *testing.T) {
+	valid := `{"version":1,"request_id":"bitcoin_storage_1","operation":"app.bitcoincore.storage.ensure","params":{"data_dir":"/mnt/bitcoin-ssd/bitcoin"}}`
+	if _, err := DecodeRequest(strings.NewReader(valid)); err != nil {
+		t.Fatalf("valid storage request rejected: %v", err)
+	}
+	for _, payload := range []string{
+		`{"version":1,"request_id":"bitcoin_storage_1","operation":"app.bitcoincore.storage.ensure","params":{"data_dir":"/mnt/bitcoin/../bitcoin-data"}}`,
+		`{"version":1,"request_id":"bitcoin_storage_1","operation":"app.bitcoincore.storage.ensure","params":{"data_dir":"/etc/bitcoin"}}`,
+		`{"version":1,"request_id":"bitcoin_storage_1","operation":"app.bitcoincore.storage.ensure","params":{"data_dir":"/mnt/bitcoin","storage_id":"attacker"}}`,
+	} {
+		if _, err := DecodeRequest(strings.NewReader(payload)); err == nil {
+			t.Fatalf("unsafe storage request accepted: %s", payload)
+		}
+	}
+}

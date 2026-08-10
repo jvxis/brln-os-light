@@ -49,6 +49,10 @@ type PackageManager interface {
 	FeatureStatus(ctx context.Context, feature PackageFeature) (PackageFeatureState, error)
 }
 
+type BitcoinStorageManager interface {
+	Ensure(ctx context.Context, dataDir string, dryRun bool) (BitcoinCoreStorageState, error)
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -62,15 +66,16 @@ type AuditEvent struct {
 }
 
 type Broker struct {
-	Runner   CommandRunner
-	Locker   Locker
-	Audit    AuditSink
-	Files    ConfigFileManager
-	Apps     AppManager
-	Packages PackageManager
-	Caller   string
-	Timeout  time.Duration
-	Now      func() time.Time
+	Runner         CommandRunner
+	Locker         Locker
+	Audit          AuditSink
+	Files          ConfigFileManager
+	Apps           AppManager
+	Packages       PackageManager
+	BitcoinStorage BitcoinStorageManager
+	Caller         string
+	Timeout        time.Duration
+	Now            func() time.Time
 }
 
 func (broker *Broker) Handle(ctx context.Context, request Request) Response {
@@ -322,6 +327,19 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "app_firewall_failed", errors.New("app firewall operation failed")
 		}
 		return state, "", nil
+	case OperationBitcoinStorageEnsure:
+		if broker.BitcoinStorage == nil {
+			return nil, "broker_unavailable", errors.New("bitcoin storage manager is unavailable")
+		}
+		var params BitcoinCoreStorageParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.bitcoincore.storage.ensure params")
+		}
+		state, err := broker.BitcoinStorage.Ensure(ctx, params.DataDir, request.DryRun)
+		if err != nil {
+			return nil, "bitcoin_storage_failed", errors.New("bitcoin storage enrollment failed")
+		}
+		return state, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -358,7 +376,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure:
 		return true
 	default:
 		return false
@@ -367,7 +385,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure:
 		return true
 	default:
 		return false

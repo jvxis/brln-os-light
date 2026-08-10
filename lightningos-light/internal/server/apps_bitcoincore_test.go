@@ -63,6 +63,19 @@ func TestEnsureBitcoinCoreImageFailsClosedOutsideEnforce(t *testing.T) {
 	}
 }
 
+func TestValidateBitcoinCoreStorageEnforceUsesBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := validateBitcoinCoreInstallDataDir(context.Background(), "/mnt/bitcoin-ssd/bitcoin"); err != nil {
+		t.Fatalf("validate storage: %v", err)
+	}
+	if client.storageCalls != 1 || client.storageDataDir != "/mnt/bitcoin-ssd/bitcoin" || client.storageDryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
 func TestNormalizeBitcoinCoreDataDir(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -108,7 +121,7 @@ func TestBitcoinCoreComposeContentsUsesConfiguredDataDir(t *testing.T) {
 	paths := bitcoinCorePaths{
 		DataDir:          "/mnt/bitcoin-ssd/bitcoin",
 		StorageGuardPath: "/var/lib/lightningos/apps/bitcoincore/storage-guard.sh",
-		StorageIDPath:    "/var/lib/lightningos/apps-data/bitcoincore/storage_id",
+		StorageIDPath:    appmanifest.BitcoinCoreStorageIDPath,
 	}
 	raw := bitcoinCoreComposeContents(paths)
 	if !strings.Contains(raw, "- /mnt/bitcoin-ssd/bitcoin:/home/bitcoin/.bitcoin") {
@@ -118,7 +131,7 @@ func TestBitcoinCoreComposeContentsUsesConfiguredDataDir(t *testing.T) {
 		`entrypoint: ["/bin/sh", "/lightningos-storage-guard.sh"]`,
 		`command: ["bitcoind"]`,
 		"- /var/lib/lightningos/apps/bitcoincore/storage-guard.sh:/lightningos-storage-guard.sh:ro",
-		"- /var/lib/lightningos/apps-data/bitcoincore/storage_id:/lightningos-expected-storage-id:ro",
+		"- " + appmanifest.BitcoinCoreStorageIDPath + ":/lightningos-expected-storage-id:ro",
 	} {
 		if !strings.Contains(raw, expected) {
 			t.Fatalf("compose is missing storage guard %q:\n%s", expected, raw)

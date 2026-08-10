@@ -52,9 +52,26 @@ type cpuMinerPrivilegedClient struct {
 	inspectAppID      string
 	inspectStatus     string
 	inspectErr        error
+	storageCalls      int
+	storageDataDir    string
+	storageDryRun     bool
+	storageErr        error
 }
 
 func (client *cpuMinerPrivilegedClient) Mode() string { return client.mode }
+
+func (client *cpuMinerPrivilegedClient) EnsureBitcoinCoreStorage(_ context.Context, dataDir string, dryRun bool) (string, error) {
+	client.storageCalls++
+	client.storageDataDir = dataDir
+	client.storageDryRun = dryRun
+	if client.storageErr != nil {
+		return "", client.storageErr
+	}
+	if dryRun {
+		return "validated", nil
+	}
+	return "ready", nil
+}
 func (client *cpuMinerPrivilegedClient) RestartService(context.Context, string, bool, bool) error {
 	return nil
 }

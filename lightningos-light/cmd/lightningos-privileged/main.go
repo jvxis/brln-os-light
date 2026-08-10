@@ -47,14 +47,15 @@ func main() {
 
 	runner := &privileged.ExecCommandRunner{}
 	broker := &privileged.Broker{
-		Runner:   runner,
-		Locker:   locker,
-		Audit:    audit,
-		Files:    privileged.NewAtomicConfigFiles(privileged.DefaultManagerConfigPath),
-		Apps:     privileged.NewComposeAppManager(runner),
-		Packages: privileged.NewCatalogPackageManager(runner),
-		Caller:   caller,
-		Timeout:  15 * time.Second,
+		Runner:         runner,
+		Locker:         locker,
+		Audit:          audit,
+		Files:          privileged.NewAtomicConfigFiles(privileged.DefaultManagerConfigPath),
+		Apps:           privileged.NewComposeAppManager(runner),
+		Packages:       privileged.NewCatalogPackageManager(runner),
+		BitcoinStorage: privileged.NewBitcoinCoreStorageManager(),
+		Caller:         caller,
+		Timeout:        15 * time.Second,
 	}
 	writeResponse(broker.Handle(context.Background(), request))
 }

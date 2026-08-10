@@ -235,6 +235,9 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 			appmanifest.RoboSatsImageTor:    "lightningos-robosats-image-tor",
 			appmanifest.RoboSatsImageProxy:  "lightningos-robosats-image-proxy",
 		},
+		appmanifest.BitcoinCoreID: {
+			appmanifest.BitcoinCoreImageNode: "lightningos-bitcoincore-image-node",
+		},
 	}
 	appUnits, ok := units[appID]
 	if !ok {

@@ -55,6 +55,7 @@ func TestDecodeRequestStrictValidation(t *testing.T) {
 		{name: "package argument injection", payload: `{"version":1,"request_id":"request_1","operation":"packages.feature.ensure","params":{"feature":"docker_runtime","packages":["docker.io"]}}`, wantErr: true},
 		{name: "valid image prepare", payload: `{"version":1,"request_id":"request_1","operation":"app.image.prepare","params":{"app_id":"cpuminer","variant":"baseline"}}`},
 		{name: "valid robosats image prepare", payload: `{"version":1,"request_id":"request_1","operation":"app.image.prepare","params":{"app_id":"robosats","variant":"client"}}`},
+		{name: "valid bitcoin core image prepare", payload: `{"version":1,"request_id":"request_1","operation":"app.image.prepare","params":{"app_id":"bitcoincore","variant":"node"}}`},
 		{name: "valid image prepare dry run", payload: `{"version":1,"request_id":"request_1","operation":"app.image.prepare","dry_run":true,"params":{"app_id":"cpuminer","variant":"fast_pinned"}}`},
 		{name: "valid image status", payload: `{"version":1,"request_id":"request_1","operation":"app.image.status","params":{"app_id":"cpuminer","variant":"fast_latest"}}`},
 		{name: "valid robosats image status", payload: `{"version":1,"request_id":"request_1","operation":"app.image.status","params":{"app_id":"robosats","variant":"proxy"}}`},

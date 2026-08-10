@@ -44,6 +44,7 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: RoboSatsID, variant: RoboSatsImageClient, image: RoboSatsImage},
 		{appID: RoboSatsID, variant: RoboSatsImageTor, image: RoboSatsTorImage},
 		{appID: RoboSatsID, variant: RoboSatsImageProxy, image: RoboSatsProxyImage},
+		{appID: BitcoinCoreID, variant: BitcoinCoreImageNode, image: BitcoinCoreImage},
 	} {
 		image, err := CatalogImageForVariant(test.appID, test.variant)
 		if err != nil || image != test.image {
@@ -58,6 +59,7 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: CPUMinerID, variant: RoboSatsImageClient},
 		{appID: RoboSatsID, variant: "latest;reboot"},
 		{appID: "mempool", variant: "client"},
+		{appID: BitcoinCoreID, variant: "latest"},
 	} {
 		if _, err := CatalogImageForVariant(test.appID, test.variant); err == nil {
 			t.Fatalf("expected %s/%s to be rejected", test.appID, test.variant)

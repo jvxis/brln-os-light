@@ -1,9 +1,49 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/system"
 )
+
+func TestBitcoinCoreImageIsPinned(t *testing.T) {
+	if bitcoinCoreImage != appmanifest.BitcoinCoreImage {
+		t.Fatalf("server image %q differs from catalog image %q", bitcoinCoreImage, appmanifest.BitcoinCoreImage)
+	}
+	if strings.HasSuffix(bitcoinCoreImage, ":latest") {
+		t.Fatalf("Bitcoin Core image must not use latest: %q", bitcoinCoreImage)
+	}
+}
+
+func TestEnsureBitcoinCoreImageEnforceUsesBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureBitcoinCoreImage(context.Background()); err != nil {
+		t.Fatalf("ensure image: %v", err)
+	}
+	if client.prepareCalls != 1 || client.appID != appmanifest.BitcoinCoreID || client.imageVariant != string(appmanifest.BitcoinCoreImageNode) || client.imageDryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
+func TestEnsureBitcoinCoreImageFailsClosedOnBrokerError(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageErr: errors.New("rejected")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureBitcoinCoreImage(context.Background()); err == nil {
+		t.Fatal("expected broker failure")
+	}
+	if client.prepareCalls != 1 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+}
 
 func TestNormalizeBitcoinCoreDataDir(t *testing.T) {
 	tests := []struct {

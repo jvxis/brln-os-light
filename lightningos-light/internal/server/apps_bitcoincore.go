@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
@@ -27,8 +28,8 @@ type bitcoinCoreApp struct {
 }
 
 const (
-	bitcoinCoreAppID            = "bitcoincore"
-	bitcoinCoreImage            = "bitcoin/bitcoin:latest"
+	bitcoinCoreAppID            = appmanifest.BitcoinCoreID
+	bitcoinCoreImage            = appmanifest.BitcoinCoreImage
 	bitcoinCoreDefaultDataDir   = "/data/bitcoin"
 	bitcoinCoreDataDirStateFile = "data_dir"
 	bitcoinCoreStorageIDFile    = "storage_id"
@@ -231,7 +232,7 @@ func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoin
 		}
 	}
 
-	if err := ensureDocker(ctx); err != nil {
+	if err := ensureDockerForCatalogApp(ctx); err != nil {
 		return err
 	}
 	if err := ensureBitcoinCoreImage(ctx); err != nil {
@@ -590,6 +591,12 @@ func syncBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) error {
 }
 
 func ensureBitcoinCoreImage(ctx context.Context) error {
+	if handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.BitcoinCoreID, string(appmanifest.BitcoinCoreImageNode)); handled {
+		if err != nil {
+			return fmt.Errorf("bitcoin core image unavailable: %w", err)
+		}
+		return nil
+	}
 	if _, err := system.RunCommandWithSudo(ctx, "docker", "image", "inspect", bitcoinCoreImage); err == nil {
 		return nil
 	}

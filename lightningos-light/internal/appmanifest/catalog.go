@@ -44,6 +44,8 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return CPUMinerImageForVariant(variant)
 	case RoboSatsID:
 		return RoboSatsImageForVariant(variant)
+	case BitcoinCoreID:
+		return BitcoinCoreImageForVariant(variant)
 	default:
 		return "", errors.New("app image manifest is not allowed")
 	}

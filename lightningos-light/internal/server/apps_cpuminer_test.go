@@ -43,6 +43,11 @@ type cpuMinerPrivilegedClient struct {
 	probeCalls        int
 	probeResult       bool
 	probeErr          error
+	firewallCalls     int
+	firewallAppID     string
+	firewallDryRun    bool
+	firewallStatus    string
+	firewallErr       error
 	inspectCalls      int
 	inspectAppID      string
 	inspectStatus     string
@@ -130,6 +135,13 @@ func (client *cpuMinerPrivilegedClient) ProbeAppImage(_ context.Context, appID s
 	client.imageVariant = variant
 	client.imageDryRun = dryRun
 	return client.probeResult, client.probeErr
+}
+
+func (client *cpuMinerPrivilegedClient) EnsureAppFirewall(_ context.Context, appID string, dryRun bool) (string, error) {
+	client.firewallCalls++
+	client.firewallAppID = appID
+	client.firewallDryRun = dryRun
+	return client.firewallStatus, client.firewallErr
 }
 
 func TestApplyCpuMinerComposeEnforceUsesBroker(t *testing.T) {

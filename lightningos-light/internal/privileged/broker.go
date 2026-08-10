@@ -41,6 +41,7 @@ type AppManager interface {
 	PrepareImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageState, error)
 	ImageStatus(ctx context.Context, appID string, variant appmanifest.AppImageVariant) (AppImageState, error)
 	ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error)
+	EnsureFirewallAccess(ctx context.Context, appID string, dryRun bool) (AppFirewallState, error)
 }
 
 type PackageManager interface {
@@ -308,6 +309,19 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "app_image_probe_failed", errors.New("app image probe failed")
 		}
 		return probe, "", nil
+	case OperationAppFirewallEnsure:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
+		}
+		var params AppFirewallParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.firewall.ensure params")
+		}
+		state, err := broker.Apps.EnsureFirewallAccess(ctx, params.AppID, request.DryRun)
+		if err != nil {
+			return nil, "app_firewall_failed", errors.New("app firewall operation failed")
+		}
+		return state, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -344,7 +358,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure:
 		return true
 	default:
 		return false
@@ -353,7 +367,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure:
 		return true
 	default:
 		return false

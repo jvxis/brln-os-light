@@ -69,6 +69,7 @@ type recordingApps struct {
 	prepareCalls      int
 	statusCalls       int
 	probeCalls        int
+	firewallCalls     int
 	appID             string
 	action            AppLifecycleAction
 	dryRun            bool
@@ -76,6 +77,7 @@ type recordingApps struct {
 	err               error
 	imageState        AppImageState
 	imageProbe        AppImageProbe
+	firewallState     AppFirewallState
 	dockerState       DockerRuntimeState
 	variant           appmanifest.CPUMinerImageVariant
 }
@@ -112,6 +114,13 @@ func (apps *recordingApps) ProbeImage(_ context.Context, appID string, variant a
 	apps.variant = variant
 	apps.dryRun = dryRun
 	return apps.imageProbe, apps.err
+}
+
+func (apps *recordingApps) EnsureFirewallAccess(_ context.Context, appID string, dryRun bool) (AppFirewallState, error) {
+	apps.firewallCalls++
+	apps.appID = appID
+	apps.dryRun = dryRun
+	return apps.firewallState, apps.err
 }
 
 func (apps *recordingApps) Inspect(_ context.Context, appID string) (AppInspection, error) {
@@ -369,6 +378,57 @@ func TestBrokerAppLifecycleFailureIsGeneric(t *testing.T) {
 		Version: ProtocolVersion, RequestID: "app_failure_1", Operation: OperationAppLifecycle, Params: params,
 	})
 	if response.OK || response.Error == nil || response.Error.Code != "app_lifecycle_failed" || response.Error.Message != "app lifecycle operation failed" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestBrokerAppFirewallUsesTypedManagerAndLock(t *testing.T) {
+	apps := &recordingApps{firewallState: AppFirewallState{Status: "active"}}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppFirewallParams{AppID: appmanifest.RoboSatsID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "app_firewall_1", Operation: OperationAppFirewallEnsure, Params: params,
+	})
+	if !response.OK || apps.firewallCalls != 1 || apps.appID != appmanifest.RoboSatsID || apps.dryRun || locker.locks != 1 || locker.unlocks != 1 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+	var state AppFirewallState
+	if err := json.Unmarshal(response.Result, &state); err != nil || state.Status != "active" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+}
+
+func TestBrokerAppFirewallDryRunDoesNotLockOrExecute(t *testing.T) {
+	apps := &recordingApps{firewallState: AppFirewallState{Status: "validated"}}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppFirewallParams{AppID: appmanifest.RoboSatsID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "app_firewall_dry_1", Operation: OperationAppFirewallEnsure, DryRun: true, Params: params,
+	})
+	if !response.OK || apps.firewallCalls != 1 || !apps.dryRun || locker.locks != 0 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+}
+
+func TestBrokerAppFirewallFailureIsGeneric(t *testing.T) {
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Apps = &recordingApps{err: errors.New("sensitive ufw output")}
+	params, err := MarshalParams(AppFirewallParams{AppID: appmanifest.RoboSatsID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{Version: ProtocolVersion, RequestID: "app_firewall_failure_1", Operation: OperationAppFirewallEnsure, Params: params})
+	if response.OK || response.Error == nil || response.Error.Code != "app_firewall_failed" || response.Error.Message != "app firewall operation failed" {
 		t.Fatalf("unexpected response: %#v", response)
 	}
 }

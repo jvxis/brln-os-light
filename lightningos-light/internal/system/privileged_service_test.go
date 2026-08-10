@@ -56,6 +56,11 @@ type fakePrivilegedServiceClient struct {
 	probeCalls          int
 	probeRunnable       bool
 	probeErr            error
+	firewallCalls       int
+	firewallAppID       string
+	firewallDryRun      bool
+	firewallStatus      string
+	firewallErr         error
 }
 
 func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID string, action string, dryRun bool) error {
@@ -156,6 +161,13 @@ func (client *fakePrivilegedServiceClient) ProbeAppImage(_ context.Context, appI
 	client.imageVariant = variant
 	client.imageDryRun = dryRun
 	return client.probeRunnable, client.probeErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureAppFirewall(_ context.Context, appID string, dryRun bool) (string, error) {
+	client.firewallCalls++
+	client.firewallAppID = appID
+	client.firewallDryRun = dryRun
+	return client.firewallStatus, client.firewallErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -288,6 +300,39 @@ func TestAppLifecycleWithBrokerModes(t *testing.T) {
 				t.Fatalf("unexpected app call: %#v", client)
 			}
 			if test.wantCalls == 1 && (client.appID != "cpuminer" || client.action != "start") {
+				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestEnsureAppFirewallWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		firewallErr error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", firewallErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", firewallErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, firewallStatus: "active", firewallErr: test.firewallErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, status, err := EnsureAppFirewallWithBroker(context.Background(), "robosats")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/status/error = %v/%q/%v", handled, status, err)
+			}
+			if client.firewallCalls != test.wantCalls || client.firewallDryRun != test.wantDryRun {
+				t.Fatalf("unexpected firewall call: %#v", client)
+			}
+			if test.wantCalls == 1 && client.firewallAppID != "robosats" {
 				t.Fatalf("unexpected typed app params: %#v", client)
 			}
 		})

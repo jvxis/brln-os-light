@@ -30,6 +30,7 @@ type PrivilegedClient interface {
 	PrepareAppImage(ctx context.Context, appID string, variant string, dryRun bool) (status string, err error)
 	AppImageStatus(ctx context.Context, appID string, variant string) (status string, err error)
 	ProbeAppImage(ctx context.Context, appID string, variant string, dryRun bool) (runnable bool, err error)
+	EnsureAppFirewall(ctx context.Context, appID string, dryRun bool) (status string, err error)
 }
 
 func EnsurePackageFeatureWithBroker(ctx context.Context, feature string) (bool, error) {
@@ -218,6 +219,27 @@ func ProbeAppImageWithBroker(ctx context.Context, appID string, variant string) 
 		return false, false, nil
 	default:
 		return false, false, nil
+	}
+}
+
+func EnsureAppFirewallWithBroker(ctx context.Context, appID string) (bool, string, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, "", nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		status, err := client.EnsureAppFirewall(ctx, appID, false)
+		return true, status, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = client.EnsureAppFirewall(shadowCtx, appID, true)
+		return false, "", nil
+	default:
+		return false, "", nil
 	}
 }
 

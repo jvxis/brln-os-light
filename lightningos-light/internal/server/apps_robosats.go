@@ -120,7 +120,13 @@ func (s *Server) installRobosats(ctx context.Context) error {
 		return err
 	}
 	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.RoboSatsID, "start"); handled {
-		return err
+		if err != nil {
+			return err
+		}
+		if err := ensureRobosatsUfwAccess(ctx); err != nil && s.logger != nil {
+			s.logger.Printf("robosats: ufw rule failed: %v", err)
+		}
+		return nil
 	}
 	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
 		return err
@@ -150,7 +156,13 @@ func (s *Server) startRobosats(ctx context.Context) error {
 		}
 	}
 	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.RoboSatsID, "start"); handled {
-		return err
+		if err != nil {
+			return err
+		}
+		if err := ensureRobosatsUfwAccess(ctx); err != nil && s.logger != nil {
+			s.logger.Printf("robosats: ufw rule failed: %v", err)
+		}
+		return nil
 	}
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
@@ -324,6 +336,9 @@ func pullDockerImage(ctx context.Context, image string) error {
 }
 
 func ensureRobosatsUfwAccess(ctx context.Context) error {
+	if handled, _, err := system.EnsureAppFirewallWithBroker(ctx, appmanifest.RoboSatsID); handled {
+		return err
+	}
 	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
 	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
 		return nil

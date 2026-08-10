@@ -121,6 +121,62 @@ func TestComposeAppEnsureDockerRuntimeDryRunExecutesNothing(t *testing.T) {
 	}
 }
 
+func TestComposeAppEnsureFirewallAccessUsesFixedUFWCommands(t *testing.T) {
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == ufwPath && reflect.DeepEqual(args, []string{"status"}) {
+			return "Status: active\n", nil, true
+		}
+		return "", nil, false
+	}}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.EnsureFirewallAccess(context.Background(), appmanifest.RoboSatsID, false)
+	if err != nil || state.Status != "active" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	want := []recordedCommand{
+		{path: ufwPath, args: []string{"status"}},
+		{path: ufwPath, args: []string{"allow", "12596/tcp"}},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands=%#v want=%#v", runner.commands, want)
+	}
+}
+
+func TestComposeAppEnsureFirewallAccessInactiveUnavailableAndDryRun(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		output     string
+		runErr     error
+		dryRun     bool
+		wantStatus string
+		wantCalls  int
+	}{
+		{name: "inactive", output: "Status: inactive\n", wantStatus: "inactive", wantCalls: 1},
+		{name: "unavailable", runErr: errors.New("missing"), wantStatus: "unavailable", wantCalls: 1},
+		{name: "dry run", dryRun: true, wantStatus: "validated"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+				if path == ufwPath {
+					return test.output, test.runErr, true
+				}
+				return "", nil, false
+			}}
+			manager := &ComposeAppManager{Runner: runner}
+			state, err := manager.EnsureFirewallAccess(context.Background(), appmanifest.RoboSatsID, test.dryRun)
+			if err != nil || state.Status != test.wantStatus || len(runner.commands) != test.wantCalls {
+				t.Fatalf("state/error/commands=%#v/%v/%#v", state, err, runner.commands)
+			}
+		})
+	}
+
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner}
+	if _, err := manager.EnsureFirewallAccess(context.Background(), "robosats;reboot", false); err == nil || len(runner.commands) != 0 {
+		t.Fatalf("untrusted app was not rejected before execution: %#v", runner.commands)
+	}
+}
+
 func TestComposeAppPrepareImageSchedulesFixedTransientPull(t *testing.T) {
 	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
 		if path == dockerPath && len(args) == 3 && args[0] == "image" && args[1] == "inspect" {

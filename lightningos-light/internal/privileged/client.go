@@ -267,6 +267,29 @@ func (client *Client) ProbeAppImage(ctx context.Context, appID string, variant s
 	return result.Runnable, nil
 }
 
+func (client *Client) EnsureAppFirewall(ctx context.Context, appID string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationAppFirewallEnsure, AppFirewallParams{AppID: appID}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	var result AppFirewallState
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return "", errors.New("invalid broker app firewall state response")
+	}
+	if dryRun && result.Status == "validated" {
+		if client != nil && client.logger != nil {
+			client.logger.Printf("privileged broker shadow validation accepted app.firewall.ensure for %s", appID)
+		}
+		return result.Status, nil
+	}
+	switch result.Status {
+	case "active", "inactive", "unavailable":
+		return result.Status, nil
+	default:
+		return "", errors.New("invalid broker app firewall state")
+	}
+}
+
 func decodeAppImageState(response Response, dryRun bool) (string, error) {
 	var result AppImageState
 	if err := decodeStrict(response.Result, &result); err != nil {

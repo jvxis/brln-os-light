@@ -48,3 +48,12 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return "", errors.New("app image manifest is not allowed")
 	}
 }
+
+func CatalogExternalTCPPort(appID string) (int, error) {
+	switch appID {
+	case RoboSatsID:
+		return RoboSatsPort, nil
+	default:
+		return 0, errors.New("app external access manifest is not allowed")
+	}
+}

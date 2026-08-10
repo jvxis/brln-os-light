@@ -20,20 +20,21 @@ const (
 type Operation string
 
 const (
-	OperationSelfTest         Operation = "self_test"
-	OperationServiceStatus    Operation = "service.status"
-	OperationServiceRestart   Operation = "service.restart"
-	OperationFilesEnableLogin Operation = "files.enable_login"
-	OperationAppLifecycle     Operation = "app.compose.lifecycle"
-	OperationAppInspect       Operation = "app.compose.inspect"
-	OperationAppRemove        Operation = "app.compose.remove"
-	OperationDockerEnsure     Operation = "docker.runtime.ensure"
-	OperationDockerStatus     Operation = "docker.runtime.status"
-	OperationPackageEnsure    Operation = "packages.feature.ensure"
-	OperationPackageStatus    Operation = "packages.feature.status"
-	OperationAppImagePrepare  Operation = "app.image.prepare"
-	OperationAppImageStatus   Operation = "app.image.status"
-	OperationAppImageProbe    Operation = "app.image.probe"
+	OperationSelfTest          Operation = "self_test"
+	OperationServiceStatus     Operation = "service.status"
+	OperationServiceRestart    Operation = "service.restart"
+	OperationFilesEnableLogin  Operation = "files.enable_login"
+	OperationAppLifecycle      Operation = "app.compose.lifecycle"
+	OperationAppInspect        Operation = "app.compose.inspect"
+	OperationAppRemove         Operation = "app.compose.remove"
+	OperationDockerEnsure      Operation = "docker.runtime.ensure"
+	OperationDockerStatus      Operation = "docker.runtime.status"
+	OperationPackageEnsure     Operation = "packages.feature.ensure"
+	OperationPackageStatus     Operation = "packages.feature.status"
+	OperationAppImagePrepare   Operation = "app.image.prepare"
+	OperationAppImageStatus    Operation = "app.image.status"
+	OperationAppImageProbe     Operation = "app.image.probe"
+	OperationAppFirewallEnsure Operation = "app.firewall.ensure"
 )
 
 type Request struct {
@@ -97,6 +98,14 @@ type AppImageState struct {
 
 type AppImageProbe struct {
 	Runnable bool `json:"runnable"`
+}
+
+type AppFirewallParams struct {
+	AppID string `json:"app_id"`
+}
+
+type AppFirewallState struct {
+	Status string `json:"status"`
 }
 
 type DockerRuntimeState struct {
@@ -312,6 +321,14 @@ func ValidateRequest(request Request) error {
 		}
 		if err := validateCatalogImageParams(params); err != nil {
 			return err
+		}
+	case OperationAppFirewallEnsure:
+		var params AppFirewallParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.firewall.ensure params: %w", err)
+		}
+		if _, err := appmanifest.CatalogExternalTCPPort(params.AppID); err != nil {
+			return errors.New("app external access manifest is not allowed")
 		}
 	default:
 		return errors.New("unknown operation")

@@ -22,7 +22,7 @@ func TestRoboSatsStartAndStopEnforceUseBroker(t *testing.T) {
 	if err := server.startRobosats(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if client.appCalls != 1 || client.appID != appmanifest.RoboSatsID || client.action != "start" || client.dryRun {
+	if client.appCalls != 1 || client.appID != appmanifest.RoboSatsID || client.action != "start" || client.dryRun || client.firewallCalls != 1 || client.firewallAppID != appmanifest.RoboSatsID || client.firewallDryRun {
 		t.Fatalf("unexpected start broker call: %#v", client)
 	}
 	if err := server.stopRobosats(context.Background()); err != nil {
@@ -30,6 +30,32 @@ func TestRoboSatsStartAndStopEnforceUseBroker(t *testing.T) {
 	}
 	if client.appCalls != 2 || client.appID != appmanifest.RoboSatsID || client.action != "stop" || client.dryRun {
 		t.Fatalf("unexpected stop broker call: %#v", client)
+	}
+}
+
+func TestEnsureRoboSatsUFWAccessEnforceUsesClosedBrokerApp(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", firewallStatus: "active"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureRobosatsUfwAccess(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.firewallCalls != 1 || client.firewallAppID != appmanifest.RoboSatsID || client.firewallDryRun {
+		t.Fatalf("unexpected firewall broker call: %#v", client)
+	}
+}
+
+func TestEnsureRoboSatsUFWAccessEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", firewallErr: errors.New("ufw failed")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureRobosatsUfwAccess(context.Background()); err == nil {
+		t.Fatal("expected firewall broker failure")
+	}
+	if client.firewallCalls != 1 {
+		t.Fatalf("unexpected firewall broker calls: %#v", client)
 	}
 }
 

@@ -184,6 +184,30 @@ func TestClientAppImageRejectsInvalidState(t *testing.T) {
 	}
 }
 
+func TestClientAppFirewallBuildsClosedTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: AppFirewallState{Status: "active"}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	status, err := client.EnsureAppFirewall(context.Background(), "robosats", false)
+	if err != nil || status != "active" || transport.request.Operation != OperationAppFirewallEnsure || transport.request.DryRun {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+	var params AppFirewallParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.AppID != "robosats" {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+}
+
+func TestClientAppFirewallRejectsInvalidState(t *testing.T) {
+	transport := &fakeTransport{result: AppFirewallState{Status: "root-shell"}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	if _, err := client.EnsureAppFirewall(context.Background(), "robosats", false); err == nil {
+		t.Fatal("expected invalid firewall state to fail")
+	}
+}
+
 func TestClientInspectAppBuildsTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: AppInspection{Status: "running", CPUPercentRaw: 123.4}}
 	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)

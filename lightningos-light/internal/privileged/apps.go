@@ -23,6 +23,7 @@ const (
 	defaultPrivilegedAppsRoot = "/var/lib/lightningos-privileged/apps"
 	dockerPath                = "/usr/bin/docker"
 	dockerComposePath         = "/usr/bin/docker-compose"
+	ufwPath                   = "/usr/sbin/ufw"
 )
 
 type ComposeAppManager struct {
@@ -49,6 +50,31 @@ var dockerCPUPercentPattern = regexp.MustCompile(`^([0-9]+(?:[.,][0-9]+)?)[[:spa
 
 func NewComposeAppManager(runner CommandRunner) *ComposeAppManager {
 	return &ComposeAppManager{Runner: runner, AppsRoot: defaultAppsRoot, PrivilegedAppsRoot: defaultPrivilegedAppsRoot}
+}
+
+func (manager *ComposeAppManager) EnsureFirewallAccess(ctx context.Context, appID string, dryRun bool) (AppFirewallState, error) {
+	var state AppFirewallState
+	if manager == nil || manager.Runner == nil {
+		return state, errors.New("compose app manager is unavailable")
+	}
+	port, err := appmanifest.CatalogExternalTCPPort(appID)
+	if err != nil {
+		return state, err
+	}
+	if dryRun {
+		return AppFirewallState{Status: "validated"}, nil
+	}
+	statusOut, err := manager.Runner.Run(ctx, ufwPath, "status")
+	if err != nil {
+		return AppFirewallState{Status: "unavailable"}, nil
+	}
+	if !strings.Contains(strings.ToLower(statusOut), "status: active") {
+		return AppFirewallState{Status: "inactive"}, nil
+	}
+	if _, err := manager.Runner.Run(ctx, ufwPath, "allow", strconv.Itoa(port)+"/tcp"); err != nil {
+		return state, err
+	}
+	return AppFirewallState{Status: "active"}, nil
 }
 
 func (manager *ComposeAppManager) EnsureDockerRuntime(ctx context.Context, dryRun bool) (DockerRuntimeState, error) {

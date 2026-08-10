@@ -69,3 +69,15 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		t.Fatal("caller mutated the RoboSats image variant list")
 	}
 }
+
+func TestCatalogExternalTCPPortIsClosedByApp(t *testing.T) {
+	port, err := CatalogExternalTCPPort(RoboSatsID)
+	if err != nil || port != RoboSatsPort {
+		t.Fatalf("port/error = %d/%v", port, err)
+	}
+	for _, appID := range []string{"", CPUMinerID, "robosats;reboot"} {
+		if _, err := CatalogExternalTCPPort(appID); err == nil {
+			t.Fatalf("expected %q to be rejected", appID)
+		}
+	}
+}

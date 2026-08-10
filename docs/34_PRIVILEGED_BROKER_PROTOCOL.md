@@ -141,3 +141,8 @@ Node rollout must install and self-test the helper in `disabled`, then observe
 `shadow` before selecting `enforce`. Rollback is a configuration-only change
 back to `disabled`; installing the foundation does not remove any legacy
 sudoers rule or Docker group membership.
+
+When the manager starts in `shadow` or `enforce`, it performs `self_test`
+through the real sudo transport and records the result in the manager log. A
+failure is visible but does not prevent read-only manager/API availability;
+migrated mutations still fail closed in `enforce`.

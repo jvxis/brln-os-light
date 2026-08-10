@@ -155,6 +155,30 @@ func (client *Client) AppLifecycle(ctx context.Context, appID string, action str
 	return err
 }
 
+func (client *Client) InspectApp(ctx context.Context, appID string) (string, float64, error) {
+	response, err := client.call(ctx, OperationAppInspect, AppInspectParams{AppID: appID}, false)
+	if err != nil {
+		if client != nil && client.mode == ModeShadow && client.logger != nil {
+			client.logger.Printf("privileged broker shadow inspection rejected app.compose.inspect: %v", err)
+		}
+		return "", 0, err
+	}
+	var result AppInspection
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return "", 0, errors.New("invalid broker app inspection response")
+	}
+	if result.Status != "running" && result.Status != "stopped" {
+		return "", 0, errors.New("invalid broker app inspection status")
+	}
+	if result.CPUPercentRaw < 0 {
+		return "", 0, errors.New("invalid broker app CPU percentage")
+	}
+	if client.mode == ModeShadow && client.logger != nil {
+		client.logger.Printf("privileged broker shadow inspection accepted app.compose.inspect for %s", appID)
+	}
+	return result.Status, result.CPUPercentRaw, nil
+}
+
 func (client *Client) call(ctx context.Context, operation Operation, params any, dryRun bool) (Response, error) {
 	var response Response
 	if client == nil || client.transport == nil {

@@ -7,20 +7,25 @@ import (
 )
 
 type fakePrivilegedServiceClient struct {
-	mode       string
-	calls      int
-	unit       string
-	noBlock    bool
-	dryRun     bool
-	err        error
-	fileCalls  int
-	fileDryRun bool
-	fileErr    error
-	appCalls   int
-	appID      string
-	action     string
-	appDryRun  bool
-	appErr     error
+	mode          string
+	calls         int
+	unit          string
+	noBlock       bool
+	dryRun        bool
+	err           error
+	fileCalls     int
+	fileDryRun    bool
+	fileErr       error
+	appCalls      int
+	appID         string
+	action        string
+	appDryRun     bool
+	appErr        error
+	inspectCalls  int
+	inspectAppID  string
+	inspectStatus string
+	inspectCPU    float64
+	inspectErr    error
 }
 
 func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID string, action string, dryRun bool) error {
@@ -29,6 +34,12 @@ func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID
 	client.action = action
 	client.appDryRun = dryRun
 	return client.appErr
+}
+
+func (client *fakePrivilegedServiceClient) InspectApp(_ context.Context, appID string) (string, float64, error) {
+	client.inspectCalls++
+	client.inspectAppID = appID
+	return client.inspectStatus, client.inspectCPU, client.inspectErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -162,6 +173,39 @@ func TestAppLifecycleWithBrokerModes(t *testing.T) {
 			}
 			if test.wantCalls == 1 && (client.appID != "cpuminer" || client.action != "start") {
 				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestInspectAppWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		inspectErr  error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", inspectErr: errors.New("rejected"), wantCalls: 1},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", inspectErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, inspectStatus: "running", inspectCPU: 99.5, inspectErr: test.inspectErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, status, cpu, err := InspectAppWithBroker(context.Background(), "cpuminer")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.inspectCalls != test.wantCalls {
+				t.Fatalf("unexpected inspect calls: %#v", client)
+			}
+			if test.wantHandled && !test.wantError && (status != "running" || cpu != 99.5) {
+				t.Fatalf("unexpected inspection = %q/%v", status, cpu)
 			}
 		})
 	}

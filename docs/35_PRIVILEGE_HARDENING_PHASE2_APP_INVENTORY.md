@@ -39,22 +39,32 @@ The first migration slice is deliberately limited to `cpuminer` `start` and
 - `shadow` performs validation only and preserves the legacy lifecycle path.
   `enforce` executes the broker action and fails closed.
 
-This slice does not yet migrate CPU Miner install, uninstall, status, config
-apply, thread updates, image probes, stats, or counter reads. It therefore does
-not authorize removal of Docker access from the manager. Those surfaces remain
-explicit Phase 2 work.
+The second CPU Miner slice adds the read-only `app.compose.inspect` operation.
+In `enforce`, both App Store status and the dedicated CPU Miner status endpoint
+receive only `running`/`stopped` and raw CPU percentage from the broker. The
+broker uses validated snapshots, fixed status/container queries, and a strictly
+validated container ID for the fixed stats command. Hashrate/share counters
+already come from the miner's localhost TCP API and require no privilege.
+
+CPU Miner install, uninstall, config apply, thread updates, and image probes
+remain on the reviewed legacy path. The legacy status/stats implementation is
+also retained for `disabled` and `shadow` compatibility. This therefore does
+not yet authorize removal of Docker access from the manager; those surfaces
+remain explicit Phase 2 work.
 
 ## Migration order
 
 1. Prove CPU Miner start/stop and negative validation on a disposable node.
-2. Add fixed status/inspection capabilities and migrate CPU Miner completely.
-3. Generalize the catalog schema for simple whole-project Compose apps.
-4. Add service-specific and dependency capabilities for complex Compose apps.
-5. Separate Docker package installation, image management, networking,
+2. Prove the fixed CPU Miner status/inspection capability on a disposable node.
+3. Add typed install, uninstall, config apply, thread update, and image probe
+   capabilities to complete CPU Miner.
+4. Generalize the catalog schema for simple whole-project Compose apps.
+5. Add service-specific and dependency capabilities for complex Compose apps.
+6. Separate Docker package installation, image management, networking,
    firewall, storage, and LND compatibility operations.
-6. Run the complete per-app lifecycle and reboot-state matrix on Ubuntu 24 and
+7. Run the complete per-app lifecycle and reboot-state matrix on Ubuntu 24 and
    Ubuntu 26.
-7. Remove direct Docker calls and manager Docker-group membership only after
+8. Remove direct Docker calls and manager Docker-group membership only after
    every supported app passes.
 
 ## Acceptance gates for this slice

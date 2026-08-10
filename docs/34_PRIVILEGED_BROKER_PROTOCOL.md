@@ -200,9 +200,36 @@ for this app and leaves time for audit completion.
 
 In `shadow`, CPU Miner start/stop validates this operation and then uses the
 legacy Compose path. In `enforce`, it executes only through the broker and
-fails closed. CPU Miner install, uninstall, status, configuration updates,
-image probes, and metrics remain on the reviewed legacy path until their own
-typed capabilities are implemented.
+fails closed. CPU Miner install, uninstall, configuration updates, and image
+probes remain on the reviewed legacy path until their own typed capabilities
+are implemented.
+
+### `app.compose.inspect`
+
+The second Phase 2 capability admits only `{"app_id":"cpuminer"}` and is
+non-mutating; `dry_run`, unknown fields, paths, services, argument arrays, and
+other app IDs are rejected. The broker validates and privately snapshots the
+same exact catalog Compose and environment files used by lifecycle operations.
+It then runs fixed Compose status and container-ID queries. A running container
+ID must be a single 12-to-64-character lowercase hexadecimal value before it
+can reach the fixed Docker stats command:
+
+```text
+/usr/bin/docker stats --no-stream --format {{.CPUPerc}} <validated-id>
+```
+
+The response is limited to `running` or `stopped` plus the raw Docker CPU
+percentage. Docker output, container metadata, paths, and IDs never cross the
+broker response. A stats failure degrades the optional CPU value to zero while
+preserving the independently established running state; a status or container
+lookup failure fails closed.
+
+In `shadow`, the read-only inspection is audited and the manager still uses
+the legacy Docker status/metrics path for compatibility comparison. In
+`enforce`, CPU Miner App Store status and its dedicated status endpoint use the
+typed inspection with no direct Docker command from the manager. Hashrate and
+share counters continue to use the miner's unprivileged localhost TCP API, and
+pool statistics continue to use their existing HTTP endpoints.
 
 The first disposable Ubuntu 24.04 gate exposed the timeout mismatch described
 above: the manager returned HTTP 500 after five seconds while the original

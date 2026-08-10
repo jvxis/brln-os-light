@@ -91,7 +91,10 @@ func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
 		status.Threads = threads
 	}
 
-	composeStatus, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, cpuMinerAppID)
+	handled, composeStatus, cpuPercentRaw, err := system.InspectAppWithBroker(ctx, cpuMinerAppID)
+	if !handled {
+		composeStatus, err = getComposeStatus(ctx, paths.Root, paths.ComposePath, cpuMinerAppID)
+	}
 	if err != nil || composeStatus != "running" {
 		return status
 	}
@@ -103,7 +106,11 @@ func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
 		status.SharesRejected = rejected
 	}
 
-	status.CPUPercent = cpuMinerCPUPercent(ctx, paths)
+	if handled {
+		status.CPUPercent = normalizeHostCPUPercent(cpuPercentRaw, runtime.NumCPU())
+	} else {
+		status.CPUPercent = cpuMinerCPUPercent(ctx, paths)
+	}
 
 	if pool.StatsBase != "" {
 		if status.Address != "" {

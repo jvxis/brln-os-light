@@ -2,6 +2,7 @@ package privileged
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -58,11 +59,19 @@ type recordingConfigFiles struct {
 }
 
 type recordingApps struct {
-	calls  int
-	appID  string
-	action AppLifecycleAction
-	dryRun bool
-	err    error
+	calls        int
+	inspectCalls int
+	appID        string
+	action       AppLifecycleAction
+	dryRun       bool
+	inspection   AppInspection
+	err          error
+}
+
+func (apps *recordingApps) Inspect(_ context.Context, appID string) (AppInspection, error) {
+	apps.inspectCalls++
+	apps.appID = appID
+	return apps.inspection, apps.err
 }
 
 func (apps *recordingApps) Lifecycle(_ context.Context, appID string, action AppLifecycleAction, dryRun bool) error {
@@ -296,6 +305,48 @@ func TestBrokerAppLifecycleFailureIsGeneric(t *testing.T) {
 		Version: ProtocolVersion, RequestID: "app_failure_1", Operation: OperationAppLifecycle, Params: params,
 	})
 	if response.OK || response.Error == nil || response.Error.Code != "app_lifecycle_failed" || response.Error.Message != "app lifecycle operation failed" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestBrokerAppInspectUsesTypedManagerWithoutLock(t *testing.T) {
+	apps := &recordingApps{inspection: AppInspection{Status: "running", CPUPercentRaw: 42.5}}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppInspectParams{AppID: "cpuminer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "app_inspect_1", Operation: OperationAppInspect, Params: params,
+	})
+	if !response.OK {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+	if apps.inspectCalls != 1 || apps.appID != "cpuminer" || locker.locks != 0 {
+		t.Fatalf("apps=%#v locker=%#v", apps, locker)
+	}
+	var result AppInspection
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result, apps.inspection) {
+		t.Fatalf("result=%#v want=%#v", result, apps.inspection)
+	}
+}
+
+func TestBrokerAppInspectFailureIsGeneric(t *testing.T) {
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Apps = &recordingApps{err: errors.New("sensitive docker output")}
+	params, err := MarshalParams(AppInspectParams{AppID: "cpuminer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "app_inspect_failure_1", Operation: OperationAppInspect, Params: params,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != "app_inspection_failed" || response.Error.Message != "app inspection failed" {
 		t.Fatalf("unexpected response: %#v", response)
 	}
 }

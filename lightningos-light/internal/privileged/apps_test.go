@@ -17,6 +17,10 @@ type composeRecordingRunner struct {
 	composeSnapshot string
 	envSnapshot     string
 	standalone      bool
+	runningServices string
+	containerID     string
+	cpuPercent      string
+	statsErr        error
 }
 
 func (runner *composeRecordingRunner) Run(_ context.Context, path string, args ...string) (string, error) {
@@ -40,7 +44,20 @@ func (runner *composeRecordingRunner) Run(_ context.Context, path string, args .
 			runner.envSnapshot = string(raw)
 		}
 	}
+	if hasArgsSuffix(args, "ps", "--services", "--filter", "status=running") {
+		return runner.runningServices, nil
+	}
+	if hasArgsSuffix(args, "ps", "-q", appmanifest.CPUMinerID) {
+		return runner.containerID, nil
+	}
+	if path == dockerPath && len(args) == 5 && reflect.DeepEqual(args[:4], []string{"stats", "--no-stream", "--format", "{{.CPUPerc}}"}) {
+		return runner.cpuPercent, runner.statsErr
+	}
 	return "", nil
+}
+
+func hasArgsSuffix(args []string, suffix ...string) bool {
+	return len(args) >= len(suffix) && reflect.DeepEqual(args[len(args)-len(suffix):], suffix)
 }
 
 func TestComposeAppLifecycleUsesValidatedSnapshotAndFixedCommand(t *testing.T) {
@@ -152,6 +169,132 @@ func TestComposeAppLifecycleRejectsUntrustedInputs(t *testing.T) {
 				t.Fatalf("rejected request executed commands: %#v", runner.commands)
 			}
 		})
+	}
+}
+
+func TestComposeAppInspectStoppedUsesValidatedSnapshot(t *testing.T) {
+	appsRoot, validEnv := writeTestCPUMinerApp(t)
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, TempRoot: t.TempDir()}
+	inspection, err := manager.Inspect(context.Background(), "cpuminer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Status != "stopped" || inspection.CPUPercentRaw != 0 || len(runner.commands) != 2 {
+		t.Fatalf("inspection=%#v commands=%#v", inspection, runner.commands)
+	}
+	if !hasArgsSuffix(runner.commands[1].args, "ps", "--services", "--filter", "status=running") {
+		t.Fatalf("unexpected status command: %#v", runner.commands[1])
+	}
+	if runner.composeSnapshot != appmanifest.CPUMinerCompose() || runner.envSnapshot != validEnv {
+		t.Fatal("broker did not inspect the validated manifest snapshot")
+	}
+	for _, arg := range runner.commands[1].args {
+		if strings.Contains(arg, appsRoot) {
+			t.Fatalf("manager-writable path reached Docker command: %q", arg)
+		}
+	}
+}
+
+func TestComposeAppInspectRunningReturnsDockerCPU(t *testing.T) {
+	appsRoot, _ := writeTestCPUMinerApp(t)
+	containerID := strings.Repeat("a", 64)
+	runner := &composeRecordingRunner{
+		runningServices: "cpuminer\n",
+		containerID:     containerID + "\n",
+		cpuPercent:      "125,75%\n",
+	}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, TempRoot: t.TempDir()}
+	inspection, err := manager.Inspect(context.Background(), "cpuminer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Status != "running" || inspection.CPUPercentRaw != 125.75 || len(runner.commands) != 4 {
+		t.Fatalf("inspection=%#v commands=%#v", inspection, runner.commands)
+	}
+	wantStats := recordedCommand{path: dockerPath, args: []string{"stats", "--no-stream", "--format", "{{.CPUPerc}}", containerID}}
+	if !reflect.DeepEqual(runner.commands[3], wantStats) {
+		t.Fatalf("stats command=%#v want=%#v", runner.commands[3], wantStats)
+	}
+}
+
+func TestComposeAppInspectDegradesStatsFailureToZero(t *testing.T) {
+	appsRoot, _ := writeTestCPUMinerApp(t)
+	runner := &composeRecordingRunner{
+		runningServices: "cpuminer\n",
+		containerID:     strings.Repeat("b", 64),
+		statsErr:        errors.New("stats unavailable"),
+	}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, TempRoot: t.TempDir()}
+	inspection, err := manager.Inspect(context.Background(), "cpuminer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Status != "running" || inspection.CPUPercentRaw != 0 {
+		t.Fatalf("unexpected inspection: %#v", inspection)
+	}
+}
+
+func TestComposeAppInspectRejectsInvalidContainerIDBeforeStats(t *testing.T) {
+	appsRoot, _ := writeTestCPUMinerApp(t)
+	runner := &composeRecordingRunner{runningServices: "cpuminer\n", containerID: "abc;reboot\n"}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, TempRoot: t.TempDir()}
+	if _, err := manager.Inspect(context.Background(), "cpuminer"); err == nil {
+		t.Fatal("expected invalid container ID to fail")
+	}
+	if len(runner.commands) != 3 {
+		t.Fatalf("invalid ID reached stats command: %#v", runner.commands)
+	}
+}
+
+func TestComposeAppInspectRejectsTamperedManifestBeforeCommand(t *testing.T) {
+	appsRoot, _ := writeTestCPUMinerApp(t)
+	path := filepath.Join(appsRoot, appmanifest.CPUMinerID, appmanifest.CPUMinerComposeFile)
+	if err := os.WriteFile(path, []byte(appmanifest.CPUMinerCompose()+"    privileged: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, TempRoot: t.TempDir()}
+	if _, err := manager.Inspect(context.Background(), "cpuminer"); err == nil {
+		t.Fatal("expected tampered manifest to fail")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("rejected manifest executed commands: %#v", runner.commands)
+	}
+}
+
+func TestParseDockerContainerID(t *testing.T) {
+	valid := strings.Repeat("c", 64)
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: valid + "\n", want: valid},
+		{input: strings.Repeat("d", 12), want: strings.Repeat("d", 12)},
+		{input: "ABCDEF123456"},
+		{input: "abc;reboot"},
+		{input: valid + "\n" + valid},
+	} {
+		if got := parseDockerContainerID(test.input); got != test.want {
+			t.Fatalf("parseDockerContainerID(%q)=%q want=%q", test.input, got, test.want)
+		}
+	}
+}
+
+func TestParseDockerCPUPercent(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  float64
+	}{
+		{input: "0.00%", want: 0},
+		{input: "125.75%\n", want: 125.75},
+		{input: "7,5%", want: 7.5},
+		{input: "NaN%", want: 0},
+		{input: "1%; reboot", want: 0},
+	} {
+		if got := parseDockerCPUPercent(test.input); got != test.want {
+			t.Fatalf("parseDockerCPUPercent(%q)=%v want=%v", test.input, got, test.want)
+		}
 	}
 }
 

@@ -91,3 +91,36 @@ func TestClientAppLifecycleBuildsTypedRequest(t *testing.T) {
 		t.Fatalf("unexpected params: %#v", params)
 	}
 }
+
+func TestClientInspectAppBuildsTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: AppInspection{Status: "running", CPUPercentRaw: 123.4}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	status, cpu, err := client.InspectApp(context.Background(), "cpuminer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" || cpu != 123.4 || transport.request.Operation != OperationAppInspect || transport.request.DryRun {
+		t.Fatalf("status=%q cpu=%v request=%#v", status, cpu, transport.request)
+	}
+	var params AppInspectParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.AppID != "cpuminer" {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+}
+
+func TestClientInspectAppRejectsInvalidResult(t *testing.T) {
+	tests := []AppInspection{
+		{Status: "unknown"},
+		{Status: "running", CPUPercentRaw: -1},
+	}
+	for _, result := range tests {
+		transport := &fakeTransport{result: result}
+		client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+		if _, _, err := client.InspectApp(context.Background(), "cpuminer"); err == nil {
+			t.Fatalf("expected invalid result to fail: %#v", result)
+		}
+	}
+}

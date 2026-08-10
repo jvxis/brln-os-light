@@ -121,7 +121,13 @@ func (a cpuMinerApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, cpuMinerAppID)
+	status := "unknown"
+	handled, brokerStatus, _, err := system.InspectAppWithBroker(ctx, cpuMinerAppID)
+	if handled {
+		status = brokerStatus
+	} else {
+		status, err = getComposeStatus(ctx, paths.Root, paths.ComposePath, cpuMinerAppID)
+	}
 	if err != nil {
 		info.Status = "unknown"
 		return info, err

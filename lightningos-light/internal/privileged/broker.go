@@ -32,6 +32,7 @@ type ConfigFileManager interface {
 
 type AppManager interface {
 	Lifecycle(ctx context.Context, appID string, action AppLifecycleAction, dryRun bool) error
+	Inspect(ctx context.Context, appID string) (AppInspection, error)
 }
 
 type AuditEvent struct {
@@ -185,6 +186,19 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "app_lifecycle_failed", errors.New("app lifecycle operation failed")
 		}
 		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationAppInspect:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
+		}
+		var params AppInspectParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.compose.inspect params")
+		}
+		inspection, err := broker.Apps.Inspect(ctx, params.AppID)
+		if err != nil {
+			return nil, "app_inspection_failed", errors.New("app inspection failed")
+		}
+		return inspection, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -221,7 +235,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect:
 		return true
 	default:
 		return false

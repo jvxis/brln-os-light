@@ -25,6 +25,7 @@ const (
 	OperationServiceRestart   Operation = "service.restart"
 	OperationFilesEnableLogin Operation = "files.enable_login"
 	OperationAppLifecycle     Operation = "app.compose.lifecycle"
+	OperationAppInspect       Operation = "app.compose.inspect"
 )
 
 type Request struct {
@@ -67,6 +68,15 @@ const (
 type AppLifecycleParams struct {
 	AppID  string             `json:"app_id"`
 	Action AppLifecycleAction `json:"action"`
+}
+
+type AppInspectParams struct {
+	AppID string `json:"app_id"`
+}
+
+type AppInspection struct {
+	Status        string  `json:"status"`
+	CPUPercentRaw float64 `json:"cpu_percent_raw"`
 }
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -183,6 +193,17 @@ func ValidateRequest(request Request) error {
 		}
 		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
 			return errors.New("app lifecycle action is not allowed")
+		}
+	case OperationAppInspect:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for app.compose.inspect")
+		}
+		var params AppInspectParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.compose.inspect params: %w", err)
+		}
+		if params.AppID != appmanifest.CPUMinerID {
+			return errors.New("app manifest is not allowed")
 		}
 	default:
 		return errors.New("unknown operation")

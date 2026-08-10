@@ -21,6 +21,28 @@ type PrivilegedClient interface {
 	RestartService(ctx context.Context, unit string, noBlock bool, dryRun bool) error
 	EnableLogin(ctx context.Context, dryRun bool) error
 	AppLifecycle(ctx context.Context, appID string, action string, dryRun bool) error
+	InspectApp(ctx context.Context, appID string) (status string, cpuPercentRaw float64, err error)
+}
+
+func InspectAppWithBroker(ctx context.Context, appID string) (handled bool, status string, cpuPercentRaw float64, err error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, "", 0, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		status, cpuPercentRaw, err := client.InspectApp(ctx, appID)
+		return true, status, cpuPercentRaw, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		_, _, _ = client.InspectApp(shadowCtx, appID)
+		return false, "", 0, nil
+	default:
+		return false, "", 0, nil
+	}
 }
 
 // AppLifecycleWithBroker routes a catalog-defined lifecycle action through the

@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"lightningos-light/internal/appmanifest"
 )
@@ -22,6 +25,14 @@ type ComposeAppManager struct {
 	AppsRoot string
 	TempRoot string
 }
+
+type composeAppSnapshot struct {
+	root        string
+	composePath string
+	envPath     string
+}
+
+var dockerCPUPercentPattern = regexp.MustCompile(`^([0-9]+(?:[.,][0-9]+)?)[[:space:]]*%$`)
 
 func NewComposeAppManager(runner CommandRunner) *ComposeAppManager {
 	return &ComposeAppManager{Runner: runner, AppsRoot: defaultAppsRoot}
@@ -41,58 +52,29 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	if action != AppLifecycleStart && action != AppLifecycleStop {
 		return errors.New("app lifecycle action is not allowed")
 	}
-	appsRoot := manager.AppsRoot
-	if appsRoot == "" {
-		appsRoot = defaultAppsRoot
-	}
-	appRoot := filepath.Join(appsRoot, appmanifest.CPUMinerID)
-	composePath := filepath.Join(appRoot, appmanifest.CPUMinerComposeFile)
-	envPath := filepath.Join(appRoot, appmanifest.CPUMinerEnvFile)
-
-	composeRaw, err := readRegularFile(composePath, 64*1024)
+	composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
 	if err != nil {
-		return errors.New("app compose manifest is unavailable")
-	}
-	if !bytes.Equal(composeRaw, []byte(appmanifest.CPUMinerCompose())) {
-		return errors.New("app compose manifest does not match the catalog")
-	}
-	envRaw, err := readRegularFile(envPath, 16*1024)
-	if err != nil {
-		return errors.New("app environment is unavailable")
-	}
-	if err := appmanifest.ValidateCPUMinerEnv(envRaw); err != nil {
-		return errors.New("app environment does not match the catalog")
+		return err
 	}
 	if dryRun {
 		return nil
 	}
 
-	snapshotRoot, err := os.MkdirTemp(manager.TempRoot, "lightningos-compose-")
+	snapshot, cleanup, err := manager.createSnapshot(composeRaw, envRaw)
 	if err != nil {
-		return errors.New("failed to create app execution snapshot")
+		return err
 	}
-	defer os.RemoveAll(snapshotRoot)
-	if err := os.Chmod(snapshotRoot, 0700); err != nil {
-		return errors.New("failed to secure app execution snapshot")
-	}
-	snapshotCompose := filepath.Join(snapshotRoot, appmanifest.CPUMinerComposeFile)
-	snapshotEnv := filepath.Join(snapshotRoot, appmanifest.CPUMinerEnvFile)
-	if err := os.WriteFile(snapshotCompose, composeRaw, 0600); err != nil {
-		return errors.New("failed to snapshot app compose manifest")
-	}
-	if err := os.WriteFile(snapshotEnv, envRaw, 0600); err != nil {
-		return errors.New("failed to snapshot app environment")
-	}
+	defer cleanup()
 
 	commandPath, prefix, err := manager.resolveCompose(ctx)
 	if err != nil {
 		return err
 	}
 	args := append(prefix,
-		"--env-file", snapshotEnv,
+		"--env-file", snapshot.envPath,
 		"--project-name", appmanifest.CPUMinerProject,
-		"--project-directory", snapshotRoot,
-		"-f", snapshotCompose,
+		"--project-directory", snapshot.root,
+		"-f", snapshot.composePath,
 	)
 	switch action {
 	case AppLifecycleStart:
@@ -107,6 +89,154 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		return errors.New("app lifecycle command failed")
 	}
 	return nil
+}
+
+func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (AppInspection, error) {
+	var inspection AppInspection
+	if manager == nil || manager.Runner == nil {
+		return inspection, errors.New("compose app manager is unavailable")
+	}
+	if appID != appmanifest.CPUMinerID {
+		return inspection, errors.New("app manifest is not allowed")
+	}
+	composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
+	if err != nil {
+		return inspection, err
+	}
+	snapshot, cleanup, err := manager.createSnapshot(composeRaw, envRaw)
+	if err != nil {
+		return inspection, err
+	}
+	defer cleanup()
+
+	commandPath, prefix, err := manager.resolveCompose(ctx)
+	if err != nil {
+		return inspection, err
+	}
+	baseArgs := append(prefix,
+		"--env-file", snapshot.envPath,
+		"--project-name", appmanifest.CPUMinerProject,
+		"--project-directory", snapshot.root,
+		"-f", snapshot.composePath,
+	)
+	output, err := manager.Runner.Run(ctx, commandPath, append(append([]string(nil), baseArgs...), "ps", "--services", "--filter", "status=running")...)
+	if err != nil {
+		return inspection, errors.New("app status command failed")
+	}
+	inspection.Status = "stopped"
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == appmanifest.CPUMinerID {
+			inspection.Status = "running"
+			break
+		}
+	}
+	if inspection.Status != "running" {
+		return inspection, nil
+	}
+
+	output, err = manager.Runner.Run(ctx, commandPath, append(append([]string(nil), baseArgs...), "ps", "-q", appmanifest.CPUMinerID)...)
+	if err != nil {
+		return inspection, errors.New("app container lookup failed")
+	}
+	containerID := parseDockerContainerID(output)
+	if containerID == "" {
+		return inspection, errors.New("app container lookup returned an invalid ID")
+	}
+	output, err = manager.Runner.Run(ctx, dockerPath, "stats", "--no-stream", "--format", "{{.CPUPerc}}", containerID)
+	if err == nil {
+		inspection.CPUPercentRaw = parseDockerCPUPercent(output)
+	}
+	return inspection, nil
+}
+
+func (manager *ComposeAppManager) validatedCPUMinerFiles() ([]byte, []byte, error) {
+	appsRoot := manager.AppsRoot
+	if appsRoot == "" {
+		appsRoot = defaultAppsRoot
+	}
+	appRoot := filepath.Join(appsRoot, appmanifest.CPUMinerID)
+	composeRaw, err := readRegularFile(filepath.Join(appRoot, appmanifest.CPUMinerComposeFile), 64*1024)
+	if err != nil {
+		return nil, nil, errors.New("app compose manifest is unavailable")
+	}
+	if !bytes.Equal(composeRaw, []byte(appmanifest.CPUMinerCompose())) {
+		return nil, nil, errors.New("app compose manifest does not match the catalog")
+	}
+	envRaw, err := readRegularFile(filepath.Join(appRoot, appmanifest.CPUMinerEnvFile), 16*1024)
+	if err != nil {
+		return nil, nil, errors.New("app environment is unavailable")
+	}
+	if err := appmanifest.ValidateCPUMinerEnv(envRaw); err != nil {
+		return nil, nil, errors.New("app environment does not match the catalog")
+	}
+	return composeRaw, envRaw, nil
+}
+
+func (manager *ComposeAppManager) createSnapshot(composeRaw []byte, envRaw []byte) (composeAppSnapshot, func(), error) {
+	var snapshot composeAppSnapshot
+	snapshotRoot, err := os.MkdirTemp(manager.TempRoot, "lightningos-compose-")
+	if err != nil {
+		return snapshot, func() {}, errors.New("failed to create app execution snapshot")
+	}
+	cleanup := func() { _ = os.RemoveAll(snapshotRoot) }
+	if err := os.Chmod(snapshotRoot, 0700); err != nil {
+		cleanup()
+		return snapshot, func() {}, errors.New("failed to secure app execution snapshot")
+	}
+	snapshot = composeAppSnapshot{
+		root:        snapshotRoot,
+		composePath: filepath.Join(snapshotRoot, appmanifest.CPUMinerComposeFile),
+		envPath:     filepath.Join(snapshotRoot, appmanifest.CPUMinerEnvFile),
+	}
+	if err := os.WriteFile(snapshot.composePath, composeRaw, 0600); err != nil {
+		cleanup()
+		return composeAppSnapshot{}, func() {}, errors.New("failed to snapshot app compose manifest")
+	}
+	if err := os.WriteFile(snapshot.envPath, envRaw, 0600); err != nil {
+		cleanup()
+		return composeAppSnapshot{}, func() {}, errors.New("failed to snapshot app environment")
+	}
+	return snapshot, cleanup, nil
+}
+
+func parseDockerContainerID(output string) string {
+	containerID := ""
+	for _, line := range strings.Split(output, "\n") {
+		candidate := strings.TrimSpace(line)
+		if candidate == "" {
+			continue
+		}
+		if containerID != "" {
+			return ""
+		}
+		if len(candidate) < 12 || len(candidate) > 64 {
+			return ""
+		}
+		valid := true
+		for _, char := range candidate {
+			if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+				valid = false
+				break
+			}
+		}
+		if !valid {
+			return ""
+		}
+		containerID = candidate
+	}
+	return containerID
+}
+
+func parseDockerCPUPercent(output string) float64 {
+	match := dockerCPUPercentPattern.FindStringSubmatch(strings.TrimSpace(output))
+	if len(match) != 2 {
+		return 0
+	}
+	value, err := strconv.ParseFloat(strings.ReplaceAll(match[1], ",", "."), 64)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
 }
 
 func (manager *ComposeAppManager) resolveCompose(ctx context.Context) (string, []string, error) {

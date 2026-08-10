@@ -18,10 +18,10 @@ import (
 const (
 	peerswapAppID         = "peerswap"
 	peerswapAssetsVersion = "version_5_0"
-	peerswapBundleVersion = "version_5_0_peerswapd_pscli_25a153e5_psweb_5_0_6"
+	peerswapBundleVersion = "version_5_0_peerswapd_pscli_25a153e5_psweb_6_0_0_1"
 	peerswapdSHA256       = "bf75a8b7b2bc3f9f152539c0611bc32a890f76a099c6ee2882b11bbf028b472b"
 	peerswapPSCliSHA256   = "69ca0aeb89b87d8eedd2d549ab542598fee69197e3110b066eb30ad9193bbbd8"
-	peerswapPSWebSHA256   = "8a7def73d51b7f0369462ccb4a96633b8c7da08ee21acbb45e5864e5788f2920"
+	peerswapPSWebSHA256   = "7409bff05d16b33929b1ea14d5356658fb201f5c73838a375d58650efde7ee3a"
 	peerswapUser          = "losop"
 	peerswapServiceName   = "lightningos-peerswapd"
 	pswebServiceName      = "lightningos-psweb"

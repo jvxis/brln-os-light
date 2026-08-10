@@ -229,7 +229,7 @@ func decodeDockerRuntimeState(response Response, dryRun bool) (string, error) {
 }
 
 func (client *Client) PrepareAppImage(ctx context.Context, appID string, variant string, dryRun bool) (string, error) {
-	response, err := client.call(ctx, OperationAppImagePrepare, AppImageParams{AppID: appID, Variant: appmanifest.CPUMinerImageVariant(variant)}, dryRun)
+	response, err := client.call(ctx, OperationAppImagePrepare, AppImageParams{AppID: appID, Variant: appmanifest.AppImageVariant(variant)}, dryRun)
 	if err != nil {
 		return "", err
 	}
@@ -245,7 +245,7 @@ func (client *Client) PrepareAppImage(ctx context.Context, appID string, variant
 }
 
 func (client *Client) AppImageStatus(ctx context.Context, appID string, variant string) (string, error) {
-	response, err := client.call(ctx, OperationAppImageStatus, AppImageParams{AppID: appID, Variant: appmanifest.CPUMinerImageVariant(variant)}, false)
+	response, err := client.call(ctx, OperationAppImageStatus, AppImageParams{AppID: appID, Variant: appmanifest.AppImageVariant(variant)}, false)
 	if err != nil {
 		return "", err
 	}
@@ -253,7 +253,7 @@ func (client *Client) AppImageStatus(ctx context.Context, appID string, variant 
 }
 
 func (client *Client) ProbeAppImage(ctx context.Context, appID string, variant string, dryRun bool) (bool, error) {
-	response, err := client.call(ctx, OperationAppImageProbe, AppImageParams{AppID: appID, Variant: appmanifest.CPUMinerImageVariant(variant)}, dryRun)
+	response, err := client.call(ctx, OperationAppImageProbe, AppImageParams{AppID: appID, Variant: appmanifest.AppImageVariant(variant)}, dryRun)
 	if err != nil {
 		return false, err
 	}

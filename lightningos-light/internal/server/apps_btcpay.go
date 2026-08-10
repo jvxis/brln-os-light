@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/system"
 )
@@ -26,7 +27,7 @@ const (
 	btcpayImage            = "btcpayserver/btcpayserver:latest"
 	btcpayNbxplorerImage   = "nicolasdorier/nbxplorer:2.6.8"
 	btcpayPostgresImage    = "postgres:16"
-	btcpayTorImage         = robosatsTorImage
+	btcpayTorImage         = appmanifest.RoboSatsTorImage
 	btcpayPort             = 23000
 	btcpayNbxplorerPort    = 32838
 	btcpayLndTLSWaitSteps  = 15

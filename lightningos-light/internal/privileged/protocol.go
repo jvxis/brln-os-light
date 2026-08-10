@@ -87,8 +87,8 @@ type AppRemoveParams struct {
 }
 
 type AppImageParams struct {
-	AppID   string                           `json:"app_id"`
-	Variant appmanifest.CPUMinerImageVariant `json:"variant"`
+	AppID   string                      `json:"app_id"`
+	Variant appmanifest.AppImageVariant `json:"variant"`
 }
 
 type AppImageState struct {
@@ -286,12 +286,20 @@ func ValidateRequest(request Request) error {
 		if params.Feature != PackageFeatureDockerRuntime {
 			return errors.New("package feature is not allowed")
 		}
-	case OperationAppImagePrepare, OperationAppImageProbe:
+	case OperationAppImagePrepare:
 		var params AppImageParams
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
 		}
-		if err := validateAppImageParams(params); err != nil {
+		if err := validateCatalogImageParams(params); err != nil {
+			return err
+		}
+	case OperationAppImageProbe:
+		var params AppImageParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.image.probe params: %w", err)
+		}
+		if err := validateCPUMinerImageParams(params); err != nil {
 			return err
 		}
 	case OperationAppImageStatus:
@@ -302,7 +310,7 @@ func ValidateRequest(request Request) error {
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid app.image.status params: %w", err)
 		}
-		if err := validateAppImageParams(params); err != nil {
+		if err := validateCatalogImageParams(params); err != nil {
 			return err
 		}
 	default:
@@ -311,7 +319,14 @@ func ValidateRequest(request Request) error {
 	return nil
 }
 
-func validateAppImageParams(params AppImageParams) error {
+func validateCatalogImageParams(params AppImageParams) error {
+	if _, err := appmanifest.CatalogImageForVariant(params.AppID, params.Variant); err != nil {
+		return errors.New("app image variant is not allowed")
+	}
+	return nil
+}
+
+func validateCPUMinerImageParams(params AppImageParams) error {
 	if params.AppID != appmanifest.CPUMinerID {
 		return errors.New("app manifest is not allowed")
 	}

@@ -15,7 +15,9 @@ const (
 	CPUMinerEnvFile     = ".env"
 )
 
-type CPUMinerImageVariant string
+type AppImageVariant string
+
+type CPUMinerImageVariant = AppImageVariant
 
 const (
 	CPUMinerImageBaseline   CPUMinerImageVariant = "baseline"

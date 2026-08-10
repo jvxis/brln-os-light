@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -49,9 +50,61 @@ func TestRoboSatsLifecycleEnforceFailsClosed(t *testing.T) {
 	}
 }
 
+func TestEnsureRoboSatsImagesEnforceUsesClosedBrokerVariants(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureRobosatsImages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"client", "tor", "proxy"}
+	if client.prepareCalls != 3 || !reflect.DeepEqual(client.preparedVariants, want) || client.appID != appmanifest.RoboSatsID || client.imageDryRun {
+		t.Fatalf("unexpected image broker calls: %#v", client)
+	}
+}
+
+func TestEnsureRoboSatsImagesEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageErr: errors.New("pull failed")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureRobosatsImages(context.Background()); err == nil {
+		t.Fatal("expected image broker failure")
+	}
+	if client.prepareCalls != 1 || client.preparedVariants[0] != "client" {
+		t.Fatalf("unexpected fail-closed sequence: %#v", client)
+	}
+}
+
+func TestEnsureDockerForCatalogAppEnforceUsesPackageAndRuntimeBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", dockerStatus: "ready"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureDockerForCatalogApp(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.packageCalls != 2 || client.packageFeature != "docker_runtime" || client.packageDryRun || client.dockerCalls != 1 || client.dockerDryRun {
+		t.Fatalf("unexpected Docker preparation broker calls: %#v", client)
+	}
+}
+
+func TestEnsureDockerForCatalogAppEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", packageErr: errors.New("package failed")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureDockerForCatalogApp(context.Background()); err == nil {
+		t.Fatal("expected package broker failure")
+	}
+	if client.packageCalls != 1 || client.dockerCalls != 0 {
+		t.Fatalf("package failure did not stop before runtime: %#v", client)
+	}
+}
+
 func TestRobosatsComposeContentsUsesPinnedTorImageAndVolumes(t *testing.T) {
 	got := robosatsComposeContents(robosatsPaths{
-		DataDir:       "/tmp/robosats-data",
 		CaddyfilePath: "/tmp/robosats/Caddyfile",
 		TLSDir:        "/tmp/robosats/tls",
 	})

@@ -38,6 +38,16 @@ func ensureDocker(ctx context.Context) error {
 	return ensureCompose(ctx)
 }
 
+func ensureDockerForCatalogApp(ctx context.Context) error {
+	if handled, err := system.EnsurePackageFeatureWithBroker(ctx, "docker_runtime"); handled && err != nil {
+		return err
+	}
+	if handled, err := system.EnsureDockerRuntimeWithBroker(ctx); handled {
+		return err
+	}
+	return ensureDocker(ctx)
+}
+
 func installDocker(ctx context.Context) error {
 	if _, err := runApt(ctx, "update"); err != nil {
 		return err

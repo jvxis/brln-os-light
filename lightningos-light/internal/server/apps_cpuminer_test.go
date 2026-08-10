@@ -28,7 +28,13 @@ type cpuMinerPrivilegedClient struct {
 	dockerDryRun      bool
 	dockerErr         error
 	dockerStatus      string
+	packageCalls      int
+	packageFeature    string
+	packageDryRun     bool
+	packageStatus     string
+	packageErr        error
 	prepareCalls      int
+	preparedVariants  []string
 	imageVariant      string
 	imageDryRun       bool
 	imageStatus       string
@@ -83,18 +89,30 @@ func (client *cpuMinerPrivilegedClient) DockerRuntimeStatus(_ context.Context) (
 	return client.dockerStatus, client.dockerErr
 }
 
-func (client *cpuMinerPrivilegedClient) EnsurePackageFeature(context.Context, string, bool) (string, error) {
-	return "ready", nil
+func (client *cpuMinerPrivilegedClient) EnsurePackageFeature(_ context.Context, feature string, dryRun bool) (string, error) {
+	client.packageCalls++
+	client.packageFeature = feature
+	client.packageDryRun = dryRun
+	status := client.packageStatus
+	if status == "" {
+		status = "ready"
+	}
+	return status, client.packageErr
 }
 
 func (client *cpuMinerPrivilegedClient) PackageFeatureStatus(context.Context, string) (string, error) {
-	return "ready", nil
+	status := client.packageStatus
+	if status == "" {
+		status = "ready"
+	}
+	return status, client.packageErr
 }
 
 func (client *cpuMinerPrivilegedClient) PrepareAppImage(_ context.Context, appID string, variant string, dryRun bool) (string, error) {
 	client.prepareCalls++
 	client.appID = appID
 	client.imageVariant = variant
+	client.preparedVariants = append(client.preparedVariants, variant)
 	client.imageDryRun = dryRun
 	return client.imageStatus, client.imageErr
 }

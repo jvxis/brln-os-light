@@ -37,3 +37,14 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 		return ComposeManifest{}, errors.New("compose app manifest is not allowed")
 	}
 }
+
+func CatalogImageForVariant(appID string, variant AppImageVariant) (string, error) {
+	switch appID {
+	case CPUMinerID:
+		return CPUMinerImageForVariant(variant)
+	case RoboSatsID:
+		return RoboSatsImageForVariant(variant)
+	default:
+		return "", errors.New("app image manifest is not allowed")
+	}
+}

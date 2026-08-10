@@ -33,3 +33,39 @@ func TestRoboSatsImagesReturnsIndependentClosedList(t *testing.T) {
 		t.Fatal("caller mutated the catalog image list")
 	}
 }
+
+func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
+	for _, test := range []struct {
+		appID   string
+		variant AppImageVariant
+		image   string
+	}{
+		{appID: CPUMinerID, variant: CPUMinerImageBaseline, image: "jvx1971/cpu-lottery-miner:v1"},
+		{appID: RoboSatsID, variant: RoboSatsImageClient, image: RoboSatsImage},
+		{appID: RoboSatsID, variant: RoboSatsImageTor, image: RoboSatsTorImage},
+		{appID: RoboSatsID, variant: RoboSatsImageProxy, image: RoboSatsProxyImage},
+	} {
+		image, err := CatalogImageForVariant(test.appID, test.variant)
+		if err != nil || image != test.image {
+			t.Fatalf("image/error for %s/%s = %q/%v", test.appID, test.variant, image, err)
+		}
+	}
+	for _, test := range []struct {
+		appID   string
+		variant AppImageVariant
+	}{
+		{appID: RoboSatsID, variant: CPUMinerImageBaseline},
+		{appID: CPUMinerID, variant: RoboSatsImageClient},
+		{appID: RoboSatsID, variant: "latest;reboot"},
+		{appID: "mempool", variant: "client"},
+	} {
+		if _, err := CatalogImageForVariant(test.appID, test.variant); err == nil {
+			t.Fatalf("expected %s/%s to be rejected", test.appID, test.variant)
+		}
+	}
+	variants := RoboSatsImageVariants()
+	variants[0] = "evil"
+	if RoboSatsImageVariants()[0] != RoboSatsImageClient {
+		t.Fatal("caller mutated the RoboSats image variant list")
+	}
+}

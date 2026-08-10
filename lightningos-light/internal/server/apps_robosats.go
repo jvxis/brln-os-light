@@ -21,20 +21,6 @@ import (
 )
 
 const (
-	// robosatsImage is pinned to the version Umbrel/Start9 ship and that renders
-	// orders correctly in self-hosted mode. v0.8.5-alpha (:latest) regressed: the
-	// order screen never leaves the loading spinner even though the coordinator
-	// returns the order plus its bond invoice. Bump this only after verifying a
-	// newer tag actually renders the make/take flow self-hosted.
-	robosatsImage    = appmanifest.RoboSatsImage
-	robosatsTorImage = appmanifest.RoboSatsTorImage
-	// robosatsProxyImage terminates TLS/HTTP2 in front of the RoboSats client.
-	// The client is served plain HTTP/1.1, which caps the browser at 6
-	// connections per host; over Tor each coordinator poll takes many seconds,
-	// so the polls pile up and starve the Nostr relay WebSockets the order flow
-	// depends on. HTTP/2 multiplexes them over a single connection and removes
-	// that limit.
-	robosatsProxyImage = appmanifest.RoboSatsProxyImage
 	// robosatsPort is both the external HTTPS port (Caddy) and the internal
 	// port the client's own nginx listens on inside its container.
 	robosatsPort = appmanifest.RoboSatsPort
@@ -42,7 +28,6 @@ const (
 
 type robosatsPaths struct {
 	Root          string
-	DataDir       string
 	ComposePath   string
 	TLSDir        string
 	CaddyfilePath string
@@ -112,10 +97,8 @@ func (a robosatsApp) Stop(ctx context.Context) error {
 
 func robosatsAppPaths() robosatsPaths {
 	root := filepath.Join(appsRoot, "robosats")
-	dataDir := filepath.Join(appsDataRoot, "robosats")
 	return robosatsPaths{
 		Root:          root,
-		DataDir:       dataDir,
 		ComposePath:   filepath.Join(root, "docker-compose.yaml"),
 		TLSDir:        filepath.Join(root, "tls"),
 		CaddyfilePath: filepath.Join(root, "Caddyfile"),
@@ -123,23 +106,20 @@ func robosatsAppPaths() robosatsPaths {
 }
 
 func (s *Server) installRobosats(ctx context.Context) error {
-	if err := ensureDocker(ctx); err != nil {
+	if err := ensureDockerForCatalogApp(ctx); err != nil {
 		return err
 	}
 	paths := robosatsAppPaths()
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
-	if err := os.MkdirAll(paths.DataDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app data directory: %w", err)
-	}
 	if err := ensureRobosatsImages(ctx); err != nil {
 		return err
 	}
-	if err := ensureRobosatsProxyAssets(paths); err != nil {
+	if err := prepareRoboSatsCatalogAssets(paths); err != nil {
 		return err
 	}
-	if _, err := ensureFileWithChange(paths.ComposePath, robosatsComposeContents(paths)); err != nil {
+	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.RoboSatsID, "start"); handled {
 		return err
 	}
 	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
@@ -174,9 +154,6 @@ func (s *Server) startRobosats(ctx context.Context) error {
 	}
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
-	}
-	if err := os.MkdirAll(paths.DataDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app data directory: %w", err)
 	}
 	if err := ensureRobosatsImages(ctx); err != nil {
 		return err
@@ -306,7 +283,17 @@ func writePEMFile(path, blockType string, der []byte, perm os.FileMode) error {
 }
 
 func ensureRobosatsImages(ctx context.Context) error {
-	for _, image := range []string{robosatsImage, robosatsTorImage, robosatsProxyImage} {
+	for _, variant := range appmanifest.RoboSatsImageVariants() {
+		image, err := appmanifest.RoboSatsImageForVariant(variant)
+		if err != nil {
+			return err
+		}
+		if handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.RoboSatsID, string(variant)); handled {
+			if err != nil {
+				return fmt.Errorf("robosats image %s unavailable: %w", variant, err)
+			}
+			continue
+		}
 		if err := ensureDockerImage(ctx, image); err != nil {
 			return err
 		}

@@ -149,6 +149,43 @@ func TestComposeAppPrepareImageSchedulesFixedTransientPull(t *testing.T) {
 	}
 }
 
+func TestComposeAppPrepareRoboSatsImagesUsesFixedTransientPulls(t *testing.T) {
+	for _, test := range []struct {
+		variant appmanifest.AppImageVariant
+		image   string
+		unit    string
+	}{
+		{variant: appmanifest.RoboSatsImageClient, image: appmanifest.RoboSatsImage, unit: "lightningos-robosats-image-client"},
+		{variant: appmanifest.RoboSatsImageTor, image: appmanifest.RoboSatsTorImage, unit: "lightningos-robosats-image-tor"},
+		{variant: appmanifest.RoboSatsImageProxy, image: appmanifest.RoboSatsProxyImage, unit: "lightningos-robosats-image-proxy"},
+	} {
+		t.Run(string(test.variant), func(t *testing.T) {
+			runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+				if path == dockerPath && len(args) == 3 && args[0] == "image" && args[1] == "inspect" {
+					return "", errors.New("missing"), true
+				}
+				if path == systemctlPath && len(args) > 0 && args[0] == "show" {
+					return "LoadState=not-found\nActiveState=inactive\n", errors.New("not found"), true
+				}
+				return "", nil, false
+			}}
+			manager := &ComposeAppManager{Runner: runner}
+			state, err := manager.PrepareImage(context.Background(), appmanifest.RoboSatsID, test.variant, false)
+			if err != nil || state.Status != "preparing" || len(runner.commands) != 3 {
+				t.Fatalf("state=%#v err=%v commands=%#v", state, err, runner.commands)
+			}
+			want := recordedCommand{path: systemdRunPath, args: []string{
+				"--quiet", "--collect", "--unit=" + test.unit,
+				"--property=Type=exec", "--property=RuntimeMaxSec=10min",
+				dockerPath, "pull", test.image,
+			}}
+			if !reflect.DeepEqual(runner.commands[2], want) {
+				t.Fatalf("pull command=%#v want=%#v", runner.commands[2], want)
+			}
+		})
+	}
+}
+
 func TestComposeAppPrepareImageReturnsCachedOrInProgressState(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -207,6 +244,9 @@ func TestComposeAppImageOperationsRejectUntrustedInputsBeforeCommand(t *testing.
 	}
 	if _, err := manager.ProbeImage(context.Background(), "cpuminer", "latest;reboot", false); err == nil {
 		t.Fatal("expected injected image variant to fail")
+	}
+	if _, err := manager.ProbeImage(context.Background(), "robosats", appmanifest.RoboSatsImageClient, false); err == nil {
+		t.Fatal("expected RoboSats compatibility probe to fail")
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("rejected image input executed commands: %#v", runner.commands)

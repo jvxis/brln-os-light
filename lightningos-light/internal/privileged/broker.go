@@ -38,9 +38,9 @@ type AppManager interface {
 	Lifecycle(ctx context.Context, appID string, action AppLifecycleAction, dryRun bool) error
 	Inspect(ctx context.Context, appID string) (AppInspection, error)
 	Remove(ctx context.Context, appID string, dryRun bool) error
-	PrepareImage(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageState, error)
-	ImageStatus(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant) (AppImageState, error)
-	ProbeImage(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageProbe, error)
+	PrepareImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageState, error)
+	ImageStatus(ctx context.Context, appID string, variant appmanifest.AppImageVariant) (AppImageState, error)
+	ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error)
 }
 
 type PackageManager interface {

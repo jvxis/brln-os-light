@@ -11,13 +11,39 @@ const (
 	RoboSatsTLSDir         = "tls"
 	RoboSatsPort           = 12596
 
-	RoboSatsImage      = "recksato/robosats-client:v0.8.4-alpha"
-	RoboSatsTorImage   = "osminogin/tor-simple:0.4.9.5"
+	// RoboSatsImage is pinned to the self-hosted-working release. v0.8.5-alpha
+	// regressed by leaving the order screen on its loading state.
+	RoboSatsImage    = "recksato/robosats-client:v0.8.4-alpha"
+	RoboSatsTorImage = "osminogin/tor-simple:0.4.9.5"
+	// RoboSatsProxyImage terminates TLS/HTTP2 so slow Tor coordinator polls do
+	// not starve the Nostr relay WebSockets behind the browser connection limit.
 	RoboSatsProxyImage = "caddy:2.8-alpine"
+
+	RoboSatsImageClient AppImageVariant = "client"
+	RoboSatsImageTor    AppImageVariant = "tor"
+	RoboSatsImageProxy  AppImageVariant = "proxy"
 )
+
+var roboSatsImages = map[AppImageVariant]string{
+	RoboSatsImageClient: RoboSatsImage,
+	RoboSatsImageTor:    RoboSatsTorImage,
+	RoboSatsImageProxy:  RoboSatsProxyImage,
+}
 
 func RoboSatsImages() []string {
 	return []string{RoboSatsImage, RoboSatsTorImage, RoboSatsProxyImage}
+}
+
+func RoboSatsImageVariants() []AppImageVariant {
+	return []AppImageVariant{RoboSatsImageClient, RoboSatsImageTor, RoboSatsImageProxy}
+}
+
+func RoboSatsImageForVariant(variant AppImageVariant) (string, error) {
+	image, ok := roboSatsImages[variant]
+	if !ok {
+		return "", fmt.Errorf("robosats image variant is not allowed")
+	}
+	return image, nil
 }
 
 func RoboSatsCompose(caddyfilePath string, tlsDir string) string {

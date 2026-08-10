@@ -102,9 +102,9 @@ func (manager *ComposeAppManager) DockerRuntimeStatus(ctx context.Context) (Dock
 	}
 }
 
-func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageState, error) {
+func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageState, error) {
 	var state AppImageState
-	image, unit, err := validatedCPUMinerImage(appID, variant)
+	image, unit, err := validatedCatalogImage(appID, variant)
 	if err != nil {
 		return state, err
 	}
@@ -137,9 +137,9 @@ func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string
 	return AppImageState{Status: "preparing"}, nil
 }
 
-func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant) (AppImageState, error) {
+func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string, variant appmanifest.AppImageVariant) (AppImageState, error) {
 	var state AppImageState
-	image, unit, err := validatedCPUMinerImage(appID, variant)
+	image, unit, err := validatedCatalogImage(appID, variant)
 	if err != nil {
 		return state, err
 	}
@@ -149,9 +149,12 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 	return manager.imageStatus(ctx, image, unit)
 }
 
-func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageProbe, error) {
+func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error) {
 	var probe AppImageProbe
-	image, _, err := validatedCPUMinerImage(appID, variant)
+	if appID != appmanifest.CPUMinerID {
+		return probe, errors.New("app image probe is not allowed")
+	}
+	image, _, err := validatedCatalogImage(appID, variant)
 	if err != nil {
 		return probe, err
 	}
@@ -190,20 +193,28 @@ func (manager *ComposeAppManager) imageStatus(ctx context.Context, image string,
 	}
 }
 
-func validatedCPUMinerImage(appID string, variant appmanifest.CPUMinerImageVariant) (string, string, error) {
-	if appID != appmanifest.CPUMinerID {
-		return "", "", errors.New("app manifest is not allowed")
-	}
-	image, err := appmanifest.CPUMinerImageForVariant(variant)
+func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (string, string, error) {
+	image, err := appmanifest.CatalogImageForVariant(appID, variant)
 	if err != nil {
 		return "", "", err
 	}
-	units := map[appmanifest.CPUMinerImageVariant]string{
-		appmanifest.CPUMinerImageBaseline:   "lightningos-cpuminer-image-baseline",
-		appmanifest.CPUMinerImageFastPinned: "lightningos-cpuminer-image-fast-pinned",
-		appmanifest.CPUMinerImageFastLatest: "lightningos-cpuminer-image-fast-latest",
+	units := map[string]map[appmanifest.AppImageVariant]string{
+		appmanifest.CPUMinerID: {
+			appmanifest.CPUMinerImageBaseline:   "lightningos-cpuminer-image-baseline",
+			appmanifest.CPUMinerImageFastPinned: "lightningos-cpuminer-image-fast-pinned",
+			appmanifest.CPUMinerImageFastLatest: "lightningos-cpuminer-image-fast-latest",
+		},
+		appmanifest.RoboSatsID: {
+			appmanifest.RoboSatsImageClient: "lightningos-robosats-image-client",
+			appmanifest.RoboSatsImageTor:    "lightningos-robosats-image-tor",
+			appmanifest.RoboSatsImageProxy:  "lightningos-robosats-image-proxy",
+		},
 	}
-	unit, ok := units[variant]
+	appUnits, ok := units[appID]
+	if !ok {
+		return "", "", errors.New("app image manifest is not allowed")
+	}
+	unit, ok := appUnits[variant]
 	if !ok {
 		return "", "", errors.New("app image variant is not allowed")
 	}

@@ -155,6 +155,18 @@ func (client *Client) AppLifecycle(ctx context.Context, appID string, action str
 	return err
 }
 
+func (client *Client) RemoveApp(ctx context.Context, appID string, dryRun bool) error {
+	_, err := client.call(ctx, OperationAppRemove, AppRemoveParams{AppID: appID}, dryRun)
+	if dryRun && client != nil && client.logger != nil {
+		if err != nil {
+			client.logger.Printf("privileged broker shadow validation rejected app.compose.remove: %v", err)
+		} else {
+			client.logger.Printf("privileged broker shadow validation accepted app.compose.remove for %s", appID)
+		}
+	}
+	return err
+}
+
 func (client *Client) InspectApp(ctx context.Context, appID string) (string, float64, error) {
 	response, err := client.call(ctx, OperationAppInspect, AppInspectParams{AppID: appID}, false)
 	if err != nil {

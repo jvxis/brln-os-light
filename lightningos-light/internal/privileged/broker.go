@@ -33,6 +33,7 @@ type ConfigFileManager interface {
 type AppManager interface {
 	Lifecycle(ctx context.Context, appID string, action AppLifecycleAction, dryRun bool) error
 	Inspect(ctx context.Context, appID string) (AppInspection, error)
+	Remove(ctx context.Context, appID string, dryRun bool) error
 }
 
 type AuditEvent struct {
@@ -199,6 +200,18 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "app_inspection_failed", errors.New("app inspection failed")
 		}
 		return inspection, "", nil
+	case OperationAppRemove:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
+		}
+		var params AppRemoveParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.compose.remove params")
+		}
+		if err := broker.Apps.Remove(ctx, params.AppID, request.DryRun); err != nil {
+			return nil, "app_remove_failed", errors.New("app remove operation failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -235,7 +248,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove:
 		return true
 	default:
 		return false
@@ -244,7 +257,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove:
 		return true
 	default:
 		return false

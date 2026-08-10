@@ -59,6 +59,15 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	if dryRun {
 		return nil
 	}
+	if action == AppLifecycleStart {
+		image, err := appmanifest.CPUMinerImage(envRaw)
+		if err != nil {
+			return errors.New("app image selection is invalid")
+		}
+		if _, err := manager.Runner.Run(ctx, dockerPath, "image", "inspect", image); err != nil {
+			return errors.New("app image is not available locally")
+		}
+	}
 
 	snapshot, cleanup, err := manager.createSnapshot(composeRaw, envRaw)
 	if err != nil {
@@ -87,6 +96,47 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	}
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		return errors.New("app lifecycle command failed")
+	}
+	return nil
+}
+
+// Remove validates and snapshots the catalog manifest before executing a
+// fixed Compose down action. The manager remains responsible for deleting its
+// own unprivileged app files only after this method succeeds.
+func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryRun bool) error {
+	if manager == nil || manager.Runner == nil {
+		return errors.New("compose app manager is unavailable")
+	}
+	if appID != appmanifest.CPUMinerID {
+		return errors.New("app manifest is not allowed")
+	}
+	composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
+	if err != nil {
+		return err
+	}
+	if dryRun {
+		return nil
+	}
+
+	snapshot, cleanup, err := manager.createSnapshot(composeRaw, envRaw)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	commandPath, prefix, err := manager.resolveCompose(ctx)
+	if err != nil {
+		return err
+	}
+	args := append(prefix,
+		"--env-file", snapshot.envPath,
+		"--project-name", appmanifest.CPUMinerProject,
+		"--project-directory", snapshot.root,
+		"-f", snapshot.composePath,
+		"down", "--remove-orphans", "--timeout", "2",
+	)
+	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
+		return errors.New("app remove command failed")
 	}
 	return nil
 }

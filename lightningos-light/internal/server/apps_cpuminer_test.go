@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,6 +19,10 @@ type cpuMinerPrivilegedClient struct {
 	action       string
 	dryRun       bool
 	lifecycleErr error
+	removeCalls  int
+	removeAppID  string
+	removeDryRun bool
+	removeErr    error
 }
 
 func (client *cpuMinerPrivilegedClient) Mode() string { return client.mode }
@@ -34,6 +39,13 @@ func (client *cpuMinerPrivilegedClient) AppLifecycle(_ context.Context, appID, a
 	client.action = action
 	client.dryRun = dryRun
 	return client.lifecycleErr
+}
+
+func (client *cpuMinerPrivilegedClient) RemoveApp(_ context.Context, appID string, dryRun bool) error {
+	client.removeCalls++
+	client.removeAppID = appID
+	client.removeDryRun = dryRun
+	return client.removeErr
 }
 
 func TestApplyCpuMinerComposeEnforceUsesBroker(t *testing.T) {
@@ -60,6 +72,48 @@ func TestApplyCpuMinerComposeEnforceFailsClosed(t *testing.T) {
 	}
 	if client.appCalls != 1 {
 		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+}
+
+func TestRemoveCpuMinerAppEnforceUsesBrokerBeforeDeletingFiles(t *testing.T) {
+	root := t.TempDir()
+	paths := cpuMinerPaths{Root: root, ComposePath: filepath.Join(root, "docker-compose.yaml"), EnvPath: filepath.Join(root, ".env")}
+	if err := os.WriteFile(paths.ComposePath, []byte("manager-owned"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := removeCpuMinerApp(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	if client.removeCalls != 1 || client.removeAppID != cpuMinerAppID || client.removeDryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("app files still exist or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestRemoveCpuMinerAppEnforceFailsClosedAndPreservesFiles(t *testing.T) {
+	root := t.TempDir()
+	paths := cpuMinerPaths{Root: root, ComposePath: filepath.Join(root, "docker-compose.yaml"), EnvPath: filepath.Join(root, ".env")}
+	if err := os.WriteFile(paths.ComposePath, []byte("manager-owned"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := &cpuMinerPrivilegedClient{mode: "enforce", removeErr: errors.New("rejected")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := removeCpuMinerApp(context.Background(), paths); err == nil {
+		t.Fatal("expected broker rejection to fail closed")
+	}
+	if client.removeCalls != 1 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+	if _, err := os.Stat(paths.ComposePath); err != nil {
+		t.Fatalf("app files were removed after broker failure: %v", err)
 	}
 }
 

@@ -61,6 +61,7 @@ type recordingConfigFiles struct {
 type recordingApps struct {
 	calls        int
 	inspectCalls int
+	removeCalls  int
 	appID        string
 	action       AppLifecycleAction
 	dryRun       bool
@@ -78,6 +79,13 @@ func (apps *recordingApps) Lifecycle(_ context.Context, appID string, action App
 	apps.calls++
 	apps.appID = appID
 	apps.action = action
+	apps.dryRun = dryRun
+	return apps.err
+}
+
+func (apps *recordingApps) Remove(_ context.Context, appID string, dryRun bool) error {
+	apps.removeCalls++
+	apps.appID = appID
 	apps.dryRun = dryRun
 	return apps.err
 }
@@ -347,6 +355,58 @@ func TestBrokerAppInspectFailureIsGeneric(t *testing.T) {
 		Version: ProtocolVersion, RequestID: "app_inspect_failure_1", Operation: OperationAppInspect, Params: params,
 	})
 	if response.OK || response.Error == nil || response.Error.Code != "app_inspection_failed" || response.Error.Message != "app inspection failed" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestBrokerAppRemoveUsesTypedManagerAndLock(t *testing.T) {
+	apps := &recordingApps{}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppRemoveParams{AppID: "cpuminer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "app_remove_1", Operation: OperationAppRemove, Params: params,
+	})
+	if !response.OK || apps.removeCalls != 1 || apps.appID != "cpuminer" || apps.dryRun {
+		t.Fatalf("response=%#v apps=%#v", response, apps)
+	}
+	if locker.locks != 1 || locker.unlocks != 1 {
+		t.Fatalf("lock counts = %d/%d, want 1/1", locker.locks, locker.unlocks)
+	}
+}
+
+func TestBrokerAppRemoveDryRunDoesNotLock(t *testing.T) {
+	apps := &recordingApps{}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppRemoveParams{AppID: "cpuminer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "app_remove_dry_1", Operation: OperationAppRemove, DryRun: true, Params: params,
+	})
+	if !response.OK || apps.removeCalls != 1 || !apps.dryRun || locker.locks != 0 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+}
+
+func TestBrokerAppRemoveFailureIsGeneric(t *testing.T) {
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Apps = &recordingApps{err: errors.New("sensitive compose output")}
+	params, err := MarshalParams(AppRemoveParams{AppID: "cpuminer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "app_remove_failure_1", Operation: OperationAppRemove, Params: params,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != "app_remove_failed" || response.Error.Message != "app remove operation failed" {
 		t.Fatalf("unexpected response: %#v", response)
 	}
 }

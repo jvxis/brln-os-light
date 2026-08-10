@@ -35,6 +35,17 @@ func TestValidateCPUMinerEnv(t *testing.T) {
 	}
 }
 
+func TestCPUMinerImageRequiresValidatedEnvironment(t *testing.T) {
+	valid := "CPUMINER_IMAGE=jvx1971/cpu-lottery-miner:v1\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
+	image, err := CPUMinerImage([]byte(valid))
+	if err != nil || image != "jvx1971/cpu-lottery-miner:v1" {
+		t.Fatalf("CPUMinerImage() = %q/%v", image, err)
+	}
+	if _, err := CPUMinerImage([]byte(replaceEnvValue(valid, "CPUMINER_IMAGE", "evil/root:latest"))); err == nil {
+		t.Fatal("expected unallowlisted image to fail")
+	}
+}
+
 func replaceEnvValue(raw string, key string, value string) string {
 	oldStart := key + "="
 	start := 0

@@ -92,6 +92,24 @@ func TestClientAppLifecycleBuildsTypedRequest(t *testing.T) {
 	}
 }
 
+func TestClientRemoveAppBuildsTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: map[string]bool{"validated": true}}
+	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)
+	if err := client.RemoveApp(context.Background(), "cpuminer", true); err != nil {
+		t.Fatal(err)
+	}
+	if transport.request.Operation != OperationAppRemove || !transport.request.DryRun {
+		t.Fatalf("unexpected request: %#v", transport.request)
+	}
+	var params AppRemoveParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.AppID != "cpuminer" {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+}
+
 func TestClientInspectAppBuildsTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: AppInspection{Status: "running", CPUPercentRaw: 123.4}}
 	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)

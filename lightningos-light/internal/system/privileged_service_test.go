@@ -26,6 +26,10 @@ type fakePrivilegedServiceClient struct {
 	inspectStatus string
 	inspectCPU    float64
 	inspectErr    error
+	removeCalls   int
+	removeAppID   string
+	removeDryRun  bool
+	removeErr     error
 }
 
 func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID string, action string, dryRun bool) error {
@@ -40,6 +44,13 @@ func (client *fakePrivilegedServiceClient) InspectApp(_ context.Context, appID s
 	client.inspectCalls++
 	client.inspectAppID = appID
 	return client.inspectStatus, client.inspectCPU, client.inspectErr
+}
+
+func (client *fakePrivilegedServiceClient) RemoveApp(_ context.Context, appID string, dryRun bool) error {
+	client.removeCalls++
+	client.removeAppID = appID
+	client.removeDryRun = dryRun
+	return client.removeErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -206,6 +217,40 @@ func TestInspectAppWithBrokerModes(t *testing.T) {
 			}
 			if test.wantHandled && !test.wantError && (status != "running" || cpu != 99.5) {
 				t.Fatalf("unexpected inspection = %q/%v", status, cpu)
+			}
+		})
+	}
+}
+
+func TestRemoveAppWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		removeErr   error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", removeErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", removeErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, removeErr: test.removeErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := RemoveAppWithBroker(context.Background(), "cpuminer")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.removeCalls != test.wantCalls || client.removeDryRun != test.wantDryRun {
+				t.Fatalf("unexpected remove call: %#v", client)
+			}
+			if test.wantCalls == 1 && client.removeAppID != "cpuminer" {
+				t.Fatalf("unexpected typed app params: %#v", client)
 			}
 		})
 	}

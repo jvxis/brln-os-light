@@ -21,6 +21,7 @@ type composeRecordingRunner struct {
 	containerID     string
 	cpuPercent      string
 	statsErr        error
+	imageErr        error
 }
 
 func (runner *composeRecordingRunner) Run(_ context.Context, path string, args ...string) (string, error) {
@@ -33,6 +34,9 @@ func (runner *composeRecordingRunner) Run(_ context.Context, path string, args .
 	}
 	if path == dockerComposePath && reflect.DeepEqual(args, []string{"version"}) {
 		return "docker-compose version 1", nil
+	}
+	if path == dockerPath && len(args) == 3 && args[0] == "image" && args[1] == "inspect" {
+		return "", runner.imageErr
 	}
 	for index, arg := range args {
 		if arg == "-f" && index+1 < len(args) {
@@ -67,13 +71,16 @@ func TestComposeAppLifecycleUsesValidatedSnapshotAndFixedCommand(t *testing.T) {
 	if err := manager.Lifecycle(context.Background(), "cpuminer", AppLifecycleStart, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.commands) != 2 {
+	if len(runner.commands) != 3 {
 		t.Fatalf("commands = %#v", runner.commands)
 	}
-	if runner.commands[0].path != dockerPath || !reflect.DeepEqual(runner.commands[0].args, []string{"compose", "version"}) {
-		t.Fatalf("unexpected compose probe: %#v", runner.commands[0])
+	if runner.commands[0].path != dockerPath || !reflect.DeepEqual(runner.commands[0].args, []string{"image", "inspect", "jvx1971/cpu-lottery-miner:v1"}) {
+		t.Fatalf("unexpected image probe: %#v", runner.commands[0])
 	}
-	lifecycle := runner.commands[1]
+	if runner.commands[1].path != dockerPath || !reflect.DeepEqual(runner.commands[1].args, []string{"compose", "version"}) {
+		t.Fatalf("unexpected compose probe: %#v", runner.commands[1])
+	}
+	lifecycle := runner.commands[2]
 	if lifecycle.path != dockerPath || len(lifecycle.args) < 11 || lifecycle.args[0] != "compose" || lifecycle.args[len(lifecycle.args)-2] != "up" || lifecycle.args[len(lifecycle.args)-1] != "-d" {
 		t.Fatalf("unexpected lifecycle command: %#v", lifecycle)
 	}
@@ -84,6 +91,18 @@ func TestComposeAppLifecycleUsesValidatedSnapshotAndFixedCommand(t *testing.T) {
 		if strings.Contains(arg, appsRoot) {
 			t.Fatalf("manager-writable path reached Docker command: %q", arg)
 		}
+	}
+}
+
+func TestComposeAppLifecycleStartRequiresLocalImage(t *testing.T) {
+	appsRoot, _ := writeTestCPUMinerApp(t)
+	runner := &composeRecordingRunner{imageErr: errors.New("missing")}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, TempRoot: t.TempDir()}
+	if err := manager.Lifecycle(context.Background(), "cpuminer", AppLifecycleStart, false); err == nil {
+		t.Fatal("expected missing local image to fail")
+	}
+	if len(runner.commands) != 1 || !reflect.DeepEqual(runner.commands[0].args, []string{"image", "inspect", "jvx1971/cpu-lottery-miner:v1"}) {
+		t.Fatalf("missing image reached Compose: %#v", runner.commands)
 	}
 }
 
@@ -169,6 +188,48 @@ func TestComposeAppLifecycleRejectsUntrustedInputs(t *testing.T) {
 				t.Fatalf("rejected request executed commands: %#v", runner.commands)
 			}
 		})
+	}
+}
+
+func TestComposeAppRemoveUsesValidatedSnapshotAndFixedCommand(t *testing.T) {
+	appsRoot, validEnv := writeTestCPUMinerApp(t)
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, TempRoot: t.TempDir()}
+	if err := manager.Remove(context.Background(), "cpuminer", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 2 || !hasArgsSuffix(runner.commands[1].args, "down", "--remove-orphans", "--timeout", "2") {
+		t.Fatalf("unexpected remove commands: %#v", runner.commands)
+	}
+	if runner.composeSnapshot != appmanifest.CPUMinerCompose() || runner.envSnapshot != validEnv {
+		t.Fatal("broker did not remove through the validated manifest snapshot")
+	}
+	for _, arg := range runner.commands[1].args {
+		if strings.Contains(arg, appsRoot) {
+			t.Fatalf("manager-writable path reached Docker command: %q", arg)
+		}
+	}
+}
+
+func TestComposeAppRemoveDryRunAndTamperFailBeforeCommand(t *testing.T) {
+	appsRoot, _ := writeTestCPUMinerApp(t)
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
+	if err := manager.Remove(context.Background(), "cpuminer", true); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("dry run executed commands: %#v", runner.commands)
+	}
+	path := filepath.Join(appsRoot, appmanifest.CPUMinerID, appmanifest.CPUMinerEnvFile)
+	if err := os.WriteFile(path, []byte("CPUMINER_IMAGE=evil/root:latest\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Remove(context.Background(), "cpuminer", false); err == nil {
+		t.Fatal("expected tampered environment to fail")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("tampered remove executed commands: %#v", runner.commands)
 	}
 }
 

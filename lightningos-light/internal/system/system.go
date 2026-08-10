@@ -22,6 +22,7 @@ type PrivilegedClient interface {
 	EnableLogin(ctx context.Context, dryRun bool) error
 	AppLifecycle(ctx context.Context, appID string, action string, dryRun bool) error
 	InspectApp(ctx context.Context, appID string) (status string, cpuPercentRaw float64, err error)
+	RemoveApp(ctx context.Context, appID string, dryRun bool) error
 }
 
 func InspectAppWithBroker(ctx context.Context, appID string) (handled bool, status string, cpuPercentRaw float64, err error) {
@@ -62,6 +63,29 @@ func AppLifecycleWithBroker(ctx context.Context, appID string, action string) (b
 		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		_ = client.AppLifecycle(shadowCtx, appID, action, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+// RemoveAppWithBroker routes catalog-defined Compose teardown through the
+// privileged broker. The caller may remove its own app files only after an
+// enforce-mode call succeeds.
+func RemoveAppWithBroker(ctx context.Context, appID string) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, client.RemoveApp(ctx, appID, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_ = client.RemoveApp(shadowCtx, appID, true)
 		return false, nil
 	default:
 		return false, nil

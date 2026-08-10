@@ -226,9 +226,18 @@ func (s *Server) stopCpuMiner(ctx context.Context) error {
 }
 
 func (s *Server) uninstallCpuMiner(ctx context.Context) error {
-	paths := cpuMinerAppPaths()
+	return removeCpuMinerApp(ctx, cpuMinerAppPaths())
+}
+
+func removeCpuMinerApp(ctx context.Context, paths cpuMinerPaths) error {
 	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		if handled, err := system.RemoveAppWithBroker(ctx, cpuMinerAppID); handled {
+			if err != nil {
+				return err
+			}
+		} else {
+			_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		}
 	}
 	if err := os.RemoveAll(paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)

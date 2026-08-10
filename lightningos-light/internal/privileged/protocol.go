@@ -26,6 +26,7 @@ const (
 	OperationFilesEnableLogin Operation = "files.enable_login"
 	OperationAppLifecycle     Operation = "app.compose.lifecycle"
 	OperationAppInspect       Operation = "app.compose.inspect"
+	OperationAppRemove        Operation = "app.compose.remove"
 )
 
 type Request struct {
@@ -71,6 +72,10 @@ type AppLifecycleParams struct {
 }
 
 type AppInspectParams struct {
+	AppID string `json:"app_id"`
+}
+
+type AppRemoveParams struct {
 	AppID string `json:"app_id"`
 }
 
@@ -201,6 +206,14 @@ func ValidateRequest(request Request) error {
 		var params AppInspectParams
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid app.compose.inspect params: %w", err)
+		}
+		if params.AppID != appmanifest.CPUMinerID {
+			return errors.New("app manifest is not allowed")
+		}
+	case OperationAppRemove:
+		var params AppRemoveParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.compose.remove params: %w", err)
 		}
 		if params.AppID != appmanifest.CPUMinerID {
 			return errors.New("app manifest is not allowed")

@@ -220,6 +220,33 @@ allowing selection to continue to the next catalog variant. Prepare and probe
 are serialized mutating operations and support validation-only `dry_run`;
 status is read-only.
 
+Bitcoin Core uses the same operations with the additional closed variant
+`{"app_id":"bitcoincore","variant":"node"}`, but it never executes a
+registry pull. The broker maps that variant to release 31.1 and one
+architecture record containing the official archive name and SHA-256 plus a
+Debian slim base pinned by platform digest. It downloads `SHA256SUMS`,
+`SHA256SUMS.asc`, the archive from `bitcoincore.org`, and seven Guix builder
+keys from the upstream signing repository. Every imported primary key must
+match its catalog fingerprint. At least three distinct `VALIDSIG`
+fingerprints must authenticate the checksum bundle, the catalog archive line
+must be present verbatim, and the downloaded archive must match the embedded
+SHA-256.
+
+Only after those checks does the transient unit build
+`lightningos/bitcoin-core:31.1` locally using the pinned base. The Dockerfile
+has no package installation or downloader and build `RUN` steps use
+`--network=none`. The resulting entrypoint drops bitcoind to UID/GID 101. A
+successful version probe is followed by an atomic root-only attestation under
+the broker's privileged app tree containing release, archive hash, base
+digest, signature count, and exact Docker image ID.
+
+`app.image.status` reports Bitcoin Core ready only when that attestation is a
+bounded regular non-symlink file, every field matches the compiled catalog,
+the signature count meets the threshold, and fixed Docker inspection returns
+the attested image ID. A local same-tag image without the attestation is
+untrusted. Bitcoin Core image preparation has no disabled/shadow legacy pull;
+the manager fails closed unless the broker operates in `enforce` mode.
+
 ### `packages.feature.ensure` and `packages.feature.status`
 
 The first shared package capability accepts only this closed request:

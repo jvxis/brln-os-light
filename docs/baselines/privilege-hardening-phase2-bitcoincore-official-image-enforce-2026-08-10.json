@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T21:08:51Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "0e1258a0df2fc73d5ba850b16163627258471e5e",
+  "tested_source": "source_head_before_slice plus the uncommitted official Bitcoin Core provenance slice",
+  "scope": "verified local Bitcoin Core image construction plus isolated executable, RPC, ZMQ, and P2P smoke tests; no App Store lifecycle or persistent blockchain storage",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "architecture": "amd64"
+  },
+  "broker_binary": {
+    "goos": "linux",
+    "goarch": "amd64",
+    "sha256": "36cfe6ad168c3aa29e7469d3a1965cb448ef4fd28aa7d897ff99f478fd88fc36"
+  },
+  "provenance_contract": {
+    "release": "31.1",
+    "release_origin": "https://bitcoincore.org/bin/bitcoin-core-31.1/",
+    "archive": "bitcoin-31.1-x86_64-linux-gnu.tar.gz",
+    "archive_sha256": "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+    "signed_checksum_files": ["SHA256SUMS", "SHA256SUMS.asc"],
+    "trusted_builder_fingerprints_pinned": 7,
+    "minimum_distinct_valid_signatures": 3,
+    "distinct_valid_signatures_observed": 7,
+    "base_image": "debian:bookworm-slim@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143",
+    "local_image": "lightningos/bitcoin-core:31.1",
+    "registry_pull_for_bitcoin_core": false,
+    "build_run_network": "none"
+  },
+  "fail_closed_contract": {
+    "unattested_same_tag_image_ready": false,
+    "mismatched_docker_image_id_ready": false,
+    "wrong_release_ready": false,
+    "wrong_archive_hash_ready": false,
+    "wrong_base_digest_ready": false,
+    "fewer_than_three_signatures_ready": false,
+    "extra_attestation_fields_ready": false,
+    "symlinked_attestation_accepted": false,
+    "legacy_disabled_or_shadow_registry_fallback": false
+  },
+  "gate_execution": {
+    "first_attempt": {
+      "result": "failed_before_key_import",
+      "cause": "trusted-key destination mistakenly quoted the work variable literally",
+      "exit_status": 23,
+      "attestation_created": false,
+      "regression_test_added": true
+    },
+    "corrected_attempt": {
+      "prepare_status": "preparing",
+      "intermediate_status": "preparing",
+      "final_status": "ready",
+      "attestation_owner": "0:0",
+      "attestation_mode": "0600",
+      "image_id": "sha256:18ab17063a6c00cb9756fc1282d5f497930670794c13b4eed721c5ed804f4555",
+      "attested_image_id_matches_docker": true
+    }
+  },
+  "runtime_smoke": {
+    "reported_daemon_version": "Bitcoin Core daemon version v31.1.0 bitcoind",
+    "reported_cli_version": "Bitcoin Core RPC client version v31.1.0",
+    "bitcoind_uid": 101,
+    "persistent_storage_used": false,
+    "storage_type": "tmpfs",
+    "rpc_chain": "regtest",
+    "network_active": true,
+    "zmq_rawblock": "tcp://127.0.0.1:28332",
+    "zmq_rawtx": "tcp://127.0.0.1:28333",
+    "p2p_internal_network": true,
+    "p2p_node_a_connections": 1,
+    "p2p_node_b_connections": 1,
+    "temporary_containers_removed": true,
+    "temporary_network_removed": true
+  },
+  "local_validation": {
+    "appmanifest_tests": "passed",
+    "privileged_tests": "passed",
+    "focused_server_bitcoin_core_tests": "passed",
+    "full_server_tests": "only the two pre-existing Windows CRLF-sensitive installer asset tests failed",
+    "git_diff_check": "passed"
+  },
+  "remaining_bitcoin_core_scope": [
+    "broker-owned storage target enrollment and identity guard",
+    "bitcoin.conf seed/read/write with secret-safe handling",
+    "typed Compose install/start/stop/status/uninstall",
+    "mainnet P2P firewall contract",
+    "consumer compatibility for LND, Electrs, Mempool, BTCPay, Fedimint, and Public Pool"
+  ],
+  "final_state": {
+    "official_local_image_present": true,
+    "official_image_attestation_present": true,
+    "unofficial_bitcoin_bitcoin_image_present": false,
+    "manager_app_root_present": false,
+    "manager_app_data_root_present": false,
+    "bitcoin_blockchain_data_dir_present": false,
+    "gate_vm": "powered_off_by_acpi",
+    "los_test2": "untouched"
+  }
+}

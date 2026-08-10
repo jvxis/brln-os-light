@@ -278,17 +278,34 @@ was untouched. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-robosats-remove-enforce-2026-08-10.json`.
 
 Bitcoin Core migration has started with its independently testable runtime and
-image boundary. The manager now uses typed Docker readiness and selects only
-the closed `bitcoincore/node` variant; the broker maps it to the explicit
-`bitcoin/bitcoin:31.1` release and a fixed transient pull unit. The disposable
-Ubuntu 24.04 `enforce` gate began without a Bitcoin image, app root, or data
-directory, completed the pull with direct manager Docker access denied,
-reported Bitcoin Core 31.1.0, rejected a caller-supplied image field, and left
-no transient unit loaded. The verification container and image were removed,
-Bitcoin Core was never started, no blockchain data was created, and LOS-TEST2
-was untouched. Storage identity/configuration, Compose lifecycle, RPC/CLI,
-firewall, and dependent-network contracts remain open. Evidence is stored in
-`docs/baselines/privilege-hardening-phase2-bitcoincore-image-enforce-2026-08-10.json`.
+image boundary. The first gate pinned `bitcoin/bitcoin:31.1`, but the
+subsequent provenance review confirmed that Docker Hub describes that image as
+unofficial. That initial gate remains as historical evidence but is
+superseded before any Bitcoin lifecycle or persistent data use.
+
+The closed `bitcoincore/node` variant now maps only to a local
+`lightningos/bitcoin-core:31.1` image. The broker downloads the official 31.1
+Linux archive, `SHA256SUMS`, signature bundle, and seven fingerprint-pinned
+Guix builder keys; it requires at least three distinct valid signatures,
+checks the exact architecture hash, and builds on a Debian base pinned by
+platform digest with network disabled for Docker build steps. Readiness also
+requires a root-only attestation whose Docker image ID matches the local
+image. An unattested same-tag image and every mismatch fail closed, and the
+manager has no registry fallback outside broker `enforce` mode.
+
+The disposable Ubuntu 24.04 gate observed seven valid signatures, produced a
+root-owned `0600` attestation, reported Bitcoin Core and `bitcoin-cli` 31.1.0,
+and ran bitcoind as UID 101. Isolated `regtest` smoke tests passed RPC, both ZMQ
+publishers, and a real P2P handshake between two nodes on an internal network.
+All temporary containers, networks, and files were removed; the verified image
+and attestation were preserved, the unofficial image was removed, no App Store
+root or blockchain data was created, the gate VM was powered off, and
+LOS-TEST2 was untouched. Storage identity/configuration, typed Compose
+lifecycle, mainnet firewall, and dependent-app contracts remain open. The
+superseded pin-only gate is recorded in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-image-enforce-2026-08-10.json`;
+the official-provenance gate is recorded in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-official-image-enforce-2026-08-10.json`.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

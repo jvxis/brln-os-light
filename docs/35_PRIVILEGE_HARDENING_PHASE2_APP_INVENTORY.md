@@ -138,21 +138,33 @@ credentials, configuration mutation, a public P2P port, and a Docker network
 consumed by Electrs, Mempool, BTCPay, Fedimint, and Public Pool. Image
 preparation can be separated safely from those contracts.
 
-- The former `bitcoin/bitcoin:latest` reference is pinned to the explicit
-  `bitcoin/bitcoin:31.1` release. A mutable major-version pointer no longer
-  forms part of the privileged execution contract.
+- The former `bitcoin/bitcoin:latest` reference is not merely pinned: the
+  third-party registry image is removed from the execution contract. Docker
+  Hub labels it unofficial, so the earlier `bitcoin/bitcoin:31.1` gate is
+  retained only as superseded historical evidence.
 - The manager selects only `bitcoincore` plus the `node` variant. The broker
-  maps those values to the fixed image and
-  `lightningos-bitcoincore-image-node` transient unit.
+  maps those values to local image `lightningos/bitcoin-core:31.1` and the
+  fixed `lightningos-bitcoincore-image-node` transient unit; the local tag is
+  never pulled from a registry.
+- The broker downloads the official architecture-specific archive and signed
+  checksum bundle from `bitcoincore.org`, pins seven Guix builder primary-key
+  fingerprints, requires at least three distinct valid signatures, checks the
+  exact archive SHA-256, and builds from a platform-specific Debian base
+  digest. Docker build steps receive `--network=none`.
+- Image readiness requires a root-owned attestation containing the release,
+  archive hash, base digest, valid-signature count, and exact Docker image ID.
+  An unattested same-tag image, malformed/symlinked attestation, insufficient
+  signatures, or any metadata/image mismatch is never reported ready.
 - Docker package/runtime readiness now uses the existing typed broker path
   before Bitcoin Core installation. In `enforce`, image preparation fails
-  closed and cannot fall back to direct Docker execution.
-- The disposable Ubuntu 24.04 gate began without the image, app root, or data
-  directory. The fixed pull completed, the image reported Bitcoin Core 31.1.0,
-  direct Docker access from the manager remained denied, and an injected image
-  field was rejected. The temporary verification container and downloaded
-  image were removed; Bitcoin Core was never started and no blockchain data
-  was created.
+  closed and cannot fall back to direct Docker execution or a registry pull.
+- The disposable Ubuntu 24.04 provenance gate observed seven valid signatures,
+  produced a root-owned `0600` attestation, matched the attested Docker image
+  ID, reported daemon and CLI 31.1.0, and ran bitcoind as UID 101. Ephemeral
+  `regtest` tests passed RPC, both ZMQ publishers, and a P2P handshake between
+  two nodes on an internal Docker network. Temporary containers/networks were
+  removed, the verified image was retained, the unofficial image was removed,
+  and no App Store root or persistent blockchain data was created.
 
 Storage enrollment/configuration is the next Bitcoin Core slice. Lifecycle
 admission follows only after the broker can independently validate the selected
@@ -209,6 +221,8 @@ mounts.
   roots without `--volumes`; named data survives, injected volume deletion is
   rejected, and a failed broker removal preserves retry state.
 - Bitcoin Core image preparation accepts only the catalog `node` variant,
-  resolves an explicit release and fixed transient unit inside the broker,
-  fails closed in `enforce`, rejects caller-supplied image fields, and does not
-  create an app root or blockchain data directory.
+  resolves an official release, signed checksums, fingerprint-pinned builders,
+  architecture hash, base digest, local image, and fixed transient unit inside
+  the broker. It requires a matching root-only attestation, fails closed in
+  `enforce`, rejects caller-supplied image fields, and does not create an App
+  Store root or blockchain data directory.

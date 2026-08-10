@@ -260,8 +260,7 @@ func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPool
 
 	if fileExists(bitcoinCoreAppPaths().ComposePath) {
 		if localCfgUpdated {
-			bitcoinPaths := bitcoinCoreAppPaths()
-			if restartErr := runCompose(ctx, bitcoinPaths.Root, bitcoinPaths.ComposePath, "restart", "bitcoind"); restartErr != nil {
+			if restartErr := runBitcoinCoreLifecycle(ctx, "restart"); restartErr != nil {
 				return publicPoolRuntimeValues{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", restartErr)
 			}
 		}

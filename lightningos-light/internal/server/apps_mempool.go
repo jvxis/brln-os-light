@@ -198,7 +198,7 @@ func (s *Server) resolveMempoolRuntimeValues(ctx context.Context, bitcoinPaths b
 		return mempoolRuntimeValues{}, errors.New("local bitcoin RPC credentials missing")
 	}
 	if updated {
-		if err := runCompose(ctx, bitcoinPaths.Root, bitcoinPaths.ComposePath, "restart", "bitcoind"); err != nil {
+		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
 			return mempoolRuntimeValues{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", err)
 		}
 	}

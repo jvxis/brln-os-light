@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T23:07:21Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "c59da5a56ae9636ebe369fce8570480a5625dade",
+  "tested_source": "source_head_before_slice plus the uncommitted typed Bitcoin Core Compose lifecycle slice",
+  "scope": "typed Bitcoin Core status, start, restart, stop, and remove using the official attested image and isolated regtest storage",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "architecture": "amd64"
+  },
+  "catalog_contract": {
+    "app_id": "bitcoincore",
+    "project": "bitcoincore",
+    "primary_service": "bitcoind",
+    "image": "lightningos/bitcoin-core:31.1",
+    "image_source": "locally built from the verified official Bitcoin Core 31.1 release",
+    "stop_timeout_seconds": 10,
+    "restart_restricted_to_bitcoin_core": true,
+    "caller_selected_paths_or_args": false,
+    "manager_compose_executed": false,
+    "execution_assets_owner": "0:0",
+    "execution_assets_mode": "0600"
+  },
+  "linux_contract_tests": {
+    "appmanifest": "passed",
+    "privileged": "passed including root ownership, wrong storage identity, manager manifest tampering, fixed command shapes, inspection, and retention tests",
+    "system": "passed",
+    "server": "passed"
+  },
+  "real_gate": {
+    "storage": "12 GiB-declared tmpfs removed after the gate",
+    "chain": "regtest",
+    "mainnet_started": false,
+    "persistent_blockchain_data_created": false,
+    "argument_array_injection_rejected": true,
+    "bitcoind_uid": 101,
+    "bitcoin_cli_chain": "regtest",
+    "operations": [
+      {"operation": "app.bitcoincore.storage.ensure", "success": true, "duration_ms": 11},
+      {"operation": "app.bitcoincore.config.ensure", "success": true, "duration_ms": 4},
+      {"operation": "app.compose.lifecycle:start", "success": true, "duration_ms": 1001},
+      {"operation": "app.compose.inspect:running", "success": true, "duration_ms": 294},
+      {"operation": "app.compose.lifecycle:restart", "success": true, "duration_ms": 1128},
+      {"operation": "app.compose.inspect:running", "success": true, "duration_ms": 261},
+      {"operation": "app.compose.lifecycle:stop", "success": true, "duration_ms": 818},
+      {"operation": "app.compose.inspect:stopped", "success": true, "duration_ms": 253},
+      {"operation": "app.compose.remove", "success": true, "duration_ms": 400}
+    ]
+  },
+  "manager_cutover": {
+    "bitcoin_app_direct_compose_lifecycle_calls_remaining": 0,
+    "bitcoin_app_direct_compose_status_calls_remaining": 0,
+    "consumer_bitcoin_restart_calls_migrated": [
+      "Bitcoin config/source",
+      "BTCPay",
+      "Electrs",
+      "Fedimint",
+      "Mempool",
+      "Public Pool"
+    ],
+    "custom_storage_privileged_shell_fallback_remaining": false,
+    "fails_closed_outside_enforce": true
+  },
+  "final_state": {
+    "official_local_image_present": true,
+    "official_image_attestation_present": true,
+    "bitcoin_compose_containers_present": false,
+    "temporary_mount_present": false,
+    "temporary_storage_metadata_present": false,
+    "temporary_execution_assets_present": false,
+    "temporary_remote_checkout_present": false,
+    "temporary_remote_broker_binary_present": false,
+    "manager_active_before_shutdown": true,
+    "gate_vm": "powered_off_by_acpi",
+    "los_test2": "untouched"
+  },
+  "remaining_scope": [
+    "live dependent-app compatibility for LND, Electrs, Mempool, BTCPay, Fedimint, and Public Pool",
+    "typed operational bitcoin-cli and log access",
+    "mainnet P2P firewall contract"
+  ]
+}

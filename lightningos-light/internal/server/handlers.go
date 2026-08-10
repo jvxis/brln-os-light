@@ -550,10 +550,9 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 	}
 
 	if needsBitcoinRestart {
-		paths := bitcoinCoreAppPaths()
 		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 		defer cancel()
-		if err := runCompose(ctx, paths.Root, paths.ComposePath, "restart", "bitcoind"); err != nil {
+		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
 			writeError(w, http.StatusInternalServerError, "bitcoin restart failed")
 			return
 		}

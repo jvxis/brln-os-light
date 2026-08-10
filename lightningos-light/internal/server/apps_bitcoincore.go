@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -15,12 +14,10 @@ import (
 )
 
 type bitcoinCorePaths struct {
-	Root             string
-	DataDir          string
-	ConfigPath       string
-	ComposePath      string
-	StorageIDPath    string
-	StorageGuardPath string
+	Root        string
+	DataDir     string
+	ConfigPath  string
+	ComposePath string
 }
 
 type bitcoinCoreApp struct {
@@ -34,7 +31,6 @@ const (
 	bitcoinCoreDataDirStateFile = "data_dir"
 	bitcoinCoreStorageIDFile    = "storage_id"
 	bitcoinCoreStorageMarker    = appmanifest.BitcoinCoreStorageMarker
-	bitcoinCoreStorageGuardFile = "storage-guard.sh"
 	bitcoinCoreConfigFile       = "bitcoin.conf"
 	bitcoinCoreMinFreeKiB       = 10 * 1024 * 1024
 	bitcoinCoreLegacySeedMax    = 8 * 1024
@@ -70,7 +66,7 @@ func (a bitcoinCoreApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "bitcoind")
+	status, err := inspectBitcoinCoreStatus(ctx)
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
@@ -99,12 +95,10 @@ func bitcoinCoreAppPaths() bitcoinCorePaths {
 	root := filepath.Join(appsRoot, bitcoinCoreAppID)
 	dataDir := readBitcoinCoreDataDir()
 	return bitcoinCorePaths{
-		Root:             root,
-		DataDir:          dataDir,
-		ConfigPath:       filepath.Join(dataDir, "bitcoin.conf"),
-		ComposePath:      filepath.Join(root, "docker-compose.yaml"),
-		StorageIDPath:    appmanifest.BitcoinCoreStorageIDPath,
-		StorageGuardPath: filepath.Join(root, bitcoinCoreStorageGuardFile),
+		Root:        root,
+		DataDir:     dataDir,
+		ConfigPath:  filepath.Join(dataDir, "bitcoin.conf"),
+		ComposePath: filepath.Join(root, "docker-compose.yaml"),
 	}
 }
 
@@ -223,13 +217,13 @@ func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoin
 	if _, err := ensureFileWithChange(paths.ComposePath, bitcoinCoreComposeContents(paths)); err != nil {
 		return err
 	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
+	if err := runBitcoinCoreLifecycle(ctx, "start"); err != nil {
 		return err
 	}
 	if _, changed, err := syncBitcoinCoreRPCAllowList(ctx, paths); err != nil {
 		return err
 	} else if changed {
-		if err := runCompose(ctx, paths.Root, paths.ComposePath, "restart", "bitcoind"); err != nil {
+		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
 			return err
 		}
 	}
@@ -266,61 +260,17 @@ func validateBitcoinCoreInstallDataDir(ctx context.Context, dataDir string) erro
 		}
 		return nil
 	}
-	parent := path.Dir(normalized)
-	script := fmt.Sprintf(`set -e
-parent=%s
-data=%s
-nearest="$parent"
-while [ ! -e "$nearest" ] && [ "$nearest" != "/" ]; do
-  nearest="$(dirname "$nearest")"
-done
-if [ ! -d "$nearest" ]; then
-  echo "nearest existing parent is not a directory: $nearest" >&2
-  exit 10
-fi
-if command -v findmnt >/dev/null 2>&1; then
-  mount_target="$(findmnt -T "$nearest" -no TARGET 2>/dev/null | head -n1 || true)"
-  if [ -z "$mount_target" ]; then
-    echo "parent directory is not on a mounted filesystem: $nearest" >&2
-    exit 11
-  fi
-  if [ "$mount_target" = "/" ]; then
-    echo "parent directory is on the root filesystem; mount the target volume first: $parent" >&2
-    exit 12
-  fi
-fi
-mkdir -p "$data"
-if [ ! -d "$data" ]; then
-  echo "data directory is not a directory: $data" >&2
-  exit 13
-fi
-touch "$data/.lightningos-write-test"
-rm -f "$data/.lightningos-write-test"
-available="$(df -Pk "$data" | awk 'NR==2 {print $4}')"
-if [ -z "$available" ]; then
-  echo "could not determine free space in $data" >&2
-  exit 14
-fi
-if [ "$available" -lt %d ]; then
-  echo "not enough free space in $data" >&2
-  exit 15
-fi
-`, shellQuote(parent), shellQuote(normalized), bitcoinCoreMinFreeKiB)
-	out, err := runSystemd(ctx, "/bin/sh", "-c", script)
-	if err != nil {
-		msg := strings.TrimSpace(out)
-		if msg == "" {
-			return fmt.Errorf("bitcoin data_dir validation failed: %w", err)
-		}
-		return fmt.Errorf("bitcoin data_dir validation failed: %s", msg)
-	}
-	return nil
+	return errors.New("bitcoin storage enrollment requires privileged broker enforce mode")
 }
 
 func (s *Server) uninstallBitcoinCore(ctx context.Context) error {
 	paths := bitcoinCoreAppPaths()
 	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		if handled, err := system.RemoveAppWithBroker(ctx, appmanifest.BitcoinCoreID); !handled {
+			return errors.New("Bitcoin Core removal requires privileged broker enforce mode")
+		} else if err != nil {
+			return fmt.Errorf("Bitcoin Core removal failed: %w", err)
+		}
 	}
 	if err := os.RemoveAll(paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)
@@ -350,13 +300,13 @@ func (s *Server) startBitcoinCore(ctx context.Context) error {
 	if _, err := ensureFileWithChange(paths.ComposePath, bitcoinCoreComposeContents(paths)); err != nil {
 		return err
 	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
+	if err := runBitcoinCoreLifecycle(ctx, "start"); err != nil {
 		return err
 	}
 	if _, changed, err := syncBitcoinCoreRPCAllowList(ctx, paths); err != nil {
 		return err
 	} else if changed {
-		if err := runCompose(ctx, paths.Root, paths.ComposePath, "restart", "bitcoind"); err != nil {
+		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
 			return err
 		}
 	}
@@ -368,33 +318,18 @@ func (s *Server) stopBitcoinCore(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("Bitcoin Core is not installed")
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
+	return runBitcoinCoreLifecycle(ctx, "stop")
 }
 
 func bitcoinCoreComposeContents(paths bitcoinCorePaths) string {
-	return fmt.Sprintf(`services:
-  bitcoind:
-    image: %s
-    user: "0:0"
-    restart: unless-stopped
-    entrypoint: ["/bin/sh", "/lightningos-storage-guard.sh"]
-    command: ["bitcoind"]
-    ports:
-      - "8333:8333"
-      - "127.0.0.1:8332:8332"
-      - "127.0.0.1:28332:28332"
-      - "127.0.0.1:28333:28333"
-    volumes:
-      - %s:/home/bitcoin/.bitcoin
-      - %s:/lightningos-storage-guard.sh:ro
-      - %s:/lightningos-expected-storage-id:ro
-`, bitcoinCoreImage, paths.DataDir, paths.StorageGuardPath, paths.StorageIDPath)
+	raw, err := appmanifest.BitcoinCoreCompose(paths.DataDir, appmanifest.BitcoinCoreExecutionRoot)
+	if err != nil {
+		return ""
+	}
+	return raw
 }
 
 func ensureBitcoinCoreStorageGuard(ctx context.Context, paths bitcoinCorePaths) error {
-	if _, err := ensureFileWithChange(paths.StorageGuardPath, bitcoinCoreStorageGuardContents()); err != nil {
-		return fmt.Errorf("failed to write Bitcoin Core storage guard: %w", err)
-	}
 	if handled, err := system.EnsureBitcoinCoreStorageWithBroker(ctx, paths.DataDir); handled {
 		if err != nil {
 			return fmt.Errorf("bitcoin storage enrollment failed: %w", err)
@@ -405,19 +340,26 @@ func ensureBitcoinCoreStorageGuard(ctx context.Context, paths bitcoinCorePaths) 
 }
 
 func bitcoinCoreStorageGuardContents() string {
-	return `#!/bin/sh
-set -eu
+	return appmanifest.BitcoinCoreStorageGuard()
+}
 
-expected="$(tr -d '\r\n' < /lightningos-expected-storage-id)"
-actual="$(tr -d '\r\n' < /home/bitcoin/.bitcoin/.lightningos-storage-id 2>/dev/null || true)"
+func runBitcoinCoreLifecycle(ctx context.Context, action string) error {
+	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.BitcoinCoreID, action); !handled {
+		return errors.New("Bitcoin Core lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Bitcoin Core %s failed: %w", action, err)
+	}
+	return nil
+}
 
-if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
-  echo "LightningOS storage guard: the configured Bitcoin data volume is missing or has the wrong identity; refusing to start bitcoind" >&2
-  exit 78
-fi
-
-exec /entrypoint.sh "$@"
-`
+func inspectBitcoinCoreStatus(ctx context.Context) (string, error) {
+	if handled, status, _, err := system.InspectAppWithBroker(ctx, appmanifest.BitcoinCoreID); !handled {
+		return "unknown", errors.New("Bitcoin Core status requires privileged broker enforce mode")
+	} else if err != nil {
+		return "unknown", fmt.Errorf("Bitcoin Core status failed: %w", err)
+	} else {
+		return status, nil
+	}
 }
 
 func ensureBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) error {

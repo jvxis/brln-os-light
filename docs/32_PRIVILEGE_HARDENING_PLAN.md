@@ -342,8 +342,34 @@ storage and remote gate artifacts were removed, the official image and
 attestation were preserved, and no Bitcoin process or blockchain data was
 created. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-bitcoincore-config-enforce-2026-08-10.json`.
-Typed Compose lifecycle and dependent-app compatibility are the next Bitcoin
-slice.
+
+Bitcoin Core's typed Compose lifecycle is now complete for status, start,
+stop, restart, and uninstall. The broker derives the data mount only from its
+root-owned storage enrollment, validates the fixed config and official-image
+attestation before start/restart, and writes the execution Compose plus storage
+guard as root-owned `0600` files. The manager-owned Compose is an inert install
+record and never reaches Docker. `restart` is a closed lifecycle action allowed
+only for Bitcoin Core; the Bitcoin config endpoint and BTCPay, Electrs,
+Fedimint, Mempool, Public Pool, and Bitcoin-source wiring now use it instead of
+direct manager Docker calls. Bitcoin lifecycle, status, and removal fail closed
+outside broker `enforce`, and the remaining legacy privileged shell fallback
+for custom storage validation has been removed.
+
+The disposable Ubuntu 24.04 gate first passed Linux ownership and negative
+tests, then ran the real typed sequence against the previously verified
+official image: storage enrollment and config ensure on a 12 GiB-declared
+`tmpfs`, rejected argument injection, start, running inspection, restart,
+running inspection, stop, stopped inspection, and remove. The isolated config
+selected `regtest`; the process ran as UID 101 and `bitcoin-cli` confirmed the
+regtest chain. No mainnet process or persistent blockchain data was used. The
+broker preserved the official image and attestation while removing the
+container and execution assets. All temporary mount, storage metadata,
+checkout, and binary paths were removed, the manager remained active, the VM
+was powered off, and `LOS-TEST2` was untouched. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-lifecycle-enforce-2026-08-10.json`.
+Live compatibility checks for the dependent apps, the remaining operational
+Bitcoin CLI/log paths, and the mainnet P2P firewall contract are the next
+Bitcoin slices.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

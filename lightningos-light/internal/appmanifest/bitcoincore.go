@@ -21,9 +21,15 @@ const (
 
 	BitcoinCoreSignatureThreshold = 3
 
-	BitcoinCoreDefaultDataDir = "/data/bitcoin"
-	BitcoinCoreStorageIDPath  = "/var/lib/lightningos-privileged/apps/bitcoincore/storage-id"
-	BitcoinCoreStorageMarker  = ".lightningos-storage-id"
+	BitcoinCoreDefaultDataDir   = "/data/bitcoin"
+	BitcoinCoreProject          = "bitcoincore"
+	BitcoinCoreComposeFile      = "docker-compose.yaml"
+	BitcoinCorePrimaryService   = "bitcoind"
+	BitcoinCoreStopTimeout      = 10
+	BitcoinCoreExecutionRoot    = "/var/lib/lightningos-privileged/apps/bitcoincore"
+	BitcoinCoreStorageGuardFile = "storage-guard.sh"
+	BitcoinCoreStorageIDPath    = "/var/lib/lightningos-privileged/apps/bitcoincore/storage-id"
+	BitcoinCoreStorageMarker    = ".lightningos-storage-id"
 )
 
 var bitcoinCoreDataDirPattern = regexp.MustCompile(`^[A-Za-z0-9/._-]+$`)
@@ -120,6 +126,55 @@ func NormalizeBitcoinCoreDataDir(dataDir string) (string, error) {
 		}
 	}
 	return cleaned, nil
+}
+
+// BitcoinCoreCompose returns the closed execution manifest used by the
+// privileged broker. Both paths are derived from broker-owned state; neither
+// is accepted from an API request.
+func BitcoinCoreCompose(dataDir string, executionRoot string) (string, error) {
+	normalized, err := NormalizeBitcoinCoreDataDir(dataDir)
+	if err != nil || normalized != dataDir {
+		return "", errors.New("bitcoin data directory is not canonical")
+	}
+	if executionRoot == "" || !strings.HasPrefix(executionRoot, "/") || strings.Contains(executionRoot, `\`) ||
+		!bitcoinCoreDataDirPattern.MatchString(executionRoot) || path.Clean(executionRoot) != executionRoot {
+		return "", errors.New("bitcoin execution root is not canonical")
+	}
+	guardPath := path.Join(executionRoot, BitcoinCoreStorageGuardFile)
+	storageIDPath := path.Join(executionRoot, "storage-id")
+	return fmt.Sprintf(`services:
+  bitcoind:
+    image: %s
+    user: "0:0"
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/lightningos-storage-guard.sh"]
+    command: ["bitcoind"]
+    ports:
+      - "8333:8333"
+      - "127.0.0.1:8332:8332"
+      - "127.0.0.1:28332:28332"
+      - "127.0.0.1:28333:28333"
+    volumes:
+      - %s:/home/bitcoin/.bitcoin
+      - %s:/lightningos-storage-guard.sh:ro
+      - %s:/lightningos-expected-storage-id:ro
+`, BitcoinCoreImage, dataDir, guardPath, storageIDPath), nil
+}
+
+func BitcoinCoreStorageGuard() string {
+	return `#!/bin/sh
+set -eu
+
+expected="$(tr -d '\r\n' < /lightningos-expected-storage-id)"
+actual="$(tr -d '\r\n' < /home/bitcoin/.bitcoin/.lightningos-storage-id 2>/dev/null || true)"
+
+if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+  echo "LightningOS storage guard: the configured Bitcoin data volume is missing or has the wrong identity; refusing to start bitcoind" >&2
+  exit 78
+fi
+
+exec /entrypoint.sh "$@"
+`
 }
 
 func BitcoinCoreDockerfile(baseImage string) string {

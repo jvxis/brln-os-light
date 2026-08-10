@@ -352,8 +352,10 @@ The first Phase 2 manifest admits only this request shape:
 }
 ```
 
-`action` is exactly `start` or `stop`. Unknown apps, actions, fields, paths,
-services, images, and argument arrays are rejected. The broker accepts only the
+`action` is exactly `start` or `stop` for the shared catalog; `restart` is also
+accepted only for Bitcoin Core and targets its fixed `bitcoind` service.
+Unknown apps, actions, fields, paths, services, images, and argument arrays are
+rejected. The broker accepts only the
 catalog CPU Miner Compose document and a strict seven-key environment with an
 allowlisted image, fixed pool target, validated mainnet payout address, safe
 worker, and bounded thread count. Symlinks and non-regular files are rejected.
@@ -512,6 +514,45 @@ events, accepted a non-mutating dry-run, rejected an unknown app and an
 argument array, uninstalled the test app, restored `disabled`, and left Docker
 inactive. Secret-free evidence is in
 `docs/baselines/privilege-hardening-phase2-cpuminer-enforce-2026-08-10.json`.
+
+### Bitcoin Core Compose contract
+
+Bitcoin Core reuses `app.compose.lifecycle`, `app.compose.inspect`, and
+`app.compose.remove` with requests containing only the catalog app ID and, for
+lifecycle, the closed action. Unlike CPU Miner and RoboSats, the broker does
+not trust or byte-validate a manager-owned Compose input. It reads the exact
+data directory and storage identity from root-owned enrollment metadata,
+verifies the protected marker and fixed `bitcoin.conf`, verifies the official
+release attestation and exact local Docker image ID for start/restart, and
+generates its execution manifest from the closed catalog.
+
+The execution Compose and storage guard are atomically stored as root-owned
+mode `0600` under
+`/var/lib/lightningos-privileged/apps/bitcoincore`. No caller-selected path,
+mount, image, service, port, option, or argument reaches Docker. Status uses a
+private transient copy of the generated manifest and returns only `running` or
+`stopped`; it does not rewrite the persistent execution assets. The fixed
+commands are `up -d`, `stop --timeout 10`,
+`restart --timeout 10 bitcoind`, and
+`down --remove-orphans --timeout 10`.
+
+Removal deletes only the root-owned execution Compose and guard after Compose
+teardown succeeds. It deliberately preserves the blockchain directory,
+storage identity/enrollment, `bitcoin.conf`, official image attestation, and
+verified local image so reinstall cannot silently select a new storage target
+or downgrade provenance. The manager may remove only its own inert app record
+after the typed removal succeeds. Bitcoin Core lifecycle, inspection, and
+removal have no legacy fallback outside broker `enforce`; dependent apps reuse
+the same typed Bitcoin-only restart action after RPC allowlist changes.
+
+The Ubuntu 24.04 real-operation gate used an isolated `regtest` config and a
+12 GiB-declared `tmpfs`. It passed typed start, two running inspections,
+restart, stop, stopped inspection, and remove; verified the daemon as UID 101
+and the RPC chain as regtest; rejected an injected argument array; and left no
+container, mount, execution assets, enrollment metadata, checkout, binary, or
+persistent blockchain data. The official image and root-owned attestation were
+preserved. Secret-free evidence is in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-lifecycle-enforce-2026-08-10.json`.
 
 ## Manager modes and rollback
 

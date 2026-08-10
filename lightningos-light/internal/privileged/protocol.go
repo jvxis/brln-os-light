@@ -74,8 +74,9 @@ type ServiceRestartParams struct {
 type AppLifecycleAction string
 
 const (
-	AppLifecycleStart AppLifecycleAction = "start"
-	AppLifecycleStop  AppLifecycleAction = "stop"
+	AppLifecycleStart   AppLifecycleAction = "start"
+	AppLifecycleStop    AppLifecycleAction = "stop"
+	AppLifecycleRestart AppLifecycleAction = "restart"
 )
 
 type AppLifecycleParams struct {
@@ -267,7 +268,10 @@ func ValidateRequest(request Request) error {
 		if _, err := appmanifest.ComposeManifestForApp(params.AppID); err != nil {
 			return errors.New("app manifest is not allowed")
 		}
-		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
+		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop && params.Action != AppLifecycleRestart {
+			return errors.New("app lifecycle action is not allowed")
+		}
+		if params.Action == AppLifecycleRestart && params.AppID != appmanifest.BitcoinCoreID {
 			return errors.New("app lifecycle action is not allowed")
 		}
 	case OperationAppInspect:

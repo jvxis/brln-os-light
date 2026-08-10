@@ -277,7 +277,7 @@ func (s *Server) resolveBtcpayLocalWiring(ctx context.Context) (btcpayBitcoinWir
 	}
 	if fileExists(bitcoinPaths.ComposePath) {
 		if updated {
-			if err := runCompose(ctx, bitcoinPaths.Root, bitcoinPaths.ComposePath, "restart", "bitcoind"); err != nil {
+			if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
 				return btcpayBitcoinWiring{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", err)
 			}
 		}

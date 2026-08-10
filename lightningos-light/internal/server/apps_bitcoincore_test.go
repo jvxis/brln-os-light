@@ -119,9 +119,7 @@ func TestNormalizeBitcoinCoreDataDir(t *testing.T) {
 
 func TestBitcoinCoreComposeContentsUsesConfiguredDataDir(t *testing.T) {
 	paths := bitcoinCorePaths{
-		DataDir:          "/mnt/bitcoin-ssd/bitcoin",
-		StorageGuardPath: "/var/lib/lightningos/apps/bitcoincore/storage-guard.sh",
-		StorageIDPath:    appmanifest.BitcoinCoreStorageIDPath,
+		DataDir: "/mnt/bitcoin-ssd/bitcoin",
 	}
 	raw := bitcoinCoreComposeContents(paths)
 	if !strings.Contains(raw, "- /mnt/bitcoin-ssd/bitcoin:/home/bitcoin/.bitcoin") {
@@ -130,7 +128,7 @@ func TestBitcoinCoreComposeContentsUsesConfiguredDataDir(t *testing.T) {
 	for _, expected := range []string{
 		`entrypoint: ["/bin/sh", "/lightningos-storage-guard.sh"]`,
 		`command: ["bitcoind"]`,
-		"- /var/lib/lightningos/apps/bitcoincore/storage-guard.sh:/lightningos-storage-guard.sh:ro",
+		"- " + appmanifest.BitcoinCoreExecutionRoot + "/storage-guard.sh:/lightningos-storage-guard.sh:ro",
 		"- " + appmanifest.BitcoinCoreStorageIDPath + ":/lightningos-expected-storage-id:ro",
 	} {
 		if !strings.Contains(raw, expected) {
@@ -150,5 +148,38 @@ func TestBitcoinCoreStorageGuardRefusesWrongVolume(t *testing.T) {
 		if !strings.Contains(raw, expected) {
 			t.Fatalf("storage guard is missing %q:\n%s", expected, raw)
 		}
+	}
+}
+
+func TestBitcoinCoreLifecycleAndStatusRequireEnforceBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", inspectStatus: "running"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := runBitcoinCoreLifecycle(context.Background(), "restart"); err != nil {
+		t.Fatal(err)
+	}
+	if client.appCalls != 1 || client.appID != appmanifest.BitcoinCoreID || client.action != "restart" || client.dryRun {
+		t.Fatalf("unexpected lifecycle broker call: %#v", client)
+	}
+	status, err := inspectBitcoinCoreStatus(context.Background())
+	if err != nil || status != "running" || client.inspectCalls != 1 || client.inspectAppID != appmanifest.BitcoinCoreID {
+		t.Fatalf("status/error/client=%q/%v/%#v", status, err, client)
+	}
+}
+
+func TestBitcoinCoreLifecycleAndStatusFailClosedOutsideEnforce(t *testing.T) {
+	for _, mode := range []string{"disabled", "shadow"} {
+		t.Run(mode, func(t *testing.T) {
+			client := &cpuMinerPrivilegedClient{mode: mode}
+			system.ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+			if err := runBitcoinCoreLifecycle(context.Background(), "start"); err == nil {
+				t.Fatal("lifecycle unexpectedly used legacy fallback")
+			}
+			if _, err := inspectBitcoinCoreStatus(context.Background()); err == nil {
+				t.Fatal("status unexpectedly used legacy fallback")
+			}
+		})
 	}
 }

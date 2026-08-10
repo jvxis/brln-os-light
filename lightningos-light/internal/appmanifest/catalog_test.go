@@ -7,12 +7,14 @@ func TestComposeManifestCatalogIsClosed(t *testing.T) {
 		id      string
 		project string
 		service string
+		timeout int
 	}{
-		{id: CPUMinerID, project: CPUMinerProject, service: CPUMinerID},
-		{id: RoboSatsID, project: RoboSatsProject, service: RoboSatsPrimaryService},
+		{id: CPUMinerID, project: CPUMinerProject, service: CPUMinerID, timeout: 2},
+		{id: RoboSatsID, project: RoboSatsProject, service: RoboSatsPrimaryService, timeout: 2},
+		{id: BitcoinCoreID, project: BitcoinCoreProject, service: BitcoinCorePrimaryService, timeout: BitcoinCoreStopTimeout},
 	} {
 		manifest, err := ComposeManifestForApp(test.id)
-		if err != nil || manifest.ID != test.id || manifest.Project != test.project || manifest.PrimaryService != test.service || manifest.StopTimeoutSeconds != 2 {
+		if err != nil || manifest.ID != test.id || manifest.Project != test.project || manifest.PrimaryService != test.service || manifest.StopTimeoutSeconds != test.timeout {
 			t.Fatalf("manifest/error=%#v/%v", manifest, err)
 		}
 	}

@@ -284,7 +284,10 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	if err != nil {
 		return errors.New("app manifest is not allowed")
 	}
-	if action != AppLifecycleStart && action != AppLifecycleStop {
+	if action != AppLifecycleStart && action != AppLifecycleStop && action != AppLifecycleRestart {
+		return errors.New("app lifecycle action is not allowed")
+	}
+	if action == AppLifecycleRestart && manifest.ID != appmanifest.BitcoinCoreID {
 		return errors.New("app lifecycle action is not allowed")
 	}
 
@@ -322,6 +325,29 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		if err != nil {
 			return err
 		}
+	case appmanifest.BitcoinCoreID:
+		requireConfig := action == AppLifecycleStart || action == AppLifecycleRestart
+		if requireConfig {
+			if err := manager.validateBitcoinCoreLifecycleAttestation(); err != nil {
+				return err
+			}
+		}
+		snapshot, cleanup, err = manager.createBitcoinCoreExecutionSnapshot(ctx, dryRun, requireConfig)
+		if err != nil {
+			return err
+		}
+		if requireConfig {
+			if dryRun {
+				return nil
+			}
+			state, err := manager.ImageStatus(ctx, appmanifest.BitcoinCoreID, appmanifest.BitcoinCoreImageNode)
+			if err != nil || state.Status != "ready" {
+				return errors.New("verified bitcoin core image is not ready")
+			}
+		}
+		if dryRun {
+			return nil
+		}
 	default:
 		return errors.New("app manifest is not allowed")
 	}
@@ -353,6 +379,8 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		args = append(args, "up", "-d")
 	case AppLifecycleStop:
 		args = append(args, "stop", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds))
+	case AppLifecycleRestart:
+		args = append(args, "restart", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds), manifest.PrimaryService)
 	}
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		return errors.New("app lifecycle command failed")
@@ -401,6 +429,15 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 			return err
 		}
 		removePersistentSnapshot = true
+	case appmanifest.BitcoinCoreID:
+		snapshot, cleanup, err = manager.createBitcoinCoreExecutionSnapshot(ctx, dryRun, false)
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			return nil
+		}
+		removePersistentSnapshot = true
 	default:
 		return errors.New("app manifest is not allowed")
 	}
@@ -423,8 +460,12 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		return errors.New("app remove command failed")
 	}
-	if removePersistentSnapshot {
+	if removePersistentSnapshot && appID == appmanifest.RoboSatsID {
 		if err := manager.removeRoboSatsExecutionSnapshot(snapshot.root); err != nil {
+			return errors.New("failed to remove app execution snapshot")
+		}
+	} else if removePersistentSnapshot && appID == appmanifest.BitcoinCoreID {
+		if err := manager.removeBitcoinCoreExecutionSnapshot(snapshot.root); err != nil {
 			return errors.New("failed to remove app execution snapshot")
 		}
 	}
@@ -474,6 +515,11 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 			return inspection, err
 		}
 		snapshot, cleanup, err = manager.createRoboSatsSnapshot(manifest, files)
+		if err != nil {
+			return inspection, err
+		}
+	case appmanifest.BitcoinCoreID:
+		snapshot, cleanup, err = manager.createBitcoinCoreInspectionSnapshot(ctx)
 		if err != nil {
 			return inspection, err
 		}

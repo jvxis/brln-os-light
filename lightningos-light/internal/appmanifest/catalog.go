@@ -33,6 +33,14 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			PrimaryService:     RoboSatsPrimaryService,
 			StopTimeoutSeconds: 2,
 		}, nil
+	case BitcoinCoreID:
+		return ComposeManifest{
+			ID:                 BitcoinCoreID,
+			Project:            BitcoinCoreProject,
+			ComposeFile:        BitcoinCoreComposeFile,
+			PrimaryService:     BitcoinCorePrimaryService,
+			StopTimeoutSeconds: BitcoinCoreStopTimeout,
+		}, nil
 	default:
 		return ComposeManifest{}, errors.New("compose app manifest is not allowed")
 	}

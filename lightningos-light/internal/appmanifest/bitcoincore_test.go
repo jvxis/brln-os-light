@@ -103,3 +103,35 @@ func TestBitcoinCoreImageRecipeDropsPrivilegesWithoutNetworkInstall(t *testing.T
 		}
 	}
 }
+
+func TestBitcoinCoreComposeIsClosedAndUsesBrokerOwnedAssets(t *testing.T) {
+	raw, err := BitcoinCoreCompose("/mnt/bitcoin-ssd/bitcoin", BitcoinCoreExecutionRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"image: " + BitcoinCoreImage,
+		"- /mnt/bitcoin-ssd/bitcoin:/home/bitcoin/.bitcoin",
+		"- " + BitcoinCoreExecutionRoot + "/storage-guard.sh:/lightningos-storage-guard.sh:ro",
+		"- " + BitcoinCoreExecutionRoot + "/storage-id:/lightningos-expected-storage-id:ro",
+	} {
+		if !strings.Contains(raw, expected) {
+			t.Fatalf("compose missing %q:\n%s", expected, raw)
+		}
+	}
+	for _, forbidden := range []string{"privileged: true", "/var/run/docker.sock", ":latest"} {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("compose contains forbidden value %q:\n%s", forbidden, raw)
+		}
+	}
+	for _, test := range []struct{ dataDir, root string }{
+		{dataDir: "/etc/bitcoin", root: BitcoinCoreExecutionRoot},
+		{dataDir: "/mnt/bitcoin/../bitcoin-data", root: BitcoinCoreExecutionRoot},
+		{dataDir: "/data/bitcoin", root: "relative/root"},
+		{dataDir: "/data/bitcoin", root: "/var/lib/../tmp"},
+	} {
+		if _, err := BitcoinCoreCompose(test.dataDir, test.root); err == nil {
+			t.Fatalf("unsafe compose inputs accepted: %#v", test)
+		}
+	}
+}

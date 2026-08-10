@@ -475,7 +475,7 @@ func (s *Server) resolveFedimintBitcoinBackend(ctx context.Context, appName stri
 		if _, changed, err := syncBitcoinCoreRPCAllowList(ctx, bitcoinPaths); err != nil {
 			return fedimintBitcoinBackendValues{}, fmt.Errorf("failed to update local bitcoind RPC allowlist: %w", err)
 		} else if changed {
-			if err := runCompose(ctx, bitcoinPaths.Root, bitcoinPaths.ComposePath, "restart", "bitcoind"); err != nil {
+			if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
 				return fedimintBitcoinBackendValues{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", err)
 			}
 		}

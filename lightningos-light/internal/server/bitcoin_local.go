@@ -169,7 +169,7 @@ func (s *Server) bitcoinLocalStatus(ctx context.Context) (bitcoinLocalStatus, er
 	resp.Installed = true
 	resp.Source = "app"
 
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "bitcoind")
+	status, err := inspectBitcoinCoreStatus(ctx)
 	if err != nil {
 		resp.Status = "unknown"
 		return resp, nil
@@ -284,7 +284,7 @@ func (s *Server) handleBitcoinLocalConfigPost(w http.ResponseWriter, r *http.Req
 	}
 
 	if req.ApplyNow {
-		if err := runCompose(ctx, paths.Root, paths.ComposePath, "restart", "bitcoind"); err != nil {
+		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
 			writeError(w, http.StatusInternalServerError, "restart failed")
 			return
 		}

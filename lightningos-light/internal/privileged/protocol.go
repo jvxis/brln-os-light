@@ -150,6 +150,9 @@ func ValidateRequest(request Request) error {
 		if err := ValidateServiceUnit(params.Unit); err != nil {
 			return err
 		}
+		if params.Unit == "lightningos-manager" && !params.NoBlock {
+			return errors.New("manager restart must be non-blocking")
+		}
 	case OperationFilesEnableLogin:
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {

@@ -97,6 +97,43 @@ func TestBrokerServiceRestartUsesFixedCommand(t *testing.T) {
 	}
 }
 
+func TestBrokerManagerRestartUsesFixedTransientUnit(t *testing.T) {
+	runner := &recordingRunner{}
+	audit := &recordingAudit{}
+	locker := &recordingLocker{}
+	broker := testBroker(runner, audit, locker)
+	params, err := MarshalParams(ServiceRestartParams{Unit: "lightningos-manager", NoBlock: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := Request{
+		Version: ProtocolVersion, RequestID: "manager_restart_1", Operation: OperationServiceRestart, Params: params,
+	}
+
+	response := broker.Handle(context.Background(), request)
+	if !response.OK {
+		t.Fatalf("unexpected response error: %+v", response.Error)
+	}
+	want := []recordedCommand{{path: systemdRunPath, args: []string{
+		"--quiet",
+		"--collect",
+		"--unit=lightningos-manager-restart-manager_restart_1",
+		"--on-active=1s",
+		systemctlPath,
+		"restart",
+		"lightningos-manager",
+	}}}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	}
+	if locker.locks != 1 || locker.unlocks != 1 {
+		t.Fatalf("lock counts = %d/%d, want 1/1", locker.locks, locker.unlocks)
+	}
+	if len(audit.events) != 2 || audit.events[1].Phase != "complete" || !audit.events[1].Success {
+		t.Fatalf("unexpected audit events: %#v", audit.events)
+	}
+}
+
 func TestBrokerDryRunValidatesWithoutExecutionOrLock(t *testing.T) {
 	runner := &recordingRunner{}
 	locker := &recordingLocker{}

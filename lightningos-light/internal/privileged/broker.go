@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const systemctlPath = "/usr/bin/systemctl"
+const (
+	systemctlPath  = "/usr/bin/systemctl"
+	systemdRunPath = "/usr/bin/systemd-run"
+)
 
 type CommandRunner interface {
 	Run(ctx context.Context, path string, args ...string) (string, error)
@@ -130,6 +133,22 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 		}
 		if request.DryRun {
 			return map[string]any{"validated": true}, "", nil
+		}
+		if params.Unit == "lightningos-manager" {
+			transientUnit := "lightningos-manager-restart-" + request.RequestID
+			args := []string{
+				"--quiet",
+				"--collect",
+				"--unit=" + transientUnit,
+				"--on-active=1s",
+				systemctlPath,
+				"restart",
+				params.Unit,
+			}
+			if _, err := broker.Runner.Run(ctx, systemdRunPath, args...); err != nil {
+				return nil, "execution_failed", errors.New("service restart failed")
+			}
+			return map[string]any{"scheduled": true}, "", nil
 		}
 		args := []string{"restart"}
 		if params.NoBlock {

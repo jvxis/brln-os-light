@@ -46,6 +46,47 @@ func TestExistingInstallersAuthorizeDetectedLNDService(t *testing.T) {
 	}
 }
 
+func TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory(t *testing.T) {
+	templatePath := filepath.Join("..", "..", "templates", "lightningos-privileged.tmpfiles.conf")
+	templateRaw, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatalf("read broker tmpfiles template: %v", err)
+	}
+	if string(templateRaw) != "d /run/lock/lightningos 0750 root root -\n" {
+		t.Fatalf("unexpected broker tmpfiles rule: %q", string(templateRaw))
+	}
+
+	scripts := []string{
+		filepath.Join("..", "..", "install.sh"),
+		filepath.Join("..", "..", "install_existing.sh"),
+		filepath.Join("..", "..", "install_existing_pi.sh"),
+		filepath.Join("assets", "upgrade-app.sh"),
+	}
+	for _, path := range scripts {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			content := string(raw)
+			for _, expected := range []string{
+				`PRIVILEGED_TMPFILES_CONFIG="/etc/tmpfiles.d/lightningos-privileged.conf"`,
+				"templates/lightningos-privileged.tmpfiles.conf",
+				`/usr/bin/systemd-tmpfiles --create "$PRIVILEGED_TMPFILES_CONFIG"`,
+			} {
+				if !strings.Contains(content, expected) {
+					t.Fatalf("%s does not provision the broker runtime directory; missing %q", path, expected)
+				}
+			}
+			create := strings.Index(content, `/usr/bin/systemd-tmpfiles --create "$PRIVILEGED_TMPFILES_CONFIG"`)
+			selfTest := strings.Index(content, `"operation":"self_test"`)
+			if create < 0 || selfTest < 0 || create > selfTest {
+				t.Fatalf("%s must create the runtime directory before broker self-test", path)
+			}
+		})
+	}
+}
+
 func TestAppUpgradeMigratesManagerTLSBeforeRestart(t *testing.T) {
 	path := filepath.Join("assets", "upgrade-app.sh")
 	raw, err := os.ReadFile(path)

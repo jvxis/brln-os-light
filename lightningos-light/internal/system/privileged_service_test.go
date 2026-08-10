@@ -48,6 +48,19 @@ func TestRestartServiceWithBrokerEnforce(t *testing.T) {
 	}
 }
 
+func TestSystemctlRestartManagerUsesBrokerNoBlock(t *testing.T) {
+	client := &fakePrivilegedServiceClient{mode: "enforce"}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+
+	if err := SystemctlRestart(context.Background(), "lightningos-manager"); err != nil {
+		t.Fatalf("restart manager: %v", err)
+	}
+	if client.calls != 1 || client.unit != "lightningos-manager" || !client.noBlock || client.dryRun {
+		t.Fatalf("manager restart must use one real non-blocking broker call: %#v", client)
+	}
+}
+
 func TestRestartServiceWithBrokerShadowFallsBack(t *testing.T) {
 	client := &fakePrivilegedServiceClient{mode: "shadow", err: errors.New("rejected")}
 	ConfigurePrivilegedClient(client)

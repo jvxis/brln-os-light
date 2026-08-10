@@ -109,6 +109,7 @@ fi
 
 LOCK_FILE="/var/lib/lightningos/app-upgrade.lock"
 PRIVILEGED_BROKER="/usr/local/libexec/lightningos-privileged"
+PRIVILEGED_TMPFILES_CONFIG="/etc/tmpfiles.d/lightningos-privileged.conf"
 GIT_BIN="$(resolve_bin git /usr/bin/git /bin/git)" || die "Required command missing: git"
 GO_BIN="$(resolve_bin go /usr/local/go/bin/go /usr/bin/go /bin/go)" || die "Required command missing: go"
 NPM_BIN="$(resolve_bin npm /usr/bin/npm /usr/local/bin/npm /bin/npm)" || die "Required command missing: npm"
@@ -439,11 +440,15 @@ print_ok "Manager installed"
 
 print_step "Installing privileged broker foundation"
 (cd "$project_dir" && env $go_env GOFLAGS=-mod=mod "$GO_BIN" build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
-for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER"; do
+for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
   [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"
 done
+[[ -f "$project_dir/templates/lightningos-privileged.tmpfiles.conf" ]] || die "Privileged broker tmpfiles template is missing"
 "$INSTALL_BIN" -d -o root -g root -m 0755 /usr/local/libexec
+"$INSTALL_BIN" -d -o root -g root -m 0755 /etc/tmpfiles.d
 "$INSTALL_BIN" -d -o root -g root -m 0750 /var/log/lightningos-privileged /run/lock/lightningos
+"$INSTALL_BIN" -o root -g root -m 0644 "$project_dir/templates/lightningos-privileged.tmpfiles.conf" "$PRIVILEGED_TMPFILES_CONFIG"
+/usr/bin/systemd-tmpfiles --create "$PRIVILEGED_TMPFILES_CONFIG"
 "$INSTALL_BIN" -o root -g root -m 0755 "$project_dir/dist/lightningos-privileged" "$PRIVILEGED_BROKER"
 broker_response="$(printf '%s\n' '{"version":1,"request_id":"upgrade_self_test","operation":"self_test","params":{}}' | env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$PRIVILEGED_BROKER")"
 if [[ "$broker_response" != *'"request_id":"upgrade_self_test"'* || "$broker_response" != *'"ok":true'* || "$broker_response" != *'"ready":true'* ]]; then

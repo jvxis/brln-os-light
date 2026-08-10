@@ -26,6 +26,7 @@ func TestDecodeRequestStrictValidation(t *testing.T) {
 		{name: "shell unit", payload: `{"version":1,"request_id":"request_1","operation":"service.restart","params":{"unit":"lnd;reboot"}}`, wantErr: true},
 		{name: "path unit", payload: `{"version":1,"request_id":"request_1","operation":"service.restart","params":{"unit":"../../lnd"}}`, wantErr: true},
 		{name: "unknown unit", payload: `{"version":1,"request_id":"request_1","operation":"service.restart","params":{"unit":"ssh"}}`, wantErr: true},
+		{name: "blocking manager restart", payload: `{"version":1,"request_id":"request_1","operation":"service.restart","params":{"unit":"lightningos-manager"}}`, wantErr: true},
 		{name: "trailing object", payload: valid + `{}`, wantErr: true},
 	}
 	for _, test := range tests {

@@ -359,30 +359,24 @@ func SystemctlIsActive(ctx context.Context, service string) bool {
 }
 
 func SystemctlRestart(ctx context.Context, service string) error {
-	if handled, err := restartServiceWithBroker(ctx, service, false); handled {
-		return err
-	}
-	systemctl := systemctlPath()
-	_, err := RunCommand(ctx, systemctl, "restart", service)
-	if err == nil {
-		return nil
-	}
-	sudoPath, sudoErr := exec.LookPath("sudo")
-	if sudoErr != nil {
-		return err
-	}
-	if _, sudoErr = RunCommand(ctx, sudoPath, "-n", systemctl, "restart", service); sudoErr == nil {
-		return nil
-	}
-	return fmt.Errorf("systemctl restart failed: %w; sudo restart failed: %v", err, sudoErr)
+	return systemctlRestart(ctx, service, service == "lightningos-manager")
 }
 
 func SystemctlRestartNoBlock(ctx context.Context, service string) error {
-	if handled, err := restartServiceWithBroker(ctx, service, true); handled {
+	return systemctlRestart(ctx, service, true)
+}
+
+func systemctlRestart(ctx context.Context, service string, noBlock bool) error {
+	if handled, err := restartServiceWithBroker(ctx, service, noBlock); handled {
 		return err
 	}
 	systemctl := systemctlPath()
-	_, err := RunCommand(ctx, systemctl, "restart", "--no-block", service)
+	args := []string{"restart"}
+	if noBlock {
+		args = append(args, "--no-block")
+	}
+	args = append(args, service)
+	_, err := RunCommand(ctx, systemctl, args...)
 	if err == nil {
 		return nil
 	}
@@ -390,8 +384,12 @@ func SystemctlRestartNoBlock(ctx context.Context, service string) error {
 	if sudoErr != nil {
 		return err
 	}
-	if _, sudoErr = RunCommand(ctx, sudoPath, "-n", systemctl, "restart", "--no-block", service); sudoErr == nil {
+	sudoArgs := append([]string{"-n", systemctl}, args...)
+	if _, sudoErr = RunCommand(ctx, sudoPath, sudoArgs...); sudoErr == nil {
 		return nil
+	}
+	if !noBlock {
+		return fmt.Errorf("systemctl restart failed: %w; sudo restart failed: %v", err, sudoErr)
 	}
 	if runErr := systemdRunSystemctlRestartNoBlock(ctx, sudoPath, systemctl, service); runErr == nil {
 		return nil

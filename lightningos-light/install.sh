@@ -37,6 +37,7 @@ TERMINAL_SCRIPT="/usr/local/sbin/lightningos-terminal"
 TERMINAL_PASSWORD_SCRIPT="/usr/local/sbin/lightningos-terminal-password"
 MANAGER_FIREWALL_SCRIPT="/usr/local/sbin/lightningos-manager-firewall"
 PRIVILEGED_BROKER="/usr/local/libexec/lightningos-privileged"
+PRIVILEGED_TMPFILES_CONFIG="/etc/tmpfiles.d/lightningos-privileged.conf"
 SYSTEM_INTEGRATIONS_MARKER="/var/lib/lightningos/system-integrations-20260731-v2"
 TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
 MANAGER_BIN="/opt/lightningos/manager/lightningos-manager"
@@ -1410,11 +1411,15 @@ install_manager() {
   mkdir -p "$REPO_ROOT/dist"
   (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
   local broker_path
-  for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER"; do
+  for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
     [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"
   done
+  [[ -f "$REPO_ROOT/templates/lightningos-privileged.tmpfiles.conf" ]] || die "Privileged broker tmpfiles template is missing"
   install -d -o root -g root -m 0755 /usr/local/libexec
+  install -d -o root -g root -m 0755 /etc/tmpfiles.d
   install -d -o root -g root -m 0750 /var/log/lightningos-privileged /run/lock/lightningos
+  install -o root -g root -m 0644 "$REPO_ROOT/templates/lightningos-privileged.tmpfiles.conf" "$PRIVILEGED_TMPFILES_CONFIG"
+  /usr/bin/systemd-tmpfiles --create "$PRIVILEGED_TMPFILES_CONFIG"
   install -o root -g root -m 0755 "$REPO_ROOT/dist/lightningos-privileged" "$PRIVILEGED_BROKER"
   local broker_response
   broker_response=$(printf '%s\n' '{"version":1,"request_id":"install_self_test","operation":"self_test","params":{}}' | env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$PRIVILEGED_BROKER")

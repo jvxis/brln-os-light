@@ -84,7 +84,8 @@ The first generalized Compose slice moves RoboSats `status`, `start`, and
 - The manager never supplies an image name, unit name, executable, or pull
   argument. The broker maps only the `client`, `tor`, and `proxy` variants to
   the three pinned images and fixed unit names.
-- RoboSats firewall changes and uninstall remain separate future capabilities.
+- RoboSats external firewall access now uses a typed `app.firewall.ensure`
+  operation. Uninstall remains its final open capability.
 
 The disposable Ubuntu 24.04 gate deliberately caught and rejected an initial
 temporary `/proc/<pid>/fd` design: Docker container creation can outlive the
@@ -102,6 +103,20 @@ and stop/start plus HTTPS passed without the manager Docker GID. The pre-existin
 firewall rule and named volume were deliberately retained, so this slice does
 not claim firewall migration or clean-data provisioning.
 
+The firewall follow-up adds a catalog-only external TCP port lookup. The
+request carries only `app_id`; the broker fixes `/usr/sbin/ufw`, `status`,
+`allow`, TCP, and port `12596`. An inactive or unavailable UFW is a compatible
+no-op, while active UFW receives the exact catalog rule. On the disposable gate,
+inactive start succeeded without a rule; after adding a temporary SSH guard and
+activating UFW, typed start created only the expected IPv4/IPv6 `12596/tcp`
+rules and HTTPS returned 200. A caller-supplied `port: 22` was rejected. The
+test rules were removed and UFW returned to its original inactive state.
+
+The legacy global sudoers wildcard for UFW remains because other App Store apps
+still depend on it. This slice removes direct UFW execution from the RoboSats
+`enforce` path; global privilege removal is intentionally deferred until every
+consumer is migrated.
+
 This slice still does not authorize global removal of Docker access from the
 manager; other App Store handlers retain explicit Phase 2 work.
 
@@ -115,8 +130,7 @@ manager; other App Store handlers retain explicit Phase 2 work.
    capabilities to complete CPU Miner. Completed.
 4. Generalize the catalog schema for simple whole-project Compose apps.
    The shared schema plus RoboSats status/start/stop, image preparation, install,
-   and first-container creation are complete; firewall and uninstall remain
-   open.
+   first-container creation, and firewall are complete; uninstall remains open.
 5. Add service-specific and dependency capabilities for complex Compose apps.
 6. Separate Docker package installation, image management, networking,
    firewall, storage, and LND compatibility operations.
@@ -147,3 +161,6 @@ manager; other App Store handlers retain explicit Phase 2 work.
 - RoboSats install prepares only the three closed image variants through fixed
   transient units, creates the first containers through the typed lifecycle,
   rejects caller-supplied image fields, and leaves no transient unit loaded.
+- RoboSats active/inactive firewall behavior passes through a fixed broker
+  command, port injection is rejected, and the gate restores its original UFW
+  state after proving external HTTPS access.

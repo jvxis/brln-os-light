@@ -251,6 +251,18 @@ roots remain as recoverable backups, and `LOS-TEST2` was untouched. Evidence is
 stored in
 `docs/baselines/privilege-hardening-phase2-robosats-image-install-enforce-2026-08-10.json`.
 
+RoboSats external firewall access has also moved to the broker. The new closed
+`app.firewall.ensure` request contains only `app_id`; the catalog fixes TCP port
+`12596`, and the broker fixes `/usr/sbin/ufw status` plus the exact `allow`
+command. The disposable Ubuntu 24.04 gate passed the inactive no-op and an
+active-UFW run protected by a temporary SSH rule. Typed start created the IPv4
+and IPv6 `12596/tcp` rules, external HTTPS returned 200, and a caller-supplied
+`port: 22` was rejected with a sanitized response. The app was stopped, both
+temporary rule sets were removed, UFW returned to inactive, and the VM was
+powered off. The legacy global UFW sudo wildcard remains for other unmigrated
+apps; RoboSats itself now has only uninstall open. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-robosats-firewall-enforce-2026-08-10.json`.
+
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.
 3. Run install/start/stop/restart/uninstall tests for every app on disposable

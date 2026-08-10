@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
@@ -197,6 +198,9 @@ func (s *Server) startCpuMiner(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("CPU Lottery Miner is not installed")
 	}
+	if handled, err := system.AppLifecycleWithBroker(ctx, cpuMinerAppID, "start"); handled {
+		return err
+	}
 	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
 }
 
@@ -204,6 +208,9 @@ func (s *Server) stopCpuMiner(ctx context.Context) error {
 	paths := cpuMinerAppPaths()
 	if !fileExists(paths.ComposePath) {
 		return errors.New("CPU Lottery Miner is not installed")
+	}
+	if handled, err := system.AppLifecycleWithBroker(ctx, cpuMinerAppID, "stop"); handled {
+		return err
 	}
 	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
 }
@@ -312,31 +319,7 @@ func cpuFlagsLineHas(cpuinfo string, flag string) bool {
 }
 
 func cpuMinerComposeContents() string {
-	return fmt.Sprintf(`services:
-  cpuminer:
-    image: ${CPUMINER_IMAGE}
-    restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "127.0.0.1:%d:%d"
-    cpus: "${THREADS}"
-    cpu_shares: 128
-    command:
-      - "cpuminer"
-      - "--algo"
-      - "sha256d"
-      - "--url"
-      - "stratum+tcp://${STRATUM_HOST}:${STRATUM_PORT}"
-      - "--user"
-      - "${MINING_ADDRESS}.${WORKER_NAME}"
-      - "--pass"
-      - "x"
-      - "--threads"
-      - "${THREADS}"
-      - "--api-bind"
-      - "0.0.0.0:%d"
-`, cpuMinerAPIPort, cpuMinerAPIPort, cpuMinerAPIPort)
+	return appmanifest.CPUMinerCompose()
 }
 
 // ensureCpuMinerCompose (re)writes the compose file from the current template.

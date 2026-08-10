@@ -57,6 +57,22 @@ type recordingConfigFiles struct {
 	err     error
 }
 
+type recordingApps struct {
+	calls  int
+	appID  string
+	action AppLifecycleAction
+	dryRun bool
+	err    error
+}
+
+func (apps *recordingApps) Lifecycle(_ context.Context, appID string, action AppLifecycleAction, dryRun bool) error {
+	apps.calls++
+	apps.appID = appID
+	apps.action = action
+	apps.dryRun = dryRun
+	return apps.err
+}
+
 func (files *recordingConfigFiles) EnableLogin(ctx context.Context, dryRun bool) (bool, error) {
 	files.calls++
 	files.dryRun = dryRun
@@ -225,6 +241,61 @@ func TestBrokerEnableLoginFailureIsGeneric(t *testing.T) {
 	broker.Files = files
 	response := broker.Handle(context.Background(), emptyParamsRequest(t, OperationFilesEnableLogin, false))
 	if response.OK || response.Error == nil || response.Error.Code != "file_update_failed" || response.Error.Message != "enable login config update failed" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestBrokerAppLifecycleUsesTypedManagerAndLock(t *testing.T) {
+	apps := &recordingApps{}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppLifecycleParams{AppID: "cpuminer", Action: AppLifecycleStart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "app_start_1", Operation: OperationAppLifecycle, Params: params,
+	})
+	if !response.OK {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+	if apps.calls != 1 || apps.appID != "cpuminer" || apps.action != AppLifecycleStart || apps.dryRun {
+		t.Fatalf("unexpected app call: %#v", apps)
+	}
+	if locker.locks != 1 || locker.unlocks != 1 {
+		t.Fatalf("lock counts = %d/%d, want 1/1", locker.locks, locker.unlocks)
+	}
+}
+
+func TestBrokerAppLifecycleDryRunDoesNotLock(t *testing.T) {
+	apps := &recordingApps{}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppLifecycleParams{AppID: "cpuminer", Action: AppLifecycleStop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "app_stop_1", Operation: OperationAppLifecycle, DryRun: true, Params: params,
+	})
+	if !response.OK || apps.calls != 1 || !apps.dryRun || locker.locks != 0 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+}
+
+func TestBrokerAppLifecycleFailureIsGeneric(t *testing.T) {
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Apps = &recordingApps{err: errors.New("sensitive compose output")}
+	params, err := MarshalParams(AppLifecycleParams{AppID: "cpuminer", Action: AppLifecycleStart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "app_failure_1", Operation: OperationAppLifecycle, Params: params,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != "app_lifecycle_failed" || response.Error.Message != "app lifecycle operation failed" {
 		t.Fatalf("unexpected response: %#v", response)
 	}
 }

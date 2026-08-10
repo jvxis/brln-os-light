@@ -169,6 +169,36 @@ actual update. In `enforce`, failure of this typed operation does not fall back
 to `sudo tee` or runtime sudoers creation. Non-default manager config paths are
 unsupported in `enforce` and fail closed.
 
+### `app.compose.lifecycle`
+
+The first Phase 2 manifest admits only this request shape:
+
+```json
+{
+  "app_id": "cpuminer",
+  "action": "start"
+}
+```
+
+`action` is exactly `start` or `stop`. Unknown apps, actions, fields, paths,
+services, images, and argument arrays are rejected. The broker accepts only the
+catalog CPU Miner Compose document and a strict seven-key environment with an
+allowlisted image, fixed pool target, validated mainnet payout address, safe
+worker, and bounded thread count. Symlinks and non-regular files are rejected.
+
+For a real operation, the validated files are copied into a private,
+broker-owned temporary directory before a fixed `/usr/bin/docker compose` (or
+fixed `/usr/bin/docker-compose` compatibility) command runs. Docker never
+receives the manager-writable source paths. Output and validation details are
+not returned to the API. `dry_run` validates only, without a Docker command or
+mutation lock.
+
+In `shadow`, CPU Miner start/stop validates this operation and then uses the
+legacy Compose path. In `enforce`, it executes only through the broker and
+fails closed. CPU Miner install, uninstall, status, configuration updates,
+image probes, and metrics remain on the reviewed legacy path until their own
+typed capabilities are implemented.
+
 ## Manager modes and rollback
 
 The `privileged` configuration block supports:

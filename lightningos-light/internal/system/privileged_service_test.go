@@ -16,6 +16,19 @@ type fakePrivilegedServiceClient struct {
 	fileCalls  int
 	fileDryRun bool
 	fileErr    error
+	appCalls   int
+	appID      string
+	action     string
+	appDryRun  bool
+	appErr     error
+}
+
+func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID string, action string, dryRun bool) error {
+	client.appCalls++
+	client.appID = appID
+	client.action = action
+	client.appDryRun = dryRun
+	return client.appErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -115,6 +128,40 @@ func TestEnableLoginConfigWithBrokerModes(t *testing.T) {
 			}
 			if client.fileCalls != test.wantCalls || client.fileDryRun != test.wantDryRun {
 				t.Fatalf("unexpected file call: %#v", client)
+			}
+		})
+	}
+}
+
+func TestAppLifecycleWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		appErr      error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", appErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", appErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, appErr: test.appErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := AppLifecycleWithBroker(context.Background(), "cpuminer", "start")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.appCalls != test.wantCalls || client.appDryRun != test.wantDryRun {
+				t.Fatalf("unexpected app call: %#v", client)
+			}
+			if test.wantCalls == 1 && (client.appID != "cpuminer" || client.action != "start") {
+				t.Fatalf("unexpected typed app params: %#v", client)
 			}
 		})
 	}

@@ -30,6 +30,10 @@ type ConfigFileManager interface {
 	EnableLogin(ctx context.Context, dryRun bool) (changed bool, err error)
 }
 
+type AppManager interface {
+	Lifecycle(ctx context.Context, appID string, action AppLifecycleAction, dryRun bool) error
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -47,6 +51,7 @@ type Broker struct {
 	Locker  Locker
 	Audit   AuditSink
 	Files   ConfigFileManager
+	Apps    AppManager
 	Caller  string
 	Timeout time.Duration
 	Now     func() time.Time
@@ -168,6 +173,18 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "file_update_failed", errors.New("enable login config update failed")
 		}
 		return map[string]any{"validated": true, "changed": changed}, "", nil
+	case OperationAppLifecycle:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
+		}
+		var params AppLifecycleParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.compose.lifecycle params")
+		}
+		if err := broker.Apps.Lifecycle(ctx, params.AppID, params.Action, request.DryRun); err != nil {
+			return nil, "app_lifecycle_failed", errors.New("app lifecycle operation failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -204,7 +221,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle:
 		return true
 	default:
 		return false
@@ -213,7 +230,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle:
 		return true
 	default:
 		return false

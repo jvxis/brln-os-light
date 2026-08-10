@@ -45,11 +45,13 @@ func main() {
 		return
 	}
 
+	runner := &privileged.ExecCommandRunner{}
 	broker := &privileged.Broker{
-		Runner:  &privileged.ExecCommandRunner{},
+		Runner:  runner,
 		Locker:  locker,
 		Audit:   audit,
 		Files:   privileged.NewAtomicConfigFiles(privileged.DefaultManagerConfigPath),
+		Apps:    privileged.NewComposeAppManager(runner),
 		Caller:  caller,
 		Timeout: 15 * time.Second,
 	}

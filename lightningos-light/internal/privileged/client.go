@@ -143,6 +143,18 @@ func (client *Client) EnableLogin(ctx context.Context, dryRun bool) error {
 	return err
 }
 
+func (client *Client) AppLifecycle(ctx context.Context, appID string, action string, dryRun bool) error {
+	_, err := client.call(ctx, OperationAppLifecycle, AppLifecycleParams{AppID: appID, Action: AppLifecycleAction(action)}, dryRun)
+	if dryRun && client != nil && client.logger != nil {
+		if err != nil {
+			client.logger.Printf("privileged broker shadow validation rejected app.compose.lifecycle: %v", err)
+		} else {
+			client.logger.Printf("privileged broker shadow validation accepted app.compose.lifecycle for %s/%s", appID, action)
+		}
+	}
+	return err
+}
+
 func (client *Client) call(ctx context.Context, operation Operation, params any, dryRun bool) (Response, error) {
 	var response Response
 	if client == nil || client.transport == nil {

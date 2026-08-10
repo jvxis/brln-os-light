@@ -20,6 +20,30 @@ type PrivilegedClient interface {
 	Mode() string
 	RestartService(ctx context.Context, unit string, noBlock bool, dryRun bool) error
 	EnableLogin(ctx context.Context, dryRun bool) error
+	AppLifecycle(ctx context.Context, appID string, action string, dryRun bool) error
+}
+
+// AppLifecycleWithBroker routes a catalog-defined lifecycle action through the
+// privileged broker. Shadow mode validates the manifest and then leaves the
+// existing lifecycle path in charge; enforce mode performs the real action.
+func AppLifecycleWithBroker(ctx context.Context, appID string, action string) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, client.AppLifecycle(ctx, appID, action, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_ = client.AppLifecycle(shadowCtx, appID, action, true)
+		return false, nil
+	default:
+		return false, nil
+	}
 }
 
 var privilegedState struct {

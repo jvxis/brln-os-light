@@ -8,6 +8,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 const (
@@ -22,6 +24,7 @@ const (
 	OperationServiceStatus    Operation = "service.status"
 	OperationServiceRestart   Operation = "service.restart"
 	OperationFilesEnableLogin Operation = "files.enable_login"
+	OperationAppLifecycle     Operation = "app.compose.lifecycle"
 )
 
 type Request struct {
@@ -52,6 +55,18 @@ type ServiceStatusParams struct {
 type ServiceRestartParams struct {
 	Unit    string `json:"unit"`
 	NoBlock bool   `json:"no_block,omitempty"`
+}
+
+type AppLifecycleAction string
+
+const (
+	AppLifecycleStart AppLifecycleAction = "start"
+	AppLifecycleStop  AppLifecycleAction = "stop"
+)
+
+type AppLifecycleParams struct {
+	AppID  string             `json:"app_id"`
+	Action AppLifecycleAction `json:"action"`
 }
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -157,6 +172,17 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid files.enable_login params: %w", err)
+		}
+	case OperationAppLifecycle:
+		var params AppLifecycleParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.compose.lifecycle params: %w", err)
+		}
+		if params.AppID != appmanifest.CPUMinerID {
+			return errors.New("app manifest is not allowed")
+		}
+		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
+			return errors.New("app lifecycle action is not allowed")
 		}
 	default:
 		return errors.New("unknown operation")

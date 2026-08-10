@@ -73,3 +73,21 @@ func TestClientEnableLoginBuildsEmptyTypedRequest(t *testing.T) {
 		t.Fatalf("unexpected request: %#v", transport.request)
 	}
 }
+
+func TestClientAppLifecycleBuildsTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: map[string]bool{"validated": true}}
+	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)
+	if err := client.AppLifecycle(context.Background(), "cpuminer", "stop", true); err != nil {
+		t.Fatal(err)
+	}
+	if transport.request.Operation != OperationAppLifecycle || !transport.request.DryRun {
+		t.Fatalf("unexpected request: %#v", transport.request)
+	}
+	var params AppLifecycleParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.AppID != "cpuminer" || params.Action != AppLifecycleStop {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+}

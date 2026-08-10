@@ -193,14 +193,20 @@ manager's direct Docker access was denied, while typed start and uninstall
 succeeded and left no app files or Compose containers. Lifecycle start now
 fails closed before Compose if the selected allowlisted image is not already
 local, preventing an implicit pull from crossing the synchronous broker
-deadline. Install, explicit image preparation/probes, first-container creation,
-the remaining apps, Ubuntu 26, and final Docker-group removal remain open;
-Phase 2 is not complete. Evidence is stored in
+deadline. CPU Miner install now uses typed Docker-runtime readiness, asynchronous
+image preparation/status, fixed compatibility probes, and the brokered
+first-container creation when Docker is already installed. Its Ubuntu 24.04
+gate completed a 90-second pull plus install/start/stop/uninstall with the live
+manager lacking the Docker GID; all transient pull units were collected.
+Docker package installation, the remaining apps, Ubuntu 26, and final
+Docker-group removal remain open; Phase 2 is not complete. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-cpuminer-inspect-enforce-2026-08-10.json`
 and
 `docs/baselines/privilege-hardening-phase2-cpuminer-config-enforce-2026-08-10.json`,
 plus
-`docs/baselines/privilege-hardening-phase2-cpuminer-remove-enforce-2026-08-10.json`.
+`docs/baselines/privilege-hardening-phase2-cpuminer-remove-enforce-2026-08-10.json`
+and
+`docs/baselines/privilege-hardening-phase2-cpuminer-image-install-enforce-2026-08-10.json`.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

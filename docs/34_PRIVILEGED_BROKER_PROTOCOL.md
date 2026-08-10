@@ -169,6 +169,57 @@ actual update. In `enforce`, failure of this typed operation does not fall back
 to `sudo tee` or runtime sudoers creation. Non-default manager config paths are
 unsupported in `enforce` and fail closed.
 
+### `docker.runtime.ensure` and `docker.runtime.status`
+
+Both operations accept only `{}`. They support a Docker runtime that is already
+installed; package names, repositories, versions, paths, service units, and
+arguments cannot be supplied. `docker.runtime.ensure` checks the fixed Docker
+binary and Compose implementation. If the daemon is stopped, it executes only:
+
+```text
+/usr/bin/systemctl start --no-block docker
+```
+
+It returns `ready` or `starting`; it never waits inside one privileged request
+for daemon startup. The non-mutating `docker.runtime.status` returns only
+`ready`, `starting`, `stopped`, or `failed`. The manager polls it for at most
+one minute. `ensure` supports validation-only `dry_run` and uses the mutation
+lock; `status` rejects `dry_run` and takes no lock. Missing Docker or Compose
+fails closed in `enforce`; installing Docker packages remains a separate
+pending capability.
+
+### `app.image.prepare`, `app.image.status`, and `app.image.probe`
+
+These operations accept only the CPU Miner app ID plus one closed image
+variant: `baseline`, `fast_pinned`, or `fast_latest`. The variant maps inside
+the broker catalog to one exact image and one fixed transient unit name. A
+caller cannot submit an image, registry, digest, tag, unit, path, or Docker
+argument.
+
+When the image is absent, `app.image.prepare` schedules a bounded pull and
+returns `preparing` without waiting for registry I/O:
+
+```text
+/usr/bin/systemd-run --quiet --collect \
+  --unit=<fixed-catalog-unit> \
+  --property=Type=exec --property=RuntimeMaxSec=10min \
+  /usr/bin/docker pull <fixed-catalog-image>
+```
+
+The non-mutating status operation first performs a fixed image inspection,
+then reports only `ready`, `preparing`, `absent`, or `failed` from the fixed
+unit state. The manager polls for at most ten minutes, so cancellation of an
+HTTP request does not ambiguously terminate the root pull; a retry can observe
+the same unit or the completed image. `--collect` removes the transient unit
+after completion.
+
+The probe operation requires the selected image to be local and executes one
+fixed two-second CPU compatibility benchmark. Its response is only
+`{"runnable":true|false}`. A non-runnable fast image is an expected result,
+allowing selection to continue to the next catalog variant. Prepare and probe
+are serialized mutating operations and support validation-only `dry_run`;
+status is read-only.
+
 ### `app.compose.lifecycle`
 
 The first Phase 2 manifest admits only this request shape:
@@ -197,8 +248,7 @@ Before `start`, the broker extracts the image only from the already validated
 environment and requires `/usr/bin/docker image inspect <allowlisted-image>`
 to succeed. A missing image fails closed before Compose, so lifecycle start
 cannot turn into an implicit, potentially long-running image pull. Explicit
-image preparation and first-container creation remain separate pending install
-capabilities.
+image preparation is handled by the typed asynchronous capability above.
 
 The CPU Miner stop manifest fixes its graceful timeout at two seconds. Compose's
 ten-second default exceeds the manager client's five-second broker deadline;
@@ -212,9 +262,10 @@ legacy Compose path. In `enforce`, it executes only through the broker and
 fails closed. CPU Miner config and thread updates now reuse this typed start
 operation after the manager updates its non-root app files. In `enforce`, their
 Compose apply therefore has no direct Docker call or fallback in the manager.
-CPU Miner install, explicit image preparation/probes, and first-container
-creation remain on the reviewed legacy path until their own typed capabilities
-are implemented.
+CPU Miner install now uses typed runtime readiness, image preparation/status,
+compatibility probes, and this lifecycle operation for first-container
+creation in `enforce`. Only Docker package installation remains on the reviewed
+legacy path for this app.
 
 ### `app.compose.remove`
 
@@ -293,8 +344,9 @@ postcondition by creating and stopping the container in `disabled` before the
 broker cutover. An attempted broker `start` before that postcondition exceeded
 the five-second client deadline while first-container setup was occurring; it
 was rejected as outside the accepted lifecycle state rather than hidden. First
-container creation remains explicitly owned by the pending typed install/image
-capabilities. After acceptance, the temporary unit override was removed, the
+container creation remained outside that earlier checkpoint and was later
+covered by the typed install/image gate. After acceptance, the temporary unit
+override was removed, the
 Docker group and `disabled` mode were restored, the app was uninstalled, Docker
 was stopped, and the VM was powered off. Secret-free evidence is in
 `docs/baselines/privilege-hardening-phase2-cpuminer-inspect-enforce-2026-08-10.json`.
@@ -311,6 +363,23 @@ recorded three successful typed lifecycle completions and two successful typed
 inspections, restored all temporary privilege changes, removed the app, stopped
 Docker, and powered off the VM. Secret-free evidence is in
 `docs/baselines/privilege-hardening-phase2-cpuminer-config-enforce-2026-08-10.json`.
+
+The later install gate installed commit `6fad543` on the same disposable
+Ubuntu 24.04 clone. Docker packages were already present, but the daemon was
+inactive and the baseline image was deliberately removed after verifying that
+no container referenced it. With both the service user and live manager
+process lacking the Docker GID, the HTTP install path started Docker through
+the typed runtime operation, evaluated all three catalog image variants, ran
+two fixed compatibility probes, pulled the missing baseline image through a
+transient unit, and created the first container through typed lifecycle. The
+pull/install completed in 90.5 seconds across eleven typed status checks,
+demonstrating that registry I/O did not remain inside one five-second broker
+request. Stop, start, and uninstall then passed; all image units were collected
+and no app files or containers remained. An injected image field was rejected.
+The original binaries, config, login setting, Docker group, inactive daemon,
+baseline image presence, and powered-off VM state were restored. `los-test2`
+was not changed. Secret-free evidence is in
+`docs/baselines/privilege-hardening-phase2-cpuminer-image-install-enforce-2026-08-10.json`.
 
 The first disposable Ubuntu 24.04 gate exposed the timeout mismatch described
 above: the manager returned HTTP 500 after five seconds while the original

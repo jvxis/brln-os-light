@@ -104,6 +104,11 @@ security exception is documented and tested.
 
 ### Phase 0 — Inventory and safety rails
 
+Status: completed on 2026-08-10. The reviewed call-site/replacement matrix,
+safety-rail design, and T0 findings are recorded in
+`docs/33_PRIVILEGE_HARDENING_PHASE0_INVENTORY.md`; the secret-free machine
+capture is stored in `docs/baselines/privilege-hardening-t0-2026-08-10.json`.
+
 1. Inventory every `RunCommandWithSudo`, `runSystemd`, Docker, package,
    firewall, ownership, service, and root-file write call site.
 2. Map each call to a proposed broker operation and owning feature.

@@ -831,6 +831,12 @@ Daily report rows also include provenance freshness fields when the report is ge
 ## Security notes
 - The seed phrase is never stored. It is displayed once in the wizard.
 - RPC credentials are stored only in `/etc/lightningos/secrets.env` (root:lightningos, `chmod 660`).
+- Release `0.5.2` still gives the manager a root-equivalent host boundary: the
+  service belongs to the `docker` group and its passwordless sudo policy allows
+  unrestricted arguments for package, Docker, `systemd-run`, and UFW commands.
+  Login, TLS, CSRF, and LAN/VPN firewalling do not contain a compromised manager
+  process. The replacement broker and privilege-removal work is tracked in
+  [`docs/32_PRIVILEGE_HARDENING_PLAN.md`](docs/32_PRIVILEGE_HARDENING_PLAN.md).
 - API/UI bind to `0.0.0.0` by default for LAN access. If you want localhost-only, set `server.host: "127.0.0.1"` in `/etc/lightningos/config.yaml`.
 - Set `UTXO_LOCK_REQUIRES_REAUTH=true` to require the same wallet-send reauth scope before UTXO lock/unlock actions. This is optional because lock/unlock are reversible, but useful on shared admin sessions.
 - Sensitive API actions are recorded in Postgres `audit_events` and can be reviewed in the UI under `Audit`.

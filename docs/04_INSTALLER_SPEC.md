@@ -52,7 +52,14 @@ Install and configure the LightningOS stack:
 
 ## App Store and Docker
 - Docker is installed on demand by the manager when the first app is installed.
-- The installer sets sudoers rules so the lightningos user can run docker commands without a password.
+- Current `0.5.2` installers add `lightningos` to the `docker` group and install
+  passwordless wildcard sudo rules for `apt-get`, `apt`, `dpkg`, `docker`,
+  `docker-compose`, `systemd-run`, and `ufw`. Both mechanisms are root-equivalent;
+  they are a documented legacy boundary, not a security sandbox.
+- New privileged behavior must not extend that boundary. The `0.5.3` migration
+  replaces it with the typed broker described in
+  `docs/32_PRIVILEGE_HARDENING_PLAN.md`, then removes Docker group membership and
+  wildcard sudo only after rollback and regression checks pass.
 
 ## Output
 - UI available on https://<host>:8443

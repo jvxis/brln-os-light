@@ -277,6 +277,19 @@ rejected with a sanitized response. The gate VM was powered off and `LOS-TEST2`
 was untouched. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-robosats-remove-enforce-2026-08-10.json`.
 
+Bitcoin Core migration has started with its independently testable runtime and
+image boundary. The manager now uses typed Docker readiness and selects only
+the closed `bitcoincore/node` variant; the broker maps it to the explicit
+`bitcoin/bitcoin:31.1` release and a fixed transient pull unit. The disposable
+Ubuntu 24.04 `enforce` gate began without a Bitcoin image, app root, or data
+directory, completed the pull with direct manager Docker access denied,
+reported Bitcoin Core 31.1.0, rejected a caller-supplied image field, and left
+no transient unit loaded. The verification container and image were removed,
+Bitcoin Core was never started, no blockchain data was created, and LOS-TEST2
+was untouched. Storage identity/configuration, Compose lifecycle, RPC/CLI,
+firewall, and dependent-network contracts remain open. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-image-enforce-2026-08-10.json`.
+
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.
 3. Run install/start/stop/restart/uninstall tests for every app on disposable

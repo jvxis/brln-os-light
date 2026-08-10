@@ -130,6 +130,35 @@ after the proof; a caller-supplied `volumes: true` field was rejected.
 This slice still does not authorize global removal of Docker access from the
 manager; other App Store handlers retain explicit Phase 2 work.
 
+## Bitcoin Core image preparation
+
+Bitcoin Core starts with a narrower catalog slice because its lifecycle also
+owns a configurable blockchain data path, a storage-identity guard, RPC
+credentials, configuration mutation, a public P2P port, and a Docker network
+consumed by Electrs, Mempool, BTCPay, Fedimint, and Public Pool. Image
+preparation can be separated safely from those contracts.
+
+- The former `bitcoin/bitcoin:latest` reference is pinned to the explicit
+  `bitcoin/bitcoin:31.1` release. A mutable major-version pointer no longer
+  forms part of the privileged execution contract.
+- The manager selects only `bitcoincore` plus the `node` variant. The broker
+  maps those values to the fixed image and
+  `lightningos-bitcoincore-image-node` transient unit.
+- Docker package/runtime readiness now uses the existing typed broker path
+  before Bitcoin Core installation. In `enforce`, image preparation fails
+  closed and cannot fall back to direct Docker execution.
+- The disposable Ubuntu 24.04 gate began without the image, app root, or data
+  directory. The fixed pull completed, the image reported Bitcoin Core 31.1.0,
+  direct Docker access from the manager remained denied, and an injected image
+  field was rejected. The temporary verification container and downloaded
+  image were removed; Bitcoin Core was never started and no blockchain data
+  was created.
+
+Storage enrollment/configuration is the next Bitcoin Core slice. Lifecycle
+admission follows only after the broker can independently validate the selected
+mount, persistent storage identity, secret-bearing config, and fixed Compose
+mounts.
+
 ## Migration order
 
 1. Prove CPU Miner start/stop and negative validation on a disposable node.
@@ -142,6 +171,8 @@ manager; other App Store handlers retain explicit Phase 2 work.
    The shared schema plus RoboSats status/start/stop, image preparation, install,
    first-container creation, firewall, and uninstall are complete.
 5. Add service-specific and dependency capabilities for complex Compose apps.
+   Bitcoin Core image preparation is complete; its storage/configuration
+   boundary is next.
 6. Separate Docker package installation, image management, networking,
    firewall, storage, and LND compatibility operations.
 7. Run the complete per-app lifecycle and reboot-state matrix on Ubuntu 24 and
@@ -177,3 +208,7 @@ manager; other App Store handlers retain explicit Phase 2 work.
 - RoboSats uninstall removes containers, network, and both execution/catalog
   roots without `--volumes`; named data survives, injected volume deletion is
   rejected, and a failed broker removal preserves retry state.
+- Bitcoin Core image preparation accepts only the catalog `node` variant,
+  resolves an explicit release and fixed transient unit inside the broker,
+  fails closed in `enforce`, rejects caller-supplied image fields, and does not
+  create an app root or blockchain data directory.

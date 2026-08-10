@@ -42,8 +42,10 @@ Install and configure the LightningOS stack:
    - admin role for provisioning (losadmin)
 9) Install LND binaries (lnd, lncli).
 10) Build and install lightningos-manager and the root-owned privileged broker
-    foundation. Create its protected audit/lock directories and require its
-    non-mutating protocol self-test to pass.
+    foundation. Create its protected audit/lock directories, install
+    `/etc/tmpfiles.d/lightningos-privileged.conf` so the runtime lock directory
+    is recreated after every boot, and require the non-mutating protocol
+    self-test to pass.
 11) Build and install UI.
 12) Generate TLS certs for the UI.
 13) Install and enable systemd units:

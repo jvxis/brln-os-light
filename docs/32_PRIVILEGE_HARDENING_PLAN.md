@@ -122,7 +122,8 @@ test strategy.
 
 ### Phase 1 — Broker foundation
 
-Status: implementation in progress on 2026-08-10. Protocol version 1, the
+Status: implementation and Phase 1 acceptance completed on 2026-08-10.
+Protocol version 1, the
 deny-by-default broker, root-only audit and lock files, manager client modes,
 installer self-test, and the first `service.restart` family are implemented.
 The integration node began from `0.5.2-Beta`; the helper was installed and
@@ -136,9 +137,15 @@ accepted, caller-controlled path/content fields were rejected, the config hash
 was unchanged, and no mutation lock was created. The secret-free evidence is
 stored in
 `docs/baselines/privilege-hardening-phase1-files-shadow-2026-08-10.json`.
-The phase remains open for soak observation and an explicit review before any
-`enforce` cutover. The protocol and rollback contract are recorded in
-`docs/34_PRIVILEGED_BROKER_PROTOCOL.md`.
+The soak and explicit review passed without moving the integration node from
+`shadow`. The review found and fixed runtime-directory recreation after reboot
+and auditable manager self-restarts. A real reboot plus service status,
+PostgreSQL restart, manager restart, negative requests, health checks, and
+rollback passed on the disposable clone. Evidence is stored in
+`docs/baselines/privilege-hardening-phase1-soak-reboot-service-2026-08-10.json`.
+The integration node remains in `shadow`; its `enforce` cutover is deliberately
+deferred while later operation families are migrated. The protocol and
+rollback contract are recorded in `docs/34_PRIVILEGED_BROKER_PROTOCOL.md`.
 
 A clean Ubuntu 24.04 VirtualBox clone of `brln-os-basica` then passed the full
 new-install gate on 2026-08-10. The exact branch checkout installed

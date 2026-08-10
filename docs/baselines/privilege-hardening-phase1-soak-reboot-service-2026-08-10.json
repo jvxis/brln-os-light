@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T12:17:34Z",
+  "secret_free": true,
+  "source": {
+    "branch": "agent/0.5.3-privilege-hardening",
+    "fix_commit": "257b391",
+    "go_version": "1.24"
+  },
+  "integration_shadow_soak": {
+    "node_alias": "los-test2",
+    "observed_at": "2026-08-10T11:55:45Z",
+    "privileged_mode": "shadow",
+    "manager_service": "active",
+    "lnd_service": "active",
+    "postgresql_service": "active",
+    "https_health": "ok",
+    "config_vs_rollout_backup": "unchanged",
+    "latest_audit_timestamp": "2026-08-10T11:13:18.030767224Z",
+    "events_after_2026_08_10T11_14_00Z": 0,
+    "privileged_log_failures_since_baseline": 0,
+    "successful_real_mutations": 0,
+    "mutation_lock": "absent",
+    "sudoers_syntax": "valid",
+    "broker_sudo": "exact_command_present"
+  },
+  "disposable_environment": {
+    "hypervisor": "VirtualBox 7.2.14",
+    "base_vm": "brln-os-basica",
+    "test_vm": "brln-os-hardening-053-tmp-20260810",
+    "os": "Ubuntu 24.04.3 LTS",
+    "architecture": "x86_64",
+    "idempotent_installer_exit_code": 0,
+    "native_bash_syntax": "passed",
+    "native_go_tests": "passed",
+    "real_reboot": "completed",
+    "final_power_state": "poweroff",
+    "retained_for_follow_up": true
+  },
+  "reboot_repair": {
+    "pre_fix_result": "broker_lock_unavailable_after_reboot",
+    "cause": "runtime lock parent under /run was not recreated at boot",
+    "repair": "/etc/tmpfiles.d/lightningos-privileged.conf",
+    "tmpfiles_config": "root:root:0644",
+    "runtime_directory_after_reboot": "root:root:0750",
+    "broker_service_status_after_reboot": "passed"
+  },
+  "service_acceptance": {
+    "postgresql_restart_http": 200,
+    "postgresql_activation_timestamp_changed": true,
+    "postgresql_audit_start_delta": 1,
+    "postgresql_audit_complete_delta": 1,
+    "pre_fix_manager_restart_http": 500,
+    "pre_fix_manager_audit_start_delta": 1,
+    "pre_fix_manager_audit_complete_delta": 0,
+    "manager_repair": "fixed delayed transient systemd unit",
+    "final_manager_restart_http": 200,
+    "final_manager_activation_timestamp_changed": true,
+    "final_manager_audit_start_delta": 1,
+    "final_manager_audit_complete_delta": 1,
+    "manager_health_after_restart": "ok",
+    "negative_requests_rejected": [
+      "path_unit",
+      "shell_unit",
+      "unknown_parameter",
+      "blocking_manager_restart"
+    ],
+    "transient_restart_units_loaded_after_collection": 0
+  },
+  "final_disposable_state": {
+    "manager_sha256": "58ece8bfc6775d830518a12872f0cdf7fb258b77309844e07b98c210c60277b9",
+    "broker_sha256": "e00027a82e88c8676b7859d482eb11cd7e9d06e0ba00d7690a769889f6b039a9",
+    "config_sha256": "c3768516565ce0ae041bdb34b08e183f636b40b951ef2a685d9ac0b68256e224",
+    "config_state": "original_hash_enable_login_true_privileged_disabled",
+    "config_file": "root:lightningos:0640",
+    "mutation_lock": "root:root:0600",
+    "manager_service": "active",
+    "postgresql_service": "active",
+    "https_health": "ok",
+    "rollback": "passed"
+  },
+  "diagnostic_harness": {
+    "production_failures_after_repairs": 0,
+    "false_negative_after_transient_fix": "health probe raced the scheduled stop/start window",
+    "final_probe_waited_for_new_activation_timestamp": true
+  },
+  "excluded": [
+    "ip_addresses",
+    "credentials",
+    "setup_tokens",
+    "configuration_contents",
+    "sudoers_contents",
+    "audit_request_parameters",
+    "private_node_identifiers"
+  ]
+}

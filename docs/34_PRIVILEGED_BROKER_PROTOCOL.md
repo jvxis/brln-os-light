@@ -31,6 +31,10 @@ compatibility have stabilized.
   below a root-owned non-writable parent.
 - The mutation lock is `/run/lock/lightningos/privileged.lock`, mode `0600`,
   below a root-owned non-writable parent.
+- `/etc/tmpfiles.d/lightningos-privileged.conf`, mode `0644`, recreates the
+  root-owned `/run/lock/lightningos` directory with mode `0750` at every boot.
+  All fresh, existing-node, Raspberry Pi, and application-upgrade paths install
+  and apply this rule before broker self-test.
 - Both files are opened with `O_NOFOLLOW`; existing non-regular, non-root-owned,
   or broadly writable files are rejected.
 - Mutating operations are serialized. Broker execution is capped at 30
@@ -117,6 +121,21 @@ Runs one of these fixed argument shapes for an allowlisted unit:
 /usr/bin/systemctl restart <unit>
 /usr/bin/systemctl restart --no-block <unit>
 ```
+
+Restarting `lightningos-manager` is necessarily asynchronous because the
+broker process starts inside the manager's systemd cgroup. That unit requires
+`no_block: true` and uses one fixed transient command instead:
+
+```text
+/usr/bin/systemd-run --quiet --collect \
+  --unit=lightningos-manager-restart-<request_id> --on-active=1s \
+  /usr/bin/systemctl restart lightningos-manager
+```
+
+The validated request ID is the only derived fragment in the transient unit
+name. The one-second delay lets the broker write its successful completion
+audit and lets the HTTP handler return before systemd stops the manager. The
+transient timer and service are collected after execution.
 
 With `dry_run: true`, the request is validated and audited but no lock or
 command execution occurs.
@@ -216,3 +235,29 @@ restart. The root-only rollback restored the exact original config hash and
 
 Full secret-free evidence is in
 `docs/baselines/privilege-hardening-phase1-fresh-install-enforce-2026-08-10.json`.
+
+## Soak, reboot, and service acceptance
+
+The integration node remained healthy in `shadow` through 2026-08-10T11:55Z.
+Its config was byte-identical to the rollout backup, the last broker event was
+still the fixed-file checkpoint at 11:13Z, no real broker mutation had run, and
+no mutation lock existed.
+
+The explicit Phase 1 review then rebooted the disposable Ubuntu 24.04 clone and
+found that the runtime lock parent disappeared with `/run`. Commit `257b391`
+added the tmpfiles rule to every install/upgrade path. An idempotent install and
+real reboot recreated the directory as `root:root:0750`, after which
+`service.status` passed immediately.
+
+The same review found that a blocking self-restart killed the broker before its
+completion audit. Commit `257b391` made manager restarts non-blocking and moved
+their actual execution to the fixed delayed transient unit documented above.
+The acceptance rerun returned HTTP 200, changed the manager activation
+timestamp, restored HTTPS health, and produced exactly one new successful
+`service.restart` start/completion pair. A PostgreSQL restart also returned
+HTTP 200 with one successful pair, while path, shell, unknown-field, and
+blocking-manager requests were rejected. The original config hash and
+`disabled` mode were restored, and the disposable VM was powered off.
+
+Full secret-free evidence is in
+`docs/baselines/privilege-hardening-phase1-soak-reboot-service-2026-08-10.json`.

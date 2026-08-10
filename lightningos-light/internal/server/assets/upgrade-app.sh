@@ -108,6 +108,7 @@ if [[ "$TAG" =~ [[:space:]] ]]; then
 fi
 
 LOCK_FILE="/var/lib/lightningos/app-upgrade.lock"
+PRIVILEGED_BROKER="/usr/local/libexec/lightningos-privileged"
 GIT_BIN="$(resolve_bin git /usr/bin/git /bin/git)" || die "Required command missing: git"
 GO_BIN="$(resolve_bin go /usr/local/go/bin/go /usr/bin/go /bin/go)" || die "Required command missing: go"
 NPM_BIN="$(resolve_bin npm /usr/bin/npm /usr/local/bin/npm /bin/npm)" || die "Required command missing: npm"
@@ -185,6 +186,16 @@ sudoers_no_requiretty_line() {
   rm -f "$tmp"
 }
 
+privileged_broker_is_trusted() {
+  [[ -f "$PRIVILEGED_BROKER" && ! -L "$PRIVILEGED_BROKER" && -x "$PRIVILEGED_BROKER" ]] || return 1
+  local owner group mode
+  owner=$("$STAT_BIN" -c '%u' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
+  group=$("$STAT_BIN" -c '%g' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
+  mode=$("$STAT_BIN" -c '%a' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
+  [[ "$owner" == "0" && "$group" == "0" ]] || return 1
+  (( (8#$mode & 8#022) == 0 ))
+}
+
 configure_manager_sudoers() {
   local manager_user=""
   manager_user="$("$SYSTEMCTL_BIN" show -p User --value lightningos-manager 2>/dev/null | tr -d '[:space:]')"
@@ -207,6 +218,9 @@ configure_manager_sudoers() {
   fi
 
   system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, /usr/local/sbin/lightningos-upgrade-lnd, /usr/local/sbin/lightningos-upgrade-app, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"
+  if [[ "$manager_user" == "lightningos" ]] && privileged_broker_is_trusted; then
+    system_cmds+=", ${PRIVILEGED_BROKER} \"\""
+  fi
   if ! "$SYSTEMCTL_BIN" is-active --quiet lnd && "$SYSTEMCTL_BIN" is-active --quiet lnd@default; then
     lnd_service="lnd@default"
     system_cmds+=", ${SYSTEMCTL_BIN} restart ${lnd_service}, ${SYSTEMCTL_BIN} restart --no-block ${lnd_service}"
@@ -422,6 +436,20 @@ mkdir -p "$project_dir/dist"
 (cd "$project_dir" && env $go_env GOFLAGS=-mod=mod "$GO_BIN" build -o dist/lightningos-manager ./cmd/lightningos-manager)
 "$INSTALL_BIN" -m 0755 "$project_dir/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
 print_ok "Manager installed"
+
+print_step "Installing privileged broker foundation"
+(cd "$project_dir" && env $go_env GOFLAGS=-mod=mod "$GO_BIN" build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
+for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER"; do
+  [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"
+done
+"$INSTALL_BIN" -d -o root -g root -m 0755 /usr/local/libexec
+"$INSTALL_BIN" -d -o root -g root -m 0750 /var/log/lightningos-privileged /run/lock/lightningos
+"$INSTALL_BIN" -o root -g root -m 0755 "$project_dir/dist/lightningos-privileged" "$PRIVILEGED_BROKER"
+broker_response="$(printf '%s\n' '{"version":1,"request_id":"upgrade_self_test","operation":"self_test","params":{}}' | "$PRIVILEGED_BROKER")"
+if [[ "$broker_response" != *'"request_id":"upgrade_self_test"'* || "$broker_response" != *'"ok":true'* || "$broker_response" != *'"ready":true'* ]]; then
+  die "Privileged broker self-test failed"
+fi
+print_ok "Privileged broker installed and self-test passed"
 
 print_step "Building UI"
 (cd "$project_dir/ui" && "$NPM_BIN" install && "$NPM_BIN" run build)

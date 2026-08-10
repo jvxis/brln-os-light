@@ -11,8 +11,10 @@ import (
 
 	"lightningos-light/internal/config"
 	"lightningos-light/internal/lndclient"
+	"lightningos-light/internal/privileged"
 	"lightningos-light/internal/reports"
 	"lightningos-light/internal/server"
+	"lightningos-light/internal/system"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -82,6 +84,15 @@ func runServer(args []string) {
 	}
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)
+	privilegedClient, err := privileged.NewClient(
+		cfg.Privileged.Mode,
+		time.Duration(cfg.Privileged.TimeoutSeconds)*time.Second,
+		logger,
+	)
+	if err != nil {
+		logger.Fatalf("privileged broker config failed: %v", err)
+	}
+	system.ConfigurePrivilegedServiceClient(privilegedClient)
 	srv := server.New(cfg, logger)
 
 	if err := srv.Run(); err != nil {

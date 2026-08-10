@@ -21,6 +21,12 @@ postgres:
 ui:
   static_dir: "./ui/dist"
 
+privileged:
+  # disabled: legacy path only; shadow: broker validates then legacy executes;
+  # enforce: broker executes and the legacy privileged path is not used.
+  mode: "disabled"
+  timeout_seconds: 5
+
 features:
   enable_login: true
   enable_bitcoin_local_placeholder: true

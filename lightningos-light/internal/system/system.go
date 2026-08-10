@@ -10,8 +10,25 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+type PrivilegedServiceClient interface {
+	Mode() string
+	RestartService(ctx context.Context, unit string, noBlock bool, dryRun bool) error
+}
+
+var privilegedServiceState struct {
+	sync.RWMutex
+	client PrivilegedServiceClient
+}
+
+func ConfigurePrivilegedServiceClient(client PrivilegedServiceClient) {
+	privilegedServiceState.Lock()
+	privilegedServiceState.client = client
+	privilegedServiceState.Unlock()
+}
 
 type DiskUsage struct {
 	Mount       string  `json:"mount"`
@@ -339,6 +356,9 @@ func SystemctlIsActive(ctx context.Context, service string) bool {
 }
 
 func SystemctlRestart(ctx context.Context, service string) error {
+	if handled, err := restartServiceWithBroker(ctx, service, false); handled {
+		return err
+	}
 	systemctl := systemctlPath()
 	_, err := RunCommand(ctx, systemctl, "restart", service)
 	if err == nil {
@@ -355,6 +375,9 @@ func SystemctlRestart(ctx context.Context, service string) error {
 }
 
 func SystemctlRestartNoBlock(ctx context.Context, service string) error {
+	if handled, err := restartServiceWithBroker(ctx, service, true); handled {
+		return err
+	}
 	systemctl := systemctlPath()
 	_, err := RunCommand(ctx, systemctl, "restart", "--no-block", service)
 	if err == nil {
@@ -371,6 +394,26 @@ func SystemctlRestartNoBlock(ctx context.Context, service string) error {
 		return nil
 	} else {
 		return fmt.Errorf("systemctl restart --no-block failed: %w; sudo restart failed: %v; sudo systemd-run restart failed: %v", err, sudoErr, runErr)
+	}
+}
+
+func restartServiceWithBroker(ctx context.Context, service string, noBlock bool) (bool, error) {
+	privilegedServiceState.RLock()
+	client := privilegedServiceState.client
+	privilegedServiceState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, client.RestartService(ctx, service, noBlock, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_ = client.RestartService(shadowCtx, service, noBlock, true)
+		return false, nil
+	default:
+		return false, nil
 	}
 }
 

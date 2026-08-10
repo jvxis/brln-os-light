@@ -270,6 +270,30 @@ func TestNoNewWildcardSudoOrDockerBoundary(t *testing.T) {
 	}
 }
 
+func TestPrivilegedBrokerSudoersEntryForbidsArguments(t *testing.T) {
+	root := moduleRoot(t)
+	paths := []string{
+		"install.sh",
+		"install_existing.sh",
+		"install_existing_pi.sh",
+		"internal/server/assets/upgrade-app.sh",
+	}
+	want := `system_cmds+=", ${PRIVILEGED_BROKER} \"\""`
+	for _, rel := range paths {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		content := string(data)
+		if !strings.Contains(content, want) {
+			t.Errorf("%s does not grant the broker with an explicit empty argument list", rel)
+		}
+		if strings.Contains(content, `${PRIVILEGED_BROKER} *`) {
+			t.Errorf("%s grants wildcard broker arguments", rel)
+		}
+	}
+}
+
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)

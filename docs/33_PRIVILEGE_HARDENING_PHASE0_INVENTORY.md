@@ -16,6 +16,12 @@ calls. Root-run provisioning scripts are inventoried separately.
 No runtime privilege, service, firewall, application, package, ownership, or
 node configuration was changed while producing this document.
 
+Phase 1 adds one exact broker invocation to the installer-generated sudoers
+alias: `/usr/local/libexec/lightningos-privileged ""`. The explicit empty
+argument list is not a wildcard and is guarded by a regression test. All 35
+legacy wildcard constructors remain frozen at the Phase 0 ceiling until their
+own operation families are migrated and removed.
+
 ## Static inventory totals
 
 The reviewed manager boundary contains:

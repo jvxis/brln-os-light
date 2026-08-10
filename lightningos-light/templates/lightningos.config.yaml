@@ -21,6 +21,12 @@ postgres:
 ui:
   static_dir: "/opt/lightningos/ui"
 
+privileged:
+  # Keep disabled until the broker is installed and its self-test passes.
+  # Shadow validates typed requests while preserving all legacy behavior.
+  mode: "disabled"
+  timeout_seconds: 5
+
 features:
   enable_login: true
   enable_bitcoin_local_placeholder: true

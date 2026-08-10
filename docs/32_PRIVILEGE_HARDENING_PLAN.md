@@ -122,6 +122,14 @@ test strategy.
 
 ### Phase 1 — Broker foundation
 
+Status: implementation in progress on 2026-08-10. Protocol version 1, the
+deny-by-default broker, root-only audit and lock files, manager client modes,
+installer self-test, and the first `service.restart` family are implemented.
+The integration node remains on `0.5.2` until the branch passes the complete
+local suite and the helper is installed first in `disabled`, then exercised in
+`shadow`. The protocol and rollback contract are recorded in
+`docs/34_PRIVILEGED_BROKER_PROTOCOL.md`.
+
 1. Implement the broker protocol, authorization, validation, structured logs,
    locking, and timeouts.
 2. Add a client package used by the manager.

@@ -21,6 +21,7 @@ LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
 APP_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-app"
 MANAGER_FIREWALL_SCRIPT="/usr/local/sbin/lightningos-manager-firewall"
+PRIVILEGED_BROKER="/usr/local/libexec/lightningos-privileged"
 TERMINAL_PASSWORD_SCRIPT="/usr/local/sbin/lightningos-terminal-password"
 SYSTEM_INTEGRATIONS_MARKER="/var/lib/lightningos/system-integrations-20260731-v2"
 TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
@@ -552,6 +553,16 @@ install_lnd_upgrade_script() {
   fi
 }
 
+privileged_broker_is_trusted() {
+  [[ -f "$PRIVILEGED_BROKER" && ! -L "$PRIVILEGED_BROKER" && -x "$PRIVILEGED_BROKER" ]] || return 1
+  local owner group mode
+  owner=$(stat -c '%u' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
+  group=$(stat -c '%g' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
+  mode=$(stat -c '%a' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
+  [[ "$owner" == "0" && "$group" == "0" ]] || return 1
+  (( (8#$mode & 8#022) == 0 ))
+}
+
 configure_sudoers() {
   local manager_user="${1:-lightningos}"
   print_step "Configuring sudoers"
@@ -588,6 +599,9 @@ configure_sudoers() {
   local system_cmds lnd_service
   lnd_service="${LND_SERVICE:-lnd}"
   system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"
+  if privileged_broker_is_trusted; then
+    system_cmds+=", ${PRIVILEGED_BROKER} \"\""
+  fi
   if [[ "$lnd_service" != "lnd" ]]; then
     system_cmds+=", ${systemctl_path} restart ${lnd_service}, ${systemctl_path} restart --no-block ${lnd_service}"
   fi
@@ -780,8 +794,23 @@ build_manager() {
   print_step "Building manager"
   (cd "$REPO_ROOT" && \
     GOFLAGS="-mod=mod" go mod download && \
-    GOFLAGS="-mod=mod" go build -o dist/lightningos-manager ./cmd/lightningos-manager)
+    GOFLAGS="-mod=mod" go build -o dist/lightningos-manager ./cmd/lightningos-manager && \
+    GOFLAGS="-mod=mod" go build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
   install -m 0755 "$REPO_ROOT/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
+  local broker_path
+  for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER"; do
+    [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"
+  done
+  install -d -o root -g root -m 0755 /usr/local/libexec
+  install -d -o root -g root -m 0750 /var/log/lightningos-privileged /run/lock/lightningos
+  install -o root -g root -m 0755 "$REPO_ROOT/dist/lightningos-privileged" "$PRIVILEGED_BROKER"
+  local broker_response
+  broker_response=$(printf '%s\n' '{"version":1,"request_id":"install_self_test","operation":"self_test","params":{}}' | "$PRIVILEGED_BROKER")
+  if ! jq -e '.version == 1 and .request_id == "install_self_test" and .ok == true and .result.ready == true' >/dev/null <<<"$broker_response"; then
+    die "Privileged broker self-test failed"
+  fi
+  print_ok "Privileged broker installed and self-test passed"
+  configure_sudoers "lightningos"
   print_ok "Manager built and installed"
 }
 

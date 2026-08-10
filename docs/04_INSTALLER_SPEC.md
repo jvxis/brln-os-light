@@ -41,7 +41,9 @@ Install and configure the LightningOS stack:
    - role and DB for notifications and reports (losapp)
    - admin role for provisioning (losadmin)
 9) Install LND binaries (lnd, lncli).
-10) Build and install lightningos-manager.
+10) Build and install lightningos-manager and the root-owned privileged broker
+    foundation. Create its protected audit/lock directories and require its
+    non-mutating protocol self-test to pass.
 11) Build and install UI.
 12) Generate TLS certs for the UI.
 13) Install and enable systemd units:
@@ -60,6 +62,12 @@ Install and configure the LightningOS stack:
   replaces it with the typed broker described in
   `docs/32_PRIVILEGE_HARDENING_PLAN.md`, then removes Docker group membership and
   wildcard sudo only after rollback and regression checks pass.
+- During Phase 1 the installers add only
+  `/usr/local/libexec/lightningos-privileged ""` to the manager sudo alias. The
+  empty argument constraint and the helper's own argument rejection prevent
+  using it as a generic root command. Configuration defaults to `disabled`;
+  installer and upgrader self-tests invoke the helper directly as root without
+  changing service state.
 
 ## Output
 - UI available on https://<host>:8443

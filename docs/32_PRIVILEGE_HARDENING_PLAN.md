@@ -223,6 +223,19 @@ rejected. `LOS-TEST2` was untouched and the successful gate clone was powered
 off. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-docker-package-install-enforce-2026-08-10.json`.
 
+The first shared Compose catalog now admits RoboSats for typed status,
+start, and stop. The broker byte-validates the manager-owned catalog files and
+TLS key pair, then atomically maintains a persistent root-only execution tree
+under `/var/lib/lightningos-privileged/apps/robosats`. RoboSats data moved from
+a manager-writable host bind to a Docker named volume. A disposable Ubuntu
+24.04 gate passed two stop/start cycles, broker status, and HTTPS 200 while the
+live manager lacked the Docker GID and direct Docker access returned failure.
+The gate rejected an earlier temporary-snapshot design before the persistent
+model was adopted. Install/image preparation, UFW, and uninstall remain on the
+reviewed legacy path and are not claimed by this slice. `LOS-TEST2` was not
+mutated. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-robosats-lifecycle-enforce-2026-08-10.json`.
+
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.
 3. Run install/start/stop/restart/uninstall tests for every app on disposable

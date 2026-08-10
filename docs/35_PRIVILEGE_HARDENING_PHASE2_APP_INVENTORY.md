@@ -56,9 +56,38 @@ inside the broker deadline.
 
 CPU Miner install, uninstall, image probes, and first-container creation remain
 on the reviewed legacy path. The legacy status/stats/apply implementation is
-retained for `disabled` and `shadow` compatibility. This therefore does not yet
-authorize removal of Docker access from the manager; those surfaces remain
-explicit Phase 2 work.
+retained for `disabled` and `shadow` compatibility.
+
+## Shared Compose catalog and RoboSats
+
+The first generalized Compose slice moves RoboSats `status`, `start`, and
+`stop` onto the same closed catalog boundary as CPU Miner.
+
+- `ComposeManifestForApp` is the only admission point for lifecycle and inspect
+  requests; unknown app IDs still fail before command execution.
+- The manager and broker share the exact RoboSats Compose and Caddy documents,
+  three pinned images, fixed project/service names, port, and stop timeout.
+- The broker rejects changed Compose/Caddy content, non-regular files,
+  symlinks, malformed certificates, and certificate/private-key mismatches.
+- RoboSats data uses a Docker named volume. No manager-writable host data path
+  reaches a root Docker bind mount.
+- Compose, Caddy, certificate, and private-key execution copies live below
+  `/var/lib/lightningos-privileged/apps/robosats`. Every component is checked
+  against symlinks; directories are root-only and file replacement is atomic.
+- Existing manager-owned catalog files are refreshed before typed start/stop,
+  allowing an installed legacy manifest to converge without Docker access.
+- All three images must already exist locally before typed start. Image pulls,
+  install, firewall changes, and uninstall remain separate future capabilities.
+
+The disposable Ubuntu 24.04 gate deliberately caught and rejected an initial
+temporary `/proc/<pid>/fd` design: Docker container creation can outlive the
+broker process, and restart policies require bind sources to remain present.
+The persistent root-owned snapshot plus named-volume design then passed two
+start/stop cycles, broker status, and HTTPS checks with direct manager Docker
+access denied.
+
+This slice still does not authorize global removal of Docker access from the
+manager; other App Store handlers retain explicit Phase 2 work.
 
 ## Migration order
 
@@ -69,6 +98,8 @@ explicit Phase 2 work.
 3. Add typed install, uninstall, image probe, and first-container creation
    capabilities to complete CPU Miner. Config and thread apply are complete.
 4. Generalize the catalog schema for simple whole-project Compose apps.
+   The shared schema and first RoboSats status/start/stop onboarding are
+   complete; install/image/firewall/uninstall remain open.
 5. Add service-specific and dependency capabilities for complex Compose apps.
 6. Separate Docker package installation, image management, networking,
    firewall, storage, and LND compatibility operations.
@@ -77,7 +108,7 @@ explicit Phase 2 work.
 8. Remove direct Docker calls and manager Docker-group membership only after
    every supported app passes.
 
-## Acceptance gates for the CPU Miner slices
+## Acceptance gates for the migrated slices
 
 - strict protocol rejection of unknown apps, actions, fields, paths, and args;
 - manifest/environment tampering and symlink rejection before command execution;
@@ -93,3 +124,6 @@ explicit Phase 2 work.
 - full Go tests, vet, registry validation, and privilege-boundary budgets;
 - disposable-VM start/stop/status with final config, group, app, and Docker
   service state restored.
+- RoboSats execution files persist under a root-only tree, data uses a named
+  volume, no manager-writable path reaches Docker, all three fixed images are
+  local, and repeated stop/start plus HTTPS survive without the Docker GID.

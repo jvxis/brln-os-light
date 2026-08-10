@@ -85,6 +85,6 @@
     "affected_vm": "brln-os-hardening-053-tmp-20260810",
     "event": "a precautionary live snapshot entered a VirtualBox livesnapshotting stall before any package-gate guest mutation",
     "gate_impact": "none; a separate clean clone from brln-os-basica completed the gate",
-    "affected_vm_cleanup": "host-side elevated poweroff is still required; the gate clone is already powered off"
+    "affected_vm_cleanup": "the stuck leaf VBoxHeadless process was terminated after PID/parent/time validation; the VM is registered in aborted state and LOS-TEST2 remained running"
   }
 }

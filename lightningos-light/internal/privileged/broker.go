@@ -43,6 +43,11 @@ type AppManager interface {
 	ProbeImage(ctx context.Context, appID string, variant appmanifest.CPUMinerImageVariant, dryRun bool) (AppImageProbe, error)
 }
 
+type PackageManager interface {
+	EnsureFeature(ctx context.Context, feature PackageFeature, dryRun bool) (PackageFeatureState, error)
+	FeatureStatus(ctx context.Context, feature PackageFeature) (PackageFeatureState, error)
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -56,14 +61,15 @@ type AuditEvent struct {
 }
 
 type Broker struct {
-	Runner  CommandRunner
-	Locker  Locker
-	Audit   AuditSink
-	Files   ConfigFileManager
-	Apps    AppManager
-	Caller  string
-	Timeout time.Duration
-	Now     func() time.Time
+	Runner   CommandRunner
+	Locker   Locker
+	Audit    AuditSink
+	Files    ConfigFileManager
+	Apps     AppManager
+	Packages PackageManager
+	Caller   string
+	Timeout  time.Duration
+	Now      func() time.Time
 }
 
 func (broker *Broker) Handle(ctx context.Context, request Request) Response {
@@ -200,6 +206,32 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "docker_runtime_status_failed", errors.New("docker runtime status failed")
 		}
 		return state, "", nil
+	case OperationPackageEnsure:
+		if broker.Packages == nil {
+			return nil, "broker_unavailable", errors.New("privileged package manager is unavailable")
+		}
+		var params PackageFeatureParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid packages.feature.ensure params")
+		}
+		state, err := broker.Packages.EnsureFeature(ctx, params.Feature, request.DryRun)
+		if err != nil {
+			return nil, "package_feature_failed", errors.New("package feature preparation failed")
+		}
+		return state, "", nil
+	case OperationPackageStatus:
+		if broker.Packages == nil {
+			return nil, "broker_unavailable", errors.New("privileged package manager is unavailable")
+		}
+		var params PackageFeatureParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid packages.feature.status params")
+		}
+		state, err := broker.Packages.FeatureStatus(ctx, params.Feature)
+		if err != nil {
+			return nil, "package_feature_status_failed", errors.New("package feature status failed")
+		}
+		return state, "", nil
 	case OperationAppLifecycle:
 		if broker.Apps == nil {
 			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
@@ -312,7 +344,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe:
 		return true
 	default:
 		return false
@@ -321,7 +353,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationAppImagePrepare, OperationAppImageProbe:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe:
 		return true
 	default:
 		return false

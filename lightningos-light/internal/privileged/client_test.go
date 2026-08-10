@@ -127,6 +127,27 @@ func TestClientDockerRuntimeBuildsEmptyTypedRequest(t *testing.T) {
 	}
 }
 
+func TestClientPackageFeatureBuildsClosedTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: PackageFeatureState{Status: "validated"}}
+	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)
+	status, err := client.EnsurePackageFeature(context.Background(), "docker_runtime", true)
+	if err != nil || status != "validated" || transport.request.Operation != OperationPackageEnsure || !transport.request.DryRun {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+	var params PackageFeatureParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.Feature != PackageFeatureDockerRuntime {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+	transport.result = PackageFeatureState{Status: "indexed"}
+	status, err = client.PackageFeatureStatus(context.Background(), "docker_runtime")
+	if err != nil || status != "indexed" || transport.request.Operation != OperationPackageStatus || transport.request.DryRun {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+}
+
 func TestClientAppImageOperationsBuildTypedRequests(t *testing.T) {
 	transport := &fakeTransport{result: AppImageState{Status: "preparing"}}
 	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)

@@ -173,6 +173,9 @@ func (s *Server) publicPoolRunning(ctx context.Context) bool {
 }
 
 func (s *Server) installCpuMiner(ctx context.Context) error {
+	if handled, err := system.EnsurePackageFeatureWithBroker(ctx, "docker_runtime"); handled && err != nil {
+		return err
+	}
 	if handled, err := system.EnsureDockerRuntimeWithBroker(ctx); handled {
 		if err != nil {
 			return err

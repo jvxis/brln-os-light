@@ -172,6 +172,46 @@ func (client *Client) DockerRuntimeStatus(ctx context.Context) (string, error) {
 	return decodeDockerRuntimeState(response, false)
 }
 
+func (client *Client) EnsurePackageFeature(ctx context.Context, feature string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationPackageEnsure, PackageFeatureParams{Feature: PackageFeature(feature)}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	status, err := decodePackageFeatureState(response, dryRun)
+	if dryRun && client != nil && client.logger != nil {
+		if err != nil {
+			client.logger.Printf("privileged broker shadow validation rejected packages.feature.ensure: %v", err)
+		} else {
+			client.logger.Printf("privileged broker shadow validation accepted packages.feature.ensure for %s", feature)
+		}
+	}
+	return status, err
+}
+
+func (client *Client) PackageFeatureStatus(ctx context.Context, feature string) (string, error) {
+	response, err := client.call(ctx, OperationPackageStatus, PackageFeatureParams{Feature: PackageFeature(feature)}, false)
+	if err != nil {
+		return "", err
+	}
+	return decodePackageFeatureState(response, false)
+}
+
+func decodePackageFeatureState(response Response, dryRun bool) (string, error) {
+	var result PackageFeatureState
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return "", errors.New("invalid broker package feature state response")
+	}
+	if dryRun && result.Status == "validated" {
+		return result.Status, nil
+	}
+	switch result.Status {
+	case "ready", "indexing", "indexed", "installing", "absent", "failed":
+		return result.Status, nil
+	default:
+		return "", errors.New("invalid broker package feature state")
+	}
+}
+
 func decodeDockerRuntimeState(response Response, dryRun bool) (string, error) {
 	var result DockerRuntimeState
 	if err := decodeStrict(response.Result, &result); err != nil {

@@ -7,47 +7,55 @@ import (
 )
 
 type fakePrivilegedServiceClient struct {
-	mode               string
-	calls              int
-	unit               string
-	noBlock            bool
-	dryRun             bool
-	err                error
-	fileCalls          int
-	fileDryRun         bool
-	fileErr            error
-	appCalls           int
-	appID              string
-	action             string
-	appDryRun          bool
-	appErr             error
-	inspectCalls       int
-	inspectAppID       string
-	inspectStatus      string
-	inspectCPU         float64
-	inspectErr         error
-	removeCalls        int
-	removeAppID        string
-	removeDryRun       bool
-	removeErr          error
-	dockerCalls        int
-	dockerStatusCalls  int
-	dockerDryRun       bool
-	dockerErr          error
-	dockerStatus       string
-	dockerStatusValues []string
-	prepareCalls       int
-	imageAppID         string
-	imageVariant       string
-	imageDryRun        bool
-	prepareStatus      string
-	prepareErr         error
-	statusCalls        int
-	statusValues       []string
-	statusErr          error
-	probeCalls         int
-	probeRunnable      bool
-	probeErr           error
+	mode                string
+	calls               int
+	unit                string
+	noBlock             bool
+	dryRun              bool
+	err                 error
+	fileCalls           int
+	fileDryRun          bool
+	fileErr             error
+	appCalls            int
+	appID               string
+	action              string
+	appDryRun           bool
+	appErr              error
+	inspectCalls        int
+	inspectAppID        string
+	inspectStatus       string
+	inspectCPU          float64
+	inspectErr          error
+	removeCalls         int
+	removeAppID         string
+	removeDryRun        bool
+	removeErr           error
+	dockerCalls         int
+	dockerStatusCalls   int
+	dockerDryRun        bool
+	dockerErr           error
+	dockerStatus        string
+	dockerStatusValues  []string
+	packageCalls        int
+	packageStatusCalls  int
+	packageFeature      string
+	packageDryRun       bool
+	packageStatus       string
+	packageEnsureValues []string
+	packageValues       []string
+	packageErr          error
+	prepareCalls        int
+	imageAppID          string
+	imageVariant        string
+	imageDryRun         bool
+	prepareStatus       string
+	prepareErr          error
+	statusCalls         int
+	statusValues        []string
+	statusErr           error
+	probeCalls          int
+	probeRunnable       bool
+	probeErr            error
 }
 
 func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID string, action string, dryRun bool) error {
@@ -87,6 +95,35 @@ func (client *fakePrivilegedServiceClient) DockerRuntimeStatus(_ context.Context
 	}
 	status := client.dockerStatusValues[0]
 	client.dockerStatusValues = client.dockerStatusValues[1:]
+	return status, nil
+}
+
+func (client *fakePrivilegedServiceClient) EnsurePackageFeature(_ context.Context, feature string, dryRun bool) (string, error) {
+	client.packageCalls++
+	client.packageFeature = feature
+	client.packageDryRun = dryRun
+	if client.packageErr != nil {
+		return "", client.packageErr
+	}
+	if len(client.packageEnsureValues) == 0 {
+		return client.packageStatus, nil
+	}
+	status := client.packageEnsureValues[0]
+	client.packageEnsureValues = client.packageEnsureValues[1:]
+	return status, nil
+}
+
+func (client *fakePrivilegedServiceClient) PackageFeatureStatus(_ context.Context, feature string) (string, error) {
+	client.packageStatusCalls++
+	client.packageFeature = feature
+	if client.packageErr != nil {
+		return "", client.packageErr
+	}
+	if len(client.packageValues) == 0 {
+		return client.packageStatus, nil
+	}
+	status := client.packageValues[0]
+	client.packageValues = client.packageValues[1:]
 	return status, nil
 }
 
@@ -349,6 +386,27 @@ func TestEnsureDockerRuntimeWithBrokerModes(t *testing.T) {
 				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
 			}
 		})
+	}
+}
+
+func TestEnsurePackageFeatureWithBrokerStagesAndModes(t *testing.T) {
+	client := &fakePrivilegedServiceClient{
+		mode:                "enforce",
+		packageEnsureValues: []string{"indexing", "installing", "ready"},
+		packageValues:       []string{"indexed", "ready"},
+	}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+	handled, err := EnsurePackageFeatureWithBroker(context.Background(), "docker_runtime")
+	if !handled || err != nil || client.packageCalls != 3 || client.packageStatusCalls != 2 || client.packageFeature != "docker_runtime" {
+		t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+	}
+
+	shadow := &fakePrivilegedServiceClient{mode: "shadow", packageErr: errors.New("rejected")}
+	ConfigurePrivilegedClient(shadow)
+	handled, err = EnsurePackageFeatureWithBroker(context.Background(), "docker_runtime")
+	if handled || err != nil || shadow.packageCalls != 1 || !shadow.packageDryRun {
+		t.Fatalf("shadow handled/error/client=%v/%v/%#v", handled, err, shadow)
 	}
 }
 

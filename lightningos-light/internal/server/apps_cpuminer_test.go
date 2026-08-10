@@ -73,6 +73,14 @@ func (client *cpuMinerPrivilegedClient) DockerRuntimeStatus(_ context.Context) (
 	return client.dockerStatus, client.dockerErr
 }
 
+func (client *cpuMinerPrivilegedClient) EnsurePackageFeature(context.Context, string, bool) (string, error) {
+	return "ready", nil
+}
+
+func (client *cpuMinerPrivilegedClient) PackageFeatureStatus(context.Context, string) (string, error) {
+	return "ready", nil
+}
+
 func (client *cpuMinerPrivilegedClient) PrepareAppImage(_ context.Context, appID string, variant string, dryRun bool) (string, error) {
 	client.prepareCalls++
 	client.appID = appID

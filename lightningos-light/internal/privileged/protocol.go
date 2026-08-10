@@ -29,6 +29,8 @@ const (
 	OperationAppRemove        Operation = "app.compose.remove"
 	OperationDockerEnsure     Operation = "docker.runtime.ensure"
 	OperationDockerStatus     Operation = "docker.runtime.status"
+	OperationPackageEnsure    Operation = "packages.feature.ensure"
+	OperationPackageStatus    Operation = "packages.feature.status"
 	OperationAppImagePrepare  Operation = "app.image.prepare"
 	OperationAppImageStatus   Operation = "app.image.status"
 	OperationAppImageProbe    Operation = "app.image.probe"
@@ -98,6 +100,18 @@ type AppImageProbe struct {
 }
 
 type DockerRuntimeState struct {
+	Status string `json:"status"`
+}
+
+type PackageFeature string
+
+const PackageFeatureDockerRuntime PackageFeature = "docker_runtime"
+
+type PackageFeatureParams struct {
+	Feature PackageFeature `json:"feature"`
+}
+
+type PackageFeatureState struct {
 	Status string `json:"status"`
 }
 
@@ -252,6 +266,25 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid docker.runtime.status params: %w", err)
+		}
+	case OperationPackageEnsure:
+		var params PackageFeatureParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid packages.feature.ensure params: %w", err)
+		}
+		if params.Feature != PackageFeatureDockerRuntime {
+			return errors.New("package feature is not allowed")
+		}
+	case OperationPackageStatus:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for packages.feature.status")
+		}
+		var params PackageFeatureParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid packages.feature.status params: %w", err)
+		}
+		if params.Feature != PackageFeatureDockerRuntime {
+			return errors.New("package feature is not allowed")
 		}
 	case OperationAppImagePrepare, OperationAppImageProbe:
 		var params AppImageParams

@@ -25,9 +25,71 @@ type PrivilegedClient interface {
 	RemoveApp(ctx context.Context, appID string, dryRun bool) error
 	EnsureDockerRuntime(ctx context.Context, dryRun bool) (status string, err error)
 	DockerRuntimeStatus(ctx context.Context) (status string, err error)
+	EnsurePackageFeature(ctx context.Context, feature string, dryRun bool) (status string, err error)
+	PackageFeatureStatus(ctx context.Context, feature string) (status string, err error)
 	PrepareAppImage(ctx context.Context, appID string, variant string, dryRun bool) (status string, err error)
 	AppImageStatus(ctx context.Context, appID string, variant string) (status string, err error)
 	ProbeAppImage(ctx context.Context, appID string, variant string, dryRun bool) (runnable bool, err error)
+}
+
+func EnsurePackageFeatureWithBroker(ctx context.Context, feature string) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		status, err := client.EnsurePackageFeature(ctx, feature, false)
+		if err != nil {
+			return true, err
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+		defer cancel()
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			switch status {
+			case "ready":
+				status, err = client.EnsurePackageFeature(waitCtx, feature, false)
+				if err != nil {
+					return true, err
+				}
+				if status != "ready" {
+					return true, errors.New("package feature finalization returned an invalid state")
+				}
+				return true, nil
+			case "indexed":
+				status, err = client.EnsurePackageFeature(waitCtx, feature, false)
+				if err != nil {
+					return true, err
+				}
+				continue
+			case "indexing", "installing":
+			case "absent", "failed":
+				return true, errors.New("package feature preparation failed")
+			default:
+				return true, errors.New("package feature returned an invalid state")
+			}
+			select {
+			case <-waitCtx.Done():
+				return true, errors.New("package feature preparation did not complete")
+			case <-ticker.C:
+				status, err = client.PackageFeatureStatus(waitCtx, feature)
+				if err != nil {
+					return true, err
+				}
+			}
+		}
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = client.EnsurePackageFeature(shadowCtx, feature, true)
+		return false, nil
+	default:
+		return false, nil
+	}
 }
 
 func EnsureDockerRuntimeWithBroker(ctx context.Context) (bool, error) {

@@ -87,6 +87,19 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 	}
 }
 
+// 2.4.2 closes the actively exploited LND macaroon disclosure fixed by
+// upstream on 2026-08-07. NBXplorer 2.6.10 is the matching release upstream
+// explicitly recommends to integrators. Keep this guard when advancing the
+// catalog so the security floor cannot regress silently.
+func TestBTCPayCatalogSecurityFloor(t *testing.T) {
+	if BTCPayRelease != "2.4.2" || BTCPayServerImage != "btcpayserver/btcpayserver:2.4.2" {
+		t.Fatalf("BTCPay catalog fell below the 2.4.2 security floor: %q", BTCPayServerImage)
+	}
+	if BTCPayNbxplorerRelease != "2.6.10" || BTCPayNbxplorerImage != "nicolasdorier/nbxplorer:2.6.10" {
+		t.Fatalf("unexpected NBXplorer security companion: %q", BTCPayNbxplorerImage)
+	}
+}
+
 func TestCatalogImageRefreshPolicyIsClosed(t *testing.T) {
 	refresh, err := CatalogImageRequiresRefresh(BTCPayID, BTCPayImageServer)
 	if err != nil || !refresh {

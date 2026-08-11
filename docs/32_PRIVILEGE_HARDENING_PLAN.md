@@ -456,12 +456,12 @@ secret-bearing Compose lifecycle. The closed catalog admits only `server`,
 `nbxplorer`, `postgres`, and `tor`; each maps to one fixed catalog image and
 transient unit. The official registry no longer exposes the legacy
 `btcpayserver/btcpayserver:latest` reference, so the current upstream stable
-release is explicitly cataloged as `btcpayserver/btcpayserver:2.4.1`.
+release is explicitly cataloged as `btcpayserver/btcpayserver:2.4.2`.
 BTCPay's `server` variant nevertheless performs a real pull on every requested
 install/start and status checks the pull unit before accepting a cached image.
 The version constant must be reviewed whenever upstream publishes a stable
 release; the root broker never discovers or accepts an arbitrary tag at
-runtime. NBXplorer 2.6.8, PostgreSQL 16, and Tor 0.4.9.5 remain fixed and
+runtime. NBXplorer 2.6.10, PostgreSQL 16, and Tor 0.4.9.5 remain fixed and
 cache-authoritative, with Tor omitted for clearnet/local Bitcoin sources.
 
 The disposable Ubuntu gate rejected an injected variant, passed dry-run,
@@ -475,6 +475,28 @@ removed, and the VM was shut down gracefully. Bitcoin source resolution and
 LND were not invoked, so the working remote Full Node + local LND contract was
 preserved unchanged. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-btcpay-images-enforce-2026-08-11.json`.
+
+On 7 August 2026, upstream released BTCPay 2.4.2 for a critical vulnerability
+under active exploitation that allowed an unauthenticated attacker to obtain
+LND `.macaroon` credentials from every earlier BTCPay version. Upstream
+confirmed stolen funds and required both BTCPay 2.4.2 and LND 0.21.1, while
+recommending NBXplorer 2.6.10 to integrators. The catalog was advanced
+immediately to BTCPay 2.4.2 and NBXplorer 2.6.10 and now has an explicit test
+against regression below that security floor. LightningOS already installs LND
+0.21.1-beta and gives BTCPay a dedicated macaroon without `offchain:write` or
+`onchain:write`; no admin macaroon is referenced or mounted. This reduces the
+authority of a leaked BTCPay credential but does not replace the mandatory
+upstream update.
+
+The follow-up disposable Ubuntu gate passed the full Go test/vet/build suite,
+then used the updated broker to resolve and prepare only the fixed images. It
+accepted dry-run, returned both variants `ready`, and verified official amd64
+digests `sha256:66a7e88964d44302a0312bf601c9ef0e4c3af71696e2e4edac6daa2742854e79`
+for BTCPay 2.4.2 and
+`sha256:7d2ab1f6ce38e301cba98a4f85bfbfcf2912d5034bd88af056f9d60e5511f911`
+for NBXplorer 2.6.10. No container was created, the manager remained active,
+and the audit contained operation metadata only. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-btcpay-security-release-2026-08-11.json`.
 
 The full BTCPay+LND gate, full-node Electrs/Mempool gates, the remaining
 dependent products, operational Bitcoin CLI/log paths, and the mainnet P2P

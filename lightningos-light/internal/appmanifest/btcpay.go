@@ -3,20 +3,21 @@ package appmanifest
 import "fmt"
 
 const (
-	BTCPayID             = "btcpay"
-	BTCPayProject        = "btcpay"
-	BTCPayComposeFile    = "docker-compose.yaml"
-	BTCPayEnvFile        = ".env"
-	BTCPayPrimaryService = "btcpayserver"
-	BTCPayPort           = 23000
-	BTCPayRelease        = "2.4.1"
+	BTCPayID               = "btcpay"
+	BTCPayProject          = "btcpay"
+	BTCPayComposeFile      = "docker-compose.yaml"
+	BTCPayEnvFile          = ".env"
+	BTCPayPrimaryService   = "btcpayserver"
+	BTCPayPort             = 23000
+	BTCPayRelease          = "2.4.2"
+	BTCPayNbxplorerRelease = "2.6.10"
 
 	// BTCPayServerImage is the newest stable tag published by the official
 	// BTCPay Docker project. Upstream does not publish a usable `latest` tag.
 	// Every user-requested install/start still refreshes this closed release
 	// tag before Compose runs; future releases change only BTCPayRelease.
 	BTCPayServerImage    = "btcpayserver/btcpayserver:" + BTCPayRelease
-	BTCPayNbxplorerImage = "nicolasdorier/nbxplorer:2.6.8"
+	BTCPayNbxplorerImage = "nicolasdorier/nbxplorer:" + BTCPayNbxplorerRelease
 	BTCPayPostgresImage  = "postgres:16"
 	BTCPayTorImage       = RoboSatsTorImage
 

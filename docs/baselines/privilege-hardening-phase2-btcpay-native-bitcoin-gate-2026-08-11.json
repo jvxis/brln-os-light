@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-11T12:18:25Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "d75498230469d8e4de2ab83684ec7ce3693a358a",
+  "tested_patch_object": "a047f8921bd2a12ab6781e7f1d225959fa93a0a7",
+  "scope": "BTCPay NBXplorer consumer gate against an existing native/systemd Bitcoin Core service",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "architecture": "amd64"
+  },
+  "official_bitcoin_artifact": {
+    "image": "lightningos/bitcoin-core:31.1",
+    "image_id": "sha256:18ab17063a6c00cb9756fc1282d5f497930670794c13b4eed721c5ed804f4555",
+    "daemon_version": 310100,
+    "chain": "regtest",
+    "blocks": 101
+  },
+  "bitcoin_fixture": {
+    "service_manager": "systemd transient gate unit",
+    "service_user": "admin",
+    "pruned": false,
+    "natpmp": false,
+    "upnp": false,
+    "discover": false,
+    "dnsseed": false,
+    "fixedseeds": false,
+    "listenonion": false,
+    "consumer_whitelist": "172.31.253.0/24",
+    "config_hash_unchanged_during_gate": true,
+    "mainnet_started": false,
+    "persistent_blockchain_data_used": false
+  },
+  "consumer_network": {
+    "name": "bitcoincore_default",
+    "driver": "bridge",
+    "scope": "local",
+    "internal": false,
+    "subnet": "172.31.253.0/24",
+    "gateway": "172.31.253.1",
+    "compose_project_label": "bitcoincore",
+    "compose_network_label": "default"
+  },
+  "btcpay_consumer": {
+    "nbxplorer_image": "nicolasdorier/nbxplorer:2.6.8",
+    "nbxplorer_digest": "sha256:1ae5e23a330659baa9ea8731b93ae0b675aaf9e7add17283c910aa13e8cbaf60",
+    "postgres_image": "postgres:16",
+    "postgres_digest": "sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b",
+    "p2p_handshake": "passed",
+    "rpc_authentication": "passed",
+    "nbxplorer_fully_synced": true,
+    "host_published_ports": [],
+    "full_btcpay_server_started": false,
+    "full_btcpay_reason": "The disposable VM has no initialized LND TLS certificate or macaroon; the gate did not fabricate Lightning credentials."
+  },
+  "defects_found_and_fixed": [
+    "The standard App Store bitcoin.conf now whitelists the fixed private consumer subnet before first start and migrates existing App Store configs idempotently.",
+    "BTCPay PostgreSQL repair now retries the temporary pg_isready/shutdown window observed during first initialization."
+  ],
+  "discarded_fixture_observations": [
+    "Network-specific regtest bind settings were initially outside the [regtest] section; Bitcoin Core rejected the fixture before opening sockets.",
+    "A host-side NBXplorer status request was correctly blocked because NBXplorer was not published; readiness was instead verified from the container's internal state transition.",
+    "PostgreSQL briefly accepted pg_isready and then shut down its temporary initialization server; this exposed the product retry gap fixed in this slice."
+  ],
+  "validation": {
+    "focused_go_tests": "passed",
+    "ubuntu_go_test_all": "passed",
+    "ubuntu_go_vet_all": "passed",
+    "ubuntu_manager_build": "passed",
+    "ubuntu_broker_build": "passed",
+    "windows_go_test_all": "two pre-existing CRLF-sensitive installer-script failures only",
+    "manager_active_during_and_after_gate": true
+  },
+  "final_state": {
+    "temporary_native_service": "inactive and removed with transient runtime",
+    "temporary_containers_present": false,
+    "temporary_network_present": false,
+    "temporary_data_present": false,
+    "temporary_remote_gate_script_present": false,
+    "official_bitcoin_image_present": true,
+    "dependency_images_cached": true,
+    "gate_vm": "powered_off gracefully",
+    "los_test2": "untouched"
+  },
+  "remaining_scope": [
+    "full BTCPay Server plus dedicated LND macaroon gate on a disposable node with initialized LND",
+    "BTCPay typed broker manifest and lifecycle cutover",
+    "full-node Electrs and Mempool install gates against unpruned synchronized txindex Bitcoin",
+    "typed operational bitcoin-cli and log access",
+    "operator-facing native bitcoin.conf preflight and remediation guidance"
+  ]
+}

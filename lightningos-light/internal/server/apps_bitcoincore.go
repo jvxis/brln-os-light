@@ -451,6 +451,7 @@ func defaultBitcoinCoreConfig() (string, error) {
 		"rpcbind=0.0.0.0:8332",
 		"rpcallowip=127.0.0.1",
 		"rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet,
+		"whitelist=" + appmanifest.BitcoinConsumerRPCSubnet,
 		"zmqpubrawblock=tcp://0.0.0.0:28332",
 		"zmqpubrawtx=tcp://0.0.0.0:28333",
 		"",
@@ -496,11 +497,19 @@ func ensureBitcoinCoreConsumerRPCValues(raw string) (string, bool) {
 			break
 		}
 	}
-	for _, expected := range []string{"127.0.0.1", appmanifest.BitcoinCoreRPCSubnet} {
+	requiredValues := []struct {
+		key   string
+		value string
+	}{
+		{key: "rpcallowip", value: "127.0.0.1"},
+		{key: "rpcallowip", value: appmanifest.BitcoinCoreRPCSubnet},
+		{key: "whitelist", value: appmanifest.BitcoinConsumerRPCSubnet},
+	}
+	for _, required := range requiredValues {
 		found := false
 		for _, line := range lines[:sectionIndex] {
 			key, value, ok := bitcoinCoreConfigKeyValue(line)
-			if ok && strings.EqualFold(key, "rpcallowip") && value == expected {
+			if ok && strings.EqualFold(key, required.key) && value == required.value {
 				found = true
 				break
 			}
@@ -508,7 +517,7 @@ func ensureBitcoinCoreConsumerRPCValues(raw string) (string, bool) {
 		if !found {
 			lines = append(lines, "")
 			copy(lines[sectionIndex+1:], lines[sectionIndex:])
-			lines[sectionIndex] = "rpcallowip=" + expected
+			lines[sectionIndex] = required.key + "=" + required.value
 			sectionIndex++
 			changed = true
 		}

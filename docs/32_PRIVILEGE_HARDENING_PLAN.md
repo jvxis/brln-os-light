@@ -432,8 +432,30 @@ safety omission was detected; the service was stopped immediately, and the
 accepted rerun verified that no mapping was added. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-bitcoin-native-consumer-enforce-2026-08-11.json`.
 
-Full install gates for each dependent product, the remaining operational
-Bitcoin CLI/log paths, and the mainnet P2P firewall contract remain open.
+The first dependent-product gate now covers BTCPay's Bitcoin-facing component.
+NBXplorer 2.6.8 reached `Ready` against the official Bitcoin Core 31.1 binary
+running as an unprivileged native systemd service. Both authenticated RPC and
+the P2P handshake crossed only `bitcoincore_default`; NBXplorer and PostgreSQL
+published no host ports, the Bitcoin config hash remained unchanged, and the
+manager stayed active. The disposable node has no initialized LND certificate
+or macaroon, so the gate deliberately did not fabricate Lightning credentials
+or claim that the full BTCPay UI/LND surface was exercised.
+
+This gate closed two restart-prevention gaps. The standard App Store
+`bitcoin.conf` now includes `whitelist=172.31.253.0/24` before first start, and
+the existing-node App Store baseline adds it idempotently alongside the fixed
+RPC allowlist. This prevents NBXplorer's stable private peer from requiring a
+later Bitcoin config edit. BTCPay's PostgreSQL database repair also retries the
+brief first-initialization interval in which `pg_isready` succeeds immediately
+before PostgreSQL shuts down its temporary bootstrap server. The accepted gate
+then passed from a clean state. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-btcpay-native-bitcoin-gate-2026-08-11.json`.
+
+The full BTCPay+LND gate, full-node Electrs/Mempool gates, the remaining
+dependent products, operational Bitcoin CLI/log paths, and the mainnet P2P
+firewall contract remain open. Electrs and Mempool gates must use a synchronized
+unpruned node with `txindex=1`; regtest is acceptable only as an isolated test
+chain satisfying that same full-index contract.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

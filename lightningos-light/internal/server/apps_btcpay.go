@@ -544,18 +544,39 @@ type btcpayCommandRunner func(context.Context, string, ...string) (string, error
 // exists, so this also repairs installs left half-initialized by an earlier
 // failed attempt.
 func ensureBtcpayNbxplorerDatabase(ctx context.Context, run btcpayCommandRunner) error {
-	var readinessOutput string
+	var lastDetail string
 	for attempt := 0; attempt < 30; attempt++ {
 		out, err := run(ctx, "docker", "exec", "btcpay-db", "pg_isready", "-U", "btcpay", "-d", "btcpayserver")
-		readinessOutput = strings.TrimSpace(out)
+		lastDetail = strings.TrimSpace(out)
 		if err == nil {
-			break
+			out, err = run(
+				ctx,
+				"docker", "exec", "btcpay-db",
+				"psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc",
+				"SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'",
+			)
+			lastDetail = strings.TrimSpace(out)
+			if err == nil && lastDetail == "1" {
+				return nil
+			}
+			if err == nil {
+				out, err = run(
+					ctx,
+					"docker", "exec", "btcpay-db",
+					"createdb", "-U", "btcpay", "--owner=btcpay", "--template=template0",
+					"--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer",
+				)
+				lastDetail = strings.TrimSpace(out)
+				if err == nil {
+					return nil
+				}
+			}
+		}
+		if err != nil && lastDetail == "" {
+			lastDetail = err.Error()
 		}
 		if attempt == 29 {
-			if readinessOutput == "" {
-				readinessOutput = err.Error()
-			}
-			return fmt.Errorf("BTCPay postgres did not become ready: %s", readinessOutput)
+			return fmt.Errorf("BTCPay postgres did not stabilize: %s", lastDetail)
 		}
 		timer := time.NewTimer(time.Second)
 		select {
@@ -565,33 +586,7 @@ func ensureBtcpayNbxplorerDatabase(ctx context.Context, run btcpayCommandRunner)
 		case <-timer.C:
 		}
 	}
-
-	out, err := run(
-		ctx,
-		"docker", "exec", "btcpay-db",
-		"psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc",
-		"SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'",
-	)
-	if err != nil {
-		return fmt.Errorf("failed to check the NBXplorer database: %w", err)
-	}
-	if strings.TrimSpace(out) == "1" {
-		return nil
-	}
-
-	if out, err = run(
-		ctx,
-		"docker", "exec", "btcpay-db",
-		"createdb", "-U", "btcpay", "--owner=btcpay", "--template=template0",
-		"--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer",
-	); err != nil {
-		detail := strings.TrimSpace(out)
-		if detail != "" {
-			return fmt.Errorf("failed to create the NBXplorer database: %s: %w", detail, err)
-		}
-		return fmt.Errorf("failed to create the NBXplorer database: %w", err)
-	}
-	return nil
+	return errors.New("BTCPay postgres did not stabilize")
 }
 
 func btcpayLightningConnectionString() string {

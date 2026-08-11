@@ -28,6 +28,7 @@ func TestDefaultBitcoinCoreConfigAllowsDedicatedConsumerNetwork(t *testing.T) {
 		"rpcbind=0.0.0.0:8332",
 		"rpcallowip=127.0.0.1",
 		"rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet,
+		"whitelist=" + appmanifest.BitcoinConsumerRPCSubnet,
 		"natpmp=0",
 		"upnp=0",
 	} {
@@ -52,6 +53,9 @@ func TestEnsureBitcoinCoreConsumerRPCValuesMigratesOnce(t *testing.T) {
 	if count := strings.Count(updated, "rpcallowip="+appmanifest.BitcoinCoreRPCSubnet+"\n"); count != 1 {
 		t.Fatalf("expected one dedicated subnet entry, got %d", count)
 	}
+	if count := strings.Count(updated, "whitelist="+appmanifest.BitcoinConsumerRPCSubnet+"\n"); count != 1 {
+		t.Fatalf("expected one dedicated P2P whitelist entry, got %d", count)
+	}
 	for _, expected := range []string{"natpmp=0\n", "upnp=0\n"} {
 		if !strings.Contains(updated, expected) {
 			t.Fatalf("migration missing %q", strings.TrimSpace(expected))
@@ -71,7 +75,7 @@ func TestEnsureBitcoinCoreConsumerRPCValuesHardensPortMappingBeforeSections(t *t
 		t.Fatalf("automatic port mapping was not disabled:\n%s", updated)
 	}
 	section := strings.Index(updated, "[regtest]")
-	for _, expected := range []string{"natpmp=0", "upnp=0", "rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet} {
+	for _, expected := range []string{"natpmp=0", "upnp=0", "rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet, "whitelist=" + appmanifest.BitcoinConsumerRPCSubnet} {
 		if index := strings.Index(updated, expected); index < 0 || index > section {
 			t.Fatalf("top-level baseline %q misplaced:\n%s", expected, updated)
 		}

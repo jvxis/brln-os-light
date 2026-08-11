@@ -303,6 +303,35 @@ func TestEnsureBtcpayNbxplorerDatabaseKeepsExistingDatabase(t *testing.T) {
 	}
 }
 
+func TestEnsureBtcpayNbxplorerDatabaseRetriesInitializationRestart(t *testing.T) {
+	var commands [][]string
+	psqlCalls := 0
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, append([]string{name}, args...))
+		switch {
+		case len(args) > 2 && args[2] == "pg_isready":
+			return "btcpay-db:5432 - accepting connections\n", nil
+		case len(args) > 2 && args[2] == "psql":
+			psqlCalls++
+			if psqlCalls == 1 {
+				return "the database system is shutting down", errors.New("exit status 2")
+			}
+			return "", nil
+		case len(args) > 2 && args[2] == "createdb":
+			return "", nil
+		default:
+			return "", errors.New("unexpected command")
+		}
+	}
+
+	if err := ensureBtcpayNbxplorerDatabase(context.Background(), run); err != nil {
+		t.Fatalf("transient postgres restart must be retried: %v", err)
+	}
+	if len(commands) != 5 || psqlCalls != 2 {
+		t.Fatalf("expected retry after transient restart; commands=%v", commands)
+	}
+}
+
 func TestBtcpayRegistryAcceptsApp(t *testing.T) {
 	apps := []appHandler{
 		stubApp{def: btcpayDefinition()},

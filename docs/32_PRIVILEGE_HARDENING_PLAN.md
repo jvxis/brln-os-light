@@ -17,6 +17,11 @@ Target release: `0.5.3`.
 
 Implementation branch: `agent/0.5.3-privilege-hardening`.
 
+Persistent continuation checkpoint:
+`docs/36_PRIVILEGE_HARDENING_HANDOFF.md`. The checkpoint is an operational
+index for resuming work in another session; this plan remains the authority for
+scope and completion.
+
 All privilege-hardening implementation commits must remain on this branch until
 the complete cutover and regression matrix is ready for review. Release `0.5.2`
 continues on `main` without partial broker or privilege-removal changes.

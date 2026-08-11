@@ -21,7 +21,7 @@ import (
 const (
 	bip110PublicMonitorURL       = "https://bip110monitor.com/api"
 	bip110NonEnforcingTipURL     = "https://mempool.space/api/blocks/tip/height"
-	bip110EnforcingTipURL        = "https://bip110.mempool.guide/api/blocks/tip/height"
+	bip110EnforcingTipURL        = "https://mempool.guide/api/blocks/tip/height"
 	bip110PeriodLength           = int64(2016)
 	bip110ThresholdCount         = 1109
 	bip110ThresholdPct           = 55.0

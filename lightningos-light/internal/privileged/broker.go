@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	systemctlPath  = "/usr/bin/systemctl"
-	systemdRunPath = "/usr/bin/systemd-run"
+	systemctlPath                  = "/usr/bin/systemctl"
+	systemdRunPath                 = "/usr/bin/systemd-run"
+	privilegedLongOperationTimeout = 2 * time.Minute
 )
 
 type CommandRunner interface {
@@ -112,6 +113,7 @@ func (broker *Broker) Handle(ctx context.Context, request Request) Response {
 	if timeout <= 0 || timeout > 30*time.Second {
 		timeout = 15 * time.Second
 	}
+	timeout = operationTimeout(timeout, request.Operation, request.DryRun)
 	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -141,6 +143,24 @@ func (broker *Broker) Handle(ctx context.Context, request Request) Response {
 		return ErrorResponse(request.RequestID, "audit_unavailable", "privileged audit completion failed")
 	}
 	return SuccessResponse(request, result)
+}
+
+// operationTimeout keeps the normal broker transport short while allowing
+// bounded Compose mutations to outlive Docker's container-recreate window.
+// A BTCPay upgrade can legitimately spend more than 30 seconds replacing its
+// database container and waiting for PostgreSQL before the rest of the stack
+// starts. Dry-run validation remains on the short configured timeout.
+func operationTimeout(configured time.Duration, operation Operation, dryRun bool) time.Duration {
+	if dryRun {
+		return configured
+	}
+	switch operation {
+	case OperationAppLifecycle, OperationAppRemove:
+		if configured < privilegedLongOperationTimeout {
+			return privilegedLongOperationTimeout
+		}
+	}
+	return configured
 }
 
 func (broker *Broker) execute(ctx context.Context, request Request) (any, string, error) {

@@ -546,11 +546,53 @@ than connected to Docker, so no container or Bitcoin/LND service was touched;
 the full functional BTCPay+LND gate remains separate. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-btcpay-lifecycle-enforce-2026-08-11.json`.
 
-The full BTCPay+LND gate, full-node Electrs/Mempool gates, the remaining
-dependent products, operational Bitcoin CLI/log paths, and the mainnet P2P
-firewall contract remain open. Electrs and Mempool gates must use a synchronized
-unpruned node with `txindex=1`; regtest is acceptable only as an isolated test
-chain satisfying that same full-index contract.
+The full BTCPay+LND integration gate has now passed on LOS TESTE2. The node's
+local App Store Bitcoin Core was intentionally not used because it was not
+synchronized; the existing BTCPay/NBXplorer wiring continued to use the
+remote synchronized Full Node through Tor. The gate upgraded the stopped
+installation from BTCPay 2.4.0 and NBXplorer 2.6.8 to the fixed official
+BTCPay 2.4.2 and NBXplorer 2.6.10 images, reached NBXplorer `Ready`, and
+returned `synchronized=true` without changing the selected Bitcoin source.
+The dedicated LND macaroon was byte-distinct from `admin.macaroon` and exposed
+only address read/write, info read, invoice read/write, and on-chain read. It
+authenticated `getinfo`, created and immediately cancelled a zero-amount test
+invoice, rejected payment-history access, and performed no payment or fund
+movement.
+
+The real upgrade exposed two recovery defects that the command-recording gate
+could not reveal. First, the original 15-second transport deadline expired
+while Compose was legitimately recreating PostgreSQL. Real lifecycle and
+remove mutations now receive a fixed two-minute ceiling in both client and
+broker, while dry-run and all other operations retain their short configured
+deadline. Second, that interrupted Compose recreate left a temporary generated
+container name, while the repair path addressed the literal `btcpay-db`
+container name. PostgreSQL readiness, catalog lookup, and idempotent database
+creation now run through the same validated Compose project and the fixed
+`btcpay-db` service, so recovery does not trust a runtime-generated container
+name. Both failures remained fail-closed and were retained in the root-only
+audit alongside the successful retries.
+
+The final-code gate then passed start/stop/start/stop through the authenticated
+manager API. It preserved 68 public BTCPay tables, one existing store, and the
+NBXplorer index across the cycle; the final binary reached `Ready` at block
+962046. The root-owned secret snapshot remained `0700`/`0600`, the LND mount
+remained read-only, and the official amd64 image IDs were
+`sha256:66a7e88964d44302a0312bf601c9ef0e4c3af71696e2e4edac6daa2742854e79`
+for BTCPay and
+`sha256:7d2ab1f6ce38e301cba98a4f85bfbfcf2912d5034bd88af056f9d60e5511f911`
+for NBXplorer. Bitcoin Core and LND were neither replaced nor restarted,
+manager configuration and sudoers hashes remained unchanged, the temporary
+`enforce` override was removed, and the node was returned to its original
+BTCPay-stopped state with the corrected binaries in `shadow`. The audit stayed
+root-owned `0600`, used only the declared metadata fields, and contained no
+credential terms. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-btcpay-functional-lifecycle-2026-08-11.json`.
+
+The full-node Electrs/Mempool gates, the remaining dependent products,
+operational Bitcoin CLI/log paths, and the mainnet P2P firewall contract remain
+open. Electrs and Mempool gates must use a synchronized unpruned node with
+`txindex=1`; regtest is acceptable only as an isolated test chain satisfying
+that same full-index contract.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

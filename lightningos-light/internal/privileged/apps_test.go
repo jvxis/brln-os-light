@@ -399,6 +399,10 @@ func hasArgsSuffix(args []string, suffix ...string) bool {
 	return len(args) >= len(suffix) && reflect.DeepEqual(args[len(args)-len(suffix):], suffix)
 }
 
+func hasArgsPrefix(args []string, prefix ...string) bool {
+	return len(args) >= len(prefix) && reflect.DeepEqual(args[:len(prefix)], prefix)
+}
+
 func TestComposeAppLifecycleUsesValidatedSnapshotAndFixedCommand(t *testing.T) {
 	appsRoot, validEnv := writeTestCPUMinerApp(t)
 	runner := &composeRecordingRunner{}
@@ -657,7 +661,7 @@ func TestComposeAppBTCPayLifecycleRunsOnlyFromPrivilegedSnapshot(t *testing.T) {
 	fixture := writeTestBTCPayApp(t, false, false)
 	runner := fixture.manager.Runner.(*composeRecordingRunner)
 	runner.hook = func(path string, args []string) (string, error, bool) {
-		if path == dockerPath && hasArgsSuffix(args, "exec", "btcpay-db", "psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc", "SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'") {
+		if path == dockerPath && hasArgsSuffix(args, "exec", "-T", "btcpay-db", "psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc", "SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'") {
 			return "1\n", nil, true
 		}
 		return "", nil, false
@@ -678,7 +682,7 @@ func TestComposeAppBTCPayLifecycleRunsOnlyFromPrivilegedSnapshot(t *testing.T) {
 		if hasArgsSuffix(command.args, "up", "-d", "btcpay-db") {
 			databaseStart = index
 		}
-		if command.path == dockerPath && hasArgsSuffix(command.args, "exec", "btcpay-db", "pg_isready", "-U", "btcpay", "-d", "btcpayserver") {
+		if command.path == dockerPath && hasArgsSuffix(command.args, "exec", "-T", "btcpay-db", "pg_isready", "-U", "btcpay", "-d", "btcpayserver") {
 			postgresReady = index
 		}
 		if hasArgsSuffix(command.args, "up", "-d") {
@@ -702,7 +706,7 @@ func TestComposeAppBTCPayLifecycleChecksOnlyCatalogImages(t *testing.T) {
 	fixture := writeTestBTCPayApp(t, false, true)
 	runner := fixture.manager.Runner.(*composeRecordingRunner)
 	runner.hook = func(path string, args []string) (string, error, bool) {
-		if path == dockerPath && hasArgsSuffix(args, "exec", "btcpay-db", "psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc", "SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'") {
+		if path == dockerPath && hasArgsSuffix(args, "exec", "-T", "btcpay-db", "psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc", "SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'") {
 			return "1\n", nil, true
 		}
 		return "", nil, false
@@ -737,9 +741,10 @@ func TestComposeAppBTCPayPostgresRepairIsClosedAndIdempotent(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			runner := &composeRecordingRunner{}
 			queryCall := 0
+			composeArgs := []string{"compose", "--project-name", appmanifest.BTCPayID}
 			runner.hook = func(path string, args []string) (string, error, bool) {
-				if path == dockerPath && len(args) >= 3 && args[0] == "exec" && args[1] == "btcpay-db" {
-					switch args[2] {
+				if path == dockerPath && len(args) >= len(composeArgs)+4 && hasArgsPrefix(args, composeArgs...) && args[len(composeArgs)] == "exec" && args[len(composeArgs)+1] == "-T" && args[len(composeArgs)+2] == "btcpay-db" {
+					switch args[len(composeArgs)+3] {
 					case "pg_isready", "createdb":
 						return "", nil, true
 					case "psql":
@@ -755,14 +760,14 @@ func TestComposeAppBTCPayPostgresRepairIsClosedAndIdempotent(t *testing.T) {
 				return "", errors.New("unexpected command"), true
 			}
 			manager := &ComposeAppManager{Runner: runner}
-			if err := manager.ensureBTCPayNbxplorerDatabaseWithPolicy(context.Background(), 3, 0); err != nil {
+			if err := manager.ensureBTCPayNbxplorerDatabaseWithPolicy(context.Background(), dockerPath, composeArgs, 3, 0); err != nil {
 				t.Fatal(err)
 			}
 			if len(runner.commands) != test.wantCommands {
 				t.Fatalf("commands=%#v", runner.commands)
 			}
 			last := runner.commands[len(runner.commands)-1]
-			created := last.path == dockerPath && len(last.args) > 2 && last.args[2] == "createdb"
+			created := last.path == dockerPath && hasArgsSuffix(last.args, "exec", "-T", "btcpay-db", "createdb", "-U", "btcpay", "--owner=btcpay", "--template=template0", "--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer")
 			if created != test.wantCreate {
 				t.Fatalf("created=%v commands=%#v", created, runner.commands)
 			}
@@ -779,16 +784,35 @@ func TestComposeAppBTCPayPostgresRepairIsClosedAndIdempotent(t *testing.T) {
 }
 
 func TestComposeAppBTCPayPostgresFailureDoesNotLeakOutput(t *testing.T) {
+	composeArgs := []string{"compose", "--project-name", appmanifest.BTCPayID}
 	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
-		if path == dockerPath && len(args) >= 3 && args[0] == "exec" && args[1] == "btcpay-db" {
+		if path == dockerPath && hasArgsPrefix(args, composeArgs...) && hasArgsSuffix(args, "exec", "-T", "btcpay-db", "pg_isready", "-U", "btcpay", "-d", "btcpayserver") {
 			return "rpc-password=do-not-log", errors.New("secret stderr"), true
 		}
 		return "", errors.New("unexpected command"), true
 	}}
 	manager := &ComposeAppManager{Runner: runner}
-	err := manager.ensureBTCPayNbxplorerDatabaseWithPolicy(context.Background(), 2, 0)
+	err := manager.ensureBTCPayNbxplorerDatabaseWithPolicy(context.Background(), dockerPath, composeArgs, 2, 0)
 	if err == nil || strings.Contains(err.Error(), "do-not-log") || strings.Contains(err.Error(), "secret stderr") {
 		t.Fatalf("unsafe postgres error: %v", err)
+	}
+}
+
+func TestComposeAppBTCPayPostgresRepairRejectsUnexpectedComposeCommand(t *testing.T) {
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner}
+	err := manager.ensureBTCPayNbxplorerDatabaseWithPolicy(
+		context.Background(),
+		"/tmp/untrusted-compose",
+		[]string{"--project-name", appmanifest.BTCPayID},
+		1,
+		0,
+	)
+	if err == nil || err.Error() != "invalid BTCPay compose command" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("unexpected command execution: %#v", runner.commands)
 	}
 }
 

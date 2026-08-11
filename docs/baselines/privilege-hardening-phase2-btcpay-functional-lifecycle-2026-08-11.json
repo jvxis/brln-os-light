@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-11T19:54:39Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "83a0b5f4386a57e4dc2c3b7a8bf791d5b434e087",
+  "tested_code_patch_object": "48ebcf1785b4c749a72c0539de7432f5f359c634",
+  "scope": "full BTCPay 2.4.2, NBXplorer 2.6.10, remote Bitcoin over Tor, dedicated LND credential, persistent database, and authenticated lifecycle gate",
+  "integration_node_touched": true,
+  "integration_node": "LOS TESTE2",
+  "platform": {
+    "ubuntu_version": "24.04",
+    "architecture": "amd64"
+  },
+  "bitcoin_source": {
+    "selected_source": "remote_full_node_over_tor",
+    "remote_node_synchronized": true,
+    "local_app_store_node_synchronized": false,
+    "local_node_used_by_nbxplorer": false,
+    "source_changed_by_gate": false,
+    "local_bitcoin_restarted": false,
+    "local_bitcoin_container_replaced": false
+  },
+  "upgrade": {
+    "baseline_app_state": "stopped",
+    "btcpay_before": "2.4.0",
+    "btcpay_after": "2.4.2",
+    "nbxplorer_before": "2.6.8",
+    "nbxplorer_after": "2.6.10",
+    "tor": "0.4.9.5",
+    "postgres": "16",
+    "btcpay_official_image_id": "sha256:66a7e88964d44302a0312bf601c9ef0e4c3af71696e2e4edac6daa2742854e79",
+    "nbxplorer_official_image_id": "sha256:7d2ab1f6ce38e301cba98a4f85bfbfcf2912d5034bd88af056f9d60e5511f911",
+    "final_manager_sha256": "761299df4079fedfe6b0cbd1f07f9ab6e86380166c9a05e9c7aa121e1d369923",
+    "final_broker_sha256": "e3503a7077681d17f022e8e24fd4eaf7fd08829ad89f9da7c06019917b914bcd"
+  },
+  "lnd_gate": {
+    "version": "0.21.2-beta.rc1",
+    "dedicated_macaroon_distinct_from_admin": true,
+    "dedicated_macaroon_mode": "0600",
+    "permissions": [
+      "address:read",
+      "address:write",
+      "info:read",
+      "invoices:read",
+      "invoices:write",
+      "onchain:read"
+    ],
+    "offchain_write": false,
+    "onchain_write": false,
+    "getinfo_http": 200,
+    "create_zero_amount_invoice_http": 200,
+    "cancel_invoice_http": 200,
+    "listpayments_rejected": true,
+    "payment_attempted": false,
+    "funds_moved": false,
+    "lnd_restarted": false
+  },
+  "functional_gate": {
+    "btcpay_http_reachable": true,
+    "nbxplorer_ready_transition_observed": true,
+    "btcpay_health_synchronized": true,
+    "ready_height": 962046,
+    "authenticated_api_stop_http": 200,
+    "authenticated_api_start_http": 200,
+    "running_containers_after_start": 4,
+    "running_containers_after_final_stop": 0,
+    "public_tables_before_lifecycle_cycle": 68,
+    "public_tables_after_lifecycle_cycle": 68,
+    "stores_before_lifecycle_cycle": 1,
+    "stores_after_lifecycle_cycle": 1,
+    "index_height_before_lifecycle_cycle": 961720,
+    "index_height_after_lifecycle_restart": 961722,
+    "final_code_binary_start_stop_passed": true,
+    "persistent_data_preserved": true
+  },
+  "live_failures_and_fixes": [
+    {
+      "failure": "the 15-second broker transport deadline expired during a legitimate PostgreSQL Compose recreate",
+      "fail_closed": true,
+      "fix": "real app.compose.lifecycle and app.compose.remove calls use the same fixed two-minute client and broker ceiling; dry-run and all other operations keep the short configured deadline"
+    },
+    {
+      "failure": "an interrupted Compose recreate left a generated PostgreSQL container name while repair addressed literal container name btcpay-db",
+      "fail_closed": true,
+      "fix": "readiness, catalog query, and idempotent database creation use the validated Compose command, protected project snapshot, and fixed btcpay-db service"
+    }
+  ],
+  "secret_snapshot": {
+    "root_directory_mode": "0700",
+    "file_mode": "0600",
+    "root_owned": true,
+    "lnd_mount_read_only": true,
+    "admin_macaroon_mounted": false,
+    "caller_supplied_paths_or_arguments": false
+  },
+  "audit": {
+    "owner": "root:root",
+    "mode": "0600",
+    "declared_keys_only": true,
+    "credential_terms_found": 0,
+    "lifecycle_success_completions": 6,
+    "lifecycle_failure_completions": 2,
+    "failures_retained": true
+  },
+  "final_node_state": {
+    "btcpay": "stopped",
+    "manager": "active",
+    "privileged_mode": "shadow",
+    "temporary_enforce_override_present": false,
+    "manager_config_changed": false,
+    "sudoers_changed": false,
+    "rollback_bundle_preserved": true,
+    "remote_staging_removed": true,
+    "temporary_api_directories_remaining": 0
+  },
+  "windows_validation": {
+    "focused_privileged_tests": "passed",
+    "privileged_and_system_tests": "passed",
+    "go_vet_all": "passed",
+    "go_build_commands": "passed",
+    "go_test_all": "passed except the two known CRLF-sensitive installer-script tests",
+    "known_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ]
+  },
+  "unchanged_contracts": {
+    "remote_full_node_support_removed": false,
+    "bitcoin_source_selection_changed": false,
+    "dedicated_macaroon_permissions_expanded": false,
+    "lan_scan_or_network_reset_performed": false
+  },
+  "remaining_scope": [
+    "run Electrs and Mempool gates against a synchronized unpruned node with txindex=1",
+    "move BTCPay firewall access into the typed broker boundary",
+    "remove the manager Docker group and wildcard Docker sudo rules after all App Store apps are migrated"
+  ]
+}

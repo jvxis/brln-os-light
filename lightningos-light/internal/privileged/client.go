@@ -482,7 +482,8 @@ func (client *Client) call(ctx context.Context, operation Operation, params any,
 	if err := ValidateRequest(request); err != nil {
 		return response, err
 	}
-	callCtx, cancel := context.WithTimeout(ctx, client.timeout)
+	callTimeout := operationTimeout(client.timeout, operation, dryRun)
+	callCtx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	response, err = client.transport.Do(callCtx, request)
 	if err != nil {

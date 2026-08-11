@@ -11,14 +11,16 @@ import (
 )
 
 type fakeTransport struct {
-	request Request
-	result  any
-	error   *ResponseError
-	err     error
+	request  Request
+	result   any
+	error    *ResponseError
+	err      error
+	deadline time.Time
 }
 
 func (transport *fakeTransport) Do(ctx context.Context, request Request) (Response, error) {
 	transport.request = request
+	transport.deadline, _ = ctx.Deadline()
 	if transport.err != nil {
 		return Response{}, transport.err
 	}
@@ -123,6 +125,10 @@ func TestClientAppLifecycleBuildsTypedRequest(t *testing.T) {
 	if params.AppID != "cpuminer" || params.Action != AppLifecycleStop {
 		t.Fatalf("unexpected params: %#v", params)
 	}
+	remaining := time.Until(transport.deadline)
+	if remaining < 500*time.Millisecond || remaining > time.Second {
+		t.Fatalf("dry-run lifecycle client deadline has %v remaining, want configured short timeout", remaining)
+	}
 }
 
 func TestClientBTCPayLifecycleBuildsTypedRequest(t *testing.T) {
@@ -137,6 +143,10 @@ func TestClientBTCPayLifecycleBuildsTypedRequest(t *testing.T) {
 	}
 	if transport.request.Operation != OperationAppLifecycle || transport.request.DryRun || params.AppID != appmanifest.BTCPayID || params.Action != AppLifecycleStart {
 		t.Fatalf("unexpected BTCPay lifecycle request: %#v/%#v", transport.request, params)
+	}
+	remaining := time.Until(transport.deadline)
+	if remaining < privilegedLongOperationTimeout-time.Second || remaining > privilegedLongOperationTimeout {
+		t.Fatalf("BTCPay lifecycle client deadline has %v remaining, want %v", remaining, privilegedLongOperationTimeout)
 	}
 }
 

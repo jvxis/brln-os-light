@@ -466,7 +466,7 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			if _, err := manager.Runner.Run(ctx, commandPath, databaseArgs...); err != nil {
 				return errors.New("app database start command failed")
 			}
-			if err := manager.ensureBTCPayNbxplorerDatabase(ctx); err != nil {
+			if err := manager.ensureBTCPayNbxplorerDatabase(ctx, commandPath, args); err != nil {
 				return err
 			}
 		}
@@ -919,38 +919,39 @@ func (manager *ComposeAppManager) Snapshot(ctx context.Context, appID string, dr
 	return err
 }
 
-func (manager *ComposeAppManager) ensureBTCPayNbxplorerDatabase(ctx context.Context) error {
-	return manager.ensureBTCPayNbxplorerDatabaseWithPolicy(ctx, btcpayPostgresReadyTries, btcpayPostgresRetryDelay)
+func (manager *ComposeAppManager) ensureBTCPayNbxplorerDatabase(ctx context.Context, commandPath string, composeArgs []string) error {
+	return manager.ensureBTCPayNbxplorerDatabaseWithPolicy(ctx, commandPath, composeArgs, btcpayPostgresReadyTries, btcpayPostgresRetryDelay)
 }
 
-func (manager *ComposeAppManager) ensureBTCPayNbxplorerDatabaseWithPolicy(ctx context.Context, attempts int, retryDelay time.Duration) error {
+func (manager *ComposeAppManager) ensureBTCPayNbxplorerDatabaseWithPolicy(ctx context.Context, commandPath string, composeArgs []string, attempts int, retryDelay time.Duration) error {
 	if attempts < 1 || retryDelay < 0 {
 		return errors.New("invalid BTCPay postgres readiness policy")
+	}
+	if commandPath != dockerPath && commandPath != dockerComposePath {
+		return errors.New("invalid BTCPay compose command")
+	}
+	runDatabaseCommand := func(args ...string) (string, error) {
+		commandArgs := append([]string(nil), composeArgs...)
+		commandArgs = append(commandArgs, "exec", "-T", "btcpay-db")
+		commandArgs = append(commandArgs, args...)
+		return manager.Runner.Run(ctx, commandPath, commandArgs...)
 	}
 	for attempt := 0; attempt < attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		_, readyErr := manager.Runner.Run(
-			ctx,
-			dockerPath,
-			"exec", "btcpay-db", "pg_isready", "-U", "btcpay", "-d", "btcpayserver",
-		)
+		_, readyErr := runDatabaseCommand("pg_isready", "-U", "btcpay", "-d", "btcpayserver")
 		if readyErr == nil {
-			output, queryErr := manager.Runner.Run(
-				ctx,
-				dockerPath,
-				"exec", "btcpay-db", "psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc",
+			output, queryErr := runDatabaseCommand(
+				"psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc",
 				"SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'",
 			)
 			if queryErr == nil && strings.TrimSpace(output) == "1" {
 				return nil
 			}
 			if queryErr == nil {
-				if _, createErr := manager.Runner.Run(
-					ctx,
-					dockerPath,
-					"exec", "btcpay-db", "createdb", "-U", "btcpay", "--owner=btcpay", "--template=template0",
+				if _, createErr := runDatabaseCommand(
+					"createdb", "-U", "btcpay", "--owner=btcpay", "--template=template0",
 					"--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer",
 				); createErr == nil {
 					return nil

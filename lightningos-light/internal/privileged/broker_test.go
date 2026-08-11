@@ -130,6 +130,7 @@ type recordingApps struct {
 	consumerNetworkState BitcoinConsumerNetworkState
 	dockerState          DockerRuntimeState
 	variant              appmanifest.CPUMinerImageVariant
+	lifecycleDeadline    time.Time
 }
 
 func (apps *recordingApps) EnsureBitcoinConsumerNetwork(_ context.Context, dryRun bool) (BitcoinConsumerNetworkState, error) {
@@ -185,9 +186,10 @@ func (apps *recordingApps) Inspect(_ context.Context, appID string) (AppInspecti
 	return apps.inspection, apps.err
 }
 
-func (apps *recordingApps) Lifecycle(_ context.Context, appID string, action AppLifecycleAction, dryRun bool) error {
+func (apps *recordingApps) Lifecycle(ctx context.Context, appID string, action AppLifecycleAction, dryRun bool) error {
 	apps.calls++
 	apps.appID = appID
+	apps.lifecycleDeadline, _ = ctx.Deadline()
 	apps.action = action
 	apps.dryRun = dryRun
 	return apps.err
@@ -419,6 +421,28 @@ func TestBrokerBTCPayLifecycleUsesTypedManagerAndLock(t *testing.T) {
 	}
 }
 
+func TestBrokerBTCPayLifecycleAllowsBoundedContainerRecreate(t *testing.T) {
+	apps := &recordingApps{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Apps = apps
+	broker.Timeout = 15 * time.Second
+	params, err := MarshalParams(AppLifecycleParams{AppID: appmanifest.BTCPayID, Action: AppLifecycleStart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "btcpay_long_start_1", Operation: OperationAppLifecycle, Params: params,
+	})
+	if !response.OK {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+	remaining := time.Until(apps.lifecycleDeadline)
+	if remaining < privilegedLongOperationTimeout-time.Second || apps.lifecycleDeadline.After(started.Add(privilegedLongOperationTimeout+time.Second)) {
+		t.Fatalf("BTCPay lifecycle deadline = %v (remaining %v), want bounded %v window", apps.lifecycleDeadline, remaining, privilegedLongOperationTimeout)
+	}
+}
+
 func TestBrokerAppLifecycleDryRunDoesNotLock(t *testing.T) {
 	apps := &recordingApps{}
 	locker := &recordingLocker{}
@@ -433,6 +457,10 @@ func TestBrokerAppLifecycleDryRunDoesNotLock(t *testing.T) {
 	})
 	if !response.OK || apps.calls != 1 || !apps.dryRun || locker.locks != 0 {
 		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+	remaining := time.Until(apps.lifecycleDeadline)
+	if remaining < 500*time.Millisecond || remaining > time.Second {
+		t.Fatalf("dry-run lifecycle deadline has %v remaining, want configured short timeout", remaining)
 	}
 }
 

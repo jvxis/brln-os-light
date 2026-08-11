@@ -3179,6 +3179,27 @@ func (s *Server) handleLNUpdateFees(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A channel sold on Magma is held under a contractual ceiling until its
+	// commitment ends. For a single channel the request is refused outright: the
+	// operator typed a number, and quietly writing a different one would be worse
+	// than saying why it cannot be used.
+	if !req.ApplyAll {
+		if commitment, ok := magmaCommitmentForChannel(0, req.ChannelPoint); ok {
+			if req.FeeRatePpm > commitment.FeeRateCapPPM && commitment.FeeRateCapPPM > 0 {
+				writeError(w, http.StatusConflict, fmt.Sprintf(
+					"this channel was sold on Magma and is capped at %d ppm until the commitment ends; %d ppm would breach it",
+					commitment.FeeRateCapPPM, req.FeeRatePpm))
+				return
+			}
+			if capBaseMsat := commitment.BaseFeeCapSat * 1000; req.BaseFeeMsat > capBaseMsat {
+				writeError(w, http.StatusConflict, fmt.Sprintf(
+					"this channel was sold on Magma and its base fee is capped at %d sat until the commitment ends",
+					commitment.BaseFeeCapSat))
+				return
+			}
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
 	defer cancel()
 
@@ -3192,6 +3213,14 @@ func (s *Server) handleLNUpdateFees(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, lndRPCErrorMessage(err))
 		return
+	}
+
+	// A node-wide change hits the sold channels too, since LND applies it in one
+	// call. Walk them back immediately rather than waiting for the next Magma poll.
+	if req.ApplyAll {
+		if svc, _ := s.magmaService(); svc != nil {
+			svc.ReapplyFeeCaps(ctx)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

@@ -406,6 +406,10 @@ type AutofeeRefreshItem struct {
 	InboundSource          string `json:"inbound_source,omitempty"`
 	Changed                bool   `json:"changed"`
 	Applied                bool   `json:"applied"`
+	// MagmaCapped marks a target the Magma commitment pulled down, so the preview
+	// and the log show the fee that will actually be written, not the one the
+	// reference asked for.
+	MagmaCapped bool `json:"magma_capped,omitempty"`
 	Reason                 string `json:"reason,omitempty"`
 	Error                  string `json:"error,omitempty"`
 }
@@ -2068,6 +2072,10 @@ order by channel_id asc
 			inboundBaseMsat = 0
 			inboundFeeRatePpm = 0
 		}
+		// The snapshot may predate a Magma sale, in which case restoring it verbatim
+		// would put the channel back above the ceiling it is now contractually held
+		// under. The commitment outranks the snapshot.
+		baseFeeMsat, feeRatePpm, _ = magmaClampChannelFees(0, channelPoint, baseFeeMsat, feeRatePpm)
 		if err := s.lnd.UpdateChannelFees(ctx, channelPoint, false, baseFeeMsat, feeRatePpm, timeLockDelta, true, inboundBaseMsat, inboundFeeRatePpm); err != nil {
 			return fmt.Errorf("restore policy %s: %w", channelPoint, err)
 		}
@@ -3391,6 +3399,15 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 		}
 
 		targetPpm = clampInt(targetPpm, cfg.MinPpm, cfg.MaxPpm)
+		// Refresh writes to LND on its own instead of going through
+		// applyChannelFeesWithRetry, so the clamp that guards Autofee does not
+		// reach here. A channel sold on Magma carries a contractual ceiling until
+		// its commitment ends and Amboss charges for every second above it, so the
+		// reference has to give way to the contract.
+		if _, cappedPpm, capped := magmaClampChannelFees(ch.ChannelID, item.ChannelPoint, 0, int64(targetPpm)); capped {
+			targetPpm = int(cappedPpm)
+			item.MagmaCapped = true
+		}
 		item.TargetPpm = targetPpm
 		item.ReferencePpm = referencePpm
 		item.Source = source
@@ -3445,11 +3462,15 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 				timeLockDelta = 144
 			}
 			inboundEnabled, inboundFeeRatePpm := inboundFeeUpdateForDiscount(item.CurrentInboundDiscount, item.TargetInboundDiscount)
+			// The base fee is carried over rather than recomputed, so it can only
+			// breach the ceiling if it was already above it; capping it here is the
+			// one chance this path has to bring it back down.
+			baseFeeMsat, _, _ := magmaClampChannelFees(ch.ChannelID, item.ChannelPoint, policy.BaseFeeMsat, int64(targetPpm))
 			if err := s.lnd.UpdateChannelFees(
 				ctx,
 				item.ChannelPoint,
 				false,
-				policy.BaseFeeMsat,
+				baseFeeMsat,
 				int64(targetPpm),
 				timeLockDelta,
 				inboundEnabled,

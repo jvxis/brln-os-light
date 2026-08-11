@@ -55,6 +55,8 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: BTCPayID, variant: BTCPayImageNbxplorer, image: BTCPayNbxplorerImage},
 		{appID: BTCPayID, variant: BTCPayImagePostgres, image: BTCPayPostgresImage},
 		{appID: BTCPayID, variant: BTCPayImageTor, image: BTCPayTorImage},
+		{appID: LNDgID, variant: LNDgImageApp, image: LNDgImage},
+		{appID: LNbitsID, variant: LNbitsImageApp, image: LNbitsImage},
 	} {
 		image, err := CatalogImageForVariant(test.appID, test.variant)
 		if err != nil || image != test.image {
@@ -71,6 +73,7 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: "mempool", variant: "client"},
 		{appID: BitcoinCoreID, variant: "latest"},
 		{appID: BTCPayID, variant: "latest;reboot"},
+		{appID: LNbitsID, variant: "latest"},
 	} {
 		if _, err := CatalogImageForVariant(test.appID, test.variant); err == nil {
 			t.Fatalf("expected %s/%s to be rejected", test.appID, test.variant)
@@ -88,6 +91,18 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 	btcpayVariants[0] = "evil"
 	if BTCPayImageVariants(false)[0] != BTCPayImageServer || len(BTCPayImageVariants(false)) != 3 {
 		t.Fatal("caller mutated the BTCPay image variants or Tor was not optional")
+	}
+}
+
+func TestLNbitsCatalogPinsOfficialStableManifest(t *testing.T) {
+	if LNbitsRelease != "1.5.6" {
+		t.Fatalf("unexpected LNbits release: %q", LNbitsRelease)
+	}
+	if LNbitsImage != "lnbits/lnbits:v1.5.6@sha256:"+LNbitsManifestSHA256 {
+		t.Fatalf("LNbits image is not pinned to the catalog digest: %q", LNbitsImage)
+	}
+	if len(LNbitsManifestSHA256) != 64 || strings.Contains(LNbitsImage, ":latest") {
+		t.Fatalf("LNbits image has an invalid or mutable selector: %q", LNbitsImage)
 	}
 }
 

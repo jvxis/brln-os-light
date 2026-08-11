@@ -67,6 +67,8 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return BTCPayImageForVariant(variant)
 	case LNDgID:
 		return LNDgImageForVariant(variant)
+	case LNbitsID:
+		return LNbitsImageForVariant(variant)
 	default:
 		return "", errors.New("app image manifest is not allowed")
 	}

@@ -330,6 +330,9 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 		appmanifest.LNDgID: {
 			appmanifest.LNDgImageApp: "lightningos-lndg-image-app",
 		},
+		appmanifest.LNbitsID: {
+			appmanifest.LNbitsImageApp: "lightningos-lnbits-image-app",
+		},
 	}
 	appUnits, ok := units[appID]
 	if !ok {

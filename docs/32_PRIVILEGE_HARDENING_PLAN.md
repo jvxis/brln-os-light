@@ -650,6 +650,45 @@ node address came directly from its secret record and no network scan was
 performed. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-lndg-dedicated-credential-2026-08-11.json`.
 
+LNbits is the next high-adoption application to enter the boundary. The
+mutable `lnbits/lnbits:latest` selector has been replaced by the official
+stable `v1.5.6` image and its Docker Hub multi-architecture manifest digest.
+The broker catalog alone selects that image and schedules its pull. Existing
+installations keep their database and extensions, but their generated Compose
+is advanced to the closed image on the next install/start request.
+
+The LNbits LND surface no longer mounts `/data/lnd`. The complete `v1.5.6`
+inventory includes both `LndRestWallet` and the built-in `LndRestNode` manager.
+Preserving wallets, invoices, payments, node information, peers, channels,
+fee policy, and on-chain balance/open/close operations requires a dedicated
+nine-permission macaroon: info read plus invoice, off-chain, on-chain, and peer
+read/write. Only that credential and `tls.cert` enter the app-private
+read-only mount. Existing `.env` files that reference `admin.macaroon` are
+migrated to the dedicated path, and alternate encrypted/admin/invoice
+macaroon selectors are scrubbed because upstream gives an encrypted selector
+precedence. The credential must be a private regular file and byte equality
+with the native admin macaroon is rejected. LNbits can still move funds and
+manage channels by design, but it has no address, message-signing, signer, or
+macaroon-administration authority.
+
+The fixed official image digest was pulled on LOS TESTE2 and imported in an
+ephemeral container with no network, a read-only root filesystem, and only
+temporary data filesystems. The exact image reference was removed afterward.
+A temporary nine-permission macaroon authenticated safe node, peer, channel,
+on-chain balance, payment-history, and invoice reads over the existing local
+gRPC listener, while address creation, message signing, and macaroon
+administration were denied; the file was removed by a trap. No LNbits service was installed, no
+invoice or payment was created, no funds moved, and neither LND configuration
+nor LND/Bitcoin service state changed. The node address came only from its
+fixed secret record and no network discovery was performed. Evidence is in
+`docs/baselines/privilege-hardening-phase2-lnbits-image-credential-gate-2026-08-11.json`.
+
+LNbits lifecycle, status, uninstall, REST-listener policy, and firewall policy
+still use the compatibility path. The next LNbits slice must move its Compose
+and secret-bearing inputs into a root-owned broker snapshot, replace those
+direct Docker/UFW/systemctl calls with typed operations, and prove a complete
+data-preserving lifecycle before the manager can lose Docker-group access.
+
 The full-node Electrs/Mempool gates, the remaining dependent products,
 operational Bitcoin CLI/log paths, and the mainnet P2P firewall contract remain
 open. Electrs and Mempool gates must use a synchronized unpruned node with

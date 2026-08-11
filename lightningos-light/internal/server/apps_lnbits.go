@@ -1,27 +1,34 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/system"
 )
 
 const (
-	lnbitsImage = "lnbits/lnbits:latest"
-	lnbitsPort  = 5000
+	lnbitsPort = 5000
 )
 
 type lnbitsPaths struct {
-	Root        string
-	DataDir     string
-	ComposePath string
-	EnvPath     string
+	Root         string
+	DataDir      string
+	ComposePath  string
+	EnvPath      string
+	LndDir       string
+	TLSCertPath  string
+	MacaroonPath string
 }
 
 type lnbitsApp struct {
@@ -34,7 +41,7 @@ func newLnbitsApp(s *Server) appHandler {
 
 func lnbitsDefinition() appDefinition {
 	return appDefinition{
-		ID:          "lnbits",
+		ID:          appmanifest.LNbitsID,
 		Name:        "LNbits",
 		Description: "Lightning wallet/accounts system and extension platform powered by your local LND.",
 		Port:        lnbitsPort,
@@ -84,11 +91,15 @@ func (a lnbitsApp) Stop(ctx context.Context) error {
 func lnbitsAppPaths() lnbitsPaths {
 	root := filepath.Join(appsRoot, "lnbits")
 	dataDir := filepath.Join(appsDataRoot, "lnbits", "data")
+	lndDir := filepath.Join(appsDataRoot, "lnbits", "lnd")
 	return lnbitsPaths{
-		Root:        root,
-		DataDir:     dataDir,
-		ComposePath: filepath.Join(root, "docker-compose.yaml"),
-		EnvPath:     filepath.Join(root, ".env"),
+		Root:         root,
+		DataDir:      dataDir,
+		ComposePath:  filepath.Join(root, "docker-compose.yaml"),
+		EnvPath:      filepath.Join(root, ".env"),
+		LndDir:       lndDir,
+		TLSCertPath:  filepath.Join(lndDir, appmanifest.LNbitsTLSCertFile),
+		MacaroonPath: filepath.Join(lndDir, appmanifest.LNbitsMacaroonFile),
 	}
 }
 
@@ -100,7 +111,7 @@ func (s *Server) installLnbits(ctx context.Context) error {
 	if err := ensureLnbitsPaths(paths); err != nil {
 		return err
 	}
-	if err := pullDockerImage(ctx, lnbitsImage); err != nil {
+	if err := ensureLnbitsImage(ctx); err != nil {
 		return err
 	}
 	if _, err := ensureFileWithChange(paths.ComposePath, lnbitsComposeContents(paths)); err != nil {
@@ -109,10 +120,10 @@ func (s *Server) installLnbits(ctx context.Context) error {
 	if err := ensureLnbitsEnv(paths); err != nil {
 		return err
 	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
+	if err := s.ensureLnbitsLndMaterial(ctx, paths); err != nil {
 		return err
 	}
-	if err := ensureLnbitsRestAccess(ctx); err != nil {
+	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
 		return err
 	}
 	if err := ensureLnbitsUfwAccess(ctx); err != nil && s.logger != nil {
@@ -146,10 +157,10 @@ func (s *Server) startLnbits(ctx context.Context) error {
 	if err := ensureLnbitsEnv(paths); err != nil {
 		return err
 	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
+	if err := s.ensureLnbitsLndMaterial(ctx, paths); err != nil {
 		return err
 	}
-	if err := ensureLnbitsRestAccess(ctx); err != nil {
+	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
 		return err
 	}
 	if err := ensureLnbitsUfwAccess(ctx); err != nil && s.logger != nil {
@@ -176,14 +187,21 @@ func ensureLnbitsPaths(paths lnbitsPaths) error {
 	if err := os.MkdirAll(filepath.Join(paths.DataDir, "extensions"), 0750); err != nil {
 		return fmt.Errorf("failed to create extension data directory: %w", err)
 	}
+	if err := os.MkdirAll(paths.LndDir, 0750); err != nil {
+		return fmt.Errorf("failed to create LND credential directory: %w", err)
+	}
 	return nil
 }
 
 func ensureLnbitsImage(ctx context.Context) error {
-	if strings.HasSuffix(lnbitsImage, ":latest") {
-		return pullDockerImage(ctx, lnbitsImage)
+	handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.LNbitsID, string(appmanifest.LNbitsImageApp))
+	if err != nil {
+		return err
 	}
-	return ensureDockerImage(ctx, lnbitsImage)
+	if handled {
+		return nil
+	}
+	return ensureDockerImage(ctx, appmanifest.LNbitsImage)
 }
 
 func lnbitsComposeContents(paths lnbitsPaths) string {
@@ -199,16 +217,16 @@ func lnbitsComposeContents(paths lnbitsPaths) string {
       - "%d:%d"
     volumes:
       - %s:/app/data
-      - /data/lnd:/data/lnd:ro
-`, lnbitsImage, lnbitsPort, lnbitsPort, paths.DataDir)
+      - %s:/etc/lnd:ro
+`, appmanifest.LNbitsImage, lnbitsPort, lnbitsPort, paths.DataDir, paths.LndDir)
 }
 
 func ensureLnbitsEnv(paths lnbitsPaths) error {
 	defaults := [][2]string{
 		{"LNBITS_BACKEND_WALLET_CLASS", "LndRestWallet"},
 		{"LND_REST_ENDPOINT", "https://host.docker.internal:8080/"},
-		{"LND_REST_CERT", "/data/lnd/tls.cert"},
-		{"LND_REST_MACAROON", "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"},
+		{"LND_REST_CERT", "/etc/lnd/" + appmanifest.LNbitsTLSCertFile},
+		{"LND_REST_MACAROON", "/etc/lnd/" + appmanifest.LNbitsMacaroonFile},
 		{"LNBITS_EXTENSIONS_PATH", "/app/data/extensions"},
 		{"LNBITS_HOST", "0.0.0.0"},
 		{"LNBITS_PORT", "5000"},
@@ -223,10 +241,22 @@ func ensureLnbitsEnv(paths lnbitsPaths) error {
 		return writeFile(paths.EnvPath, strings.Join(lines, "\n"), 0600)
 	}
 
+	managed := map[string]bool{
+		"LNBITS_BACKEND_WALLET_CLASS": true,
+		"LND_REST_ENDPOINT":           true,
+		"LND_REST_CERT":               true,
+		"LND_REST_MACAROON":           true,
+	}
 	for _, kv := range defaults {
 		exists, value, err := envValueState(paths.EnvPath, kv[0])
 		if err != nil {
 			return err
+		}
+		if managed[kv[0]] && (!exists || value != kv[1]) {
+			if err := setEnvValue(paths.EnvPath, kv[0], kv[1]); err != nil {
+				return err
+			}
+			continue
 		}
 		if !exists {
 			if err := appendEnvLine(paths.EnvPath, kv[0], kv[1]); err != nil {
@@ -239,6 +269,154 @@ func ensureLnbitsEnv(paths lnbitsPaths) error {
 				return err
 			}
 		}
+	}
+	// A legacy encrypted value takes precedence over the file path in LNbits.
+	// Scrub all alternate LND macaroon selectors so the dedicated file is the
+	// only credential the funding source can load.
+	for _, key := range []string{
+		"LND_REST_MACAROON_ENCRYPTED",
+		"LND_ADMIN_MACAROON",
+		"LND_REST_ADMIN_MACAROON",
+		"LND_INVOICE_MACAROON",
+		"LND_REST_INVOICE_MACAROON",
+	} {
+		exists, value, err := envValueState(paths.EnvPath, key)
+		if err != nil {
+			return err
+		}
+		if exists && value != "" {
+			if err := setEnvValue(paths.EnvPath, key, ""); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ensureLnbitsLndMaterial limits LNbits to the exact TLS certificate and a
+// dedicated macaroon. It deliberately never mounts the native LND directory.
+func (s *Server) ensureLnbitsLndMaterial(ctx context.Context, paths lnbitsPaths) error {
+	if err := s.ensureLnbitsMacaroon(ctx, paths); err != nil {
+		return err
+	}
+	if err := ensureLnbitsRestAccess(ctx); err != nil {
+		return err
+	}
+	return copyLnbitsLndCert(paths)
+}
+
+func (s *Server) ensureLnbitsMacaroon(ctx context.Context, paths lnbitsPaths) error {
+	if info, err := os.Lstat(paths.MacaroonPath); err == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("LNbits LND credential must be a regular file")
+		}
+		credential, err := os.ReadFile(paths.MacaroonPath)
+		if err != nil || len(credential) == 0 {
+			return errors.New("LNbits LND credential is unavailable")
+		}
+		if err := validateLnbitsCredentialNotAdmin(credential); err != nil {
+			return err
+		}
+		return os.Chmod(paths.MacaroonPath, 0600)
+	} else if !os.IsNotExist(err) {
+		return errors.New("LNbits LND credential is unavailable")
+	}
+	if s.lnd == nil {
+		return errors.New("LND client unavailable")
+	}
+	ids, err := s.lnd.ListMacaroonIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list LND macaroon IDs: %w", err)
+	}
+	rootKeyID, err := lndclient.GenerateMacaroonRootKeyID(ids, time.Now())
+	if err != nil {
+		return err
+	}
+	result, err := s.lnd.BakeCustomMacaroon(ctx, lndclient.BakeCustomMacaroonRequest{
+		Permissions: lnbitsMacaroonPermissions(),
+		RootKeyID:   rootKeyID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to bake LNbits macaroon: %w", err)
+	}
+	raw, err := hex.DecodeString(result.MacaroonHex)
+	if err != nil || len(raw) == 0 {
+		return errors.New("invalid LND macaroon response")
+	}
+	if err := validateLnbitsCredentialNotAdmin(raw); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(paths.MacaroonPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to write LNbits macaroon: %w", err)
+	}
+	if _, err := file.Write(raw); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("failed to write LNbits macaroon: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("failed to close LNbits macaroon: %w", err)
+	}
+	return nil
+}
+
+func validateLnbitsCredentialNotAdmin(credential []byte) error {
+	admin, err := os.ReadFile(lndAdminMacaroonPath)
+	if err != nil {
+		return errors.New("native LND admin credential is unavailable")
+	}
+	if bytes.Equal(credential, admin) {
+		return errors.New("LNbits LND credential must not be the admin macaroon")
+	}
+	return nil
+}
+
+// LNbits v1.5.6 uses this credential for both LndRestWallet and its built-in
+// LndRestNode manager. The latter adds node info, peer, channel, fee-policy,
+// and on-chain balance/open/close RPCs to the wallet's invoice/payment calls.
+func lnbitsMacaroonPermissions() []lndclient.MacaroonPermission {
+	return []lndclient.MacaroonPermission{
+		{Entity: "info", Action: "read"},
+		{Entity: "invoices", Action: "read"},
+		{Entity: "invoices", Action: "write"},
+		{Entity: "offchain", Action: "read"},
+		{Entity: "offchain", Action: "write"},
+		{Entity: "onchain", Action: "read"},
+		{Entity: "onchain", Action: "write"},
+		{Entity: "peers", Action: "read"},
+		{Entity: "peers", Action: "write"},
+	}
+}
+
+func copyLnbitsLndCert(paths lnbitsPaths) error {
+	const source = "/data/lnd/tls.cert"
+	var raw []byte
+	var err error
+	for attempt := 0; attempt < 10; attempt++ {
+		raw, err = os.ReadFile(source)
+		if err == nil && len(raw) > 0 {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", source, err)
+	}
+	if len(raw) == 0 {
+		return fmt.Errorf("%s is empty", source)
+	}
+	if info, statErr := os.Lstat(paths.TLSCertPath); statErr == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("LNbits LND certificate must be a regular file")
+		}
+		if existing, readErr := os.ReadFile(paths.TLSCertPath); readErr == nil && bytes.Equal(existing, raw) {
+			return nil
+		}
+	} else if !os.IsNotExist(statErr) {
+		return errors.New("LNbits LND certificate is unavailable")
+	}
+	if err := os.WriteFile(paths.TLSCertPath, raw, 0640); err != nil {
+		return fmt.Errorf("failed to copy LND tls.cert for LNbits: %w", err)
 	}
 	return nil
 }

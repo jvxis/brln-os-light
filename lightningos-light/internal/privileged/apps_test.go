@@ -244,6 +244,31 @@ func TestComposeAppPrepareRoboSatsImagesUsesFixedTransientPulls(t *testing.T) {
 	}
 }
 
+func TestComposeAppPrepareLNbitsUsesPinnedOfficialDigest(t *testing.T) {
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && len(args) == 3 && args[0] == "image" && args[1] == "inspect" {
+			return "", errors.New("missing"), true
+		}
+		if path == systemctlPath && len(args) > 0 && args[0] == "show" {
+			return "LoadState=not-found\nActiveState=inactive\n", errors.New("not found"), true
+		}
+		return "", nil, false
+	}}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.PrepareImage(context.Background(), appmanifest.LNbitsID, appmanifest.LNbitsImageApp, false)
+	if err != nil || state.Status != "preparing" || len(runner.commands) != 3 {
+		t.Fatalf("state=%#v err=%v commands=%#v", state, err, runner.commands)
+	}
+	want := recordedCommand{path: systemdRunPath, args: []string{
+		"--quiet", "--collect", "--unit=lightningos-lnbits-image-app",
+		"--property=Type=exec", "--property=RuntimeMaxSec=10min",
+		dockerPath, "pull", appmanifest.LNbitsImage,
+	}}
+	if !reflect.DeepEqual(runner.commands[2], want) {
+		t.Fatalf("pull command=%#v want=%#v", runner.commands[2], want)
+	}
+}
+
 func TestComposeAppPrepareBTCPayReleaseAlwaysSchedulesRefresh(t *testing.T) {
 	runner := &composeRecordingRunner{}
 	manager := &ComposeAppManager{Runner: runner}

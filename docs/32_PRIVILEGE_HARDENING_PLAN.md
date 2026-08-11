@@ -623,6 +623,33 @@ does not claim an upstream cryptographic release signature; transitive Python
 hash locking remains part of issue #34. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-lndg-image-gate-2026-08-11.json`.
 
+The LNDg credential surface is now separated from the native LND directory.
+An inventory of every non-generated Python RPC call in LNDg `v1.11.0`, checked
+against the official LND `v0.21.1-beta` permission maps, produced a fixed
+13-permission macaroon: address write; info read; invoice read/write; message
+write; off-chain read/write; on-chain read/write; peer read/write; and signer
+read/generate. The file must be regular and private, and byte equality with
+`admin.macaroon` is rejected. Macaroon administration and `info:write` are not
+granted. This credential remains capable of moving funds by design because
+LNDg exposes payments, rebalances, channel operations, and on-chain actions;
+dedication limits unrelated authority but cannot make this app read-only.
+
+Compose no longer mounts all of `/data/lnd`. It mounts only the private
+`tls.cert` and `lndg.macaroon` directory plus the exact `channel.db` file in
+read-only mode. Upstream uses that database path only to display its file size;
+no graph directory or native macaroon is exposed. The initializer receives
+explicit certificate, macaroon, and database paths instead of deriving
+`admin.macaroon` from an LND root.
+
+The fixed permission set was baked on LOS TESTE2 and authenticated safe reads
+for node info, channels, invoices, wallet balance, peers, and pending channels,
+plus a test message signature. The macaroon lived only at one validated `/tmp`
+path and was removed by a trap. No invoice, payment, channel mutation,
+on-chain mutation, config edit, LND restart, or fund movement occurred. The
+node address came directly from its secret record and no network scan was
+performed. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-lndg-dedicated-credential-2026-08-11.json`.
+
 The full-node Electrs/Mempool gates, the remaining dependent products,
 operational Bitcoin CLI/log paths, and the mainnet P2P firewall contract remain
 open. Electrs and Mempool gates must use a synchronized unpruned node with

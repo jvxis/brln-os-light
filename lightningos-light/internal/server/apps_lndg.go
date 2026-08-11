@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/system"
 )
 
@@ -25,6 +27,9 @@ type lndgPaths struct {
 	DockerfilePath    string
 	DockerignorePath  string
 	EntrypointPath    string
+	LndDir            string
+	TLSCertPath       string
+	MacaroonPath      string
 	AdminPasswordPath string
 	DbPasswordPath    string
 	BuildHashPath     string
@@ -94,6 +99,7 @@ func lndgAppPaths() lndgPaths {
 	dataDir := filepath.Join(appsDataRoot, "lndg", "data")
 	pgDir := filepath.Join(appsDataRoot, "lndg", "pgdata")
 	logPath := filepath.Join(dataDir, "lndg-controller.log")
+	lndDir := filepath.Join(appsDataRoot, "lndg", "lnd")
 	return lndgPaths{
 		Root:              root,
 		DataDir:           dataDir,
@@ -104,6 +110,9 @@ func lndgAppPaths() lndgPaths {
 		DockerfilePath:    filepath.Join(root, "Dockerfile"),
 		DockerignorePath:  filepath.Join(root, ".dockerignore"),
 		EntrypointPath:    filepath.Join(root, "entrypoint.sh"),
+		LndDir:            lndDir,
+		TLSCertPath:       filepath.Join(lndDir, "tls.cert"),
+		MacaroonPath:      filepath.Join(lndDir, "lndg.macaroon"),
 		AdminPasswordPath: filepath.Join(dataDir, "lndg-admin.txt"),
 		DbPasswordPath:    filepath.Join(dataDir, "lndg-db-password.txt"),
 		BuildHashPath:     filepath.Join(root, ".build_hash"),
@@ -127,6 +136,9 @@ func (s *Server) installLndg(ctx context.Context) error {
 	}
 	if err := os.MkdirAll(paths.PgDir, 0750); err != nil {
 		return fmt.Errorf("failed to create app db directory: %w", err)
+	}
+	if err := os.MkdirAll(paths.LndDir, 0750); err != nil {
+		return fmt.Errorf("failed to create app LND directory: %w", err)
 	}
 	if err := ensureLndgLogFile(paths.LogPath); err != nil {
 		return err
@@ -154,7 +166,13 @@ func (s *Server) installLndg(ctx context.Context) error {
 	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg-db"); err != nil {
 		return err
 	}
+	if err := s.ensureLndgMacaroon(ctx, paths); err != nil {
+		return err
+	}
 	if err := ensureLndgGrpcAccess(ctx); err != nil {
+		return err
+	}
+	if err := copyLndgLndCert(paths); err != nil {
 		return err
 	}
 	if err := ensureLndgUfwAccess(ctx); err != nil && s.logger != nil {
@@ -201,6 +219,9 @@ func (s *Server) startLndg(ctx context.Context) error {
 	if err := os.MkdirAll(paths.PgDir, 0750); err != nil {
 		return fmt.Errorf("failed to create app db directory: %w", err)
 	}
+	if err := os.MkdirAll(paths.LndDir, 0750); err != nil {
+		return fmt.Errorf("failed to create app LND directory: %w", err)
+	}
 	if err := ensureLndgLogFile(paths.LogPath); err != nil {
 		return err
 	}
@@ -235,7 +256,13 @@ func (s *Server) startLndg(ctx context.Context) error {
 	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg-db"); err != nil {
 		return err
 	}
+	if err := s.ensureLndgMacaroon(ctx, paths); err != nil {
+		return err
+	}
 	if err := ensureLndgGrpcAccess(ctx); err != nil {
+		return err
+	}
+	if err := copyLndgLndCert(paths); err != nil {
 		return err
 	}
 	if err := ensureLndgUfwAccess(ctx); err != nil && s.logger != nil {
@@ -375,6 +402,9 @@ func lndgComposeContents(paths lndgPaths) string {
       LNDG_NETWORK: ${LNDG_NETWORK}
       LNDG_RPC_SERVER: ${LNDG_RPC_SERVER}
       LNDG_LND_DIR: ${LNDG_LND_DIR}
+      LNDG_TLS_PATH: /etc/lnd/tls.cert
+      LNDG_MACAROON_PATH: /etc/lnd/lndg.macaroon
+      LNDG_DATABASE_PATH: /etc/lnd/channel.db
       LNDG_ALLOWED_HOSTS: ${LNDG_ALLOWED_HOSTS}
       LNDG_CSRF_TRUSTED_ORIGINS: ${LNDG_CSRF_TRUSTED_ORIGINS}
     extra_hosts:
@@ -383,11 +413,129 @@ func lndgComposeContents(paths lndgPaths) string {
       - "8889:8889"
     entrypoint: ["/entrypoint.sh"]
     volumes:
-      - /data/lnd:/root/.lnd:ro
+      - %s:/etc/lnd:ro
+      - /data/lnd/data/graph/mainnet/channel.db:/etc/lnd/channel.db:ro
       - %s:/app/data:rw
       - %s:/var/log/lndg-controller.log:rw
       - %s:/entrypoint.sh:ro
-`, paths.PgDir, appmanifest.LNDgImage, paths.DataDir, paths.LogPath, paths.EntrypointPath)
+`, paths.PgDir, appmanifest.LNDgImage, paths.LndDir, paths.DataDir, paths.LogPath, paths.EntrypointPath)
+}
+
+func (s *Server) ensureLndgMacaroon(ctx context.Context, paths lndgPaths) error {
+	if info, err := os.Lstat(paths.MacaroonPath); err == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("LNDg LND credential must be a regular file")
+		}
+		credential, err := os.ReadFile(paths.MacaroonPath)
+		if err != nil || len(credential) == 0 {
+			return errors.New("LNDg LND credential is unavailable")
+		}
+		if err := validateLndgCredentialNotAdmin(credential); err != nil {
+			return err
+		}
+		return os.Chmod(paths.MacaroonPath, 0600)
+	} else if !os.IsNotExist(err) {
+		return errors.New("LNDg LND credential is unavailable")
+	}
+	if s.lnd == nil {
+		return errors.New("LND client unavailable")
+	}
+	ids, err := s.lnd.ListMacaroonIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list LND macaroon IDs: %w", err)
+	}
+	rootKeyID, err := lndclient.GenerateMacaroonRootKeyID(ids, time.Now())
+	if err != nil {
+		return err
+	}
+	result, err := s.lnd.BakeCustomMacaroon(ctx, lndclient.BakeCustomMacaroonRequest{
+		Permissions: lndgMacaroonPermissions(),
+		RootKeyID:   rootKeyID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to bake LNDg macaroon: %w", err)
+	}
+	raw, err := hex.DecodeString(result.MacaroonHex)
+	if err != nil || len(raw) == 0 {
+		return errors.New("invalid LND macaroon response")
+	}
+	if err := validateLndgCredentialNotAdmin(raw); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(paths.MacaroonPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to write LNDg macaroon: %w", err)
+	}
+	if _, err := file.Write(raw); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("failed to write LNDg macaroon: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("failed to close LNDg macaroon: %w", err)
+	}
+	return nil
+}
+
+func validateLndgCredentialNotAdmin(credential []byte) error {
+	admin, err := os.ReadFile("/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon")
+	if err != nil {
+		return errors.New("native LND admin credential is unavailable")
+	}
+	if bytes.Equal(credential, admin) {
+		return errors.New("LNDg LND credential must not be the admin macaroon")
+	}
+	return nil
+}
+
+func lndgMacaroonPermissions() []lndclient.MacaroonPermission {
+	return []lndclient.MacaroonPermission{
+		{Entity: "address", Action: "write"},
+		{Entity: "info", Action: "read"},
+		{Entity: "invoices", Action: "read"},
+		{Entity: "invoices", Action: "write"},
+		{Entity: "message", Action: "write"},
+		{Entity: "offchain", Action: "read"},
+		{Entity: "offchain", Action: "write"},
+		{Entity: "onchain", Action: "read"},
+		{Entity: "onchain", Action: "write"},
+		{Entity: "peers", Action: "read"},
+		{Entity: "peers", Action: "write"},
+		{Entity: "signer", Action: "generate"},
+		{Entity: "signer", Action: "read"},
+	}
+}
+
+func copyLndgLndCert(paths lndgPaths) error {
+	const source = "/data/lnd/tls.cert"
+	var raw []byte
+	var err error
+	for attempt := 0; attempt < 10; attempt++ {
+		raw, err = os.ReadFile(source)
+		if err == nil && len(raw) > 0 {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", source, err)
+	}
+	if len(raw) == 0 {
+		return fmt.Errorf("%s is empty", source)
+	}
+	if info, statErr := os.Lstat(paths.TLSCertPath); statErr == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("LNDg LND certificate must be a regular file")
+		}
+		if existing, readErr := os.ReadFile(paths.TLSCertPath); readErr == nil && bytes.Equal(existing, raw) {
+			return nil
+		}
+	} else if !os.IsNotExist(statErr) {
+		return errors.New("LNDg LND certificate is unavailable")
+	}
+	if err := os.WriteFile(paths.TLSCertPath, raw, 0640); err != nil {
+		return fmt.Errorf("failed to copy LND tls.cert for LNDg: %w", err)
+	}
+	return nil
 }
 
 func ensureLndgEnv(ctx context.Context, paths lndgPaths) error {
@@ -931,13 +1079,16 @@ ADMIN_FILE="$DATA_DIR/lndg-admin.txt"
 : "${LNDG_LND_DIR:=/root/.lnd}"
 : "${LNDG_NETWORK:=mainnet}"
 : "${LNDG_RPC_SERVER:=host.docker.internal:10009}"
+: "${LNDG_TLS_PATH:=/etc/lnd/tls.cert}"
+: "${LNDG_MACAROON_PATH:=/etc/lnd/lndg.macaroon}"
+: "${LNDG_DATABASE_PATH:=/etc/lnd/channel.db}"
 : "${LNDG_ADMIN_USER:=lndg-admin}"
 : "${LNDG_ADMIN_PASSWORD:?LNDG_ADMIN_PASSWORD is required}"
 
 mkdir -p "$DATA_DIR"
 
   if [ ! -f "$SETTINGS_FILE" ]; then
-  python initialize.py -d -net "$LNDG_NETWORK" -rpc "$LNDG_RPC_SERVER" -dir "$LNDG_LND_DIR" -u "$LNDG_ADMIN_USER" --adminpw="$LNDG_ADMIN_PASSWORD" -wn -f
+  python initialize.py -d -net "$LNDG_NETWORK" -rpc "$LNDG_RPC_SERVER" -dir "$LNDG_LND_DIR" -tls "$LNDG_TLS_PATH" -mcrn "$LNDG_MACAROON_PATH" -lnddb "$LNDG_DATABASE_PATH" -u "$LNDG_ADMIN_USER" --adminpw="$LNDG_ADMIN_PASSWORD" -wn -f
 fi
 
 python - <<'PY'

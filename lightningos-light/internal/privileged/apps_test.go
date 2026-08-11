@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -649,6 +650,180 @@ func TestComposeAppBTCPayDryRunValidatesWithoutSnapshot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(fixture.privilegedRoot, appmanifest.BTCPayID)); !os.IsNotExist(err) {
 		t.Fatalf("dry-run created a privileged snapshot: %v", err)
+	}
+}
+
+func TestComposeAppBTCPayLifecycleRunsOnlyFromPrivilegedSnapshot(t *testing.T) {
+	fixture := writeTestBTCPayApp(t, false, false)
+	runner := fixture.manager.Runner.(*composeRecordingRunner)
+	runner.hook = func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && hasArgsSuffix(args, "exec", "btcpay-db", "psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc", "SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'") {
+			return "1\n", nil, true
+		}
+		return "", nil, false
+	}
+
+	if err := fixture.manager.Lifecycle(context.Background(), appmanifest.BTCPayID, AppLifecycleStart, false); err != nil {
+		t.Fatal(err)
+	}
+	wantSnapshotRoot := filepath.Join(fixture.privilegedRoot, appmanifest.BTCPayID)
+	databaseStart := -1
+	postgresReady := -1
+	fullStart := -1
+	for index, command := range runner.commands {
+		joined := strings.Join(command.args, " ")
+		if strings.Contains(joined, fixture.appRoot) {
+			t.Fatalf("manager-owned BTCPay root reached Docker: %#v", command)
+		}
+		if hasArgsSuffix(command.args, "up", "-d", "btcpay-db") {
+			databaseStart = index
+		}
+		if command.path == dockerPath && hasArgsSuffix(command.args, "exec", "btcpay-db", "pg_isready", "-U", "btcpay", "-d", "btcpayserver") {
+			postgresReady = index
+		}
+		if hasArgsSuffix(command.args, "up", "-d") {
+			fullStart = index
+		}
+		if command.path == dockerPath && len(command.args) >= 2 && command.args[0] == "compose" && command.args[1] != "version" {
+			if !strings.Contains(joined, "--project-directory "+wantSnapshotRoot) || !strings.Contains(joined, "-f "+filepath.Join(wantSnapshotRoot, appmanifest.BTCPayComposeFile)) {
+				t.Fatalf("Compose did not use the broker snapshot: %#v", command)
+			}
+		}
+	}
+	if databaseStart < 0 || postgresReady <= databaseStart || fullStart <= postgresReady {
+		t.Fatalf("invalid BTCPay start/database order: %#v", runner.commands)
+	}
+	if strings.Contains(runner.composeSnapshot, ".macaroon") || !strings.Contains(runner.composeSnapshot, "macaroonfilepath=/etc/lnd/"+appmanifest.BTCPaySnapshotAuthFile) {
+		t.Fatalf("execution snapshot exposed the wrong LND credential: %s", runner.composeSnapshot)
+	}
+}
+
+func TestComposeAppBTCPayLifecycleChecksOnlyCatalogImages(t *testing.T) {
+	fixture := writeTestBTCPayApp(t, false, true)
+	runner := fixture.manager.Runner.(*composeRecordingRunner)
+	runner.hook = func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && hasArgsSuffix(args, "exec", "btcpay-db", "psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc", "SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'") {
+			return "1\n", nil, true
+		}
+		return "", nil, false
+	}
+	if err := fixture.manager.Lifecycle(context.Background(), appmanifest.BTCPayID, AppLifecycleStart, false); err != nil {
+		t.Fatal(err)
+	}
+	var inspected []string
+	for _, command := range runner.commands {
+		if command.path == dockerPath && len(command.args) == 3 && command.args[0] == "image" && command.args[1] == "inspect" {
+			inspected = append(inspected, command.args[2])
+		}
+	}
+	if want := appmanifest.BTCPayImages(true); !reflect.DeepEqual(inspected, want) {
+		t.Fatalf("inspected images=%#v want=%#v", inspected, want)
+	}
+}
+
+func TestComposeAppBTCPayPostgresRepairIsClosedAndIdempotent(t *testing.T) {
+	tests := []struct {
+		name         string
+		queryOutputs []string
+		queryErrors  []error
+		wantCommands int
+		wantCreate   bool
+	}{
+		{name: "existing database", queryOutputs: []string{"1\n"}, wantCommands: 2},
+		{name: "missing database", queryOutputs: []string{""}, wantCommands: 3, wantCreate: true},
+		{name: "initialization restart", queryOutputs: []string{"shutting down", ""}, queryErrors: []error{errors.New("temporary")}, wantCommands: 5, wantCreate: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &composeRecordingRunner{}
+			queryCall := 0
+			runner.hook = func(path string, args []string) (string, error, bool) {
+				if path == dockerPath && len(args) >= 3 && args[0] == "exec" && args[1] == "btcpay-db" {
+					switch args[2] {
+					case "pg_isready", "createdb":
+						return "", nil, true
+					case "psql":
+						output := test.queryOutputs[queryCall]
+						var err error
+						if queryCall < len(test.queryErrors) {
+							err = test.queryErrors[queryCall]
+						}
+						queryCall++
+						return output, err, true
+					}
+				}
+				return "", errors.New("unexpected command"), true
+			}
+			manager := &ComposeAppManager{Runner: runner}
+			if err := manager.ensureBTCPayNbxplorerDatabaseWithPolicy(context.Background(), 3, 0); err != nil {
+				t.Fatal(err)
+			}
+			if len(runner.commands) != test.wantCommands {
+				t.Fatalf("commands=%#v", runner.commands)
+			}
+			last := runner.commands[len(runner.commands)-1]
+			created := last.path == dockerPath && len(last.args) > 2 && last.args[2] == "createdb"
+			if created != test.wantCreate {
+				t.Fatalf("created=%v commands=%#v", created, runner.commands)
+			}
+			if created {
+				joined := strings.Join(last.args, " ")
+				for _, required := range []string{"--owner=btcpay", "--template=template0", "--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer"} {
+					if !strings.Contains(joined, required) {
+						t.Fatalf("createdb command missing %q: %s", required, joined)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestComposeAppBTCPayPostgresFailureDoesNotLeakOutput(t *testing.T) {
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && len(args) >= 3 && args[0] == "exec" && args[1] == "btcpay-db" {
+			return "rpc-password=do-not-log", errors.New("secret stderr"), true
+		}
+		return "", errors.New("unexpected command"), true
+	}}
+	manager := &ComposeAppManager{Runner: runner}
+	err := manager.ensureBTCPayNbxplorerDatabaseWithPolicy(context.Background(), 2, 0)
+	if err == nil || strings.Contains(err.Error(), "do-not-log") || strings.Contains(err.Error(), "secret stderr") {
+		t.Fatalf("unsafe postgres error: %v", err)
+	}
+}
+
+func TestComposeAppBTCPayStopUsesSnapshotWithoutDatabaseCommands(t *testing.T) {
+	fixture := writeTestBTCPayApp(t, false, false)
+	runner := fixture.manager.Runner.(*composeRecordingRunner)
+	if err := fixture.manager.Lifecycle(context.Background(), appmanifest.BTCPayID, AppLifecycleStop, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range runner.commands {
+		if command.path == dockerPath && len(command.args) > 0 && command.args[0] == "exec" {
+			t.Fatalf("stop invoked a database command: %#v", command)
+		}
+	}
+	last := runner.commands[len(runner.commands)-1]
+	if !hasArgsSuffix(last.args, "stop", "--timeout", strconv.Itoa(appmanifest.BTCPayStopTimeout)) || strings.Contains(strings.Join(last.args, " "), fixture.appRoot) {
+		t.Fatalf("unsafe BTCPay stop command: %#v", last)
+	}
+}
+
+func TestComposeAppBTCPayRemoveUsesAndDeletesOnlySnapshot(t *testing.T) {
+	fixture := writeTestBTCPayApp(t, false, false)
+	runner := fixture.manager.Runner.(*composeRecordingRunner)
+	if err := fixture.manager.Remove(context.Background(), appmanifest.BTCPayID, false); err != nil {
+		t.Fatal(err)
+	}
+	last := runner.commands[len(runner.commands)-1]
+	if !hasArgsSuffix(last.args, "down", "--remove-orphans", "--timeout", strconv.Itoa(appmanifest.BTCPayStopTimeout)) || strings.Contains(strings.Join(last.args, " "), fixture.appRoot) {
+		t.Fatalf("unsafe BTCPay remove command: %#v", last)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.privilegedRoot, appmanifest.BTCPayID)); !os.IsNotExist(err) {
+		t.Fatalf("privileged snapshot was not removed: %v", err)
+	}
+	if _, err := os.Stat(fixture.appRoot); err != nil {
+		t.Fatalf("broker removed manager-owned app data: %v", err)
 	}
 }
 

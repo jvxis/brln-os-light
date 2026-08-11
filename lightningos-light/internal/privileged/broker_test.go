@@ -402,6 +402,23 @@ func TestBrokerAppLifecycleUsesTypedManagerAndLock(t *testing.T) {
 	}
 }
 
+func TestBrokerBTCPayLifecycleUsesTypedManagerAndLock(t *testing.T) {
+	apps := &recordingApps{}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppLifecycleParams{AppID: appmanifest.BTCPayID, Action: AppLifecycleStart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "btcpay_start_1", Operation: OperationAppLifecycle, Params: params,
+	})
+	if !response.OK || apps.calls != 1 || apps.appID != appmanifest.BTCPayID || apps.action != AppLifecycleStart || apps.dryRun || locker.locks != 1 || locker.unlocks != 1 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+}
+
 func TestBrokerAppLifecycleDryRunDoesNotLock(t *testing.T) {
 	apps := &recordingApps{}
 	locker := &recordingLocker{}

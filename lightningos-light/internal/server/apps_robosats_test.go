@@ -171,6 +171,19 @@ func TestEnsureDockerForCatalogAppEnforceFailsClosed(t *testing.T) {
 	}
 }
 
+func TestEnsureDockerForCatalogAppStrictRejectsLegacyFallback(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "disabled"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureDockerForCatalogAppEnforce(context.Background()); err == nil || !strings.Contains(err.Error(), "requires privileged broker enforce mode") {
+		t.Fatalf("strict Docker preparation did not fail closed: %v", err)
+	}
+	if client.packageCalls != 0 || client.dockerCalls != 0 {
+		t.Fatalf("disabled broker unexpectedly executed Docker preparation: %#v", client)
+	}
+}
+
 func TestRobosatsComposeContentsUsesPinnedTorImageAndVolumes(t *testing.T) {
 	got := robosatsComposeContents(robosatsPaths{
 		CaddyfilePath: "/tmp/robosats/Caddyfile",

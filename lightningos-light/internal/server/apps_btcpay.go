@@ -94,7 +94,11 @@ func (a btcpayApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "btcpayserver")
+	handled, status, _, err := system.InspectAppWithBroker(ctx, btcpayAppID)
+	if !handled {
+		info.Status = "unknown"
+		return info, errors.New("BTCPay status requires privileged broker enforce mode")
+	}
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
@@ -116,13 +120,22 @@ func (a btcpayApp) Stop(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("BTCPay Server is not installed")
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
+	if handled, err := system.AppLifecycleWithBroker(ctx, btcpayAppID, "stop"); !handled {
+		return errors.New("BTCPay lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("BTCPay stop failed: %w", err)
+	}
+	return nil
 }
 
 func (a btcpayApp) Uninstall(ctx context.Context) error {
 	paths := btcpayAppPaths()
 	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		if handled, err := system.RemoveAppWithBroker(ctx, btcpayAppID); !handled {
+			return errors.New("BTCPay removal requires privileged broker enforce mode")
+		} else if err != nil {
+			return fmt.Errorf("BTCPay removal failed: %w", err)
+		}
 	}
 	// Keep appsDataRoot/btcpay: it may hold store hot-wallet seeds, the
 	// invoice database, and the baked LND macaroon for a future reinstall.
@@ -154,7 +167,7 @@ func btcpayAppPaths() btcpayPaths {
 // applyBtcpay drives both Install and Start so a bitcoin source switch after
 // install re-wires NBXplorer automatically on the next start.
 func (s *Server) applyBtcpay(ctx context.Context) error {
-	if err := ensureDocker(ctx); err != nil {
+	if err := ensureDockerForCatalogAppEnforce(ctx); err != nil {
 		return err
 	}
 	paths := btcpayAppPaths()
@@ -191,21 +204,10 @@ func (s *Server) applyBtcpay(ctx context.Context) error {
 	if _, err := ensureFileWithChange(paths.ComposePath, btcpayComposeContents(paths, wiring)); err != nil {
 		return err
 	}
-	if handled, err := system.SnapshotAppWithBroker(ctx, btcpayAppID); handled && err != nil {
-		return err
-	}
-
-	// Init scripts under /docker-entrypoint-initdb.d only run while postgres is
-	// creating an empty data directory. Repair an already-initialized pgdata
-	// volume that is missing NBXplorer's database before starting dependants.
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "btcpay-db"); err != nil {
-		return err
-	}
-	if err := ensureBtcpayNbxplorerDatabase(ctx, system.RunCommandWithSudo); err != nil {
-		return err
-	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
-		return err
+	if handled, err := system.AppLifecycleWithBroker(ctx, btcpayAppID, "start"); !handled {
+		return errors.New("BTCPay lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("BTCPay start failed: %w", err)
 	}
 	if err := ensureBtcpayUfwAccess(ctx); err != nil && s.logger != nil {
 		s.logger.Printf("btcpay: ufw rule failed: %v", err)
@@ -226,21 +228,13 @@ func ensureBtcpayImages(ctx context.Context, useTor bool) error {
 }
 
 func ensureBtcpayImageVariant(ctx context.Context, variant appmanifest.AppImageVariant) error {
-	image, err := appmanifest.BTCPayImageForVariant(variant)
-	if err != nil {
+	if _, err := appmanifest.BTCPayImageForVariant(variant); err != nil {
 		return err
 	}
 	if handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.BTCPayID, string(variant)); handled {
 		return err
 	}
-	refresh, err := appmanifest.CatalogImageRequiresRefresh(appmanifest.BTCPayID, variant)
-	if err != nil {
-		return err
-	}
-	if refresh {
-		return pullDockerImage(ctx, image)
-	}
-	return ensureDockerImage(ctx, image)
+	return errors.New("BTCPay image preparation requires privileged broker enforce mode")
 }
 
 func ensureBtcpayPaths(paths btcpayPaths) error {
@@ -528,58 +522,6 @@ func ensureBtcpayEnv(paths btcpayPaths, wiring btcpayBitcoinWiring, dbPassword s
 // LC_CTYPE/LC_COLLATE 'C' follows the upstream NBXplorer requirement.
 func btcpayDbInitContents() string {
 	return appmanifest.BTCPayDBInit()
-}
-
-type btcpayCommandRunner func(context.Context, string, ...string) (string, error)
-
-// ensureBtcpayNbxplorerDatabase makes postgres initialization idempotent. The
-// official postgres entrypoint deliberately ignores init scripts once pgdata
-// exists, so this also repairs installs left half-initialized by an earlier
-// failed attempt.
-func ensureBtcpayNbxplorerDatabase(ctx context.Context, run btcpayCommandRunner) error {
-	var lastDetail string
-	for attempt := 0; attempt < 30; attempt++ {
-		out, err := run(ctx, "docker", "exec", "btcpay-db", "pg_isready", "-U", "btcpay", "-d", "btcpayserver")
-		lastDetail = strings.TrimSpace(out)
-		if err == nil {
-			out, err = run(
-				ctx,
-				"docker", "exec", "btcpay-db",
-				"psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc",
-				"SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'",
-			)
-			lastDetail = strings.TrimSpace(out)
-			if err == nil && lastDetail == "1" {
-				return nil
-			}
-			if err == nil {
-				out, err = run(
-					ctx,
-					"docker", "exec", "btcpay-db",
-					"createdb", "-U", "btcpay", "--owner=btcpay", "--template=template0",
-					"--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer",
-				)
-				lastDetail = strings.TrimSpace(out)
-				if err == nil {
-					return nil
-				}
-			}
-		}
-		if err != nil && lastDetail == "" {
-			lastDetail = err.Error()
-		}
-		if attempt == 29 {
-			return fmt.Errorf("BTCPay postgres did not stabilize: %s", lastDetail)
-		}
-		timer := time.NewTimer(time.Second)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
-	return errors.New("BTCPay postgres did not stabilize")
 }
 
 func btcpayLightningConnectionString() string {

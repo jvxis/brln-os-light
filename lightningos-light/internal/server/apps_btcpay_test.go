@@ -237,6 +237,16 @@ func TestEnsureBtcpayImagesEnforceFailsClosed(t *testing.T) {
 	}
 }
 
+func TestEnsureBtcpayImagesRejectsLegacyFallback(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "disabled"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureBtcpayImages(context.Background(), false); err == nil || !strings.Contains(err.Error(), "requires privileged broker enforce mode") {
+		t.Fatalf("BTCPay image preparation did not fail closed: %v", err)
+	}
+}
+
 func TestBtcpayComposeContentsAppSource(t *testing.T) {
 	paths := btcpayAppPaths()
 	wiring := btcpayBitcoinWiring{Source: "app", JoinBitcoinNetwork: true}
@@ -353,88 +363,6 @@ func TestBtcpayDbInitContents(t *testing.T) {
 	}
 	if !strings.Contains(sql, "LC_CTYPE 'C'") {
 		t.Fatalf("init sql missing C locale: %s", sql)
-	}
-}
-
-func TestEnsureBtcpayNbxplorerDatabaseCreatesMissingDatabase(t *testing.T) {
-	var commands [][]string
-	run := func(_ context.Context, name string, args ...string) (string, error) {
-		command := append([]string{name}, args...)
-		commands = append(commands, command)
-		switch {
-		case len(args) > 2 && args[2] == "pg_isready":
-			return "btcpay-db:5432 - accepting connections\n", nil
-		case len(args) > 2 && args[2] == "psql":
-			return "", nil
-		case len(args) > 2 && args[2] == "createdb":
-			return "", nil
-		default:
-			return "", errors.New("unexpected command")
-		}
-	}
-
-	if err := ensureBtcpayNbxplorerDatabase(context.Background(), run); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(commands) != 3 {
-		t.Fatalf("expected readiness, lookup, and create commands; got %d: %v", len(commands), commands)
-	}
-	createdb := strings.Join(commands[2], " ")
-	for _, required := range []string{"--owner=btcpay", "--template=template0", "--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer"} {
-		if !strings.Contains(createdb, required) {
-			t.Fatalf("createdb command missing %q: %s", required, createdb)
-		}
-	}
-}
-
-func TestEnsureBtcpayNbxplorerDatabaseKeepsExistingDatabase(t *testing.T) {
-	var commands [][]string
-	run := func(_ context.Context, name string, args ...string) (string, error) {
-		commands = append(commands, append([]string{name}, args...))
-		switch {
-		case len(args) > 2 && args[2] == "pg_isready":
-			return "btcpay-db:5432 - accepting connections\n", nil
-		case len(args) > 2 && args[2] == "psql":
-			return "1\n", nil
-		default:
-			return "", errors.New("unexpected command")
-		}
-	}
-
-	if err := ensureBtcpayNbxplorerDatabase(context.Background(), run); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(commands) != 2 {
-		t.Fatalf("existing database must not be recreated; got commands: %v", commands)
-	}
-}
-
-func TestEnsureBtcpayNbxplorerDatabaseRetriesInitializationRestart(t *testing.T) {
-	var commands [][]string
-	psqlCalls := 0
-	run := func(_ context.Context, name string, args ...string) (string, error) {
-		commands = append(commands, append([]string{name}, args...))
-		switch {
-		case len(args) > 2 && args[2] == "pg_isready":
-			return "btcpay-db:5432 - accepting connections\n", nil
-		case len(args) > 2 && args[2] == "psql":
-			psqlCalls++
-			if psqlCalls == 1 {
-				return "the database system is shutting down", errors.New("exit status 2")
-			}
-			return "", nil
-		case len(args) > 2 && args[2] == "createdb":
-			return "", nil
-		default:
-			return "", errors.New("unexpected command")
-		}
-	}
-
-	if err := ensureBtcpayNbxplorerDatabase(context.Background(), run); err != nil {
-		t.Fatalf("transient postgres restart must be retried: %v", err)
-	}
-	if len(commands) != 5 || psqlCalls != 2 {
-		t.Fatalf("expected retry after transient restart; commands=%v", commands)
 	}
 }
 

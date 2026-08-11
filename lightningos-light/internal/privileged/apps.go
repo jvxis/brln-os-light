@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"lightningos-light/internal/appmanifest"
 )
@@ -29,6 +30,8 @@ const (
 	dockerPath                = "/usr/bin/docker"
 	dockerComposePath         = "/usr/bin/docker-compose"
 	ufwPath                   = "/usr/sbin/ufw"
+	btcpayPostgresReadyTries  = 30
+	btcpayPostgresRetryDelay  = time.Second
 )
 
 type ComposeAppManager struct {
@@ -417,6 +420,19 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		if dryRun {
 			return nil
 		}
+	case appmanifest.BTCPayID:
+		files, err := manager.validatedBTCPayFiles()
+		if err != nil {
+			return err
+		}
+		images = appmanifest.BTCPayImages(files.useTorProxy)
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createBTCPaySnapshot(files)
+		if err != nil {
+			return err
+		}
 	default:
 		return errors.New("app manifest is not allowed")
 	}
@@ -445,6 +461,15 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	)
 	switch action {
 	case AppLifecycleStart:
+		if manifest.ID == appmanifest.BTCPayID {
+			databaseArgs := append(append([]string(nil), args...), "up", "-d", "btcpay-db")
+			if _, err := manager.Runner.Run(ctx, commandPath, databaseArgs...); err != nil {
+				return errors.New("app database start command failed")
+			}
+			if err := manager.ensureBTCPayNbxplorerDatabase(ctx); err != nil {
+				return err
+			}
+		}
 		args = append(args, "up", "-d")
 	case AppLifecycleStop:
 		args = append(args, "stop", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds))
@@ -507,6 +532,19 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 			return nil
 		}
 		removePersistentSnapshot = true
+	case appmanifest.BTCPayID:
+		files, err := manager.validatedBTCPayFiles()
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createBTCPaySnapshot(files)
+		if err != nil {
+			return err
+		}
+		removePersistentSnapshot = true
 	default:
 		return errors.New("app manifest is not allowed")
 	}
@@ -537,8 +575,27 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 		if err := manager.removeBitcoinCoreExecutionSnapshot(snapshot.root); err != nil {
 			return errors.New("failed to remove app execution snapshot")
 		}
+	} else if removePersistentSnapshot && appID == appmanifest.BTCPayID {
+		if err := manager.removeBTCPayExecutionSnapshot(snapshot.root); err != nil {
+			return errors.New("failed to remove app execution snapshot")
+		}
 	}
 	return nil
+}
+
+func (manager *ComposeAppManager) removeBTCPayExecutionSnapshot(snapshotRoot string) error {
+	privilegedAppsRoot := manager.PrivilegedAppsRoot
+	if privilegedAppsRoot == "" {
+		privilegedAppsRoot = defaultPrivilegedAppsRoot
+	}
+	expectedRoot := filepath.Join(filepath.Clean(privilegedAppsRoot), appmanifest.BTCPayID)
+	if filepath.Clean(snapshotRoot) != expectedRoot {
+		return errors.New("invalid app execution snapshot")
+	}
+	if err := validateRegularDirectory(expectedRoot); err != nil {
+		return errors.New("invalid app execution snapshot")
+	}
+	return os.RemoveAll(expectedRoot)
 }
 
 func (manager *ComposeAppManager) removeRoboSatsExecutionSnapshot(snapshotRoot string) error {
@@ -589,6 +646,15 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 		}
 	case appmanifest.BitcoinCoreID:
 		snapshot, cleanup, err = manager.createBitcoinCoreInspectionSnapshot(ctx)
+		if err != nil {
+			return inspection, err
+		}
+	case appmanifest.BTCPayID:
+		files, err := manager.validatedBTCPayFiles()
+		if err != nil {
+			return inspection, err
+		}
+		snapshot, cleanup, err = manager.createBTCPaySnapshot(files)
 		if err != nil {
 			return inspection, err
 		}
@@ -851,6 +917,58 @@ func (manager *ComposeAppManager) Snapshot(ctx context.Context, appID string, dr
 	_, cleanup, err := manager.prepareBTCPaySnapshot(dryRun)
 	cleanup()
 	return err
+}
+
+func (manager *ComposeAppManager) ensureBTCPayNbxplorerDatabase(ctx context.Context) error {
+	return manager.ensureBTCPayNbxplorerDatabaseWithPolicy(ctx, btcpayPostgresReadyTries, btcpayPostgresRetryDelay)
+}
+
+func (manager *ComposeAppManager) ensureBTCPayNbxplorerDatabaseWithPolicy(ctx context.Context, attempts int, retryDelay time.Duration) error {
+	if attempts < 1 || retryDelay < 0 {
+		return errors.New("invalid BTCPay postgres readiness policy")
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		_, readyErr := manager.Runner.Run(
+			ctx,
+			dockerPath,
+			"exec", "btcpay-db", "pg_isready", "-U", "btcpay", "-d", "btcpayserver",
+		)
+		if readyErr == nil {
+			output, queryErr := manager.Runner.Run(
+				ctx,
+				dockerPath,
+				"exec", "btcpay-db", "psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc",
+				"SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'",
+			)
+			if queryErr == nil && strings.TrimSpace(output) == "1" {
+				return nil
+			}
+			if queryErr == nil {
+				if _, createErr := manager.Runner.Run(
+					ctx,
+					dockerPath,
+					"exec", "btcpay-db", "createdb", "-U", "btcpay", "--owner=btcpay", "--template=template0",
+					"--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer",
+				); createErr == nil {
+					return nil
+				}
+			}
+		}
+		if attempt == attempts-1 {
+			return errors.New("BTCPay postgres did not stabilize")
+		}
+		timer := time.NewTimer(btcpayPostgresRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return errors.New("BTCPay postgres did not stabilize")
 }
 
 func (manager *ComposeAppManager) createBTCPaySnapshot(files btcpayValidatedFiles) (composeAppSnapshot, func(), error) {

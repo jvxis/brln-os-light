@@ -41,6 +41,15 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			PrimaryService:     BitcoinCorePrimaryService,
 			StopTimeoutSeconds: BitcoinCoreStopTimeout,
 		}, nil
+	case BTCPayID:
+		return ComposeManifest{
+			ID:                 BTCPayID,
+			Project:            BTCPayProject,
+			ComposeFile:        BTCPayComposeFile,
+			EnvFile:            BTCPayEnvFile,
+			PrimaryService:     BTCPayPrimaryService,
+			StopTimeoutSeconds: BTCPayStopTimeout,
+		}, nil
 	default:
 		return ComposeManifest{}, errors.New("compose app manifest is not allowed")
 	}

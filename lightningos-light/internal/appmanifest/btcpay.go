@@ -15,6 +15,7 @@ const (
 	BTCPayPrimaryService   = "btcpayserver"
 	BTCPayPort             = 23000
 	BTCPayNbxplorerPort    = 32838
+	BTCPayStopTimeout      = 30
 	BTCPayRelease          = "2.4.2"
 	BTCPayNbxplorerRelease = "2.6.10"
 
@@ -46,6 +47,15 @@ func BTCPayImageVariants(useTor bool) []AppImageVariant {
 		variants = append(variants, BTCPayImageTor)
 	}
 	return variants
+}
+
+func BTCPayImages(useTor bool) []string {
+	variants := BTCPayImageVariants(useTor)
+	images := make([]string, 0, len(variants))
+	for _, variant := range variants {
+		images = append(images, btcpayImages[variant])
+	}
+	return images
 }
 
 func BTCPayImageForVariant(variant AppImageVariant) (string, error) {

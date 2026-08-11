@@ -195,6 +195,35 @@ func TestPrivilegeBoundaryCallSiteBudgets(t *testing.T) {
 	}
 }
 
+func TestBTCPayLifecycleHasNoLegacyDockerExecution(t *testing.T) {
+	root := moduleRoot(t)
+	path := filepath.Join(root, "internal", "server", "apps_btcpay.go")
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := map[string]struct{}{
+		"ensureDocker":      {},
+		"ensureDockerImage": {},
+		"getComposeStatus":  {},
+		"pullDockerImage":   {},
+		"runCompose":        {},
+	}
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name := calledFunctionName(call.Fun)
+		if _, blocked := forbidden[name]; blocked {
+			position := fset.Position(call.Pos())
+			t.Errorf("BTCPay legacy Docker call %s at line %d; use the typed broker", name, position.Line)
+		}
+		return true
+	})
+}
+
 func TestNoNewWildcardSudoOrDockerBoundary(t *testing.T) {
 	root := moduleRoot(t)
 	allowedDockerLines := make(map[string]struct{}, len(legacyDockerGroupLines))

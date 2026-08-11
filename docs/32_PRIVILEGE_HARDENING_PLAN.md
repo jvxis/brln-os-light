@@ -498,8 +498,8 @@ for NBXplorer 2.6.10. No container was created, the manager remained active,
 and the audit contained operation metadata only. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-btcpay-security-release-2026-08-11.json`.
 
-BTCPay's secret-bearing inputs now have a closed broker snapshot gate before
-the legacy Compose lifecycle. The typed `app.compose.snapshot` operation
+BTCPay's secret-bearing inputs first entered a closed broker snapshot gate
+before the legacy Compose lifecycle. The typed `app.compose.snapshot` operation
 accepts only BTCPay and byte-validates the shared Compose catalog, exact
 PostgreSQL initialization, and an exact allowlist of environment keys with
 coherent local, App Store, clearnet-remote, or Onion-remote Bitcoin wiring. It
@@ -519,11 +519,32 @@ BTCPay-specific set (`address` read/write, `info` read, `invoices` read/write,
 and `onchain` read), without `offchain:write` or `onchain:write`. The Ubuntu
 root gate passed the complete Go test/vet/build suite and all positive and
 negative snapshot cases without starting a container or touching Bitcoin/LND.
-The next slice must move Compose execution and PostgreSQL repair onto this
-broker-owned snapshot; until then, the snapshot is a mandatory validation gate
-before the existing lifecycle, not yet the lifecycle execution source.
 Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-btcpay-secret-snapshot-2026-08-11.json`.
+
+BTCPay's Compose execution has now completed that cutover. The shared manifest
+catalog admits BTCPay start/stop/status/remove but rejects restart and every
+caller-supplied path, image, service, or argument. Docker package/runtime
+preparation and all four fixed BTCPay image variants fail closed outside broker
+`enforce`; the manager file contains no legacy Compose, image pull, or Compose
+status call. Start verifies the exact required images, uses only the
+root-owned snapshot, starts `btcpay-db`, checks for the NBXplorer database, and
+creates it with the fixed owner/template/encoding/locale arguments only when
+missing, before starting the complete stack. Database command output is never
+returned through broker errors. Stop uses the fixed 30-second catalog timeout,
+status reads the catalog primary service, and remove runs a fixed Compose down
+before deleting only the privileged snapshot; persistent BTCPay application
+data, database, wallet state, and the dedicated source macaroon remain intact
+for reinstall.
+
+The Ubuntu 24.04 amd64 gate passed all Go tests, vet, builds, and the root-mode
+BTCPay lifecycle tests. Those tests proved the database-before-stack order,
+existing/missing/transient database paths, exact image set with and without
+Tor, snapshot-only Compose paths, generic failures, stop behavior, and
+snapshot-only removal. The command runner was deliberately recorded rather
+than connected to Docker, so no container or Bitcoin/LND service was touched;
+the full functional BTCPay+LND gate remains separate. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-btcpay-lifecycle-enforce-2026-08-11.json`.
 
 The full BTCPay+LND gate, full-node Electrs/Mempool gates, the remaining
 dependent products, operational Bitcoin CLI/log paths, and the mainnet P2P

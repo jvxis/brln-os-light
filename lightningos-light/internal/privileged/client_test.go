@@ -125,6 +125,21 @@ func TestClientAppLifecycleBuildsTypedRequest(t *testing.T) {
 	}
 }
 
+func TestClientBTCPayLifecycleBuildsTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: map[string]bool{"validated": true}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	if err := client.AppLifecycle(context.Background(), appmanifest.BTCPayID, "start", false); err != nil {
+		t.Fatal(err)
+	}
+	var params AppLifecycleParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if transport.request.Operation != OperationAppLifecycle || transport.request.DryRun || params.AppID != appmanifest.BTCPayID || params.Action != AppLifecycleStart {
+		t.Fatalf("unexpected BTCPay lifecycle request: %#v/%#v", transport.request, params)
+	}
+}
+
 func TestClientBTCPaySnapshotBuildsTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: map[string]bool{"validated": true}}
 	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)

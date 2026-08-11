@@ -48,6 +48,19 @@ func ensureDockerForCatalogApp(ctx context.Context) error {
 	return ensureDocker(ctx)
 }
 
+func ensureDockerForCatalogAppEnforce(ctx context.Context) error {
+	if handled, err := system.EnsurePackageFeatureWithBroker(ctx, "docker_runtime"); !handled {
+		return errors.New("Docker package provisioning requires privileged broker enforce mode")
+	} else if err != nil {
+		return err
+	}
+	if handled, err := system.EnsureDockerRuntimeWithBroker(ctx); !handled {
+		return errors.New("Docker runtime provisioning requires privileged broker enforce mode")
+	} else {
+		return err
+	}
+}
+
 func installDocker(ctx context.Context) error {
 	if _, err := runApt(ctx, "update"); err != nil {
 		return err

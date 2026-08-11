@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
@@ -113,6 +114,10 @@ func (s *Server) installLndg(ctx context.Context) error {
 	if err := ensureDocker(ctx); err != nil {
 		return err
 	}
+	imageHandled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.LNDgID, string(appmanifest.LNDgImageApp))
+	if err != nil {
+		return err
+	}
 	paths := lndgAppPaths()
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
@@ -158,7 +163,12 @@ func (s *Server) installLndg(ctx context.Context) error {
 	if err := syncLndgDbPassword(ctx, paths); err != nil {
 		return err
 	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "--build", "lndg"); err != nil {
+	startArgs := []string{"up", "-d"}
+	if !imageHandled {
+		startArgs = append(startArgs, "--build")
+	}
+	startArgs = append(startArgs, "lndg")
+	if err := runCompose(ctx, paths.Root, paths.ComposePath, startArgs...); err != nil {
 		return err
 	}
 	_ = writeFile(paths.BuildHashPath, buildKey+"\n", 0640)
@@ -177,6 +187,10 @@ func (s *Server) uninstallLndg(ctx context.Context) error {
 }
 
 func (s *Server) startLndg(ctx context.Context) error {
+	imageHandled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.LNDgID, string(appmanifest.LNDgImageApp))
+	if err != nil {
+		return err
+	}
 	paths := lndgAppPaths()
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
@@ -214,6 +228,9 @@ func (s *Server) startLndg(ctx context.Context) error {
 	buildKey := lndgBuildKey(paths, currentHash)
 	if readSecretFile(paths.BuildHashPath) != buildKey {
 		needsBuild = true
+	}
+	if imageHandled {
+		needsBuild = false
 	}
 	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg-db"); err != nil {
 		return err
@@ -340,6 +357,7 @@ func lndgComposeContents(paths lndgPaths) string {
       - %s:/var/lib/postgresql/data
 
   lndg:
+    image: %s
     build:
       context: .
       args:
@@ -363,11 +381,13 @@ func lndgComposeContents(paths lndgPaths) string {
       - "host.docker.internal:host-gateway"
     ports:
       - "8889:8889"
+    entrypoint: ["/entrypoint.sh"]
     volumes:
       - /data/lnd:/root/.lnd:ro
       - %s:/app/data:rw
       - %s:/var/log/lndg-controller.log:rw
-`, paths.PgDir, paths.DataDir, paths.LogPath)
+      - %s:/entrypoint.sh:ro
+`, paths.PgDir, appmanifest.LNDgImage, paths.DataDir, paths.LogPath, paths.EntrypointPath)
 }
 
 func ensureLndgEnv(ctx context.Context, paths lndgPaths) error {
@@ -879,23 +899,22 @@ func resolveLndgGit(_ context.Context, existingRef string, existingSha string) (
 	return ref, sha
 }
 
-const lndgDockerfile = `FROM python:3.12-slim
+var lndgDockerfile = fmt.Sprintf(`FROM %s
 ENV PYTHONUNBUFFERED=1
-RUN apt-get update && apt-get install -y git gcc libpq-dev postgresql-client && rm -rf /var/lib/apt/lists/*
-ARG LNDG_GIT_REF=master
-ARG LNDG_GIT_SHA=unknown
-RUN echo "LNDG_GIT_REF=$LNDG_GIT_REF LNDG_GIT_SHA=$LNDG_GIT_SHA"
-RUN git clone --depth 1 --branch "$LNDG_GIT_REF" https://github.com/cryptosharks131/lndg /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl gcc libpq-dev postgresql-client && rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -fsSLo /tmp/lndg.tar.gz %s \
+    && printf '%%s  %%s\n' %s /tmp/lndg.tar.gz | sha256sum --check --strict - \
+    && mkdir /app \
+    && tar --no-same-owner --no-same-permissions --strip-components=1 -xzf /tmp/lndg.tar.gz -C /app \
+    && rm /tmp/lndg.tar.gz
 WORKDIR /app
-RUN if [ -n "$LNDG_GIT_SHA" ] && [ "$LNDG_GIT_SHA" != "unknown" ]; then \
-      git fetch --depth 1 origin "$LNDG_GIT_SHA" && git checkout "$LNDG_GIT_SHA"; \
-    fi
-RUN pip install -r requirements.txt
-RUN pip install supervisor whitenoise psycopg2-binary
+RUN python -m pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir supervisor==%s whitenoise==%s psycopg2-binary==%s
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
-`
+`, appmanifest.LNDgBaseImage, appmanifest.LNDgSourceURL, appmanifest.LNDgSourceSHA256,
+	appmanifest.LNDgSupervisor, appmanifest.LNDgWhitenoise, appmanifest.LNDgPsycopgBinary)
 
 const lndgDockerignore = `*
 !Dockerfile

@@ -588,6 +588,41 @@ root-owned `0600`, used only the declared metadata fields, and contained no
 credential terms. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-btcpay-functional-lifecycle-2026-08-11.json`.
 
+The remaining App Store order is now driven by observed use: LNDg first,
+LNbits second, then the native BRLN Loop and Magma paths. Fedimint, Electrs,
+and Mempool are lower priority; Electrs and Mempool remain last because their
+functional gate requires a synchronized, unpruned Full Node with `txindex=1`.
+
+LNDg's image boundary has entered the broker. Upstream publishes neither a
+container image nor release assets, so LightningOS builds its own image from
+the exact `v1.11.0` commit. That release ref resolves to the cataloged
+GitHub-verified commit, and the broker downloads only its fixed codeload
+archive, checks the closed SHA-256 before extraction, uses a digest-pinned
+Python base image, pins the three LightningOS-added Python packages, and
+attests the resulting Docker image ID together with release, commit, source
+digest, and base image. In `enforce`, install/start wait for that attested image
+and skip the manager-owned build. The compatibility build used in `shadow`
+also stopped cloning `master` and now checks the same source digest.
+
+The isolated Ubuntu 24.04 gate built the image with Docker 29.1.3, imported
+Django, gRPC, pandas, PostgreSQL, supervisor, and whitenoise successfully, and
+bound image ID
+`sha256:374025a562a4dbba3b79ac9177cee0c92364ecbf76347ed4c9b3be0c033c8c56`
+to the attestation contract. The existing provisional VirtualBox VM was
+reached only through a localhost NAT forward; no LAN discovery occurred, no
+application container was started, and Bitcoin/LND were untouched.
+
+LNDg cannot use a read-only macaroon without losing core features. Its release
+invokes analytics plus peer, channel, fee, invoice, payment/rebalance,
+on-chain, signing, and watchtower mutations. The next slice will therefore
+bake a dedicated LNDg credential with only the required LND permission
+entities and expose it through a root-owned snapshot. The current whole
+`/data/lnd` mount, including `admin.macaroon`, is explicitly not an acceptable
+final state. Because upstream provides no signed release manifest, this slice
+does not claim an upstream cryptographic release signature; transitive Python
+hash locking remains part of issue #34. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-lndg-image-gate-2026-08-11.json`.
+
 The full-node Electrs/Mempool gates, the remaining dependent products,
 operational Bitcoin CLI/log paths, and the mainnet P2P firewall contract remain
 open. Electrs and Mempool gates must use a synchronized unpruned node with

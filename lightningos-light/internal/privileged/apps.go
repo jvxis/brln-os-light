@@ -163,6 +163,9 @@ func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string
 	if appID == appmanifest.BitcoinCoreID {
 		return manager.prepareBitcoinCoreImage(ctx, unit)
 	}
+	if appID == appmanifest.LNDgID {
+		return manager.prepareLNDgImage(ctx, unit)
+	}
 	if refresh {
 		state, err = manager.refreshImageStatus(ctx, image, unit)
 		if err != nil || state.Status == "preparing" {
@@ -215,6 +218,9 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 			return state, artifactErr
 		}
 		return manager.bitcoinCoreImageStatus(ctx, artifact, unit)
+	}
+	if appID == appmanifest.LNDgID {
+		return manager.lndgImageStatus(ctx, unit)
 	}
 	if refresh {
 		return manager.refreshImageStatus(ctx, image, unit)
@@ -320,6 +326,9 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 			appmanifest.BTCPayImageNbxplorer: "lightningos-btcpay-image-nbxplorer",
 			appmanifest.BTCPayImagePostgres:  "lightningos-btcpay-image-postgres",
 			appmanifest.BTCPayImageTor:       "lightningos-btcpay-image-tor",
+		},
+		appmanifest.LNDgID: {
+			appmanifest.LNDgImageApp: "lightningos-lndg-image-app",
 		},
 	}
 	appUnits, ok := units[appID]

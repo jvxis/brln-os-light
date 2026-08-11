@@ -80,11 +80,14 @@ where revenue_settled_at is not null
 
 	// Accepted but unpaid: shown separately so the operator can tell a sale that
 	// has landed from one that is still a promise.
+	// A promise the buyer abandoned is not pending revenue, so orders Amboss has
+	// closed out drop off even though our own state machine never moved them.
 	if err := s.db.QueryRow(ctx, `
 select coalesce(sum(revenue_sat),0), count(*)
 from magma_orders
 where revenue_settled_at is null and local_state = any($1)
-`, magmaCommittedStates).Scan(&result.PendingRevenueSat, &result.PendingCount); err != nil {
+  and not (magma_status = any($2))
+`, magmaCommittedStates, magmaTerminalStatusList()).Scan(&result.PendingRevenueSat, &result.PendingCount); err != nil {
 		return MagmaPnL{}, err
 	}
 	return result, nil

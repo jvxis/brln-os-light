@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -34,7 +35,7 @@ func TestMagmaOfferRemainingIsDerivedFromLockedSize(t *testing.T) {
 	defer srv.Close()
 
 	client := &magmaAmbossClient{endpoint: srv.URL, http: srv.Client()}
-	offers, err := client.Offers(t.Context(), "token")
+	offers, err := client.Offers(context.Background(), "token")
 	if err != nil {
 		t.Fatalf("Offers: %v", err)
 	}

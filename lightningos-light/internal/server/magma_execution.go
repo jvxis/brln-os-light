@@ -188,6 +188,12 @@ type MagmaCapacity struct {
 // magmaCommittedStates are the orders where we already owe the buyer a channel:
 // the invoice is out, or the funding is mid-flight. Their size is spoken for even
 // though it has not left the wallet yet.
+//
+// The local state alone is not enough to decide that, because it only ever moves
+// on our own actions. When a buyer walks away the order dies on the Amboss side
+// and nothing here advances: local_state stays "accepted" forever. So every query
+// over these states must also exclude the statuses Amboss treats as closed, or a
+// dead sale keeps reserving wallet balance and an open slot for good.
 var magmaCommittedStates = []string{magmaStateAccepting, magmaStateAccepted, magmaStateOpening}
 
 // Capacity reports how much on-chain balance is genuinely free for a new sale.
@@ -206,8 +212,9 @@ func (s *MagmaService) Capacity(ctx context.Context) (MagmaCapacity, error) {
 	}
 	capacity := MagmaCapacity{ConfirmedSat: balances.OnchainConfirmedSat}
 	if err := s.db.QueryRow(ctx, `
-select coalesce(sum(size_sat),0), count(*) from magma_orders where local_state = any($1)
-`, magmaCommittedStates).Scan(&capacity.CommittedSat, &capacity.CommittedJobs); err != nil {
+select coalesce(sum(size_sat),0), count(*) from magma_orders
+where local_state = any($1) and not (magma_status = any($2))
+`, magmaCommittedStates, magmaTerminalStatusList()).Scan(&capacity.CommittedSat, &capacity.CommittedJobs); err != nil {
 		return MagmaCapacity{}, err
 	}
 	capacity.AvailableSat = capacity.ConfirmedSat - capacity.CommittedSat

@@ -23,8 +23,11 @@ const (
 
 	BitcoinCoreDefaultDataDir   = "/data/bitcoin"
 	BitcoinCoreProject          = "bitcoincore"
-	BitcoinCoreNetwork          = "bitcoincore_default"
-	BitcoinCoreRPCSubnet        = "172.31.253.0/24"
+	BitcoinConsumerNetwork      = "bitcoincore_default"
+	BitcoinConsumerRPCSubnet    = "172.31.253.0/24"
+	BitcoinConsumerHostGateway  = "172.31.253.1"
+	BitcoinCoreNetwork          = BitcoinConsumerNetwork
+	BitcoinCoreRPCSubnet        = BitcoinConsumerRPCSubnet
 	BitcoinCoreComposeFile      = "docker-compose.yaml"
 	BitcoinCorePrimaryService   = "bitcoind"
 	BitcoinCoreStopTimeout      = 10
@@ -166,7 +169,8 @@ networks:
     ipam:
       config:
         - subnet: %s
-`, BitcoinCoreImage, dataDir, guardPath, storageIDPath, BitcoinCoreNetwork, BitcoinCoreRPCSubnet), nil
+          gateway: %s
+`, BitcoinCoreImage, dataDir, guardPath, storageIDPath, BitcoinCoreNetwork, BitcoinCoreRPCSubnet, BitcoinConsumerHostGateway), nil
 }
 
 func BitcoinCoreStorageGuard() string {

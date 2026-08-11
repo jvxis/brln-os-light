@@ -292,3 +292,17 @@ func TestClientBitcoinStorageBuildsClosedTypedRequest(t *testing.T) {
 		t.Fatal("expected invalid storage state to fail")
 	}
 }
+
+func TestClientBitcoinConsumerNetworkBuildsClosedTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: BitcoinConsumerNetworkState{Status: "ready"}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	status, err := client.EnsureBitcoinConsumerNetwork(context.Background(), false)
+	if err != nil || status != "ready" || transport.request.Operation != OperationBitcoinConsumerNetworkEnsure || transport.request.DryRun || string(transport.request.Params) != "{}" {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+
+	transport.result = BitcoinConsumerNetworkState{Status: "attacker-controlled"}
+	if _, err := client.EnsureBitcoinConsumerNetwork(context.Background(), false); err == nil {
+		t.Fatal("expected invalid network state to fail")
+	}
+}

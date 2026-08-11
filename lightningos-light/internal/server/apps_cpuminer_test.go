@@ -56,6 +56,25 @@ type cpuMinerPrivilegedClient struct {
 	storageDataDir    string
 	storageDryRun     bool
 	storageErr        error
+	networkCalls      int
+	networkDryRun     bool
+	networkStatus     string
+	networkErr        error
+}
+
+func (client *cpuMinerPrivilegedClient) EnsureBitcoinConsumerNetwork(_ context.Context, dryRun bool) (string, error) {
+	client.networkCalls++
+	client.networkDryRun = dryRun
+	if client.networkErr != nil {
+		return "", client.networkErr
+	}
+	if client.networkStatus != "" {
+		return client.networkStatus, nil
+	}
+	if dryRun {
+		return "validated", nil
+	}
+	return "ready", nil
 }
 
 func (client *cpuMinerPrivilegedClient) Mode() string { return client.mode }

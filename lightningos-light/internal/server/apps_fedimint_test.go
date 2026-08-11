@@ -7,7 +7,20 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	"lightningos-light/internal/appmanifest"
 )
+
+func TestFedimintExternalBitcoinUsesFixedConsumerBoundary(t *testing.T) {
+	values := fedimintBitcoinBackendFromConfig(bitcoinRPCConfig{
+		Host: "127.0.0.1:18443",
+		User: "rpc-user",
+		Pass: "rpc-pass",
+	})
+	if values.URL != "http://"+appmanifest.BitcoinConsumerHostGateway+":18443" ||
+		!values.UseBitcoinCoreNetwork || !values.NeedsLocalRPCBridgeUFW || values.LocalExternalBitcoinPort != 18443 {
+		t.Fatalf("unexpected external Bitcoin wiring: %#v", values)
+	}
+}
 
 func TestFedimintGuardianComposeUsesIrohAndBitcoind(t *testing.T) {
 	paths := fedimintGuardianPaths{

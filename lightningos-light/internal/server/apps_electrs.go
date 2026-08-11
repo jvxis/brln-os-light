@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 const (
@@ -31,8 +33,10 @@ type electrsPaths struct {
 type electrsRuntimeValues struct {
 	BitcoinRPCUser string
 	BitcoinRPCPass string
+	BitcoinRPCHost string
 	BitcoinRPCPort int
 	Network        string
+	BitcoinP2PHost string
 	BitcoinP2PPort int
 }
 
@@ -123,9 +127,6 @@ func (s *Server) applyElectrs(ctx context.Context) error {
 	}
 
 	bitcoinPaths := bitcoinCoreAppPaths()
-	if !fileExists(bitcoinPaths.ComposePath) {
-		return errors.New("Electrs requires the Bitcoin Core app to be installed")
-	}
 
 	paths := electrsAppPaths()
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
@@ -167,18 +168,45 @@ func (s *Server) resolveElectrsRuntimeValues(ctx context.Context, bitcoinPaths b
 	// the same docker-exec ladder readBitcoinCoreConfig uses — direct ReadFile
 	// would silently permission-deny and fall back to treating the node as
 	// mainnet, misconfiguring electrs.
-	rawConf, err := readBitcoinCoreConfig(ctx, bitcoinPaths)
+	info, err := fetchBitcoinInfo(ctx, localCfg.Host, localCfg.User, localCfg.Pass)
 	if err != nil {
-		return electrsRuntimeValues{}, fmt.Errorf("failed to read bitcoin.conf for chain detection: %w", err)
+		return electrsRuntimeValues{}, fmt.Errorf("failed to detect local Bitcoin chain: %w", err)
 	}
-	network, p2pPort := detectBitcoinCoreChain(rawConf)
+	network, p2pPort := electrsNetworkAndP2PPort(info.Chain)
+	rpcHost := "bitcoind"
+	p2pHost := "bitcoind"
+	if !fileExists(bitcoinPaths.ComposePath) {
+		if !isLocalRPCHost(localCfg.Host) {
+			return electrsRuntimeValues{}, fmt.Errorf("local bitcoin RPC host is not local: %s", localCfg.Host)
+		}
+		if err := ensureLocalExternalBitcoinConsumerNetwork(ctx); err != nil {
+			return electrsRuntimeValues{}, err
+		}
+		rpcHost = appmanifest.BitcoinConsumerHostGateway
+		p2pHost = appmanifest.BitcoinConsumerHostGateway
+	}
 	return electrsRuntimeValues{
 		BitcoinRPCUser: localCfg.User,
 		BitcoinRPCPass: localCfg.Pass,
+		BitcoinRPCHost: rpcHost,
 		BitcoinRPCPort: rpcPort,
 		Network:        network,
+		BitcoinP2PHost: p2pHost,
 		BitcoinP2PPort: p2pPort,
 	}, nil
+}
+
+func electrsNetworkAndP2PPort(chain string) (string, int) {
+	switch strings.ToLower(strings.TrimSpace(chain)) {
+	case "test", "testnet", "testnet3", "testnet4":
+		return "testnet", 18333
+	case "signet":
+		return "signet", 38333
+	case "regtest":
+		return "regtest", 18444
+	default:
+		return "bitcoin", 8333
+	}
 }
 
 // detectBitcoinCoreChain scans a bitcoin.conf body for a top-level chain
@@ -241,8 +269,8 @@ func electrsComposeContents(_ electrsPaths, values electrsRuntimeValues) string 
     command:
       - --network=%s
       - --db-dir=/data/db
-      - --daemon-rpc-addr=bitcoind:%d
-      - --daemon-p2p-addr=bitcoind:%d
+      - --daemon-rpc-addr=%s:%d
+      - --daemon-p2p-addr=%s:%d
       - --electrum-rpc-addr=0.0.0.0:%d
       - --monitoring-addr=0.0.0.0:%d
       - --cookie-file=/run/bitcoin.cookie
@@ -265,7 +293,9 @@ volumes:
 		electrsMonitorPort, electrsMonitorPort,
 		electrsVolumeName,
 		values.Network,
+		values.BitcoinRPCHost,
 		values.BitcoinRPCPort,
+		values.BitcoinP2PHost,
 		values.BitcoinP2PPort,
 		electrsRPCPort,
 		electrsMonitorPort,
@@ -314,12 +344,10 @@ func (s *Server) fetchElectrsStatus(ctx context.Context) electrsStatus {
 		out.IndexHeight = indexHeight
 	}
 
-	bitcoinPaths := bitcoinCoreAppPaths()
-	if fileExists(bitcoinPaths.ComposePath) {
-		chainCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		info, err := fetchBitcoinLocalChainInfo(chainCtx, bitcoinPaths)
-		if err == nil {
+	chainCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if cfg, err := readBitcoinLocalRPCConfig(chainCtx); err == nil {
+		if info, err := fetchBitcoinInfo(chainCtx, cfg.Host, cfg.User, cfg.Pass); err == nil {
 			out.TipHeight = info.Blocks
 		}
 	}

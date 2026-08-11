@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
@@ -35,6 +36,7 @@ type mempoolPaths struct {
 type mempoolRuntimeValues struct {
 	BitcoinRPCUser string
 	BitcoinRPCPass string
+	BitcoinRPCHost string
 	BitcoinRPCPort int
 	DBPassword     string
 	DBRootPassword string
@@ -127,9 +129,6 @@ func (s *Server) applyMempool(ctx context.Context) error {
 	}
 
 	bitcoinPaths := bitcoinCoreAppPaths()
-	if !fileExists(bitcoinPaths.ComposePath) {
-		return errors.New("Mempool requires the Bitcoin Core app to be installed")
-	}
 	if !fileExists(electrsAppPaths().ComposePath) {
 		return errors.New("Mempool requires the Electrs app to be installed")
 	}
@@ -198,10 +197,21 @@ func (s *Server) resolveMempoolRuntimeValues(ctx context.Context, bitcoinPaths b
 		return mempoolRuntimeValues{}, errors.New("local bitcoin RPC credentials missing")
 	}
 	_, rpcPort := parseMainchainRPC(localCfg.Host)
+	rpcHost := "bitcoind"
+	if !fileExists(bitcoinPaths.ComposePath) {
+		if !isLocalRPCHost(localCfg.Host) {
+			return mempoolRuntimeValues{}, fmt.Errorf("local bitcoin RPC host is not local: %s", localCfg.Host)
+		}
+		if err := ensureLocalExternalBitcoinConsumerNetwork(ctx); err != nil {
+			return mempoolRuntimeValues{}, err
+		}
+		rpcHost = appmanifest.BitcoinConsumerHostGateway
+	}
 
 	values := mempoolRuntimeValues{
 		BitcoinRPCUser: localCfg.User,
 		BitcoinRPCPass: localCfg.Pass,
+		BitcoinRPCHost: rpcHost,
 		BitcoinRPCPort: rpcPort,
 	}
 
@@ -236,6 +246,7 @@ func ensureMempoolEnv(paths mempoolPaths, values mempoolRuntimeValues) error {
 	required := [][2]string{
 		{"MEMPOOL_BITCOIN_RPC_USER", values.BitcoinRPCUser},
 		{"MEMPOOL_BITCOIN_RPC_PASS", values.BitcoinRPCPass},
+		{"MEMPOOL_BITCOIN_RPC_HOST", values.BitcoinRPCHost},
 		{"MEMPOOL_BITCOIN_RPC_PORT", strconv.Itoa(values.BitcoinRPCPort)},
 		{"MEMPOOL_DB_PASSWORD", values.DBPassword},
 		{"MEMPOOL_DB_ROOT_PASSWORD", values.DBRootPassword},
@@ -308,7 +319,7 @@ func mempoolComposeContents(_ mempoolPaths) string {
       ELECTRUM_HOST: "electrs"
       ELECTRUM_PORT: "50001"
       ELECTRUM_TLS_ENABLED: "false"
-      CORE_RPC_HOST: "bitcoind"
+      CORE_RPC_HOST: "${MEMPOOL_BITCOIN_RPC_HOST}"
       CORE_RPC_PORT: "${MEMPOOL_BITCOIN_RPC_PORT}"
       CORE_RPC_USERNAME: "${MEMPOOL_BITCOIN_RPC_USER}"
       CORE_RPC_PASSWORD: "${MEMPOOL_BITCOIN_RPC_PASS}"

@@ -28,6 +28,8 @@ func TestDefaultBitcoinCoreConfigAllowsDedicatedConsumerNetwork(t *testing.T) {
 		"rpcbind=0.0.0.0:8332",
 		"rpcallowip=127.0.0.1",
 		"rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet,
+		"natpmp=0",
+		"upnp=0",
 	} {
 		if !strings.Contains(raw, expected+"\n") {
 			t.Fatalf("default bitcoin.conf missing %q", expected)
@@ -50,10 +52,29 @@ func TestEnsureBitcoinCoreConsumerRPCValuesMigratesOnce(t *testing.T) {
 	if count := strings.Count(updated, "rpcallowip="+appmanifest.BitcoinCoreRPCSubnet+"\n"); count != 1 {
 		t.Fatalf("expected one dedicated subnet entry, got %d", count)
 	}
+	for _, expected := range []string{"natpmp=0\n", "upnp=0\n"} {
+		if !strings.Contains(updated, expected) {
+			t.Fatalf("migration missing %q", strings.TrimSpace(expected))
+		}
+	}
 
 	again, changed := ensureBitcoinCoreConsumerRPCValues(updated)
 	if changed || again != updated {
 		t.Fatal("consumer RPC baseline migration is not idempotent")
+	}
+}
+
+func TestEnsureBitcoinCoreConsumerRPCValuesHardensPortMappingBeforeSections(t *testing.T) {
+	legacy := "server=1\nnatpmp=1\nupnp=1\n[regtest]\nrpcport=18443\n"
+	updated, changed := ensureBitcoinCoreConsumerRPCValues(legacy)
+	if !changed || strings.Contains(updated, "natpmp=1") || strings.Contains(updated, "upnp=1") {
+		t.Fatalf("automatic port mapping was not disabled:\n%s", updated)
+	}
+	section := strings.Index(updated, "[regtest]")
+	for _, expected := range []string{"natpmp=0", "upnp=0", "rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet} {
+		if index := strings.Index(updated, expected); index < 0 || index > section {
+			t.Fatalf("top-level baseline %q misplaced:\n%s", expected, updated)
+		}
 	}
 }
 

@@ -66,6 +66,10 @@ type fakePrivilegedServiceClient struct {
 	storageDryRun       bool
 	storageStatus       string
 	storageErr          error
+	networkCalls        int
+	networkDryRun       bool
+	networkStatus       string
+	networkErr          error
 	configCalls         int
 	configOperation     string
 	configDataDir       string
@@ -73,6 +77,20 @@ type fakePrivilegedServiceClient struct {
 	configDryRun        bool
 	configStatus        string
 	configErr           error
+}
+
+func (client *fakePrivilegedServiceClient) EnsureBitcoinConsumerNetwork(_ context.Context, dryRun bool) (string, error) {
+	client.networkCalls++
+	client.networkDryRun = dryRun
+	status := client.networkStatus
+	if status == "" {
+		if dryRun {
+			status = "validated"
+		} else {
+			status = "ready"
+		}
+	}
+	return status, client.networkErr
 }
 
 func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID string, action string, dryRun bool) error {
@@ -611,6 +629,35 @@ func TestEnsureBitcoinCoreStorageWithBrokerModes(t *testing.T) {
 			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
 			handled, err := EnsureBitcoinCoreStorageWithBroker(context.Background(), "/mnt/bitcoin-ssd/bitcoin")
 			if handled != test.wantHandled || (err != nil) != test.wantError || client.storageCalls != test.wantCalls || client.storageDryRun != test.wantDryRun || (client.storageCalls > 0 && client.storageDataDir != "/mnt/bitcoin-ssd/bitcoin") {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+		})
+	}
+}
+
+func TestEnsureBitcoinConsumerNetworkWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		status      string
+		brokerErr   error
+		wantHandled bool
+		wantErr     bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "enforce", mode: "enforce", status: "ready", wantHandled: true, wantCalls: 1},
+		{name: "enforce failure", mode: "enforce", brokerErr: errors.New("rejected"), wantHandled: true, wantErr: true, wantCalls: 1},
+		{name: "enforce invalid state", mode: "enforce", status: "invalid", wantHandled: true, wantErr: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", status: "validated", wantCalls: 1, wantDryRun: true},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, networkStatus: test.status, networkErr: test.brokerErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := EnsureBitcoinConsumerNetworkWithBroker(context.Background())
+			if handled != test.wantHandled || (err != nil) != test.wantErr || client.networkCalls != test.wantCalls || client.networkDryRun != test.wantDryRun {
 				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
 			}
 		})

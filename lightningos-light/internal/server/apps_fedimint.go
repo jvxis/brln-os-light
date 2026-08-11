@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/config"
 	"lightningos-light/internal/system"
 
@@ -465,12 +466,28 @@ func fedimintLndRPCAddr(cfg *config.Config) string {
 	return "https://" + net.JoinHostPort("host.docker.internal", strconv.Itoa(port))
 }
 
-func (s *Server) resolveFedimintBitcoinBackend(_ context.Context, appName string) (fedimintBitcoinBackendValues, error) {
-	cfg, ok := readBitcoindRPCConfigFromLNDConf()
-	if !ok {
-		return fedimintBitcoinBackendValues{}, fmt.Errorf("bitcoin RPC credentials unavailable: configure bitcoind.rpchost, bitcoind.rpcuser and bitcoind.rpcpass in %s before starting %s", lndConfPath, appName)
+func (s *Server) resolveFedimintBitcoinBackend(ctx context.Context, appName string) (fedimintBitcoinBackendValues, error) {
+	var cfg bitcoinRPCConfig
+	if readBitcoinSource() == "remote" {
+		var ok bool
+		cfg, ok = readBitcoindRPCConfigFromLNDConf()
+		if !ok {
+			return fedimintBitcoinBackendValues{}, fmt.Errorf("bitcoin RPC credentials unavailable: configure bitcoind.rpchost, bitcoind.rpcuser and bitcoind.rpcpass in %s before starting %s", lndConfPath, appName)
+		}
+	} else {
+		var err error
+		cfg, err = readBitcoinLocalRPCConfig(ctx)
+		if err != nil {
+			return fedimintBitcoinBackendValues{}, fmt.Errorf("bitcoin RPC credentials unavailable before starting %s: %w", appName, err)
+		}
 	}
-	return fedimintBitcoinBackendFromConfig(cfg), nil
+	values := fedimintBitcoinBackendFromConfig(cfg)
+	if values.NeedsLocalRPCBridgeUFW {
+		if err := ensureLocalExternalBitcoinConsumerNetwork(ctx); err != nil {
+			return fedimintBitcoinBackendValues{}, err
+		}
+	}
+	return values, nil
 }
 
 func fedimintBitcoinBackendFromConfig(cfg bitcoinRPCConfig) fedimintBitcoinBackendValues {
@@ -485,7 +502,8 @@ func fedimintBitcoinBackendFromConfig(cfg bitcoinRPCConfig) fedimintBitcoinBacke
 			values.URL = "http://" + net.JoinHostPort("bitcoind", strconv.Itoa(port))
 			values.UseBitcoinCoreNetwork = true
 		} else {
-			values.URL = "http://" + net.JoinHostPort("host.docker.internal", strconv.Itoa(port))
+			values.URL = "http://" + net.JoinHostPort(appmanifest.BitcoinConsumerHostGateway, strconv.Itoa(port))
+			values.UseBitcoinCoreNetwork = true
 			values.NeedsLocalRPCBridgeUFW = true
 			values.LocalExternalBitcoinPort = port
 		}
@@ -774,7 +792,7 @@ func ensureFedimintGatewayUfwAccess(ctx context.Context) error {
 	return lastErr
 }
 
-func ensureFedimintBitcoinBackendUfwAccess(ctx context.Context, values fedimintBitcoinBackendValues, bridgeName func(context.Context) (string, error)) error {
+func ensureFedimintBitcoinBackendUfwAccess(ctx context.Context, values fedimintBitcoinBackendValues, _ func(context.Context) (string, error)) error {
 	if !values.NeedsLocalRPCBridgeUFW || values.LocalExternalBitcoinPort <= 0 {
 		return nil
 	}
@@ -783,16 +801,11 @@ func ensureFedimintBitcoinBackendUfwAccess(ctx context.Context, values fedimintB
 		return nil
 	}
 
-	var lastErr error
-	if err := allowFedimintBridgePort(ctx, fedimintDockerBridgeName, values.LocalExternalBitcoinPort); err != nil {
-		lastErr = err
+	bridge, err := dockerComposeBridgeName(ctx, appmanifest.BitcoinConsumerNetwork)
+	if err != nil {
+		return fmt.Errorf("failed to resolve bitcoin consumer bridge: %w", err)
 	}
-	if bridge, bridgeErr := bridgeName(ctx); bridgeErr == nil && bridge != "" {
-		if err := allowFedimintBridgePort(ctx, bridge, values.LocalExternalBitcoinPort); err != nil {
-			lastErr = err
-		}
-	}
-	return lastErr
+	return allowFedimintBridgePort(ctx, bridge, values.LocalExternalBitcoinPort)
 }
 
 func allowFedimintBridgePort(ctx context.Context, bridge string, port int) error {

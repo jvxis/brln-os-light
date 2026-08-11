@@ -293,6 +293,32 @@ removed only after broker ensure succeeds. All three operations fail closed
 outside broker `enforce` mode. Audit events contain operation outcomes but no
 path, config content, RPC username, or RPC password.
 
+### `bitcoin.consumer-network.ensure`
+
+This mutating operation accepts only `{}`. The caller cannot provide a Docker
+network name, CIDR, gateway, label, interface, port, executable, or firewall
+argument. A real request creates or validates exactly:
+
+```text
+network: bitcoincore_default
+driver/scope: bridge/local
+subnet: 172.31.253.0/24
+gateway: 172.31.253.1
+labels: com.docker.compose.project=bitcoincore
+        com.docker.compose.network=default
+```
+
+An existing network is preserved only if all fields match; incompatible or
+uninspectable state fails closed and is never deleted or replaced. If UFW is
+active, the broker resolves the bridge solely from the validated hexadecimal
+Docker network ID and applies fixed mainnet RPC, P2P, and ZMQ TCP rules
+only on that bridge. Inactive or unavailable UFW is not modified. `dry_run`
+validates the closed request without invoking Docker or UFW.
+
+The operation owns only the consumer boundary. It never reads or writes an
+external `bitcoin.conf` and never starts, stops, restarts, or removes an
+external/systemd Bitcoin service.
+
 ### `packages.feature.ensure` and `packages.feature.status`
 
 The first shared package capability accepts only this closed request:

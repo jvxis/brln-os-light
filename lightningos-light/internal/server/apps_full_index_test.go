@@ -1,6 +1,45 @@
 package server
 
-import "testing"
+import (
+	"net/http/httptest"
+	"testing"
+)
+
+func TestFullIndexAvailabilityAcceptsNativeLocalBitcoinRPC(t *testing.T) {
+	rpc := httptest.NewServer(bitcoinRPCMockHandler(t, true, false, false))
+	defer rpc.Close()
+	availability := fullIndexBitcoinConfigAvailability(t.Context(), bitcoinRPCConfig{
+		Host: rpc.URL,
+		User: "rpc-user",
+		Pass: "rpc-pass",
+	})
+	if !availability.Available {
+		t.Fatalf("native local Bitcoin RPC rejected: %#v", availability)
+	}
+}
+
+func TestFullIndexAvailabilityRejectsUnsafeNativeBitcoinModes(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		txIndex bool
+		pruned  bool
+		syncing bool
+		reason  string
+	}{
+		{name: "pruned", txIndex: true, pruned: true, reason: fullIndexUnavailableUnpruned},
+		{name: "syncing", txIndex: true, syncing: true, reason: fullIndexUnavailableBitcoinSync},
+		{name: "txindex missing", reason: fullIndexUnavailableTxIndex},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rpc := httptest.NewServer(bitcoinRPCMockHandler(t, test.txIndex, test.pruned, test.syncing))
+			defer rpc.Close()
+			availability := fullIndexBitcoinConfigAvailability(t.Context(), bitcoinRPCConfig{Host: rpc.URL, User: "u", Pass: "p"})
+			if availability.Available || availability.Reason != test.reason {
+				t.Fatalf("availability=%#v, want reason %q", availability, test.reason)
+			}
+		})
+	}
+}
 
 func TestParseBitcoinCoreBool(t *testing.T) {
 	raw := `

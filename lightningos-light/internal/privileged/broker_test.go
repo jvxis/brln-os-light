@@ -108,25 +108,33 @@ func (storage *recordingBitcoinStorage) Ensure(_ context.Context, dataDir string
 }
 
 type recordingApps struct {
-	calls             int
-	inspectCalls      int
-	removeCalls       int
-	dockerCalls       int
-	dockerStatusCalls int
-	prepareCalls      int
-	statusCalls       int
-	probeCalls        int
-	firewallCalls     int
-	appID             string
-	action            AppLifecycleAction
-	dryRun            bool
-	inspection        AppInspection
-	err               error
-	imageState        AppImageState
-	imageProbe        AppImageProbe
-	firewallState     AppFirewallState
-	dockerState       DockerRuntimeState
-	variant           appmanifest.CPUMinerImageVariant
+	calls                int
+	inspectCalls         int
+	removeCalls          int
+	dockerCalls          int
+	dockerStatusCalls    int
+	prepareCalls         int
+	statusCalls          int
+	probeCalls           int
+	firewallCalls        int
+	consumerNetworkCalls int
+	appID                string
+	action               AppLifecycleAction
+	dryRun               bool
+	inspection           AppInspection
+	err                  error
+	imageState           AppImageState
+	imageProbe           AppImageProbe
+	firewallState        AppFirewallState
+	consumerNetworkState BitcoinConsumerNetworkState
+	dockerState          DockerRuntimeState
+	variant              appmanifest.CPUMinerImageVariant
+}
+
+func (apps *recordingApps) EnsureBitcoinConsumerNetwork(_ context.Context, dryRun bool) (BitcoinConsumerNetworkState, error) {
+	apps.consumerNetworkCalls++
+	apps.dryRun = dryRun
+	return apps.consumerNetworkState, apps.err
 }
 
 func (apps *recordingApps) EnsureDockerRuntime(_ context.Context, dryRun bool) (DockerRuntimeState, error) {
@@ -668,6 +676,40 @@ func TestBrokerBitcoinStorageEnrollmentIsTypedLockedAndSanitized(t *testing.T) {
 				t.Fatalf("response/locker/storage=%#v/%#v/%#v", response, locker, test.storage)
 			}
 			if !test.wantOK && (response.Error == nil || response.Error.Code != "bitcoin_storage_failed" || response.Error.Message != "bitcoin storage enrollment failed") {
+				t.Fatalf("unsanitized failure response: %#v", response)
+			}
+		})
+	}
+}
+
+func TestBrokerBitcoinConsumerNetworkIsClosedLockedAndSanitized(t *testing.T) {
+	params, err := MarshalParams(struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		dryRun    bool
+		apps      *recordingApps
+		wantOK    bool
+		wantLocks int
+	}{
+		{name: "real", apps: &recordingApps{consumerNetworkState: BitcoinConsumerNetworkState{Status: "ready"}}, wantOK: true, wantLocks: 1},
+		{name: "dry run", dryRun: true, apps: &recordingApps{consumerNetworkState: BitcoinConsumerNetworkState{Status: "validated"}}, wantOK: true},
+		{name: "failure", apps: &recordingApps{err: errors.New("sensitive docker detail")}, wantLocks: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			locker := &recordingLocker{}
+			broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+			broker.Apps = test.apps
+			response := broker.Handle(context.Background(), Request{
+				Version: ProtocolVersion, RequestID: "bitcoin_consumer_network_1", Operation: OperationBitcoinConsumerNetworkEnsure,
+				DryRun: test.dryRun, Params: params,
+			})
+			if response.OK != test.wantOK || locker.locks != test.wantLocks || test.apps.consumerNetworkCalls != 1 || test.apps.dryRun != test.dryRun {
+				t.Fatalf("response/locker/apps=%#v/%#v/%#v", response, locker, test.apps)
+			}
+			if !test.wantOK && (response.Error == nil || response.Error.Code != "bitcoin_consumer_network_failed" || response.Error.Message != "bitcoin consumer network ensure failed") {
 				t.Fatalf("unsanitized failure response: %#v", response)
 			}
 		})

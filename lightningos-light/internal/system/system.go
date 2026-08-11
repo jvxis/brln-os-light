@@ -40,6 +40,43 @@ type bitcoinCoreConfigPrivilegedClient interface {
 	WriteBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (status string, err error)
 }
 
+type bitcoinConsumerNetworkPrivilegedClient interface {
+	EnsureBitcoinConsumerNetwork(ctx context.Context, dryRun bool) (status string, err error)
+}
+
+func EnsureBitcoinConsumerNetworkWithBroker(ctx context.Context) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	networkClient, ok := client.(bitcoinConsumerNetworkPrivilegedClient)
+	switch client.Mode() {
+	case "enforce":
+		if !ok {
+			return true, errors.New("bitcoin consumer network broker capability is unavailable")
+		}
+		status, err := networkClient.EnsureBitcoinConsumerNetwork(ctx, false)
+		if err != nil {
+			return true, err
+		}
+		if status != "ready" {
+			return true, errors.New("bitcoin consumer network ensure returned an invalid state")
+		}
+		return true, nil
+	case "shadow":
+		if ok {
+			shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			_, _ = networkClient.EnsureBitcoinConsumerNetwork(shadowCtx, true)
+		}
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
 func EnsureBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string, content string) (bool, error) {
 	client, configClient := configuredBitcoinCoreConfigClient()
 	if client == nil {

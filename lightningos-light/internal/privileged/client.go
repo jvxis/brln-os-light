@@ -311,6 +311,27 @@ func (client *Client) EnsureBitcoinCoreStorage(ctx context.Context, dataDir stri
 	return result.Status, nil
 }
 
+func (client *Client) EnsureBitcoinConsumerNetwork(ctx context.Context, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBitcoinConsumerNetworkEnsure, struct{}{}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	var result BitcoinConsumerNetworkState
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return "", errors.New("invalid broker bitcoin consumer network response")
+	}
+	if dryRun && result.Status == "validated" {
+		if client != nil && client.logger != nil {
+			client.logger.Printf("privileged broker shadow validation accepted bitcoin.consumer-network.ensure")
+		}
+		return result.Status, nil
+	}
+	if result.Status != "ready" {
+		return "", errors.New("invalid broker bitcoin consumer network state")
+	}
+	return result.Status, nil
+}
+
 func (client *Client) EnsureBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (string, error) {
 	response, err := client.call(ctx, OperationBitcoinConfigEnsure, BitcoinCoreConfigWriteParams{DataDir: dataDir, Content: content}, dryRun)
 	if err != nil {

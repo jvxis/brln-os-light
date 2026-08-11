@@ -36,34 +36,38 @@ type bitcoinIndexInfoRPCResponse struct {
 
 func (s *Server) fullIndexAppAvailability(ctx context.Context) fullIndexAppAvailability {
 	if readBitcoinSource() != "local" {
-		return fullIndexUnavailable(fullIndexUnavailableBitcoinSource, "Electrs and Mempool require Bitcoin Core from the App Store as the active Bitcoin source.")
-	}
-
-	paths := bitcoinCoreAppPaths()
-	if !fileExists(paths.ComposePath) {
-		return fullIndexUnavailable(fullIndexUnavailableBitcoinApp, "Install Bitcoin Core from the App Store before installing Electrs or Mempool.")
+		return fullIndexUnavailable(fullIndexUnavailableBitcoinSource, "Electrs and Mempool require an active local Bitcoin Core source.")
 	}
 
 	checkCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	raw, err := readBitcoinCoreConfig(checkCtx, paths)
+	cfg, err := readBitcoinLocalRPCConfig(checkCtx)
 	if err != nil {
-		return fullIndexUnavailable(fullIndexUnavailableBitcoinRPC, "Bitcoin Core config could not be read. Start Bitcoin Core and try again.")
+		return fullIndexUnavailable(fullIndexUnavailableBitcoinRPC, "Local Bitcoin RPC config could not be read. Check bitcoin.conf or lnd.conf.")
 	}
-	if pruned, _ := parseBitcoinCorePrune(raw); pruned {
+	return fullIndexBitcoinConfigAvailability(checkCtx, cfg)
+}
+
+func fullIndexBitcoinConfigAvailability(ctx context.Context, cfg bitcoinRPCConfig) fullIndexAppAvailability {
+	if !isLocalRPCHost(cfg.Host) {
+		return fullIndexUnavailable(fullIndexUnavailableBitcoinSource, fmt.Sprintf("Local Bitcoin RPC host is not local: %s", cfg.Host))
+	}
+	if strings.TrimSpace(cfg.User) == "" || strings.TrimSpace(cfg.Pass) == "" {
+		return fullIndexUnavailable(fullIndexUnavailableBitcoinRPC, "Local Bitcoin RPC credentials are missing.")
+	}
+	info, err := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
+	if err != nil {
+		return fullIndexUnavailable(fullIndexUnavailableBitcoinRPC, "Local Bitcoin RPC is unavailable. Start Bitcoin Core and try again.")
+	}
+	if info.Pruned {
 		return fullIndexUnavailable(fullIndexUnavailableUnpruned, "Electrs and Mempool require a non-pruned Bitcoin Core node. Disable pruning before installing.")
 	}
-
-	if chainInfo, err := fetchBitcoinLocalChainInfo(checkCtx, paths); err == nil && chainInfo.Pruned {
-		return fullIndexUnavailable(fullIndexUnavailableUnpruned, "Electrs and Mempool require a non-pruned Bitcoin Core node. Disable pruning before installing.")
+	if bitcoinInfoStillSyncing(info) {
+		return fullIndexUnavailable(fullIndexUnavailableBitcoinSync, "Electrs and Mempool require Bitcoin Core to be fully synced.")
 	}
-
-	txIndexReady, txIndexKnown, err := bitcoinCoreTxIndexReady(checkCtx, paths, raw)
-	if err != nil {
-		return fullIndexUnavailable(fullIndexUnavailableTxIndex, "Electrs and Mempool require txindex=1 before installing.")
-	}
-	if !txIndexKnown || !txIndexReady {
+	txIndexReady, txIndexKnown, err := bitcoinRPCConfigTxIndexReady(ctx, cfg)
+	if err != nil || !txIndexKnown || !txIndexReady {
 		return fullIndexUnavailable(fullIndexUnavailableTxIndex, "Electrs and Mempool require txindex=1 before installing.")
 	}
 

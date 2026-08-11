@@ -42,6 +42,7 @@ type AppManager interface {
 	ImageStatus(ctx context.Context, appID string, variant appmanifest.AppImageVariant) (AppImageState, error)
 	ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error)
 	EnsureFirewallAccess(ctx context.Context, appID string, dryRun bool) (AppFirewallState, error)
+	EnsureBitcoinConsumerNetwork(ctx context.Context, dryRun bool) (BitcoinConsumerNetworkState, error)
 }
 
 type PackageManager interface {
@@ -379,6 +380,15 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "bitcoin_config_failed", errors.New("bitcoin config read failed")
 		}
 		return state, "", nil
+	case OperationBitcoinConsumerNetworkEnsure:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("app manager is unavailable")
+		}
+		state, err := broker.Apps.EnsureBitcoinConsumerNetwork(ctx, request.DryRun)
+		if err != nil {
+			return nil, "bitcoin_consumer_network_failed", errors.New("bitcoin consumer network ensure failed")
+		}
+		return state, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -415,7 +425,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure:
 		return true
 	default:
 		return false
@@ -424,7 +434,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure:
 		return true
 	default:
 		return false

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
@@ -256,7 +257,7 @@ func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPool
 	if strings.TrimSpace(localCfg.User) == "" || strings.TrimSpace(localCfg.Pass) == "" {
 		return publicPoolRuntimeValues{}, errors.New("local bitcoin RPC credentials missing")
 	}
-	localHost, localPort := parseMainchainRPC(localCfg.Host)
+	_, localPort := parseMainchainRPC(localCfg.Host)
 
 	if fileExists(bitcoinCoreAppPaths().ComposePath) {
 		values.BitcoinMode = "local_app"
@@ -269,12 +270,16 @@ func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPool
 		return values, nil
 	}
 
+	if err := ensureLocalExternalBitcoinConsumerNetwork(ctx); err != nil {
+		return publicPoolRuntimeValues{}, err
+	}
 	values.BitcoinMode = "local_external"
-	values.BitcoinRPCURL = publicPoolDockerRPCURL(localHost)
+	values.BitcoinRPCURL = "http://" + appmanifest.BitcoinConsumerHostGateway
 	values.BitcoinRPCPort = localPort
 	values.BitcoinRPCUser = localCfg.User
 	values.BitcoinRPCPass = localCfg.Pass
-	values.BitcoinZMQHost = publicPoolExternalZMQHost(localCfg.ZMQBlock)
+	values.BitcoinZMQHost = publicPoolDockerZMQHost(localCfg.ZMQBlock, appmanifest.BitcoinConsumerHostGateway)
+	values.UseBitcoinCoreNetwork = true
 	values.NeedsLocalRPCBridgeUFW = true
 	values.LocalExternalBitcoinPort = localPort
 	return values, nil
@@ -578,18 +583,7 @@ func (s *Server) resolvePublicPoolUfwRuntimeValues(ctx context.Context) (publicP
 }
 
 func publicPoolBridgeName(ctx context.Context) (string, error) {
-	out, err := system.RunCommandWithSudo(ctx, "docker", "network", "inspect", "publicpool_default", "--format", "{{.Id}}")
-	if err != nil {
-		return "", err
-	}
-	id := strings.TrimSpace(out)
-	if id == "" || id == "<no value>" {
-		return "", errors.New("publicpool_default network id not found")
-	}
-	if len(id) > 12 {
-		id = id[:12]
-	}
-	return "br-" + id, nil
+	return dockerComposeBridgeName(ctx, appmanifest.BitcoinConsumerNetwork)
 }
 
 func publicPoolUfwCommand(ctx context.Context, port int) string {
@@ -608,5 +602,5 @@ func publicPoolUfwCommandForBridge(bridge string, port int) string {
 	if bridge != "" {
 		return fmt.Sprintf("sudo ufw allow in on %s to any port %d proto tcp", bridge, port)
 	}
-	return fmt.Sprintf("NET_ID=$(sudo docker network inspect publicpool_default --format '{{.Id}}') && BR=\"br-$(printf '%%.12s' \"$NET_ID\")\" && sudo ufw allow in on \"$BR\" to any port %d proto tcp", port)
+	return fmt.Sprintf("NET_ID=$(sudo docker network inspect %s --format '{{.Id}}') && BR=\"br-$(printf '%%.12s' \"$NET_ID\")\" && sudo ufw allow in on \"$BR\" to any port %d proto tcp", appmanifest.BitcoinConsumerNetwork, port)
 }

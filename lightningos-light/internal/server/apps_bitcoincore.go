@@ -202,6 +202,9 @@ func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoin
 	if err := ensureDockerForCatalogApp(ctx); err != nil {
 		return err
 	}
+	if err := ensureBitcoinConsumerNetwork(ctx); err != nil {
+		return err
+	}
 	if err := ensureBitcoinCoreImage(ctx); err != nil {
 		return err
 	}
@@ -441,6 +444,8 @@ func defaultBitcoinCoreConfig() (string, error) {
 		"server=1",
 		"printtoconsole=1",
 		"txindex=1",
+		"natpmp=0",
+		"upnp=0",
 		"rpcuser=lightningos",
 		"rpcpassword=" + password,
 		"rpcbind=0.0.0.0:8332",
@@ -484,9 +489,16 @@ func ensureBitcoinCoreConsumerRPCValues(raw string) (string, bool) {
 		lines = nil
 	}
 	changed := normalized != ensureTrailingNewline(strings.TrimRight(strings.ReplaceAll(raw, "\r\n", "\n"), "\n"))
+	sectionIndex := len(lines)
+	for index, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			sectionIndex = index
+			break
+		}
+	}
 	for _, expected := range []string{"127.0.0.1", appmanifest.BitcoinCoreRPCSubnet} {
 		found := false
-		for _, line := range lines {
+		for _, line := range lines[:sectionIndex] {
 			key, value, ok := bitcoinCoreConfigKeyValue(line)
 			if ok && strings.EqualFold(key, "rpcallowip") && value == expected {
 				found = true
@@ -494,7 +506,31 @@ func ensureBitcoinCoreConsumerRPCValues(raw string) (string, bool) {
 			}
 		}
 		if !found {
-			lines = append(lines, "rpcallowip="+expected)
+			lines = append(lines, "")
+			copy(lines[sectionIndex+1:], lines[sectionIndex:])
+			lines[sectionIndex] = "rpcallowip=" + expected
+			sectionIndex++
+			changed = true
+		}
+	}
+	for _, key := range []string{"natpmp", "upnp"} {
+		found := false
+		for index := 0; index < sectionIndex; index++ {
+			currentKey, value, ok := bitcoinCoreConfigKeyValue(lines[index])
+			if !ok || !strings.EqualFold(currentKey, key) {
+				continue
+			}
+			found = true
+			if value != "0" {
+				lines[index] = key + "=0"
+				changed = true
+			}
+		}
+		if !found {
+			lines = append(lines, "")
+			copy(lines[sectionIndex+1:], lines[sectionIndex:])
+			lines[sectionIndex] = key + "=0"
+			sectionIndex++
 			changed = true
 		}
 	}

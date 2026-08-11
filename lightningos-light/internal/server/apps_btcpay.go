@@ -292,15 +292,20 @@ func (s *Server) resolveBtcpayLocalWiring(ctx context.Context) (btcpayBitcoinWir
 	if !isLocalRPCHost(cfg.Host) {
 		return btcpayBitcoinWiring{}, fmt.Errorf("local bitcoin RPC host is not local: %s", cfg.Host)
 	}
+	if err := ensureLocalExternalBitcoinConsumerNetwork(ctx); err != nil {
+		return btcpayBitcoinWiring{}, err
+	}
 	_, port := parseMainchainRPC(cfg.Host)
+	dockerHost := appmanifest.BitcoinConsumerHostGateway
 	return btcpayBitcoinWiring{
-		Source:       "external",
-		RPCURL:       fmt.Sprintf("http://host.docker.internal:%d/", port),
-		RPCUser:      cfg.User,
-		RPCPass:      cfg.Pass,
-		NodeEndpoint: "host.docker.internal:8333",
-		ProbeRPCHost: cfg.Host,
-		ProbeP2P:     "127.0.0.1:8333",
+		Source:             "external",
+		RPCURL:             fmt.Sprintf("http://%s:%d/", dockerHost, port),
+		RPCUser:            cfg.User,
+		RPCPass:            cfg.Pass,
+		NodeEndpoint:       net.JoinHostPort(dockerHost, "8333"),
+		ProbeRPCHost:       cfg.Host,
+		ProbeP2P:           "127.0.0.1:8333",
+		JoinBitcoinNetwork: true,
 	}, nil
 }
 

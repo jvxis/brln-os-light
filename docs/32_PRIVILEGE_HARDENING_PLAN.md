@@ -387,6 +387,51 @@ resolved `bitcoind`, authenticated over the shared network, and confirmed
 `regtest` with `getblockchaininfo`; the Bitcoin container ID and start time did
 not change. No mainnet or persistent blockchain data was used. Evidence is in
 `docs/baselines/privilege-hardening-phase2-bitcoincore-consumer-network-enforce-2026-08-11.json`.
+
+The shared network is now also a closed broker operation for nodes whose local
+Bitcoin Core is a native/systemd service rather than the App Store container.
+The caller cannot choose its name, subnet, gateway, labels, bridge, or firewall
+arguments. The broker creates or validates only `bitcoincore_default` at
+`172.31.253.0/24` with gateway `172.31.253.1`; an existing network with a
+different driver, scope, labels, or IPAM is rejected without replacement. If
+UFW is active, only the compiled Bitcoin RPC, P2P, and ZMQ ports are allowed on
+the bridge derived from the validated Docker network ID. The manager never
+writes, starts, stops, restarts, or removes the external Bitcoin service.
+
+Native Bitcoin has a distinct RPC exposure contract because Docker-to-host
+traffic is source-NATed to a host address before Bitcoin Core applies
+`rpcallowip`. The native service therefore binds RPC only to localhost and the
+private gateway (`rpcbind=127.0.0.1` plus `rpcbind=172.31.253.1`) and uses
+`rpcallowip=0.0.0.0/0`; this is safe only as a complete contract with no RPC
+bind on a LAN/WAN interface and the broker-managed bridge-only UFW rule. The
+App Store Bitcoin container keeps the narrower `rpcallowip=172.31.253.0/24`
+contract because its consumers connect container-to-container without that
+host source NAT. Existing native configurations are detected read-only and
+must be reconciled explicitly by the operator; LightningOS does not silently
+rewrite or restart them.
+
+BTCPay, Electrs, Fedimint, Mempool, and Public Pool now resolve native Bitcoin
+to the fixed gateway and join the shared network. Electrs and Mempool no longer
+require the Bitcoin App Store marker: their full-index gate checks the running
+local node over RPC for synchronization, pruning, and a synced `txindex`.
+Remote Bitcoin modes remain separate and do not create the local consumer
+network.
+
+An Ubuntu 24.04 disposable gate copied `bitcoind` and `bitcoin-cli` from the
+previously verified official LightningOS Bitcoin Core 31.1 image, ran the
+daemon as an unprivileged native systemd service in `regtest`, and reached it
+twice from disposable containers on the fixed network. The service start
+timestamp and config hash remained unchanged across the accepted consumer
+window, the manager stayed active, and no production/mainnet data was used.
+NAT-PMP, UPnP, and discovery were explicitly disabled in the accepted fixture.
+The same finding is enforced for App Store Bitcoin: fresh configs disable
+NAT-PMP and UPnP before first start, and the idempotent existing-node baseline
+sets both to zero only when reconciliation is required.
+The first discarded fixture briefly attempted a NAT-PMP mapping before this
+safety omission was detected; the service was stopped immediately, and the
+accepted rerun verified that no mapping was added. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-bitcoin-native-consumer-enforce-2026-08-11.json`.
+
 Full install gates for each dependent product, the remaining operational
 Bitcoin CLI/log paths, and the mainnet P2P firewall contract remain open.
 

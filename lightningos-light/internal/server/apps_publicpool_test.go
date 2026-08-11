@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 func TestPublicPoolDockerRPCURLUsesHostGatewayForLocalBind(t *testing.T) {
@@ -37,7 +39,7 @@ func TestPublicPoolUfwCommandForBridge(t *testing.T) {
 	}
 
 	fallback := publicPoolUfwCommandForBridge("", 0)
-	if want := "publicpool_default"; !strings.Contains(fallback, want) {
+	if want := appmanifest.BitcoinConsumerNetwork; !strings.Contains(fallback, want) {
 		t.Fatalf("expected fallback command to inspect %q, got %q", want, fallback)
 	}
 	if want := "to any port 8332 proto tcp"; !strings.Contains(fallback, want) {

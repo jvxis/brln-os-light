@@ -451,6 +451,31 @@ before PostgreSQL shuts down its temporary bootstrap server. The accepted gate
 then passed from a clean state. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-btcpay-native-bitcoin-gate-2026-08-11.json`.
 
+BTCPay image preparation has now entered the typed broker boundary before its
+secret-bearing Compose lifecycle. The closed catalog admits only `server`,
+`nbxplorer`, `postgres`, and `tor`; each maps to one fixed catalog image and
+transient unit. The official registry no longer exposes the legacy
+`btcpayserver/btcpayserver:latest` reference, so the current upstream stable
+release is explicitly cataloged as `btcpayserver/btcpayserver:2.4.1`.
+BTCPay's `server` variant nevertheless performs a real pull on every requested
+install/start and status checks the pull unit before accepting a cached image.
+The version constant must be reviewed whenever upstream publishes a stable
+release; the root broker never discovers or accepts an arbitrary tag at
+runtime. NBXplorer 2.6.8, PostgreSQL 16, and Tor 0.4.9.5 remain fixed and
+cache-authoritative, with Tor omitted for clearnet/local Bitcoin sources.
+
+The disposable Ubuntu gate rejected an injected variant, passed dry-run,
+downloaded official BTCPay 2.4.1 at digest
+`sha256:f841a37ae8888bf1aca1e9391352dec5f622fc739b13b4913eebdb30b1c275e2`,
+and then proved refresh-on-request by scheduling a second pull while that same
+image was already cached. The second pull reported the image up to date. All
+three fixed dependencies returned `ready`; no container or Compose project was
+created, the manager remained active, temporary source/broker assets were
+removed, and the VM was shut down gracefully. Bitcoin source resolution and
+LND were not invoked, so the working remote Full Node + local LND contract was
+preserved unchanged. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-btcpay-images-enforce-2026-08-11.json`.
+
 The full BTCPay+LND gate, full-node Electrs/Mempool gates, the remaining
 dependent products, operational Bitcoin CLI/log paths, and the mainnet P2P
 firewall contract remain open. Electrs and Mempool gates must use a synchronized

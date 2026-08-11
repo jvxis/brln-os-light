@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/system"
 
 	"gopkg.in/yaml.v3"
 )
@@ -183,8 +187,48 @@ func TestBtcpayComposeContentsRemoteSource(t *testing.T) {
 }
 
 func TestBtcpayImageTracksLatestStableRelease(t *testing.T) {
-	if btcpayImage != "btcpayserver/btcpayserver:latest" {
+	if btcpayImage != appmanifest.BTCPayServerImage {
+		t.Fatalf("server and catalog BTCPay images differ: %q != %q", btcpayImage, appmanifest.BTCPayServerImage)
+	}
+	if btcpayImage != "btcpayserver/btcpayserver:2.4.1" || appmanifest.BTCPayRelease != "2.4.1" {
 		t.Fatalf("BTCPay image must track the latest stable release, got %q", btcpayImage)
+	}
+}
+
+func TestEnsureBtcpayImagesEnforceUsesClosedBrokerVariants(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureBtcpayImages(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"server", "nbxplorer", "postgres"}
+	if client.prepareCalls != 3 || !reflect.DeepEqual(client.preparedVariants, want) || client.appID != appmanifest.BTCPayID || client.imageDryRun {
+		t.Fatalf("unexpected non-Tor image broker calls: %#v", client)
+	}
+
+	client.prepareCalls = 0
+	client.preparedVariants = nil
+	if err := ensureBtcpayImages(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	want = append(want, "tor")
+	if client.prepareCalls != 4 || !reflect.DeepEqual(client.preparedVariants, want) {
+		t.Fatalf("unexpected Tor image broker calls: %#v", client)
+	}
+}
+
+func TestEnsureBtcpayImagesEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageErr: errors.New("pull failed")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureBtcpayImages(context.Background(), false); err == nil {
+		t.Fatal("expected broker image failure")
+	}
+	if client.prepareCalls != 1 || len(client.preparedVariants) != 1 || client.preparedVariants[0] != "server" {
+		t.Fatalf("unexpected fail-closed sequence: %#v", client)
 	}
 }
 

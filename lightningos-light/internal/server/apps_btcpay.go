@@ -23,12 +23,12 @@ import (
 // ships its own bitcoind + LND. This compose reuses the node's existing
 // Bitcoin source and the native LND over REST (see docs/19_BACKLOG.md §14).
 const (
-	btcpayAppID            = "btcpay"
-	btcpayImage            = "btcpayserver/btcpayserver:latest"
-	btcpayNbxplorerImage   = "nicolasdorier/nbxplorer:2.6.8"
-	btcpayPostgresImage    = "postgres:16"
-	btcpayTorImage         = appmanifest.RoboSatsTorImage
-	btcpayPort             = 23000
+	btcpayAppID            = appmanifest.BTCPayID
+	btcpayImage            = appmanifest.BTCPayServerImage
+	btcpayNbxplorerImage   = appmanifest.BTCPayNbxplorerImage
+	btcpayPostgresImage    = appmanifest.BTCPayPostgresImage
+	btcpayTorImage         = appmanifest.BTCPayTorImage
+	btcpayPort             = appmanifest.BTCPayPort
 	btcpayNbxplorerPort    = 32838
 	btcpayLndTLSWaitSteps  = 15
 	btcpayTorSOCKSEndpoint = "tor:9050"
@@ -175,19 +175,8 @@ func (s *Server) applyBtcpay(ctx context.Context) error {
 		return err
 	}
 
-	if err := ensureBtcpayImage(ctx); err != nil {
+	if err := ensureBtcpayImages(ctx, wiring.UseTorProxy); err != nil {
 		return err
-	}
-	if err := ensureDockerImage(ctx, btcpayNbxplorerImage); err != nil {
-		return err
-	}
-	if err := ensureDockerImage(ctx, btcpayPostgresImage); err != nil {
-		return err
-	}
-	if wiring.UseTorProxy {
-		if err := ensureDockerImage(ctx, btcpayTorImage); err != nil {
-			return err
-		}
 	}
 
 	dbPassword, err := ensureBtcpayDbPassword(paths)
@@ -222,14 +211,34 @@ func (s *Server) applyBtcpay(ctx context.Context) error {
 	return nil
 }
 
-// The BTCPay image intentionally tracks upstream's latest stable release so
-// security updates are picked up on both install and a user-initiated start.
+// The BTCPay image tracks the catalog's newest official stable release and is
+// refreshed on both install and a user-initiated start.
 // Pinned dependency images keep using the shared cache-aware helper.
-func ensureBtcpayImage(ctx context.Context) error {
-	if strings.HasSuffix(btcpayImage, ":latest") {
-		return pullDockerImage(ctx, btcpayImage)
+func ensureBtcpayImages(ctx context.Context, useTor bool) error {
+	for _, variant := range appmanifest.BTCPayImageVariants(useTor) {
+		if err := ensureBtcpayImageVariant(ctx, variant); err != nil {
+			return fmt.Errorf("btcpay image %s unavailable: %w", variant, err)
+		}
 	}
-	return ensureDockerImage(ctx, btcpayImage)
+	return nil
+}
+
+func ensureBtcpayImageVariant(ctx context.Context, variant appmanifest.AppImageVariant) error {
+	image, err := appmanifest.BTCPayImageForVariant(variant)
+	if err != nil {
+		return err
+	}
+	if handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.BTCPayID, string(variant)); handled {
+		return err
+	}
+	refresh, err := appmanifest.CatalogImageRequiresRefresh(appmanifest.BTCPayID, variant)
+	if err != nil {
+		return err
+	}
+	if refresh {
+		return pullDockerImage(ctx, image)
+	}
+	return ensureDockerImage(ctx, image)
 }
 
 func ensureBtcpayPaths(paths btcpayPaths) error {

@@ -242,6 +242,52 @@ func TestComposeAppPrepareRoboSatsImagesUsesFixedTransientPulls(t *testing.T) {
 	}
 }
 
+func TestComposeAppPrepareBTCPayReleaseAlwaysSchedulesRefresh(t *testing.T) {
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.PrepareImage(context.Background(), appmanifest.BTCPayID, appmanifest.BTCPayImageServer, false)
+	if err != nil || state.Status != "preparing" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	if len(runner.commands) != 3 {
+		t.Fatalf("cached latest image did not schedule refresh: %#v", runner.commands)
+	}
+	want := recordedCommand{path: systemdRunPath, args: []string{
+		"--quiet", "--collect", "--unit=lightningos-btcpay-image-server",
+		"--property=Type=exec", "--property=RuntimeMaxSec=10min",
+		dockerPath, "pull", appmanifest.BTCPayServerImage,
+	}}
+	if !reflect.DeepEqual(runner.commands[2], want) {
+		t.Fatalf("pull command=%#v want=%#v", runner.commands[2], want)
+	}
+}
+
+func TestComposeAppBTCPayReleaseStatusWaitsForRefreshUnit(t *testing.T) {
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == systemctlPath && len(args) > 0 && args[0] == "show" {
+			return "LoadState=loaded\nActiveState=active\nSubState=running\nResult=success\n", nil, true
+		}
+		return "", nil, false
+	}}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.ImageStatus(context.Background(), appmanifest.BTCPayID, appmanifest.BTCPayImageServer)
+	if err != nil || state.Status != "preparing" || len(runner.commands) != 1 {
+		t.Fatalf("state=%#v err=%v commands=%#v", state, err, runner.commands)
+	}
+}
+
+func TestComposeAppPrepareBTCPayPinnedDependencyUsesCache(t *testing.T) {
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.PrepareImage(context.Background(), appmanifest.BTCPayID, appmanifest.BTCPayImageNbxplorer, false)
+	if err != nil || state.Status != "ready" || len(runner.commands) != 1 {
+		t.Fatalf("state=%#v err=%v commands=%#v", state, err, runner.commands)
+	}
+	if !reflect.DeepEqual(runner.commands[0], recordedCommand{path: dockerPath, args: []string{"image", "inspect", appmanifest.BTCPayNbxplorerImage}}) {
+		t.Fatalf("unexpected pinned dependency command: %#v", runner.commands[0])
+	}
+}
+
 func TestComposeAppPrepareBitcoinCoreImageUsesVerifiedLocalBuild(t *testing.T) {
 	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
 		if path == systemctlPath && len(args) > 0 && args[0] == "show" {

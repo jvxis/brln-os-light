@@ -54,9 +54,21 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return RoboSatsImageForVariant(variant)
 	case BitcoinCoreID:
 		return BitcoinCoreImageForVariant(variant)
+	case BTCPayID:
+		return BTCPayImageForVariant(variant)
 	default:
 		return "", errors.New("app image manifest is not allowed")
 	}
+}
+
+// CatalogImageRequiresRefresh distinguishes release tags that must be checked
+// on every requested start from cache-authoritative or locally attested
+// artifacts. The catalog remains the sole authority for this policy.
+func CatalogImageRequiresRefresh(appID string, variant AppImageVariant) (bool, error) {
+	if _, err := CatalogImageForVariant(appID, variant); err != nil {
+		return false, err
+	}
+	return appID == BTCPayID && variant == BTCPayImageServer, nil
 }
 
 func CatalogExternalTCPPort(appID string) (int, error) {

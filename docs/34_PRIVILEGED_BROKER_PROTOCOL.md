@@ -190,14 +190,15 @@ pending capability.
 
 ### `app.image.prepare`, `app.image.status`, and `app.image.probe`
 
-These operations accept only the CPU Miner app ID plus one closed image
-variant: `baseline`, `fast_pinned`, or `fast_latest`. The variant maps inside
-the broker catalog to one exact image and one fixed transient unit name. A
-caller cannot submit an image, registry, digest, tag, unit, path, or Docker
-argument.
+These operations accept only app/variant pairs compiled into the shared
+catalog. CPU Miner admits `baseline`, `fast_pinned`, and `fast_latest`;
+RoboSats admits `client`, `tor`, and `proxy`; Bitcoin Core admits only `node`;
+and BTCPay admits `server`, `nbxplorer`, `postgres`, and `tor`. Every variant
+maps to one exact image and one fixed transient unit name. A caller cannot
+submit an image, registry, digest, tag, unit, path, or Docker argument.
 
-When the image is absent, `app.image.prepare` schedules a bounded pull and
-returns `preparing` without waiting for registry I/O:
+When a cache-authoritative image is absent, `app.image.prepare` schedules a
+bounded pull and returns `preparing` without waiting for registry I/O:
 
 ```text
 /usr/bin/systemd-run --quiet --collect \
@@ -206,9 +207,11 @@ returns `preparing` without waiting for registry I/O:
   /usr/bin/docker pull <fixed-catalog-image>
 ```
 
-The non-mutating status operation first performs a fixed image inspection,
-then reports only `ready`, `preparing`, `absent`, or `failed` from the fixed
-unit state. The manager polls for at most ten minutes, so cancellation of an
+The non-mutating status operation reports only `ready`, `preparing`, `absent`,
+or `failed`. Cache-authoritative variants inspect the fixed image first and
+then the unit. Refresh-on-request variants inspect the unit first, so an older
+local image with the same release tag cannot make an active update appear
+complete. The manager polls for at most ten minutes, so cancellation of an
 HTTP request does not ambiguously terminate the root pull; a retry can observe
 the same unit or the completed image. `--collect` removes the transient unit
 after completion.
@@ -219,6 +222,17 @@ fixed two-second CPU compatibility benchmark. Its response is only
 allowing selection to continue to the next catalog variant. Prepare and probe
 are serialized mutating operations and support validation-only `dry_run`;
 status is read-only.
+
+BTCPay uses the official `btcpayserver/btcpayserver:2.4.1` image, the newest
+stable release published when this catalog was updated. Upstream does not
+publish a usable `btcpayserver/btcpayserver:latest` tag: the release number is
+therefore explicit and reviewable, while the `server` variant is still marked
+refresh-on-request and executes a real pull for every install/start. Updating
+to a future stable release changes the single catalog release constant rather
+than allowing root-time discovery of an arbitrary tag. NBXplorer 2.6.8,
+PostgreSQL 16, and Tor 0.4.9.5 are fixed cache-authoritative dependencies. Tor
+is requested only for the existing remote-Onion Bitcoin wiring. This image
+slice does not alter local/remote Bitcoin selection, RPC credentials, or LND.
 
 Bitcoin Core uses the same operations with the additional closed variant
 `{"app_id":"bitcoincore","variant":"node"}`, but it never executes a

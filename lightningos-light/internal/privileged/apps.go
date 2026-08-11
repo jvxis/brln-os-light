@@ -131,7 +131,7 @@ func (manager *ComposeAppManager) DockerRuntimeStatus(ctx context.Context) (Dock
 
 func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageState, error) {
 	var state AppImageState
-	image, unit, err := validatedCatalogImage(appID, variant)
+	image, unit, refresh, err := validatedCatalogImage(appID, variant)
 	if err != nil {
 		return state, err
 	}
@@ -144,6 +144,16 @@ func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string
 	if appID == appmanifest.BitcoinCoreID {
 		return manager.prepareBitcoinCoreImage(ctx, unit)
 	}
+	if refresh {
+		state, err = manager.refreshImageStatus(ctx, image, unit)
+		if err != nil || state.Status == "preparing" {
+			return state, err
+		}
+		if state.Status == "failed" {
+			return state, errors.New("app image preparation previously failed")
+		}
+		return manager.scheduleImagePull(ctx, image, unit)
+	}
 	state, err = manager.imageStatus(ctx, image, unit)
 	if err != nil || state.Status == "ready" || state.Status == "preparing" {
 		return state, err
@@ -151,6 +161,10 @@ func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string
 	if state.Status == "failed" {
 		return state, errors.New("app image preparation previously failed")
 	}
+	return manager.scheduleImagePull(ctx, image, unit)
+}
+
+func (manager *ComposeAppManager) scheduleImagePull(ctx context.Context, image string, unit string) (AppImageState, error) {
 	args := []string{
 		"--quiet",
 		"--collect",
@@ -162,14 +176,14 @@ func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string
 		image,
 	}
 	if _, err := manager.Runner.Run(ctx, systemdRunPath, args...); err != nil {
-		return state, errors.New("app image preparation could not be scheduled")
+		return AppImageState{}, errors.New("app image preparation could not be scheduled")
 	}
 	return AppImageState{Status: "preparing"}, nil
 }
 
 func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string, variant appmanifest.AppImageVariant) (AppImageState, error) {
 	var state AppImageState
-	image, unit, err := validatedCatalogImage(appID, variant)
+	image, unit, refresh, err := validatedCatalogImage(appID, variant)
 	if err != nil {
 		return state, err
 	}
@@ -183,6 +197,9 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 		}
 		return manager.bitcoinCoreImageStatus(ctx, artifact, unit)
 	}
+	if refresh {
+		return manager.refreshImageStatus(ctx, image, unit)
+	}
 	return manager.imageStatus(ctx, image, unit)
 }
 
@@ -191,7 +208,7 @@ func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, 
 	if appID != appmanifest.CPUMinerID {
 		return probe, errors.New("app image probe is not allowed")
 	}
-	image, _, err := validatedCatalogImage(appID, variant)
+	image, _, _, err := validatedCatalogImage(appID, variant)
 	if err != nil {
 		return probe, err
 	}
@@ -230,10 +247,40 @@ func (manager *ComposeAppManager) imageStatus(ctx context.Context, image string,
 	}
 }
 
-func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (string, string, error) {
+// refreshImageStatus checks the transient pull unit before the local cache.
+// Refresh-on-request catalog images must not report ready merely because an
+// older local image with the same closed release tag is already present.
+func (manager *ComposeAppManager) refreshImageStatus(ctx context.Context, image string, unit string) (AppImageState, error) {
+	output, showErr := manager.Runner.Run(ctx, systemctlPath, "show",
+		"--property=LoadState", "--property=ActiveState", "--property=SubState", "--property=Result", "--no-pager", unit)
+	values := parseSystemdProperties(output)
+	switch values["ActiveState"] {
+	case "active", "activating", "reloading":
+		return AppImageState{Status: "preparing"}, nil
+	case "failed":
+		return AppImageState{Status: "failed"}, nil
+	case "inactive", "deactivating":
+		if result := values["Result"]; result != "" && result != "success" {
+			return AppImageState{Status: "failed"}, nil
+		}
+	}
+	if showErr != nil && values["LoadState"] != "" && values["LoadState"] != "not-found" {
+		return AppImageState{}, errors.New("app image preparation state is invalid")
+	}
+	if _, err := manager.Runner.Run(ctx, dockerPath, "image", "inspect", image); err == nil {
+		return AppImageState{Status: "ready"}, nil
+	}
+	return AppImageState{Status: "absent"}, nil
+}
+
+func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (string, string, bool, error) {
 	image, err := appmanifest.CatalogImageForVariant(appID, variant)
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
+	}
+	refresh, err := appmanifest.CatalogImageRequiresRefresh(appID, variant)
+	if err != nil {
+		return "", "", false, err
 	}
 	units := map[string]map[appmanifest.AppImageVariant]string{
 		appmanifest.CPUMinerID: {
@@ -249,16 +296,22 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 		appmanifest.BitcoinCoreID: {
 			appmanifest.BitcoinCoreImageNode: "lightningos-bitcoincore-image-node",
 		},
+		appmanifest.BTCPayID: {
+			appmanifest.BTCPayImageServer:    "lightningos-btcpay-image-server",
+			appmanifest.BTCPayImageNbxplorer: "lightningos-btcpay-image-nbxplorer",
+			appmanifest.BTCPayImagePostgres:  "lightningos-btcpay-image-postgres",
+			appmanifest.BTCPayImageTor:       "lightningos-btcpay-image-tor",
+		},
 	}
 	appUnits, ok := units[appID]
 	if !ok {
-		return "", "", errors.New("app image manifest is not allowed")
+		return "", "", false, errors.New("app image manifest is not allowed")
 	}
 	unit, ok := appUnits[variant]
 	if !ok {
-		return "", "", errors.New("app image variant is not allowed")
+		return "", "", false, errors.New("app image variant is not allowed")
 	}
-	return image, unit, nil
+	return image, unit, refresh, nil
 }
 
 func parseSystemdProperties(output string) map[string]string {

@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-11T12:54:13Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "4409f376dc1b5f0c23ef7f312c107867b6a4ff9c",
+  "tested_patch_object": "67b4d44178a20df0bbc46e51a006422bcd3a747a",
+  "scope": "closed BTCPay image catalog and mandatory server-image refresh through the privileged broker",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "architecture": "amd64"
+  },
+  "official_sources": {
+    "docker_project": "https://github.com/btcpayserver/btcpayserver-docker",
+    "release_page": "https://github.com/btcpayserver/btcpayserver/releases/tag/v2.4.1",
+    "legacy_latest_tag_available": false,
+    "stable_release": "2.4.1"
+  },
+  "closed_catalog": {
+    "server": "btcpayserver/btcpayserver:2.4.1",
+    "nbxplorer": "nicolasdorier/nbxplorer:2.6.8",
+    "postgres": "postgres:16",
+    "tor": "osminogin/tor-simple:0.4.9.5",
+    "caller_supplied_image": false,
+    "caller_supplied_tag": false,
+    "caller_supplied_unit": false,
+    "server_refresh_on_every_prepare": true,
+    "dependencies_cache_authoritative": true
+  },
+  "accepted_gate": {
+    "dry_run": "validated without command execution",
+    "argument_injection": "server;reboot rejected as invalid_request",
+    "first_prepare": "preparing then ready",
+    "first_pull": "downloaded newer image",
+    "cached_prepare": "preparing then ready",
+    "cached_pull": "image is up to date",
+    "image_digest": "sha256:f841a37ae8888bf1aca1e9391352dec5f622fc739b13b4913eebdb30b1c275e2",
+    "image_id": "sha256:f841a37ae8888bf1aca1e9391352dec5f622fc739b13b4913eebdb30b1c275e2",
+    "image_os": "linux",
+    "image_architecture": "amd64",
+    "nbxplorer_status": "ready",
+    "postgres_status": "ready",
+    "tor_status": "ready",
+    "containers_created": false,
+    "manager_active": true,
+    "audit_contains_parameters_or_secrets": false
+  },
+  "discarded_gate_observation": {
+    "reference": "btcpayserver/btcpayserver:latest",
+    "registry_result": "not found",
+    "mutation_before_failure": false,
+    "resolution": "replaced the unusable legacy reference with the current official stable tag 2.4.1 while retaining refresh-on-request semantics"
+  },
+  "validation": {
+    "ubuntu_go_test_all_before_release_tag_correction": "passed",
+    "ubuntu_go_vet_all_before_release_tag_correction": "passed",
+    "ubuntu_affected_packages_after_release_tag_correction": "passed",
+    "ubuntu_broker_build_after_release_tag_correction": "passed",
+    "windows_go_vet_all": "passed",
+    "windows_build_all_commands": "passed",
+    "windows_go_test_all": "two pre-existing CRLF-sensitive installer-script failures only"
+  },
+  "unchanged_contracts": {
+    "remote_full_node_bitcoin": true,
+    "local_native_bitcoin": true,
+    "app_store_bitcoin": true,
+    "local_lnd": true,
+    "los_test2_touched": false
+  },
+  "final_state": {
+    "temporary_source_checkout_present": false,
+    "temporary_broker_present": false,
+    "temporary_containers_present": false,
+    "btcpay_image_cached": true,
+    "dependency_images_cached": true,
+    "gate_vm": "powered_off gracefully"
+  },
+  "remaining_scope": [
+    "validate and snapshot BTCPay secret-bearing Compose/env/LND assets inside the broker",
+    "typed BTCPay status/start/stop/uninstall and PostgreSQL repair",
+    "full BTCPay plus dedicated LND macaroon gate",
+    "remote Full Node regression gate when the lifecycle slice is ready"
+  ]
+}

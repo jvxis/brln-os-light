@@ -47,6 +47,10 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: RoboSatsID, variant: RoboSatsImageTor, image: RoboSatsTorImage},
 		{appID: RoboSatsID, variant: RoboSatsImageProxy, image: RoboSatsProxyImage},
 		{appID: BitcoinCoreID, variant: BitcoinCoreImageNode, image: BitcoinCoreImage},
+		{appID: BTCPayID, variant: BTCPayImageServer, image: BTCPayServerImage},
+		{appID: BTCPayID, variant: BTCPayImageNbxplorer, image: BTCPayNbxplorerImage},
+		{appID: BTCPayID, variant: BTCPayImagePostgres, image: BTCPayPostgresImage},
+		{appID: BTCPayID, variant: BTCPayImageTor, image: BTCPayTorImage},
 	} {
 		image, err := CatalogImageForVariant(test.appID, test.variant)
 		if err != nil || image != test.image {
@@ -62,6 +66,7 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: RoboSatsID, variant: "latest;reboot"},
 		{appID: "mempool", variant: "client"},
 		{appID: BitcoinCoreID, variant: "latest"},
+		{appID: BTCPayID, variant: "latest;reboot"},
 	} {
 		if _, err := CatalogImageForVariant(test.appID, test.variant); err == nil {
 			t.Fatalf("expected %s/%s to be rejected", test.appID, test.variant)
@@ -71,6 +76,38 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 	variants[0] = "evil"
 	if RoboSatsImageVariants()[0] != RoboSatsImageClient {
 		t.Fatal("caller mutated the RoboSats image variant list")
+	}
+	btcpayVariants := BTCPayImageVariants(true)
+	if len(btcpayVariants) != 4 || btcpayVariants[0] != BTCPayImageServer || btcpayVariants[3] != BTCPayImageTor {
+		t.Fatalf("unexpected BTCPay variants: %#v", btcpayVariants)
+	}
+	btcpayVariants[0] = "evil"
+	if BTCPayImageVariants(false)[0] != BTCPayImageServer || len(BTCPayImageVariants(false)) != 3 {
+		t.Fatal("caller mutated the BTCPay image variants or Tor was not optional")
+	}
+}
+
+func TestCatalogImageRefreshPolicyIsClosed(t *testing.T) {
+	refresh, err := CatalogImageRequiresRefresh(BTCPayID, BTCPayImageServer)
+	if err != nil || !refresh {
+		t.Fatalf("BTCPay server release must refresh: refresh=%v err=%v", refresh, err)
+	}
+	for _, test := range []struct {
+		appID   string
+		variant AppImageVariant
+	}{
+		{BTCPayID, BTCPayImageNbxplorer},
+		{BTCPayID, BTCPayImagePostgres},
+		{RoboSatsID, RoboSatsImageClient},
+		{BitcoinCoreID, BitcoinCoreImageNode},
+	} {
+		refresh, err = CatalogImageRequiresRefresh(test.appID, test.variant)
+		if err != nil || refresh {
+			t.Fatalf("unexpected refresh policy for %s/%s: %v/%v", test.appID, test.variant, refresh, err)
+		}
+	}
+	if _, err := CatalogImageRequiresRefresh(BTCPayID, "server;reboot"); err == nil {
+		t.Fatal("untrusted refresh variant was accepted")
 	}
 }
 

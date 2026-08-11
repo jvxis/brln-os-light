@@ -21,6 +21,10 @@ type fakePrivilegedServiceClient struct {
 	action              string
 	appDryRun           bool
 	appErr              error
+	snapshotCalls       int
+	snapshotAppID       string
+	snapshotDryRun      bool
+	snapshotErr         error
 	inspectCalls        int
 	inspectAppID        string
 	inspectStatus       string
@@ -99,6 +103,13 @@ func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID
 	client.action = action
 	client.appDryRun = dryRun
 	return client.appErr
+}
+
+func (client *fakePrivilegedServiceClient) SnapshotApp(_ context.Context, appID string, dryRun bool) error {
+	client.snapshotCalls++
+	client.snapshotAppID = appID
+	client.snapshotDryRun = dryRun
+	return client.snapshotErr
 }
 
 func (client *fakePrivilegedServiceClient) InspectApp(_ context.Context, appID string) (string, float64, error) {
@@ -380,6 +391,40 @@ func TestAppLifecycleWithBrokerModes(t *testing.T) {
 			}
 			if test.wantCalls == 1 && (client.appID != "cpuminer" || client.action != "start") {
 				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestSnapshotAppWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		snapshotErr error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", snapshotErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", snapshotErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, snapshotErr: test.snapshotErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := SnapshotAppWithBroker(context.Background(), "btcpay")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.snapshotCalls != test.wantCalls || client.snapshotDryRun != test.wantDryRun {
+				t.Fatalf("unexpected snapshot call: %#v", client)
+			}
+			if test.wantCalls == 1 && client.snapshotAppID != "btcpay" {
+				t.Fatalf("unexpected typed snapshot params: %#v", client)
 			}
 		})
 	}

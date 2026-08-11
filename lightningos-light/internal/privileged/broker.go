@@ -36,6 +36,7 @@ type AppManager interface {
 	EnsureDockerRuntime(ctx context.Context, dryRun bool) (DockerRuntimeState, error)
 	DockerRuntimeStatus(ctx context.Context) (DockerRuntimeState, error)
 	Lifecycle(ctx context.Context, appID string, action AppLifecycleAction, dryRun bool) error
+	Snapshot(ctx context.Context, appID string, dryRun bool) error
 	Inspect(ctx context.Context, appID string) (AppInspection, error)
 	Remove(ctx context.Context, appID string, dryRun bool) error
 	PrepareImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageState, error)
@@ -258,6 +259,18 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "app_lifecycle_failed", errors.New("app lifecycle operation failed")
 		}
 		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationAppSnapshot:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
+		}
+		var params AppSnapshotParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.compose.snapshot params")
+		}
+		if err := broker.Apps.Snapshot(ctx, params.AppID, request.DryRun); err != nil {
+			return nil, "app_snapshot_failed", errors.New("app snapshot operation failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
 	case OperationAppInspect:
 		if broker.Apps == nil {
 			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
@@ -425,7 +438,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure:
 		return true
 	default:
 		return false
@@ -434,7 +447,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure:
 		return true
 	default:
 		return false

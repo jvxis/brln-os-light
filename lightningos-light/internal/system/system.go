@@ -44,6 +44,34 @@ type bitcoinConsumerNetworkPrivilegedClient interface {
 	EnsureBitcoinConsumerNetwork(ctx context.Context, dryRun bool) (status string, err error)
 }
 
+type appSnapshotPrivilegedClient interface {
+	SnapshotApp(ctx context.Context, appID string, dryRun bool) error
+}
+
+func SnapshotAppWithBroker(ctx context.Context, appID string) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	snapshotClient, ok := client.(appSnapshotPrivilegedClient)
+	if !ok {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, snapshotClient.SnapshotApp(ctx, appID, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		_ = snapshotClient.SnapshotApp(shadowCtx, appID, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
 func EnsureBitcoinConsumerNetworkWithBroker(ctx context.Context) (bool, error) {
 	privilegedState.RLock()
 	client := privilegedState.client

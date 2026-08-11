@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -574,6 +575,183 @@ func TestComposeAppRoboSatsRejectsSymlinkedPrivilegedRoot(t *testing.T) {
 	}
 }
 
+func TestComposeAppBTCPayCreatesSecretSafePersistentSnapshot(t *testing.T) {
+	fixture := writeTestBTCPayApp(t, false, false)
+	snapshot, cleanup, err := fixture.manager.prepareBTCPaySnapshot(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	wantRoot := filepath.Join(fixture.privilegedRoot, appmanifest.BTCPayID)
+	if snapshot.root != wantRoot || snapshot.composePath != filepath.Join(wantRoot, appmanifest.BTCPayComposeFile) || snapshot.envPath != filepath.Join(wantRoot, appmanifest.BTCPayEnvFile) {
+		t.Fatalf("unexpected BTCPay snapshot: %#v", snapshot)
+	}
+	composeRaw, err := os.ReadFile(snapshot.composePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compose := string(composeRaw)
+	for _, required := range []string{
+		filepath.Join(wantRoot, appmanifest.BTCPayDBInitFile),
+		filepath.Join(wantRoot, appmanifest.BTCPayLNDDir),
+		"macaroonfilepath=/etc/lnd/" + appmanifest.BTCPaySnapshotAuthFile,
+	} {
+		if !strings.Contains(compose, required) {
+			t.Fatalf("execution compose missing %q:\n%s", required, compose)
+		}
+	}
+	for _, forbidden := range []string{"admin.macaroon", ".macaroon", fixture.appRoot} {
+		if strings.Contains(compose, forbidden) {
+			t.Fatalf("execution compose contains forbidden manager asset %q", forbidden)
+		}
+	}
+	authPath := filepath.Join(wantRoot, appmanifest.BTCPayLNDDir, appmanifest.BTCPaySnapshotAuthFile)
+	authRaw, err := os.ReadFile(authPath)
+	if err != nil || string(authRaw) != testBTCPayDedicatedMacaroon {
+		t.Fatalf("dedicated credential was not snapshotted: %q/%v", authRaw, err)
+	}
+	if _, err := os.Lstat(filepath.Join(wantRoot, appmanifest.BTCPayLNDDir, appmanifest.BTCPayMacaroonFile)); !os.IsNotExist(err) {
+		t.Fatalf("snapshot exposed a .macaroon file: %v", err)
+	}
+	for _, path := range []string{
+		snapshot.composePath,
+		snapshot.envPath,
+		filepath.Join(wantRoot, appmanifest.BTCPayDBInitFile),
+		filepath.Join(wantRoot, appmanifest.BTCPayLNDDir, appmanifest.BTCPayTLSCertFile),
+		authPath,
+	} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || (runtime.GOOS == "linux" && info.Mode().Perm() != 0600) {
+			t.Fatalf("snapshot asset is not a 0600 regular file: %s: %v/%v", path, info, err)
+		}
+		if runtime.GOOS == "linux" && os.Geteuid() == 0 && !privilegedPathOwnedByRoot(info) {
+			t.Fatalf("snapshot asset is not owned by root: %s", path)
+		}
+	}
+	for _, path := range []string{wantRoot, filepath.Join(wantRoot, appmanifest.BTCPayLNDDir)} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() || (runtime.GOOS == "linux" && info.Mode().Perm() != 0700) {
+			t.Fatalf("snapshot directory is not a 0700 directory: %s: %v/%v", path, info, err)
+		}
+		if runtime.GOOS == "linux" && os.Geteuid() == 0 && !privilegedPathOwnedByRoot(info) {
+			t.Fatalf("snapshot directory is not owned by root: %s", path)
+		}
+	}
+	if _, err := os.Stat(wantRoot); err != nil {
+		t.Fatalf("persistent snapshot was unexpectedly cleaned: %v", err)
+	}
+}
+
+func TestComposeAppBTCPayDryRunValidatesWithoutSnapshot(t *testing.T) {
+	fixture := writeTestBTCPayApp(t, false, false)
+	if _, _, err := fixture.manager.prepareBTCPaySnapshot(true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.privilegedRoot, appmanifest.BTCPayID)); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created a privileged snapshot: %v", err)
+	}
+}
+
+func TestComposeAppBTCPayRejectsUntrustedSecretAssets(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, fixture *testBTCPayFixture)
+	}{
+		{name: "tampered compose", mutate: func(t *testing.T, fixture *testBTCPayFixture) {
+			mustWriteTestFile(t, fixture.composePath, []byte(appmanifest.BTCPayCompose(fixture.composePaths, false, false)+"# tampered\n"), 0600)
+		}},
+		{name: "unknown env key", mutate: func(t *testing.T, fixture *testBTCPayFixture) {
+			mustWriteTestFile(t, fixture.envPath, []byte(fixture.envRaw+"ATTACKER_IMAGE=evil/root:latest\n"), 0600)
+		}},
+		{name: "duplicate env key", mutate: func(t *testing.T, fixture *testBTCPayFixture) {
+			mustWriteTestFile(t, fixture.envPath, []byte(fixture.envRaw+"BTCPAY_DB_PASSWORD="+strings.Repeat("b", 32)+"\n"), 0600)
+		}},
+		{name: "compose interpolation in secret", mutate: func(t *testing.T, fixture *testBTCPayFixture) {
+			raw := strings.Replace(fixture.envRaw, "NBXPLORER_BTCRPCPASSWORD=rpc-pass", "NBXPLORER_BTCRPCPASSWORD=${ADMIN}", 1)
+			mustWriteTestFile(t, fixture.envPath, []byte(raw), 0600)
+		}},
+		{name: "admin macaroon content", mutate: func(t *testing.T, fixture *testBTCPayFixture) {
+			adminRaw, err := os.ReadFile(fixture.adminMacaroonPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustWriteTestFile(t, fixture.macaroonPath, adminRaw, 0600)
+		}},
+		{name: "admin macaroon hardlink", mutate: func(t *testing.T, fixture *testBTCPayFixture) {
+			if err := os.Remove(fixture.macaroonPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Link(fixture.adminMacaroonPath, fixture.macaroonPath); err != nil {
+				t.Skipf("hardlink unavailable: %v", err)
+			}
+		}},
+		{name: "symlinked dedicated macaroon", mutate: func(t *testing.T, fixture *testBTCPayFixture) {
+			if err := os.Remove(fixture.macaroonPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(fixture.adminMacaroonPath, fixture.macaroonPath); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+		}},
+		{name: "mismatched native certificate", mutate: func(t *testing.T, fixture *testBTCPayFixture) {
+			certificate, _ := testTLSKeyPair(t)
+			mustWriteTestFile(t, fixture.certificatePath, certificate, 0600)
+		}},
+		{name: "world readable environment", mutate: func(t *testing.T, fixture *testBTCPayFixture) {
+			if runtime.GOOS != "linux" {
+				t.Skip("POSIX permission enforcement is validated on Linux")
+			}
+			if err := os.Chmod(fixture.envPath, 0644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "unexpected admin file in snapshot", mutate: func(t *testing.T, fixture *testBTCPayFixture) {
+			lndSnapshot := filepath.Join(fixture.privilegedRoot, appmanifest.BTCPayID, appmanifest.BTCPayLNDDir)
+			if err := os.MkdirAll(lndSnapshot, 0700); err != nil {
+				t.Fatal(err)
+			}
+			mustWriteTestFile(t, filepath.Join(lndSnapshot, "admin.macaroon"), []byte("forbidden"), 0600)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := writeTestBTCPayApp(t, false, false)
+			test.mutate(t, fixture)
+			if _, _, err := fixture.manager.prepareBTCPaySnapshot(false); err == nil {
+				t.Fatal("expected BTCPay snapshot validation to fail")
+			}
+		})
+	}
+}
+
+func TestValidateBTCPayEnvAcceptsOnlyCoherentWiring(t *testing.T) {
+	onion := strings.Repeat("a", 56) + ".onion"
+	for _, test := range []struct {
+		name     string
+		env      string
+		wantJoin bool
+		wantTor  bool
+		wantErr  bool
+	}{
+		{name: "remote clearnet", env: testBTCPayEnv("http://bitcoin.example.com:8332/", "bitcoin.example.com:8333", "")},
+		{name: "remote onion", env: testBTCPayEnv("https://bitcoin.example.com:8332/", onion+":8333", "tor:9050"), wantTor: true},
+		{name: "app store bitcoin", env: testBTCPayEnv("http://bitcoind:8332/", "bitcoind:8333", ""), wantJoin: true},
+		{name: "native bitcoin", env: testBTCPayEnv("http://"+appmanifest.BitcoinConsumerHostGateway+":18443/", appmanifest.BitcoinConsumerHostGateway+":8333", ""), wantJoin: true},
+		{name: "stale socks", env: testBTCPayEnv("http://bitcoin.example.com:8332/", "bitcoin.example.com:8333", "tor:9050"), wantErr: true},
+		{name: "onion without socks", env: testBTCPayEnv("http://bitcoin.example.com:8332/", onion+":8333", ""), wantErr: true},
+		{name: "mixed local endpoints", env: testBTCPayEnv("http://bitcoind:8332/", "bitcoin.example.com:8333", ""), wantErr: true},
+		{name: "URL credentials", env: testBTCPayEnv("http://user:pass@bitcoin.example.com:8332/", "bitcoin.example.com:8333", ""), wantErr: true},
+		{name: "query injection", env: testBTCPayEnv("http://bitcoin.example.com:8332/?x=1", "bitcoin.example.com:8333", ""), wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			join, tor, err := validateBTCPayEnv([]byte(test.env))
+			if (err != nil) != test.wantErr || (!test.wantErr && (join != test.wantJoin || tor != test.wantTor)) {
+				t.Fatalf("join/tor/error=%v/%v/%v", join, tor, err)
+			}
+		})
+	}
+}
+
 func TestWriteAtomicRegularFileReplacesExistingContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "asset")
 	if err := writeAtomicRegularFile(path, []byte("first"), 0600); err != nil {
@@ -904,6 +1082,111 @@ func TestParseDockerCPUPercent(t *testing.T) {
 			t.Fatalf("parseDockerCPUPercent(%q)=%v want=%v", test.input, got, test.want)
 		}
 	}
+}
+
+const (
+	testBTCPayDedicatedMacaroon = "dedicated-btcpay-macaroon-binary"
+	testBTCPayAdminMacaroon     = "native-admin-macaroon-binary"
+)
+
+type testBTCPayFixture struct {
+	manager           *ComposeAppManager
+	appRoot           string
+	privilegedRoot    string
+	composePath       string
+	envPath           string
+	envRaw            string
+	composePaths      appmanifest.BTCPayComposePaths
+	certificatePath   string
+	macaroonPath      string
+	adminMacaroonPath string
+}
+
+func writeTestBTCPayApp(t *testing.T, joinBitcoinNetwork bool, useTorProxy bool) *testBTCPayFixture {
+	t.Helper()
+	appsRoot := filepath.Join(t.TempDir(), "apps")
+	appsDataRoot := filepath.Join(t.TempDir(), "apps-data")
+	privilegedRoot := filepath.Join(t.TempDir(), "privileged-apps")
+	lndDataRoot := filepath.Join(t.TempDir(), "native-lnd")
+	appRoot := filepath.Join(appsRoot, appmanifest.BTCPayID)
+	dataRoot := filepath.Join(appsDataRoot, appmanifest.BTCPayID)
+	lndDir := filepath.Join(dataRoot, appmanifest.BTCPayLNDDir)
+	for _, directory := range []string{
+		appRoot,
+		filepath.Join(dataRoot, "data"),
+		filepath.Join(dataRoot, "nbxplorer"),
+		filepath.Join(dataRoot, "pgdata"),
+		lndDir,
+		filepath.Join(lndDataRoot, "data", "chain", "bitcoin", "mainnet"),
+	} {
+		if err := os.MkdirAll(directory, 0750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	composePaths := appmanifest.BTCPayComposePaths{
+		DataDir:    filepath.Join(dataRoot, "data"),
+		NbxDir:     filepath.Join(dataRoot, "nbxplorer"),
+		PgDir:      filepath.Join(dataRoot, "pgdata"),
+		DbInitPath: filepath.Join(appRoot, appmanifest.BTCPayDBInitFile),
+		LndDir:     lndDir,
+	}
+	rpcURL := "http://bitcoin.example.com:8332/"
+	nodeEndpoint := "bitcoin.example.com:8333"
+	socksEndpoint := ""
+	if joinBitcoinNetwork {
+		rpcURL = "http://bitcoind:8332/"
+		nodeEndpoint = "bitcoind:8333"
+	}
+	if useTorProxy {
+		nodeEndpoint = strings.Repeat("a", 56) + ".onion:8333"
+		socksEndpoint = "tor:9050"
+	}
+	envRaw := testBTCPayEnv(rpcURL, nodeEndpoint, socksEndpoint)
+	composePath := filepath.Join(appRoot, appmanifest.BTCPayComposeFile)
+	envPath := filepath.Join(appRoot, appmanifest.BTCPayEnvFile)
+	certificatePath := filepath.Join(lndDir, appmanifest.BTCPayTLSCertFile)
+	macaroonPath := filepath.Join(lndDir, appmanifest.BTCPayMacaroonFile)
+	adminMacaroonPath := filepath.Join(lndDataRoot, "data", "chain", "bitcoin", "mainnet", "admin.macaroon")
+	mustWriteTestFile(t, composePath, []byte(appmanifest.BTCPayCompose(composePaths, joinBitcoinNetwork, useTorProxy)), 0600)
+	mustWriteTestFile(t, envPath, []byte(envRaw), 0600)
+	mustWriteTestFile(t, composePaths.DbInitPath, []byte(appmanifest.BTCPayDBInit()), 0600)
+	certificate, _ := testTLSKeyPair(t)
+	mustWriteTestFile(t, certificatePath, certificate, 0600)
+	mustWriteTestFile(t, filepath.Join(lndDataRoot, appmanifest.BTCPayTLSCertFile), certificate, 0600)
+	mustWriteTestFile(t, macaroonPath, []byte(testBTCPayDedicatedMacaroon), 0600)
+	mustWriteTestFile(t, adminMacaroonPath, []byte(testBTCPayAdminMacaroon), 0600)
+	return &testBTCPayFixture{
+		manager: &ComposeAppManager{
+			Runner:             &composeRecordingRunner{},
+			AppsRoot:           appsRoot,
+			AppsDataRoot:       appsDataRoot,
+			PrivilegedAppsRoot: privilegedRoot,
+			LNDDataRoot:        lndDataRoot,
+		},
+		appRoot:           appRoot,
+		privilegedRoot:    privilegedRoot,
+		composePath:       composePath,
+		envPath:           envPath,
+		envRaw:            envRaw,
+		composePaths:      composePaths,
+		certificatePath:   certificatePath,
+		macaroonPath:      macaroonPath,
+		adminMacaroonPath: adminMacaroonPath,
+	}
+}
+
+func testBTCPayEnv(rpcURL string, nodeEndpoint string, socksEndpoint string) string {
+	lines := []string{
+		"BTCPAY_DB_PASSWORD=" + strings.Repeat("a", 32),
+		"NBXPLORER_BTCRPCURL=" + rpcURL,
+		"NBXPLORER_BTCRPCUSER=rpc-user",
+		"NBXPLORER_BTCRPCPASSWORD=rpc-pass",
+		"NBXPLORER_BTCNODEENDPOINT=" + nodeEndpoint,
+	}
+	if socksEndpoint != "" {
+		lines = append(lines, "NBXPLORER_SOCKSENDPOINT="+socksEndpoint)
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 func writeTestCPUMinerApp(t *testing.T) (string, string) {

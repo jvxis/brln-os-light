@@ -1,6 +1,9 @@
 package appmanifest
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestComposeManifestCatalogIsClosed(t *testing.T) {
 	for _, test := range []struct {
@@ -97,6 +100,27 @@ func TestBTCPayCatalogSecurityFloor(t *testing.T) {
 	}
 	if BTCPayNbxplorerRelease != "2.6.10" || BTCPayNbxplorerImage != "nicolasdorier/nbxplorer:2.6.10" {
 		t.Fatalf("unexpected NBXplorer security companion: %q", BTCPayNbxplorerImage)
+	}
+}
+
+func TestBTCPayExecutionCatalogHidesMacaroonExtension(t *testing.T) {
+	paths := BTCPayComposePaths{
+		DataDir:    "/data/btcpay",
+		NbxDir:     "/data/nbxplorer",
+		PgDir:      "/data/postgres",
+		DbInitPath: "/manager/init-nbxplorer.sql",
+		LndDir:     "/manager/lnd",
+	}
+	managerCompose := BTCPayCompose(paths, false, false)
+	executionCompose := BTCPayExecutionCompose(paths, false, false)
+	if !strings.Contains(managerCompose, "macaroonfilepath=/etc/lnd/"+BTCPayMacaroonFile) {
+		t.Fatal("manager catalog lost the dedicated BTCPay macaroon")
+	}
+	if !strings.Contains(executionCompose, "macaroonfilepath=/etc/lnd/"+BTCPaySnapshotAuthFile) {
+		t.Fatal("execution catalog lost the extensionless BTCPay credential")
+	}
+	if strings.Contains(executionCompose, ".macaroon") || strings.Contains(executionCompose, "admin.macaroon") {
+		t.Fatal("execution catalog exposes a forbidden macaroon filename")
 	}
 }
 

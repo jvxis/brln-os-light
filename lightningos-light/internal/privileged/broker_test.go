@@ -110,6 +110,7 @@ func (storage *recordingBitcoinStorage) Ensure(_ context.Context, dataDir string
 type recordingApps struct {
 	calls                int
 	inspectCalls         int
+	snapshotCalls        int
 	removeCalls          int
 	dockerCalls          int
 	dockerStatusCalls    int
@@ -188,6 +189,13 @@ func (apps *recordingApps) Lifecycle(_ context.Context, appID string, action App
 	apps.calls++
 	apps.appID = appID
 	apps.action = action
+	apps.dryRun = dryRun
+	return apps.err
+}
+
+func (apps *recordingApps) Snapshot(_ context.Context, appID string, dryRun bool) error {
+	apps.snapshotCalls++
+	apps.appID = appID
 	apps.dryRun = dryRun
 	return apps.err
 }
@@ -408,6 +416,47 @@ func TestBrokerAppLifecycleDryRunDoesNotLock(t *testing.T) {
 	})
 	if !response.OK || apps.calls != 1 || !apps.dryRun || locker.locks != 0 {
 		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+}
+
+func TestBrokerBTCPaySnapshotUsesTypedManagerAndLock(t *testing.T) {
+	apps := &recordingApps{}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppSnapshotParams{AppID: appmanifest.BTCPayID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "btcpay_snapshot_1", Operation: OperationAppSnapshot, Params: params,
+	})
+	if !response.OK || apps.snapshotCalls != 1 || apps.appID != appmanifest.BTCPayID || apps.dryRun || locker.locks != 1 || locker.unlocks != 1 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+}
+
+func TestBrokerBTCPaySnapshotDryRunAndFailureAreSafe(t *testing.T) {
+	apps := &recordingApps{}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppSnapshotParams{AppID: appmanifest.BTCPayID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "btcpay_snapshot_dry_1", Operation: OperationAppSnapshot, DryRun: true, Params: params,
+	})
+	if !response.OK || apps.snapshotCalls != 1 || !apps.dryRun || locker.locks != 0 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+	apps.err = errors.New("secret macaroon bytes")
+	response = broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "btcpay_snapshot_fail_1", Operation: OperationAppSnapshot, Params: params,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != "app_snapshot_failed" || response.Error.Message != "app snapshot operation failed" {
+		t.Fatalf("snapshot failure leaked detail: %#v", response)
 	}
 }
 

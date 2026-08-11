@@ -498,6 +498,33 @@ for NBXplorer 2.6.10. No container was created, the manager remained active,
 and the audit contained operation metadata only. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-btcpay-security-release-2026-08-11.json`.
 
+BTCPay's secret-bearing inputs now have a closed broker snapshot gate before
+the legacy Compose lifecycle. The typed `app.compose.snapshot` operation
+accepts only BTCPay and byte-validates the shared Compose catalog, exact
+PostgreSQL initialization, and an exact allowlist of environment keys with
+coherent local, App Store, clearnet-remote, or Onion-remote Bitcoin wiring. It
+also requires the copied LND TLS certificate to match `/data/lnd/tls.cert` and
+requires the dedicated BTCPay credential to be a private regular file whose
+bytes differ from the native `admin.macaroon`. Symlinks, an admin hardlink,
+unexpected snapshot assets, broad Linux secret permissions, and Compose/env
+injection are rejected before persistence.
+
+In enforce mode the broker persists the validated execution snapshot under
+`/var/lib/lightningos-privileged/apps/btcpay`, with root-owned `0700`
+directories and `0600` files. The dedicated credential is exposed to the
+container only as `/etc/lnd/btcpay.auth`; neither a `.macaroon` filename nor
+`admin.macaroon` appears in the execution manifest. This does not create a new
+credential or expand its permissions: the manager still bakes the existing
+BTCPay-specific set (`address` read/write, `info` read, `invoices` read/write,
+and `onchain` read), without `offchain:write` or `onchain:write`. The Ubuntu
+root gate passed the complete Go test/vet/build suite and all positive and
+negative snapshot cases without starting a container or touching Bitcoin/LND.
+The next slice must move Compose execution and PostgreSQL repair onto this
+broker-owned snapshot; until then, the snapshot is a mandatory validation gate
+before the existing lifecycle, not yet the lifecycle execution source.
+Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-btcpay-secret-snapshot-2026-08-11.json`.
+
 The full BTCPay+LND gate, full-node Electrs/Mempool gates, the remaining
 dependent products, operational Bitcoin CLI/log paths, and the mainnet P2P
 firewall contract remain open. Electrs and Mempool gates must use a synchronized

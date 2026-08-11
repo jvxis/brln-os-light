@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 type fakeTransport struct {
@@ -119,6 +121,24 @@ func TestClientAppLifecycleBuildsTypedRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if params.AppID != "cpuminer" || params.Action != AppLifecycleStop {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+}
+
+func TestClientBTCPaySnapshotBuildsTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: map[string]bool{"validated": true}}
+	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)
+	if err := client.SnapshotApp(context.Background(), appmanifest.BTCPayID, true); err != nil {
+		t.Fatal(err)
+	}
+	if transport.request.Operation != OperationAppSnapshot || !transport.request.DryRun {
+		t.Fatalf("unexpected request: %#v", transport.request)
+	}
+	var params AppSnapshotParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.AppID != appmanifest.BTCPayID {
 		t.Fatalf("unexpected params: %#v", params)
 	}
 }

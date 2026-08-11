@@ -25,6 +25,7 @@ const (
 	OperationServiceRestart               Operation = "service.restart"
 	OperationFilesEnableLogin             Operation = "files.enable_login"
 	OperationAppLifecycle                 Operation = "app.compose.lifecycle"
+	OperationAppSnapshot                  Operation = "app.compose.snapshot"
 	OperationAppInspect                   Operation = "app.compose.inspect"
 	OperationAppRemove                    Operation = "app.compose.remove"
 	OperationDockerEnsure                 Operation = "docker.runtime.ensure"
@@ -86,6 +87,10 @@ type AppLifecycleParams struct {
 }
 
 type AppInspectParams struct {
+	AppID string `json:"app_id"`
+}
+
+type AppSnapshotParams struct {
 	AppID string `json:"app_id"`
 }
 
@@ -278,6 +283,14 @@ func ValidateRequest(request Request) error {
 		}
 		if params.Action == AppLifecycleRestart && params.AppID != appmanifest.BitcoinCoreID {
 			return errors.New("app lifecycle action is not allowed")
+		}
+	case OperationAppSnapshot:
+		var params AppSnapshotParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.compose.snapshot params: %w", err)
+		}
+		if params.AppID != appmanifest.BTCPayID {
+			return errors.New("app snapshot manifest is not allowed")
 		}
 	case OperationAppInspect:
 		if request.DryRun {

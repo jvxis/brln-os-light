@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,7 +23,9 @@ import (
 
 const (
 	defaultAppsRoot           = "/var/lib/lightningos/apps"
+	defaultAppsDataRoot       = "/var/lib/lightningos/apps-data"
 	defaultPrivilegedAppsRoot = "/var/lib/lightningos-privileged/apps"
+	defaultLNDDataRoot        = "/data/lnd"
 	dockerPath                = "/usr/bin/docker"
 	dockerComposePath         = "/usr/bin/docker-compose"
 	ufwPath                   = "/usr/sbin/ufw"
@@ -30,7 +34,9 @@ const (
 type ComposeAppManager struct {
 	Runner             CommandRunner
 	AppsRoot           string
+	AppsDataRoot       string
 	PrivilegedAppsRoot string
+	LNDDataRoot        string
 	TempRoot           string
 }
 
@@ -45,6 +51,16 @@ type roboSatsValidatedFiles struct {
 	caddyfileRaw   []byte
 	certificateRaw []byte
 	privateKeyRaw  []byte
+}
+
+type btcpayValidatedFiles struct {
+	composeRaw         []byte
+	envRaw             []byte
+	dbInitRaw          []byte
+	certificateRaw     []byte
+	macaroonRaw        []byte
+	joinBitcoinNetwork bool
+	useTorProxy        bool
 }
 
 var dockerCPUPercentPattern = regexp.MustCompile(`^([0-9]+(?:[.,][0-9]+)?)[[:space:]]*%$`)
@@ -703,6 +719,220 @@ func (manager *ComposeAppManager) validatedRoboSatsFiles() (roboSatsValidatedFil
 	return files, nil
 }
 
+// validatedBTCPayFiles accepts only the manager's closed catalog output and
+// proves that the LND material is the dedicated BTCPay credential rather than
+// the native node's admin macaroon. Secret bytes are never included in errors.
+func (manager *ComposeAppManager) validatedBTCPayFiles() (btcpayValidatedFiles, error) {
+	var files btcpayValidatedFiles
+	appsRoot := manager.AppsRoot
+	if appsRoot == "" {
+		appsRoot = defaultAppsRoot
+	}
+	appsDataRoot := manager.AppsDataRoot
+	if appsDataRoot == "" {
+		appsDataRoot = defaultAppsDataRoot
+	}
+	lndDataRoot := manager.LNDDataRoot
+	if lndDataRoot == "" {
+		lndDataRoot = defaultLNDDataRoot
+	}
+	appRoot := filepath.Join(appsRoot, appmanifest.BTCPayID)
+	dataRoot := filepath.Join(appsDataRoot, appmanifest.BTCPayID)
+	lndDir := filepath.Join(dataRoot, appmanifest.BTCPayLNDDir)
+	for _, directory := range []string{
+		appsRoot,
+		appRoot,
+		appsDataRoot,
+		dataRoot,
+		filepath.Join(dataRoot, "data"),
+		filepath.Join(dataRoot, "nbxplorer"),
+		filepath.Join(dataRoot, "pgdata"),
+		lndDir,
+		lndDataRoot,
+		filepath.Join(lndDataRoot, "data"),
+		filepath.Join(lndDataRoot, "data", "chain"),
+		filepath.Join(lndDataRoot, "data", "chain", "bitcoin"),
+		filepath.Join(lndDataRoot, "data", "chain", "bitcoin", "mainnet"),
+	} {
+		if err := validateRegularDirectory(directory); err != nil {
+			return files, errors.New("BTCPay directory is unavailable")
+		}
+	}
+	fail := func(message string) (btcpayValidatedFiles, error) {
+		return btcpayValidatedFiles{}, errors.New(message)
+	}
+
+	envPath := filepath.Join(appRoot, appmanifest.BTCPayEnvFile)
+	envRaw, err := readRegularFile(envPath, 32*1024)
+	if err != nil || validateSecretFileMode(envPath) != nil {
+		return fail("BTCPay environment is unavailable")
+	}
+	joinBitcoinNetwork, useTorProxy, err := validateBTCPayEnv(envRaw)
+	if err != nil {
+		return fail("BTCPay environment does not match the catalog")
+	}
+	managerPaths := appmanifest.BTCPayComposePaths{
+		DataDir:    filepath.Join(dataRoot, "data"),
+		NbxDir:     filepath.Join(dataRoot, "nbxplorer"),
+		PgDir:      filepath.Join(dataRoot, "pgdata"),
+		DbInitPath: filepath.Join(appRoot, appmanifest.BTCPayDBInitFile),
+		LndDir:     lndDir,
+	}
+	composeRaw, err := readRegularFile(filepath.Join(appRoot, appmanifest.BTCPayComposeFile), 96*1024)
+	if err != nil {
+		return fail("BTCPay compose manifest is unavailable")
+	}
+	expectedCompose := appmanifest.BTCPayCompose(managerPaths, joinBitcoinNetwork, useTorProxy)
+	if !bytes.Equal(composeRaw, []byte(expectedCompose)) {
+		return fail("BTCPay compose manifest does not match the catalog")
+	}
+	dbInitRaw, err := readRegularFile(managerPaths.DbInitPath, 8*1024)
+	if err != nil || !bytes.Equal(dbInitRaw, []byte(appmanifest.BTCPayDBInit())) {
+		return fail("BTCPay database initialization does not match the catalog")
+	}
+
+	certificatePath := filepath.Join(lndDir, appmanifest.BTCPayTLSCertFile)
+	certificateRaw, err := readRegularFile(certificatePath, 64*1024)
+	if err != nil || validateTLSCertificate(certificateRaw) != nil {
+		return fail("BTCPay LND certificate is invalid")
+	}
+	nativeCertificateRaw, err := readRegularFile(filepath.Join(lndDataRoot, appmanifest.BTCPayTLSCertFile), 64*1024)
+	if err != nil || !bytes.Equal(certificateRaw, nativeCertificateRaw) {
+		return fail("BTCPay LND certificate does not match the native node")
+	}
+	macaroonPath := filepath.Join(lndDir, appmanifest.BTCPayMacaroonFile)
+	macaroonRaw, err := readRegularFile(macaroonPath, 64*1024)
+	if err != nil || validateSecretFileMode(macaroonPath) != nil {
+		return fail("BTCPay LND credential is unavailable")
+	}
+	adminMacaroonPath := filepath.Join(lndDataRoot, "data", "chain", "bitcoin", "mainnet", "admin.macaroon")
+	adminMacaroonRaw, err := readRegularFile(adminMacaroonPath, 64*1024)
+	if err != nil {
+		return fail("native LND admin credential is unavailable")
+	}
+	if bytes.Equal(macaroonRaw, adminMacaroonRaw) {
+		return fail("BTCPay LND credential must not be the admin macaroon")
+	}
+
+	files.composeRaw = composeRaw
+	files.envRaw = envRaw
+	files.dbInitRaw = dbInitRaw
+	files.certificateRaw = certificateRaw
+	files.macaroonRaw = macaroonRaw
+	files.joinBitcoinNetwork = joinBitcoinNetwork
+	files.useTorProxy = useTorProxy
+	return files, nil
+}
+
+// prepareBTCPaySnapshot validates the unprivileged inputs even in dry-run and,
+// for execution, persists only a root-owned closed snapshot. The credential is
+// deliberately renamed without a .macaroon suffix inside the container.
+func (manager *ComposeAppManager) prepareBTCPaySnapshot(dryRun bool) (composeAppSnapshot, func(), error) {
+	files, err := manager.validatedBTCPayFiles()
+	if err != nil {
+		return composeAppSnapshot{}, func() {}, err
+	}
+	if dryRun {
+		return composeAppSnapshot{}, func() {}, nil
+	}
+	return manager.createBTCPaySnapshot(files)
+}
+
+func (manager *ComposeAppManager) Snapshot(ctx context.Context, appID string, dryRun bool) error {
+	if manager == nil {
+		return errors.New("compose app manager is unavailable")
+	}
+	if appID != appmanifest.BTCPayID {
+		return errors.New("app snapshot manifest is not allowed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, cleanup, err := manager.prepareBTCPaySnapshot(dryRun)
+	cleanup()
+	return err
+}
+
+func (manager *ComposeAppManager) createBTCPaySnapshot(files btcpayValidatedFiles) (composeAppSnapshot, func(), error) {
+	var snapshot composeAppSnapshot
+	privilegedAppsRoot := manager.PrivilegedAppsRoot
+	if privilegedAppsRoot == "" {
+		privilegedAppsRoot = defaultPrivilegedAppsRoot
+	}
+	appsDataRoot := manager.AppsDataRoot
+	if appsDataRoot == "" {
+		appsDataRoot = defaultAppsDataRoot
+	}
+	if err := ensureDirectoryTreeNoSymlink(privilegedAppsRoot, 0700); err != nil {
+		return snapshot, func() {}, errors.New("failed to secure privileged app root")
+	}
+	snapshotRoot := filepath.Join(privilegedAppsRoot, appmanifest.BTCPayID)
+	if err := ensureDirectoryTreeNoSymlink(snapshotRoot, 0700); err != nil {
+		return snapshot, func() {}, errors.New("failed to secure BTCPay execution snapshot")
+	}
+	lndSnapshotDir := filepath.Join(snapshotRoot, appmanifest.BTCPayLNDDir)
+	if err := ensureDirectoryTreeNoSymlink(lndSnapshotDir, 0700); err != nil {
+		return snapshot, func() {}, errors.New("failed to secure BTCPay LND snapshot")
+	}
+	if err := validateSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
+		appmanifest.BTCPayComposeFile: true,
+		appmanifest.BTCPayEnvFile:     true,
+		appmanifest.BTCPayDBInitFile:  true,
+		appmanifest.BTCPayLNDDir:      false,
+	}); err != nil {
+		return snapshot, func() {}, errors.New("BTCPay execution snapshot contains unexpected assets")
+	}
+	if err := validateSnapshotDirectoryEntries(lndSnapshotDir, map[string]bool{
+		appmanifest.BTCPayTLSCertFile:      true,
+		appmanifest.BTCPaySnapshotAuthFile: true,
+	}); err != nil {
+		return snapshot, func() {}, errors.New("BTCPay LND snapshot contains unexpected assets")
+	}
+
+	snapshot = composeAppSnapshot{
+		root:        snapshotRoot,
+		composePath: filepath.Join(snapshotRoot, appmanifest.BTCPayComposeFile),
+		envPath:     filepath.Join(snapshotRoot, appmanifest.BTCPayEnvFile),
+	}
+	dbInitPath := filepath.Join(snapshotRoot, appmanifest.BTCPayDBInitFile)
+	certificatePath := filepath.Join(lndSnapshotDir, appmanifest.BTCPayTLSCertFile)
+	authPath := filepath.Join(lndSnapshotDir, appmanifest.BTCPaySnapshotAuthFile)
+	for _, file := range []struct {
+		path    string
+		data    []byte
+		message string
+	}{
+		{snapshot.envPath, files.envRaw, "failed to snapshot BTCPay environment"},
+		{dbInitPath, files.dbInitRaw, "failed to snapshot BTCPay database initialization"},
+		{certificatePath, files.certificateRaw, "failed to snapshot BTCPay LND certificate"},
+		{authPath, files.macaroonRaw, "failed to snapshot BTCPay LND credential"},
+	} {
+		if err := writeAtomicRegularFile(file.path, file.data, 0600); err != nil {
+			return composeAppSnapshot{}, func() {}, errors.New(file.message)
+		}
+	}
+	dataRoot := filepath.Join(appsDataRoot, appmanifest.BTCPayID)
+	executionPaths := appmanifest.BTCPayComposePaths{
+		DataDir:    filepath.Join(dataRoot, "data"),
+		NbxDir:     filepath.Join(dataRoot, "nbxplorer"),
+		PgDir:      filepath.Join(dataRoot, "pgdata"),
+		DbInitPath: dbInitPath,
+		LndDir:     lndSnapshotDir,
+	}
+	executionCompose := appmanifest.BTCPayExecutionCompose(
+		executionPaths,
+		files.joinBitcoinNetwork,
+		files.useTorProxy,
+	)
+	if strings.Contains(executionCompose, ".macaroon") || strings.Contains(executionCompose, "admin.macaroon") {
+		return composeAppSnapshot{}, func() {}, errors.New("BTCPay execution manifest exposes a forbidden LND credential")
+	}
+	if err := writeAtomicRegularFile(snapshot.composePath, []byte(executionCompose), 0600); err != nil {
+		return composeAppSnapshot{}, func() {}, errors.New("failed to snapshot BTCPay compose manifest")
+	}
+	return snapshot, func() {}, nil
+}
+
 func (manager *ComposeAppManager) createSnapshot(manifest appmanifest.ComposeManifest, composeRaw []byte, envRaw []byte) (composeAppSnapshot, func(), error) {
 	var snapshot composeAppSnapshot
 	snapshotRoot, err := os.MkdirTemp(manager.TempRoot, "lightningos-compose-")
@@ -779,6 +1009,189 @@ func (manager *ComposeAppManager) createRoboSatsSnapshot(manifest appmanifest.Co
 	return snapshot, cleanup, nil
 }
 
+func validateBTCPayEnv(raw []byte) (bool, bool, error) {
+	if len(raw) == 0 || bytes.Contains(raw, []byte{'\r'}) || raw[len(raw)-1] != '\n' {
+		return false, false, errors.New("invalid environment encoding")
+	}
+	allowed := map[string]int{
+		"BTCPAY_DB_PASSWORD":        128,
+		"NBXPLORER_BTCRPCURL":       2048,
+		"NBXPLORER_BTCRPCUSER":      512,
+		"NBXPLORER_BTCRPCPASSWORD":  512,
+		"NBXPLORER_BTCNODEENDPOINT": 512,
+		"NBXPLORER_SOCKSENDPOINT":   64,
+	}
+	values := make(map[string]string)
+	lines := strings.Split(string(raw), "\n")
+	for _, line := range lines[:len(lines)-1] {
+		key, value, ok := strings.Cut(line, "=")
+		maxBytes, allowedKey := allowed[key]
+		if !ok || !allowedKey || value == "" || len(value) > maxBytes {
+			return false, false, errors.New("invalid environment entry")
+		}
+		if _, duplicate := values[key]; duplicate || !isSafeBTCPayEnvValue(value) {
+			return false, false, errors.New("invalid environment value")
+		}
+		values[key] = value
+	}
+	for _, required := range []string{
+		"BTCPAY_DB_PASSWORD",
+		"NBXPLORER_BTCRPCURL",
+		"NBXPLORER_BTCRPCUSER",
+		"NBXPLORER_BTCRPCPASSWORD",
+		"NBXPLORER_BTCNODEENDPOINT",
+	} {
+		if values[required] == "" {
+			return false, false, errors.New("missing environment entry")
+		}
+	}
+	if !isBase64URLToken(values["BTCPAY_DB_PASSWORD"], 32) {
+		return false, false, errors.New("invalid database credential")
+	}
+	rpcURL, err := url.Parse(values["NBXPLORER_BTCRPCURL"])
+	if err != nil || (rpcURL.Scheme != "http" && rpcURL.Scheme != "https") || rpcURL.User != nil || rpcURL.Hostname() == "" || rpcURL.Port() == "" || rpcURL.Path != "/" || rpcURL.RawQuery != "" || rpcURL.Fragment != "" {
+		return false, false, errors.New("invalid Bitcoin RPC URL")
+	}
+	if !validBTCPayHost(rpcURL.Hostname()) {
+		return false, false, errors.New("invalid Bitcoin RPC host")
+	}
+	rpcPort, err := strconv.Atoi(rpcURL.Port())
+	if err != nil || rpcPort < 1 || rpcPort > 65535 {
+		return false, false, errors.New("invalid Bitcoin RPC port")
+	}
+	nodeHost, nodePortRaw, err := net.SplitHostPort(values["NBXPLORER_BTCNODEENDPOINT"])
+	if err != nil || !validBTCPayHost(nodeHost) {
+		return false, false, errors.New("invalid Bitcoin P2P endpoint")
+	}
+	nodePort, err := strconv.Atoi(nodePortRaw)
+	if err != nil || nodePort < 1 || nodePort > 65535 {
+		return false, false, errors.New("invalid Bitcoin P2P port")
+	}
+	rpcHost := strings.ToLower(rpcURL.Hostname())
+	nodeHost = strings.ToLower(nodeHost)
+	joinBitcoinNetwork := false
+	switch rpcHost {
+	case "bitcoind":
+		if rpcURL.Scheme != "http" || rpcPort != 8332 || nodeHost != "bitcoind" || nodePort != 8333 {
+			return false, false, errors.New("invalid App Store Bitcoin wiring")
+		}
+		joinBitcoinNetwork = true
+	case appmanifest.BitcoinConsumerHostGateway:
+		if rpcURL.Scheme != "http" || nodeHost != appmanifest.BitcoinConsumerHostGateway || nodePort != 8333 {
+			return false, false, errors.New("invalid native Bitcoin wiring")
+		}
+		joinBitcoinNetwork = true
+	default:
+		if nodeHost == "bitcoind" || nodeHost == appmanifest.BitcoinConsumerHostGateway {
+			return false, false, errors.New("mixed Bitcoin wiring is not allowed")
+		}
+	}
+	useTorProxy := isBTCPayOnionHost(nodeHost)
+	socksEndpoint, hasSocksEndpoint := values["NBXPLORER_SOCKSENDPOINT"]
+	if useTorProxy {
+		if !hasSocksEndpoint || socksEndpoint != "tor:9050" {
+			return false, false, errors.New("invalid Tor wiring")
+		}
+	} else if hasSocksEndpoint {
+		return false, false, errors.New("unexpected Tor wiring")
+	}
+	return joinBitcoinNetwork, useTorProxy, nil
+}
+
+func isSafeBTCPayEnvValue(value string) bool {
+	for i := 0; i < len(value); i++ {
+		char := value[i]
+		if char < 0x21 || char > 0x7e {
+			return false
+		}
+		switch char {
+		case '$', '\\', '\'', '"', '`', '#':
+			return false
+		}
+	}
+	return true
+}
+
+func isBase64URLToken(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func validBTCPayHost(host string) bool {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	if net.ParseIP(host) != nil || isBTCPayOnionHost(host) {
+		return true
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isBTCPayOnionHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	label := strings.TrimSuffix(host, ".onion")
+	if label == host || len(label) != 56 {
+		return false
+	}
+	for _, char := range label {
+		if (char < 'a' || char > 'z') && (char < '2' || char > '7') {
+			return false
+		}
+	}
+	return true
+}
+
+func validateTLSCertificate(certificateRaw []byte) error {
+	block, rest := pem.Decode(certificateRaw)
+	if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
+		return errors.New("invalid certificate PEM")
+	}
+	_, err := x509.ParseCertificate(block.Bytes)
+	return err
+}
+
+func validateSnapshotDirectoryEntries(directory string, allowed map[string]bool) error {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		expectFile, ok := allowed[entry.Name()]
+		if !ok {
+			return errors.New("unexpected snapshot entry")
+		}
+		info, err := os.Lstat(filepath.Join(directory, entry.Name()))
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("invalid snapshot entry")
+		}
+		if expectFile && !info.Mode().IsRegular() {
+			return errors.New("snapshot file is invalid")
+		}
+		if !expectFile && !info.IsDir() {
+			return errors.New("snapshot directory is invalid")
+		}
+	}
+	return nil
+}
+
 func validateRegularDirectory(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -805,6 +1218,9 @@ func ensureDirectoryTreeNoSymlink(path string, mode os.FileMode) error {
 			break
 		}
 	}
+	if err := securePrivilegedPathOwner(cleanPath); err != nil {
+		return err
+	}
 	return os.Chmod(cleanPath, mode)
 }
 
@@ -820,6 +1236,10 @@ func writeAtomicRegularFile(path string, data []byte, mode os.FileMode) error {
 		_ = os.Remove(temporaryPath)
 	}
 	if err := temporary.Chmod(mode); err != nil {
+		cleanup()
+		return err
+	}
+	if err := securePrivilegedPathOwner(temporaryPath); err != nil {
 		cleanup()
 		return err
 	}

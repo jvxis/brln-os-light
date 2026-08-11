@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -255,6 +257,29 @@ func TestBtcpayComposeContentsAppSource(t *testing.T) {
 	}
 }
 
+func TestBtcpayComposeMatchesSharedCatalog(t *testing.T) {
+	paths := btcpayAppPaths()
+	catalogPaths := appmanifest.BTCPayComposePaths{
+		DataDir:    paths.DataDir,
+		NbxDir:     paths.NbxDir,
+		PgDir:      paths.PgDir,
+		DbInitPath: paths.DbInitPath,
+		LndDir:     paths.LndDir,
+	}
+	for _, wiring := range []btcpayBitcoinWiring{
+		{Source: "remote"},
+		{Source: "remote", UseTorProxy: true},
+		{Source: "app", JoinBitcoinNetwork: true},
+		{Source: "external", JoinBitcoinNetwork: true},
+	} {
+		got := btcpayComposeContents(paths, wiring)
+		want := appmanifest.BTCPayCompose(catalogPaths, wiring.JoinBitcoinNetwork, wiring.UseTorProxy)
+		if got != want {
+			t.Fatalf("server BTCPay compose diverged from the broker catalog for %#v", wiring)
+		}
+	}
+}
+
 func assertValidBtcpayComposeYAML(t *testing.T, compose string) {
 	t.Helper()
 	var parsed map[string]any
@@ -287,8 +312,42 @@ func TestEnsureBtcpayEnvIncludesTorSocksEndpoint(t *testing.T) {
 	}
 }
 
+func TestEnsureBtcpayEnvRewritesClosedSet(t *testing.T) {
+	paths := btcpayPaths{EnvPath: filepath.Join(t.TempDir(), ".env")}
+	if err := os.WriteFile(paths.EnvPath, []byte("ATTACKER=value\nNBXPLORER_SOCKSENDPOINT=tor:9050\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wiring := btcpayBitcoinWiring{
+		RPCURL:       "http://bitcoin.example:8085/",
+		RPCUser:      "user",
+		RPCPass:      "pass",
+		NodeEndpoint: "bitcoin.example:8333",
+	}
+	if err := ensureBtcpayEnv(paths, wiring, strings.Repeat("a", 32)); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(paths.EnvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "BTCPAY_DB_PASSWORD=" + strings.Repeat("a", 32) + "\n" +
+		"NBXPLORER_BTCRPCURL=http://bitcoin.example:8085/\n" +
+		"NBXPLORER_BTCRPCUSER=user\n" +
+		"NBXPLORER_BTCRPCPASSWORD=pass\n" +
+		"NBXPLORER_BTCNODEENDPOINT=bitcoin.example:8333\n"
+	if string(raw) != want {
+		t.Fatalf("unexpected closed environment:\n%s", raw)
+	}
+	if info, err := os.Stat(paths.EnvPath); err != nil || (runtime.GOOS == "linux" && info.Mode().Perm() != 0600) {
+		t.Fatalf("BTCPay environment mode is not 0600: %v/%v", info, err)
+	}
+}
+
 func TestBtcpayDbInitContents(t *testing.T) {
 	sql := btcpayDbInitContents()
+	if sql != appmanifest.BTCPayDBInit() {
+		t.Fatal("server BTCPay SQL diverged from the broker catalog")
+	}
 	if !strings.Contains(sql, "CREATE DATABASE nbxplorer") {
 		t.Fatalf("init sql missing nbxplorer database: %s", sql)
 	}

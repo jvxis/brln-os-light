@@ -214,17 +214,19 @@ func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoin
 	if err := ensureBitcoinCoreConfig(ctx, paths); err != nil {
 		return err
 	}
+	wasRunning, configChanged, err := ensureBitcoinCoreConsumerRPCBaseline(ctx, paths)
+	if err != nil {
+		return err
+	}
 	if _, err := ensureFileWithChange(paths.ComposePath, bitcoinCoreComposeContents(paths)); err != nil {
 		return err
 	}
 	if err := runBitcoinCoreLifecycle(ctx, "start"); err != nil {
 		return err
 	}
-	if _, changed, err := syncBitcoinCoreRPCAllowList(ctx, paths); err != nil {
-		return err
-	} else if changed {
+	if wasRunning && configChanged {
 		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
-			return err
+			return fmt.Errorf("failed to restart Bitcoin Core after one-time RPC baseline migration: %w", err)
 		}
 	}
 	return nil
@@ -297,17 +299,19 @@ func (s *Server) startBitcoinCore(ctx context.Context) error {
 	if err := ensureBitcoinCoreConfig(ctx, paths); err != nil {
 		return err
 	}
+	wasRunning, configChanged, err := ensureBitcoinCoreConsumerRPCBaseline(ctx, paths)
+	if err != nil {
+		return err
+	}
 	if _, err := ensureFileWithChange(paths.ComposePath, bitcoinCoreComposeContents(paths)); err != nil {
 		return err
 	}
 	if err := runBitcoinCoreLifecycle(ctx, "start"); err != nil {
 		return err
 	}
-	if _, changed, err := syncBitcoinCoreRPCAllowList(ctx, paths); err != nil {
-		return err
-	} else if changed {
+	if wasRunning && configChanged {
 		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
-			return err
+			return fmt.Errorf("failed to restart Bitcoin Core after one-time RPC baseline migration: %w", err)
 		}
 	}
 	return nil
@@ -441,12 +445,63 @@ func defaultBitcoinCoreConfig() (string, error) {
 		"rpcpassword=" + password,
 		"rpcbind=0.0.0.0:8332",
 		"rpcallowip=127.0.0.1",
-		"rpcallowip=172.17.0.0/16",
+		"rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet,
 		"zmqpubrawblock=tcp://0.0.0.0:28332",
 		"zmqpubrawtx=tcp://0.0.0.0:28333",
 		"",
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+func ensureBitcoinCoreConsumerRPCBaseline(ctx context.Context, paths bitcoinCorePaths) (bool, bool, error) {
+	wasRunning := false
+	if fileExists(paths.ComposePath) {
+		status, err := inspectBitcoinCoreStatus(ctx)
+		if err != nil {
+			return false, false, fmt.Errorf("failed to inspect Bitcoin Core before RPC baseline migration: %w", err)
+		}
+		wasRunning = status == "running"
+	}
+
+	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
+	if err != nil {
+		return false, false, err
+	}
+	updated, changed := ensureBitcoinCoreConsumerRPCValues(raw)
+	if !changed {
+		return wasRunning, false, nil
+	}
+	if err := writeBitcoinCoreConfig(ctx, paths, updated); err != nil {
+		return false, false, err
+	}
+	return wasRunning, true, nil
+}
+
+func ensureBitcoinCoreConsumerRPCValues(raw string) (string, bool) {
+	normalized := sanitizeBitcoinCoreConfig(raw)
+	lines := strings.Split(strings.TrimRight(normalized, "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		lines = nil
+	}
+	changed := normalized != ensureTrailingNewline(strings.TrimRight(strings.ReplaceAll(raw, "\r\n", "\n"), "\n"))
+	for _, expected := range []string{"127.0.0.1", appmanifest.BitcoinCoreRPCSubnet} {
+		found := false
+		for _, line := range lines {
+			key, value, ok := bitcoinCoreConfigKeyValue(line)
+			if ok && strings.EqualFold(key, "rpcallowip") && value == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			lines = append(lines, "rpcallowip="+expected)
+			changed = true
+		}
+	}
+	if !changed {
+		return normalized, false
+	}
+	return ensureTrailingNewline(strings.Join(lines, "\n")), true
 }
 
 func ensureBitcoinCoreImage(ctx context.Context) error {

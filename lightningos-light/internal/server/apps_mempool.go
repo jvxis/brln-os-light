@@ -190,17 +190,12 @@ func ensureMempoolUfwAccess(ctx context.Context) error {
 }
 
 func (s *Server) resolveMempoolRuntimeValues(ctx context.Context, bitcoinPaths bitcoinCorePaths, paths mempoolPaths) (mempoolRuntimeValues, error) {
-	localCfg, updated, err := readBitcoinLocalRPCConfig(ctx)
+	localCfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		return mempoolRuntimeValues{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
 	}
 	if strings.TrimSpace(localCfg.User) == "" || strings.TrimSpace(localCfg.Pass) == "" {
 		return mempoolRuntimeValues{}, errors.New("local bitcoin RPC credentials missing")
-	}
-	if updated {
-		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
-			return mempoolRuntimeValues{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", err)
-		}
 	}
 	_, rpcPort := parseMainchainRPC(localCfg.Host)
 

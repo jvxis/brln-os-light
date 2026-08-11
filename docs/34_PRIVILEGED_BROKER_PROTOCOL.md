@@ -543,7 +543,8 @@ verified local image so reinstall cannot silently select a new storage target
 or downgrade provenance. The manager may remove only its own inert app record
 after the typed removal succeeds. Bitcoin Core lifecycle, inspection, and
 removal have no legacy fallback outside broker `enforce`; dependent apps reuse
-the same typed Bitcoin-only restart action after RPC allowlist changes.
+the fixed `bitcoincore_default` network and do not mutate the allowlist or
+restart Bitcoin during install-time RPC discovery.
 
 The Ubuntu 24.04 real-operation gate used an isolated `regtest` config and a
 12 GiB-declared `tmpfs`. It passed typed start, two running inspections,
@@ -553,6 +554,31 @@ container, mount, execution assets, enrollment metadata, checkout, binary, or
 persistent blockchain data. The official image and root-owned attestation were
 preserved. Secret-free evidence is in
 `docs/baselines/privilege-hardening-phase2-bitcoincore-lifecycle-enforce-2026-08-10.json`.
+
+### Bitcoin Core consumer-network contract
+
+The closed Compose manifest assigns `bitcoincore_default` the fixed private
+subnet `172.31.253.0/24`. The default `bitcoin.conf` contains the matching
+`rpcallowip` before first start. Current and future Docker consumers gain local
+RPC access only by joining that external network; neither caller-provided
+network names nor app-specific subnets enter the privileged protocol.
+
+For upgrades, the manager adds the fixed subnet idempotently only from the
+Bitcoin app's own install/start path. It preserves RPC credentials and legacy
+allow entries. A running Bitcoin Core is restarted once only when this one-time
+migration changed the file; a stopped node is not restarted after start.
+Routine config reads and dependent-app wiring are read-only and cannot request
+a Bitcoin restart as a side effect.
+
+The Ubuntu 24.04 gate exercised a fresh fixed network and an existing
+Compose-labeled dynamic `172.18.0.0/16` network. Both ran the official attested
+image with an isolated `regtest` config. A disposable consumer joined
+`bitcoincore_default`, resolved `bitcoind`, and returned `chain=regtest` from
+`getblockchaininfo`; the Bitcoin container ID and start timestamp were
+unchanged. The legacy network remained in place for the duration of its test,
+proving that upgrade does not force immediate network recreation. Secret-free
+evidence is in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-consumer-network-enforce-2026-08-11.json`.
 
 ## Manager modes and rollback
 

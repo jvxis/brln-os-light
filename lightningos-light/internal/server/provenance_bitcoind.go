@@ -15,7 +15,7 @@ func (s *Server) provenanceBitcoinCoreAvailability(ctx context.Context) fullInde
 	checkCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	cfg, _, err := readBitcoinLocalRPCConfig(checkCtx)
+	cfg, err := readBitcoinLocalRPCConfig(checkCtx)
 	if err != nil {
 		return fullIndexUnavailable(fullIndexUnavailableBitcoinRPC, "Local Bitcoin RPC config could not be read. Check lnd.conf or bitcoin.conf.")
 	}

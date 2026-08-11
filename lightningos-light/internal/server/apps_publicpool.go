@@ -102,7 +102,7 @@ func (s *Server) enrichPublicPoolUfwInfo(ctx context.Context, info *appInfo) {
 		return
 	}
 	port := 8332
-	if cfg, _, err := readBitcoinLocalRPCConfig(ctx); err == nil {
+	if cfg, err := readBitcoinLocalRPCConfig(ctx); err == nil {
 		if _, parsedPort := parseMainchainRPC(cfg.Host); parsedPort > 0 {
 			port = parsedPort
 		}
@@ -249,7 +249,7 @@ func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPool
 		return values, nil
 	}
 
-	localCfg, localCfgUpdated, err := readBitcoinLocalRPCConfig(ctx)
+	localCfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		return publicPoolRuntimeValues{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
 	}
@@ -259,11 +259,6 @@ func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPool
 	localHost, localPort := parseMainchainRPC(localCfg.Host)
 
 	if fileExists(bitcoinCoreAppPaths().ComposePath) {
-		if localCfgUpdated {
-			if restartErr := runBitcoinCoreLifecycle(ctx, "restart"); restartErr != nil {
-				return publicPoolRuntimeValues{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", restartErr)
-			}
-		}
 		values.BitcoinMode = "local_app"
 		values.BitcoinRPCURL = "http://bitcoind"
 		values.BitcoinRPCPort = localPort
@@ -572,7 +567,7 @@ func (s *Server) resolvePublicPoolUfwRuntimeValues(ctx context.Context) (publicP
 	if fileExists(bitcoinCoreAppPaths().ComposePath) {
 		return values, nil
 	}
-	localCfg, _, err := readBitcoinLocalRPCConfig(ctx)
+	localCfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		return publicPoolRuntimeValues{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
 	}

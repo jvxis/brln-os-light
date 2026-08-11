@@ -612,7 +612,7 @@ func (s *bip110MonitorService) activeRPCConfig(ctx context.Context) (bitcoinRPCC
 		return bitcoinRPCConfig{}, "active_bitcoind", errors.New("server unavailable")
 	}
 	if readBitcoinSource() == "local" {
-		cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+		cfg, err := readBitcoinLocalRPCConfig(ctx)
 		return cfg, "local_bitcoind", err
 	}
 	user := strings.TrimSpace(os.Getenv("BITCOIN_RPC_USER"))

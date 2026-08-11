@@ -1,10 +1,18 @@
 package appmanifest
 
 import (
+	"net"
 	"regexp"
 	"strings"
 	"testing"
 )
+
+func TestBitcoinCoreConsumerNetworkIsFixedPrivateIPv4(t *testing.T) {
+	ip, subnet, err := net.ParseCIDR(BitcoinCoreRPCSubnet)
+	if err != nil || ip.To4() == nil || subnet.String() != BitcoinCoreRPCSubnet || !ip.IsPrivate() {
+		t.Fatalf("invalid dedicated Bitcoin Core RPC subnet %q", BitcoinCoreRPCSubnet)
+	}
+}
 
 func TestBitcoinCoreReleaseArtifactsAreClosedByArchitecture(t *testing.T) {
 	for _, test := range []struct {
@@ -114,6 +122,8 @@ func TestBitcoinCoreComposeIsClosedAndUsesBrokerOwnedAssets(t *testing.T) {
 		"- /mnt/bitcoin-ssd/bitcoin:/home/bitcoin/.bitcoin",
 		"- " + BitcoinCoreExecutionRoot + "/storage-guard.sh:/lightningos-storage-guard.sh:ro",
 		"- " + BitcoinCoreExecutionRoot + "/storage-id:/lightningos-expected-storage-id:ro",
+		"name: " + BitcoinCoreNetwork,
+		"subnet: " + BitcoinCoreRPCSubnet,
 	} {
 		if !strings.Contains(raw, expected) {
 			t.Fatalf("compose missing %q:\n%s", expected, raw)

@@ -268,7 +268,7 @@ func (s *Server) resolveBtcpayBitcoinWiring(ctx context.Context) (btcpayBitcoinW
 
 func (s *Server) resolveBtcpayLocalWiring(ctx context.Context) (btcpayBitcoinWiring, error) {
 	bitcoinPaths := bitcoinCoreAppPaths()
-	cfg, updated, err := readBitcoinLocalRPCConfig(ctx)
+	cfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		return btcpayBitcoinWiring{}, err
 	}
@@ -276,11 +276,6 @@ func (s *Server) resolveBtcpayLocalWiring(ctx context.Context) (btcpayBitcoinWir
 		return btcpayBitcoinWiring{}, errors.New("local bitcoin RPC credentials missing")
 	}
 	if fileExists(bitcoinPaths.ComposePath) {
-		if updated {
-			if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
-				return btcpayBitcoinWiring{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", err)
-			}
-		}
 		// NBXplorer joins the Bitcoin Core app's compose network (mempool
 		// precedent) so RPC and P2P stay off the host interfaces.
 		return btcpayBitcoinWiring{

@@ -155,17 +155,12 @@ func (s *Server) applyElectrs(ctx context.Context) error {
 }
 
 func (s *Server) resolveElectrsRuntimeValues(ctx context.Context, bitcoinPaths bitcoinCorePaths) (electrsRuntimeValues, error) {
-	localCfg, updated, err := readBitcoinLocalRPCConfig(ctx)
+	localCfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		return electrsRuntimeValues{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
 	}
 	if strings.TrimSpace(localCfg.User) == "" || strings.TrimSpace(localCfg.Pass) == "" {
 		return electrsRuntimeValues{}, errors.New("local bitcoin RPC credentials missing")
-	}
-	if updated {
-		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
-			return electrsRuntimeValues{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", err)
-		}
 	}
 	_, rpcPort := parseMainchainRPC(localCfg.Host)
 	// /data/bitcoin/bitcoin.conf is root-owned on a deployed host, so read via

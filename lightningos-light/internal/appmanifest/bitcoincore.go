@@ -23,6 +23,8 @@ const (
 
 	BitcoinCoreDefaultDataDir   = "/data/bitcoin"
 	BitcoinCoreProject          = "bitcoincore"
+	BitcoinCoreNetwork          = "bitcoincore_default"
+	BitcoinCoreRPCSubnet        = "172.31.253.0/24"
 	BitcoinCoreComposeFile      = "docker-compose.yaml"
 	BitcoinCorePrimaryService   = "bitcoind"
 	BitcoinCoreStopTimeout      = 10
@@ -158,7 +160,13 @@ func BitcoinCoreCompose(dataDir string, executionRoot string) (string, error) {
       - %s:/home/bitcoin/.bitcoin
       - %s:/lightningos-storage-guard.sh:ro
       - %s:/lightningos-expected-storage-id:ro
-`, BitcoinCoreImage, dataDir, guardPath, storageIDPath), nil
+networks:
+  default:
+    name: %s
+    ipam:
+      config:
+        - subnet: %s
+`, BitcoinCoreImage, dataDir, guardPath, storageIDPath, BitcoinCoreNetwork, BitcoinCoreRPCSubnet), nil
 }
 
 func BitcoinCoreStorageGuard() string {

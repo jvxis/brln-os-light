@@ -514,7 +514,7 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 		ZMQTx:    s.cfg.BitcoinRemote.ZMQRawTx,
 	}
 
-	localCfg, localUpdated, err := readBitcoinLocalRPCConfig(r.Context())
+	localCfg, err := readBitcoinLocalRPCConfig(r.Context())
 	if err != nil && source == "local" {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -525,7 +525,6 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 			ZMQBlock: "tcp://127.0.0.1:28332",
 			ZMQTx:    "tcp://127.0.0.1:28333",
 		}
-		localUpdated = false
 	}
 
 	if err := updateLNDConfBitcoinSource(source, remoteCfg, localCfg); err != nil {
@@ -537,8 +536,8 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 	}
 	s.invalidateBitcoinStatusCaches()
 
-	needsBitcoinRestart := source == "local" && localUpdated
-	if source == "local" && !needsBitcoinRestart {
+	needsBitcoinRestart := false
+	if source == "local" {
 		rpcCtx, rpcCancel := context.WithTimeout(r.Context(), 4*time.Second)
 		defer rpcCancel()
 		if _, err := fetchBitcoinInfo(rpcCtx, localCfg.Host, localCfg.User, localCfg.Pass); err != nil {
@@ -630,7 +629,7 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 		ZMQRawTx:    "tcp://127.0.0.1:28333",
 	}
 	if !fileExists(paths.ComposePath) {
-		cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+		cfg, err := readBitcoinLocalRPCConfig(ctx)
 		if err == nil && strings.TrimSpace(cfg.Host) != "" {
 			status.RPCHost = cfg.Host
 			if strings.TrimSpace(cfg.ZMQBlock) != "" {
@@ -652,31 +651,31 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 	return status, nil
 }
 
-func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, bool, error) {
+func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, error) {
 	paths := bitcoinCoreAppPaths()
 	if !fileExists(paths.ComposePath) {
 		for _, candidate := range localBitcoinConfigCandidates(paths) {
 			if cfg, ok := readBitcoinConfRPCConfig(candidate); ok {
-				return cfg, false, nil
+				return cfg, nil
 			}
 		}
 		if cfg, ok := readBitcoinTaggedRPCConfigFromLNDConf("local"); ok {
-			return cfg, false, nil
+			return cfg, nil
 		}
 		if cfg, ok := readBitcoindRPCConfigFromLNDConf(); ok {
 			if isLocalRPCHost(cfg.Host) {
-				return cfg, false, nil
+				return cfg, nil
 			}
 		}
-		return bitcoinRPCConfig{}, false, errors.New("bitcoin core is not installed")
+		return bitcoinRPCConfig{}, errors.New("bitcoin core is not installed")
 	}
-	raw, updated, err := syncBitcoinCoreRPCAllowList(ctx, paths)
+	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
 	if err != nil {
-		return bitcoinRPCConfig{}, false, fmt.Errorf("failed to read local bitcoin.conf: %w", err)
+		return bitcoinRPCConfig{}, fmt.Errorf("failed to read local bitcoin.conf: %w", err)
 	}
 	user, pass, zmqBlock, zmqTx := parseBitcoinCoreRPCConfig(raw)
 	if user == "" || pass == "" {
-		return bitcoinRPCConfig{}, false, errors.New("local RPC credentials missing")
+		return bitcoinRPCConfig{}, errors.New("local RPC credentials missing")
 	}
 	zmqBlock = normalizeLocalZMQ(zmqBlock, "tcp://127.0.0.1:28332")
 	zmqTx = normalizeLocalZMQ(zmqTx, "tcp://127.0.0.1:28333")
@@ -686,7 +685,7 @@ func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, bool, err
 		Pass:     pass,
 		ZMQBlock: zmqBlock,
 		ZMQTx:    zmqTx,
-	}, updated, nil
+	}, nil
 }
 
 func localBitcoinConfigCandidates(paths bitcoinCorePaths) []string {
@@ -5334,73 +5333,6 @@ func normalizeLocalZMQ(value string, fallback string) string {
 	return "tcp://" + trimmed
 }
 
-func dockerContainerGateways(ctx context.Context, containerID string) []string {
-	if containerID == "" {
-		return []string{}
-	}
-	out, err := system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"inspect",
-		"-f",
-		"{{range $k,$v := .NetworkSettings.Networks}}{{println $v.Gateway}}{{end}}",
-		containerID,
-	)
-	if err != nil {
-		return []string{}
-	}
-	gateways := []string{}
-	seen := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		trimmed := strings.TrimSpace(line)
-		ip := net.ParseIP(trimmed)
-		if ip == nil {
-			continue
-		}
-		normalized := ip.String()
-		if seen[normalized] {
-			continue
-		}
-		seen[normalized] = true
-		gateways = append(gateways, normalized)
-	}
-	return gateways
-}
-
-func dockerContainerCIDRs(ctx context.Context, containerID string) []string {
-	if containerID == "" {
-		return []string{}
-	}
-	out, err := system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"inspect",
-		"-f",
-		"{{range $k,$v := .NetworkSettings.Networks}}{{printf \"%s/%d\\n\" $v.IPAddress $v.IPPrefixLen}}{{end}}",
-		containerID,
-	)
-	if err != nil {
-		return []string{}
-	}
-	cidrs := []string{}
-	seen := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "/") {
-			continue
-		}
-		if _, cidr, parseErr := net.ParseCIDR(trimmed); parseErr == nil && cidr != nil {
-			normalized := cidr.String()
-			if normalized == "" || seen[normalized] {
-				continue
-			}
-			seen[normalized] = true
-			cidrs = append(cidrs, normalized)
-		}
-	}
-	return cidrs
-}
-
 func updateLNDConfRPC(ctx context.Context, user, pass, host, zmqBlock, zmqTx string) error {
 	remoteCfg := bitcoinRPCConfig{
 		Host:     host,
@@ -5409,7 +5341,7 @@ func updateLNDConfRPC(ctx context.Context, user, pass, host, zmqBlock, zmqTx str
 		ZMQBlock: zmqBlock,
 		ZMQTx:    zmqTx,
 	}
-	localCfg, _, err := readBitcoinLocalRPCConfig(ctx)
+	localCfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		localCfg = bitcoinRPCConfig{
 			Host:     "127.0.0.1:8332",

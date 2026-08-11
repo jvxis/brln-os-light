@@ -702,7 +702,7 @@ func ensurePSWebConfig(ctx context.Context, paths peerswapPaths, values peerswap
 		return err
 	}
 
-	bitcoinCfg, _, bitcoinErr := readBitcoinLocalRPCConfig(ctx)
+	bitcoinCfg, bitcoinErr := readBitcoinLocalRPCConfig(ctx)
 	changed := updatePSWebConfigMap(cfg, paths, values, bitcoinCfg, bitcoinErr == nil)
 	if !changed {
 		return nil

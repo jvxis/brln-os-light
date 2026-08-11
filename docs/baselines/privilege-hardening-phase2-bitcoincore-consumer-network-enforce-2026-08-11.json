@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-11T10:20:59Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "7c1d7e330bffa37ec9d478c786c03b1d60f81c02",
+  "tested_source": "source_head_before_slice plus the uncommitted Bitcoin Core consumer-network slice",
+  "scope": "stable Bitcoin Core Docker consumer network, idempotent config baseline migration, and restart-free dependent-app RPC discovery",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "architecture": "amd64"
+  },
+  "consumer_contract": {
+    "network": "bitcoincore_default",
+    "fresh_subnet": "172.31.253.0/24",
+    "default_config_ready_before_first_start": true,
+    "current_and_future_consumers_join_one_external_network": true,
+    "app_specific_rpcallowip_mutation": false,
+    "config_reads_have_side_effects": false,
+    "consumer_install_restarts_bitcoin": false,
+    "existing_running_node_restart_maximum": "one restart only when the Bitcoin app performs the one-time baseline migration",
+    "existing_stopped_node_extra_restart": false
+  },
+  "linux_contract_tests": {
+    "appmanifest": "passed",
+    "privileged": "passed",
+    "system": "passed",
+    "server": "passed",
+    "vet": "passed",
+    "manager_build": "passed",
+    "broker_build": "passed"
+  },
+  "real_gates": [
+    {
+      "mode": "fresh",
+      "network_subnet": "172.31.253.0/24",
+      "chain": "regtest",
+      "consumer_rpc": "getblockchaininfo passed",
+      "bitcoin_container_restarted_by_consumer": false
+    },
+    {
+      "mode": "legacy_network",
+      "network_subnet": "172.18.0.0/16",
+      "fixed_baseline_also_present": true,
+      "forced_network_recreation": false,
+      "chain": "regtest",
+      "consumer_rpc": "getblockchaininfo passed",
+      "bitcoin_container_restarted_by_consumer": false
+    }
+  ],
+  "gate_fixture_note": "Bitcoin Core 31.1 requires network-sensitive options under [regtest] when regtest is selected; the accepted gate fixture used that section. Production remains default mainnet and was not started.",
+  "final_state": {
+    "official_local_image_present": true,
+    "bitcoin_compose_containers_present": false,
+    "bitcoin_network_present": false,
+    "temporary_mount_present": false,
+    "temporary_storage_metadata_present": false,
+    "temporary_execution_assets_present": false,
+    "temporary_remote_checkout_present": false,
+    "temporary_remote_broker_binary_present": false,
+    "manager_active_before_shutdown": true,
+    "gate_vm": "powered_off_by_acpi",
+    "los_test2": "untouched"
+  },
+  "remaining_scope": [
+    "full install gates for each dependent product",
+    "typed operational bitcoin-cli and log access",
+    "mainnet P2P firewall contract"
+  ]
+}

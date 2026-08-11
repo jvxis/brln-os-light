@@ -143,7 +143,7 @@ func (s *Server) bitcoinLocalStatus(ctx context.Context) (bitcoinLocalStatus, er
 		DataDir:   paths.DataDir,
 	}
 	if !fileExists(paths.ComposePath) {
-		cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+		cfg, err := readBitcoinLocalRPCConfig(ctx)
 		if err != nil {
 			return resp, nil
 		}
@@ -413,7 +413,7 @@ func getBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHas
 			bestTime, buckets, err = computeBitcoinLocalCadence(ctx, paths, trimmed)
 		}
 	} else {
-		cfg, _, cfgErr := readBitcoinLocalRPCConfig(ctx)
+		cfg, cfgErr := readBitcoinLocalRPCConfig(ctx)
 		if cfgErr != nil {
 			return 0, nil, cfgErr
 		}
@@ -1080,31 +1080,6 @@ func normalizeIPv4DottedMaskCIDR(value string) (string, bool) {
 	return network.String(), true
 }
 
-func normalizeBitcoinCoreConfigText(raw string) string {
-	return ensureTrailingNewline(strings.TrimRight(strings.ReplaceAll(raw, "\r\n", "\n"), "\n"))
-}
-
-func rpcAllowLineValue(line string) (string, bool) {
-	key, value, ok := bitcoinCoreConfigKeyValue(line)
-	if !ok || !strings.EqualFold(key, "rpcallowip") {
-		return "", false
-	}
-	return normalizeRPCAllowIPValue(value)
-}
-
-func rpcAllowValueIsCIDR(value string) bool {
-	return strings.Contains(value, "/")
-}
-
-func rpcAllowCIDRContainsIP(cidrValue string, ipValue string) bool {
-	_, cidr, err := net.ParseCIDR(cidrValue)
-	if err != nil || cidr == nil {
-		return false
-	}
-	ip := net.ParseIP(ipValue)
-	return ip != nil && cidr.Contains(ip)
-}
-
 func looksLikeEntrypointLog(line string) bool {
 	if line == "" {
 		return false
@@ -1121,103 +1096,12 @@ func looksLikeEntrypointLog(line string) bool {
 	return false
 }
 
-func syncBitcoinCoreRPCAllowList(ctx context.Context, paths bitcoinCorePaths) (string, bool, error) {
-	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
-	if err != nil {
-		return "", false, err
-	}
-
-	allowList := []string{"127.0.0.1"}
-	if gateway, gwErr := dockerGatewayIP(ctx); gwErr == nil && gateway != "" {
-		allowList = append(allowList, gateway)
-	}
-	if containerID, idErr := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind"); idErr == nil && containerID != "" {
-		for _, gateway := range dockerContainerGateways(ctx, containerID) {
-			allowList = append(allowList, gateway)
-		}
-		for _, cidr := range dockerContainerCIDRs(ctx, containerID) {
-			allowList = append(allowList, cidr)
-		}
-	}
-
-	updated, changed := ensureBitcoinCoreRPCAllowList(raw, allowList)
-	if !changed {
-		return raw, false, nil
-	}
-	if err := writeBitcoinCoreConfig(ctx, paths, updated); err != nil {
-		return "", false, err
-	}
-	return updated, true, nil
-}
-
-func ensureBitcoinCoreRPCAllowList(raw string, allow []string) (string, bool) {
-	normalized := sanitizeBitcoinCoreConfig(raw)
-	lines := strings.Split(strings.TrimRight(normalized, "\n"), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		lines = []string{}
-	}
-
-	changed := normalized != normalizeBitcoinCoreConfigText(raw)
-	for _, entry := range allow {
-		trimmed, valid := normalizeRPCAllowIPValue(entry)
-		if !valid {
-			continue
-		}
-		if rpcAllowListContains(lines, trimmed) {
-			continue
-		}
-		lines = append(lines, "rpcallowip="+trimmed)
-		changed = true
-	}
-
-	if !changed {
-		return normalized, false
-	}
-	return ensureTrailingNewline(strings.Join(lines, "\n")), true
-}
-
-func rpcAllowListContains(lines []string, value string) bool {
-	value, valid := normalizeRPCAllowIPValue(value)
-	if !valid {
-		return false
-	}
-	if rpcAllowValueIsCIDR(value) {
-		for _, line := range lines {
-			candidate, ok := rpcAllowLineValue(line)
-			if !ok || !rpcAllowValueIsCIDR(candidate) {
-				continue
-			}
-			if candidate == value {
-				return true
-			}
-		}
-		return false
-	}
-
-	for _, line := range lines {
-		candidate, ok := rpcAllowLineValue(line)
-		if !ok {
-			continue
-		}
-		if rpcAllowValueIsCIDR(candidate) {
-			if rpcAllowCIDRContainsIP(candidate, value) {
-				return true
-			}
-			continue
-		}
-		if candidate == value {
-			return true
-		}
-	}
-	return false
-}
-
 func roundGB(value float64) float64 {
 	return math.Round(value*100) / 100
 }
 
 func (s *Server) bitcoinLocalReady(ctx context.Context) (bool, string) {
-	cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+	cfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "not installed") {

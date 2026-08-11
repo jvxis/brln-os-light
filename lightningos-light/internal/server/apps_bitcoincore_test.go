@@ -19,6 +19,44 @@ func TestBitcoinCoreImageIsPinned(t *testing.T) {
 	}
 }
 
+func TestDefaultBitcoinCoreConfigAllowsDedicatedConsumerNetwork(t *testing.T) {
+	raw, err := defaultBitcoinCoreConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"rpcbind=0.0.0.0:8332",
+		"rpcallowip=127.0.0.1",
+		"rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet,
+	} {
+		if !strings.Contains(raw, expected+"\n") {
+			t.Fatalf("default bitcoin.conf missing %q", expected)
+		}
+	}
+	if strings.Contains(raw, "rpcallowip=172.17.0.0/16") {
+		t.Fatal("default bitcoin.conf still depends on Docker's mutable bridge subnet")
+	}
+}
+
+func TestEnsureBitcoinCoreConsumerRPCValuesMigratesOnce(t *testing.T) {
+	const legacy = "server=1\nrpcuser=lightningos\nrpcpassword=preserve-me\nrpcallowip=127.0.0.1\n"
+	updated, changed := ensureBitcoinCoreConsumerRPCValues(legacy)
+	if !changed {
+		t.Fatal("expected the dedicated consumer subnet to be added")
+	}
+	if !strings.Contains(updated, "rpcpassword=preserve-me\n") {
+		t.Fatal("migration did not preserve the existing RPC password")
+	}
+	if count := strings.Count(updated, "rpcallowip="+appmanifest.BitcoinCoreRPCSubnet+"\n"); count != 1 {
+		t.Fatalf("expected one dedicated subnet entry, got %d", count)
+	}
+
+	again, changed := ensureBitcoinCoreConsumerRPCValues(updated)
+	if changed || again != updated {
+		t.Fatal("consumer RPC baseline migration is not idempotent")
+	}
+}
+
 func TestEnsureBitcoinCoreImageEnforceUsesBroker(t *testing.T) {
 	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
 	system.ConfigurePrivilegedClient(client)

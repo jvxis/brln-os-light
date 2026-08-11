@@ -16,7 +16,7 @@ type bitcoinBlockHashRPCResponse struct {
 }
 
 func resolveBitcoinRPCConfigForClosedChannels(ctx context.Context) (bitcoinRPCConfig, error) {
-	if cfg, _, err := readBitcoinLocalRPCConfig(ctx); err == nil {
+	if cfg, err := readBitcoinLocalRPCConfig(ctx); err == nil {
 		if strings.TrimSpace(cfg.Host) != "" && strings.TrimSpace(cfg.User) != "" && strings.TrimSpace(cfg.Pass) != "" {
 			return cfg, nil
 		}

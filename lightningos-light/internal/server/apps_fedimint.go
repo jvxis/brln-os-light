@@ -465,20 +465,10 @@ func fedimintLndRPCAddr(cfg *config.Config) string {
 	return "https://" + net.JoinHostPort("host.docker.internal", strconv.Itoa(port))
 }
 
-func (s *Server) resolveFedimintBitcoinBackend(ctx context.Context, appName string) (fedimintBitcoinBackendValues, error) {
+func (s *Server) resolveFedimintBitcoinBackend(_ context.Context, appName string) (fedimintBitcoinBackendValues, error) {
 	cfg, ok := readBitcoindRPCConfigFromLNDConf()
 	if !ok {
 		return fedimintBitcoinBackendValues{}, fmt.Errorf("bitcoin RPC credentials unavailable: configure bitcoind.rpchost, bitcoind.rpcuser and bitcoind.rpcpass in %s before starting %s", lndConfPath, appName)
-	}
-	bitcoinPaths := bitcoinCoreAppPaths()
-	if isLocalRPCHost(cfg.Host) && fileExists(bitcoinPaths.ComposePath) {
-		if _, changed, err := syncBitcoinCoreRPCAllowList(ctx, bitcoinPaths); err != nil {
-			return fedimintBitcoinBackendValues{}, fmt.Errorf("failed to update local bitcoind RPC allowlist: %w", err)
-		} else if changed {
-			if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
-				return fedimintBitcoinBackendValues{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", err)
-			}
-		}
 	}
 	return fedimintBitcoinBackendFromConfig(cfg), nil
 }

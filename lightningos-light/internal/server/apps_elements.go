@@ -958,7 +958,7 @@ func resolveElementsLocalBitcoinRPCConfig(ctx context.Context) (bitcoinRPCConfig
 	if cfg, ok := readElementsLocalBitcoinRPCConfigFromLNDConf(); ok {
 		return cfg, nil
 	}
-	if cfg, _, err := readBitcoinLocalRPCConfig(ctx); err == nil {
+	if cfg, err := readBitcoinLocalRPCConfig(ctx); err == nil {
 		if !isLocalRPCHost(cfg.Host) {
 			return bitcoinRPCConfig{}, fmt.Errorf("local bitcoin RPC host is not local: %s", cfg.Host)
 		}

@@ -367,9 +367,28 @@ container and execution assets. All temporary mount, storage metadata,
 checkout, and binary paths were removed, the manager remained active, the VM
 was powered off, and `LOS-TEST2` was untouched. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-bitcoincore-lifecycle-enforce-2026-08-10.json`.
-Live compatibility checks for the dependent apps, the remaining operational
-Bitcoin CLI/log paths, and the mainnet P2P firewall contract are the next
-Bitcoin slices.
+Bitcoin consumer access now has a stable, restart-minimizing contract. New
+installs create `bitcoincore_default` on the fixed private subnet
+`172.31.253.0/24`, and the default `bitcoin.conf` allows localhost plus that
+subnet before bitcoind first starts. Every current or future local Docker
+consumer must join this one external network; app-specific networks are not
+added to `rpcallowip`. Reading local RPC configuration is now side-effect free,
+and the BTCPay, Electrs, Fedimint, Mempool, and Public Pool wiring paths no
+longer rewrite `bitcoin.conf` or restart Bitcoin Core. Existing nodes receive
+the fixed allow entry once when the Bitcoin app itself is installed/started;
+an already-running daemon is restarted once only if that migration changed the
+file, while a stopped daemon reads it on its normal start.
+
+The disposable Ubuntu 24.04 gate passed both fresh and legacy-network cases.
+The fresh network used `172.31.253.0/24`; a pre-existing Compose-labeled
+dynamic network on `172.18.0.0/16` remained usable while its old allow entry
+coexisted with the new baseline. In both cases an isolated Docker consumer
+resolved `bitcoind`, authenticated over the shared network, and confirmed
+`regtest` with `getblockchaininfo`; the Bitcoin container ID and start time did
+not change. No mainnet or persistent blockchain data was used. Evidence is in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-consumer-network-enforce-2026-08-11.json`.
+Full install gates for each dependent product, the remaining operational
+Bitcoin CLI/log paths, and the mainnet P2P firewall contract remain open.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.
@@ -522,6 +541,12 @@ require an announced test window. Bitcoin must never be deliberately stopped for
 hardening tests. LND and the manager may be restarted when the checkpoint calls
 for it. Apps may be stopped only when required for their own lifecycle test and
 must finish in their original running/stopped state.
+
+The local test network is outside the mutation scope. Agents must use the
+router-reserved address recorded outside Git and must not scan the LAN, renew
+DHCP, reset host/guest adapters, or change VirtualBox bridge/NAT settings while
+locating a test VM. Read-only neighbor-table inspection is also avoided once a
+reserved address is available.
 
 Destructive and failure-injection tests run first on a fresh disposable VM. The
 preserved integration node receives only a phase that has already passed that

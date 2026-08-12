@@ -69,6 +69,15 @@ type BitcoinConfigManager interface {
 	Credentials(ctx context.Context, dataDir string) (BitcoinCoreCredentialsState, error)
 }
 
+type LoopManager interface {
+	Status(ctx context.Context) (LoopState, error)
+	Ensure(ctx context.Context, params LoopEnsureParams, dryRun bool) (LoopState, error)
+	Lifecycle(ctx context.Context, action AppLifecycleAction, dryRun bool) (LoopState, error)
+	Remove(ctx context.Context, dryRun bool) error
+	EnsurePermissions(ctx context.Context, dryRun bool) error
+	EnsureClientMaterial(ctx context.Context, dryRun bool) error
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -90,6 +99,7 @@ type Broker struct {
 	Packages       PackageManager
 	BitcoinStorage BitcoinStorageManager
 	BitcoinConfig  BitcoinConfigManager
+	Loop           LoopManager
 	Caller         string
 	Timeout        time.Duration
 	Now            func() time.Time
@@ -162,7 +172,7 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		return configured
 	}
 	switch operation {
-	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset:
+	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}
@@ -468,6 +478,65 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "bitcoin_consumer_network_failed", errors.New("bitcoin consumer network ensure failed")
 		}
 		return state, "", nil
+	case OperationLoopStatus:
+		if broker.Loop == nil {
+			return nil, "broker_unavailable", errors.New("Lightning Loop manager is unavailable")
+		}
+		state, err := broker.Loop.Status(ctx)
+		if err != nil {
+			return nil, "loop_status_failed", errors.New("Lightning Loop status failed")
+		}
+		return state, "", nil
+	case OperationLoopEnsure:
+		if broker.Loop == nil {
+			return nil, "broker_unavailable", errors.New("Lightning Loop manager is unavailable")
+		}
+		var params LoopEnsureParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.loop.ensure params")
+		}
+		state, err := broker.Loop.Ensure(ctx, params, request.DryRun)
+		if err != nil {
+			return nil, "loop_ensure_failed", errors.New("Lightning Loop preparation failed")
+		}
+		return state, "", nil
+	case OperationLoopLifecycle:
+		if broker.Loop == nil {
+			return nil, "broker_unavailable", errors.New("Lightning Loop manager is unavailable")
+		}
+		var params LoopLifecycleParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.loop.lifecycle params")
+		}
+		state, err := broker.Loop.Lifecycle(ctx, params.Action, request.DryRun)
+		if err != nil {
+			return nil, "loop_lifecycle_failed", errors.New("Lightning Loop lifecycle failed")
+		}
+		return state, "", nil
+	case OperationLoopRemove:
+		if broker.Loop == nil {
+			return nil, "broker_unavailable", errors.New("Lightning Loop manager is unavailable")
+		}
+		if err := broker.Loop.Remove(ctx, request.DryRun); err != nil {
+			return nil, "loop_remove_failed", errors.New("Lightning Loop removal failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationLoopPermissionsEnsure:
+		if broker.Loop == nil {
+			return nil, "broker_unavailable", errors.New("Lightning Loop manager is unavailable")
+		}
+		if err := broker.Loop.EnsurePermissions(ctx, request.DryRun); err != nil {
+			return nil, "loop_permissions_failed", errors.New("Lightning Loop permissions repair failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationLoopClientMaterialEnsure:
+		if broker.Loop == nil {
+			return nil, "broker_unavailable", errors.New("Lightning Loop manager is unavailable")
+		}
+		if err := broker.Loop.EnsureClientMaterial(ctx, request.DryRun); err != nil {
+			return nil, "loop_client_material_failed", errors.New("Lightning Loop client material preparation failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -504,7 +573,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure:
 		return true
 	default:
 		return false
@@ -513,7 +582,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure:
 		return true
 	default:
 		return false

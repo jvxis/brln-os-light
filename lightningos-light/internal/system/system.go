@@ -57,6 +57,96 @@ type appAdminResetPrivilegedClient interface {
 	ResetAppAdmin(ctx context.Context, appID string, dryRun bool) error
 }
 
+type loopPrivilegedClient interface {
+	LoopStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, hasPersistentState bool, err error)
+	EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (status string, err error)
+	LoopLifecycle(ctx context.Context, action string, dryRun bool) (status string, err error)
+	RemoveLoop(ctx context.Context, dryRun bool) error
+	EnsureLoopPermissions(ctx context.Context, dryRun bool) error
+	EnsureLoopClientMaterial(ctx context.Context, dryRun bool) error
+}
+
+type LoopBrokerState struct {
+	Installed          bool
+	Status             string
+	HasLNDMacaroon     bool
+	HasPersistentState bool
+}
+
+func LoopStatusWithBroker(ctx context.Context) (bool, LoopBrokerState, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, LoopBrokerState{}, nil
+	}
+	loopClient, ok := client.(loopPrivilegedClient)
+	if !ok {
+		return true, LoopBrokerState{}, errors.New("privileged broker does not support Lightning Loop")
+	}
+	installed, status, hasMacaroon, hasState, err := loopClient.LoopStatus(ctx)
+	return true, LoopBrokerState{Installed: installed, Status: status, HasLNDMacaroon: hasMacaroon, HasPersistentState: hasState}, err
+}
+
+func EnsureLoopWithBroker(ctx context.Context, tlsCertificate, macaroon []byte) (bool, error) {
+	return loopMutationWithBroker(ctx, func(callCtx context.Context, client loopPrivilegedClient, dryRun bool) error {
+		_, err := client.EnsureLoop(callCtx, tlsCertificate, macaroon, dryRun)
+		return err
+	})
+}
+
+func LoopLifecycleWithBroker(ctx context.Context, action string) (bool, error) {
+	return loopMutationWithBroker(ctx, func(callCtx context.Context, client loopPrivilegedClient, dryRun bool) error {
+		_, err := client.LoopLifecycle(callCtx, action, dryRun)
+		return err
+	})
+}
+
+func RemoveLoopWithBroker(ctx context.Context) (bool, error) {
+	return loopMutationWithBroker(ctx, func(callCtx context.Context, client loopPrivilegedClient, dryRun bool) error {
+		return client.RemoveLoop(callCtx, dryRun)
+	})
+}
+
+func EnsureLoopPermissionsWithBroker(ctx context.Context) (bool, error) {
+	return loopMutationWithBroker(ctx, func(callCtx context.Context, client loopPrivilegedClient, dryRun bool) error {
+		return client.EnsureLoopPermissions(callCtx, dryRun)
+	})
+}
+
+func EnsureLoopClientMaterialWithBroker(ctx context.Context) (bool, error) {
+	return loopMutationWithBroker(ctx, func(callCtx context.Context, client loopPrivilegedClient, dryRun bool) error {
+		return client.EnsureLoopClientMaterial(callCtx, dryRun)
+	})
+}
+
+func loopMutationWithBroker(ctx context.Context, operation func(context.Context, loopPrivilegedClient, bool) error) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	loopClient, ok := client.(loopPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker does not support Lightning Loop")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, operation(ctx, loopClient, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		_ = operation(shadowCtx, loopClient, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
 func ResetAppAdminWithBroker(ctx context.Context, appID string) (bool, error) {
 	privilegedState.RLock()
 	client := privilegedState.client

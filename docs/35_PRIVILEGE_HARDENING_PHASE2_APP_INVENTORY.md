@@ -11,7 +11,8 @@ The registry exposes 20 app IDs through the common `Info`, `Install`,
 | Family | App IDs | Current lifecycle boundary | Additional privileged dependencies |
 | --- | --- | --- | --- |
 | Docker Compose | `bitcoincore`, `bark-wallet`, `electrs`, `mempool`, `fedimint-guardian`, `fedimint-gateway`, `lndg`, `lnbits`, `btcpay`, `robosats`, `publicpool`, `cpuminer`, `tapd` | Generic `runCompose(root, composePath, args...)` with caller-selected paths and argument slices | Docker/Compose installation, image probes and pulls, container inspect/stats/exec/update, Docker network inspection, UFW, LND compatibility changes, and storage repair, depending on the app |
-| Native systemd | `elements`, `peerswap`, `loop` | Generic privileged systemd and shell helpers | Units, binaries, config/data trees, users/groups, ownership, firewall, and credential material |
+| Native systemd | `elements`, `peerswap` | Generic privileged systemd and shell helpers | Units, binaries, config/data trees, users/groups, ownership, firewall, and credential material |
+| Native systemd (migrated) | `loop` | Closed typed broker operations; no direct privileged manager call | Final Ubuntu 24.04/26.04 clean-install, reboot, and shared cutover matrix |
 | In-process feature toggle | `depixbuy`, `fswap`, `loopout-brln`, `magma-sales` | Manager service state/configuration | Persistent database or fixed environment state; no container lifecycle |
 
 The 13 Compose apps do not share one safe free-form command shape. Observed

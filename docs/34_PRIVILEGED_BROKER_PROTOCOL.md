@@ -169,6 +169,33 @@ actual update. In `enforce`, failure of this typed operation does not fall back
 to `sudo tee` or runtime sudoers creation. Non-default manager config paths are
 unsupported in `enforce` and fail closed.
 
+### Native Lightning Loop operations
+
+Lightning Labs Loop uses six operations whose paths, service account, unit,
+ports, release URL, archive names, checksums, configuration, and ownership are
+fixed by the shared catalog:
+
+- `app.loop.status` accepts `{}` and returns only installed/service state plus
+  booleans indicating whether the dedicated LND macaroon and persistent swap
+  state exist;
+- `app.loop.ensure` accepts a bounded LND TLS certificate and an optional
+  bounded newly baked dedicated macaroon. It prepares only the fixed
+  `v0.33.3-beta` release and the cataloged native runtime;
+- `app.loop.lifecycle` accepts only `start` or `stop`;
+- `app.loop.remove` accepts `{}`, disables the fixed unit, removes only the
+  application binaries/unit, and deliberately preserves swap data and
+  credentials;
+- `app.loop.permissions.ensure` accepts `{}` and idempotently repairs only the
+  fixed service account, directories, modes, ownership, and traverse ACLs;
+- `app.loop.client-material.ensure` accepts `{}` and atomically creates only
+  the fixed manager-readable copies of Loop's API certificate and macaroon.
+
+No operation accepts a path, unit, executable, URL, checksum, user, group,
+mode, port, shell fragment, or arbitrary lifecycle argument. Existing
+directory components and credential sources must be real directories/regular
+files, never symlinks. Credential bytes remain in standard input only; audit
+records contain the operation metadata but not request parameters.
+
 ### `docker.runtime.ensure` and `docker.runtime.status`
 
 Both operations accept only `{}`. They support a Docker runtime that is already

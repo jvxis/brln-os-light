@@ -118,6 +118,65 @@ func (client *Client) ServiceStatus(ctx context.Context, unit string) (string, e
 	return result.Status, nil
 }
 
+func (client *Client) LoopStatus(ctx context.Context) (bool, string, bool, bool, error) {
+	response, err := client.call(ctx, OperationLoopStatus, struct{}{}, false)
+	if err != nil {
+		return false, "", false, false, err
+	}
+	state, err := decodeLoopState(response, false)
+	return state.Installed, state.Status, state.HasLNDMacaroon, state.HasPersistentState, err
+}
+
+func (client *Client) EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationLoopEnsure, LoopEnsureParams{
+		LNDTLSCertificate: tlsCertificate,
+		LNDMacaroon:       macaroon,
+	}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeLoopState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) LoopLifecycle(ctx context.Context, action string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationLoopLifecycle, LoopLifecycleParams{Action: AppLifecycleAction(action)}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeLoopState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) RemoveLoop(ctx context.Context, dryRun bool) error {
+	_, err := client.call(ctx, OperationLoopRemove, struct{}{}, dryRun)
+	return err
+}
+
+func (client *Client) EnsureLoopPermissions(ctx context.Context, dryRun bool) error {
+	_, err := client.call(ctx, OperationLoopPermissionsEnsure, struct{}{}, dryRun)
+	return err
+}
+
+func (client *Client) EnsureLoopClientMaterial(ctx context.Context, dryRun bool) error {
+	_, err := client.call(ctx, OperationLoopClientMaterialEnsure, struct{}{}, dryRun)
+	return err
+}
+
+func decodeLoopState(response Response, dryRun bool) (LoopState, error) {
+	var state LoopState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return state, errors.New("invalid broker Lightning Loop state response")
+	}
+	if dryRun && state.Status == "validated" {
+		return state, nil
+	}
+	if state.Status != "running" && state.Status != "stopped" && state.Status != "unknown" {
+		return LoopState{}, errors.New("invalid broker Lightning Loop status")
+	}
+	return state, nil
+}
+
 func (client *Client) RestartService(ctx context.Context, unit string, noBlock bool, dryRun bool) error {
 	_, err := client.call(ctx, OperationServiceRestart, ServiceRestartParams{
 		Unit:    unit,

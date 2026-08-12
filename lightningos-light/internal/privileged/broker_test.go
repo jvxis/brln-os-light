@@ -81,6 +81,52 @@ type recordingBitcoinConfig struct {
 	err             error
 }
 
+type recordingLoopManager struct {
+	operation string
+	action    AppLifecycleAction
+	params    LoopEnsureParams
+	dryRun    bool
+	state     LoopState
+	err       error
+}
+
+func (manager *recordingLoopManager) Status(context.Context) (LoopState, error) {
+	manager.operation = "status"
+	return manager.state, manager.err
+}
+
+func (manager *recordingLoopManager) Ensure(_ context.Context, params LoopEnsureParams, dryRun bool) (LoopState, error) {
+	manager.operation = "ensure"
+	manager.params = params
+	manager.dryRun = dryRun
+	return manager.state, manager.err
+}
+
+func (manager *recordingLoopManager) Lifecycle(_ context.Context, action AppLifecycleAction, dryRun bool) (LoopState, error) {
+	manager.operation = "lifecycle"
+	manager.action = action
+	manager.dryRun = dryRun
+	return manager.state, manager.err
+}
+
+func (manager *recordingLoopManager) Remove(_ context.Context, dryRun bool) error {
+	manager.operation = "remove"
+	manager.dryRun = dryRun
+	return manager.err
+}
+
+func (manager *recordingLoopManager) EnsurePermissions(_ context.Context, dryRun bool) error {
+	manager.operation = "permissions"
+	manager.dryRun = dryRun
+	return manager.err
+}
+
+func (manager *recordingLoopManager) EnsureClientMaterial(_ context.Context, dryRun bool) error {
+	manager.operation = "client-material"
+	manager.dryRun = dryRun
+	return manager.err
+}
+
 func (config *recordingBitcoinConfig) Ensure(_ context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (BitcoinCoreConfigState, error) {
 	config.operation = "ensure"
 	config.dataDir = dataDir
@@ -1007,6 +1053,71 @@ func TestBrokerBitcoinCredentialsReadIsTypedUnlockedAndNeverAudited(t *testing.T
 	}
 	if strings.Contains(fmt.Sprintf("%#v", audit.events), password) {
 		t.Fatal("RPC password leaked into audit")
+	}
+}
+
+func TestBrokerLoopOperationsAreTypedLockedAndNeverAuditCredentialBytes(t *testing.T) {
+	const certificate = "loop-certificate-never-audit"
+	const macaroon = "loop-macaroon-never-audit"
+	for _, test := range []struct {
+		name      string
+		operation Operation
+		dryRun    bool
+		params    any
+		wantCall  string
+		wantLocks int
+	}{
+		{name: "status", operation: OperationLoopStatus, params: struct{}{}, wantCall: "status"},
+		{name: "ensure", operation: OperationLoopEnsure, params: LoopEnsureParams{LNDTLSCertificate: []byte(certificate), LNDMacaroon: []byte(macaroon)}, wantCall: "ensure", wantLocks: 1},
+		{name: "ensure dry run", operation: OperationLoopEnsure, dryRun: true, params: LoopEnsureParams{LNDTLSCertificate: []byte(certificate)}, wantCall: "ensure"},
+		{name: "lifecycle", operation: OperationLoopLifecycle, params: LoopLifecycleParams{Action: AppLifecycleStart}, wantCall: "lifecycle", wantLocks: 1},
+		{name: "remove", operation: OperationLoopRemove, params: struct{}{}, wantCall: "remove", wantLocks: 1},
+		{name: "permissions", operation: OperationLoopPermissionsEnsure, params: struct{}{}, wantCall: "permissions", wantLocks: 1},
+		{name: "client material", operation: OperationLoopClientMaterialEnsure, params: struct{}{}, wantCall: "client-material", wantLocks: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rawParams, err := MarshalParams(test.params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			audit := &recordingAudit{}
+			locker := &recordingLocker{}
+			loop := &recordingLoopManager{state: LoopState{Installed: true, Status: "running", HasLNDMacaroon: true}}
+			if test.dryRun {
+				loop.state = LoopState{Status: "validated"}
+			}
+			broker := testBroker(&recordingRunner{}, audit, locker)
+			broker.Loop = loop
+			response := broker.Handle(context.Background(), Request{
+				Version: ProtocolVersion, RequestID: "loop_broker_1", Operation: test.operation, DryRun: test.dryRun, Params: rawParams,
+			})
+			if !response.OK || loop.operation != test.wantCall || loop.dryRun != test.dryRun || locker.locks != test.wantLocks {
+				t.Fatalf("response/loop/locker=%#v/%#v/%#v", response, loop, locker)
+			}
+			encoded, err := json.Marshal(audit.events)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encoded), certificate) || strings.Contains(string(encoded), macaroon) {
+				t.Fatalf("Loop secret leaked into audit: %s", encoded)
+			}
+		})
+	}
+}
+
+func TestBrokerLoopFailureIsGeneric(t *testing.T) {
+	const secret = "loop-secret-do-not-echo"
+	params, err := MarshalParams(LoopEnsureParams{LNDTLSCertificate: []byte(secret)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Loop = &recordingLoopManager{err: errors.New("failed while handling " + secret)}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "loop_failure_1", Operation: OperationLoopEnsure, Params: params,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != "loop_ensure_failed" || strings.Contains(response.Error.Message, secret) {
+		t.Fatalf("unexpected response: %#v", response)
 	}
 }
 

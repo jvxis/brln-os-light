@@ -44,6 +44,12 @@ const (
 	OperationBitcoinCredentialsRead       Operation = "app.bitcoincore.credentials.read"
 	OperationBitcoinStatus                Operation = "app.bitcoincore.status"
 	OperationBitcoinConsumerNetworkEnsure Operation = "bitcoin.consumer-network.ensure"
+	OperationLoopStatus                   Operation = "app.loop.status"
+	OperationLoopEnsure                   Operation = "app.loop.ensure"
+	OperationLoopLifecycle                Operation = "app.loop.lifecycle"
+	OperationLoopRemove                   Operation = "app.loop.remove"
+	OperationLoopPermissionsEnsure        Operation = "app.loop.permissions.ensure"
+	OperationLoopClientMaterialEnsure     Operation = "app.loop.client-material.ensure"
 )
 
 type Request struct {
@@ -196,6 +202,22 @@ type PackageFeatureState struct {
 type AppInspection struct {
 	Status        string  `json:"status"`
 	CPUPercentRaw float64 `json:"cpu_percent_raw"`
+}
+
+type LoopEnsureParams struct {
+	LNDTLSCertificate []byte `json:"lnd_tls_certificate"`
+	LNDMacaroon       []byte `json:"lnd_macaroon,omitempty"`
+}
+
+type LoopLifecycleParams struct {
+	Action AppLifecycleAction `json:"action"`
+}
+
+type LoopState struct {
+	Installed          bool   `json:"installed"`
+	Status             string `json:"status"`
+	HasLNDMacaroon     bool   `json:"has_lnd_macaroon"`
+	HasPersistentState bool   `json:"has_persistent_state"`
 }
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -464,6 +486,30 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid bitcoin.consumer-network.ensure params: %w", err)
+		}
+	case OperationLoopStatus, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure:
+		if request.DryRun && request.Operation == OperationLoopStatus {
+			return errors.New("dry_run is not valid for app.loop.status")
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
+	case OperationLoopEnsure:
+		var params LoopEnsureParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.loop.ensure params: %w", err)
+		}
+		if err := appmanifest.ValidateLoopMaterial(params.LNDTLSCertificate, params.LNDMacaroon); err != nil {
+			return err
+		}
+	case OperationLoopLifecycle:
+		var params LoopLifecycleParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.loop.lifecycle params: %w", err)
+		}
+		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
+			return errors.New("Loop lifecycle action is not allowed")
 		}
 	default:
 		return errors.New("unknown operation")

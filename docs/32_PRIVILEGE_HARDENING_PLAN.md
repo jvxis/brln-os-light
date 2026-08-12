@@ -811,6 +811,41 @@ is still mandatory.
 Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-native-brln-boundary-2026-08-12.json`.
 
+Lightning Labs' Lightning Loop app is a separate product from the first-party
+BRLN Loop Out feature above. Its elevated-LND disclaimer remains because it is
+a third-party daemon with a dedicated credential capable of swaps and fund
+movement. Its native systemd lifecycle is now inside a closed broker contract:
+status, verified release/config/unit preparation, start/stop, removal,
+permission repair, and manager-readable API material synchronization have
+distinct typed operations. The manager no longer contains a `sudo`,
+`systemd-run`, privileged shell, user/group mutation, root-file install, or
+caller-selected privileged path for this app, and its legacy privilege budget
+has been removed.
+
+The catalog fixes Loop `v0.33.3-beta`, the official GitHub release URL,
+architecture-specific SHA-256 values, service account, paths, ports,
+configuration, and hardened unit. Archive extraction accepts only the two
+bounded regular binaries. Requests cannot select a URL, archive, checksum,
+path, unit, user, owner, command, or lifecycle action outside `start`/`stop`;
+symlinked trees and oversized credential material fail closed. The dedicated
+LND macaroon is preserved across idempotent repair, and only broker-created
+`0640` client copies make the Loop API certificate and macaroon readable to
+the manager.
+
+LOS TESTE2 supplied the existing-node gate. Loop was already installed at the
+cataloged version with persistent swap state, but intentionally inactive and
+disabled. The broker was exercised directly as `lightningos` while the global
+manager configuration remained in `shadow`. Typed status, real idempotent
+permission/config/unit preparation, client-material synchronization, and a
+dry-run start all passed. No real start, stop, uninstall, or swap operation was
+performed; the service finished inactive/disabled. Internal before/after hash
+comparisons proved the swap database, dedicated LND macaroon, Loop API
+macaroon, and TLS private key unchanged. Broker audit contained no certificate
+or macaroon fields. Bitcoin and LND retained their exact timestamps, and all
+remote gate files were removed. Clean install, reboot persistence, and
+Ubuntu 24.04/26.04 remain in the shared final matrix. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-lightning-loop-boundary-2026-08-12.json`.
+
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC
 cookie, root-owned execution snapshot, typed lifecycle/inspect/remove, and

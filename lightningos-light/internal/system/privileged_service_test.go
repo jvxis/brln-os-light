@@ -89,6 +89,88 @@ type fakePrivilegedServiceClient struct {
 	bitcoinStatusCalls  int
 	bitcoinStatusJSON   string
 	bitcoinStatusErr    error
+	loopCalls           int
+	loopAction          string
+	loopDryRun          bool
+	loopInstalled       bool
+	loopStatus          string
+	loopHasMacaroon     bool
+	loopHasState        bool
+	loopErr             error
+}
+
+func TestLoopBrokerHelpersFailClosedAndShadowValidates(t *testing.T) {
+	client := &fakePrivilegedServiceClient{
+		mode:            "enforce",
+		loopInstalled:   true,
+		loopStatus:      "running",
+		loopHasMacaroon: true,
+		loopHasState:    true,
+	}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+
+	handled, state, err := LoopStatusWithBroker(context.Background())
+	if !handled || err != nil || !state.Installed || state.Status != "running" || !state.HasLNDMacaroon || !state.HasPersistentState {
+		t.Fatalf("unexpected Loop broker status: handled=%v state=%+v err=%v", handled, state, err)
+	}
+	if handled, err := LoopLifecycleWithBroker(context.Background(), "stop"); !handled || err != nil || client.loopAction != "stop" || client.loopDryRun {
+		t.Fatalf("Loop enforce lifecycle did not execute: handled=%v err=%v client=%+v", handled, err, client)
+	}
+
+	client.mode = "shadow"
+	if handled, err := EnsureLoopPermissionsWithBroker(context.Background()); handled || err != nil || client.loopAction != "permissions" || !client.loopDryRun {
+		t.Fatalf("Loop shadow operation did not validate only: handled=%v err=%v client=%+v", handled, err, client)
+	}
+	if handled, _, err := LoopStatusWithBroker(context.Background()); handled || err != nil {
+		t.Fatalf("Loop status must fail closed outside enforce mode: handled=%v err=%v", handled, err)
+	}
+}
+
+func (client *fakePrivilegedServiceClient) LoopStatus(_ context.Context) (bool, string, bool, bool, error) {
+	client.loopCalls++
+	return client.loopInstalled, client.loopStatus, client.loopHasMacaroon, client.loopHasState, client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureLoop(_ context.Context, _, _ []byte, dryRun bool) (string, error) {
+	client.loopCalls++
+	client.loopAction = "ensure"
+	client.loopDryRun = dryRun
+	if dryRun {
+		return "validated", client.loopErr
+	}
+	return client.loopStatus, client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) LoopLifecycle(_ context.Context, action string, dryRun bool) (string, error) {
+	client.loopCalls++
+	client.loopAction = action
+	client.loopDryRun = dryRun
+	if dryRun {
+		return "validated", client.loopErr
+	}
+	return client.loopStatus, client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) RemoveLoop(_ context.Context, dryRun bool) error {
+	client.loopCalls++
+	client.loopAction = "remove"
+	client.loopDryRun = dryRun
+	return client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureLoopPermissions(_ context.Context, dryRun bool) error {
+	client.loopCalls++
+	client.loopAction = "permissions"
+	client.loopDryRun = dryRun
+	return client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureLoopClientMaterial(_ context.Context, dryRun bool) error {
+	client.loopCalls++
+	client.loopAction = "client-material"
+	client.loopDryRun = dryRun
+	return client.loopErr
 }
 
 func (client *fakePrivilegedServiceClient) EnsureBitcoinConsumerNetwork(_ context.Context, dryRun bool) (string, error) {

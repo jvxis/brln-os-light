@@ -1377,6 +1377,7 @@ export default function LightningOps() {
   const batchPeerInputRef = useRef<HTMLInputElement | null>(null)
 
   const [feeScopeAll, setFeeScopeAll] = useState(true)
+  const [feeConfirmOpen, setFeeConfirmOpen] = useState(false)
   const [feeChannelPoint, setFeeChannelPoint] = useState('')
   const [baseFeeMsat, setBaseFeeMsat] = useState('')
   const [feeRatePpm, setFeeRatePpm] = useState('')
@@ -6172,12 +6173,14 @@ export default function LightningOps() {
   const runFeeUpdate = async (payload: {
     applyAll: boolean
     channelPoint?: string
-    baseFeeMsat: number
-    feeRatePpm: number
-    timeLockDelta: number
+    // undefined means the operator left the field blank, and the channel keeps
+    // whatever it has. Only an explicit 0 sets a fee to zero.
+    baseFeeMsat?: number
+    feeRatePpm?: number
+    timeLockDelta?: number
     inboundEnabled: boolean
-    inboundBaseMsat: number
-    inboundFeeRatePpm: number
+    inboundBaseMsat?: number
+    inboundFeeRatePpm?: number
     setStatus: (value: string) => void
   }) => {
     payload.setStatus(t('lightningOps.updatingFees'))
@@ -6185,8 +6188,10 @@ export default function LightningOps() {
       payload.setStatus(t('lightningOps.selectChannelOrAll'))
       return false
     }
-    const hasOutbound = payload.baseFeeMsat !== 0 || payload.feeRatePpm !== 0 || payload.timeLockDelta !== 0
-    const hasInbound = payload.inboundEnabled && (payload.inboundBaseMsat !== 0 || payload.inboundFeeRatePpm !== 0)
+    const hasOutbound = payload.baseFeeMsat !== undefined || payload.feeRatePpm !== undefined
+      || payload.timeLockDelta !== undefined
+    const hasInbound = payload.inboundEnabled
+      && (payload.inboundBaseMsat !== undefined || payload.inboundFeeRatePpm !== undefined)
     if (!hasOutbound && !hasInbound) {
       payload.setStatus(t('lightningOps.setAtLeastOneFee'))
       return false
@@ -6360,7 +6365,7 @@ export default function LightningOps() {
       channelPoint: inlineFeeChannelPoint,
       baseFeeMsat: outBase,
       feeRatePpm: outRate,
-      timeLockDelta: delta,
+      timeLockDelta: delta > 0 ? delta : undefined,
       inboundEnabled: true,
       inboundBaseMsat: inBase,
       inboundFeeRatePpm: inRate,
@@ -6372,23 +6377,69 @@ export default function LightningOps() {
     }
   }
 
-  const handleUpdateFees = async () => {
-    const base = Number(baseFeeMsat || 0)
-    const ppm = Number(feeRatePpm || 0)
-    const delta = Number(timeLockDelta || 0)
-    const inboundBase = Number(inboundBaseMsat || 0)
-    const inboundRate = Number(inboundFeeRatePpm || 0)
+  // A blank input is not a zero. Number('') is 0, and that single coercion is
+  // what let "set the base fee everywhere" also set 0 ppm everywhere.
+  const optionalFeeInput = (raw: string): number | undefined => {
+    const trimmed = (raw || '').trim()
+    if (trimmed === '') return undefined
+    const parsed = Number(trimmed)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+
+  const feeUpdateFields = () => ({
+    baseFeeMsat: optionalFeeInput(baseFeeMsat),
+    feeRatePpm: optionalFeeInput(feeRatePpm),
+    timeLockDelta: optionalFeeInput(timeLockDelta),
+    inboundBaseMsat: optionalFeeInput(inboundBaseMsat),
+    inboundFeeRatePpm: optionalFeeInput(inboundFeeRatePpm)
+  })
+
+  const submitFeeUpdate = async () => {
+    const fields = feeUpdateFields()
     await runFeeUpdate({
       applyAll: feeScopeAll,
       channelPoint: feeScopeAll ? undefined : feeChannelPoint,
-      baseFeeMsat: base,
-      feeRatePpm: ppm,
-      timeLockDelta: delta,
-      inboundEnabled: inboundEnabled,
-      inboundBaseMsat: inboundBase,
-      inboundFeeRatePpm: inboundRate,
+      ...fields,
+      inboundEnabled,
       setStatus: setFeeStatus
     })
+  }
+
+  // What the operator is about to change, and what stays as it is. Built from the
+  // same parsing the request uses, so the dialog cannot promise one thing and the
+  // backend do another.
+  const feeUpdateChangeList = useMemo(() => {
+    const fields = feeUpdateFields()
+    const lines: string[] = []
+    if (fields.feeRatePpm !== undefined) lines.push(`${t('lightningOps.outRate')}: ${fields.feeRatePpm} ppm`)
+    if (fields.baseFeeMsat !== undefined) lines.push(`${t('lightningOps.outBase')}: ${fields.baseFeeMsat} msat`)
+    if (fields.timeLockDelta !== undefined) lines.push(`${t('lightningOps.timeLockDelta')}: ${fields.timeLockDelta}`)
+    if (inboundEnabled && fields.inboundFeeRatePpm !== undefined) {
+      lines.push(`${t('lightningOps.inboundFeeRate')}: ${fields.inboundFeeRatePpm} ppm`)
+    }
+    if (inboundEnabled && fields.inboundBaseMsat !== undefined) {
+      lines.push(`${t('lightningOps.inboundBaseFee')}: ${fields.inboundBaseMsat} msat`)
+    }
+    return lines
+  }, [baseFeeMsat, feeRatePpm, timeLockDelta, inboundBaseMsat, inboundFeeRatePpm, inboundEnabled, t])
+
+  const feeUpdateKeepList = useMemo(() => {
+    const fields = feeUpdateFields()
+    const lines: string[] = []
+    if (fields.feeRatePpm === undefined) lines.push(t('lightningOps.outRate'))
+    if (fields.baseFeeMsat === undefined) lines.push(t('lightningOps.outBase'))
+    if (fields.timeLockDelta === undefined) lines.push(t('lightningOps.timeLockDelta'))
+    return lines
+  }, [baseFeeMsat, feeRatePpm, timeLockDelta, t])
+
+  const handleUpdateFees = async () => {
+    // Applying to every channel is the one action here that cannot be walked back
+    // channel by channel, so it asks first.
+    if (feeScopeAll) {
+      setFeeConfirmOpen(true)
+      return
+    }
+    await submitFeeUpdate()
   }
 
   const channelOptions = useMemo(() => {
@@ -9206,10 +9257,63 @@ export default function LightningOps() {
             </div>
           )}
           <p className="text-xs text-fog/50">{t('lightningOps.inboundFeesNote')}</p>
+          <p className="text-xs text-fog/50">{t('lightningOps.feeBlankKeepsCurrent')}</p>
           <button className="btn-secondary" onClick={handleUpdateFees}>{t('lightningOps.updateFees')}</button>
           {feeStatus && <p className="text-sm text-brass">{feeStatus}</p>}
         </div>
       </div>
+
+      {feeConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+            <h3 className="text-lg font-semibold text-fog">{t('lightningOps.feeApplyAllTitle')}</h3>
+            <p className="mt-1 text-sm text-fog/70">
+              {t('lightningOps.feeApplyAllBody', { count: channels.length })}
+            </p>
+
+            {/* Spelling out both lists is the point: the bug this prevents was a
+                field nobody meant to send being written to every channel. */}
+            <div className="mt-4 space-y-3 text-sm">
+              <div className="rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2">
+                <span className="text-xs uppercase tracking-wide text-amber-200/70">
+                  {t('lightningOps.feeApplyAllChanging')}
+                </span>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-amber-100">
+                  {feeUpdateChangeList.length === 0
+                    ? <li>{t('lightningOps.feeApplyAllNothing')}</li>
+                    : feeUpdateChangeList.map((line) => <li key={line}>{line}</li>)}
+                </ul>
+              </div>
+              {feeUpdateKeepList.length > 0 && (
+                <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-fog/70">
+                  <span className="text-xs uppercase tracking-wide text-fog/45">
+                    {t('lightningOps.feeApplyAllKeeping')}
+                  </span>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                    {feeUpdateKeepList.map((line) => <li key={line}>{line}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setFeeConfirmOpen(false)}>
+                {t('common.cancel')}
+              </button>
+              <button
+                className="btn-primary"
+                disabled={feeUpdateChangeList.length === 0}
+                onClick={async () => {
+                  setFeeConfirmOpen(false)
+                  await submitFeeUpdate()
+                }}
+              >
+                {t('lightningOps.feeApplyAllConfirm', { count: channels.length })}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div id={BATCH_OPEN_SECTION_ID} className="section-card space-y-4">
         <div>

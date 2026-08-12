@@ -106,36 +106,6 @@ func (s *MagmaService) releaseFeeGuard(ctx context.Context, orderID string) {
 	}
 }
 
-// ReapplyFeeCaps pulls every channel still under commitment back under its
-// ceiling. It exists for the node-wide fee edit, which writes all channels in a
-// single LND call and so cannot skip the sold ones: the fee lands everywhere and
-// is walked back here, seconds later, rather than blocking an operation that is
-// legitimate for the other ninety channels.
-func (s *MagmaService) ReapplyFeeCaps(ctx context.Context) {
-	if s.lnd == nil {
-		return
-	}
-	commitments, err := s.ActiveCommitments(ctx)
-	if err != nil {
-		return
-	}
-	for _, commitment := range commitments {
-		changed, detail, err := s.enforceFeeCaps(ctx, commitment.ChannelPoint,
-			commitment.FeeRateCapPPM, commitment.BaseFeeCapSat)
-		if err != nil {
-			if s.logger != nil {
-				s.logger.Printf("magma: could not restore the fee ceiling on %s: %v",
-					commitment.ChannelPoint, err)
-			}
-			continue
-		}
-		if changed {
-			s.appendEvent(ctx, commitment.OrderID, "fee_guard", "info", fmt.Sprintf(
-				"A node-wide fee change crossed this channel's ceiling; %s", detail), nil)
-		}
-	}
-}
-
 // enforceFeeCaps lowers the outbound fee when the node defaults already breach the
 // order's ceilings.
 //

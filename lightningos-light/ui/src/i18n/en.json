@@ -4375,6 +4375,13 @@
     "watchtowerRemoveConfirm": "Remove this watchtower?",
     "watchtowerActionFailed": "Watchtower action failed.",
     "watchtowerSessions": "Sessions: {{count}}",
+    "feeBlankKeepsCurrent": "Leave a field blank to keep each channel’s current value. Only an explicit 0 sets a fee to zero.",
+    "feeApplyAllTitle": "Apply to every channel",
+    "feeApplyAllBody": "This writes to all {{count}} channels. Blank fields are left untouched.",
+    "feeApplyAllChanging": "Will change",
+    "feeApplyAllKeeping": "Left as it is on each channel",
+    "feeApplyAllNothing": "Nothing filled in",
+    "feeApplyAllConfirm": "Apply to {{count}} channels",
     "updateFees": "Update fees",
     "updatingFees": "Updating fees...",
     "useFastest": "Use fastest"

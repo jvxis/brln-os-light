@@ -5,13 +5,13 @@ This document is the entry point for continuing pull request
 an operational index, not a replacement for the accepted implementation plan
 in `docs/32_PRIVILEGE_HARDENING_PLAN.md`.
 
-Last reconciled: 2026-08-11.
+Last reconciled: 2026-08-12.
 
 ## Authoritative objective
 
 Complete the entire LightningOS `0.5.3` privilege-hardening plan on branch
 `agent/0.5.3-privilege-hardening`. A single application migration, including
-the current Electrs slice, is only a subgoal. The work is complete only when
+the current native BRLN slice, is only a subgoal. The work is complete only when
 all completion criteria in the plan are proven and Draft PR #33 is ready for
 review. Do not redefine completion around the latest migrated app.
 
@@ -32,10 +32,10 @@ The scope includes:
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote Draft PR: `#33`, targeting `main`.
-- Reconciled base before the Electrs/status slice: `9f7098c`.
-- The accepted slice is published with subject
-  `0.5.3-Beta: broker Electrs and Bitcoin status`.
-- The worktree was clean after the accepted slice and disposable-gate cleanup.
+- Published checkpoint before the native BRLN slice: `b0e0338`.
+- The latest accepted slice is published with subject
+  `0.5.3-Beta: harden native BRLN apps`.
+- The worktree was clean after that accepted slice and gate cleanup.
 - Every new implementation or evidence commit must start with
   `0.5.3-Beta`.
 - `main` may continue receiving `0.5.2` work. Do not merge or rebase it into
@@ -103,6 +103,7 @@ Application state at this checkpoint:
 | BTCPay Server/NBXplorer | Official fixed security release, image refresh, root-owned secret snapshot, dedicated LND macaroon, remote/native Bitcoin gates, lifecycle, data preservation, and real functional gate passed | Final matrix and any remaining shared host dependencies found by inventory |
 | LNDg | Exact-source non-root image, official digest-pinned private PostgreSQL, dedicated 13-permission LND credential, root-owned snapshot, typed lifecycle/inspect/remove/admin reset, firewall/host policy, SQLite-to-PostgreSQL migration, data preservation, and real functional gate passed | Cross-version final matrix only |
 | LNbits | Official stable digest, dedicated nine-permission LND credential, root-owned Compose/environment/credential snapshot, non-root read-only runtime, typed lifecycle/status/uninstall/REST/firewall, and data-preserving legacy SQLite/Admin UI migration accepted on LOS TESTE2 | Final Ubuntu 24.04/26.04 matrix and shared rollout/rollback acceptance only |
+| BRLN Loop Out and Magma | Native non-root/PostgreSQL lifecycle confirmed free of OS-privileged execution; permanent source gate added; elevated LND authority disclosed in App Store; authenticated LOS TESTE2 state-preserving gate passed | Shared removal of the manager's temporary Docker-group membership and final cross-version matrix only |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
 | Native apps and in-process features | Inventory plus isolated shared primitives only | Migrate privileged systemd, files, users, binaries, storage, firewall, and credential paths as applicable |
@@ -230,11 +231,14 @@ Evidence is stored in
 and
 `docs/baselines/privilege-hardening-phase2-bitcoincore-status-2026-08-11.json`.
 
-The next application slice is the high-adoption native BRLN surface, beginning
-with BRLN Loop and Magma. LNbits has completed its broker-owned Compose/secret
-lifecycle, status, uninstall, REST-listener/firewall policy, legacy Admin UI
-settings migration, clean-install stopped create-before-firewall ordering, and
-data-preserving functional gate under the dedicated numeric UID/GID `65532`.
+The high-adoption native BRLN slice is accepted. BRLN Loop Out and Magma remain
+inside the non-root manager and need no broker operation: their lifecycle is
+PostgreSQL-only and a permanent source gate rejects OS-privileged imports,
+Docker/systemd/sudo wrappers, host file mutation, and host listeners. Their
+elevated LND authority is now disclosed by the App Store. The authenticated
+LOS TESTE2 gate preserved both as installed/running, with Loop idle and Magma
+in monitor mode, and preserved LND/Bitcoin timestamps. The integration node's
+legacy manager Docker-group membership remains an explicit shared-cutover item.
 Mempool and Fedimint remain lower priority.
 
 ## Test-node and network constraints

@@ -784,9 +784,31 @@ their exact activation/container timestamps, the manager remained healthy in
 removed. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-lnbits-functional-lifecycle-2026-08-12.json`.
 
-The next high-adoption slice is the native BRLN application surface, beginning
-with BRLN Loop and Magma. LNbits remains pending only in the final cross-version
+The high-adoption native BRLN application slice, beginning with BRLN Loop and
+Magma, is accepted. LNbits remains pending only in the final cross-version
 matrix and final rollout/rollback acceptance shared by all applications.
+
+BRLN Loop Out and Magma do not have an OS-privileged lifecycle to move into the
+broker. Both are in-process services of the non-root manager, persist their
+install/enabled state in the manager PostgreSQL database, publish no host port,
+and contain no sudo, systemd, Docker, UFW, root-file, or host-listener path. A
+new source-level boundary test scans every production `loopout_brln_*` and
+`magma_*` file plus both App Store wrappers and rejects those operation classes
+if they are introduced later.
+
+Their LND authority is nevertheless elevated and is now disclosed through the
+existing App Store acknowledgement. BRLN Loop can pay invoices and create a
+return address; it retains sensitive reauthentication and the central spending
+guard. Magma can create invoices, connect peers, and fund channels; manual
+channel opens retain fresh funds reauthentication, and the tested installation
+remained in monitor mode. The authenticated LOS TESTE2 gate preserved both
+apps as installed/running with no active Loop job or transient Magma order,
+added the disclosure to both API records, and moved no funds or channels. LND
+and Bitcoin retained their timestamps. The node still has the manager's legacy
+Docker-group membership because the shared Phase 2 `enforce` cutover remains
+open; neither native app uses it, and final removal is still mandatory.
+Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-native-brln-boundary-2026-08-12.json`.
 
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC

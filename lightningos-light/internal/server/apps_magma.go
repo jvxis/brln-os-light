@@ -21,6 +21,9 @@ func magmaDefinition() appDefinition {
 			"Installs in monitor mode, which only watches and alerts; accepting orders and " +
 			"opening channels needs assisted or automatic mode.",
 		Port: 0,
+		SecurityNotices: []string{
+			appSecurityNoticeElevatedLNDAccess,
+		},
 	}
 }
 

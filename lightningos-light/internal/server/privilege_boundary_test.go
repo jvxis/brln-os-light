@@ -255,6 +255,87 @@ func TestLNbitsLifecycleHasNoLegacyPrivilegedExecution(t *testing.T) {
 	})
 }
 
+func TestNativeBRLNAppsHaveNoOSPrivilegeExecution(t *testing.T) {
+	root := moduleRoot(t)
+	serverRoot := filepath.Join(root, "internal", "server")
+	forbiddenImports := map[string]bool{
+		"os/exec":                               true,
+		"syscall":                               true,
+		"lightningos-light/internal/privileged": true,
+		"lightningos-light/internal/system":     true,
+	}
+	forbiddenCalls := map[string]bool{
+		"RunCommandWithSudo":          true,
+		"WriteFileWithSudo":           true,
+		"runSystemd":                  true,
+		"runCompose":                  true,
+		"getComposeStatus":            true,
+		"ensureDocker":                true,
+		"ensureDockerImage":           true,
+		"pullDockerImage":             true,
+		"AppLifecycleWithBroker":      true,
+		"PrepareAppImageWithBroker":   true,
+		"EnsureAppFirewallWithBroker": true,
+		"Command":                     true,
+		"WriteFile":                   true,
+		"Remove":                      true,
+		"RemoveAll":                   true,
+		"Chmod":                       true,
+		"Chown":                       true,
+		"Mkdir":                       true,
+		"MkdirAll":                    true,
+		"Rename":                      true,
+		"CreateTemp":                  true,
+		"OpenFile":                    true,
+		"Listen":                      true,
+	}
+
+	err := filepath.WalkDir(serverRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			return nil
+		}
+		name := entry.Name()
+		if name != "apps_loopout_brln.go" && name != "apps_magma.go" &&
+			!strings.HasPrefix(name, "loopout_brln_") && !strings.HasPrefix(name, "magma_") {
+			return nil
+		}
+
+		fset := token.NewFileSet()
+		parsed, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			return parseErr
+		}
+		for _, imported := range parsed.Imports {
+			value, unquoteErr := strconv.Unquote(imported.Path.Value)
+			if unquoteErr != nil {
+				return unquoteErr
+			}
+			if forbiddenImports[value] {
+				t.Errorf("native BRLN app imports privileged package %q in %s", value, filepath.ToSlash(path))
+			}
+		}
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			name := calledFunctionName(call.Fun)
+			if forbiddenCalls[name] {
+				position := fset.Position(call.Pos())
+				t.Errorf("native BRLN app OS-privileged call %s in %s:%d", name, filepath.ToSlash(path), position.Line)
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNoNewWildcardSudoOrDockerBoundary(t *testing.T) {
 	root := moduleRoot(t)
 	allowedDockerLines := make(map[string]struct{}, len(legacyDockerGroupLines))

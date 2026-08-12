@@ -196,6 +196,74 @@ func decodeElementsStateStatus(response Response, dryRun bool) (string, error) {
 	return state.Status, nil
 }
 
+func (client *Client) PeerSwapStatus(ctx context.Context) (bool, string, bool, string, error) {
+	response, err := client.call(ctx, OperationPeerSwapStatus, struct{}{}, false)
+	if err != nil {
+		return false, "", false, "", err
+	}
+	state, err := decodePeerSwapState(response, false)
+	return state.Installed, state.Status, state.HasLNDMacaroon, state.ElementsMode, err
+}
+
+func (client *Client) ReadPeerSwapSource(ctx context.Context) (bool, string, string, string, string, string, error) {
+	response, err := client.call(ctx, OperationPeerSwapSourceRead, struct{}{}, false)
+	if err != nil {
+		return false, "", "", "", "", "", err
+	}
+	var state PeerSwapSourceState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return false, "", "", "", "", "", errors.New("invalid broker PeerSwap source response")
+	}
+	if state.Configured {
+		if err := appmanifest.ValidatePeerSwapSource(state.Source.Mode, state.Source.URL, state.Source.User, state.Source.Password, state.Source.Wallet); err != nil {
+			return false, "", "", "", "", "", errors.New("invalid broker PeerSwap source")
+		}
+	}
+	return state.Configured, state.Source.Mode, state.Source.URL, state.Source.User, state.Source.Password, state.Source.Wallet, nil
+}
+
+func (client *Client) WritePeerSwapSource(ctx context.Context, mode, rawURL, user, password, wallet string, dryRun bool) error {
+	_, err := client.call(ctx, OperationPeerSwapSourceWrite, PeerSwapSource{Mode: mode, URL: rawURL, User: user, Password: password, Wallet: wallet}, dryRun)
+	return err
+}
+
+func (client *Client) EnsurePeerSwap(ctx context.Context, elementsMode, config, webConfig string, tlsCertificate, macaroon []byte, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationPeerSwapEnsure, PeerSwapEnsureParams{ElementsMode: elementsMode, Config: config, WebConfig: webConfig, LNDTLSCertificate: tlsCertificate, LNDMacaroon: macaroon}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodePeerSwapState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) PeerSwapLifecycle(ctx context.Context, action string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationPeerSwapLifecycle, PeerSwapLifecycleParams{Action: AppLifecycleAction(action)}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodePeerSwapState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) RemovePeerSwap(ctx context.Context, dryRun bool) error {
+	_, err := client.call(ctx, OperationPeerSwapRemove, struct{}{}, dryRun)
+	return err
+}
+
+func decodePeerSwapState(response Response, dryRun bool) (PeerSwapState, error) {
+	var state PeerSwapState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return PeerSwapState{}, errors.New("invalid broker PeerSwap state response")
+	}
+	if dryRun && state.Status == "validated" {
+		return state, nil
+	}
+	if state.Status != "running" && state.Status != "stopped" && state.Status != "unknown" {
+		return PeerSwapState{}, errors.New("invalid broker PeerSwap status")
+	}
+	return state, nil
+}
+
 func (client *Client) EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (string, error) {
 	response, err := client.call(ctx, OperationLoopEnsure, LoopEnsureParams{
 		LNDTLSCertificate: tlsCertificate,

@@ -55,6 +55,12 @@ const (
 	OperationElementsEnsure               Operation = "app.elements.ensure"
 	OperationElementsLifecycle            Operation = "app.elements.lifecycle"
 	OperationElementsRemove               Operation = "app.elements.remove"
+	OperationPeerSwapStatus               Operation = "app.peerswap.status"
+	OperationPeerSwapSourceRead           Operation = "app.peerswap.source.read"
+	OperationPeerSwapSourceWrite          Operation = "app.peerswap.source.write"
+	OperationPeerSwapEnsure               Operation = "app.peerswap.ensure"
+	OperationPeerSwapLifecycle            Operation = "app.peerswap.lifecycle"
+	OperationPeerSwapRemove               Operation = "app.peerswap.remove"
 )
 
 type Request struct {
@@ -258,6 +264,38 @@ type ElementsState struct {
 	Version              int     `json:"version,omitempty"`
 	Subversion           string  `json:"subversion,omitempty"`
 	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
+}
+
+type PeerSwapSource struct {
+	Mode     string `json:"mode"`
+	URL      string `json:"url,omitempty"`
+	User     string `json:"user,omitempty"`
+	Password string `json:"password,omitempty"`
+	Wallet   string `json:"wallet,omitempty"`
+}
+
+type PeerSwapSourceState struct {
+	Configured bool           `json:"configured"`
+	Source     PeerSwapSource `json:"source"`
+}
+
+type PeerSwapEnsureParams struct {
+	ElementsMode      string `json:"elements_mode"`
+	Config            string `json:"config"`
+	WebConfig         string `json:"web_config"`
+	LNDTLSCertificate []byte `json:"lnd_tls_certificate"`
+	LNDMacaroon       []byte `json:"lnd_macaroon,omitempty"`
+}
+
+type PeerSwapLifecycleParams struct {
+	Action AppLifecycleAction `json:"action"`
+}
+
+type PeerSwapState struct {
+	Installed      bool   `json:"installed"`
+	Status         string `json:"status"`
+	HasLNDMacaroon bool   `json:"has_lnd_macaroon"`
+	ElementsMode   string `json:"elements_mode,omitempty"`
 }
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -583,6 +621,45 @@ func ValidateRequest(request Request) error {
 		}
 		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
 			return errors.New("Elements lifecycle action is not allowed")
+		}
+	case OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapRemove:
+		if request.DryRun && (request.Operation == OperationPeerSwapStatus || request.Operation == OperationPeerSwapSourceRead) {
+			return fmt.Errorf("dry_run is not valid for %s", request.Operation)
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
+	case OperationPeerSwapSourceWrite:
+		var params PeerSwapSource
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.peerswap.source.write params: %w", err)
+		}
+		if err := appmanifest.ValidatePeerSwapSource(params.Mode, params.URL, params.User, params.Password, params.Wallet); err != nil {
+			return err
+		}
+	case OperationPeerSwapEnsure:
+		var params PeerSwapEnsureParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.peerswap.ensure params: %w", err)
+		}
+		paths := appmanifest.DefaultPeerSwapPaths()
+		if err := appmanifest.ValidatePeerSwapMaterial(params.LNDTLSCertificate, params.LNDMacaroon); err != nil {
+			return err
+		}
+		if err := appmanifest.ValidatePeerSwapConfig(params.Config, params.ElementsMode, paths); err != nil {
+			return err
+		}
+		if err := appmanifest.ValidatePeerSwapWebConfig(params.WebConfig, appmanifest.DefaultPeerSwapPaths()); err != nil {
+			return err
+		}
+	case OperationPeerSwapLifecycle:
+		var params PeerSwapLifecycleParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.peerswap.lifecycle params: %w", err)
+		}
+		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop && params.Action != AppLifecycleRestart {
+			return errors.New("PeerSwap lifecycle action is not allowed")
 		}
 	default:
 		return errors.New("unknown operation")

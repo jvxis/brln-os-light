@@ -57,6 +57,7 @@ func main() {
 		BitcoinConfig:  privileged.NewBitcoinCoreConfigManager(),
 		Loop:           privileged.NewNativeLoopManager(runner),
 		Elements:       privileged.NewNativeElementsManager(runner),
+		PeerSwap:       privileged.NewNativePeerSwapManager(runner),
 		Caller:         caller,
 		Timeout:        15 * time.Second,
 	}

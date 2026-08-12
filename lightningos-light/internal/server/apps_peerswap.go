@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,18 +13,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/system"
 )
 
 const (
 	peerswapAppID         = "peerswap"
 	peerswapAssetsVersion = "version_5_0"
-	peerswapBundleVersion = "version_5_0_peerswapd_pscli_25a153e5_psweb_5_0_6"
-	peerswapdSHA256       = "bf75a8b7b2bc3f9f152539c0611bc32a890f76a099c6ee2882b11bbf028b472b"
-	peerswapPSCliSHA256   = "69ca0aeb89b87d8eedd2d549ab542598fee69197e3110b066eb30ad9193bbbd8"
-	peerswapPSWebSHA256   = "8a7def73d51b7f0369462ccb4a96633b8c7da08ee21acbb45e5864e5788f2920"
-	peerswapUser          = "losop"
+	peerswapUser          = appmanifest.PeerSwapUser
 	peerswapServiceName   = "lightningos-peerswapd"
 	pswebServiceName      = "lightningos-psweb"
 	pswebPort             = 1984
@@ -82,17 +83,16 @@ func (a peerswapApp) Definition() appDefinition {
 func (a peerswapApp) Info(ctx context.Context) (appInfo, error) {
 	def := a.Definition()
 	info := newAppInfo(def)
-	paths := peerswapAppPaths()
-	if !fileExists(paths.VersionPath) || !fileExists(filepath.Join(paths.BinDir, "peerswapd")) {
-		return info, nil
+	handled, state, err := system.PeerSwapStatusWithBroker(ctx)
+	if !handled {
+		return info, errors.New("PeerSwap requires the privileged broker in enforce mode")
 	}
-	info.Installed = true
-	status, err := peerswapServiceStatus(ctx)
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
 	}
-	info.Status = status
+	info.Installed = state.Installed
+	info.Status = state.Status
 	return info, nil
 }
 
@@ -113,18 +113,18 @@ func (a peerswapApp) Stop(ctx context.Context) error {
 }
 
 func peerswapAppPaths() peerswapPaths {
-	root := filepath.Join(appsRoot, peerswapAppID)
+	manifest := appmanifest.DefaultPeerSwapPaths()
 	return peerswapPaths{
-		Root:               root,
-		BinDir:             filepath.Join(root, "bin"),
-		AppDataDir:         filepath.Join(appsDataRoot, peerswapAppID),
-		ConfigDir:          filepath.Join("/home", peerswapUser, ".peerswap"),
-		ConfigPath:         filepath.Join("/home", peerswapUser, ".peerswap", "peerswap.conf"),
-		PSWebConfigPath:    filepath.Join("/home", peerswapUser, ".peerswap", "pswebconfig.json"),
-		ElementsSourcePath: filepath.Join(appsDataRoot, peerswapAppID, "elements_rpc.json"),
-		ServicePath:        filepath.Join("/etc/systemd/system", peerswapServiceName+".service"),
-		WebServicePath:     filepath.Join("/etc/systemd/system", pswebServiceName+".service"),
-		VersionPath:        filepath.Join(root, "VERSION"),
+		Root:               manifest.Root,
+		BinDir:             manifest.BinDir,
+		AppDataDir:         manifest.DataRoot,
+		ConfigDir:          manifest.RuntimeDir,
+		ConfigPath:         manifest.ConfigPath,
+		PSWebConfigPath:    manifest.PSWebConfigPath,
+		ElementsSourcePath: manifest.ElementsSourcePath,
+		ServicePath:        manifest.ServicePath,
+		WebServicePath:     manifest.WebServicePath,
+		VersionPath:        manifest.VersionPath,
 	}
 }
 
@@ -134,239 +134,78 @@ func (s *Server) installPeerswap(ctx context.Context) error {
 
 func (s *Server) installPeerswapWithOptions(ctx context.Context, opts peerswapInstallOptions) error {
 	paths := peerswapAppPaths()
-	if err := os.MkdirAll(paths.Root, 0750); err != nil {
-		return fmt.Errorf("failed to create app directory: %w", err)
-	}
-	if err := os.MkdirAll(paths.AppDataDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app data directory: %w", err)
-	}
 	source, err := s.preparePeerswapElementsSourceForInstall(ctx, paths, opts)
 	if err != nil {
 		return err
 	}
-	if err := ensurePeerswapElementsDataDir(ctx); err != nil {
+	if err := s.ensurePeerswapBrokerRuntime(ctx, paths, source); err != nil {
 		return err
 	}
-	if err := ensurePeerswapConfigDir(ctx, paths); err != nil {
+	if handled, err := system.PeerSwapLifecycleWithBroker(ctx, "start"); !handled {
+		return errors.New("PeerSwap requires the privileged broker in enforce mode")
+	} else if err != nil {
 		return err
 	}
-	if err := ensurePeerswapBinaries(ctx, paths); err != nil {
-		return err
-	}
-	if err := s.ensurePeerswapConfig(ctx, paths); err != nil {
-		return err
-	}
-	if err := ensurePeerswapServices(ctx, paths, source.Mode); err != nil {
-		return err
-	}
-	if _, err := runSystemd(ctx, "systemctl", "enable", "--now", peerswapServiceName); err != nil {
-		return err
-	}
-	if _, err := runSystemd(ctx, "systemctl", "enable", "--now", pswebServiceName); err != nil {
-		return err
-	}
-	if err := ensurePswebUfwAccess(ctx); err != nil && s.logger != nil {
-		s.logger.Printf("psweb: ufw rule failed: %v", err)
+	if handled, _, firewallErr := system.EnsureAppFirewallWithBroker(ctx, peerswapAppID); handled && firewallErr != nil && s.logger != nil {
+		s.logger.Printf("psweb: firewall rule failed: %v", firewallErr)
 	}
 	return nil
 }
 
 func (s *Server) startPeerswap(ctx context.Context) error {
 	paths := peerswapAppPaths()
-	if !fileExists(paths.VersionPath) || !fileExists(filepath.Join(paths.BinDir, "peerswapd")) {
-		return errors.New("Peerswap is not installed")
+	handled, state, err := system.PeerSwapStatusWithBroker(ctx)
+	if !handled {
+		return errors.New("PeerSwap requires the privileged broker in enforce mode")
 	}
-	if err := os.MkdirAll(paths.AppDataDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app data directory: %w", err)
+	if err != nil {
+		return err
+	}
+	if !state.Installed {
+		return errors.New("Peerswap is not installed")
 	}
 	source, err := s.preparePeerswapElementsSourceForStart(ctx, paths)
 	if err != nil {
 		return err
 	}
-	if err := ensurePeerswapElementsDataDir(ctx); err != nil {
+	if err := s.ensurePeerswapBrokerRuntime(ctx, paths, source); err != nil {
 		return err
 	}
-	if err := ensurePeerswapConfigDir(ctx, paths); err != nil {
+	if handled, err := system.PeerSwapLifecycleWithBroker(ctx, "start"); !handled {
+		return errors.New("PeerSwap requires the privileged broker in enforce mode")
+	} else if err != nil {
 		return err
 	}
-	if err := ensurePeerswapBinaries(ctx, paths); err != nil {
-		return err
-	}
-	if err := s.ensurePeerswapConfig(ctx, paths); err != nil {
-		return err
-	}
-	if err := ensurePeerswapServices(ctx, paths, source.Mode); err != nil {
-		return err
-	}
-	if _, err := runSystemd(ctx, peerswapStartSystemctlArgs(peerswapServiceName)...); err != nil {
-		return err
-	}
-	if _, err := runSystemd(ctx, peerswapStartSystemctlArgs(pswebServiceName)...); err != nil {
-		return err
-	}
-	if err := ensurePswebUfwAccess(ctx); err != nil && s.logger != nil {
-		s.logger.Printf("psweb: ufw rule failed: %v", err)
+	if handled, _, firewallErr := system.EnsureAppFirewallWithBroker(ctx, peerswapAppID); handled && firewallErr != nil && s.logger != nil {
+		s.logger.Printf("psweb: firewall rule failed: %v", firewallErr)
 	}
 	return nil
 }
 
 func (s *Server) stopPeerswap(ctx context.Context) error {
-	paths := peerswapAppPaths()
-	if !fileExists(paths.VersionPath) || !fileExists(filepath.Join(paths.BinDir, "peerswapd")) {
+	handled, state, err := system.PeerSwapStatusWithBroker(ctx)
+	if !handled {
+		return errors.New("PeerSwap requires the privileged broker in enforce mode")
+	}
+	if err != nil {
+		return err
+	}
+	if !state.Installed {
 		return errors.New("Peerswap is not installed")
 	}
-	_, webErr := runSystemd(ctx, peerswapStopSystemctlArgs(pswebServiceName)...)
-	_, daemonErr := runSystemd(ctx, peerswapStopSystemctlArgs(peerswapServiceName)...)
-	if daemonErr != nil {
-		return daemonErr
+	if handled, err := system.PeerSwapLifecycleWithBroker(ctx, "stop"); !handled {
+		return errors.New("PeerSwap requires the privileged broker in enforce mode")
+	} else {
+		return err
 	}
-	return webErr
-}
-
-func peerswapStartSystemctlArgs(serviceName string) []string {
-	return []string{"systemctl", "enable", "--now", serviceName}
-}
-
-func peerswapStopSystemctlArgs(serviceName string) []string {
-	return []string{"systemctl", "disable", "--now", serviceName}
-}
-
-func ensurePswebUfwAccess(ctx context.Context) error {
-	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
-	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
-		return nil
-	}
-	_, err = system.RunCommandWithSudo(ctx, "ufw", "allow", fmt.Sprintf("%d/tcp", pswebPort))
-	return err
 }
 
 func (s *Server) uninstallPeerswap(ctx context.Context) error {
-	paths := peerswapAppPaths()
-	_, _ = runSystemd(ctx, "systemctl", "disable", "--now", peerswapServiceName)
-	_, _ = runSystemd(ctx, "systemctl", "disable", "--now", pswebServiceName)
-	_, _ = runSystemd(ctx, "/bin/sh", "-c", "rm -f "+paths.ServicePath+" "+paths.WebServicePath+" /etc/systemd/system/multi-user.target.wants/"+peerswapServiceName+".service /etc/systemd/system/multi-user.target.wants/"+pswebServiceName+".service")
-	_, _ = runSystemd(ctx, "systemctl", "daemon-reload")
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", "rm -rf "+paths.Root); err != nil {
-		return fmt.Errorf("failed to remove app files: %w", err)
-	}
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", "rm -rf "+paths.AppDataDir); err != nil {
-		return fmt.Errorf("failed to remove app data: %w", err)
-	}
-	return nil
-}
-
-func ensureElementsReady(ctx context.Context) error {
-	paths := elementsAppPaths()
-	if !fileExists(paths.ElementsdPath) {
-		return errors.New("Elements is required before installing Peerswap")
-	}
-	status, err := elementsServiceStatus(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to check Elements status: %w", err)
-	}
-	if status != "running" {
-		return errors.New("Elements must be running before starting Peerswap")
-	}
-	return nil
-}
-
-func ensurePeerswapConfigDir(ctx context.Context, paths peerswapPaths) error {
-	script := fmt.Sprintf(`set -e
-mkdir -p "%s"
-chown %s:%s "%s"
-chmod 750 "%s"
-`, paths.ConfigDir, peerswapUser, peerswapUser, paths.ConfigDir, paths.ConfigDir)
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return fmt.Errorf("failed to prepare %s: %w", paths.ConfigDir, err)
-	}
-	return nil
-}
-
-func ensurePeerswapBinaries(ctx context.Context, paths peerswapPaths) error {
-	if peerswapInstalledBinariesCurrent(paths) {
-		return nil
-	}
-	assetsRoot, err := peerswapAssetsRoot()
-	if err != nil {
+	if handled, err := system.RemovePeerSwapWithBroker(ctx); !handled {
+		return errors.New("PeerSwap requires the privileged broker in enforce mode")
+	} else {
 		return err
 	}
-	if err := ensurePeerswapAssetStaging(ctx, assetsRoot); err != nil {
-		return err
-	}
-	if err := ensurePeerswapBinaryChecksums(assetsRoot); err != nil {
-		return err
-	}
-	script := fmt.Sprintf(`set -e
-mkdir -p "%s"
-install -m 0755 "%s" "%s"
-install -m 0755 "%s" "%s"
-install -m 0755 "%s" "%s"
-chown %s:%s "%s" "%s" "%s"
-`, paths.BinDir,
-		filepath.Join(assetsRoot, "peerswapd"), filepath.Join(paths.BinDir, "peerswapd"),
-		filepath.Join(assetsRoot, "pscli"), filepath.Join(paths.BinDir, "pscli"),
-		filepath.Join(assetsRoot, "psweb"), filepath.Join(paths.BinDir, "psweb"),
-		peerswapUser, peerswapUser,
-		filepath.Join(paths.BinDir, "peerswapd"), filepath.Join(paths.BinDir, "pscli"), filepath.Join(paths.BinDir, "psweb"))
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return err
-	}
-	return writeFile(paths.VersionPath, peerswapBundleVersion+"\n", 0640)
-}
-
-func peerswapInstalledBinariesCurrent(paths peerswapPaths) bool {
-	if readSecretFile(paths.VersionPath) != peerswapBundleVersion {
-		return false
-	}
-	if !peerswapBinariesExist(paths.BinDir) {
-		return false
-	}
-	return peerswapBinaryChecksumsMatch(paths.BinDir)
-}
-
-func peerswapAssetsRoot() (string, error) {
-	base := filepath.Join("/opt/lightningos/manager/assets/binaries/peerswap", peerswapAssetsVersion, peerswapAssetsArch)
-	return base, nil
-}
-
-func ensurePeerswapAssetStaging(ctx context.Context, dest string) error {
-	if peerswapBinariesExist(dest) {
-		if peerswapBinaryChecksumsMatch(dest) {
-			return nil
-		}
-	}
-	script := fmt.Sprintf(`set -e
-source=""
-for candidate in \
-  /home/*/brln-os-light/lightningos-light/assets/binaries/peerswap/%[2]s/%[3]s \
-  /home/*/lightningos-light/assets/binaries/peerswap/%[2]s/%[3]s \
-  /root/brln-os-light/lightningos-light/assets/binaries/peerswap/%[2]s/%[3]s \
-  /root/lightningos-light/assets/binaries/peerswap/%[2]s/%[3]s; do
-  if [ -f "$candidate/peerswapd" ] && [ -f "$candidate/pscli" ] && [ -f "$candidate/psweb" ]; then
-    source="$candidate"
-    break
-  fi
-done
-if [ -n "$source" ]; then
-  mkdir -p "%[1]s"
-  install -m 0755 "$source/peerswapd" "%[1]s/peerswapd"
-  install -m 0755 "$source/pscli" "%[1]s/pscli"
-  install -m 0755 "$source/psweb" "%[1]s/psweb"
-  exit 0
-fi
-if [ -f "%[1]s/peerswapd" ] && [ -f "%[1]s/pscli" ] && [ -f "%[1]s/psweb" ]; then
-  exit 0
-fi
-echo "peerswap binaries not found under /home/*, /root, or %[1]s"
-exit 1
-`, dest, peerswapAssetsVersion, peerswapAssetsArch)
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return err
-	}
-	if peerswapBinariesExist(dest) {
-		return ensurePeerswapBinaryChecksums(dest)
-	}
-	return fmt.Errorf("peerswap binaries missing in %s", dest)
 }
 
 func peerswapBinariesExist(dir string) bool {
@@ -384,7 +223,7 @@ func ensurePeerswapBinaryChecksums(dir string) error {
 			return fmt.Errorf("failed to verify staged %s binary: %w", name, err)
 		}
 		if !ok {
-			return fmt.Errorf("staged %s binary at %s does not match expected bundle %s; refresh Peerswap assets and start again", name, path, peerswapBundleVersion)
+			return fmt.Errorf("staged %s binary at %s does not match expected bundle %s; refresh Peerswap assets and start again", name, path, appmanifest.PeerSwapVersionMarker())
 		}
 	}
 	return nil
@@ -401,11 +240,11 @@ func peerswapBinaryChecksumsMatch(dir string) bool {
 }
 
 func peerswapBinarySHA256s() map[string]string {
-	return map[string]string{
-		"peerswapd": peerswapdSHA256,
-		"pscli":     peerswapPSCliSHA256,
-		"psweb":     peerswapPSWebSHA256,
+	checksums := make(map[string]string, len(appmanifest.PeerSwapBinaries()))
+	for _, binary := range appmanifest.PeerSwapBinaries() {
+		checksums[binary.Name] = binary.SHA256
 	}
+	return checksums
 }
 
 func peerswapFileSHA256Matches(path string, expected string) (bool, error) {
@@ -430,30 +269,32 @@ func fileSHA256(path string) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-func (s *Server) ensurePeerswapConfig(ctx context.Context, paths peerswapPaths) error {
+func (s *Server) ensurePeerswapBrokerRuntime(ctx context.Context, paths peerswapPaths, source peerswapElementsSource) error {
 	values, err := s.peerswapConfigDefaults(ctx)
 	if err != nil {
 		return err
 	}
-	raw, err := readPeerswapConfig(ctx, paths)
+	config := defaultPeerswapConfig(values)
+	webConfig, err := buildPeerswapWebConfig(ctx, paths, values)
 	if err != nil {
 		return err
 	}
-	if raw != "" {
-		values = applyPeerswapConfigOverrides(values, raw)
+	handled, state, err := system.PeerSwapStatusWithBroker(ctx)
+	if !handled {
+		return errors.New("PeerSwap requires the privileged broker in enforce mode")
 	}
-	updated := raw
-	if raw == "" {
-		updated = defaultPeerswapConfig(values)
-	} else {
-		updated = updatePeerswapConfig(raw, values)
+	if err != nil {
+		return err
 	}
-	if updated != raw {
-		if err := writePeerswapConfig(ctx, paths, updated); err != nil {
-			return err
-		}
+	certificate, macaroon, err := s.peerSwapLNDMaterial(ctx, state.HasLNDMacaroon)
+	if err != nil {
+		return err
 	}
-	return ensurePSWebConfig(ctx, paths, values)
+	handled, err = system.EnsurePeerSwapWithBroker(ctx, source.Mode, config, webConfig, certificate, macaroon)
+	if !handled {
+		return errors.New("PeerSwap requires the privileged broker in enforce mode")
+	}
+	return err
 }
 
 func (s *Server) peerswapConfigDefaults(ctx context.Context) (peerswapConfigValues, error) {
@@ -464,8 +305,8 @@ func (s *Server) peerswapConfigDefaults(ctx context.Context) (peerswapConfigValu
 	}
 	elementsPaths := elementsAppPaths()
 	values := peerswapConfigValues{
-		LndTLSPath:          "/data/lnd/tls.cert",
-		LndMacaroonPath:     "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
+		LndTLSPath:          appmanifest.DefaultPeerSwapPaths().LNDTLSCertPath,
+		LndMacaroonPath:     appmanifest.DefaultPeerSwapPaths().LNDMacaroonPath,
 		ElementsRPCWallet:   peerswapSourceWallet(source),
 		ElementsDataDir:     elementsPaths.DataDir,
 		ElementsLiquidSwaps: "true",
@@ -483,7 +324,9 @@ func (s *Server) peerswapConfigDefaults(ctx context.Context) (peerswapConfigValu
 		values.ElementsRPCWallet = wallet
 		if source.Wallet != wallet {
 			source.Wallet = wallet
-			_ = writePeerswapElementsSource(paths, source)
+			if err := writePeerswapElementsSource(ctx, paths, source); err != nil {
+				return peerswapConfigValues{}, err
+			}
 		}
 		values.ElementsRPCUser = source.User
 		values.ElementsRPCPass = source.Password
@@ -502,11 +345,65 @@ func (s *Server) peerswapConfigDefaults(ctx context.Context) (peerswapConfigValu
 	return values, nil
 }
 
-func ensurePeerswapElementsDataDir(_ context.Context) error {
-	// Local Elements readiness is validated before this point; storage ownership
-	// is exclusively maintained by the typed Elements broker. Remote mode does
-	// not need local Elements storage at all.
+func (s *Server) peerSwapLNDMaterial(ctx context.Context, hasExistingMacaroon bool) ([]byte, []byte, error) {
+	certificate, err := os.ReadFile("/data/lnd/tls.cert")
+	if err != nil || len(certificate) == 0 {
+		return nil, nil, errors.New("LND TLS certificate is unavailable")
+	}
+	if hasExistingMacaroon {
+		return certificate, nil, nil
+	}
+	if s == nil || s.lnd == nil {
+		return nil, nil, errors.New("LND client unavailable")
+	}
+	ids, err := s.lnd.ListMacaroonIDs(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to list LND macaroon IDs: %w", err)
+	}
+	rootKeyID, err := lndclient.GenerateMacaroonRootKeyID(ids, time.Now())
+	if err != nil {
+		return nil, nil, err
+	}
+	baked, err := s.lnd.BakeCustomMacaroon(ctx, lndclient.BakeCustomMacaroonRequest{
+		Permissions: peerSwapMacaroonPermissions(),
+		RootKeyID:   rootKeyID,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to bake dedicated PeerSwap macaroon: %w", err)
+	}
+	macaroon, err := hex.DecodeString(baked.MacaroonHex)
+	if err != nil || len(macaroon) == 0 {
+		return nil, nil, errors.New("invalid LND macaroon response")
+	}
+	if err := validatePeerSwapCredentialNotAdmin(macaroon); err != nil {
+		return nil, nil, err
+	}
+	return certificate, macaroon, nil
+}
+
+func validatePeerSwapCredentialNotAdmin(credential []byte) error {
+	admin, err := os.ReadFile("/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon")
+	if err != nil {
+		return errors.New("native LND admin credential is unavailable")
+	}
+	if bytes.Equal(credential, admin) {
+		return errors.New("PeerSwap LND credential must not be the admin macaroon")
+	}
 	return nil
+}
+
+func peerSwapMacaroonPermissions() []lndclient.MacaroonPermission {
+	return []lndclient.MacaroonPermission{
+		{Entity: "address", Action: "write"},
+		{Entity: "info", Action: "read"},
+		{Entity: "invoices", Action: "read"},
+		{Entity: "invoices", Action: "write"},
+		{Entity: "offchain", Action: "read"},
+		{Entity: "offchain", Action: "write"},
+		{Entity: "onchain", Action: "read"},
+		{Entity: "onchain", Action: "write"},
+		{Entity: "peers", Action: "read"},
+	}
 }
 
 func readElementsRPCConfig(ctx context.Context) (string, string, int, error) {
@@ -554,6 +451,8 @@ func readElementsRPCConfig(ctx context.Context) (string, string, int, error) {
 func defaultPeerswapConfig(values peerswapConfigValues) string {
 	lines := []string{
 		"# LightningOS Peerswap configuration",
+		"host=127.0.0.1:" + strconv.Itoa(appmanifest.PeerSwapRPCPort),
+		"lnd.host=127.0.0.1:10009",
 		"lnd.tlscertpath=" + values.LndTLSPath,
 		"lnd.macaroonpath=" + values.LndMacaroonPath,
 		"elementsd.rpcuser=" + values.ElementsRPCUser,
@@ -617,6 +516,8 @@ func updatePeerswapConfig(raw string, values peerswapConfigValues) string {
 		lines = []string{}
 	}
 	forceOrder := []string{
+		"host",
+		"lnd.host",
 		"lnd.tlscertpath",
 		"lnd.macaroonpath",
 		"elementsd.rpcuser",
@@ -629,6 +530,8 @@ func updatePeerswapConfig(raw string, values peerswapConfigValues) string {
 		"bitcoinswaps",
 	}
 	force := map[string]string{
+		"host":                  "127.0.0.1:" + strconv.Itoa(appmanifest.PeerSwapRPCPort),
+		"lnd.host":              "127.0.0.1:10009",
 		"lnd.tlscertpath":       values.LndTLSPath,
 		"lnd.macaroonpath":      values.LndMacaroonPath,
 		"elementsd.rpcuser":     values.ElementsRPCUser,
@@ -672,65 +575,15 @@ func updatePeerswapConfig(raw string, values peerswapConfigValues) string {
 	return strings.Join(updated, "\n") + "\n"
 }
 
-func readPeerswapConfig(ctx context.Context, paths peerswapPaths) (string, error) {
-	out, err := runSystemd(ctx, "/bin/sh", "-c", "cat "+paths.ConfigPath)
+func buildPeerswapWebConfig(ctx context.Context, paths peerswapPaths, values peerswapConfigValues) (string, error) {
+	cfg := map[string]any{}
+	bitcoinCfg, bitcoinErr := readBitcoinLocalRPCConfig(ctx)
+	updatePSWebConfigMap(cfg, paths, values, bitcoinCfg, bitcoinErr == nil)
+	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		msg := strings.ToLower(out)
-		if strings.Contains(msg, "no such file") || strings.Contains(strings.ToLower(err.Error()), "no such file") {
-			return "", nil
-		}
 		return "", err
 	}
-	return strings.TrimRight(out, "\n") + "\n", nil
-}
-
-func writePeerswapConfig(ctx context.Context, paths peerswapPaths, content string) error {
-	tmpPath := filepath.Join(paths.Root, "peerswap.conf.tmp")
-	if err := writeFile(tmpPath, content, 0640); err != nil {
-		return err
-	}
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-	script := fmt.Sprintf("install -m 0600 -o %s -g %s %s %s", peerswapUser, peerswapUser, tmpPath, paths.ConfigPath)
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return err
-	}
-	return nil
-}
-
-func ensurePSWebConfig(ctx context.Context, paths peerswapPaths, values peerswapConfigValues) error {
-	cfg, err := readPSWebConfig(ctx, paths)
-	if err != nil {
-		return err
-	}
-
-	bitcoinCfg, bitcoinErr := readBitcoinLocalRPCConfig(ctx)
-	changed := updatePSWebConfigMap(cfg, paths, values, bitcoinCfg, bitcoinErr == nil)
-	if !changed {
-		return nil
-	}
-	return writePSWebConfig(ctx, paths, cfg)
-}
-
-func readPSWebConfig(ctx context.Context, paths peerswapPaths) (map[string]any, error) {
-	out, err := runSystemd(ctx, "/bin/sh", "-c", "cat "+paths.PSWebConfigPath)
-	if err != nil {
-		msg := strings.ToLower(out + err.Error())
-		if strings.Contains(msg, "no such file") || strings.Contains(msg, "not found") {
-			return map[string]any{}, nil
-		}
-		return nil, err
-	}
-	raw := strings.TrimSpace(out)
-	if raw == "" {
-		return map[string]any{}, nil
-	}
-	cfg := map[string]any{}
-	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
-		return map[string]any{}, nil
-	}
-	return cfg, nil
+	return string(raw) + "\n", nil
 }
 
 func updatePSWebConfigMap(cfg map[string]any, paths peerswapPaths, values peerswapConfigValues, bitcoinCfg bitcoinRPCConfig, hasBitcoin bool) bool {
@@ -753,7 +606,7 @@ func updatePSWebConfigMap(cfg map[string]any, paths peerswapPaths, values peersw
 	set("ElementsHost", values.ElementsRPCHost)
 	set("ElementsPort", strconv.Itoa(values.ElementsRPCPort))
 	set("ElementsWallet", values.ElementsRPCWallet)
-	set("LightningDir", "/data/lnd")
+	set("LightningDir", appmanifest.DefaultPeerSwapPaths().LNDDir)
 
 	if hasBitcoin {
 		set("BitcoinHost", pswebBitcoinHost(bitcoinCfg.Host))
@@ -789,156 +642,30 @@ func pswebBitcoinHost(host string) string {
 	return "http://" + bitcoinRPCHostPort(host, 8332)
 }
 
-func writePSWebConfig(ctx context.Context, paths peerswapPaths, cfg map[string]any) error {
-	content, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmpPath := filepath.Join(paths.Root, "pswebconfig.json.tmp")
-	if err := writeFile(tmpPath, string(content)+"\n", 0640); err != nil {
-		return err
-	}
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-	script := fmt.Sprintf("install -m 0644 -o %s -g %s %s %s", peerswapUser, peerswapUser, tmpPath, paths.PSWebConfigPath)
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return err
-	}
-	return nil
-}
-
-func ensurePeerswapServices(ctx context.Context, paths peerswapPaths, elementsMode string) error {
-	svc := peerswapServiceContents(paths, elementsMode)
-	if existing, err := os.ReadFile(paths.ServicePath); err == nil && string(existing) == svc {
-		// no-op
-	} else {
-		tmpPath := filepath.Join(paths.Root, "peerswap.service.tmp")
-		if err := writeFile(tmpPath, svc, 0644); err != nil {
-			return err
-		}
-		defer func() {
-			_ = os.Remove(tmpPath)
-		}()
-		script := fmt.Sprintf("install -m 0644 %s %s", tmpPath, paths.ServicePath)
-		if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-			return err
-		}
-	}
-
-	web := pswebServiceContents(paths)
-	if existing, err := os.ReadFile(paths.WebServicePath); err == nil && string(existing) == web {
-		// no-op
-	} else {
-		tmpPath := filepath.Join(paths.Root, "psweb.service.tmp")
-		if err := writeFile(tmpPath, web, 0644); err != nil {
-			return err
-		}
-		defer func() {
-			_ = os.Remove(tmpPath)
-		}()
-		script := fmt.Sprintf("install -m 0644 %s %s", tmpPath, paths.WebServicePath)
-		if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-			return err
-		}
-	}
-
-	if _, err := runSystemd(ctx, "systemctl", "daemon-reload"); err != nil {
-		return err
-	}
-	return nil
-}
-
 func peerswapServiceContents(paths peerswapPaths, elementsModes ...string) string {
 	elementsMode := peerswapElementsModeLocal
 	if len(elementsModes) > 0 && elementsModes[0] != "" {
 		elementsMode = elementsModes[0]
 	}
-	elementsAfter := ""
-	if elementsMode != peerswapElementsModeRemote {
-		elementsAfter = " " + elementsServiceName + ".service"
+	manifest := appmanifest.DefaultPeerSwapPaths()
+	if paths.BinDir != "" {
+		manifest.BinDir = paths.BinDir
+		manifest.PeerswapdPath = filepath.Join(paths.BinDir, "peerswapd")
 	}
-	return fmt.Sprintf(`[Unit]
-Description=LightningOS Peerswap daemon
-After=network-online.target%s
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=%s
-Group=%s
-SupplementaryGroups=lnd
-Environment=HOME=/home/%s
-Environment=USER=%s
-WorkingDirectory=/home/%s
-ExecStart=%s
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-`, elementsAfter, peerswapUser, peerswapUser, peerswapUser, peerswapUser, peerswapUser, filepath.Join(paths.BinDir, "peerswapd"))
+	if paths.ConfigDir != "" {
+		manifest.RuntimeDir = paths.ConfigDir
+	}
+	return appmanifest.PeerSwapServiceUnit(manifest, elementsMode)
 }
 
 func pswebServiceContents(paths peerswapPaths) string {
-	return fmt.Sprintf(`[Unit]
-Description=LightningOS Peerswap web UI
-After=network-online.target %s
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=%s
-Group=%s
-SupplementaryGroups=lnd
-Environment=HOME=/home/%s
-Environment=USER=%s
-WorkingDirectory=/home/%s
-ExecStart=%s -datadir %s
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-`, peerswapServiceName+".service", peerswapUser, peerswapUser, peerswapUser, peerswapUser, peerswapUser, filepath.Join(paths.BinDir, "psweb"), paths.ConfigDir)
-}
-
-func peerswapServiceStatus(ctx context.Context) (string, error) {
-	daemonStatus, err := serviceActiveState(ctx, peerswapServiceName)
-	if err != nil {
-		return "unknown", err
+	manifest := appmanifest.DefaultPeerSwapPaths()
+	if paths.BinDir != "" {
+		manifest.BinDir = paths.BinDir
+		manifest.PSWebPath = filepath.Join(paths.BinDir, "psweb")
 	}
-	webStatus, err := serviceActiveState(ctx, pswebServiceName)
-	if err != nil {
-		return "unknown", err
+	if paths.ConfigDir != "" {
+		manifest.RuntimeDir = paths.ConfigDir
 	}
-	if daemonStatus == "running" && webStatus == "running" {
-		return "running", nil
-	}
-	if daemonStatus == "stopped" && webStatus == "stopped" {
-		return "stopped", nil
-	}
-	return "stopped", nil
-}
-
-func serviceActiveState(ctx context.Context, name string) (string, error) {
-	out, err := runSystemd(ctx, "systemctl", "is-active", name)
-	if err != nil {
-		state := strings.TrimSpace(out)
-		if state == "activating" {
-			return "running", nil
-		}
-		if state == "inactive" || state == "failed" || state == "deactivating" {
-			return "stopped", nil
-		}
-		return "unknown", err
-	}
-	state := strings.TrimSpace(out)
-	if state == "active" || state == "activating" {
-		return "running", nil
-	}
-	if state == "inactive" || state == "failed" || state == "deactivating" {
-		return "stopped", nil
-	}
-	return "unknown", nil
+	return appmanifest.PeerSwapWebServiceUnit(manifest)
 }

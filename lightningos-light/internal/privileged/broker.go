@@ -86,6 +86,15 @@ type ElementsManager interface {
 	Remove(ctx context.Context, dataDir string, dryRun bool) error
 }
 
+type PeerSwapManager interface {
+	Status(ctx context.Context) (PeerSwapState, error)
+	Source(ctx context.Context) (PeerSwapSourceState, error)
+	WriteSource(ctx context.Context, source PeerSwapSource, dryRun bool) error
+	Ensure(ctx context.Context, params PeerSwapEnsureParams, dryRun bool) (PeerSwapState, error)
+	Lifecycle(ctx context.Context, action AppLifecycleAction, dryRun bool) (PeerSwapState, error)
+	Remove(ctx context.Context, dryRun bool) error
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -109,6 +118,7 @@ type Broker struct {
 	BitcoinConfig  BitcoinConfigManager
 	Loop           LoopManager
 	Elements       ElementsManager
+	PeerSwap       PeerSwapManager
 	Caller         string
 	Timeout        time.Duration
 	Now            func() time.Time
@@ -610,6 +620,70 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "elements_remove_failed", errors.New("Elements removal failed")
 		}
 		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationPeerSwapStatus:
+		if broker.PeerSwap == nil {
+			return nil, "broker_unavailable", errors.New("PeerSwap manager is unavailable")
+		}
+		state, err := broker.PeerSwap.Status(ctx)
+		if err != nil {
+			return nil, "peerswap_status_failed", errors.New("PeerSwap status failed")
+		}
+		return state, "", nil
+	case OperationPeerSwapSourceRead:
+		if broker.PeerSwap == nil {
+			return nil, "broker_unavailable", errors.New("PeerSwap manager is unavailable")
+		}
+		state, err := broker.PeerSwap.Source(ctx)
+		if err != nil {
+			return nil, "peerswap_source_failed", errors.New("PeerSwap Elements source read failed")
+		}
+		return state, "", nil
+	case OperationPeerSwapSourceWrite:
+		if broker.PeerSwap == nil {
+			return nil, "broker_unavailable", errors.New("PeerSwap manager is unavailable")
+		}
+		var params PeerSwapSource
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.peerswap.source.write params")
+		}
+		if err := broker.PeerSwap.WriteSource(ctx, params, request.DryRun); err != nil {
+			return nil, "peerswap_source_failed", errors.New("PeerSwap Elements source write failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationPeerSwapEnsure:
+		if broker.PeerSwap == nil {
+			return nil, "broker_unavailable", errors.New("PeerSwap manager is unavailable")
+		}
+		var params PeerSwapEnsureParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.peerswap.ensure params")
+		}
+		state, err := broker.PeerSwap.Ensure(ctx, params, request.DryRun)
+		if err != nil {
+			return nil, "peerswap_ensure_failed", errors.New("PeerSwap preparation failed")
+		}
+		return state, "", nil
+	case OperationPeerSwapLifecycle:
+		if broker.PeerSwap == nil {
+			return nil, "broker_unavailable", errors.New("PeerSwap manager is unavailable")
+		}
+		var params PeerSwapLifecycleParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.peerswap.lifecycle params")
+		}
+		state, err := broker.PeerSwap.Lifecycle(ctx, params.Action, request.DryRun)
+		if err != nil {
+			return nil, "peerswap_lifecycle_failed", errors.New("PeerSwap lifecycle failed")
+		}
+		return state, "", nil
+	case OperationPeerSwapRemove:
+		if broker.PeerSwap == nil {
+			return nil, "broker_unavailable", errors.New("PeerSwap manager is unavailable")
+		}
+		if err := broker.PeerSwap.Remove(ctx, request.DryRun); err != nil {
+			return nil, "peerswap_remove_failed", errors.New("PeerSwap removal failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -646,7 +720,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove:
 		return true
 	default:
 		return false
@@ -655,7 +729,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove:
 		return true
 	default:
 		return false

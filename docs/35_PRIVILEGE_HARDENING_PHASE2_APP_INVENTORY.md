@@ -11,8 +11,7 @@ The registry exposes 20 app IDs through the common `Info`, `Install`,
 | Family | App IDs | Current lifecycle boundary | Additional privileged dependencies |
 | --- | --- | --- | --- |
 | Docker Compose | `bitcoincore`, `bark-wallet`, `electrs`, `mempool`, `fedimint-guardian`, `fedimint-gateway`, `lndg`, `lnbits`, `btcpay`, `robosats`, `publicpool`, `cpuminer`, `tapd` | Generic `runCompose(root, composePath, args...)` with caller-selected paths and argument slices | Docker/Compose installation, image probes and pulls, container inspect/stats/exec/update, Docker network inspection, UFW, LND compatibility changes, and storage repair, depending on the app |
-| Native systemd | `peerswap` | Generic privileged systemd and shell helpers | Units, bundled binaries, config trees, dedicated LND/Elements credentials, firewall, and ownership |
-| Native systemd (migrated) | `loop`, `elements` | Closed typed broker operations; no direct privileged manager call | Final Ubuntu 24.04/26.04 clean-install, reboot, and shared cutover matrix; PeerSwap integration for Elements |
+| Native systemd (migrated) | `loop`, `elements`, `peerswap` | Closed typed broker operations; no direct privileged manager call | Final Ubuntu 24.04/26.04 clean-install, reboot, and shared cutover matrix |
 | In-process feature toggle | `depixbuy`, `fswap`, `loopout-brln`, `magma-sales` | Manager service state/configuration | Persistent database or fixed environment state; no container lifecycle |
 
 The 13 Compose apps do not share one safe free-form command shape. Observed
@@ -196,11 +195,26 @@ the hardened fixed unit, two allowlisted read-only RPC status calls, lifecycle,
 and removal. The manager-side Elements files have zero direct privileged calls
 and their Phase 0 budget entries were removed. LOS TESTE2 proved the real
 existing-node migration while inactive/disabled, with config/credential hashes
-and Bitcoin/LND timestamps unchanged. PeerSwap remains pending and must consume
-this provider boundary rather than access Elements storage through a privileged
-shell; its existing remote/external Elements RPC mode must remain independent
-of the locally enrolled volume. Evidence is in
+and Bitcoin/LND timestamps unchanged. Evidence is in
 `docs/baselines/privilege-hardening-phase2-elements-boundary-2026-08-12.json`.
+
+## Accepted native PeerSwap boundary
+
+PeerSwap has also moved out of the generic native-systemd bucket. Its manager
+files contain no direct privileged calls. The broker fixes the upstream
+v6.0.0/v6.0.0.1 binary bundle and hashes while retaining the legacy packaging
+folder, migrates regular legacy state into a dedicated runtime, creates the
+`lightningos-peerswap` identity, installs a dedicated nine-permission LND
+credential, validates and merges both config formats, owns the two hardened
+units, and exposes typed status/source/lifecycle/removal plus fixed firewall.
+
+The root-only source contract preserves both local store-managed Elements with
+its enrolled default or distinct external volume and a remote/external
+Elements RPC. LOS TESTE2 proved the latter without starting PeerSwap or local
+Elements: the old state matched its new runtime copy, remote Liquid RPC and
+dedicated LND reads succeeded, macaroon administration failed, source policy
+became `root:root 0600`, and Bitcoin/LND timestamps were unchanged. Evidence:
+`docs/baselines/privilege-hardening-phase2-peerswap-boundary-2026-08-12.json`.
 
 ## Migration order
 

@@ -90,6 +90,47 @@ type recordingLoopManager struct {
 	err       error
 }
 
+type recordingPeerSwapManager struct {
+	operation   string
+	action      AppLifecycleAction
+	params      PeerSwapEnsureParams
+	source      PeerSwapSource
+	dryRun      bool
+	state       PeerSwapState
+	sourceState PeerSwapSourceState
+	err         error
+}
+
+func (manager *recordingPeerSwapManager) Status(context.Context) (PeerSwapState, error) {
+	manager.operation = "status"
+	return manager.state, manager.err
+}
+
+func (manager *recordingPeerSwapManager) Source(context.Context) (PeerSwapSourceState, error) {
+	manager.operation = "source-read"
+	return manager.sourceState, manager.err
+}
+
+func (manager *recordingPeerSwapManager) WriteSource(_ context.Context, source PeerSwapSource, dryRun bool) error {
+	manager.operation, manager.source, manager.dryRun = "source-write", source, dryRun
+	return manager.err
+}
+
+func (manager *recordingPeerSwapManager) Ensure(_ context.Context, params PeerSwapEnsureParams, dryRun bool) (PeerSwapState, error) {
+	manager.operation, manager.params, manager.dryRun = "ensure", params, dryRun
+	return manager.state, manager.err
+}
+
+func (manager *recordingPeerSwapManager) Lifecycle(_ context.Context, action AppLifecycleAction, dryRun bool) (PeerSwapState, error) {
+	manager.operation, manager.action, manager.dryRun = "lifecycle", action, dryRun
+	return manager.state, manager.err
+}
+
+func (manager *recordingPeerSwapManager) Remove(_ context.Context, dryRun bool) error {
+	manager.operation, manager.dryRun = "remove", dryRun
+	return manager.err
+}
+
 func (manager *recordingLoopManager) Status(context.Context) (LoopState, error) {
 	manager.operation = "status"
 	return manager.state, manager.err
@@ -1118,6 +1159,91 @@ func TestBrokerLoopFailureIsGeneric(t *testing.T) {
 	})
 	if response.OK || response.Error == nil || response.Error.Code != "loop_ensure_failed" || strings.Contains(response.Error.Message, secret) {
 		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestBrokerPeerSwapOperationsAreTypedLockedAndNeverAuditSecrets(t *testing.T) {
+	params := peerSwapBrokerTestEnsureParams(t)
+	source := PeerSwapSource{Mode: appmanifest.PeerSwapElementsModeRemote, URL: "https://elements.example:7041", User: "rpc-user", Password: "peerswap-secret-never-audit", Wallet: "peerswap_node"}
+	for _, test := range []struct {
+		name      string
+		operation Operation
+		dryRun    bool
+		params    any
+		wantCall  string
+		wantLocks int
+	}{
+		{name: "status", operation: OperationPeerSwapStatus, params: struct{}{}, wantCall: "status"},
+		{name: "source read", operation: OperationPeerSwapSourceRead, params: struct{}{}, wantCall: "source-read"},
+		{name: "source write", operation: OperationPeerSwapSourceWrite, params: source, wantCall: "source-write", wantLocks: 1},
+		{name: "source write dry run", operation: OperationPeerSwapSourceWrite, dryRun: true, params: source, wantCall: "source-write"},
+		{name: "ensure", operation: OperationPeerSwapEnsure, params: params, wantCall: "ensure", wantLocks: 1},
+		{name: "ensure dry run", operation: OperationPeerSwapEnsure, dryRun: true, params: params, wantCall: "ensure"},
+		{name: "lifecycle", operation: OperationPeerSwapLifecycle, params: PeerSwapLifecycleParams{Action: AppLifecycleRestart}, wantCall: "lifecycle", wantLocks: 1},
+		{name: "remove", operation: OperationPeerSwapRemove, params: struct{}{}, wantCall: "remove", wantLocks: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rawParams, err := MarshalParams(test.params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			audit := &recordingAudit{}
+			locker := &recordingLocker{}
+			manager := &recordingPeerSwapManager{
+				state:       PeerSwapState{Installed: true, Status: "stopped", HasLNDMacaroon: true, ElementsMode: appmanifest.PeerSwapElementsModeRemote},
+				sourceState: PeerSwapSourceState{Configured: true, Source: source},
+			}
+			if test.dryRun && test.operation == OperationPeerSwapEnsure {
+				manager.state = PeerSwapState{Status: "validated", ElementsMode: appmanifest.PeerSwapElementsModeRemote}
+			}
+			broker := testBroker(&recordingRunner{}, audit, locker)
+			broker.PeerSwap = manager
+			response := broker.Handle(context.Background(), Request{
+				Version: ProtocolVersion, RequestID: "peerswap_broker_1", Operation: test.operation, DryRun: test.dryRun, Params: rawParams,
+			})
+			if !response.OK || manager.operation != test.wantCall || manager.dryRun != test.dryRun || locker.locks != test.wantLocks {
+				t.Fatalf("response/manager/locker=%#v/%#v/%#v", response, manager, locker)
+			}
+			encoded, err := json.Marshal(audit.events)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, secret := range []string{source.Password, string(params.LNDMacaroon), string(params.LNDTLSCertificate)} {
+				if strings.Contains(string(encoded), secret) {
+					t.Fatalf("PeerSwap secret leaked into audit: %s", encoded)
+				}
+			}
+		})
+	}
+}
+
+func peerSwapBrokerTestEnsureParams(t *testing.T) PeerSwapEnsureParams {
+	t.Helper()
+	paths := appmanifest.DefaultPeerSwapPaths()
+	config := "host=127.0.0.1:42069\n" +
+		"lnd.host=127.0.0.1:10009\n" +
+		"lnd.tlscertpath=" + paths.LNDTLSCertPath + "\n" +
+		"lnd.macaroonpath=" + paths.LNDMacaroonPath + "\n" +
+		"elementsd.rpcuser=rpc-user\n" +
+		"elementsd.rpcpass=peerswap-secret-never-audit\n" +
+		"elementsd.rpchost=https://elements.example\n" +
+		"elementsd.rpcport=7041\n" +
+		"elementsd.rpcwallet=peerswap_node\n" +
+		"elementsd.datadir=/media/liquid/elements\n" +
+		"elementsd.liquidswaps=true\n" +
+		"bitcoinswaps=false\n"
+	web, err := json.Marshal(map[string]any{
+		"DataDir": paths.RuntimeDir, "LightningDir": paths.LNDDir, "Chain": "mainnet",
+		"ElementsUser": "rpc-user", "ElementsPass": "peerswap-secret-never-audit", "ElementsWallet": "peerswap_node",
+		"ElementsDir": "/media/liquid/elements", "ElementsDirMapped": "/media/liquid/elements",
+		"ElementsHost": "https://elements.example", "ElementsPort": "7041", "BitcoinSwaps": false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return PeerSwapEnsureParams{
+		ElementsMode: appmanifest.PeerSwapElementsModeRemote, Config: config, WebConfig: string(web),
+		LNDTLSCertificate: []byte("peerswap-certificate-never-audit"), LNDMacaroon: []byte("peerswap-macaroon-never-audit"),
 	}
 }
 

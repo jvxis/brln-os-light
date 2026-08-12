@@ -74,6 +74,114 @@ type elementsPrivilegedClient interface {
 	RemoveElements(ctx context.Context, dataDir string, dryRun bool) error
 }
 
+type peerSwapPrivilegedClient interface {
+	PeerSwapStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, elementsMode string, err error)
+	ReadPeerSwapSource(ctx context.Context) (configured bool, mode string, rawURL string, user string, password string, wallet string, err error)
+	WritePeerSwapSource(ctx context.Context, mode string, rawURL string, user string, password string, wallet string, dryRun bool) error
+	EnsurePeerSwap(ctx context.Context, elementsMode string, config string, webConfig string, tlsCertificate []byte, macaroon []byte, dryRun bool) (status string, err error)
+	PeerSwapLifecycle(ctx context.Context, action string, dryRun bool) (status string, err error)
+	RemovePeerSwap(ctx context.Context, dryRun bool) error
+}
+
+type PeerSwapBrokerState struct {
+	Installed      bool
+	Status         string
+	HasLNDMacaroon bool
+	ElementsMode   string
+}
+
+type PeerSwapBrokerSource struct {
+	Configured bool
+	Mode       string
+	URL        string
+	User       string
+	Password   string
+	Wallet     string
+}
+
+func PeerSwapStatusWithBroker(ctx context.Context) (bool, PeerSwapBrokerState, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, PeerSwapBrokerState{}, nil
+	}
+	peerSwapClient, ok := client.(peerSwapPrivilegedClient)
+	if !ok {
+		return true, PeerSwapBrokerState{}, errors.New("privileged broker does not support PeerSwap")
+	}
+	installed, status, hasMacaroon, elementsMode, err := peerSwapClient.PeerSwapStatus(ctx)
+	return true, PeerSwapBrokerState{Installed: installed, Status: status, HasLNDMacaroon: hasMacaroon, ElementsMode: elementsMode}, err
+}
+
+func ReadPeerSwapSourceWithBroker(ctx context.Context) (bool, PeerSwapBrokerSource, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, PeerSwapBrokerSource{}, nil
+	}
+	peerSwapClient, ok := client.(peerSwapPrivilegedClient)
+	if !ok {
+		return true, PeerSwapBrokerSource{}, errors.New("privileged broker does not support PeerSwap")
+	}
+	configured, mode, rawURL, user, password, wallet, err := peerSwapClient.ReadPeerSwapSource(ctx)
+	return true, PeerSwapBrokerSource{Configured: configured, Mode: mode, URL: rawURL, User: user, Password: password, Wallet: wallet}, err
+}
+
+func WritePeerSwapSourceWithBroker(ctx context.Context, source PeerSwapBrokerSource) (bool, error) {
+	return peerSwapMutationWithBroker(ctx, func(callCtx context.Context, client peerSwapPrivilegedClient, dryRun bool) error {
+		return client.WritePeerSwapSource(callCtx, source.Mode, source.URL, source.User, source.Password, source.Wallet, dryRun)
+	})
+}
+
+func EnsurePeerSwapWithBroker(ctx context.Context, elementsMode, config, webConfig string, tlsCertificate, macaroon []byte) (bool, error) {
+	return peerSwapMutationWithBroker(ctx, func(callCtx context.Context, client peerSwapPrivilegedClient, dryRun bool) error {
+		_, err := client.EnsurePeerSwap(callCtx, elementsMode, config, webConfig, tlsCertificate, macaroon, dryRun)
+		return err
+	})
+}
+
+func PeerSwapLifecycleWithBroker(ctx context.Context, action string) (bool, error) {
+	return peerSwapMutationWithBroker(ctx, func(callCtx context.Context, client peerSwapPrivilegedClient, dryRun bool) error {
+		_, err := client.PeerSwapLifecycle(callCtx, action, dryRun)
+		return err
+	})
+}
+
+func RemovePeerSwapWithBroker(ctx context.Context) (bool, error) {
+	return peerSwapMutationWithBroker(ctx, func(callCtx context.Context, client peerSwapPrivilegedClient, dryRun bool) error {
+		return client.RemovePeerSwap(callCtx, dryRun)
+	})
+}
+
+func peerSwapMutationWithBroker(ctx context.Context, operation func(context.Context, peerSwapPrivilegedClient, bool) error) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	peerSwapClient, ok := client.(peerSwapPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker does not support PeerSwap")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, operation(ctx, peerSwapClient, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		_ = operation(shadowCtx, peerSwapClient, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
 func ElementsStatusWithBroker(ctx context.Context, dataDir string) (bool, string, error) {
 	privilegedState.RLock()
 	client := privilegedState.client

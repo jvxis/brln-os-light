@@ -185,3 +185,11 @@ replacement, and test strategy. Current wildcard sudo, Docker group access,
 generic privileged shells, and the test-node T0 state are covered by persistent
 safety rails. Phase 1 may begin with the broker protocol while the integration
 node remains unchanged on `0.5.2` until the shadow-broker checkpoint.
+
+Post-baseline migration note (2026-08-12): both PeerSwap rows above have now
+reached zero direct privileged manager calls. Their fixed binaries, source
+policy, legacy-state migration, dedicated identity/LND credential, units,
+lifecycle/removal and firewall are owned by closed broker/catalog operations.
+The original counts remain in this document because they are the Phase 0
+baseline; their per-file privilege-budget allowances were removed from the
+permanent source gate.

@@ -1,0 +1,138 @@
+{
+  "schema": "lightningos.privilege-hardening.peerswap-boundary.v1",
+  "captured_at": "2026-08-12T14:41:00Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "node": "LOS-TESTE2",
+  "scope": "state-preserving PeerSwap native boundary migration with remote Elements",
+  "source": {
+    "peerswap_project": "ElementsProject/peerswap",
+    "peerswap_release": "v6.0.0",
+    "peerswap_commit": "25a153e5b70cb35830dc6354d0fac6994e0fd610",
+    "psweb_release": "v6.0.0.1",
+    "legacy_asset_directory_preserved": "version_5_0/amd64",
+    "peerswapd_sha256": "bf75a8b7b2bc3f9f152539c0611bc32a890f76a099c6ee2882b11bbf028b472b",
+    "pscli_sha256": "69ca0aeb89b87d8eedd2d549ab542598fee69197e3110b066eb30ad9193bbbd8",
+    "psweb_sha256": "8a7def73d51b7f0369462ccb4a96633b8c7da08ee21acbb45e5864e5788f2920",
+    "broker_binary_sha256": "10570f7ad089394441f19359e9e5341e1a041b6c6ec47f516634707e0a851a24"
+  },
+  "preserved_state": {
+    "peerswap_before": {
+      "daemon_enabled": "disabled",
+      "daemon_active": "inactive",
+      "web_enabled": "disabled",
+      "web_active": "inactive",
+      "elements_mode": "remote",
+      "legacy_file_count": 8,
+      "legacy_bytes": 539706,
+      "legacy_tree_sha256": "0cf83abad446eea78b217ea4bb9e97ee88fae4d405d9586559123b3fb71b232f"
+    },
+    "peerswap_after": {
+      "daemon_enabled": "disabled",
+      "daemon_active": "inactive",
+      "web_enabled": "disabled",
+      "web_active": "inactive",
+      "broker_status": "stopped",
+      "elements_mode": "remote",
+      "legacy_payload_copy_matches": true,
+      "legacy_tree_sha256": "0cf83abad446eea78b217ea4bb9e97ee88fae4d405d9586559123b3fb71b232f",
+      "legacy_tree_retained_for_rollback": true,
+      "source_semantics_preserved": true
+    },
+    "bitcoin_container_started_at_before": "2026-08-07T15:01:47.444810527Z",
+    "bitcoin_container_started_at_after": "2026-08-07T15:01:47.444810527Z",
+    "bitcoin_container_restart_count_after": 0,
+    "lnd_active_enter_timestamp_monotonic_before": 165280210848,
+    "lnd_active_enter_timestamp_monotonic_after": 165280210848,
+    "lnd_restart_count_after": 0,
+    "manager_active_enter_timestamp_monotonic_before": 423170333669,
+    "manager_active_enter_timestamp_monotonic_after": 423170333669,
+    "elements_enabled_after": "disabled",
+    "elements_active_after": "inactive"
+  },
+  "boundary": {
+    "service_user": "lightningos-peerswap",
+    "human_operator_user_removed_from_active_app_tree": true,
+    "human_operator_user_removed_from_active_runtime_tree": true,
+    "app_root_owner": "lightningos-peerswap:lightningos",
+    "app_root_mode": "2750",
+    "runtime_owner": "lightningos-peerswap:lightningos-peerswap",
+    "runtime_mode": "2750",
+    "runtime_wrong_owner_count": 0,
+    "runtime_symlink_count": 0,
+    "source_policy_owner": "root:root",
+    "source_policy_mode": "0600",
+    "source_policy_readable_directly_by_manager": false,
+    "source_policy_readable_by_runtime": false,
+    "lnd_material_mode": "0600",
+    "systemd_verify": "passed",
+    "remote_unit_depends_on_local_elements": false,
+    "systemd_confinement": [
+      "ProtectSystem=strict",
+      "ProtectHome=true",
+      "PrivateDevices=true",
+      "NoNewPrivileges=true",
+      "MemoryDenyWriteExecute=true",
+      "CapabilityBoundingSet=",
+      "ReadWritePaths=/var/lib/lightningos/apps-data/peerswap/runtime"
+    ]
+  },
+  "lnd_credential": {
+    "dedicated": true,
+    "admin_macaroon_reused": false,
+    "admin_macaroon_operations_denied": true,
+    "allowed_read_gate": "passed",
+    "permissions": [
+      "address:write",
+      "info:read",
+      "invoices:read",
+      "invoices:write",
+      "offchain:read",
+      "offchain:write",
+      "onchain:read",
+      "onchain:write",
+      "peers:read"
+    ]
+  },
+  "elements_compatibility": {
+    "store_managed_local_mode_retained_in_contract": true,
+    "remote_external_mode_preserved": true,
+    "distinct_external_local_volume_retained_in_config_contract": true,
+    "remote_rpc_gate": "passed",
+    "remote_chain": "liquidv1",
+    "remote_blocks_observed": 4014379,
+    "remote_pruned": false,
+    "remote_endpoint_or_credentials_captured": false
+  },
+  "broker_gates": {
+    "self_test": "passed",
+    "source_read": "passed_with_redacted_observation",
+    "source_write_dry_run": "passed",
+    "ensure_dry_run": "passed",
+    "ensure_existing_inactive": "passed",
+    "status_existing_inactive": "stopped",
+    "lifecycle_start_dry_run": "passed",
+    "firewall_dry_run": "passed",
+    "remove_dry_run": "passed"
+  },
+  "local_gates": {
+    "focused_go_tests": "passed",
+    "full_go_suite": "all packages passed except two pre-existing Windows CRLF fixture failures",
+    "known_windows_fixture_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ],
+    "go_vet": "passed",
+    "manager_build": "passed",
+    "broker_build_linux_amd64": "passed",
+    "registry_validation": "passed",
+    "privileged_manager_call_sites": 0,
+    "privileged_shell_literals": 0,
+    "git_diff_check": "passed"
+  },
+  "network_configuration_mutation": false,
+  "service_lifecycle_mutation": false,
+  "lnd_restart": false,
+  "bitcoin_restart": false,
+  "temporary_files_cleaned": true,
+  "secrets_captured": false
+}

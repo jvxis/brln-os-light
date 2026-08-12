@@ -871,12 +871,41 @@ inactive/disabled on its existing external mounted storage. Real ensure
 migrated ownership and the unit without starting the daemon. Config and RPC
 credential hashes were unchanged, an unenrolled config read failed closed,
 dry-run start/removal passed, and no legacy `losop` ownership remained in the
-app or data tree. Bitcoin and LND retained their exact timestamps. PeerSwap
-remains the open half of this domain and must consume the enrolled local
-Elements boundary without recreating a config/storage shell path, while
-preserving its independent remote/external Elements RPC mode. Evidence is
+app or data tree. Bitcoin and LND retained their exact timestamps. Evidence is
 stored in
 `docs/baselines/privilege-hardening-phase2-elements-boundary-2026-08-12.json`.
+
+The PeerSwap half of the coupled domain is also accepted. The manager now has
+zero direct privileged call sites in its PeerSwap lifecycle and Elements-source
+files. Six closed broker operations own status, the root-only source policy,
+idempotent runtime preparation, lifecycle, and removal; the existing catalog
+firewall operation admits only port 1984. No request accepts a path, unit,
+binary, release URL, checksum, user, group, port, shell fragment, or arbitrary
+lifecycle action.
+
+The legacy package directory remains `version_5_0/amd64` for installer and
+upgrade compatibility, while the broker verifies that its actual content is
+upstream PeerSwap `v6.0.0` at commit
+`25a153e5b70cb35830dc6354d0fac6994e0fd610` plus PSWeb `v6.0.0.1`, using three
+fixed SHA-256 hashes. Both services run as `lightningos-peerswap`, without the
+human operator or the `lnd` group, and can write only their dedicated runtime.
+The source policy is `root:root 0600`; neither the manager nor the app can read
+it directly. Existing configuration and PSWeb preferences are merged while
+forcing loopback LND, the dedicated credential path, and the selected Elements
+RPC values.
+
+Local store-managed Elements and remote/external Elements remain independent
+first-class modes. Local mode consumes the already enrolled default or
+distinct/external Elements volume; remote mode has no systemd dependency on
+the local Elements service. LOS TESTE2 supplied the real remote-mode upgrade:
+eight legacy files were copied byte-for-byte to the new runtime and the legacy
+tree was retained for rollback, while the two PeerSwap services and local
+Elements stayed inactive/disabled. A dedicated nine-permission LND macaroon
+authenticated required reads and was denied macaroon administration. The
+remote full Liquid node answered `liquidv1`, while Bitcoin, LND, manager, and
+their timestamps remained unchanged. No service lifecycle or network-policy
+mutation was performed and all gate files were removed. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-peerswap-boundary-2026-08-12.json`.
 
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC

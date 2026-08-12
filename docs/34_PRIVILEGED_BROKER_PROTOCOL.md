@@ -196,6 +196,40 @@ directory components and credential sources must be real directories/regular
 files, never symlinks. Credential bytes remain in standard input only; audit
 records contain the operation metadata but not request parameters.
 
+### Native PeerSwap operations
+
+PeerSwap uses six closed operations plus the shared catalog firewall contract:
+
+- `app.peerswap.status` accepts `{}` and returns only installed/service state,
+  the selected `local` or `remote` Elements mode, and whether a dedicated LND
+  credential exists;
+- `app.peerswap.source.read` accepts `{}` and reads only the fixed root-owned
+  source policy. The manager needs the secret to construct PeerSwap's private
+  config, but no HTTP response returns the password;
+- `app.peerswap.source.write` accepts only a validated local or HTTP(S) remote
+  Elements source. It cannot select a policy path, and real writes are atomic
+  `root:root 0600` files;
+- `app.peerswap.ensure` accepts the `local|remote` enum, bounded fully
+  validated PeerSwap/PSWeb configuration bytes, the LND TLS certificate, and
+  an optional newly baked dedicated macaroon. The release, hashes, legacy
+  migration source, identities, paths, units, ports, and service sandbox are
+  fixed by the catalog;
+- `app.peerswap.lifecycle` accepts only `start`, `stop`, or `restart`. Local
+  mode refuses to start unless the fixed Elements service is running; remote
+  mode does not depend on or restart local Elements;
+- `app.peerswap.remove` accepts `{}`, disables the two fixed units and removes
+  only the reproducible app tree. Persistent swap state, source policy, and
+  dedicated credential survive reinstall;
+- `app.firewall.ensure` with catalog ID `peerswap` admits only TCP port 1984.
+
+The legacy asset folder name `version_5_0/amd64` is an installer compatibility
+contract, not provenance. Every real ensure verifies the fixed upstream
+PeerSwap v6.0.0 and PSWeb v6.0.0.1 hashes before changing the runtime. Existing
+`/home/losop/.peerswap` regular files are copied without links or special files
+to the dedicated runtime and left untouched for rollback. Managed config
+values always replace legacy admin-macaroon and broad-listener paths; unknown
+operator preferences and the `bitcoinswaps` choice are preserved.
+
 ### `docker.runtime.ensure` and `docker.runtime.status`
 
 Both operations accept only `{}`. They support a Docker runtime that is already

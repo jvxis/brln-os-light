@@ -2,8 +2,11 @@ package privileged
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 func TestDecodeRequestStrictValidation(t *testing.T) {
@@ -130,6 +133,68 @@ func TestDecodeRequestStrictValidation(t *testing.T) {
 				t.Fatalf("DecodeRequest() error = %v, wantErr %v", err, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestPeerSwapRequestsAreTypedAndSourceBounded(t *testing.T) {
+	request := func(operation Operation, params any, dryRun bool) Request {
+		raw, err := MarshalParams(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Request{Version: ProtocolVersion, RequestID: "peerswap_test_1", Operation: operation, DryRun: dryRun, Params: raw}
+	}
+	remote := PeerSwapSource{Mode: appmanifest.PeerSwapElementsModeRemote, URL: "https://elements.example:7041", User: "rpc", Password: "secret", Wallet: "peerswap_node"}
+	if err := ValidateRequest(request(OperationPeerSwapSourceWrite, remote, true)); err != nil {
+		t.Fatalf("valid remote source rejected: %v", err)
+	}
+	unsafe := remote
+	unsafe.URL = "file:///etc/shadow"
+	if err := ValidateRequest(request(OperationPeerSwapSourceWrite, unsafe, false)); err == nil {
+		t.Fatal("unsafe PeerSwap source accepted")
+	}
+	paths := appmanifest.DefaultPeerSwapPaths()
+	config := "host=127.0.0.1:42069\n" +
+		"lnd.host=127.0.0.1:10009\n" +
+		"lnd.tlscertpath=" + paths.LNDTLSCertPath + "\n" +
+		"lnd.macaroonpath=" + paths.LNDMacaroonPath + "\n" +
+		"elementsd.rpcuser=rpc\n" +
+		"elementsd.rpcpass=secret\n" +
+		"elementsd.rpchost=https://elements.example\n" +
+		"elementsd.rpcport=7041\n" +
+		"elementsd.rpcwallet=peerswap_node\n" +
+		"elementsd.datadir=/media/liquid/elements\n" +
+		"elementsd.liquidswaps=true\n" +
+		"bitcoinswaps=false\n"
+	webRaw, err := json.Marshal(map[string]any{
+		"DataDir":           paths.RuntimeDir,
+		"ElementsUser":      "rpc",
+		"ElementsPass":      "secret",
+		"BitcoinSwaps":      false,
+		"Chain":             "mainnet",
+		"ElementsDir":       "/media/liquid/elements",
+		"ElementsDirMapped": "/media/liquid/elements",
+		"ElementsHost":      "https://elements.example",
+		"ElementsPort":      "7041",
+		"ElementsWallet":    "peerswap_node",
+		"LightningDir":      paths.LNDDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ensure := PeerSwapEnsureParams{ElementsMode: appmanifest.PeerSwapElementsModeRemote, Config: config, WebConfig: string(webRaw), LNDTLSCertificate: []byte("cert")}
+	if err := ValidateRequest(request(OperationPeerSwapEnsure, ensure, true)); err != nil {
+		t.Fatalf("valid PeerSwap ensure rejected: %v", err)
+	}
+	ensure.Config = strings.Replace(ensure.Config, "lnd.macaroonpath="+paths.LNDMacaroonPath, "lnd.macaroonpath=/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon", 1)
+	if err := ValidateRequest(request(OperationPeerSwapEnsure, ensure, true)); err == nil {
+		t.Fatal("PeerSwap admin macaroon path accepted")
+	}
+	if err := ValidateRequest(request(OperationPeerSwapLifecycle, PeerSwapLifecycleParams{Action: "exec"}, false)); err == nil {
+		t.Fatal("arbitrary PeerSwap lifecycle action accepted")
+	}
+	if err := ValidateRequest(request(OperationPeerSwapSourceRead, struct{}{}, true)); err == nil {
+		t.Fatal("PeerSwap source read dry-run accepted")
 	}
 }
 

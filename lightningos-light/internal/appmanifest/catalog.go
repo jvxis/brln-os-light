@@ -123,6 +123,8 @@ func CatalogExternalTCPPort(appID string) (int, error) {
 		return LNDgPort, nil
 	case LNbitsID:
 		return LNbitsPort, nil
+	case PeerSwapID:
+		return PeerSwapWebPort, nil
 	default:
 		return 0, errors.New("app external access manifest is not allowed")
 	}

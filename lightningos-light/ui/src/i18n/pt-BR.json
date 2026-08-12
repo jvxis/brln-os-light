@@ -4375,6 +4375,13 @@
     "watchtowerRemoveConfirm": "Remover esta watchtower?",
     "watchtowerActionFailed": "Falha na ação de watchtower.",
     "watchtowerSessions": "Sessões: {{count}}",
+    "feeBlankKeepsCurrent": "Deixe em branco para manter o valor atual de cada canal. So um 0 explicito zera a taxa.",
+    "feeApplyAllTitle": "Aplicar em todos os canais",
+    "feeApplyAllBody": "Isso escreve nos {{count}} canais. Campos em branco ficam intocados.",
+    "feeApplyAllChanging": "Vai mudar",
+    "feeApplyAllKeeping": "Mantido como esta em cada canal",
+    "feeApplyAllNothing": "Nada preenchido",
+    "feeApplyAllConfirm": "Aplicar em {{count}} canais",
     "updateFees": "Atualizar fees",
     "updatingFees": "Atualizando fees...",
     "useFastest": "Usar mais rápido"

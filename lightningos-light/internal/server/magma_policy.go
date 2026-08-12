@@ -290,9 +290,12 @@ where e.kind = 'accepted' and e.created_at >= date_trunc('day', now())
 
 func (s *MagmaService) concurrentOpens(ctx context.Context) (int, error) {
 	var count int
+	// This feeds MaxConcurrentOpens, so counting a dead order here does not just
+	// misreport - it permanently spends one of the slots auto mode needs to work.
 	err := s.db.QueryRow(ctx,
-		`select count(*) from magma_orders where local_state = any($1)`,
-		magmaCommittedStates).Scan(&count)
+		`select count(*) from magma_orders
+where local_state = any($1) and not (magma_status = any($2))`,
+		magmaCommittedStates, magmaTerminalStatusList()).Scan(&count)
 	return count, err
 }
 

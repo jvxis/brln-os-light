@@ -3153,24 +3153,33 @@ func (s *Server) handleLNCloseChannel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// A blank field means "leave this alone", which is why every fee is a pointer.
+// Decoding into plain int64 made an untouched field arrive as a deliberate zero:
+// setting only the base fee on every channel silently wrote 0 ppm across the
+// node, giving away routing for free until someone noticed.
 func (s *Server) handleLNUpdateFees(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ChannelPoint      string `json:"channel_point"`
 		ApplyAll          bool   `json:"apply_all"`
-		BaseFeeMsat       int64  `json:"base_fee_msat"`
-		FeeRatePpm        int64  `json:"fee_rate_ppm"`
-		TimeLockDelta     int64  `json:"time_lock_delta"`
+		BaseFeeMsat       *int64 `json:"base_fee_msat"`
+		FeeRatePpm        *int64 `json:"fee_rate_ppm"`
+		TimeLockDelta     *int64 `json:"time_lock_delta"`
 		InboundEnabled    bool   `json:"inbound_enabled"`
-		InboundBaseMsat   int64  `json:"inbound_base_msat"`
-		InboundFeeRatePpm int64  `json:"inbound_fee_rate_ppm"`
+		InboundBaseMsat   *int64 `json:"inbound_base_msat"`
+		InboundFeeRatePpm *int64 `json:"inbound_fee_rate_ppm"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if req.BaseFeeMsat < 0 || req.FeeRatePpm < 0 || req.TimeLockDelta < 0 {
-		writeError(w, http.StatusBadRequest, "fees must be zero or positive")
-		return
+	for name, value := range map[string]*int64{
+		"base_fee_msat": req.BaseFeeMsat, "fee_rate_ppm": req.FeeRatePpm,
+		"time_lock_delta": req.TimeLockDelta, "inbound_base_msat": req.InboundBaseMsat,
+	} {
+		if value != nil && *value < 0 {
+			writeError(w, http.StatusBadRequest, name+" must be zero or positive")
+			return
+		}
 	}
 	if req.ApplyAll && strings.TrimSpace(req.ChannelPoint) != "" {
 		writeError(w, http.StatusBadRequest, "use apply_all or channel_point, not both")
@@ -3180,27 +3189,120 @@ func (s *Server) handleLNUpdateFees(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "channel_point required unless apply_all=true")
 		return
 	}
-	if req.BaseFeeMsat == 0 && req.FeeRatePpm == 0 && req.TimeLockDelta == 0 && !req.InboundEnabled {
+	outboundGiven := req.BaseFeeMsat != nil || req.FeeRatePpm != nil || req.TimeLockDelta != nil
+	inboundGiven := req.InboundEnabled && (req.InboundBaseMsat != nil || req.InboundFeeRatePpm != nil)
+	if !outboundGiven && !inboundGiven {
 		writeError(w, http.StatusBadRequest, "at least one fee field is required")
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
-	defer cancel()
-
-	if err := s.lnd.UpdateChannelFees(ctx, req.ChannelPoint, req.ApplyAll, req.BaseFeeMsat, req.FeeRatePpm, req.TimeLockDelta, req.InboundEnabled, req.InboundBaseMsat, req.InboundFeeRatePpm); err != nil {
-		if isTimeoutError(err) {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"ok":      true,
-				"warning": "Update sent. LND is syncing; policy may already be updated.",
-			})
+	// Applying to every channel is a loop rather than one bulk call, because the
+	// bulk call has no way to say "keep this channel's current value" for a field
+	// the operator left blank.
+	targets := []string{strings.TrimSpace(req.ChannelPoint)}
+	timeout := lndRPCTimeout
+	if req.ApplyAll {
+		listCtx, listCancel := context.WithTimeout(r.Context(), lndRPCTimeout)
+		channels, err := s.lnd.ListChannels(listCtx)
+		listCancel()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, lndRPCErrorMessage(err))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, lndRPCErrorMessage(err))
-		return
+		targets = make([]string, 0, len(channels))
+		for _, ch := range channels {
+			if point := strings.TrimSpace(ch.ChannelPoint); point != "" {
+				targets = append(targets, point)
+			}
+		}
+		if len(targets) == 0 {
+			writeError(w, http.StatusBadRequest, "no channels to update")
+			return
+		}
+		timeout = 5 * time.Minute
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	updated, capped := 0, 0
+	failures := make([]string, 0, 2)
+	for _, point := range targets {
+		policy, err := s.lnd.GetChannelPolicy(ctx, point)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", point, err))
+			continue
+		}
+		// Anything the operator did not fill in keeps the value the channel
+		// already has, including the time lock, which LND requires on every call.
+		baseFeeMsat, feeRatePpm, timeLockDelta := policy.BaseFeeMsat, policy.FeeRatePpm, policy.TimeLockDelta
+		if req.BaseFeeMsat != nil {
+			baseFeeMsat = *req.BaseFeeMsat
+		}
+		if req.FeeRatePpm != nil {
+			feeRatePpm = *req.FeeRatePpm
+		}
+		if req.TimeLockDelta != nil && *req.TimeLockDelta > 0 {
+			timeLockDelta = *req.TimeLockDelta
+		}
+		if timeLockDelta <= 0 {
+			timeLockDelta = 144
+		}
+		inboundBaseMsat, inboundFeeRatePpm := policy.InboundBaseMsat, policy.InboundFeeRatePpm
+		if req.InboundBaseMsat != nil {
+			inboundBaseMsat = *req.InboundBaseMsat
+		}
+		if req.InboundFeeRatePpm != nil {
+			inboundFeeRatePpm = *req.InboundFeeRatePpm
+		}
+
+		// A channel sold on Magma is capped until its commitment ends. One channel
+		// at a time is the operator naming a target, so the request is refused and
+		// says why; across every channel it is a sweep, and refusing the sweep for
+		// one contract would punish the other ninety, so that one is held down.
+		if commitment, ok := magmaCommitmentForChannel(0, point); ok {
+			clampedBase, clampedRate, clamped := magmaClampChannelFees(0, point, baseFeeMsat, feeRatePpm)
+			if clamped && !req.ApplyAll {
+				writeError(w, http.StatusConflict, fmt.Sprintf(
+					"this channel was sold on Magma and is capped at %d ppm / %d sat base until the commitment ends",
+					commitment.FeeRateCapPPM, commitment.BaseFeeCapSat))
+				return
+			}
+			if clamped {
+				baseFeeMsat, feeRatePpm = clampedBase, clampedRate
+				capped++
+			}
+		}
+
+		if err := s.lnd.UpdateChannelFees(ctx, point, false, baseFeeMsat, feeRatePpm,
+			timeLockDelta, req.InboundEnabled, inboundBaseMsat, inboundFeeRatePpm); err != nil {
+			if isTimeoutError(err) && !req.ApplyAll {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"ok":      true,
+					"warning": "Update sent. LND is syncing; policy may already be updated.",
+				})
+				return
+			}
+			failures = append(failures, fmt.Sprintf("%s: %v", point, lndRPCErrorMessage(err)))
+			continue
+		}
+		updated++
+	}
+
+	if updated == 0 && len(failures) > 0 {
+		writeError(w, http.StatusInternalServerError, failures[0])
+		return
+	}
+	response := map[string]any{"ok": true, "updated": updated, "total": len(targets)}
+	if capped > 0 {
+		response["magma_capped"] = capped
+	}
+	if len(failures) > 0 {
+		response["failed"] = len(failures)
+		response["warning"] = fmt.Sprintf("%d of %d channels failed; first: %s",
+			len(failures), len(targets), failures[0])
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleLNUpdateChanStatus(w http.ResponseWriter, r *http.Request) {

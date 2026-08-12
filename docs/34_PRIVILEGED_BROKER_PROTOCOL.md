@@ -224,7 +224,9 @@ PeerSwap uses six closed operations plus the shared catalog firewall contract:
 
 The legacy asset folder name `version_5_0/amd64` is an installer compatibility
 contract, not provenance. Every real ensure verifies the fixed upstream
-PeerSwap v6.0.0 and PSWeb v6.0.0.1 hashes before changing the runtime. Existing
+PeerSwap v6.0.0 and the official PSWeb upstream `main` commit
+`09983da398f253f8c14213e9f5c61b80cc879b67`, packaged as v6.0.0.1, before
+changing the runtime. Existing
 `/home/losop/.peerswap` regular files are copied without links or special files
 to the dedicated runtime and left untouched for rollback. Managed config
 values always replace legacy admin-macaroon and broad-listener paths; unknown

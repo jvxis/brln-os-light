@@ -631,6 +631,9 @@ export const bumpPendingOpenChannel = (payload: { channel_point: string; preset?
   request('/api/lnops/channel/pending-open/bump-fee', { method: 'POST', body: JSON.stringify(payload) })
 export const closeChannel = (payload: { channel_point: string; force?: boolean; sat_per_vbyte?: number; confirm_password?: string }) =>
   request('/api/lnops/channel/close', { method: 'POST', body: JSON.stringify(payload) })
+// Every fee is optional on purpose: omitting one tells the backend to keep the
+// channel's current value. Sending 0 for a field the operator left blank is what
+// once wiped the fee rate off every channel on the node.
 export const updateChannelFees = (payload: {
   channel_point?: string
   apply_all?: boolean

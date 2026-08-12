@@ -33,8 +33,13 @@ The scope includes:
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote Draft PR: `#33`, targeting `main`.
 - Published checkpoint entering the PeerSwap slice: `1561dde`.
-- The latest accepted slice is published with subject
+- The accepted PeerSwap implementation checkpoint is `a3cfb2b`, subject
   `0.5.3-Beta: harden PeerSwap runtime`.
+- `origin/main` was then integrated through `c0c488a` because it had a concrete
+  conflict in PeerSwap and supplied the owner's updated PSWeb binary in
+  `cd0ea3e`, plus the intervening 0.5.2 fee/Magma fixes. The hardening catalog
+  now pins that binary to official upstream commit `09983da` and its tested
+  SHA-256; this was not a routine merge merely because `main` advanced.
 - PeerSwap gate uploads and local/remote temporary files were cleaned before
   publication.
 - Every new implementation or evidence commit must start with
@@ -107,7 +112,7 @@ Application state at this checkpoint:
 | BRLN Loop Out and Magma | Native non-root/PostgreSQL lifecycle confirmed free of OS-privileged execution; permanent source gate added; authenticated LOS TESTE2 state-preserving gate passed; no third-party disclaimer applies | Shared removal of the manager's temporary Docker-group membership and final cross-version matrix only |
 | Lightning Loop | Closed native broker contract for fixed official release, user/directories, config/unit, dedicated LND material, lifecycle/status/removal and client-material repair; existing stopped installation preserved through real LOS TESTE2 gate | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
 | Elements | Closed native broker for official digest-pinned release, dedicated identity, enrolled storage, safe config merge/read, bounded RPC status, hardened unit and lifecycle/removal; preserved inactive LOS TESTE2 install migrated without dependency restarts | Clean install/reboot and shared final matrix |
-| PeerSwap | Fixed upstream v6.0.0/v6.0.0.1 hashes in the compatible legacy asset folder, dedicated identity and nine-permission LND credential, root-only local/remote Elements policy, state-preserving migration, hardened units, typed status/lifecycle/removal/firewall; remote-mode LOS TESTE2 gate passed without starting services | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
+| PeerSwap | Fixed upstream v6.0.0 and official PSWeb commit `09983da` (v6.0.0.1 package) hashes in the compatible legacy asset folder, dedicated identity and nine-permission LND credential, root-only local/remote Elements policy, state-preserving migration, hardened units, typed status/lifecycle/removal/firewall; remote-mode LOS TESTE2 gate passed without starting services | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
 | Native apps and in-process features | Inventory plus isolated shared primitives only | Migrate privileged systemd, files, users, binaries, storage, firewall, and credential paths as applicable |
@@ -271,7 +276,8 @@ inactive/disabled state, config and RPC credential hashes, and Bitcoin/LND
 timestamps while removing `losop` ownership from both trees. Evidence:
 `docs/baselines/privilege-hardening-phase2-elements-boundary-2026-08-12.json`.
 The PeerSwap consumer half is accepted as well. The broker pins the actual
-v6.0.0/v6.0.0.1 hashes while retaining the `version_5_0/amd64` packaging path,
+v6.0.0 and official PSWeb commit `09983da` (v6.0.0.1 package) hashes while
+retaining the `version_5_0/amd64` packaging path,
 creates `lightningos-peerswap`, migrates regular legacy state without deleting
 the rollback tree, forces a dedicated nine-permission LND credential, and owns
 the root-only Elements source, validated configs, hardened units,

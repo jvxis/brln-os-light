@@ -50,17 +50,13 @@ var magmaCommitments = &magmaCommitmentCache{}
 // channel point. An order counts while Amboss has not marked it finished: the
 // terminal statuses are the ones that release the obligation.
 func (s *MagmaService) ActiveCommitments(ctx context.Context) ([]MagmaChannelCommitment, error) {
-	terminal := make([]string, 0, len(magmaTerminalStatuses))
-	for status := range magmaTerminalStatuses {
-		terminal = append(terminal, status)
-	}
 	rows, err := s.db.Query(ctx, `
 select order_id, channel_point, coalesce(channel_scid,''), coalesce(buyer_alias,''),
        buyer_pubkey, size_sat, revenue_sat, fee_rate_cap_ppm, base_fee_cap_sat,
        blocks_until_can_be_closed, commitment_blocks, magma_status
 from magma_orders
 where channel_point <> '' and not (magma_status = any($1))
-`, terminal)
+`, magmaTerminalStatusList())
 	if err != nil {
 		return nil, err
 	}

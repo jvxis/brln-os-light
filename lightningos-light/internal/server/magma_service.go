@@ -617,6 +617,17 @@ var magmaTerminalStatuses = map[string]bool{
 	"ADMIN_CLOSED":                  true,
 }
 
+// magmaTerminalStatusList is the same set as a slice, for the SQL queries that
+// have to exclude orders Amboss has already closed out. It exists so that a new
+// query cannot quietly forget the exclusion: every caller reaches for this.
+func magmaTerminalStatusList() []string {
+	statuses := make([]string, 0, len(magmaTerminalStatuses))
+	for status := range magmaTerminalStatuses {
+		statuses = append(statuses, status)
+	}
+	return statuses
+}
+
 // magmaFullFetchMaxInterval bounds how long the cheap path can run on its own.
 // The counter is a signal, not a guarantee; this makes a missed signal cost
 // minutes rather than forever.

@@ -886,8 +886,10 @@ lifecycle action.
 The legacy package directory remains `version_5_0/amd64` for installer and
 upgrade compatibility, while the broker verifies that its actual content is
 upstream PeerSwap `v6.0.0` at commit
-`25a153e5b70cb35830dc6354d0fac6994e0fd610` plus PSWeb `v6.0.0.1`, using three
-fixed SHA-256 hashes. Both services run as `lightningos-peerswap`, without the
+`25a153e5b70cb35830dc6354d0fac6994e0fd610` plus the official PSWeb upstream
+`main` commit `09983da398f253f8c14213e9f5c61b80cc879b67`, packaged under the
+`v6.0.0.1` label, using three fixed SHA-256 hashes. Both services run as
+`lightningos-peerswap`, without the
 human operator or the `lnd` group, and can write only their dedicated runtime.
 The source policy is `root:root 0600`; neither the manager nor the app can read
 it directly. Existing configuration and PSWeb preferences are merged while

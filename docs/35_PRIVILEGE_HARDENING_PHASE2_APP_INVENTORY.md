@@ -202,7 +202,8 @@ and Bitcoin/LND timestamps unchanged. Evidence is in
 
 PeerSwap has also moved out of the generic native-systemd bucket. Its manager
 files contain no direct privileged calls. The broker fixes the upstream
-v6.0.0/v6.0.0.1 binary bundle and hashes while retaining the legacy packaging
+v6.0.0 binary plus official PSWeb `main` commit `09983da398f253f8c14213e9f5c61b80cc879b67`
+(packaged as v6.0.0.1) and hashes while retaining the legacy packaging
 folder, migrates regular legacy state into a dedicated runtime, creates the
 `lightningos-peerswap` identity, installs a dedicated nine-permission LND
 credential, validates and merges both config formats, owns the two hardened

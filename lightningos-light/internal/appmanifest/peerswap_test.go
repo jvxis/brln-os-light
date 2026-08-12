@@ -13,6 +13,9 @@ func TestPeerSwapCatalogPinsUpdatedBinariesInLegacyPackageDirectory(t *testing.T
 	if PeerSwapVersion != "v6.0.0" || len(PeerSwapCommit) != 40 {
 		t.Fatalf("unexpected PeerSwap provenance: %s %s", PeerSwapVersion, PeerSwapCommit)
 	}
+	if PeerSwapWebVersion != "v6.0.0.1" || len(PeerSwapWebCommit) != 40 {
+		t.Fatalf("unexpected PSWeb provenance: %s %s", PeerSwapWebVersion, PeerSwapWebCommit)
+	}
 	for _, binary := range PeerSwapBinaries() {
 		if len(binary.SHA256) != 64 {
 			t.Fatalf("invalid %s checksum", binary.Name)

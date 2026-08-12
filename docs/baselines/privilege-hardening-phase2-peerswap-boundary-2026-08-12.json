@@ -1,6 +1,6 @@
 {
   "schema": "lightningos.privilege-hardening.peerswap-boundary.v1",
-  "captured_at": "2026-08-12T14:41:00Z",
+  "captured_at": "2026-08-12T14:51:00Z",
   "branch": "agent/0.5.3-privilege-hardening",
   "node": "LOS-TESTE2",
   "scope": "state-preserving PeerSwap native boundary migration with remote Elements",
@@ -8,12 +8,14 @@
     "peerswap_project": "ElementsProject/peerswap",
     "peerswap_release": "v6.0.0",
     "peerswap_commit": "25a153e5b70cb35830dc6354d0fac6994e0fd610",
-    "psweb_release": "v6.0.0.1",
+    "psweb_package_label": "v6.0.0.1",
+    "psweb_upstream_ref": "main",
+    "psweb_upstream_commit": "09983da398f253f8c14213e9f5c61b80cc879b67",
     "legacy_asset_directory_preserved": "version_5_0/amd64",
     "peerswapd_sha256": "bf75a8b7b2bc3f9f152539c0611bc32a890f76a099c6ee2882b11bbf028b472b",
     "pscli_sha256": "69ca0aeb89b87d8eedd2d549ab542598fee69197e3110b066eb30ad9193bbbd8",
-    "psweb_sha256": "8a7def73d51b7f0369462ccb4a96633b8c7da08ee21acbb45e5864e5788f2920",
-    "broker_binary_sha256": "10570f7ad089394441f19359e9e5341e1a041b6c6ec47f516634707e0a851a24"
+    "psweb_sha256": "7409bff05d16b33929b1ea14d5356658fb201f5c73838a375d58650efde7ee3a",
+    "broker_binary_sha256": "2a456412907112865acb4e3bc9f312d229359a7a11d8a0be774c62ba67cf7bb0"
   },
   "preserved_state": {
     "peerswap_before": {
@@ -99,7 +101,7 @@
     "distinct_external_local_volume_retained_in_config_contract": true,
     "remote_rpc_gate": "passed",
     "remote_chain": "liquidv1",
-    "remote_blocks_observed": 4014379,
+    "remote_blocks_observed": 4014397,
     "remote_pruned": false,
     "remote_endpoint_or_credentials_captured": false
   },
@@ -113,6 +115,14 @@
     "lifecycle_start_dry_run": "passed",
     "firewall_dry_run": "passed",
     "remove_dry_run": "passed"
+  },
+  "updated_psweb_gate": {
+    "main_commit_integrated": "cd0ea3e",
+    "staged_hash": "passed",
+    "installed_hash": "passed",
+    "non_starting_executable_probe": "passed",
+    "broker_ensure": "passed",
+    "service_choice_preserved": "inactive_and_disabled"
   },
   "local_gates": {
     "focused_go_tests": "passed",

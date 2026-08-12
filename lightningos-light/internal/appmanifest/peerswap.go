@@ -16,6 +16,7 @@ const (
 	PeerSwapVersion            = "v6.0.0"
 	PeerSwapCommit             = "25a153e5b70cb35830dc6354d0fac6994e0fd610"
 	PeerSwapWebVersion         = "v6.0.0.1"
+	PeerSwapWebCommit          = "09983da398f253f8c14213e9f5c61b80cc879b67"
 	PeerSwapAssetDirectory     = "version_5_0" // Legacy package path; content is v6.0.0.
 	PeerSwapAssetArch          = "amd64"
 	PeerSwapUser               = "lightningos-peerswap"
@@ -92,12 +93,12 @@ func PeerSwapBinaries() []PeerSwapBinary {
 	return []PeerSwapBinary{
 		{Name: "peerswapd", SHA256: "bf75a8b7b2bc3f9f152539c0611bc32a890f76a099c6ee2882b11bbf028b472b"},
 		{Name: "pscli", SHA256: "69ca0aeb89b87d8eedd2d549ab542598fee69197e3110b066eb30ad9193bbbd8"},
-		{Name: "psweb", SHA256: "8a7def73d51b7f0369462ccb4a96633b8c7da08ee21acbb45e5864e5788f2920"},
+		{Name: "psweb", SHA256: "7409bff05d16b33929b1ea14d5356658fb201f5c73838a375d58650efde7ee3a"},
 	}
 }
 
 func PeerSwapVersionMarker() string {
-	return PeerSwapVersion + "_" + PeerSwapCommit + "_psweb_" + PeerSwapWebVersion
+	return PeerSwapVersion + "_" + PeerSwapCommit + "_psweb_" + PeerSwapWebVersion + "_" + PeerSwapWebCommit
 }
 
 func PeerSwapServiceUnit(paths PeerSwapPaths, elementsMode string) string {

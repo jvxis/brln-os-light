@@ -796,17 +796,18 @@ new source-level boundary test scans every production `loopout_brln_*` and
 `magma_*` file plus both App Store wrappers and rejects those operation classes
 if they are introduced later.
 
-Their LND authority is nevertheless elevated and is now disclosed through the
-existing App Store acknowledgement. BRLN Loop can pay invoices and create a
+Their LND authority remains explicitly inventoried in this technical plan, but
+the App Store does not present the third-party elevated-access disclaimer for
+these first-party native features. BRLN Loop can pay invoices and create a
 return address; it retains sensitive reauthentication and the central spending
 guard. Magma can create invoices, connect peers, and fund channels; manual
 channel opens retain fresh funds reauthentication, and the tested installation
 remained in monitor mode. The authenticated LOS TESTE2 gate preserved both
-apps as installed/running with no active Loop job or transient Magma order,
-added the disclosure to both API records, and moved no funds or channels. LND
-and Bitcoin retained their timestamps. The node still has the manager's legacy
-Docker-group membership because the shared Phase 2 `enforce` cutover remains
-open; neither native app uses it, and final removal is still mandatory.
+apps as installed/running with no active Loop job or transient Magma order and
+moved no funds or channels. LND and Bitcoin retained their timestamps. The node
+still has the manager's legacy Docker-group membership because the shared Phase
+2 `enforce` cutover remains open; neither native app uses it, and final removal
+is still mandatory.
 Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-native-brln-boundary-2026-08-12.json`.
 

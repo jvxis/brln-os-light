@@ -94,8 +94,6 @@ func TestConfiguredAppSecurityNotices(t *testing.T) {
 		"lndg":               true,
 		"lnbits":             true,
 		loopAppID:            true,
-		loopOutBRLNAppID:     true,
-		magmaAppID:           true,
 		fedimintGatewayAppID: true,
 		peerswapAppID:        true,
 		tapdAppID:            true,

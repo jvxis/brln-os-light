@@ -34,7 +34,7 @@ The scope includes:
 - Remote Draft PR: `#33`, targeting `main`.
 - Published checkpoint before the native BRLN slice: `b0e0338`.
 - The latest accepted slice is published with subject
-  `0.5.3-Beta: harden native BRLN apps`.
+  `0.5.3-Beta: keep native BRLN apps first-party`.
 - The worktree was clean after that accepted slice and gate cleanup.
 - Every new implementation or evidence commit must start with
   `0.5.3-Beta`.
@@ -103,7 +103,7 @@ Application state at this checkpoint:
 | BTCPay Server/NBXplorer | Official fixed security release, image refresh, root-owned secret snapshot, dedicated LND macaroon, remote/native Bitcoin gates, lifecycle, data preservation, and real functional gate passed | Final matrix and any remaining shared host dependencies found by inventory |
 | LNDg | Exact-source non-root image, official digest-pinned private PostgreSQL, dedicated 13-permission LND credential, root-owned snapshot, typed lifecycle/inspect/remove/admin reset, firewall/host policy, SQLite-to-PostgreSQL migration, data preservation, and real functional gate passed | Cross-version final matrix only |
 | LNbits | Official stable digest, dedicated nine-permission LND credential, root-owned Compose/environment/credential snapshot, non-root read-only runtime, typed lifecycle/status/uninstall/REST/firewall, and data-preserving legacy SQLite/Admin UI migration accepted on LOS TESTE2 | Final Ubuntu 24.04/26.04 matrix and shared rollout/rollback acceptance only |
-| BRLN Loop Out and Magma | Native non-root/PostgreSQL lifecycle confirmed free of OS-privileged execution; permanent source gate added; elevated LND authority disclosed in App Store; authenticated LOS TESTE2 state-preserving gate passed | Shared removal of the manager's temporary Docker-group membership and final cross-version matrix only |
+| BRLN Loop Out and Magma | Native non-root/PostgreSQL lifecycle confirmed free of OS-privileged execution; permanent source gate added; authenticated LOS TESTE2 state-preserving gate passed; no third-party disclaimer applies | Shared removal of the manager's temporary Docker-group membership and final cross-version matrix only |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
 | Native apps and in-process features | Inventory plus isolated shared primitives only | Migrate privileged systemd, files, users, binaries, storage, firewall, and credential paths as applicable |
@@ -234,10 +234,10 @@ and
 The high-adoption native BRLN slice is accepted. BRLN Loop Out and Magma remain
 inside the non-root manager and need no broker operation: their lifecycle is
 PostgreSQL-only and a permanent source gate rejects OS-privileged imports,
-Docker/systemd/sudo wrappers, host file mutation, and host listeners. Their
-elevated LND authority is now disclosed by the App Store. The authenticated
-LOS TESTE2 gate preserved both as installed/running, with Loop idle and Magma
-in monitor mode, and preserved LND/Bitcoin timestamps. The integration node's
+Docker/systemd/sudo wrappers, host file mutation, and host listeners. They are
+first-party native features, so the third-party App Store disclaimer does not
+apply. The authenticated LOS TESTE2 gate preserved both as installed/running,
+with Loop idle and Magma in monitor mode, and preserved LND/Bitcoin timestamps. The integration node's
 legacy manager Docker-group membership remains an explicit shared-cutover item.
 Mempool and Fedimint remain lower priority.
 

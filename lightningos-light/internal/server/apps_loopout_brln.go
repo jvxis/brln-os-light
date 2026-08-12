@@ -18,9 +18,6 @@ func loopOutBRLNDefinition() appDefinition {
 		Name:        "Loop Out BR⚡LN",
 		Description: "Move outbound Lightning liquidity to an external wallet in controlled Lightning Address payments.",
 		Port:        0,
-		SecurityNotices: []string{
-			appSecurityNoticeElevatedLNDAccess,
-		},
 	}
 }
 

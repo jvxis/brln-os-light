@@ -1,8 +1,8 @@
 {
-  "captured_at_utc": "2026-08-12T12:30:25Z",
+  "captured_at_utc": "2026-08-12T12:34:30Z",
   "branch": "agent/0.5.3-privilege-hardening",
   "source_head_before_slice": "b0e0338",
-  "scope": "native BRLN Loop Out and Magma OS-privilege boundary and App Store disclosure",
+  "scope": "native BRLN Loop Out and Magma OS-privilege boundary",
   "architecture": {
     "runtime": "in-process manager services",
     "container_lifecycle": false,
@@ -63,12 +63,10 @@
     }
   },
   "app_store_disclosure": {
-    "notice": "elevated_lnd_access",
-    "loopout_brln_before": false,
-    "loopout_brln_after": true,
-    "magma_before": false,
-    "magma_after": true,
-    "explicit_install_acknowledgement_required_by_existing_ui": true
+    "third_party_disclaimer_required": false,
+    "reason": "BRLN Loop Out and Magma are first-party native manager features",
+    "loopout_brln_elevated_notice": false,
+    "magma_elevated_notice": false
   },
   "los_teste2_gate": {
     "manager_service_user": "lightningos",
@@ -106,7 +104,7 @@
   },
   "validation": {
     "focused_native_brln_tests": "pass",
-    "registry_security_notice_test": "pass",
+    "registry_first_party_notice_test": "pass",
     "static_privilege_boundary_test": "pass",
     "go_vet": "pass",
     "go_build_all": "pass",

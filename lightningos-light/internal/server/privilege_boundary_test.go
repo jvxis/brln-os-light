@@ -36,8 +36,7 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/server/apps_docker.go":                   {runSudo: 16, shell: 2},
 	"internal/server/apps_elements.go":                 {runSystemd: 18, shell: 11},
 	"internal/server/apps_fedimint.go":                 {runSudo: 10},
-	"internal/server/apps_lnbits.go":                   {runSudo: 7},
-	"internal/server/apps_lnd_access_compat.go":        {runSudo: 2},
+	"internal/server/apps_lnd_access_compat.go":        {runSudo: 4},
 	"internal/server/apps_loop.go":                     {runSystemd: 16, shell: 5},
 	"internal/server/apps_mempool.go":                  {runSudo: 2},
 	"internal/server/apps_peerswap.go":                 {runSudo: 2, runSystemd: 23, shell: 12},
@@ -219,6 +218,38 @@ func TestBTCPayLifecycleHasNoLegacyDockerExecution(t *testing.T) {
 		if _, blocked := forbidden[name]; blocked {
 			position := fset.Position(call.Pos())
 			t.Errorf("BTCPay legacy Docker call %s at line %d; use the typed broker", name, position.Line)
+		}
+		return true
+	})
+}
+
+func TestLNbitsLifecycleHasNoLegacyPrivilegedExecution(t *testing.T) {
+	root := moduleRoot(t)
+	path := filepath.Join(root, "internal", "server", "apps_lnbits.go")
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := map[string]struct{}{
+		"ensureDocker":           {},
+		"ensureDockerImage":      {},
+		"getComposeStatus":       {},
+		"pullDockerImage":        {},
+		"runCompose":             {},
+		"RunCommandWithSudo":     {},
+		"ensureLnbitsRestAccess": {},
+		"ensureLnbitsUfwAccess":  {},
+	}
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name := calledFunctionName(call.Fun)
+		if _, blocked := forbidden[name]; blocked {
+			position := fset.Position(call.Pos())
+			t.Errorf("LNbits legacy privileged call %s at line %d; use the typed broker", name, position.Line)
 		}
 		return true
 	})

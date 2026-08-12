@@ -11,6 +11,10 @@ func prepareLNDgWritableData(string) error {
 	return nil
 }
 
+func prepareLNbitsWritableData(string) error {
+	return nil
+}
+
 func validateSecretFileMode(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {

@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"lightningos-light/internal/appmanifest"
@@ -47,6 +49,74 @@ func prepareLNDgWritableData(dataDir string) error {
 		}
 		return os.Chmod(path, 0640)
 	})
+}
+
+func prepareLNbitsWritableData(dataDir string) error {
+	passwdRaw, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return errors.New("host account inventory is unavailable")
+	}
+	groupRaw, err := os.ReadFile("/etc/group")
+	if err != nil {
+		return errors.New("host group inventory is unavailable")
+	}
+	if err := validateLNbitsHostIdentityFiles(passwdRaw, groupRaw); err != nil {
+		return err
+	}
+	return filepath.WalkDir(dataDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("LNbits data entry is unsafe")
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return errors.New("LNbits data ownership is unavailable")
+		}
+		if info.IsDir() {
+			if os.Geteuid() == 0 {
+				if err := os.Chown(path, appmanifest.LNbitsContainerUID, int(stat.Gid)); err != nil {
+					return err
+				}
+			}
+			return os.Chmod(path, 0770)
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("LNbits data entry is not a regular file")
+		}
+		if os.Geteuid() == 0 {
+			if err := os.Chown(path, appmanifest.LNbitsContainerUID, int(stat.Gid)); err != nil {
+				return err
+			}
+		}
+		return os.Chmod(path, 0640)
+	})
+}
+
+func validateLNbitsHostIdentityFiles(passwdRaw, groupRaw []byte) error {
+	if identityFileContainsNumericID(passwdRaw, 2, appmanifest.LNbitsContainerUID) {
+		return errors.New("LNbits container UID collides with a host account")
+	}
+	if identityFileContainsNumericID(groupRaw, 2, appmanifest.LNbitsContainerGID) {
+		return errors.New("LNbits container GID collides with a host group")
+	}
+	return nil
+}
+
+func identityFileContainsNumericID(raw []byte, field, id int) bool {
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) <= field {
+			continue
+		}
+		value, err := strconv.Atoi(fields[field])
+		if err == nil && value == id {
+			return true
+		}
+	}
+	return false
 }
 
 func validateSecretFileMode(path string) error {

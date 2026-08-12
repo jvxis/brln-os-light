@@ -13,21 +13,28 @@ import (
 
 func TestLnbitsComposeUsesPinnedOfficialImageAndDedicatedCredential(t *testing.T) {
 	paths := lnbitsPaths{
-		DataDir: "/var/lib/lightningos/apps-data/lnbits/data",
-		LndDir:  "/var/lib/lightningos/apps-data/lnbits/lnd",
+		DataDir:      "/var/lib/lightningos/apps-data/lnbits/data",
+		LndDir:       "/var/lib/lightningos/apps-data/lnbits/lnd",
+		TLSCertPath:  "/var/lib/lightningos/apps-data/lnbits/lnd/tls.cert",
+		MacaroonPath: "/var/lib/lightningos/apps-data/lnbits/lnd/lnbits.macaroon",
 	}
 	compose := lnbitsComposeContents(paths)
 
 	for _, required := range []string{
 		"image: " + appmanifest.LNbitsImage,
 		paths.DataDir + ":/app/data",
-		paths.LndDir + ":/etc/lnd:ro",
+		paths.TLSCertPath + ":/etc/lnd/tls.cert:ro",
+		paths.MacaroonPath + ":/etc/lnd/lnbits.macaroon:ro",
+		`user: "65532:65532"`,
+		"read_only: true",
+		"cap_drop:\n      - ALL",
+		"no-new-privileges:true",
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("compose missing %q\n%s", required, compose)
 		}
 	}
-	for _, forbidden := range []string{"lnbits/lnbits:latest", "/data/lnd", "admin.macaroon"} {
+	for _, forbidden := range []string{"lnbits/lnbits:latest", "/data/lnd", "admin.macaroon", "/var/run/docker.sock", "privileged: true"} {
 		if strings.Contains(compose, forbidden) {
 			t.Fatalf("compose exposes mutable or privileged input %q\n%s", forbidden, compose)
 		}
@@ -46,6 +53,9 @@ func TestEnsureLnbitsEnvAllowsLocalHTTPAuth(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "AUTH_HTTPS_ONLY=false\n") {
 		t.Fatalf("env must allow local HTTP auth\n%s", string(content))
+	}
+	if !strings.Contains(string(content), "LNBITS_DATA_FOLDER=/app/data\n") {
+		t.Fatalf("env must pin the persistent data folder\n%s", string(content))
 	}
 }
 
@@ -75,14 +85,13 @@ func TestEnsureLnbitsEnvMigratesLegacyAdminCredentialSelectors(t *testing.T) {
 		"LND_REST_ENDPOINT=https://host.docker.internal:8080/",
 		"LND_REST_CERT=/etc/lnd/tls.cert",
 		"LND_REST_MACAROON=/etc/lnd/lnbits.macaroon",
-		"LND_REST_MACAROON_ENCRYPTED=",
 		"CUSTOM_SETTING=preserved",
 	} {
 		if !strings.Contains(got, required) {
 			t.Fatalf("migrated env missing %q\n%s", required, got)
 		}
 	}
-	for _, forbidden := range []string{"admin.macaroon", "legacy-secret", "/data/lnd"} {
+	for _, forbidden := range []string{"LND_REST_MACAROON_ENCRYPTED", "admin.macaroon", "legacy-secret", "/data/lnd"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("migrated env retained %q\n%s", forbidden, got)
 		}

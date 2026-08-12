@@ -102,7 +102,7 @@ Application state at this checkpoint:
 | Bitcoin Core | Official-source verified image, attestation, storage enrollment, secret config operations, lifecycle, consumer network, native-consumer path, and cookie-backed typed local status passed | Dedicated Electrs credential migration for legacy `rpcauth` nodes, operational CLI/log paths, mainnet P2P firewall, and final matrix |
 | BTCPay Server/NBXplorer | Official fixed security release, image refresh, root-owned secret snapshot, dedicated LND macaroon, remote/native Bitcoin gates, lifecycle, data preservation, and real functional gate passed | Final matrix and any remaining shared host dependencies found by inventory |
 | LNDg | Exact-source non-root image, official digest-pinned private PostgreSQL, dedicated 13-permission LND credential, root-owned snapshot, typed lifecycle/inspect/remove/admin reset, firewall/host policy, SQLite-to-PostgreSQL migration, data preservation, and real functional gate passed | Cross-version final matrix only |
-| LNbits | Official stable digest plus dedicated nine-permission LND credential and narrow read-only mount design | Broker-owned Compose/secret snapshot, lifecycle, status, uninstall, REST-listener/firewall policy, and data-preserving functional gate |
+| LNbits | Official stable digest, dedicated nine-permission LND credential, root-owned Compose/environment/credential snapshot, non-root read-only runtime, typed lifecycle/status/uninstall/REST/firewall, and data-preserving legacy SQLite/Admin UI migration accepted on LOS TESTE2 | Final Ubuntu 24.04/26.04 matrix and shared rollout/rollback acceptance only |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
 | Native apps and in-process features | Inventory plus isolated shared primitives only | Migrate privileged systemd, files, users, binaries, storage, firewall, and credential paths as applicable |
@@ -230,9 +230,12 @@ Evidence is stored in
 and
 `docs/baselines/privilege-hardening-phase2-bitcoincore-status-2026-08-11.json`.
 
-The next application slice is LNbits: complete its broker-owned Compose/secret
-lifecycle, status, uninstall, REST-listener/firewall policy, and
-data-preserving functional gate. Mempool and Fedimint remain lower priority.
+The next application slice is the high-adoption native BRLN surface, beginning
+with BRLN Loop and Magma. LNbits has completed its broker-owned Compose/secret
+lifecycle, status, uninstall, REST-listener/firewall policy, legacy Admin UI
+settings migration, clean-install stopped create-before-firewall ordering, and
+data-preserving functional gate under the dedicated numeric UID/GID `65532`.
+Mempool and Fedimint remain lower priority.
 
 ## Test-node and network constraints
 

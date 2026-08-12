@@ -323,7 +323,7 @@ func (manager *ComposeAppManager) ensureLNDgHostAccess(ctx context.Context) erro
 		return errors.New("LNDg network gateway lookup failed")
 	}
 	gateway := strings.TrimSpace(gatewayRaw)
-	if !isLNDgDockerGateway(gateway) {
+	if !isPrivateDockerGateway(gateway) {
 		return errors.New("LNDg network gateway is invalid")
 	}
 	configPath := manager.LNDConfigPath
@@ -336,7 +336,7 @@ func (manager *ComposeAppManager) ensureLNDgHostAccess(ctx context.Context) erro
 	}
 	lines := strings.Split(strings.TrimRight(string(configRaw), "\n"), "\n")
 	updated, changed := updateLNDgRPCOptions(lines, gateway)
-	certificateNeedsRefresh := manager.lndCertificateNeedsLNDgAccess()
+	certificateNeedsRefresh := manager.lndCertificateNeedsDockerHostAccess()
 	if changed {
 		content := []byte(strings.Join(updated, "\n") + "\n")
 		if err := replaceRegularFilePreservingMetadata(configPath, content); err != nil {
@@ -402,7 +402,7 @@ func updateLNDgRPCOptions(lines []string, gateway string) ([]string, bool) {
 	return updated, false
 }
 
-func isLNDgDockerGateway(value string) bool {
+func isPrivateDockerGateway(value string) bool {
 	ip := net.ParseIP(value)
 	if ip == nil || ip.To4() == nil || !ip.IsPrivate() {
 		return false
@@ -410,7 +410,7 @@ func isLNDgDockerGateway(value string) bool {
 	return ip.To4()[3] == 1
 }
 
-func (manager *ComposeAppManager) lndCertificateNeedsLNDgAccess() bool {
+func (manager *ComposeAppManager) lndCertificateNeedsDockerHostAccess() bool {
 	lndDataRoot := manager.LNDDataRoot
 	if lndDataRoot == "" {
 		lndDataRoot = defaultLNDDataRoot

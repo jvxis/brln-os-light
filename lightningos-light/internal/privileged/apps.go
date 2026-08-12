@@ -476,6 +476,19 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		if err != nil {
 			return err
 		}
+	case appmanifest.LNbitsID:
+		files, err := manager.validatedLNbitsFiles()
+		if err != nil {
+			return err
+		}
+		images = []string{appmanifest.LNbitsImage}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createLNbitsSnapshot(files)
+		if err != nil {
+			return err
+		}
 	case appmanifest.ElectrsID:
 		files, err := manager.validatedElectrsFiles()
 		if err != nil {
@@ -556,6 +569,35 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 				return err
 			}
 			if err := manager.refreshLNDgSnapshotCertificate(snapshot.root); err != nil {
+				return err
+			}
+		}
+		if manifest.ID == appmanifest.LNbitsID {
+			appsDataRoot := manager.AppsDataRoot
+			if appsDataRoot == "" {
+				appsDataRoot = defaultAppsDataRoot
+			}
+			if err := prepareLNbitsWritableData(filepath.Join(appsDataRoot, appmanifest.LNbitsID, "data")); err != nil {
+				return errors.New("LNbits writable data preparation failed")
+			}
+			if err := manager.migrateLNbitsLegacySettings(ctx); err != nil {
+				return err
+			}
+			if err := manager.ensureLNbitsHostAccess(ctx); err != nil {
+				return err
+			}
+			// A clean install does not have lnbits_default yet. Materialize the
+			// reviewed container and its network without starting it, so the
+			// broker can bind the internal LND REST firewall rule to the actual
+			// Compose subnet before LNbits becomes reachable.
+			createArgs := append(append([]string(nil), args...), "create")
+			if _, err := manager.Runner.Run(ctx, commandPath, createArgs...); err != nil {
+				return errors.New("LNbits container preparation failed")
+			}
+			if err := manager.ensureLNbitsInternalFirewall(ctx); err != nil {
+				return err
+			}
+			if err := manager.refreshLNbitsSnapshotCertificate(snapshot.root); err != nil {
 				return err
 			}
 		}
@@ -647,6 +689,19 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 			return err
 		}
 		removePersistentSnapshot = true
+	case appmanifest.LNbitsID:
+		files, err := manager.validatedLNbitsFiles()
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createLNbitsSnapshot(files)
+		if err != nil {
+			return err
+		}
+		removePersistentSnapshot = true
 	case appmanifest.ElectrsID:
 		files, err := manager.validatedElectrsFiles()
 		if err != nil {
@@ -699,6 +754,10 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 		}
 	} else if removePersistentSnapshot && appID == appmanifest.LNDgID {
 		if err := manager.removeLNDgExecutionSnapshot(snapshot.root); err != nil {
+			return errors.New("failed to remove app execution snapshot")
+		}
+	} else if removePersistentSnapshot && appID == appmanifest.LNbitsID {
+		if err := manager.removeLNbitsExecutionSnapshot(snapshot.root); err != nil {
 			return errors.New("failed to remove app execution snapshot")
 		}
 	} else if removePersistentSnapshot && appID == appmanifest.ElectrsID {
@@ -790,6 +849,15 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 			return inspection, err
 		}
 		snapshot, cleanup, err = manager.createLNDgSnapshot(files)
+		if err != nil {
+			return inspection, err
+		}
+	case appmanifest.LNbitsID:
+		files, err := manager.validatedLNbitsFiles()
+		if err != nil {
+			return inspection, err
+		}
+		snapshot, cleanup, err = manager.createLNbitsSnapshot(files)
 		if err != nil {
 			return inspection, err
 		}

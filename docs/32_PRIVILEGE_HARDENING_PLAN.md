@@ -742,10 +742,51 @@ fixed secret record and no network discovery was performed. Evidence is in
 `docs/baselines/privilege-hardening-phase2-lnbits-image-credential-gate-2026-08-11.json`.
 
 LNbits lifecycle, status, uninstall, REST-listener policy, and firewall policy
-still use the compatibility path. The next LNbits slice must move its Compose
-and secret-bearing inputs into a root-owned broker snapshot, replace those
-direct Docker/UFW/systemctl calls with typed operations, and prove a complete
-data-preserving lifecycle before the manager can lose Docker-group access.
+now use the typed broker exclusively. The manager declaration is reduced to a
+closed Compose document plus one private environment file. The broker validates
+both, rejects unexpected app/LND assets, and creates a persistent root-owned
+execution snapshot. The official digest-pinned image runs as the closed
+host-independent UID/GID `65532:65532` with a
+read-only root filesystem, all capabilities dropped, `no-new-privileges`, no
+host networking or Docker socket, one writable data mount, and only the
+dedicated macaroon and `tls.cert` as individual read-only mounts.
+
+The existing-node gate exposed an additional upstream precedence rule: when
+LNbits Admin UI has persisted funding-source settings in `system_settings`, the
+database overrides the corrected `.env`. A legacy node therefore still tried
+the removed native `admin.macaroon` and fell back to `VoidWallet`. Before every
+start, the broker now runs a fixed parameterized SQLite migration in the same
+official image with no network, non-root UID, read-only root filesystem, and
+only the data directory mounted. It updates only the LndRest wallet class,
+endpoint, certificate, and dedicated macaroon fields and empties alternate LND
+credential selectors; no user, wallet, payment, extension, or unrelated
+setting is inserted, deleted, or rewritten.
+
+For a clean installation, the broker now materializes the reviewed container
+and `lnbits_default` network in the stopped state before applying the internal
+LND REST firewall rule. Only after the real Compose subnet is known and the
+fixed rule succeeds does the broker start LNbits. This closes the fresh-node
+ordering gap without adding a caller-controlled network or firewall input.
+
+LOS TESTE2 provided a real stopped legacy upgrade with no app-private LND
+directory. A dedicated nine-permission macaroon was created under a separate
+root key, authenticated `GetInfo`, and denied address creation. The old SQLite
+database started and finished with one database, 13 application tables, and
+273 rows; integrity passed and no table or row was lost. The hardened runtime
+returned HTTP 200 using `LndRestWallet` without `VoidWallet` fallback, and
+dry-run, start, inspect-running, firewall, stop, and inspect-stopped all passed.
+The final gate also confirmed that numeric UID/GID `65532` did not collide with
+a host account or group, the stopped create-before-firewall sequence passed,
+and the persistent data was owned by the closed container UID.
+The node returned to its original stopped choice. LND and Bitcoin retained
+their exact activation/container timestamps, the manager remained healthy in
+`shadow`, and all gate backups, uploads, log captures, and render helpers were
+removed. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-lnbits-functional-lifecycle-2026-08-12.json`.
+
+The next high-adoption slice is the native BRLN application surface, beginning
+with BRLN Loop and Magma. LNbits remains pending only in the final cross-version
+matrix and final rollout/rollback acceptance shared by all applications.
 
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC

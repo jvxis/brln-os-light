@@ -51,6 +51,15 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			PrimaryService:     BTCPayPrimaryService,
 			StopTimeoutSeconds: BTCPayStopTimeout,
 		}, nil
+	case LNDgID:
+		return ComposeManifest{
+			ID:                 LNDgID,
+			Project:            LNDgProject,
+			ComposeFile:        LNDgComposeFile,
+			EnvFile:            LNDgEnvFile,
+			PrimaryService:     LNDgPrimaryService,
+			StopTimeoutSeconds: LNDgStopTimeout,
+		}, nil
 	case ElectrsID:
 		return ComposeManifest{
 			ID:                 ElectrsID,
@@ -101,6 +110,8 @@ func CatalogExternalTCPPort(appID string) (int, error) {
 	switch appID {
 	case RoboSatsID:
 		return RoboSatsPort, nil
+	case LNDgID:
+		return LNDgPort, nil
 	default:
 		return 0, errors.New("app external access manifest is not allowed")
 	}

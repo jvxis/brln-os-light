@@ -49,6 +49,10 @@ type AppManager interface {
 	BitcoinCoreStatus(ctx context.Context) (BitcoinCoreStatusState, error)
 }
 
+type AppAdminManager interface {
+	ResetAdmin(ctx context.Context, appID string, dryRun bool) error
+}
+
 type PackageManager interface {
 	EnsureFeature(ctx context.Context, feature PackageFeature, dryRun bool) (PackageFeatureState, error)
 	FeatureStatus(ctx context.Context, feature PackageFeature) (PackageFeatureState, error)
@@ -158,7 +162,7 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		return configured
 	}
 	switch operation {
-	case OperationAppLifecycle, OperationAppRemove:
+	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}
@@ -321,6 +325,19 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 		}
 		if err := broker.Apps.Remove(ctx, params.AppID, request.DryRun); err != nil {
 			return nil, "app_remove_failed", errors.New("app remove operation failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationAppAdminReset:
+		adminManager, ok := broker.Apps.(AppAdminManager)
+		if !ok {
+			return nil, "broker_unavailable", errors.New("privileged app admin manager is unavailable")
+		}
+		var params AppAdminResetParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.admin.reset params")
+		}
+		if err := adminManager.ResetAdmin(ctx, params.AppID, request.DryRun); err != nil {
+			return nil, "app_admin_reset_failed", errors.New("app admin reset failed")
 		}
 		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
 	case OperationAppImagePrepare:
@@ -487,7 +504,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure:
 		return true
 	default:
 		return false
@@ -496,7 +513,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure:
 		return true
 	default:
 		return false

@@ -464,6 +464,18 @@ func (client *Client) RemoveApp(ctx context.Context, appID string, dryRun bool) 
 	return err
 }
 
+func (client *Client) ResetAppAdmin(ctx context.Context, appID string, dryRun bool) error {
+	_, err := client.call(ctx, OperationAppAdminReset, AppAdminResetParams{AppID: appID}, dryRun)
+	if dryRun && client != nil && client.logger != nil {
+		if err != nil {
+			client.logger.Printf("privileged broker shadow validation rejected app.admin.reset: %v", err)
+		} else {
+			client.logger.Printf("privileged broker shadow validation accepted app.admin.reset for %s", appID)
+		}
+	}
+	return err
+}
+
 func (client *Client) InspectApp(ctx context.Context, appID string) (string, float64, error) {
 	response, err := client.call(ctx, OperationAppInspect, AppInspectParams{AppID: appID}, false)
 	if err != nil {

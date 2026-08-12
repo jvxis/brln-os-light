@@ -35,6 +35,10 @@ type fakePrivilegedServiceClient struct {
 	removeAppID         string
 	removeDryRun        bool
 	removeErr           error
+	adminResetCalls     int
+	adminResetAppID     string
+	adminResetDryRun    bool
+	adminResetErr       error
 	dockerCalls         int
 	dockerStatusCalls   int
 	dockerDryRun        bool
@@ -127,6 +131,13 @@ func (client *fakePrivilegedServiceClient) RemoveApp(_ context.Context, appID st
 	client.removeAppID = appID
 	client.removeDryRun = dryRun
 	return client.removeErr
+}
+
+func (client *fakePrivilegedServiceClient) ResetAppAdmin(_ context.Context, appID string, dryRun bool) error {
+	client.adminResetCalls++
+	client.adminResetAppID = appID
+	client.adminResetDryRun = dryRun
+	return client.adminResetErr
 }
 
 func (client *fakePrivilegedServiceClient) EnsureDockerRuntime(_ context.Context, dryRun bool) (string, error) {
@@ -537,6 +548,40 @@ func TestRemoveAppWithBrokerModes(t *testing.T) {
 				t.Fatalf("unexpected remove call: %#v", client)
 			}
 			if test.wantCalls == 1 && client.removeAppID != "cpuminer" {
+				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestResetAppAdminWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		resetErr    error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", resetErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", resetErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, adminResetErr: test.resetErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := ResetAppAdminWithBroker(context.Background(), "lndg")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.adminResetCalls != test.wantCalls || client.adminResetDryRun != test.wantDryRun {
+				t.Fatalf("unexpected reset call: %#v", client)
+			}
+			if test.wantCalls == 1 && client.adminResetAppID != "lndg" {
 				t.Fatalf("unexpected typed app params: %#v", client)
 			}
 		})

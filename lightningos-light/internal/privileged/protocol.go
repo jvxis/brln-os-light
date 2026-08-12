@@ -28,6 +28,7 @@ const (
 	OperationAppSnapshot                  Operation = "app.compose.snapshot"
 	OperationAppInspect                   Operation = "app.compose.inspect"
 	OperationAppRemove                    Operation = "app.compose.remove"
+	OperationAppAdminReset                Operation = "app.admin.reset"
 	OperationDockerEnsure                 Operation = "docker.runtime.ensure"
 	OperationDockerStatus                 Operation = "docker.runtime.status"
 	OperationPackageEnsure                Operation = "packages.feature.ensure"
@@ -97,6 +98,10 @@ type AppSnapshotParams struct {
 }
 
 type AppRemoveParams struct {
+	AppID string `json:"app_id"`
+}
+
+type AppAdminResetParams struct {
 	AppID string `json:"app_id"`
 }
 
@@ -337,6 +342,14 @@ func ValidateRequest(request Request) error {
 		}
 		if _, err := appmanifest.ComposeManifestForApp(params.AppID); err != nil {
 			return errors.New("app manifest is not allowed")
+		}
+	case OperationAppAdminReset:
+		var params AppAdminResetParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.admin.reset params: %w", err)
+		}
+		if params.AppID != appmanifest.LNDgID {
+			return errors.New("app admin reset manifest is not allowed")
 		}
 	case OperationDockerEnsure:
 		var params struct{}

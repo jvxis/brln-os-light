@@ -14,11 +14,12 @@ import (
 const lndgImageAttestationFile = "image-attestation"
 
 type lndgImageAttestation struct {
-	ImageID      string
-	Release      string
-	Commit       string
-	SourceSHA256 string
-	BaseImage    string
+	ImageID          string
+	Release          string
+	Commit           string
+	SourceSHA256     string
+	BaseImage        string
+	DockerfileSHA256 string
 }
 
 func (manager *ComposeAppManager) prepareLNDgImage(ctx context.Context, unit string) (AppImageState, error) {
@@ -55,7 +56,8 @@ func (manager *ComposeAppManager) lndgImageStatus(ctx context.Context, unit stri
 		if attestation.Release == appmanifest.LNDgRelease &&
 			attestation.Commit == appmanifest.LNDgSourceCommit &&
 			attestation.SourceSHA256 == appmanifest.LNDgSourceSHA256 &&
-			attestation.BaseImage == appmanifest.LNDgBaseImage {
+			attestation.BaseImage == appmanifest.LNDgBaseImage &&
+			attestation.DockerfileSHA256 == appmanifest.LNDgDockerfileSHA256() {
 			output, inspectErr := manager.Runner.Run(ctx, dockerPath, "image", "inspect", "--format", "{{.Id}}", appmanifest.LNDgImage)
 			if inspectErr == nil && strings.TrimSpace(output) == attestation.ImageID {
 				return AppImageState{Status: "ready"}, nil
@@ -112,17 +114,18 @@ func readLNDgImageAttestation(path string) (lndgImageAttestation, error) {
 		}
 		values[key] = value
 	}
-	if len(values) != 5 || !dockerImageIDPattern.MatchString(values["image_id"]) {
+	if len(values) != 6 || !dockerImageIDPattern.MatchString(values["image_id"]) {
 		return attestation, errors.New("invalid lndg image attestation fields")
 	}
 	attestation = lndgImageAttestation{
-		ImageID:      values["image_id"],
-		Release:      values["release"],
-		Commit:       values["commit"],
-		SourceSHA256: values["source_sha256"],
-		BaseImage:    values["base_image"],
+		ImageID:          values["image_id"],
+		Release:          values["release"],
+		Commit:           values["commit"],
+		SourceSHA256:     values["source_sha256"],
+		BaseImage:        values["base_image"],
+		DockerfileSHA256: values["dockerfile_sha256"],
 	}
-	if attestation.Release == "" || attestation.Commit == "" || attestation.SourceSHA256 == "" || attestation.BaseImage == "" {
+	if attestation.Release == "" || attestation.Commit == "" || attestation.SourceSHA256 == "" || attestation.BaseImage == "" || attestation.DockerfileSHA256 == "" {
 		return lndgImageAttestation{}, errors.New("incomplete lndg image attestation")
 	}
 	return attestation, nil
@@ -155,12 +158,12 @@ printf '%%s' %s | /usr/bin/base64 -d > "$work/Dockerfile"
 /usr/bin/docker build --pull --no-cache --tag %s --file "$work/Dockerfile" "$work"
 /usr/bin/docker run --rm %s python -c 'import django, grpc, pandas, psycopg2, supervisor, whitenoise' >/dev/null
 image_id="$(/usr/bin/docker image inspect --format '{{.Id}}' %s)"
-printf 'image_id=%%s\nrelease=%s\ncommit=%s\nsource_sha256=%s\nbase_image=%s\n' "$image_id" > "$work/image-attestation"
+printf 'image_id=%%s\nrelease=%s\ncommit=%s\nsource_sha256=%s\nbase_image=%s\ndockerfile_sha256=%s\n' "$image_id" > "$work/image-attestation"
 /bin/chmod 0600 "$work/image-attestation"
 /bin/mv -f "$work/image-attestation" "$attestation"
 `, shellLiteral(buildRoot), shellLiteral(attestationPath), shellLiteral(appmanifest.LNDgSourceURL),
 		shellLiteral(appmanifest.LNDgSourceSHA256), appmanifest.LNDgSourceDir, appmanifest.LNDgSourceDir,
 		appmanifest.LNDgSourceDir, appmanifest.LNDgSourceDir, shellLiteral(dockerfile), shellLiteral(appmanifest.LNDgImage),
 		shellLiteral(appmanifest.LNDgImage), shellLiteral(appmanifest.LNDgImage), appmanifest.LNDgRelease,
-		appmanifest.LNDgSourceCommit, appmanifest.LNDgSourceSHA256, appmanifest.LNDgBaseImage)
+		appmanifest.LNDgSourceCommit, appmanifest.LNDgSourceSHA256, appmanifest.LNDgBaseImage, appmanifest.LNDgDockerfileSHA256())
 }

@@ -20,6 +20,7 @@ func TestLNDgImageBuildScriptPinsAndVerifiesSource(t *testing.T) {
 		appmanifest.LNDgImage,
 		"sha256sum --check --strict",
 		"--no-same-owner --no-same-permissions",
+		appmanifest.LNDgDockerfileSHA256(),
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("build script missing %q", required)
@@ -44,6 +45,7 @@ func TestLNDgImageStatusRequiresMatchingAttestationAndImageID(t *testing.T) {
 		"commit=" + appmanifest.LNDgSourceCommit + "\n" +
 		"source_sha256=" + appmanifest.LNDgSourceSHA256 + "\n" +
 		"base_image=" + appmanifest.LNDgBaseImage + "\n"
+	raw += "dockerfile_sha256=" + appmanifest.LNDgDockerfileSHA256() + "\n"
 	if err := os.WriteFile(attestationPath, []byte(raw), 0600); err != nil {
 		t.Fatal(err)
 	}

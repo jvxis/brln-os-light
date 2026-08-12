@@ -40,6 +40,7 @@ type ComposeAppManager struct {
 	AppsDataRoot       string
 	PrivilegedAppsRoot string
 	LNDDataRoot        string
+	LNDConfigPath      string
 	TempRoot           string
 	ElectrsRPCProbe    electrsRPCProbeFunc
 }
@@ -164,7 +165,7 @@ func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string
 	if appID == appmanifest.BitcoinCoreID {
 		return manager.prepareBitcoinCoreImage(ctx, unit)
 	}
-	if appID == appmanifest.LNDgID {
+	if appID == appmanifest.LNDgID && variant == appmanifest.LNDgImageApp {
 		return manager.prepareLNDgImage(ctx, unit)
 	}
 	if appID == appmanifest.ElectrsID {
@@ -223,7 +224,7 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 		}
 		return manager.bitcoinCoreImageStatus(ctx, artifact, unit)
 	}
-	if appID == appmanifest.LNDgID {
+	if appID == appmanifest.LNDgID && variant == appmanifest.LNDgImageApp {
 		return manager.lndgImageStatus(ctx, unit)
 	}
 	if appID == appmanifest.ElectrsID {
@@ -335,7 +336,8 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 			appmanifest.BTCPayImageTor:       "lightningos-btcpay-image-tor",
 		},
 		appmanifest.LNDgID: {
-			appmanifest.LNDgImageApp: "lightningos-lndg-image-app",
+			appmanifest.LNDgImageApp:      "lightningos-lndg-image-app",
+			appmanifest.LNDgImagePostgres: "lightningos-lndg-image-postgres",
 		},
 		appmanifest.LNbitsID: {
 			appmanifest.LNbitsImageApp: "lightningos-lnbits-image-app",
@@ -455,6 +457,25 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		if err != nil {
 			return err
 		}
+	case appmanifest.LNDgID:
+		files, err := manager.validatedLNDgFiles()
+		if err != nil {
+			return err
+		}
+		images = []string{appmanifest.LNDgImage, appmanifest.LNDgPostgresImage}
+		if action == AppLifecycleStart && !dryRun {
+			state, imageErr := manager.lndgImageStatus(ctx, "lightningos-lndg-image-app")
+			if imageErr != nil || state.Status != "ready" {
+				return errors.New("verified LNDg image is not ready")
+			}
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createLNDgSnapshot(files)
+		if err != nil {
+			return err
+		}
 	case appmanifest.ElectrsID:
 		files, err := manager.validatedElectrsFiles()
 		if err != nil {
@@ -513,6 +534,28 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 				return errors.New("app database start command failed")
 			}
 			if err := manager.ensureBTCPayNbxplorerDatabase(ctx, commandPath, args); err != nil {
+				return err
+			}
+		}
+		if manifest.ID == appmanifest.LNDgID {
+			appsDataRoot := manager.AppsDataRoot
+			if appsDataRoot == "" {
+				appsDataRoot = defaultAppsDataRoot
+			}
+			if err := prepareLNDgWritableData(filepath.Join(appsDataRoot, appmanifest.LNDgID, "data")); err != nil {
+				return errors.New("LNDg writable data preparation failed")
+			}
+			databaseArgs := append(append([]string(nil), args...), "up", "-d", appmanifest.LNDgDatabaseService)
+			if _, err := manager.Runner.Run(ctx, commandPath, databaseArgs...); err != nil {
+				return errors.New("LNDg database start command failed")
+			}
+			if err := manager.waitAndSyncLNDgDatabase(ctx, commandPath, args); err != nil {
+				return err
+			}
+			if err := manager.ensureLNDgHostAccess(ctx); err != nil {
+				return err
+			}
+			if err := manager.refreshLNDgSnapshotCertificate(snapshot.root); err != nil {
 				return err
 			}
 		}
@@ -591,6 +634,19 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 			return err
 		}
 		removePersistentSnapshot = true
+	case appmanifest.LNDgID:
+		files, err := manager.validatedLNDgFiles()
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createLNDgSnapshot(files)
+		if err != nil {
+			return err
+		}
+		removePersistentSnapshot = true
 	case appmanifest.ElectrsID:
 		files, err := manager.validatedElectrsFiles()
 		if err != nil {
@@ -639,6 +695,10 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 		}
 	} else if removePersistentSnapshot && appID == appmanifest.BTCPayID {
 		if err := manager.removeBTCPayExecutionSnapshot(snapshot.root); err != nil {
+			return errors.New("failed to remove app execution snapshot")
+		}
+	} else if removePersistentSnapshot && appID == appmanifest.LNDgID {
+		if err := manager.removeLNDgExecutionSnapshot(snapshot.root); err != nil {
 			return errors.New("failed to remove app execution snapshot")
 		}
 	} else if removePersistentSnapshot && appID == appmanifest.ElectrsID {
@@ -721,6 +781,15 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 			return inspection, err
 		}
 		snapshot, cleanup, err = manager.createBTCPaySnapshot(files)
+		if err != nil {
+			return inspection, err
+		}
+	case appmanifest.LNDgID:
+		files, err := manager.validatedLNDgFiles()
+		if err != nil {
+			return inspection, err
+		}
+		snapshot, cleanup, err = manager.createLNDgSnapshot(files)
 		if err != nil {
 			return inspection, err
 		}

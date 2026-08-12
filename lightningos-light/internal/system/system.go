@@ -53,6 +53,36 @@ type appSnapshotPrivilegedClient interface {
 	SnapshotApp(ctx context.Context, appID string, dryRun bool) error
 }
 
+type appAdminResetPrivilegedClient interface {
+	ResetAppAdmin(ctx context.Context, appID string, dryRun bool) error
+}
+
+func ResetAppAdminWithBroker(ctx context.Context, appID string) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	adminClient, ok := client.(appAdminResetPrivilegedClient)
+	switch client.Mode() {
+	case "enforce":
+		if !ok {
+			return true, errors.New("app admin reset broker capability is unavailable")
+		}
+		return true, adminClient.ResetAppAdmin(ctx, appID, false)
+	case "shadow":
+		if ok {
+			shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			_ = adminClient.ResetAppAdmin(shadowCtx, appID, true)
+		}
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
 func SnapshotAppWithBroker(ctx context.Context, appID string) (bool, error) {
 	privilegedState.RLock()
 	client := privilegedState.client

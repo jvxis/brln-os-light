@@ -101,7 +101,7 @@ Application state at this checkpoint:
 | RoboSats | Closed images, install, root-owned snapshot, lifecycle, inspect, firewall, and data-preserving uninstall passed | Cross-version final matrix only |
 | Bitcoin Core | Official-source verified image, attestation, storage enrollment, secret config operations, lifecycle, consumer network, native-consumer path, and cookie-backed typed local status passed | Dedicated Electrs credential migration for legacy `rpcauth` nodes, operational CLI/log paths, mainnet P2P firewall, and final matrix |
 | BTCPay Server/NBXplorer | Official fixed security release, image refresh, root-owned secret snapshot, dedicated LND macaroon, remote/native Bitcoin gates, lifecycle, data preservation, and real functional gate passed | Final matrix and any remaining shared host dependencies found by inventory |
-| LNDg | Exact-source image build and attestation plus dedicated 13-permission LND credential and narrow read-only mounts | Broker-owned Compose/secret snapshot, lifecycle, status, uninstall, firewall/host dependencies, and complete functional gate |
+| LNDg | Exact-source non-root image, official digest-pinned private PostgreSQL, dedicated 13-permission LND credential, root-owned snapshot, typed lifecycle/inspect/remove/admin reset, firewall/host policy, SQLite-to-PostgreSQL migration, data preservation, and real functional gate passed | Cross-version final matrix only |
 | LNbits | Official stable digest plus dedicated nine-permission LND credential and narrow read-only mount design | Broker-owned Compose/secret snapshot, lifecycle, status, uninstall, REST-listener/firewall policy, and data-preserving functional gate |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
@@ -230,9 +230,9 @@ Evidence is stored in
 and
 `docs/baselines/privilege-hardening-phase2-bitcoincore-status-2026-08-11.json`.
 
-The next application slice should return to the higher-adoption open work:
-complete LNDg or LNbits broker-owned Compose/secret lifecycle, status,
-uninstall, and functional gates. Mempool and Fedimint remain lower priority.
+The next application slice is LNbits: complete its broker-owned Compose/secret
+lifecycle, status, uninstall, REST-listener/firewall policy, and
+data-preserving functional gate. Mempool and Fedimint remain lower priority.
 
 ## Test-node and network constraints
 

@@ -223,6 +223,28 @@ func TestClientRemoveAppBuildsTypedRequest(t *testing.T) {
 	}
 }
 
+func TestClientLNDgAdminResetBuildsTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: map[string]bool{"validated": true}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	if err := client.ResetAppAdmin(context.Background(), appmanifest.LNDgID, false); err != nil {
+		t.Fatal(err)
+	}
+	if transport.request.Operation != OperationAppAdminReset || transport.request.DryRun {
+		t.Fatalf("unexpected request: %#v", transport.request)
+	}
+	var params AppAdminResetParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.AppID != appmanifest.LNDgID {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+	remaining := time.Until(transport.deadline)
+	if remaining < privilegedLongOperationTimeout-time.Second || remaining > privilegedLongOperationTimeout {
+		t.Fatalf("LNDg admin reset client deadline has %v remaining, want %v", remaining, privilegedLongOperationTimeout)
+	}
+}
+
 func TestClientDockerRuntimeBuildsEmptyTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: DockerRuntimeState{Status: "validated"}}
 	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)

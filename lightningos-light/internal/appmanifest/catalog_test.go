@@ -16,6 +16,7 @@ func TestComposeManifestCatalogIsClosed(t *testing.T) {
 		{id: RoboSatsID, project: RoboSatsProject, service: RoboSatsPrimaryService, timeout: 2},
 		{id: BitcoinCoreID, project: BitcoinCoreProject, service: BitcoinCorePrimaryService, timeout: BitcoinCoreStopTimeout},
 		{id: BTCPayID, project: BTCPayProject, service: BTCPayPrimaryService, timeout: BTCPayStopTimeout},
+		{id: LNDgID, project: LNDgProject, service: LNDgPrimaryService, timeout: LNDgStopTimeout},
 		{id: ElectrsID, project: ElectrsProject, service: ElectrsPrimaryService, timeout: ElectrsStopTimeout},
 	} {
 		manifest, err := ComposeManifestForApp(test.id)
@@ -27,7 +28,7 @@ func TestComposeManifestCatalogIsClosed(t *testing.T) {
 	if err != nil || !electrs.RemoveVolumes {
 		t.Fatalf("Electrs must remove its reproducible index volume: %#v/%v", electrs, err)
 	}
-	for _, id := range []string{CPUMinerID, RoboSatsID, BitcoinCoreID, BTCPayID} {
+	for _, id := range []string{CPUMinerID, RoboSatsID, BitcoinCoreID, BTCPayID, LNDgID} {
 		manifest, err := ComposeManifestForApp(id)
 		if err != nil || manifest.RemoveVolumes {
 			t.Fatalf("%s unexpectedly removes persistent volumes: %#v/%v", id, manifest, err)
@@ -67,6 +68,7 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: BTCPayID, variant: BTCPayImagePostgres, image: BTCPayPostgresImage},
 		{appID: BTCPayID, variant: BTCPayImageTor, image: BTCPayTorImage},
 		{appID: LNDgID, variant: LNDgImageApp, image: LNDgImage},
+		{appID: LNDgID, variant: LNDgImagePostgres, image: LNDgPostgresImage},
 		{appID: LNbitsID, variant: LNbitsImageApp, image: LNbitsImage},
 		{appID: ElectrsID, variant: ElectrsImageApp, image: ElectrsImage},
 	} {
@@ -178,9 +180,14 @@ func TestCatalogImageRefreshPolicyIsClosed(t *testing.T) {
 }
 
 func TestCatalogExternalTCPPortIsClosedByApp(t *testing.T) {
-	port, err := CatalogExternalTCPPort(RoboSatsID)
-	if err != nil || port != RoboSatsPort {
-		t.Fatalf("port/error = %d/%v", port, err)
+	for _, test := range []struct {
+		appID string
+		port  int
+	}{{RoboSatsID, RoboSatsPort}, {LNDgID, LNDgPort}} {
+		port, err := CatalogExternalTCPPort(test.appID)
+		if err != nil || port != test.port {
+			t.Fatalf("port/error for %s = %d/%v", test.appID, port, err)
+		}
 	}
 	for _, appID := range []string{"", CPUMinerID, "robosats;reboot"} {
 		if _, err := CatalogExternalTCPPort(appID); err == nil {

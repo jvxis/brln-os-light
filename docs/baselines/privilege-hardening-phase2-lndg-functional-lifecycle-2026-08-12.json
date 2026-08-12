@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-12T11:05:42Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "86ac4d021235ab1d30dc4fd9f5936f25bd93bb8a",
+  "scope": "complete broker-owned LNDg runtime, PostgreSQL migration, lifecycle, and functional gate",
+  "catalog": {
+    "lndg_release": "1.11.0",
+    "source_commit_fixed": true,
+    "source_archive_sha256_verified": true,
+    "base_image_digest_pinned": true,
+    "postgres_official_image": true,
+    "postgres_release": "16.14-trixie",
+    "postgres_multiarch_index_digest": "sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20"
+  },
+  "runtime_boundary": {
+    "manager_direct_privileged_calls": 0,
+    "typed_admin_reset_operation": true,
+    "broker_owned_snapshot": true,
+    "snapshot_root_mode": "0700",
+    "snapshot_env_mode": "0600",
+    "snapshot_macaroon_mode": "0640",
+    "snapshot_macaroon_owner": "root",
+    "snapshot_macaroon_group": "fixed container gid",
+    "app_container_user": "1000:1000",
+    "capabilities_dropped": "ALL",
+    "no_new_privileges": true,
+    "whole_lnd_directory_mounted": false,
+    "dedicated_macaroon_mounted_read_only": true,
+    "admin_macaroon_mounted": false,
+    "channel_db_mount_read_only": true,
+    "postgres_backed_lnd_placeholder_supported": true
+  },
+  "postgres": {
+    "dedicated_container": true,
+    "dedicated_persistent_volume": true,
+    "private_compose_network": "lndg_default",
+    "host_port_5432_published": false,
+    "final_status": "running",
+    "collation_warning_count_after_final_pin": 0,
+    "public_table_count": 31,
+    "django_migration_count": 58
+  },
+  "legacy_data_migration": {
+    "root_cause": "legacy entrypoint indentation left LNDg on SQLite despite a dedicated PostgreSQL container",
+    "guarded_one_time_import": true,
+    "postgres_empty_schema_required": true,
+    "private_completion_marker": true,
+    "temporary_fixture_removed": true,
+    "sqlite_preserved_for_rollback": true,
+    "relevant_common_table_count": 27,
+    "sqlite_relevant_rows": 190,
+    "postgres_relevant_rows": 190,
+    "row_count_mismatches": 0,
+    "sqlite_only_tables": 0,
+    "postgres_only_tables": 0
+  },
+  "functional_gate": {
+    "node": "LOS TESTE2",
+    "fixed_node_address_from_secret_record": true,
+    "network_scan_performed": false,
+    "manager_health_http": 200,
+    "broker_inspect_status": "running",
+    "unauthenticated_lndg_http": 302,
+    "authenticated_admin_login_passed": true,
+    "authenticated_dashboard_http": 200,
+    "stop_passed": true,
+    "start_passed": true,
+    "final_app_status": "running",
+    "final_postgres_status": "running",
+    "lnd_restart_requested": false,
+    "lnd_activation_timestamp_changed": false,
+    "bitcoin_restart_requested": false,
+    "bitcoin_container_started_at_changed": false,
+    "funds_moved": false
+  },
+  "audit_and_cleanup": {
+    "audit_secret_term_matches": 0,
+    "temporary_remote_uploads_remaining": 0,
+    "temporary_root_backup_removed": true,
+    "mistaken_bookworm_test_image_removed": true,
+    "worktree_gate_source_removed": true
+  },
+  "validation": {
+    "focused_go_tests": "passed",
+    "go_vet_focused_packages": "passed",
+    "linux_manager_build": "passed",
+    "linux_broker_build": "passed",
+    "git_diff_check": "passed"
+  },
+  "next_slice": "complete LNbits broker-owned lifecycle and data-preserving functional gate"
+}

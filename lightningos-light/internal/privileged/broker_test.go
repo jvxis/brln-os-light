@@ -122,6 +122,7 @@ type recordingApps struct {
 	inspectCalls         int
 	snapshotCalls        int
 	removeCalls          int
+	adminResetCalls      int
 	dockerCalls          int
 	dockerStatusCalls    int
 	prepareCalls         int
@@ -221,6 +222,13 @@ func (apps *recordingApps) Snapshot(_ context.Context, appID string, dryRun bool
 
 func (apps *recordingApps) Remove(_ context.Context, appID string, dryRun bool) error {
 	apps.removeCalls++
+	apps.appID = appID
+	apps.dryRun = dryRun
+	return apps.err
+}
+
+func (apps *recordingApps) ResetAdmin(_ context.Context, appID string, dryRun bool) error {
+	apps.adminResetCalls++
 	apps.appID = appID
 	apps.dryRun = dryRun
 	return apps.err
@@ -689,6 +697,58 @@ func TestBrokerAppRemoveFailureIsGeneric(t *testing.T) {
 		Version: ProtocolVersion, RequestID: "app_remove_failure_1", Operation: OperationAppRemove, Params: params,
 	})
 	if response.OK || response.Error == nil || response.Error.Code != "app_remove_failed" || response.Error.Message != "app remove operation failed" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestBrokerLNDgAdminResetUsesTypedManagerAndLock(t *testing.T) {
+	apps := &recordingApps{}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppAdminResetParams{AppID: appmanifest.LNDgID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "lndg_admin_reset_1", Operation: OperationAppAdminReset, Params: params,
+	})
+	if !response.OK || apps.adminResetCalls != 1 || apps.appID != appmanifest.LNDgID || apps.dryRun {
+		t.Fatalf("response=%#v apps=%#v", response, apps)
+	}
+	if locker.locks != 1 || locker.unlocks != 1 {
+		t.Fatalf("lock counts = %d/%d, want 1/1", locker.locks, locker.unlocks)
+	}
+}
+
+func TestBrokerLNDgAdminResetDryRunDoesNotLock(t *testing.T) {
+	apps := &recordingApps{}
+	locker := &recordingLocker{}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+	broker.Apps = apps
+	params, err := MarshalParams(AppAdminResetParams{AppID: appmanifest.LNDgID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "lndg_admin_reset_dry_1", Operation: OperationAppAdminReset, DryRun: true, Params: params,
+	})
+	if !response.OK || apps.adminResetCalls != 1 || !apps.dryRun || locker.locks != 0 {
+		t.Fatalf("response=%#v apps=%#v locker=%#v", response, apps, locker)
+	}
+}
+
+func TestBrokerLNDgAdminResetFailureIsGeneric(t *testing.T) {
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Apps = &recordingApps{err: errors.New("sensitive database output")}
+	params, err := MarshalParams(AppAdminResetParams{AppID: appmanifest.LNDgID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "lndg_admin_reset_failure_1", Operation: OperationAppAdminReset, Params: params,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != "app_admin_reset_failed" || response.Error.Message != "app admin reset failed" {
 		t.Fatalf("unexpected response: %#v", response)
 	}
 }

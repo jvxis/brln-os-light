@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -30,6 +29,7 @@ type lndgPaths struct {
 	LndDir            string
 	TLSCertPath       string
 	MacaroonPath      string
+	ChannelDBPath     string
 	AdminPasswordPath string
 	DbPasswordPath    string
 	BuildHashPath     string
@@ -69,7 +69,11 @@ func (a lndgApp) Info(ctx context.Context) (appInfo, error) {
 	}
 	info.Installed = true
 	info.AdminPasswordPath = paths.AdminPasswordPath
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "lndg")
+	handled, status, _, err := system.InspectAppWithBroker(ctx, appmanifest.LNDgID)
+	if !handled {
+		info.Status = "unknown"
+		return info, errors.New("LNDg status requires privileged broker enforce mode")
+	}
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
@@ -113,6 +117,7 @@ func lndgAppPaths() lndgPaths {
 		LndDir:            lndDir,
 		TLSCertPath:       filepath.Join(lndDir, "tls.cert"),
 		MacaroonPath:      filepath.Join(lndDir, "lndg.macaroon"),
+		ChannelDBPath:     filepath.Join(lndDir, appmanifest.LNDgChannelDBFile),
 		AdminPasswordPath: filepath.Join(dataDir, "lndg-admin.txt"),
 		DbPasswordPath:    filepath.Join(dataDir, "lndg-db-password.txt"),
 		BuildHashPath:     filepath.Join(root, ".build_hash"),
@@ -120,11 +125,11 @@ func lndgAppPaths() lndgPaths {
 }
 
 func (s *Server) installLndg(ctx context.Context) error {
-	if err := ensureDocker(ctx); err != nil {
-		return err
-	}
-	imageHandled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.LNDgID, string(appmanifest.LNDgImageApp))
-	if err != nil {
+	return s.applyLndg(ctx)
+}
+
+func (s *Server) applyLndg(ctx context.Context) error {
+	if err := ensureDockerForCatalogAppEnforce(ctx); err != nil {
 		return err
 	}
 	paths := lndgAppPaths()
@@ -143,14 +148,10 @@ func (s *Server) installLndg(ctx context.Context) error {
 	if err := ensureLndgLogFile(paths.LogPath); err != nil {
 		return err
 	}
+	if err := ensureLndgChannelDBSource(paths); err != nil {
+		return err
+	}
 
-	currentHash := lndgBuildHash()
-	if _, err := ensureFileWithChange(paths.DockerfilePath, lndgDockerfile); err != nil {
-		return err
-	}
-	if _, err := ensureFileWithChange(paths.DockerignorePath, lndgDockerignore); err != nil {
-		return err
-	}
 	if _, err := ensureFileWithChange(paths.EntrypointPath, lndgEntrypoint); err != nil {
 		return err
 	}
@@ -161,42 +162,43 @@ func (s *Server) installLndg(ctx context.Context) error {
 	if err := ensureLndgEnv(ctx, paths); err != nil {
 		return err
 	}
-	buildKey := lndgBuildKey(paths, currentHash)
-
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg-db"); err != nil {
-		return err
-	}
 	if err := s.ensureLndgMacaroon(ctx, paths); err != nil {
-		return err
-	}
-	if err := ensureLndgGrpcAccess(ctx); err != nil {
 		return err
 	}
 	if err := copyLndgLndCert(paths); err != nil {
 		return err
 	}
-	if err := ensureLndgUfwAccess(ctx); err != nil && s.logger != nil {
-		s.logger.Printf("lndg: ufw rule failed: %v", err)
-	}
-	if err := syncLndgDbPassword(ctx, paths); err != nil {
+	if err := removeLegacyLNDgBuildAssets(paths); err != nil {
 		return err
 	}
-	startArgs := []string{"up", "-d"}
-	if !imageHandled {
-		startArgs = append(startArgs, "--build")
+	for _, variant := range appmanifest.LNDgImageVariants() {
+		if handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.LNDgID, string(variant)); !handled {
+			return errors.New("LNDg image preparation requires privileged broker enforce mode")
+		} else if err != nil {
+			return fmt.Errorf("LNDg image %s unavailable: %w", variant, err)
+		}
 	}
-	startArgs = append(startArgs, "lndg")
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, startArgs...); err != nil {
-		return err
+	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.LNDgID, "start"); !handled {
+		return errors.New("LNDg lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("LNDg start failed: %w", err)
 	}
-	_ = writeFile(paths.BuildHashPath, buildKey+"\n", 0640)
+	if handled, _, err := system.EnsureAppFirewallWithBroker(ctx, appmanifest.LNDgID); !handled {
+		return errors.New("LNDg firewall requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("LNDg firewall failed: %w", err)
+	}
 	return nil
 }
 
 func (s *Server) uninstallLndg(ctx context.Context) error {
 	paths := lndgAppPaths()
 	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		if handled, err := system.RemoveAppWithBroker(ctx, appmanifest.LNDgID); !handled {
+			return errors.New("LNDg removal requires privileged broker enforce mode")
+		} else if err != nil {
+			return fmt.Errorf("LNDg removal failed: %w", err)
+		}
 	}
 	if err := os.RemoveAll(paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)
@@ -205,80 +207,7 @@ func (s *Server) uninstallLndg(ctx context.Context) error {
 }
 
 func (s *Server) startLndg(ctx context.Context) error {
-	imageHandled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.LNDgID, string(appmanifest.LNDgImageApp))
-	if err != nil {
-		return err
-	}
-	paths := lndgAppPaths()
-	if err := os.MkdirAll(paths.Root, 0750); err != nil {
-		return fmt.Errorf("failed to create app directory: %w", err)
-	}
-	if err := os.MkdirAll(paths.DataDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app data directory: %w", err)
-	}
-	if err := os.MkdirAll(paths.PgDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app db directory: %w", err)
-	}
-	if err := os.MkdirAll(paths.LndDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app LND directory: %w", err)
-	}
-	if err := ensureLndgLogFile(paths.LogPath); err != nil {
-		return err
-	}
-	needsBuild := false
-	currentHash := lndgBuildHash()
-	if changed, err := ensureFileWithChange(paths.DockerfilePath, lndgDockerfile); err != nil {
-		return err
-	} else if changed {
-		needsBuild = true
-	}
-	if _, err := ensureFileWithChange(paths.DockerignorePath, lndgDockerignore); err != nil {
-		return err
-	}
-	if changed, err := ensureFileWithChange(paths.EntrypointPath, lndgEntrypoint); err != nil {
-		return err
-	} else if changed {
-		needsBuild = true
-	}
-	if _, err := ensureFileWithChange(paths.ComposePath, lndgComposeContents(paths)); err != nil {
-		return err
-	}
-	if err := ensureLndgEnv(ctx, paths); err != nil {
-		return err
-	}
-	buildKey := lndgBuildKey(paths, currentHash)
-	if readSecretFile(paths.BuildHashPath) != buildKey {
-		needsBuild = true
-	}
-	if imageHandled {
-		needsBuild = false
-	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg-db"); err != nil {
-		return err
-	}
-	if err := s.ensureLndgMacaroon(ctx, paths); err != nil {
-		return err
-	}
-	if err := ensureLndgGrpcAccess(ctx); err != nil {
-		return err
-	}
-	if err := copyLndgLndCert(paths); err != nil {
-		return err
-	}
-	if err := ensureLndgUfwAccess(ctx); err != nil && s.logger != nil {
-		s.logger.Printf("lndg: ufw rule failed: %v", err)
-	}
-	if err := syncLndgDbPassword(ctx, paths); err != nil {
-		return err
-	}
-	if needsBuild {
-		if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "--build", "lndg"); err != nil {
-			return err
-		}
-		_ = writeFile(paths.BuildHashPath, buildKey+"\n", 0640)
-		return nil
-	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg")
+	return s.applyLndg(ctx)
 }
 
 func (s *Server) stopLndg(ctx context.Context) error {
@@ -286,7 +215,12 @@ func (s *Server) stopLndg(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("LNDg is not installed")
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
+	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.LNDgID, "stop"); !handled {
+		return errors.New("LNDg lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("LNDg stop failed: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) resetLndgAdminPassword(ctx context.Context) error {
@@ -295,130 +229,52 @@ func (s *Server) resetLndgAdminPassword(ctx context.Context) error {
 		return errors.New("LNDg is not installed")
 	}
 
-	adminUser := readEnvValue(paths.EnvPath, "LNDG_ADMIN_USER")
-	if adminUser == "" {
-		adminUser = "lndg-admin"
-	}
-
-	adminPassword := readSecretFile(paths.AdminPasswordPath)
-	if adminPassword == "" {
-		adminPassword = readEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD")
-	}
-	if adminPassword == "" {
-		return errors.New("LNDG_ADMIN_PASSWORD missing")
-	}
-
-	if err := setEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD", adminPassword); err != nil {
-		return err
-	}
-	if readSecretFile(paths.AdminPasswordPath) != adminPassword {
-		if err := writeFile(paths.AdminPasswordPath, adminPassword+"\n", 0600); err != nil {
-			return err
-		}
-	}
-
-	containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, "lndg")
-	if err != nil {
-		return err
-	}
-	if containerID == "" {
-		return errors.New("lndg container not running")
-	}
-
-	script := `python - <<'PY'
-import os
-import sys
-
-sys.path.insert(0, "/app")
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "lndg.settings")
-
-import django  # noqa: E402
-django.setup()
-
-from django.contrib.auth import get_user_model  # noqa: E402
-
-username = os.environ.get("LNDG_ADMIN_USER", "lndg-admin")
-password = os.environ.get("LNDG_ADMIN_PASSWORD", "")
-if not password:
-  raise SystemExit("LNDG_ADMIN_PASSWORD is required")
-
-User = get_user_model()
-user, _ = User.objects.get_or_create(username=username, defaults={"email": "admin@lndg.local"})
-user.set_password(password)
-user.is_staff = True
-user.is_superuser = True
-user.save()
-print("ok")
-PY`
-
-	_, err = system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"exec",
-		"-i",
-		"-e",
-		"LNDG_ADMIN_USER="+adminUser,
-		"-e",
-		"LNDG_ADMIN_PASSWORD="+adminPassword,
-		containerID,
-		"sh",
-		"-c",
-		script,
-	)
-	if err != nil {
-		return err
+	if handled, err := system.ResetAppAdminWithBroker(ctx, appmanifest.LNDgID); !handled {
+		return errors.New("LNDg admin reset requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("LNDg admin reset failed: %w", err)
 	}
 	return nil
 }
 
 func lndgComposeContents(paths lndgPaths) string {
-	return fmt.Sprintf(`services:
-  lndg-db:
-    image: postgres:16
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: lndg
-      POSTGRES_PASSWORD: ${LNDG_DB_PASSWORD}
-      POSTGRES_DB: lndg
-    volumes:
-      - %s:/var/lib/postgresql/data
+	return appmanifest.LNDgCompose(appmanifest.LNDgComposePaths{
+		DataDir:        paths.DataDir,
+		PgDir:          paths.PgDir,
+		LogPath:        paths.LogPath,
+		LndDir:         paths.LndDir,
+		ChannelDBPath:  lndgChannelDBSource(paths),
+		EntrypointPath: paths.EntrypointPath,
+	})
+}
 
-  lndg:
-    image: %s
-    build:
-      context: .
-      args:
-        LNDG_GIT_REF: ${LNDG_GIT_REF}
-        LNDG_GIT_SHA: ${LNDG_GIT_SHA}
-    restart: unless-stopped
-    depends_on:
-      - lndg-db
-    env_file:
-      - ./.env
-    environment:
-      LNDG_DB_PASSWORD: ${LNDG_DB_PASSWORD}
-      LNDG_ADMIN_PASSWORD: ${LNDG_ADMIN_PASSWORD}
-      LNDG_ADMIN_USER: ${LNDG_ADMIN_USER}
-      LNDG_NETWORK: ${LNDG_NETWORK}
-      LNDG_RPC_SERVER: ${LNDG_RPC_SERVER}
-      LNDG_LND_DIR: ${LNDG_LND_DIR}
-      LNDG_TLS_PATH: /etc/lnd/tls.cert
-      LNDG_MACAROON_PATH: /etc/lnd/lndg.macaroon
-      LNDG_DATABASE_PATH: /etc/lnd/channel.db
-      LNDG_ALLOWED_HOSTS: ${LNDG_ALLOWED_HOSTS}
-      LNDG_CSRF_TRUSTED_ORIGINS: ${LNDG_CSRF_TRUSTED_ORIGINS}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "8889:8889"
-    entrypoint: ["/entrypoint.sh"]
-    volumes:
-      - %s:/etc/lnd:ro
-      - /data/lnd/data/graph/mainnet/channel.db:/etc/lnd/channel.db:ro
-      - %s:/app/data:rw
-      - %s:/var/log/lndg-controller.log:rw
-      - %s:/entrypoint.sh:ro
-`, paths.PgDir, appmanifest.LNDgImage, paths.LndDir, paths.DataDir, paths.LogPath, paths.EntrypointPath)
+func lndgChannelDBSource(paths lndgPaths) string {
+	if info, err := os.Lstat(appmanifest.LNDgChannelDBPath); err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+		return appmanifest.LNDgChannelDBPath
+	}
+	return paths.ChannelDBPath
+}
+
+func ensureLndgChannelDBSource(paths lndgPaths) error {
+	if lndgChannelDBSource(paths) == appmanifest.LNDgChannelDBPath {
+		return nil
+	}
+	if info, err := os.Lstat(paths.ChannelDBPath); err == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() != 0 {
+			return errors.New("LNDg channel database placeholder is unsafe")
+		}
+		return os.Chmod(paths.ChannelDBPath, 0640)
+	} else if !os.IsNotExist(err) {
+		return errors.New("LNDg channel database placeholder is unavailable")
+	}
+	file, err := os.OpenFile(paths.ChannelDBPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0640)
+	if err != nil {
+		return errors.New("failed to create LNDg channel database placeholder")
+	}
+	if err := file.Close(); err != nil {
+		return errors.New("failed to close LNDg channel database placeholder")
+	}
+	return nil
 }
 
 func (s *Server) ensureLndgMacaroon(ctx context.Context, paths lndgPaths) error {
@@ -539,85 +395,11 @@ func copyLndgLndCert(paths lndgPaths) error {
 }
 
 func ensureLndgEnv(ctx context.Context, paths lndgPaths) error {
-	allowedHosts, csrfOrigins := defaultLndgHosts(ctx)
-	allowedHostsValue := strings.Join(allowedHosts, ",")
-	csrfOriginsValue := strings.Join(csrfOrigins, ",")
-	if fileExists(paths.EnvPath) {
-		existingRef := readEnvValue(paths.EnvPath, "LNDG_GIT_REF")
-		existingSha := readEnvValue(paths.EnvPath, "LNDG_GIT_SHA")
-		gitRef, gitSha := resolveLndgGit(ctx, existingRef, existingSha)
-		if existingRef == "" || gitRef != existingRef {
-			if err := setEnvValue(paths.EnvPath, "LNDG_GIT_REF", gitRef); err != nil {
-				return err
-			}
-		}
-		if gitSha != "" && gitSha != existingSha {
-			if err := setEnvValue(paths.EnvPath, "LNDG_GIT_SHA", gitSha); err != nil {
-				return err
-			}
-		}
-		adminPassword := readEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD")
-		if adminPassword == "" {
-			adminPassword = readSecretFile(paths.AdminPasswordPath)
-		}
-		if adminPassword == "" {
-			var err error
-			adminPassword, err = randomToken(20)
-			if err != nil {
-				return err
-			}
-		}
-		if err := setEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD", adminPassword); err != nil {
-			return err
-		}
-		if readSecretFile(paths.AdminPasswordPath) != adminPassword {
-			if err := writeFile(paths.AdminPasswordPath, adminPassword+"\n", 0600); err != nil {
-				return err
-			}
-		}
-
-		dbPassword := readEnvValue(paths.EnvPath, "LNDG_DB_PASSWORD")
-		if dbPassword == "" {
-			dbPassword = readSecretFile(paths.DbPasswordPath)
-		}
-		if dbPassword == "" {
-			var err error
-			dbPassword, err = randomToken(24)
-			if err != nil {
-				return err
-			}
-		}
-		if err := setEnvValue(paths.EnvPath, "LNDG_DB_PASSWORD", dbPassword); err != nil {
-			return err
-		}
-		if readSecretFile(paths.DbPasswordPath) != dbPassword {
-			if err := writeFile(paths.DbPasswordPath, dbPassword+"\n", 0600); err != nil {
-				return err
-			}
-		}
-		if allowedHostsValue != "" {
-			existing := splitEnvList(readEnvValue(paths.EnvPath, "LNDG_ALLOWED_HOSTS"))
-			merged := mergeUnique(existing, allowedHosts)
-			mergedValue := strings.Join(merged, ",")
-			if mergedValue != "" && mergedValue != strings.Join(existing, ",") {
-				if err := setEnvValue(paths.EnvPath, "LNDG_ALLOWED_HOSTS", mergedValue); err != nil {
-					return err
-				}
-			}
-		}
-		if csrfOriginsValue != "" {
-			existing := splitEnvList(readEnvValue(paths.EnvPath, "LNDG_CSRF_TRUSTED_ORIGINS"))
-			merged := mergeUnique(existing, csrfOrigins)
-			mergedValue := strings.Join(merged, ",")
-			if mergedValue != "" && mergedValue != strings.Join(existing, ",") {
-				if err := setEnvValue(paths.EnvPath, "LNDG_CSRF_TRUSTED_ORIGINS", mergedValue); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+	allowedHosts, _ := defaultLndgHosts(ctx)
+	adminPassword := readEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD")
+	if adminPassword == "" {
+		adminPassword = readSecretFile(paths.AdminPasswordPath)
 	}
-	adminPassword := readSecretFile(paths.AdminPasswordPath)
 	if adminPassword == "" {
 		var err error
 		adminPassword, err = randomToken(20)
@@ -625,7 +407,10 @@ func ensureLndgEnv(ctx context.Context, paths lndgPaths) error {
 			return err
 		}
 	}
-	dbPassword := readSecretFile(paths.DbPasswordPath)
+	dbPassword := readEnvValue(paths.EnvPath, "LNDG_DB_PASSWORD")
+	if dbPassword == "" {
+		dbPassword = readSecretFile(paths.DbPasswordPath)
+	}
 	if dbPassword == "" {
 		var err error
 		dbPassword, err = randomToken(24)
@@ -633,304 +418,57 @@ func ensureLndgEnv(ctx context.Context, paths lndgPaths) error {
 			return err
 		}
 	}
-	gitRef, gitSha := resolveLndgGit(ctx, "", "")
-	env := strings.Join([]string{
-		"LNDG_ADMIN_USER=lndg-admin",
-		"LNDG_ADMIN_PASSWORD=" + adminPassword,
-		"LNDG_DB_PASSWORD=" + dbPassword,
-		"LNDG_NETWORK=mainnet",
-		"LNDG_RPC_SERVER=host.docker.internal:10009",
-		"LNDG_LND_DIR=/root/.lnd",
-		"LNDG_GIT_REF=" + gitRef,
-		"LNDG_GIT_SHA=" + gitSha,
-		"LNDG_ALLOWED_HOSTS=" + allowedHostsValue,
-		"LNDG_CSRF_TRUSTED_ORIGINS=" + csrfOriginsValue,
-		"",
-	}, "\n")
+	env, err := appmanifest.LNDgRuntimeEnv(appmanifest.LNDgRuntime{
+		AdminPassword: adminPassword,
+		DBPassword:    dbPassword,
+		AllowedHosts:  allowedHosts,
+	})
+	if err != nil {
+		return err
+	}
 	if err := writeFile(paths.EnvPath, env, 0600); err != nil {
 		return err
 	}
-	if !fileExists(paths.AdminPasswordPath) {
-		if err := writeFile(paths.AdminPasswordPath, adminPassword+"\n", 0600); err != nil {
-			return err
-		}
-	}
-	if !fileExists(paths.DbPasswordPath) {
-		if err := writeFile(paths.DbPasswordPath, dbPassword+"\n", 0600); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func syncLndgDbPassword(ctx context.Context, paths lndgPaths) error {
-	password := readEnvValue(paths.EnvPath, "LNDG_DB_PASSWORD")
-	if password == "" {
-		password = readSecretFile(paths.DbPasswordPath)
-	}
-	if password == "" {
-		return errors.New("LNDG_DB_PASSWORD missing")
-	}
-	containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, "lndg-db")
-	if err != nil {
+	if err := os.Chmod(paths.EnvPath, 0600); err != nil {
 		return err
 	}
-	if containerID == "" {
-		return errors.New("lndg-db container not running")
+	if err := writePrivateLNDgFile(paths.AdminPasswordPath, []byte(adminPassword+"\n")); err != nil {
+		return err
 	}
-	escaped := strings.ReplaceAll(password, "'", "''")
-	cmd := fmt.Sprintf("export PGPASSWORD=\"$POSTGRES_PASSWORD\"; PGUSER=\"${POSTGRES_USER:-postgres}\"; psql -U \"$PGUSER\" -h 127.0.0.1 -d postgres -v ON_ERROR_STOP=1 -c \"ALTER USER lndg WITH PASSWORD '%s';\" || psql -U \"$PGUSER\" -h 127.0.0.1 -d postgres -v ON_ERROR_STOP=1 -c \"CREATE USER lndg WITH PASSWORD '%s';\"", escaped, escaped)
-	var lastErr error
-	var lastOut string
-	for attempt := 0; attempt < 10; attempt++ {
-		out, err := system.RunCommandWithSudo(ctx, "docker", "exec", "-i", containerID, "sh", "-c", cmd)
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-		lastOut = strings.TrimSpace(out)
-		time.Sleep(2 * time.Second)
-	}
-	if lastErr != nil {
-		if lastOut != "" {
-			return fmt.Errorf("failed to sync lndg db password: %s", lastOut)
-		}
-		return fmt.Errorf("failed to sync lndg db password: %w", lastErr)
+	if err := writePrivateLNDgFile(paths.DbPasswordPath, []byte(dbPassword+"\n")); err != nil {
+		return err
 	}
 	return nil
 }
 
-func ensureLndgGrpcAccess(ctx context.Context) error {
-	gateways := []string{}
-	bridgeIP, err := dockerGatewayIP(ctx)
-	if err == nil && bridgeIP != "" {
-		gateways = append(gateways, bridgeIP)
+func writePrivateLNDgFile(path string, raw []byte) error {
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("LNDg secret target is unsafe")
+		}
+	} else if !os.IsNotExist(err) {
+		return errors.New("LNDg secret target is unavailable")
 	}
-	if len(gateways) == 0 {
-		return errors.New("unable to determine docker gateway IPs")
+	if err := writeFile(path, string(raw), 0600); err != nil {
+		return err
 	}
-	content, err := os.ReadFile(lndConfPath)
-	if err != nil {
-		return fmt.Errorf("failed to read lnd.conf: %w", err)
-	}
-	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
-	lines, changed := updateLndGrpcOptions(lines, gateways)
-	if !changed {
-		return nil
-	}
-	if err := os.WriteFile(lndConfPath, []byte(strings.Join(lines, "\n")+"\n"), 0640); err != nil {
-		return fmt.Errorf("failed to update lnd.conf: %w", err)
-	}
-	_, _ = system.RunCommandWithSudo(ctx, "rm", "-f", "/data/lnd/tls.cert", "/data/lnd/tls.key")
-	if _, err := system.RunCommandWithSudo(ctx, "systemctl", "restart", "lnd"); err != nil {
-		return fmt.Errorf("failed to restart lnd: %w", err)
+	return os.Chmod(path, 0600)
+}
+
+func removeLegacyLNDgBuildAssets(paths lndgPaths) error {
+	for _, path := range []string{paths.DockerfilePath, paths.DockerignorePath, paths.BuildHashPath} {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("legacy LNDg build asset is unsafe")
+		}
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("failed to remove legacy LNDg build asset: %w", err)
+		}
 	}
 	return nil
-}
-
-func dockerGatewayIP(ctx context.Context) (string, error) {
-	out, err := system.RunCommandWithSudo(ctx, "docker", "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}")
-	if err == nil {
-		ip := strings.TrimSpace(out)
-		if ip != "" && ip != "<no value>" {
-			return ip, nil
-		}
-	}
-	out, err = system.RunCommandWithSudo(ctx, "ip", "-4", "addr", "show", "docker0")
-	if err == nil {
-		fields := strings.Fields(out)
-		for i, token := range fields {
-			if token == "inet" && i+1 < len(fields) {
-				ip := strings.Split(fields[i+1], "/")[0]
-				if ip != "" {
-					return ip, nil
-				}
-			}
-		}
-	}
-	return "", errors.New("unable to determine docker bridge gateway IP")
-}
-
-func lndgNetworkGatewayIP(ctx context.Context) (string, error) {
-	out, err := system.RunCommandWithSudo(ctx, "docker", "network", "inspect", "lndg_default", "--format", "{{(index .IPAM.Config 0).Gateway}}")
-	if err != nil {
-		return "", err
-	}
-	ip := strings.TrimSpace(out)
-	if ip == "" || ip == "<no value>" {
-		return "", errors.New("lndg_default network gateway not found")
-	}
-	return ip, nil
-}
-
-func ensureLndgUfwAccess(ctx context.Context) error {
-	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
-	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
-		return nil
-	}
-	var lastAllowOut string
-	var lastStatusOut string
-	var lastBridge string
-	for attempt := 0; attempt < 5; attempt++ {
-		bridge, bridgeErr := lndgBridgeName(ctx)
-		if bridgeErr != nil || bridge == "" {
-			err = bridgeErr
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		lastBridge = bridge
-		out, cmdErr := system.RunCommandWithSudo(ctx, "ufw", "allow", "in", "on", bridge, "to", "any", "port", "10009", "proto", "tcp")
-		lastAllowOut = strings.TrimSpace(out)
-		if cmdErr != nil {
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		verifyOut, verifyErr := system.RunCommandWithSudo(ctx, "ufw", "show", "added")
-		if verifyErr == nil && strings.Contains(verifyOut, bridge) && strings.Contains(verifyOut, "10009") {
-			return nil
-		}
-		if _, reloadErr := system.RunCommandWithSudo(ctx, "ufw", "reload"); reloadErr == nil {
-			verifyOut, verifyErr = system.RunCommandWithSudo(ctx, "ufw", "status", "verbose")
-			if verifyErr == nil {
-				lastStatusOut = strings.TrimSpace(verifyOut)
-				if strings.Contains(verifyOut, bridge) && strings.Contains(verifyOut, "10009/tcp") {
-					return nil
-				}
-			}
-		}
-		time.Sleep(2 * time.Second)
-	}
-	if lastAllowOut != "" {
-		return fmt.Errorf("failed to apply ufw rule for %s:10009 (last ufw output: %s)", lastBridge, lastAllowOut)
-	}
-	if lastStatusOut != "" {
-		return fmt.Errorf("failed to apply ufw rule for %s:10009 (last ufw status: %s)", lastBridge, lastStatusOut)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to apply ufw rule for lndg bridge: %w", err)
-	}
-	return fmt.Errorf("failed to apply ufw rule for %s:10009", lastBridge)
-}
-
-func lndgBridgeName(ctx context.Context) (string, error) {
-	out, err := system.RunCommandWithSudo(ctx, "docker", "network", "inspect", "lndg_default", "--format", "{{.Id}}")
-	if err != nil {
-		return "", err
-	}
-	id := strings.TrimSpace(out)
-	if id == "" || id == "<no value>" {
-		return "", errors.New("lndg_default network id not found")
-	}
-	if len(id) > 12 {
-		id = id[:12]
-	}
-	return "br-" + id, nil
-}
-
-func updateLndGrpcOptions(lines []string, gateways []string) ([]string, bool) {
-	uniqueGateways := []string{}
-	for _, gw := range gateways {
-		gw = strings.TrimSpace(gw)
-		if gw == "" || stringInSlice(gw, uniqueGateways) {
-			continue
-		}
-		uniqueGateways = append(uniqueGateways, gw)
-	}
-	allowedGateways := map[string]bool{}
-	for _, gw := range uniqueGateways {
-		allowedGateways[gw] = true
-	}
-	rpclistenOrder := []string{}
-	rpclistenSet := map[string]bool{}
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if isStaleDockerGrpcLine(trimmed, allowedGateways) {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "rpclisten=") {
-			value := strings.TrimSpace(strings.TrimPrefix(trimmed, "rpclisten="))
-			if value != "" && !rpclistenSet[value] {
-				rpclistenSet[value] = true
-				rpclistenOrder = append(rpclistenOrder, value)
-			}
-		}
-	}
-
-	desiredOrder := []string{"127.0.0.1:10009"}
-	for _, gw := range uniqueGateways {
-		desiredOrder = append(desiredOrder, gw+":10009")
-	}
-	for _, value := range desiredOrder {
-		if !rpclistenSet[value] {
-			rpclistenSet[value] = true
-			rpclistenOrder = append([]string{value}, rpclistenOrder...)
-		}
-	}
-
-	cleaned := []string{}
-	insertIdx := -1
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "[Application Options]" && insertIdx == -1 {
-			cleaned = append(cleaned, line)
-			insertIdx = len(cleaned)
-			continue
-		}
-		if strings.HasPrefix(trimmed, "tlsextraip=") || strings.HasPrefix(trimmed, "tlsextradomain=") || strings.HasPrefix(trimmed, "rpclisten=") {
-			continue
-		}
-		cleaned = append(cleaned, line)
-	}
-	if insertIdx == -1 {
-		insertIdx = 0
-	}
-
-	block := []string{}
-	for _, gw := range uniqueGateways {
-		block = append(block, fmt.Sprintf("tlsextraip=%s", gw))
-	}
-	block = append(block, "tlsextradomain=host.docker.internal")
-	added := map[string]bool{}
-	for _, value := range desiredOrder {
-		if !added[value] {
-			block = append(block, "rpclisten="+value)
-			added[value] = true
-		}
-	}
-	for _, value := range rpclistenOrder {
-		if !added[value] {
-			block = append(block, "rpclisten="+value)
-			added[value] = true
-		}
-	}
-
-	updated := append([]string{}, cleaned[:insertIdx]...)
-	updated = append(updated, block...)
-	updated = append(updated, cleaned[insertIdx:]...)
-
-	changed := len(updated) != len(lines)
-	if !changed {
-		for i := range updated {
-			if updated[i] != lines[i] {
-				changed = true
-				break
-			}
-		}
-	}
-	return updated, changed
-}
-
-func lndgBuildHash() string {
-	sum := sha256.Sum256([]byte(lndgDockerfile + "\n" + lndgEntrypoint))
-	return hex.EncodeToString(sum[:])
-}
-
-func lndgBuildKey(paths lndgPaths, base string) string {
-	gitSha := readEnvValue(paths.EnvPath, "LNDG_GIT_SHA")
-	if gitSha == "" {
-		gitSha = "unknown"
-	}
-	return base + ":" + gitSha
 }
 
 func ensureLndgLogFile(path string) error {
@@ -1028,198 +566,4 @@ func detectHostIPs(ctx context.Context) []string {
 	return ips
 }
 
-const (
-	lndgDefaultGitRef = "master"
-	// Keep fresh installs reproducible. Upstream dependency changes must be
-	// validated here before this SHA is deliberately advanced.
-	lndgDefaultGitSHA = "0fe400029240fc59431b56b6ce47e24b764396b1"
-)
-
-func resolveLndgGit(_ context.Context, existingRef string, existingSha string) (string, string) {
-	ref := strings.TrimSpace(existingRef)
-	if ref == "" {
-		ref = lndgDefaultGitRef
-	}
-	sha := strings.TrimSpace(existingSha)
-	if sha == "" {
-		sha = lndgDefaultGitSHA
-	}
-	return ref, sha
-}
-
-var lndgDockerfile = fmt.Sprintf(`FROM %s
-ENV PYTHONUNBUFFERED=1
-RUN apt-get update && apt-get install -y --no-install-recommends curl gcc libpq-dev postgresql-client && rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -fsSLo /tmp/lndg.tar.gz %s \
-    && printf '%%s  %%s\n' %s /tmp/lndg.tar.gz | sha256sum --check --strict - \
-    && mkdir /app \
-    && tar --no-same-owner --no-same-permissions --strip-components=1 -xzf /tmp/lndg.tar.gz -C /app \
-    && rm /tmp/lndg.tar.gz
-WORKDIR /app
-RUN python -m pip install --no-cache-dir -r requirements.txt
-RUN python -m pip install --no-cache-dir supervisor==%s whitenoise==%s psycopg2-binary==%s
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
-`, appmanifest.LNDgBaseImage, appmanifest.LNDgSourceURL, appmanifest.LNDgSourceSHA256,
-	appmanifest.LNDgSupervisor, appmanifest.LNDgWhitenoise, appmanifest.LNDgPsycopgBinary)
-
-const lndgDockerignore = `*
-!Dockerfile
-!entrypoint.sh
-`
-
-const lndgEntrypoint = `#!/bin/sh
-set -e
-
-DATA_DIR=/app/data
-SETTINGS_FILE=/app/lndg/settings.py
-ADMIN_FILE="$DATA_DIR/lndg-admin.txt"
-
-: "${LNDG_LND_DIR:=/root/.lnd}"
-: "${LNDG_NETWORK:=mainnet}"
-: "${LNDG_RPC_SERVER:=host.docker.internal:10009}"
-: "${LNDG_TLS_PATH:=/etc/lnd/tls.cert}"
-: "${LNDG_MACAROON_PATH:=/etc/lnd/lndg.macaroon}"
-: "${LNDG_DATABASE_PATH:=/etc/lnd/channel.db}"
-: "${LNDG_ADMIN_USER:=lndg-admin}"
-: "${LNDG_ADMIN_PASSWORD:?LNDG_ADMIN_PASSWORD is required}"
-
-mkdir -p "$DATA_DIR"
-
-  if [ ! -f "$SETTINGS_FILE" ]; then
-  python initialize.py -d -net "$LNDG_NETWORK" -rpc "$LNDG_RPC_SERVER" -dir "$LNDG_LND_DIR" -tls "$LNDG_TLS_PATH" -mcrn "$LNDG_MACAROON_PATH" -lnddb "$LNDG_DATABASE_PATH" -u "$LNDG_ADMIN_USER" --adminpw="$LNDG_ADMIN_PASSWORD" -wn -f
-fi
-
-python - <<'PY'
-import os
-
-path = "/app/lndg/settings.py"
-raw = open(path, "r", encoding="utf-8").read().splitlines()
-start = None
-depth = 0
-end = None
-
-for i, line in enumerate(raw):
-  if start is None and line.strip().startswith("DATABASES"):
-    start = i
-  if start is not None:
-    depth += line.count("{") - line.count("}")
-    if depth == 0 and i > start:
-      end = i
-      break
-
-if start is None or end is None:
-  raise SystemExit("Unable to locate DATABASES block")
-
-db_password = os.environ.get("LNDG_DB_PASSWORD", "")
-if not db_password:
-  raise SystemExit("LNDG_DB_PASSWORD is required")
-
-allowed_hosts = [h.strip() for h in os.environ.get("LNDG_ALLOWED_HOSTS", "").split(",") if h.strip()]
-csrf_trusted = [o.strip() for o in os.environ.get("LNDG_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
-if not csrf_trusted and allowed_hosts:
-  for host in allowed_hosts:
-    for scheme in ("http", "https"):
-      csrf_trusted.append(f"{scheme}://{host}")
-      csrf_trusted.append(f"{scheme}://{host}:8889")
-
-  replacement = [
-    "DATABASES = {",
-    "    'default': {",
-  "        'ENGINE': 'django.db.backends.postgresql_psycopg2',",
-  "        'NAME': 'lndg',",
-  "        'USER': 'lndg',",
-  "        'PASSWORD': '" + db_password + "',",
-  "        'HOST': 'lndg-db',",
-  "        'PORT': '5432',",
-  "    }",
-  "}",
-  ]
-
-  raw = raw[:start] + replacement + raw[end+1:]
-  filtered = []
-  for line in raw:
-    stripped = line.strip()
-    if (
-      stripped.startswith("ALLOWED_HOSTS")
-      or stripped.startswith("CSRF_TRUSTED_ORIGINS")
-      or stripped.startswith("CSRF_COOKIE_SECURE")
-      or stripped.startswith("SESSION_COOKIE_SECURE")
-      or stripped.startswith("CSRF_COOKIE_SAMESITE")
-      or stripped.startswith("SESSION_COOKIE_SAMESITE")
-      or stripped.startswith("CSRF_COOKIE_DOMAIN")
-      or stripped.startswith("SESSION_COOKIE_DOMAIN")
-      or stripped.startswith("CSRF_COOKIE_NAME")
-      or stripped.startswith("SESSION_COOKIE_NAME")
-    ):
-      continue
-    filtered.append(line)
-  raw = filtered
-if allowed_hosts:
-  raw += ["", "ALLOWED_HOSTS = " + repr(allowed_hosts)]
-if csrf_trusted:
-  raw += ["CSRF_TRUSTED_ORIGINS = " + repr(csrf_trusted)]
-raw += [
-  "CSRF_COOKIE_SECURE = False",
-  "SESSION_COOKIE_SECURE = False",
-  "CSRF_COOKIE_DOMAIN = None",
-  "SESSION_COOKIE_DOMAIN = None",
-  "CSRF_COOKIE_SAMESITE = 'Lax'",
-  "SESSION_COOKIE_SAMESITE = 'Lax'",
-]
-with open(path, "w", encoding="utf-8") as f:
-  f.write("\n".join(raw))
-PY
-
-until pg_isready -h lndg-db -U lndg > /dev/null 2>&1; do
-  sleep 2
-done
-
-python manage.py migrate
-python manage.py collectstatic --noinput
-
-python - <<'PY'
-import os
-import sys
-
-sys.path.insert(0, "/app")
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "lndg.settings")
-
-import django  # noqa: E402
-django.setup()
-
-from django.contrib.auth import get_user_model  # noqa: E402
-
-username = os.environ.get("LNDG_ADMIN_USER", "lndg-admin")
-password = os.environ.get("LNDG_ADMIN_PASSWORD", "")
-if not password:
-  raise SystemExit("LNDG_ADMIN_PASSWORD is required")
-
-User = get_user_model()
-user, created = User.objects.get_or_create(username=username, defaults={"email": "admin@lndg.local"})
-updated = False
-if created:
-  user.set_password(password)
-  updated = True
-if not user.is_staff:
-  user.is_staff = True
-  updated = True
-if not user.is_superuser:
-  user.is_superuser = True
-  updated = True
-if not user.has_usable_password():
-  user.set_password(password)
-  updated = True
-if updated:
-  user.save()
-PY
-
-if [ ! -f "$ADMIN_FILE" ]; then
-  printf "%s\n" "$LNDG_ADMIN_PASSWORD" > "$ADMIN_FILE"
-fi
-
-LOG_FILE=/var/log/lndg-controller.log
-touch "$LOG_FILE"
-exec sh -c "python controller.py runserver 0.0.0.0:8889 2>&1 | tee -a \"$LOG_FILE\""
-`
+const lndgEntrypoint = appmanifest.LNDgEntrypoint

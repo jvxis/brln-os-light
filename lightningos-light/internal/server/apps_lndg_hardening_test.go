@@ -69,19 +69,20 @@ func TestLNDgMacaroonPermissionsMatchUpstreamRPCInventory(t *testing.T) {
 }
 
 func TestLNDgCompatibilityBuildUsesClosedReleaseSource(t *testing.T) {
+	dockerfile := appmanifest.LNDgDockerfile()
 	for _, required := range []string{
 		"FROM " + appmanifest.LNDgBaseImage,
-		appmanifest.LNDgSourceURL,
-		appmanifest.LNDgSourceSHA256,
-		"sha256sum --check --strict",
+		"COPY " + appmanifest.LNDgSourceDir + "/ /app/",
 		"supervisor==" + appmanifest.LNDgSupervisor,
+		"useradd --uid 1000",
+		"chown -R 1000:1000 /app",
 	} {
-		if !strings.Contains(lndgDockerfile, required) {
+		if !strings.Contains(dockerfile, required) {
 			t.Fatalf("compatibility Dockerfile missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"git clone", "git fetch", "checkout", "master"} {
-		if strings.Contains(lndgDockerfile, forbidden) {
+	for _, forbidden := range []string{"curl ", "git clone", "git fetch", "checkout", "master"} {
+		if strings.Contains(dockerfile, forbidden) {
 			t.Fatalf("compatibility Dockerfile contains mutable selector %q", forbidden)
 		}
 	}

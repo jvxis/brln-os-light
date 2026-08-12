@@ -677,6 +677,37 @@ node address came directly from its secret record and no network scan was
 performed. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-lndg-dedicated-credential-2026-08-11.json`.
 
+The complete LNDg runtime boundary has now passed on LOS TESTE2. The manager no
+longer owns any Docker, UFW, LND-restart, database-exec, lifecycle, inspection,
+removal, or admin-reset command for this app. It writes only a closed
+declaration; the broker validates it byte-for-byte, copies secrets and LND
+material into a root-owned execution snapshot, selects both images from the
+catalog, and runs fixed typed operations. The LNDg image runs as UID/GID 1000
+with all capabilities dropped and `no-new-privileges`; its dedicated
+PostgreSQL 16.14 Trixie container uses the Docker Official Image index digest,
+has its own persistent volume and private network, and does not publish 5432.
+
+The live gate also corrected a legacy behavior: although the old Compose had a
+PostgreSQL container, an entrypoint indentation defect left LNDg using SQLite.
+The new entrypoint exports SQLite only when PostgreSQL has no Django schema,
+migrates PostgreSQL, imports the fixture once, records a private marker, and
+keeps the original SQLite file for rollback. The gate found 31 legacy tables
+and compared all 27 relevant common tables after migration: 190 rows on each
+side, zero count differences, and no tables exclusive to either database.
+Nodes whose native LND uses PostgreSQL are also supported: because they have no
+`channel.db`, the broker mounts a private empty read-only placeholder used only
+by LNDg's file-size display.
+
+Install/start, inspect, authenticated admin login, stop, and start passed with
+both containers running at the end. The LND credential remained dedicated;
+the execution snapshot was root-owned `0700` with `0600` environment and a
+group-readable `0640` macaroon for the non-root container. LND and Bitcoin
+retained their original activation/container timestamps. The manager/broker
+binaries were updated in `shadow`, all gate uploads/backups and the mistakenly
+tested Bookworm image were removed, and no network scan or adapter operation
+occurred. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-lndg-functional-lifecycle-2026-08-12.json`.
+
 LNbits is the next high-adoption application to enter the boundary. The
 mutable `lnbits/lnbits:latest` selector has been replaced by the official
 stable `v1.5.6` image and its Docker Hub multi-architecture manifest digest.

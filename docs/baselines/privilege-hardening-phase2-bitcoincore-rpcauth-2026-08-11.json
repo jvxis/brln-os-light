@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-12T00:31:05Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "9f7098cb5f451bdbfd879cedc480e2c9dff32811",
+  "tested_source": "source_head_before_slice plus the Bitcoin Core rpcauth, Electrs, and Bitcoin Local status slice",
+  "scope": "rpcauth-only bootstrap for new App Store Bitcoin Core installs, protected credential recovery for LND and managed consumers, and legacy preservation",
+  "new_install_contract": {
+    "manager_template_contains_credentials": false,
+    "broker_operation": "app.bitcoincore.config.ensure",
+    "generate_rpcauth_parameter": true,
+    "rpc_username": "lightningos",
+    "password_random_bytes": 32,
+    "salt_random_bytes": 16,
+    "verifier": "HMAC-SHA256 compatible with Bitcoin Core rpcauth.py",
+    "bitcoin_conf_auth_directive": "rpcauth only",
+    "bitcoin_conf_contains_rpcuser": false,
+    "bitcoin_conf_contains_rpcpassword": false,
+    "bitcoin_conf_owner_mode": "root:101 0640",
+    "recoverable_record": "/var/lib/lightningos-privileged/apps/bitcoincore/rpc-credentials.json",
+    "recoverable_record_owner_mode": "root:root 0600",
+    "idempotent_without_rotation": true
+  },
+  "consumer_contract": {
+    "operation": "app.bitcoincore.credentials.read",
+    "read_only": true,
+    "canonical_enrolled_data_dir_only": true,
+    "stored_hmac_recomputed": true,
+    "matching_active_rpcauth_required": true,
+    "http_endpoint_exposed": false,
+    "audit_or_log_contains_secret": false,
+    "purpose": "supply the clear credential only to LND and managed consumers whose upstream configuration requires it"
+  },
+  "legacy_contract": {
+    "existing_config_preserved_byte_for_byte": true,
+    "silent_credential_rotation": false,
+    "bitcoin_restart": false,
+    "legacy_rpcauth_without_recoverable_password": "fails closed for consumers and requires explicit one-time maintenance migration"
+  },
+  "functional_gate": {
+    "host": "disposable Ubuntu 24.04 VirtualBox VM",
+    "image": "official-source verified lightningos/bitcoin-core:31.1",
+    "chain": "regtest",
+    "config_generated_by_broker": true,
+    "correct_password_authenticated": true,
+    "wrong_password_rejected": true,
+    "credential_passed_in_process_arguments": false,
+    "result": "passed"
+  },
+  "failure_retained_and_fixed": {
+    "failure": "Bitcoin Core 31 rejected global rpcbind/rpcport while the functional fixture selected regtest",
+    "fail_closed": true,
+    "fix": "place regtest-only RPC settings under the [regtest] section while keeping rpcauth in the global section",
+    "production_mainnet_config_changed_by_fixture_fix": false
+  },
+  "validation": {
+    "linux_generated_config_ownership_and_idempotency": "passed",
+    "linux_legacy_preservation": "passed",
+    "linux_real_bitcoin_rpc_authentication": "passed",
+    "linux_wrong_password_rejection": "passed",
+    "linux_go_test_all": "passed",
+    "linux_go_vet_all": "passed",
+    "linux_manager_and_broker_build": "passed",
+    "windows_focused_tests": "passed",
+    "windows_go_vet_all": "passed",
+    "windows_manager_and_broker_build": "passed",
+    "registry_validation": "passed",
+    "ui_build": "passed",
+    "known_windows_only_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ]
+  },
+  "los_test2_final_gate": {
+    "manager_sha256": "0aae60a5ae43f55ec2d2abd8d7560be3c0ea785c206b0d862f2c7371d95d71ef",
+    "broker_sha256": "cb7d5bf9fccbe3ce0584573e80b9d3fe3cf84d43462cebf1c270a0167c527ce5",
+    "manager_active": true,
+    "bitcoin_status": "running",
+    "blocks": 961588,
+    "verification_progress": 0.998858,
+    "status_source": "bounded debug.log fallback while RPC was busy",
+    "zero_percent_reported": false,
+    "bitcoin_container_id_unchanged": true,
+    "bitcoin_container_started_at_unchanged": true,
+    "bitcoin_config_changed": false,
+    "bitcoin_restarted": false,
+    "network_changed": false,
+    "dependent_apps_restarted": false
+  },
+  "final_state": {
+    "los_temporary_uploads_and_backups_present": false,
+    "functional_gate_container_present": false,
+    "vm_temporary_checkout_or_builds_present": false,
+    "gate_vm": "powered_off_and_network_restored",
+    "host_or_lan_network_changed": false
+  }
+}

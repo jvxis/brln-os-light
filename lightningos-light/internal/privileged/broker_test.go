@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -70,20 +71,29 @@ type recordingBitcoinStorage struct {
 }
 
 type recordingBitcoinConfig struct {
-	operation string
-	dataDir   string
-	content   string
-	dryRun    bool
-	state     BitcoinCoreConfigState
-	err       error
+	operation       string
+	dataDir         string
+	content         string
+	generateRPCAuth bool
+	dryRun          bool
+	state           BitcoinCoreConfigState
+	credentials     BitcoinCoreCredentialsState
+	err             error
 }
 
-func (config *recordingBitcoinConfig) Ensure(_ context.Context, dataDir string, content string, dryRun bool) (BitcoinCoreConfigState, error) {
+func (config *recordingBitcoinConfig) Ensure(_ context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (BitcoinCoreConfigState, error) {
 	config.operation = "ensure"
 	config.dataDir = dataDir
 	config.content = content
+	config.generateRPCAuth = generateRPCAuth
 	config.dryRun = dryRun
 	return config.state, config.err
+}
+
+func (config *recordingBitcoinConfig) Credentials(_ context.Context, dataDir string) (BitcoinCoreCredentialsState, error) {
+	config.operation = "credentials"
+	config.dataDir = dataDir
+	return config.credentials, config.err
 }
 
 func (config *recordingBitcoinConfig) Read(_ context.Context, dataDir string) (BitcoinCoreConfigState, error) {
@@ -119,6 +129,7 @@ type recordingApps struct {
 	probeCalls           int
 	firewallCalls        int
 	consumerNetworkCalls int
+	bitcoinStatusCalls   int
 	appID                string
 	action               AppLifecycleAction
 	dryRun               bool
@@ -128,6 +139,7 @@ type recordingApps struct {
 	imageProbe           AppImageProbe
 	firewallState        AppFirewallState
 	consumerNetworkState BitcoinConsumerNetworkState
+	bitcoinStatusState   BitcoinCoreStatusState
 	dockerState          DockerRuntimeState
 	variant              appmanifest.CPUMinerImageVariant
 	lifecycleDeadline    time.Time
@@ -137,6 +149,11 @@ func (apps *recordingApps) EnsureBitcoinConsumerNetwork(_ context.Context, dryRu
 	apps.consumerNetworkCalls++
 	apps.dryRun = dryRun
 	return apps.consumerNetworkState, apps.err
+}
+
+func (apps *recordingApps) BitcoinCoreStatus(_ context.Context) (BitcoinCoreStatusState, error) {
+	apps.bitcoinStatusCalls++
+	return apps.bitcoinStatusState, apps.err
 }
 
 func (apps *recordingApps) EnsureDockerRuntime(_ context.Context, dryRun bool) (DockerRuntimeState, error) {
@@ -810,6 +827,41 @@ func TestBrokerBitcoinConsumerNetworkIsClosedLockedAndSanitized(t *testing.T) {
 	}
 }
 
+func TestBrokerBitcoinStatusIsReadOnlyAndSanitizesFailures(t *testing.T) {
+	params, err := MarshalParams(struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := BitcoinCoreStatusState{
+		Chain: "main", Blocks: 100, Headers: 100, VerificationProgress: 1,
+		BestBlockHash: strings.Repeat("0", 64), NetworkOK: true, Version: 310100,
+		Subversion: "/Satoshi:31.1.0/", Connections: 8,
+	}
+	for _, test := range []struct {
+		name   string
+		apps   *recordingApps
+		wantOK bool
+	}{
+		{name: "ready", apps: &recordingApps{bitcoinStatusState: state}, wantOK: true},
+		{name: "failure", apps: &recordingApps{err: errors.New("cookie and container detail")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			locker := &recordingLocker{}
+			broker := testBroker(&recordingRunner{}, &recordingAudit{}, locker)
+			broker.Apps = test.apps
+			response := broker.Handle(context.Background(), Request{
+				Version: ProtocolVersion, RequestID: "bitcoin_status_1", Operation: OperationBitcoinStatus, Params: params,
+			})
+			if response.OK != test.wantOK || test.apps.bitcoinStatusCalls != 1 || locker.locks != 0 {
+				t.Fatalf("response/apps/locker=%#v/%#v/%#v", response, test.apps, locker)
+			}
+			if !test.wantOK && (response.Error == nil || response.Error.Code != "bitcoin_status_failed" || response.Error.Message != "bitcoin core status failed") {
+				t.Fatalf("unsanitized status failure: %#v", response)
+			}
+		})
+	}
+}
+
 func TestBrokerBitcoinConfigOperationsLockMutationsAndNeverAuditSecrets(t *testing.T) {
 	const content = "server=1\nrpcpassword=never-audit-me\n"
 	for _, test := range []struct {
@@ -871,6 +923,30 @@ func TestBrokerBitcoinConfigFailureIsGeneric(t *testing.T) {
 	})
 	if response.OK || response.Error == nil || response.Error.Code != "bitcoin_config_failed" || response.Error.Message != "bitcoin config update failed" || strings.Contains(response.Error.Message, "do-not-echo") {
 		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestBrokerBitcoinCredentialsReadIsTypedUnlockedAndNeverAudited(t *testing.T) {
+	const password = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	params, err := MarshalParams(BitcoinCoreConfigTargetParams{DataDir: "/data/bitcoin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := &recordingAudit{}
+	locker := &recordingLocker{}
+	config := &recordingBitcoinConfig{credentials: BitcoinCoreCredentialsState{
+		Status: "ready", User: appmanifest.BitcoinCoreRPCUser, Password: password,
+	}}
+	broker := testBroker(&recordingRunner{}, audit, locker)
+	broker.BitcoinConfig = config
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "bitcoin_credentials_1", Operation: OperationBitcoinCredentialsRead, Params: params,
+	})
+	if !response.OK || config.operation != "credentials" || config.dataDir != "/data/bitcoin" || locker.locks != 0 {
+		t.Fatalf("response/config/locker=%#v/%#v/%#v", response, config, locker)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", audit.events), password) {
+		t.Fatal("RPC password leaked into audit")
 	}
 }
 

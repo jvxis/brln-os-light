@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,17 +13,23 @@ import (
 
 type bitcoinConfigTestClient struct {
 	*cpuMinerPrivilegedClient
-	operation   string
-	dataDir     string
-	content     string
-	readContent string
-	dryRun      bool
-	err         error
+	operation       string
+	dataDir         string
+	content         string
+	generateRPCAuth bool
+	readContent     string
+	dryRun          bool
+	err             error
 }
 
-func (client *bitcoinConfigTestClient) EnsureBitcoinCoreConfig(_ context.Context, dataDir string, content string, dryRun bool) (string, error) {
+func (client *bitcoinConfigTestClient) EnsureBitcoinCoreConfig(_ context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (string, error) {
+	client.generateRPCAuth = generateRPCAuth
 	client.recordConfig("ensure", dataDir, content, dryRun)
 	return "ready", client.err
+}
+
+func (client *bitcoinConfigTestClient) ReadBitcoinCoreCredentials(context.Context, string) (string, string, error) {
+	return "", "", client.err
 }
 
 func (client *bitcoinConfigTestClient) ReadBitcoinCoreConfig(_ context.Context, dataDir string) (string, error) {
@@ -60,7 +67,7 @@ func TestBitcoinCoreConfigServerPathsRequireTypedBroker(t *testing.T) {
 	if err := ensureBitcoinCoreConfig(context.Background(), paths); err != nil {
 		t.Fatal(err)
 	}
-	if client.operation != "ensure" || client.dataDir != dataDir || client.content != legacy || client.dryRun {
+	if client.operation != "ensure" || client.dataDir != dataDir || client.content != legacy || client.generateRPCAuth || client.dryRun {
 		t.Fatalf("unexpected ensure request: %#v", client)
 	}
 	if _, err := os.Lstat(filepath.Join(root, bitcoinCoreConfigFile)); !os.IsNotExist(err) {
@@ -77,6 +84,21 @@ func TestBitcoinCoreConfigServerPathsRequireTypedBroker(t *testing.T) {
 	}
 	if client.operation != "write" || client.content != updated || client.dataDir != dataDir {
 		t.Fatalf("unexpected write request: %#v", client)
+	}
+}
+
+func TestNewBitcoinCoreConfigRequestsBrokerGeneratedRPCAuth(t *testing.T) {
+	client := &bitcoinConfigTestClient{cpuMinerPrivilegedClient: &cpuMinerPrivilegedClient{mode: "enforce"}}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	paths := bitcoinCorePaths{Root: t.TempDir(), DataDir: "/data/bitcoin"}
+
+	if err := ensureBitcoinCoreConfig(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	if client.operation != "ensure" || !client.generateRPCAuth ||
+		strings.Contains(client.content, "rpcpassword=") || strings.Contains(client.content, "rpcuser=") || strings.Contains(client.content, "rpcauth=") {
+		t.Fatalf("new install did not delegate rpcauth generation to broker: %#v", client)
 	}
 }
 
@@ -140,6 +162,26 @@ func TestApplyBitcoinCLIChainInfoToLocalStatusKeepsBasicFieldsWithoutNetwork(t *
 	}
 	if status.Version != 0 || status.Subversion != "" || status.Connections != 0 {
 		t.Fatalf("expected network metadata to stay unset without getnetworkinfo: %+v", status)
+	}
+}
+
+func TestParseBitcoinCoreBrokerStatusPreservesUnknownZeroValues(t *testing.T) {
+	raw := `{"chain":"main","blocks":954700,"headers":954701,"best_block_time":1780000000,"verification_progress":0.999,"initial_block_download":true,"best_block_hash":"0000000000000000000000000000000000000000000000000000000000000000","pruned":false,"network_ok":true,"version":310100,"subversion":"/Satoshi:31.1.0/","connections":12}`
+	status, err := parseBitcoinCoreBrokerStatus(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.RPCOk || status.Chain != "main" || status.Blocks != 954700 || status.Headers != 954701 || status.VerificationProgress != 0.999 || status.Pruned {
+		t.Fatalf("unexpected broker status: %+v", status)
+	}
+	for _, invalid := range []string{
+		`{}`,
+		`{"chain":"regtest","blocks":1,"headers":1,"verification_progress":1,"best_block_hash":"x"}`,
+		`{"chain":"main","blocks":2,"headers":1,"verification_progress":1,"best_block_hash":"x"}`,
+	} {
+		if _, err := parseBitcoinCoreBrokerStatus(invalid); err == nil {
+			t.Fatalf("invalid broker status accepted: %s", invalid)
+		}
 	}
 }
 

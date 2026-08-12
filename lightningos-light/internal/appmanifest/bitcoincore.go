@@ -35,6 +35,9 @@ const (
 	BitcoinCoreStorageGuardFile = "storage-guard.sh"
 	BitcoinCoreStorageIDPath    = "/var/lib/lightningos-privileged/apps/bitcoincore/storage-id"
 	BitcoinCoreStorageMarker    = ".lightningos-storage-id"
+	BitcoinCoreContainerDataDir = "/home/bitcoin/.bitcoin"
+	BitcoinCoreContainerConfig  = BitcoinCoreContainerDataDir + "/bitcoin.conf"
+	BitcoinCoreRPCUser          = "lightningos"
 )
 
 var bitcoinCoreDataDirPattern = regexp.MustCompile(`^[A-Za-z0-9/._-]+$`)

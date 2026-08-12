@@ -15,6 +15,7 @@ const (
 	systemctlPath                  = "/usr/bin/systemctl"
 	systemdRunPath                 = "/usr/bin/systemd-run"
 	privilegedLongOperationTimeout = 2 * time.Minute
+	privilegedBitcoinStatusTimeout = 45 * time.Second
 )
 
 type CommandRunner interface {
@@ -45,6 +46,7 @@ type AppManager interface {
 	ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error)
 	EnsureFirewallAccess(ctx context.Context, appID string, dryRun bool) (AppFirewallState, error)
 	EnsureBitcoinConsumerNetwork(ctx context.Context, dryRun bool) (BitcoinConsumerNetworkState, error)
+	BitcoinCoreStatus(ctx context.Context) (BitcoinCoreStatusState, error)
 }
 
 type PackageManager interface {
@@ -57,9 +59,10 @@ type BitcoinStorageManager interface {
 }
 
 type BitcoinConfigManager interface {
-	Ensure(ctx context.Context, dataDir string, content string, dryRun bool) (BitcoinCoreConfigState, error)
+	Ensure(ctx context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (BitcoinCoreConfigState, error)
 	Read(ctx context.Context, dataDir string) (BitcoinCoreConfigState, error)
 	Write(ctx context.Context, dataDir string, content string, dryRun bool) (BitcoinCoreConfigState, error)
+	Credentials(ctx context.Context, dataDir string) (BitcoinCoreCredentialsState, error)
 }
 
 type AuditEvent struct {
@@ -158,6 +161,10 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 	case OperationAppLifecycle, OperationAppRemove:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
+		}
+	case OperationBitcoinStatus:
+		if configured < privilegedBitcoinStatusTimeout {
+			return privilegedBitcoinStatusTimeout
 		}
 	}
 	return configured
@@ -392,12 +399,25 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 		var state BitcoinCoreConfigState
 		var err error
 		if request.Operation == OperationBitcoinConfigEnsure {
-			state, err = broker.BitcoinConfig.Ensure(ctx, params.DataDir, params.Content, request.DryRun)
+			state, err = broker.BitcoinConfig.Ensure(ctx, params.DataDir, params.Content, params.GenerateRPCAuth, request.DryRun)
 		} else {
 			state, err = broker.BitcoinConfig.Write(ctx, params.DataDir, params.Content, request.DryRun)
 		}
 		if err != nil {
 			return nil, "bitcoin_config_failed", errors.New("bitcoin config update failed")
+		}
+		return state, "", nil
+	case OperationBitcoinCredentialsRead:
+		if broker.BitcoinConfig == nil {
+			return nil, "broker_unavailable", errors.New("bitcoin config manager is unavailable")
+		}
+		var params BitcoinCoreConfigTargetParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid bitcoin credentials params")
+		}
+		state, err := broker.BitcoinConfig.Credentials(ctx, params.DataDir)
+		if err != nil {
+			return nil, "bitcoin_credentials_failed", errors.New("bitcoin credentials read failed")
 		}
 		return state, "", nil
 	case OperationBitcoinConfigRead:
@@ -411,6 +431,15 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 		state, err := broker.BitcoinConfig.Read(ctx, params.DataDir)
 		if err != nil {
 			return nil, "bitcoin_config_failed", errors.New("bitcoin config read failed")
+		}
+		return state, "", nil
+	case OperationBitcoinStatus:
+		if broker.Apps == nil {
+			return nil, "broker_unavailable", errors.New("app manager is unavailable")
+		}
+		state, err := broker.Apps.BitcoinCoreStatus(ctx)
+		if err != nil {
+			return nil, "bitcoin_status_failed", errors.New("bitcoin core status failed")
 		}
 		return state, "", nil
 	case OperationBitcoinConsumerNetworkEnsure:
@@ -458,7 +487,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure:
 		return true
 	default:
 		return false

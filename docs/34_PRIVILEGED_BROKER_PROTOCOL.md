@@ -193,7 +193,8 @@ pending capability.
 These operations accept only app/variant pairs compiled into the shared
 catalog. CPU Miner admits `baseline`, `fast_pinned`, and `fast_latest`;
 RoboSats admits `client`, `tor`, and `proxy`; Bitcoin Core admits only `node`;
-and BTCPay admits `server`, `nbxplorer`, `postgres`, and `tor`. Every variant
+BTCPay admits `server`, `nbxplorer`, `postgres`, and `tor`; and Electrs admits
+only `server`. Every variant
 maps to one exact image and one fixed transient unit name. A caller cannot
 submit an image, registry, digest, tag, unit, path, or Docker argument.
 
@@ -261,6 +262,16 @@ the attested image ID. A local same-tag image without the attestation is
 untrusted. Bitcoin Core image preparation has no disabled/shadow legacy pull;
 the manager fails closed unless the broker operates in `enforce` mode.
 
+Electrs has no production-supported upstream image or release binary. The
+broker therefore builds `lightningos/electrs:0.11.1` from the exact verified
+`romanz/electrs` `v0.11.1` archive, whose resolved commit and SHA-256 are fixed
+in the catalog, on a platform-pinned Debian slim base. A fixed version probe
+and the exact local image ID are bound to a root-only attestation. Build
+failure remains observable through a validated root-only failure marker even
+after systemd collects the transient unit; only a later explicit prepare may
+clear and retry it. A same-tag local image without the matching attestation is
+untrusted.
+
 ### `app.bitcoincore.storage.ensure`
 
 This mutating operation accepts only `{"data_dir":"<canonical-linux-path>"}`.
@@ -279,12 +290,14 @@ preserve the identity. `dry_run` validates path, mount, and capacity without
 creating metadata, directories, or markers. Audit records operation outcome
 but never the path or identity.
 
-### `app.bitcoincore.config.ensure`, `.read`, and `.write`
+### `app.bitcoincore.config.ensure`, `.read`, `.write`, and credentials
 
 These operations bind secret-bearing `bitcoin.conf` handling to the storage
 target previously enrolled by `app.bitcoincore.storage.ensure`. Every request
 contains only the canonical `data_dir`; `ensure` and `write` additionally carry
-bounded `content`. The destination is always the fixed `bitcoin.conf` basename.
+bounded `content`. On a new App Store install, `ensure` also carries only the
+boolean `generate_rpcauth`; the content must then be a credential-free
+template. The destination is always the fixed `bitcoin.conf` basename.
 Caller-supplied filenames, owners, modes, identities, commands, and extra fields
 are rejected. Config content must be non-empty valid UTF-8, at most 8 KiB,
 contain neither NUL nor carriage-return bytes, and end with a newline.
@@ -303,9 +316,56 @@ or replacing a file; `read` is non-mutating and rejects `dry_run`.
 The manager no longer reads the config through a running/root Docker container
 or writes it through a manager-side temporary secret file. An old manager-owned
 seed is read only to preserve existing credentials during migration and is
-removed only after broker ensure succeeds. All three operations fail closed
+removed only after broker ensure succeeds. All config operations fail closed
 outside broker `enforce` mode. Audit events contain operation outcomes but no
 path, config content, RPC username, or RPC password.
+
+For a new config, the broker generates the fixed `lightningos` username, a
+32-byte random password, a 16-byte random salt, and the Bitcoin Core-compatible
+HMAC-SHA256 `rpcauth`. Only the `rpcauth=<user>:<salt>$<hash>` verifier is added
+to `bitcoin.conf`; neither `rpcuser` nor `rpcpassword` is written there. The
+recoverable tuple is stored under the broker's root-only Bitcoin tree as a
+fixed `root:root` mode `0600` record. Config and credential creation are
+idempotent and never rotate or rewrite an existing config.
+
+`app.bitcoincore.credentials.read` is read-only, accepts only the enrolled
+`data_dir`, revalidates the root-only record, recomputes its HMAC, and requires
+the matching `rpcauth` to be active in the fixed config before returning the
+username and password over the local typed broker channel. This is the narrow
+compatibility bridge required by LND and managed consumers, whose upstream
+configuration formats still require the clear credential. It is never exposed
+by an HTTP endpoint, command argument, audit event, or log. Legacy configs
+without a matching protected record fail closed here and require an explicit
+one-time credential migration; they are never silently rotated or restarted.
+
+### `app.bitcoincore.status`
+
+This read-only operation accepts only `{}` and rejects `dry_run`. The broker
+validates the enrolled Bitcoin storage identity and the root-owned execution
+Compose snapshot, resolves the one fixed running `bitcoind` service, and
+validates its container ID before invoking `bitcoin-cli` inside that container.
+The CLI receives only the fixed container data directory and config path, so
+Bitcoin Core supplies authentication from its runtime cookie. RPC usernames,
+passwords, cookies, arbitrary methods, arguments, endpoints, container names,
+and Docker output cannot be supplied by or returned to the manager.
+
+The closed query set is `getblockchaininfo`, `getnetworkinfo`, and
+`getblockheader` for the validated best-block hash. Mainnet is required and
+all output is size-bounded and decoded into typed chain, synchronization,
+pruning, storage, peer, version, and best-block-time fields. In `enforce`, a
+managed App Store node uses this operation for the Bitcoin Local page and
+fails closed without the legacy password path. In `shadow`, the established
+container-cookie and bounded `debug.log` compatibility reader remains
+authoritative so a slow indexing RPC cannot suppress synchronization progress;
+the typed operation becomes authoritative at `enforce` cutover.
+
+Existing App Store nodes are enrolled during the idempotent system-integration
+reconcile only when their legacy Compose and single-line canonical data-dir
+record satisfy the closed layout. Enrollment uses
+`app.bitcoincore.storage.ensure`, leaves a failed migration retryable by not
+writing the version marker, and never restarts Bitcoin, Docker, networking, or
+dependent applications. It does not reconstruct or rotate a legacy
+`rpcauth` password; telemetry uses the runtime cookie independently.
 
 ### `bitcoin.consumer-network.ensure`
 
@@ -619,6 +679,36 @@ unchanged. The legacy network remained in place for the duration of its test,
 proving that upgrade does not force immediate network recreation. Secret-free
 evidence is in
 `docs/baselines/privilege-hardening-phase2-bitcoincore-consumer-network-enforce-2026-08-11.json`.
+
+### Electrs Compose and full-node contract
+
+Electrs reuses the typed image, lifecycle, inspection, and removal operations
+with the catalog-fixed `server` variant. Its non-root Compose execution has a
+read-only root filesystem, drops all capabilities, enables
+`no-new-privileges`, exposes Electrum and Prometheus only on localhost, and
+joins either the fixed App Store Bitcoin network or the fixed native Bitcoin
+gateway. It receives no Bitcoin config, Docker socket, LND material, broad
+host directory, or caller-selected mount, network, port, image, or option.
+Only its reproducible named index volume is removed on uninstall.
+
+The manager declaration contains the closed runtime mode and one private
+dedicated `user:password` cookie. The broker rejects symlinks, unsafe modes,
+unexpected bytes, alternate hosts, manifest/env/cookie tampering, and a cookie
+equal to known broad credentials, then snapshots the execution material below
+the root-only privileged app tree. Docker consumes only that snapshot and the
+cookie is mounted read-only at the fixed container path.
+
+Every start independently authenticates Bitcoin and requires the expected
+chain, `pruned=false`, initial block download false, blocks equal headers, and
+an enabled fully synchronized transaction index. Authentication, pruning,
+synchronization, and transaction-index failures are distinct fail-closed
+states reached before Compose. The accepted Ubuntu 24.04 functional gate used
+an isolated 101-block regtest node satisfying the same full-node and
+`txindex=1` contract. Electrum protocol and metrics checks, stop/start,
+data-preserving stop, data-removing uninstall, and negative tamper gates
+passed; no preserved integration node was used as the positive gate. Evidence
+is in
+`docs/baselines/privilege-hardening-phase2-electrs-functional-2026-08-11.json`.
 
 ## Manager modes and rollback
 

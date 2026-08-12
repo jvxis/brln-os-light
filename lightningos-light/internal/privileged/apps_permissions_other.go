@@ -19,6 +19,18 @@ func securePrivilegedPathOwner(string) error {
 	return nil
 }
 
+func setPrivilegedPathGroup(string, int) error {
+	return nil
+}
+
+func validatePrivilegedPrivateFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("privileged private file is unsafe")
+	}
+	return nil
+}
+
 func privilegedPathOwnedByRoot(os.FileInfo) bool {
 	return true
 }

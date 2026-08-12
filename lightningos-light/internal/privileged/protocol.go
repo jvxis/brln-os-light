@@ -40,6 +40,8 @@ const (
 	OperationBitcoinConfigEnsure          Operation = "app.bitcoincore.config.ensure"
 	OperationBitcoinConfigRead            Operation = "app.bitcoincore.config.read"
 	OperationBitcoinConfigWrite           Operation = "app.bitcoincore.config.write"
+	OperationBitcoinCredentialsRead       Operation = "app.bitcoincore.credentials.read"
+	OperationBitcoinStatus                Operation = "app.bitcoincore.status"
 	OperationBitcoinConsumerNetworkEnsure Operation = "bitcoin.consumer-network.ensure"
 )
 
@@ -132,13 +134,38 @@ type BitcoinCoreConfigTargetParams struct {
 }
 
 type BitcoinCoreConfigWriteParams struct {
-	DataDir string `json:"data_dir"`
-	Content string `json:"content"`
+	DataDir         string `json:"data_dir"`
+	Content         string `json:"content"`
+	GenerateRPCAuth bool   `json:"generate_rpcauth,omitempty"`
 }
 
 type BitcoinCoreConfigState struct {
 	Status  string `json:"status"`
 	Content string `json:"content,omitempty"`
+}
+
+type BitcoinCoreCredentialsState struct {
+	Status   string `json:"status"`
+	User     string `json:"user"`
+	Password string `json:"password"`
+}
+
+type BitcoinCoreStatusState struct {
+	Chain                string  `json:"chain"`
+	Blocks               int64   `json:"blocks"`
+	Headers              int64   `json:"headers"`
+	BestBlockTime        int64   `json:"best_block_time,omitempty"`
+	VerificationProgress float64 `json:"verification_progress"`
+	InitialBlockDownload bool    `json:"initial_block_download"`
+	BestBlockHash        string  `json:"best_block_hash"`
+	Pruned               bool    `json:"pruned"`
+	PruneHeight          int64   `json:"prune_height,omitempty"`
+	PruneTargetSize      int64   `json:"prune_target_size,omitempty"`
+	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
+	NetworkOK            bool    `json:"network_ok"`
+	Version              int     `json:"version,omitempty"`
+	Subversion           string  `json:"subversion,omitempty"`
+	Connections          int     `json:"connections,omitempty"`
 }
 
 type BitcoinConsumerNetworkState struct {
@@ -387,9 +414,9 @@ func ValidateRequest(request Request) error {
 		if err != nil || normalized != params.DataDir {
 			return errors.New("bitcoin storage target is not allowed")
 		}
-	case OperationBitcoinConfigRead:
+	case OperationBitcoinConfigRead, OperationBitcoinCredentialsRead:
 		if request.DryRun {
-			return errors.New("dry_run is not valid for app.bitcoincore.config.read")
+			return fmt.Errorf("dry_run is not valid for %s", request.Operation)
 		}
 		var params BitcoinCoreConfigTargetParams
 		if err := decodeStrict(request.Params, &params); err != nil {
@@ -397,6 +424,14 @@ func ValidateRequest(request Request) error {
 		}
 		if err := validateBitcoinCoreConfigDataDir(params.DataDir); err != nil {
 			return err
+		}
+	case OperationBitcoinStatus:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for app.bitcoincore.status")
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.bitcoincore.status params: %w", err)
 		}
 	case OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite:
 		var params BitcoinCoreConfigWriteParams
@@ -408,6 +443,9 @@ func ValidateRequest(request Request) error {
 		}
 		if err := validateBitcoinCoreConfigContent(params.Content); err != nil {
 			return err
+		}
+		if request.Operation == OperationBitcoinConfigWrite && params.GenerateRPCAuth {
+			return errors.New("generate_rpcauth is valid only for app.bitcoincore.config.ensure")
 		}
 	case OperationBitcoinConsumerNetworkEnsure:
 		var params struct{}

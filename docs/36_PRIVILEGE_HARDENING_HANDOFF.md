@@ -32,10 +32,10 @@ The scope includes:
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote Draft PR: `#33`, targeting `main`.
-- Reconciled HEAD: `293250301044bed90169e1302cae0009dda905f6`.
-- Reconciled HEAD subject:
-  `0.5.3-Beta: harden LNbits image and LND credential`.
-- The worktree was clean when this handoff was created.
+- Reconciled base before the Electrs/status slice: `9f7098c`.
+- The accepted slice is published with subject
+  `0.5.3-Beta: broker Electrs and Bitcoin status`.
+- The worktree was clean after the accepted slice and disposable-gate cleanup.
 - Every new implementation or evidence commit must start with
   `0.5.3-Beta`.
 - `main` may continue receiving `0.5.2` work. Do not merge or rebase it into
@@ -99,11 +99,11 @@ Application state at this checkpoint:
 | --- | --- | --- |
 | CPU Miner | Image, Docker readiness, install, config apply, inspect, lifecycle, and uninstall passed without manager Docker access | Cross-version final matrix only |
 | RoboSats | Closed images, install, root-owned snapshot, lifecycle, inspect, firewall, and data-preserving uninstall passed | Cross-version final matrix only |
-| Bitcoin Core | Official-source verified image, attestation, storage enrollment, secret config operations, lifecycle, consumer network, and native-consumer path passed | Existing-node RPC credential compatibility, operational CLI/log paths, mainnet P2P firewall, and final matrix |
+| Bitcoin Core | Official-source verified image, attestation, storage enrollment, secret config operations, lifecycle, consumer network, native-consumer path, and cookie-backed typed local status passed | Dedicated Electrs credential migration for legacy `rpcauth` nodes, operational CLI/log paths, mainnet P2P firewall, and final matrix |
 | BTCPay Server/NBXplorer | Official fixed security release, image refresh, root-owned secret snapshot, dedicated LND macaroon, remote/native Bitcoin gates, lifecycle, data preservation, and real functional gate passed | Final matrix and any remaining shared host dependencies found by inventory |
 | LNDg | Exact-source image build and attestation plus dedicated 13-permission LND credential and narrow read-only mounts | Broker-owned Compose/secret snapshot, lifecycle, status, uninstall, firewall/host dependencies, and complete functional gate |
 | LNbits | Official stable digest plus dedicated nine-permission LND credential and narrow read-only mount design | Broker-owned Compose/secret snapshot, lifecycle, status, uninstall, REST-listener/firewall policy, and data-preserving functional gate |
-| Electrs | Existing manager-side implementation and Full Node manager gate only; no Electrs broker migration is committed yet | Entire closed image/manifest/secret/lifecycle/inspect/remove contract and functional gate |
+| Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
 | Native apps and in-process features | Inventory plus isolated shared primitives only | Migrate privileged systemd, files, users, binaries, storage, firewall, and credential paths as applicable |
 
@@ -111,10 +111,10 @@ No phase is complete merely because the applications listed as accepted above
 work individually. Phase 2 exits only when the complete supported App Store
 works while the manager has no Docker group/socket access.
 
-## Current immediate slice: Electrs
+## Accepted slice: Electrs and Bitcoin Local status
 
-The immediate implementation slice at this checkpoint is Electrs. It must not
-be mistaken for the final PR objective.
+The Electrs implementation slice is accepted. It must not be mistaken for the
+final PR objective.
 
 Closed upstream research already completed:
 
@@ -138,7 +138,7 @@ image is intentionally updated. Mutable transitive Debian/Rust dependencies
 remain in the issue #34 supply-chain track and must not be represented as fully
 solved by the source checksum alone.
 
-Required Electrs end state:
+Accepted Electrs end state:
 
 1. Add an `appmanifest` catalog entry fixing the image, project, Compose and
    env filenames, services, networks, mounts, localhost-only ports, named
@@ -170,24 +170,83 @@ Required Electrs end state:
    secret modes and symlinks, arbitrary hosts/ports/networks, bad credentials,
    pruned/IBD/unsynchronized/no-txindex nodes, unattested images, caller volume
    flags, and manager Docker fallback.
-8. Run a functional gate only against an isolated synchronized, unpruned
+8. The functional gate ran only against an isolated synchronized, unpruned
    `txindex=1` node. Isolated regtest is acceptable only when it genuinely
    satisfies that same contract. Do not claim LOS TESTE2 as the positive
    Electrs gate while its local Bitcoin is incomplete or RPC authentication is
    unresolved.
-9. Preserve evidence, remove all temporary files/containers/networks/VM state,
-   commit with the required prefix, push, and update Draft PR #33.
+9. Evidence was preserved and all temporary files, containers, networks,
+   volumes, transient units, source trees, and disposable VM settings were
+   removed or restored before publication.
 
-At this checkpoint, no Electrs code has been modified. The working design was
-being reconciled against `internal/appmanifest/catalog.go`,
-`internal/privileged/apps.go`, the LNDg build-attestation pattern, and
-`internal/server/apps_electrs.go`.
+The Ubuntu 24.04 gate built image ID
+`sha256:db39852159a1324aefca44fc4dd8f0a3d968a8a6891ab1565e0bfa6dee827141`
+and passed with an isolated 101-block regtest chain, `pruned=false`, and a
+fully synchronized transaction index. It exercised Electrum protocol,
+Prometheus metrics, stop/start, data preservation across stop, and index-volume
+removal on uninstall. Failed build dependencies and incomplete wallet/txindex
+fixtures remained fail-closed and were corrected before acceptance.
+
+Bitcoin Local status now has a separate closed read-only broker operation. It
+uses the container's runtime cookie through fixed `bitcoin-cli` calls, never
+returns credentials, and is authoritative in `enforce`. In `shadow`, the
+compatibility reader remains authoritative so a slow indexing RPC cannot hide
+the bounded `debug.log` synchronization progress; it also reuses the stored
+LightningOS Bitcoin Local block from `lnd.conf` when that block still contains
+credentials. Existing canonical App Store nodes receive idempotent storage
+enrollment without any Bitcoin, Docker, network, or dependent restart.
+Read-only LOS TESTE2 validation observed mainnet at blocks 961493/headers
+962058, verification progress 0.9986531584779004, unpruned, with about 806 GiB
+on disk. Its active remote LND block contains credentials, but the preserved
+local block has empty user/password fields; the current `rpcauth` hash cannot
+recover them. The final shadow gate nevertheless returned running at block
+961534 and progress 0.998754 from the bounded log fallback. The node was not
+used as the Electrs positive gate. Its legacy `rpcauth` still needs a one-time
+dedicated Electrs credential migration once it is synchronized; this status
+fix deliberately does not rotate credentials or restart Bitcoin.
+
+The App Store Bitcoin bootstrap now closes the credential gap for future
+installs. The manager sends a credential-free standard config template; the
+broker generates `lightningos` credentials and writes only `rpcauth` to
+`bitcoin.conf`, while retaining the recoverable tuple in its root-only `0600`
+state. `app.bitcoincore.credentials.read` recomputes the HMAC and verifies the
+matching active config before returning the tuple locally for LND or a managed
+consumer. No HTTP route exposes it, and audits/logs contain neither username
+nor password. Existing configs, including LOS TESTE2, are preserved without
+rotation or Bitcoin restart and remain queued for explicit one-time migration
+when consumer credentials are needed.
+
+The final disposable functional gate authenticated successfully against the
+official-source verified Bitcoin Core 31.1 image using the broker-generated
+config and rejected a wrong password. The full Linux suite, vet, manager and
+broker builds, registry validation, and UI build passed. LOS TESTE2 was updated
+only with the tested manager/broker binaries; Bitcoin retained the same
+container ID and `StartedAt`, and the UI/API still reported real progress via
+the bounded log fallback while RPC was busy. All uploads/backups were removed,
+and the VM was cleaned, powered off, and returned to its original bridge.
+
+Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-electrs-functional-2026-08-11.json`
+and
+`docs/baselines/privilege-hardening-phase2-bitcoincore-status-2026-08-11.json`.
+
+The next application slice should return to the higher-adoption open work:
+complete LNDg or LNbits broker-owned Compose/secret lifecycle, status,
+uninstall, and functional gates. Mempool and Fedimint remain lower priority.
 
 ## Test-node and network constraints
 
-The integration node record is outside Git at
-`D:\Users\jaime\.secrets\infos_los-test2.txt`. Never copy its contents into a
-commit, test output, evidence JSON, PR comment, shell transcript, or this file.
+Access records are outside Git:
+
+- integration node LOS TESTE2:
+  `D:\Users\jaime\.secrets\infos_los-test2.txt`;
+- general BRLN VPS inventory/access:
+  `D:\Users\jaime\.secrets\infos_vps_brln.txt`.
+
+Never copy their contents into a commit, test output, evidence JSON, PR
+comment, shell transcript, or this file. Use only the record required for the
+specific authorized target; do not treat the general VPS inventory as
+permission to mutate another host.
 
 Operational rules from the owner:
 

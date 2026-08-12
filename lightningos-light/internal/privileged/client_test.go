@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,7 +75,7 @@ func TestClientBitcoinCoreConfigRequestsKeepSecretInTypedPayload(t *testing.T) {
 	transport := &fakeTransport{result: BitcoinCoreConfigState{Status: "ready"}}
 	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
 
-	status, err := client.EnsureBitcoinCoreConfig(context.Background(), dataDir, content, false)
+	status, err := client.EnsureBitcoinCoreConfig(context.Background(), dataDir, content, false, false)
 	if err != nil || status != "ready" || transport.request.Operation != OperationBitcoinConfigEnsure {
 		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
 	}
@@ -81,8 +83,15 @@ func TestClientBitcoinCoreConfigRequestsKeepSecretInTypedPayload(t *testing.T) {
 	if err := json.Unmarshal(transport.request.Params, &writeParams); err != nil {
 		t.Fatal(err)
 	}
-	if writeParams.DataDir != dataDir || writeParams.Content != content {
+	if writeParams.DataDir != dataDir || writeParams.Content != content || writeParams.GenerateRPCAuth {
 		t.Fatalf("unexpected config params: %#v", writeParams)
+	}
+
+	transport.result = BitcoinCoreCredentialsState{Status: "ready", User: appmanifest.BitcoinCoreRPCUser, Password: strings.Repeat("a", 64)}
+	user, password, err := client.ReadBitcoinCoreCredentials(context.Background(), dataDir)
+	if err != nil || user != appmanifest.BitcoinCoreRPCUser || password != strings.Repeat("a", 64) ||
+		transport.request.Operation != OperationBitcoinCredentialsRead || transport.request.DryRun {
+		t.Fatalf("credentials/error/request=%q/%d/%v/%#v", user, len(password), err, transport.request)
 	}
 
 	transport.result = BitcoinCoreConfigState{Status: "ready", Content: content}
@@ -95,6 +104,34 @@ func TestClientBitcoinCoreConfigRequestsKeepSecretInTypedPayload(t *testing.T) {
 	status, err = client.WriteBitcoinCoreConfig(context.Background(), dataDir, content, false)
 	if err != nil || status != "ready" || transport.request.Operation != OperationBitcoinConfigWrite {
 		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+}
+
+func TestClientBitcoinCoreStatusUsesClosedReadOnlyRequest(t *testing.T) {
+	state := BitcoinCoreStatusState{
+		Chain: "main", Blocks: 100, Headers: 100, BestBlockTime: 1_780_000_000,
+		VerificationProgress: 1, BestBlockHash: strings.Repeat("0", 64),
+		SizeOnDisk: 123, NetworkOK: true, Version: 310100, Subversion: "/Satoshi:31.1.0/", Connections: 8,
+	}
+	transport := &fakeTransport{result: state}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	raw, err := client.BitcoinCoreStatus(context.Background())
+	if err != nil || transport.request.Operation != OperationBitcoinStatus || transport.request.DryRun || string(transport.request.Params) != "{}" {
+		t.Fatalf("raw/error/request=%q/%v/%#v", raw, err, transport.request)
+	}
+	remaining := time.Until(transport.deadline)
+	if remaining < privilegedBitcoinStatusTimeout-time.Second || remaining > privilegedBitcoinStatusTimeout {
+		t.Fatalf("bitcoin status deadline has %v remaining, want %v", remaining, privilegedBitcoinStatusTimeout)
+	}
+	var got BitcoinCoreStatusState
+	if err := json.Unmarshal([]byte(raw), &got); err != nil || !reflect.DeepEqual(got, state) {
+		t.Fatalf("decoded/error=%#v/%v", got, err)
+	}
+
+	state.Chain = "regtest"
+	transport.result = state
+	if _, err := client.BitcoinCoreStatus(context.Background()); err == nil {
+		t.Fatal("invalid broker status response was accepted")
 	}
 }
 

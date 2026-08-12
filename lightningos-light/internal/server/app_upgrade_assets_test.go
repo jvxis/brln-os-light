@@ -39,11 +39,35 @@ func TestEmbeddedSystemIntegrationAssetsAreSafe(t *testing.T) {
 		"so stdout contains only the selected CIDR",
 		"Restart=always",
 		"setup-manager-tls-mdns.sh",
-		"system-integrations-20260807-v3",
+		"system-integrations-20260811-v4",
+		"upgrade_bitcoin_storage",
+		"app.bitcoincore.storage.ensure",
 	} {
 		combined := embeddedTerminalHelper + embeddedTerminalPasswordHelper + embeddedManagerFirewallHelper + embeddedSystemIntegrationsReconciler + embeddedAppUpgradeScript + systemIntegrationsMarkerPath
 		if !strings.Contains(combined, fragment) {
 			t.Fatalf("embedded system integration assets are missing %q", fragment)
+		}
+	}
+}
+
+func TestSystemIntegrationReconcilerEnrollsLegacyBitcoinWithoutRestart(t *testing.T) {
+	for _, required := range []string{
+		"reconcile_bitcoin_storage_enrollment",
+		"app.bitcoincore.storage.ensure",
+		"Existing Bitcoin Core storage enrolled without restart",
+	} {
+		if !strings.Contains(embeddedSystemIntegrationsReconciler, required) {
+			t.Fatalf("system integration reconciler is missing %q", required)
+		}
+	}
+	enrollment := strings.Index(embeddedSystemIntegrationsReconciler, "reconcile_bitcoin_storage_enrollment\n")
+	marker := strings.Index(embeddedSystemIntegrationsReconciler, "touch \"$marker_path\"")
+	if enrollment < 0 || marker < 0 || enrollment > marker {
+		t.Fatal("Bitcoin storage enrollment must complete before the reconciliation marker")
+	}
+	for _, forbidden := range []string{"restart bitcoind", "restart bitcoin", "docker restart"} {
+		if strings.Contains(strings.ToLower(embeddedSystemIntegrationsReconciler), forbidden) {
+			t.Fatalf("legacy Bitcoin enrollment contains forbidden restart action %q", forbidden)
 		}
 	}
 }

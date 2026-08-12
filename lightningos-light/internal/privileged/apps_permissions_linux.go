@@ -23,6 +23,24 @@ func securePrivilegedPathOwner(path string) error {
 	return os.Chown(path, 0, 0)
 }
 
+func setPrivilegedPathGroup(path string, gid int) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	return os.Chown(path, 0, gid)
+}
+
+func validatePrivilegedPrivateFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0600 {
+		return errors.New("privileged private file is unsafe")
+	}
+	if os.Geteuid() == 0 && !privilegedPathOwnedByRoot(info) {
+		return errors.New("privileged private file is not root-owned")
+	}
+	return nil
+}
+
 func privilegedPathOwnedByRoot(info os.FileInfo) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	return ok && stat.Uid == 0 && stat.Gid == 0

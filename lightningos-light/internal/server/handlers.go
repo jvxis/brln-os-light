@@ -674,7 +674,15 @@ func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, error) {
 		return bitcoinRPCConfig{}, fmt.Errorf("failed to read local bitcoin.conf: %w", err)
 	}
 	user, pass, zmqBlock, zmqTx := parseBitcoinCoreRPCConfig(raw)
+	credentialUser, credentialPass, handled, credentialErr := system.ReadBitcoinCoreCredentialsWithBroker(ctx, paths.DataDir)
+	if handled && credentialErr == nil {
+		user = credentialUser
+		pass = credentialPass
+	}
 	if user == "" || pass == "" {
+		if handled && credentialErr != nil {
+			return bitcoinRPCConfig{}, fmt.Errorf("local RPC credentials unavailable: %w", credentialErr)
+		}
 		return bitcoinRPCConfig{}, errors.New("local RPC credentials missing")
 	}
 	zmqBlock = normalizeLocalZMQ(zmqBlock, "tcp://127.0.0.1:28332")

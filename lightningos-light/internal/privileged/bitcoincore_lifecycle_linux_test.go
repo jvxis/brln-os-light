@@ -92,6 +92,69 @@ func TestBitcoinCoreInspectAndRemovePreserveEnrollmentAndAttestation(t *testing.
 	}
 }
 
+func TestBitcoinCoreStatusUsesCookieBackedFixedCLICommands(t *testing.T) {
+	manager, runner, _, _ := newTestBitcoinCoreLifecycleManager(t)
+	containerID := strings.Repeat("b", 64)
+	hash := strings.Repeat("0", 64)
+	runner.runningServices = appmanifest.BitcoinCorePrimaryService + "\n"
+	runner.hook = func(path string, args []string) (string, error, bool) {
+		if hasArgsSuffix(args, "ps", "-q", appmanifest.BitcoinCorePrimaryService) {
+			return containerID + "\n", nil, true
+		}
+		if path != dockerPath {
+			return "", nil, false
+		}
+		prefix := []string{"exec", "-i", containerID, "bitcoin-cli", "-datadir=" + appmanifest.BitcoinCoreContainerDataDir, "-conf=" + appmanifest.BitcoinCoreContainerConfig, "-rpcclienttimeout=40"}
+		if len(args) < len(prefix) || !reflect.DeepEqual(args[:len(prefix)], prefix) {
+			return "", nil, false
+		}
+		switch {
+		case reflect.DeepEqual(args[len(prefix):], []string{"getblockchaininfo"}):
+			return fmt.Sprintf(`{"chain":"main","blocks":954700,"headers":954701,"verificationprogress":0.999,"initialblockdownload":true,"bestblockhash":"%s","pruned":false,"size_on_disk":123}`, hash), nil, true
+		case reflect.DeepEqual(args[len(prefix):], []string{"getnetworkinfo"}):
+			return `{"version":310100,"subversion":"/Satoshi:31.1.0/","connections":12}`, nil, true
+		case reflect.DeepEqual(args[len(prefix):], []string{"getblockheader", hash, "true"}):
+			return `{"time":1780000000}`, nil, true
+		default:
+			return "", nil, false
+		}
+	}
+
+	state, err := manager.BitcoinCoreStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Chain != "main" || state.Blocks != 954700 || state.Headers != 954701 || state.VerificationProgress != 0.999 ||
+		!state.NetworkOK || state.Version != 310100 || state.Connections != 12 || state.BestBlockTime != 1780000000 {
+		t.Fatalf("unexpected bitcoin status: %+v", state)
+	}
+	for _, command := range runner.commands {
+		joined := strings.Join(command.args, " ")
+		if strings.Contains(joined, "rpcuser") || strings.Contains(joined, "rpcpassword") || strings.Contains(joined, "rpcauth") {
+			t.Fatalf("credential material reached command arguments: %#v", command)
+		}
+	}
+}
+
+func TestBitcoinCoreStatusRejectsUntrustedContainerIDBeforeExec(t *testing.T) {
+	manager, runner, _, _ := newTestBitcoinCoreLifecycleManager(t)
+	runner.runningServices = appmanifest.BitcoinCorePrimaryService + "\n"
+	runner.hook = func(_ string, args []string) (string, error, bool) {
+		if hasArgsSuffix(args, "ps", "-q", appmanifest.BitcoinCorePrimaryService) {
+			return "abc;reboot\n", nil, true
+		}
+		return "", nil, false
+	}
+	if _, err := manager.BitcoinCoreStatus(context.Background()); err == nil {
+		t.Fatal("untrusted container ID was accepted")
+	}
+	for _, command := range runner.commands {
+		if command.path == dockerPath && len(command.args) > 0 && command.args[0] == "exec" {
+			t.Fatalf("invalid container ID reached docker exec: %#v", command)
+		}
+	}
+}
+
 func TestBitcoinCoreLifecycleRejectsWrongStorageIdentityBeforeDocker(t *testing.T) {
 	manager, runner, _, dataDir := newTestBitcoinCoreLifecycleManager(t)
 	marker := filepath.Join(dataDir, appmanifest.BitcoinCoreStorageMarker)

@@ -328,8 +328,9 @@ and complete cleanup without starting Bitcoin or creating blockchain data.
 Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-bitcoincore-storage-enforce-2026-08-10.json`.
 
-Secret-bearing `bitcoin.conf` handling now uses three separate typed broker
-operations: `app.bitcoincore.config.ensure`, `.read`, and `.write`. The caller
+Secret-bearing `bitcoin.conf` handling now uses four separate typed broker
+operations: `app.bitcoincore.config.ensure`, `.read`, `.write`, and the
+read-only `app.bitcoincore.credentials.read`. The caller
 supplies only the enrolled `data_dir` and, for mutations, bounded config
 content; it cannot select the destination filename. The broker verifies the
 root-only enrollment metadata and storage marker, rejects symlinks, reads only
@@ -338,6 +339,27 @@ The manager's root-container read/write ladder and manager-side temporary
 secret file have been removed. Existing `101:101` configs are tightened
 atomically without changing their contents, and the old manager-owned seed is
 used only to preserve credentials before being removed after broker success.
+
+Fresh App Store installs no longer generate `rpcuser`/`rpcpassword` in
+`bitcoin.conf`. The manager supplies a credential-free standard template and
+the broker generates a Bitcoin Core-compatible `rpcauth`, stores only its hash
+in the config, and retains the recoverable credential as `root:root 0600` in
+the broker-owned Bitcoin tree. The typed credential read verifies that this
+record and the active `rpcauth` match before LND or a managed app can consume
+it. The operation is local-only and its result is absent from HTTP, audit, and
+logs. Existing configs remain byte-for-byte preserved and are never silently
+rotated or restarted; a legacy `rpcauth` with no retained password requires a
+separate, explicit maintenance migration.
+
+The disposable Ubuntu 24.04 functional gate used the official-source verified
+Bitcoin Core 31.1 image and the config produced by this broker path. Correct
+credentials authenticated to an isolated `regtest` JSON-RPC endpoint and an
+incorrect password was rejected. The first fixture failed closed because
+Bitcoin Core 31 requires regtest-specific RPC settings inside `[regtest]`; the
+fixture was corrected without changing the production mainnet template. Linux
+ownership/idempotency/legacy tests, the full Go suite, vet, both builds, and the
+UI build passed. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-rpcauth-2026-08-11.json`.
 
 The disposable Ubuntu 24.04 gate passed dry-run without creation, config
 ensure/read/write round trips, legacy-owner migration, target/field/content
@@ -694,11 +716,36 @@ and secret-bearing inputs into a root-owned broker snapshot, replace those
 direct Docker/UFW/systemctl calls with typed operations, and prove a complete
 data-preserving lifecycle before the manager can lose Docker-group access.
 
-The full-node Electrs/Mempool gates, the remaining dependent products,
-operational Bitcoin CLI/log paths, and the mainnet P2P firewall contract remain
-open. Electrs and Mempool gates must use a synchronized unpruned node with
-`txindex=1`; regtest is acceptable only as an isolated test chain satisfying
-that same full-index contract.
+Electrs now has a closed source-built image from the verified upstream
+`v0.11.1` archive, fixed manifest and networking, one private dedicated RPC
+cookie, root-owned execution snapshot, typed lifecycle/inspect/remove, and
+fail-closed Full Node checks for authentication, synchronization, pruning, and
+`txindex`. Its Ubuntu 24.04 functional gate used an isolated 101-block regtest
+Full Node with synchronized `txindex=1`; Electrum protocol, metrics,
+stop/start, and volume-removing uninstall passed. The retained LOS TESTE2 node
+was inspected only in read-only mode and was not used to weaken or satisfy the
+positive gate. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-electrs-functional-2026-08-11.json`.
+
+The same slice closes managed-node Bitcoin Local telemetry in broker
+`enforce`: the broker now validates the root-owned Bitcoin execution state and
+uses the runtime cookie through fixed in-container `bitcoin-cli` queries,
+returning only typed status fields. Existing canonical App Store layouts are
+enrolled idempotently without restarting Bitcoin, Docker, networking, or
+dependents. In `shadow`, the existing container/log compatibility reader stays
+authoritative: it reuses a preserved LightningOS Bitcoin Local credential from
+`lnd.conf` when one exists and retains bounded `debug.log` progress when RPC is
+busy. Missing telemetry is shown as unknown rather than `0.00%`.
+Read-only LOS TESTE2 validation confirmed the preserved node was running,
+unpruned, and approximately 99.87% synchronized; the former UI value was an
+authentication/reporting failure, not blockchain loss. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-bitcoincore-status-2026-08-11.json`.
+
+The Mempool full-node gate, the remaining dependent products, operational
+Bitcoin CLI/log paths, and the mainnet P2P firewall contract remain open.
+Mempool must use a synchronized unpruned node with `txindex=1`; regtest is
+acceptable only as an isolated test chain satisfying that same full-index
+contract.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

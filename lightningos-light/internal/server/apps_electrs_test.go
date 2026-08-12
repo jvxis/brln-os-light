@@ -14,6 +14,7 @@ func TestElectrsExternalBitcoinUsesFixedConsumerBoundary(t *testing.T) {
 		BitcoinP2PHost: appmanifest.BitcoinConsumerHostGateway,
 		BitcoinP2PPort: 18444,
 		Network:        "regtest",
+		BitcoinMode:    appmanifest.ElectrsBitcoinModeNative,
 	}
 	compose := electrsComposeContents(electrsPaths{}, values)
 	for _, want := range []string{

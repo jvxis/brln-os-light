@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const systemIntegrationsMarkerPath = "/var/lib/lightningos/system-integrations-20260807-v3"
+const systemIntegrationsMarkerPath = "/var/lib/lightningos/system-integrations-20260811-v4"
 
 //go:embed assets/lightningos-terminal.sh
 var embeddedTerminalHelper string

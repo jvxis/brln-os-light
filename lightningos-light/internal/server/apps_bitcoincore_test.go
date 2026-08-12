@@ -39,6 +39,11 @@ func TestDefaultBitcoinCoreConfigAllowsDedicatedConsumerNetwork(t *testing.T) {
 	if strings.Contains(raw, "rpcallowip=172.17.0.0/16") {
 		t.Fatal("default bitcoin.conf still depends on Docker's mutable bridge subnet")
 	}
+	for _, forbidden := range []string{"rpcuser=", "rpcpassword=", "rpcauth="} {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("manager-side config template contains credentials: %q", forbidden)
+		}
+	}
 }
 
 func TestEnsureBitcoinCoreConsumerRPCValuesMigratesOnce(t *testing.T) {

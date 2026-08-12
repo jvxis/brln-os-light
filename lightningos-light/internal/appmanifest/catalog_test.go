@@ -16,10 +16,21 @@ func TestComposeManifestCatalogIsClosed(t *testing.T) {
 		{id: RoboSatsID, project: RoboSatsProject, service: RoboSatsPrimaryService, timeout: 2},
 		{id: BitcoinCoreID, project: BitcoinCoreProject, service: BitcoinCorePrimaryService, timeout: BitcoinCoreStopTimeout},
 		{id: BTCPayID, project: BTCPayProject, service: BTCPayPrimaryService, timeout: BTCPayStopTimeout},
+		{id: ElectrsID, project: ElectrsProject, service: ElectrsPrimaryService, timeout: ElectrsStopTimeout},
 	} {
 		manifest, err := ComposeManifestForApp(test.id)
 		if err != nil || manifest.ID != test.id || manifest.Project != test.project || manifest.PrimaryService != test.service || manifest.StopTimeoutSeconds != test.timeout {
 			t.Fatalf("manifest/error=%#v/%v", manifest, err)
+		}
+	}
+	electrs, err := ComposeManifestForApp(ElectrsID)
+	if err != nil || !electrs.RemoveVolumes {
+		t.Fatalf("Electrs must remove its reproducible index volume: %#v/%v", electrs, err)
+	}
+	for _, id := range []string{CPUMinerID, RoboSatsID, BitcoinCoreID, BTCPayID} {
+		manifest, err := ComposeManifestForApp(id)
+		if err != nil || manifest.RemoveVolumes {
+			t.Fatalf("%s unexpectedly removes persistent volumes: %#v/%v", id, manifest, err)
 		}
 	}
 	for _, id := range []string{"", "publicpool", "robosats;reboot", "../robosats"} {
@@ -57,6 +68,7 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: BTCPayID, variant: BTCPayImageTor, image: BTCPayTorImage},
 		{appID: LNDgID, variant: LNDgImageApp, image: LNDgImage},
 		{appID: LNbitsID, variant: LNbitsImageApp, image: LNbitsImage},
+		{appID: ElectrsID, variant: ElectrsImageApp, image: ElectrsImage},
 	} {
 		image, err := CatalogImageForVariant(test.appID, test.variant)
 		if err != nil || image != test.image {
@@ -74,6 +86,7 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: BitcoinCoreID, variant: "latest"},
 		{appID: BTCPayID, variant: "latest;reboot"},
 		{appID: LNbitsID, variant: "latest"},
+		{appID: ElectrsID, variant: "latest"},
 	} {
 		if _, err := CatalogImageForVariant(test.appID, test.variant); err == nil {
 			t.Fatalf("expected %s/%s to be rejected", test.appID, test.variant)

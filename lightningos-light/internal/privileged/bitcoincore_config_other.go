@@ -7,8 +7,12 @@ import (
 	"errors"
 )
 
-func (manager *BitcoinCoreConfigManager) Ensure(context.Context, string, string, bool) (BitcoinCoreConfigState, error) {
+func (manager *BitcoinCoreConfigManager) Ensure(context.Context, string, string, bool, bool) (BitcoinCoreConfigState, error) {
 	return BitcoinCoreConfigState{}, errors.New("bitcoin config is supported only on Linux")
+}
+
+func (manager *BitcoinCoreConfigManager) Credentials(context.Context, string) (BitcoinCoreCredentialsState, error) {
+	return BitcoinCoreCredentialsState{}, errors.New("bitcoin credentials are supported only on Linux")
 }
 
 func (manager *BitcoinCoreConfigManager) Read(context.Context, string) (BitcoinCoreConfigState, error) {

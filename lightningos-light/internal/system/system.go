@@ -35,9 +35,14 @@ type PrivilegedClient interface {
 }
 
 type bitcoinCoreConfigPrivilegedClient interface {
-	EnsureBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (status string, err error)
+	EnsureBitcoinCoreConfig(ctx context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (status string, err error)
 	ReadBitcoinCoreConfig(ctx context.Context, dataDir string) (content string, err error)
 	WriteBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (status string, err error)
+	ReadBitcoinCoreCredentials(ctx context.Context, dataDir string) (user string, password string, err error)
+}
+
+type bitcoinCoreStatusPrivilegedClient interface {
+	BitcoinCoreStatus(ctx context.Context) (statusJSON string, err error)
 }
 
 type bitcoinConsumerNetworkPrivilegedClient interface {
@@ -105,7 +110,7 @@ func EnsureBitcoinConsumerNetworkWithBroker(ctx context.Context) (bool, error) {
 	}
 }
 
-func EnsureBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string, content string) (bool, error) {
+func EnsureBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string, content string, generateRPCAuth bool) (bool, error) {
 	client, configClient := configuredBitcoinCoreConfigClient()
 	if client == nil {
 		return false, nil
@@ -115,7 +120,7 @@ func EnsureBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string, cont
 		if configClient == nil {
 			return true, errors.New("bitcoin config broker capability is unavailable")
 		}
-		status, err := configClient.EnsureBitcoinCoreConfig(ctx, dataDir, content, false)
+		status, err := configClient.EnsureBitcoinCoreConfig(ctx, dataDir, content, generateRPCAuth, false)
 		if err != nil {
 			return true, err
 		}
@@ -127,12 +132,27 @@ func EnsureBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string, cont
 		if configClient != nil {
 			shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			_, _ = configClient.EnsureBitcoinCoreConfig(shadowCtx, dataDir, content, true)
+			_, _ = configClient.EnsureBitcoinCoreConfig(shadowCtx, dataDir, content, generateRPCAuth, true)
 		}
 		return false, nil
 	default:
 		return false, nil
 	}
+}
+
+func ReadBitcoinCoreCredentialsWithBroker(ctx context.Context, dataDir string) (string, string, bool, error) {
+	client, configClient := configuredBitcoinCoreConfigClient()
+	if client == nil {
+		return "", "", false, nil
+	}
+	if client.Mode() != "enforce" {
+		return "", "", false, nil
+	}
+	if configClient == nil {
+		return "", "", true, errors.New("bitcoin credentials broker capability is unavailable")
+	}
+	user, password, err := configClient.ReadBitcoinCoreCredentials(ctx, dataDir)
+	return user, password, true, err
 }
 
 func ReadBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string) (string, bool, error) {
@@ -148,6 +168,31 @@ func ReadBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string) (strin
 	}
 	content, err := configClient.ReadBitcoinCoreConfig(ctx, dataDir)
 	return content, true, err
+}
+
+func ReadBitcoinCoreStatusWithBroker(ctx context.Context) (string, bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return "", false, nil
+	}
+	statusClient, ok := client.(bitcoinCoreStatusPrivilegedClient)
+	switch client.Mode() {
+	case "enforce":
+		if !ok {
+			return "", true, errors.New("bitcoin status broker capability is unavailable")
+		}
+		status, err := statusClient.BitcoinCoreStatus(ctx)
+		return status, true, err
+	case "shadow":
+		// Shadow retains the established container/log compatibility path. A
+		// synchronous RPC probe here can take tens of seconds while bitcoind is
+		// indexing and would delay the fallback that already reports progress.
+		return "", false, nil
+	default:
+		return "", false, nil
+	}
 }
 
 func WriteBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string, content string) (bool, error) {
@@ -351,7 +396,10 @@ func PrepareAppImageWithBroker(ctx context.Context, appID string, variant string
 		if status != "preparing" {
 			return true, errors.New("app image preparation returned an invalid state")
 		}
-		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		// Source-built catalog images (notably Electrs) can legitimately take
+		// longer than a registry pull on low-power nodes. The broker's transient
+		// unit remains independently bounded and status polling carries no secret.
+		waitCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 		defer cancel()
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()

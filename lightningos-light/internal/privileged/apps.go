@@ -41,6 +41,7 @@ type ComposeAppManager struct {
 	PrivilegedAppsRoot string
 	LNDDataRoot        string
 	TempRoot           string
+	ElectrsRPCProbe    electrsRPCProbeFunc
 }
 
 type composeAppSnapshot struct {
@@ -166,6 +167,9 @@ func (manager *ComposeAppManager) PrepareImage(ctx context.Context, appID string
 	if appID == appmanifest.LNDgID {
 		return manager.prepareLNDgImage(ctx, unit)
 	}
+	if appID == appmanifest.ElectrsID {
+		return manager.prepareElectrsImage(ctx, unit)
+	}
 	if refresh {
 		state, err = manager.refreshImageStatus(ctx, image, unit)
 		if err != nil || state.Status == "preparing" {
@@ -221,6 +225,9 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 	}
 	if appID == appmanifest.LNDgID {
 		return manager.lndgImageStatus(ctx, unit)
+	}
+	if appID == appmanifest.ElectrsID {
+		return manager.electrsImageStatus(ctx, unit)
 	}
 	if refresh {
 		return manager.refreshImageStatus(ctx, image, unit)
@@ -333,6 +340,9 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 		appmanifest.LNbitsID: {
 			appmanifest.LNbitsImageApp: "lightningos-lnbits-image-app",
 		},
+		appmanifest.ElectrsID: {
+			appmanifest.ElectrsImageApp: "lightningos-electrs-image-app",
+		},
 	}
 	appUnits, ok := units[appID]
 	if !ok {
@@ -442,6 +452,30 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			return nil
 		}
 		snapshot, cleanup, err = manager.createBTCPaySnapshot(files)
+		if err != nil {
+			return err
+		}
+	case appmanifest.ElectrsID:
+		files, err := manager.validatedElectrsFiles()
+		if err != nil {
+			return err
+		}
+		if action == AppLifecycleStart {
+			if dryRun {
+				return nil
+			}
+			if err := manager.validateElectrsBitcoin(ctx, files.runtime, files.cookieRaw); err != nil {
+				return err
+			}
+			state, err := manager.electrsImageStatus(ctx, "lightningos-electrs-image-app")
+			if err != nil || state.Status != "ready" {
+				return errors.New("verified Electrs image is not ready")
+			}
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createElectrsSnapshot(files)
 		if err != nil {
 			return err
 		}
@@ -557,6 +591,19 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 			return err
 		}
 		removePersistentSnapshot = true
+	case appmanifest.ElectrsID:
+		files, err := manager.validatedElectrsFiles()
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createElectrsSnapshot(files)
+		if err != nil {
+			return err
+		}
+		removePersistentSnapshot = true
 	default:
 		return errors.New("app manifest is not allowed")
 	}
@@ -576,6 +623,9 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 		"-f", snapshot.composePath,
 		"down", "--remove-orphans", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds),
 	)
+	if manifest.RemoveVolumes {
+		args = append(args, "--volumes")
+	}
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		return errors.New("app remove command failed")
 	}
@@ -589,6 +639,10 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 		}
 	} else if removePersistentSnapshot && appID == appmanifest.BTCPayID {
 		if err := manager.removeBTCPayExecutionSnapshot(snapshot.root); err != nil {
+			return errors.New("failed to remove app execution snapshot")
+		}
+	} else if removePersistentSnapshot && appID == appmanifest.ElectrsID {
+		if err := manager.removeElectrsExecutionSnapshot(snapshot.root); err != nil {
 			return errors.New("failed to remove app execution snapshot")
 		}
 	}
@@ -667,6 +721,15 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 			return inspection, err
 		}
 		snapshot, cleanup, err = manager.createBTCPaySnapshot(files)
+		if err != nil {
+			return inspection, err
+		}
+	case appmanifest.ElectrsID:
+		files, err := manager.validatedElectrsFiles()
+		if err != nil {
+			return inspection, err
+		}
+		snapshot, cleanup, err = manager.createElectrsSnapshot(files)
 		if err != nil {
 			return inspection, err
 		}

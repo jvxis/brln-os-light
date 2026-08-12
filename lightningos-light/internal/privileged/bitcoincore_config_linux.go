@@ -3,18 +3,26 @@
 package privileged
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
-func (manager *BitcoinCoreConfigManager) Ensure(ctx context.Context, dataDir string, content string, dryRun bool) (BitcoinCoreConfigState, error) {
+func (manager *BitcoinCoreConfigManager) Ensure(ctx context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (BitcoinCoreConfigState, error) {
 	if err := validateBitcoinCoreConfigContent(content); err != nil {
 		return BitcoinCoreConfigState{}, err
+	}
+	if generateRPCAuth {
+		if _, err := bitcoinCoreConfigWithRPCAuth(content, "validation:00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000"); err != nil {
+			return BitcoinCoreConfigState{}, err
+		}
 	}
 	directoryFD, err := manager.openEnrolledDataDir(dataDir)
 	if err != nil {
@@ -43,10 +51,110 @@ func (manager *BitcoinCoreConfigManager) Ensure(ctx context.Context, dataDir str
 	if dryRun {
 		return BitcoinCoreConfigState{Status: "validated"}, nil
 	}
+	if generateRPCAuth {
+		credentials, err := manager.ensureCredentials()
+		if err != nil {
+			return BitcoinCoreConfigState{}, err
+		}
+		content, err = bitcoinCoreConfigWithRPCAuth(content, credentials.RPCAuth)
+		if err != nil {
+			return BitcoinCoreConfigState{}, err
+		}
+	}
 	if err := writeBitcoinCoreConfigAt(ctx, directoryFD, content, nil); err != nil {
 		return BitcoinCoreConfigState{}, err
 	}
 	return BitcoinCoreConfigState{Status: "ready"}, nil
+}
+
+func (manager *BitcoinCoreConfigManager) Credentials(_ context.Context, dataDir string) (BitcoinCoreCredentialsState, error) {
+	directoryFD, err := manager.openEnrolledDataDir(dataDir)
+	if err != nil {
+		return BitcoinCoreCredentialsState{}, err
+	}
+	defer unix.Close(directoryFD)
+
+	credentials, err := manager.readCredentials()
+	if err != nil {
+		return BitcoinCoreCredentialsState{}, err
+	}
+	content, exists, err := readBitcoinCoreConfigAt(directoryFD)
+	if err != nil || !exists || !bitcoinCoreConfigContainsRPCAuth(content, credentials.RPCAuth) {
+		return BitcoinCoreCredentialsState{}, errors.New("bitcoin RPC credentials do not match the active config")
+	}
+	return BitcoinCoreCredentialsState{
+		Status:   "ready",
+		User:     credentials.User,
+		Password: credentials.Password,
+	}, nil
+}
+
+func (manager *BitcoinCoreConfigManager) ensureCredentials() (bitcoinCoreStoredCredentials, error) {
+	credentials, err := manager.readCredentials()
+	if err == nil {
+		return credentials, nil
+	}
+	if !os.IsNotExist(err) {
+		return bitcoinCoreStoredCredentials{}, err
+	}
+	credentials, err = generateBitcoinCoreCredentials()
+	if err != nil {
+		return bitcoinCoreStoredCredentials{}, errors.New("generate bitcoin RPC credentials failed")
+	}
+	raw, err := marshalBitcoinCoreCredentials(credentials)
+	if err != nil {
+		return bitcoinCoreStoredCredentials{}, errors.New("encode bitcoin RPC credentials failed")
+	}
+	root := manager.storageRoot()
+	if err := validateRootOwnedDirectory(root, 0o700); err != nil {
+		return bitcoinCoreStoredCredentials{}, errors.New("bitcoin credential root is unsafe")
+	}
+	path := filepath.Join(root, bitcoinCoreCredentialsFile)
+	if err := writeAtomicRegularFile(path, raw, 0o600); err != nil {
+		return bitcoinCoreStoredCredentials{}, errors.New("persist bitcoin RPC credentials failed")
+	}
+	if err := validateRootOwnedRegularFile(path, 0o600); err != nil {
+		return bitcoinCoreStoredCredentials{}, errors.New("bitcoin RPC credentials are unsafe")
+	}
+	return credentials, nil
+}
+
+func (manager *BitcoinCoreConfigManager) readCredentials() (bitcoinCoreStoredCredentials, error) {
+	root := manager.storageRoot()
+	if err := validateRootOwnedDirectory(root, 0o700); err != nil {
+		return bitcoinCoreStoredCredentials{}, errors.New("bitcoin credential root is unsafe")
+	}
+	path := filepath.Join(root, bitcoinCoreCredentialsFile)
+	if err := validateRootOwnedRegularFile(path, 0o600); err != nil {
+		return bitcoinCoreStoredCredentials{}, err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || len(raw) == 0 || len(raw) > maxBitcoinCoreCredentialsBytes {
+		return bitcoinCoreStoredCredentials{}, errors.New("read bitcoin RPC credentials failed")
+	}
+	var credentials bitcoinCoreStoredCredentials
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&credentials); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return bitcoinCoreStoredCredentials{}, errors.New("bitcoin RPC credentials are invalid")
+	}
+	if err := validateBitcoinCoreCredentials(credentials); err != nil {
+		return bitcoinCoreStoredCredentials{}, err
+	}
+	return credentials, nil
+}
+
+func bitcoinCoreConfigContainsRPCAuth(content string, rpcAuth string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		if trimmed == "rpcauth="+rpcAuth {
+			return true
+		}
+	}
+	return false
 }
 
 func (manager *BitcoinCoreConfigManager) Read(_ context.Context, dataDir string) (BitcoinCoreConfigState, error) {

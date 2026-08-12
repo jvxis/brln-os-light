@@ -12,6 +12,7 @@ type ComposeManifest struct {
 	EnvFile            string
 	PrimaryService     string
 	StopTimeoutSeconds int
+	RemoveVolumes      bool
 }
 
 func ComposeManifestForApp(appID string) (ComposeManifest, error) {
@@ -50,6 +51,16 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			PrimaryService:     BTCPayPrimaryService,
 			StopTimeoutSeconds: BTCPayStopTimeout,
 		}, nil
+	case ElectrsID:
+		return ComposeManifest{
+			ID:                 ElectrsID,
+			Project:            ElectrsProject,
+			ComposeFile:        ElectrsComposeFile,
+			EnvFile:            ElectrsEnvFile,
+			PrimaryService:     ElectrsPrimaryService,
+			StopTimeoutSeconds: ElectrsStopTimeout,
+			RemoveVolumes:      true,
+		}, nil
 	default:
 		return ComposeManifest{}, errors.New("compose app manifest is not allowed")
 	}
@@ -69,6 +80,8 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return LNDgImageForVariant(variant)
 	case LNbitsID:
 		return LNbitsImageForVariant(variant)
+	case ElectrsID:
+		return ElectrsImageForVariant(variant)
 	default:
 		return "", errors.New("app image manifest is not allowed")
 	}

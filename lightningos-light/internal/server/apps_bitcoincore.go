@@ -361,7 +361,8 @@ func runBitcoinCoreLifecycle(ctx context.Context, action string) error {
 
 func inspectBitcoinCoreStatus(ctx context.Context) (string, error) {
 	if handled, status, _, err := system.InspectAppWithBroker(ctx, appmanifest.BitcoinCoreID); !handled {
-		return "unknown", errors.New("Bitcoin Core status requires privileged broker enforce mode")
+		paths := bitcoinCoreAppPaths()
+		return getComposeStatus(ctx, paths.Root, paths.ComposePath, appmanifest.BitcoinCorePrimaryService)
 	} else if err != nil {
 		return "unknown", fmt.Errorf("Bitcoin Core status failed: %w", err)
 	} else {
@@ -381,7 +382,7 @@ func ensureBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) error 
 	if legacyExists {
 		content = ensureTrailingNewline(legacyContent)
 	}
-	if handled, err := system.EnsureBitcoinCoreConfigWithBroker(ctx, paths.DataDir, content); handled {
+	if handled, err := system.EnsureBitcoinCoreConfigWithBroker(ctx, paths.DataDir, content, !legacyExists); handled {
 		if err != nil {
 			return fmt.Errorf("failed to ensure bitcoin.conf: %w", err)
 		}
@@ -436,18 +437,12 @@ func removeLegacyBitcoinCoreSeedConfig(root string) error {
 }
 
 func defaultBitcoinCoreConfig() (string, error) {
-	password, err := randomToken(32)
-	if err != nil {
-		return "", err
-	}
 	lines := []string{
 		"server=1",
 		"printtoconsole=1",
 		"txindex=1",
 		"natpmp=0",
 		"upnp=0",
-		"rpcuser=lightningos",
-		"rpcpassword=" + password,
 		"rpcbind=0.0.0.0:8332",
 		"rpcallowip=127.0.0.1",
 		"rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet,

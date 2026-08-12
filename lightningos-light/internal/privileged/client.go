@@ -332,12 +332,28 @@ func (client *Client) EnsureBitcoinConsumerNetwork(ctx context.Context, dryRun b
 	return result.Status, nil
 }
 
-func (client *Client) EnsureBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (string, error) {
-	response, err := client.call(ctx, OperationBitcoinConfigEnsure, BitcoinCoreConfigWriteParams{DataDir: dataDir, Content: content}, dryRun)
+func (client *Client) EnsureBitcoinCoreConfig(ctx context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBitcoinConfigEnsure, BitcoinCoreConfigWriteParams{DataDir: dataDir, Content: content, GenerateRPCAuth: generateRPCAuth}, dryRun)
 	if err != nil {
 		return "", err
 	}
 	return client.decodeBitcoinCoreConfigUpdate(response, dryRun, OperationBitcoinConfigEnsure)
+}
+
+func (client *Client) ReadBitcoinCoreCredentials(ctx context.Context, dataDir string) (string, string, error) {
+	response, err := client.call(ctx, OperationBitcoinCredentialsRead, BitcoinCoreConfigTargetParams{DataDir: dataDir}, false)
+	if err != nil {
+		return "", "", err
+	}
+	var result BitcoinCoreCredentialsState
+	if err := decodeStrict(response.Result, &result); err != nil || result.Status != "ready" ||
+		result.User != appmanifest.BitcoinCoreRPCUser || len(result.Password) != 64 {
+		return "", "", errors.New("invalid broker bitcoin credentials response")
+	}
+	if _, err := hex.DecodeString(result.Password); err != nil {
+		return "", "", errors.New("invalid broker bitcoin credentials response")
+	}
+	return result.User, result.Password, nil
 }
 
 func (client *Client) ReadBitcoinCoreConfig(ctx context.Context, dataDir string) (string, error) {
@@ -353,6 +369,22 @@ func (client *Client) ReadBitcoinCoreConfig(ctx context.Context, dataDir string)
 		return "", errors.New("invalid broker bitcoin config content")
 	}
 	return result.Content, nil
+}
+
+func (client *Client) BitcoinCoreStatus(ctx context.Context) (string, error) {
+	response, err := client.call(ctx, OperationBitcoinStatus, struct{}{}, false)
+	if err != nil {
+		return "", err
+	}
+	var result BitcoinCoreStatusState
+	if err := decodeStrict(response.Result, &result); err != nil || validateBitcoinCoreStatusState(result) != nil {
+		return "", errors.New("invalid broker bitcoin status response")
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return "", errors.New("invalid broker bitcoin status response")
+	}
+	return string(raw), nil
 }
 
 func (client *Client) WriteBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (string, error) {

@@ -8,6 +8,7 @@ import (
 
 const (
 	bitcoinStatusCacheOK            = 30 * time.Second
+	bitcoinLocalStatusCacheOK       = 2 * time.Minute
 	bitcoinStatusCacheStale         = 10 * time.Second
 	bitcoinStatusCacheErr           = 45 * time.Second
 	bitcoinStatusStaleOKGrace       = 2 * time.Minute
@@ -43,7 +44,7 @@ func bitcoinLocalStatusTTL(status bitcoinLocalStatus, err error) time.Duration {
 	if err != nil || !status.RPCOk {
 		return bitcoinStatusCacheErr
 	}
-	return bitcoinStatusCacheOK
+	return bitcoinLocalStatusCacheOK
 }
 
 func (s *Server) invalidateBitcoinStatusCaches() {

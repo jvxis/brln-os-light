@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -81,6 +82,9 @@ type fakePrivilegedServiceClient struct {
 	configDryRun        bool
 	configStatus        string
 	configErr           error
+	bitcoinStatusCalls  int
+	bitcoinStatusJSON   string
+	bitcoinStatusErr    error
 }
 
 func (client *fakePrivilegedServiceClient) EnsureBitcoinConsumerNetwork(_ context.Context, dryRun bool) (string, error) {
@@ -234,15 +238,24 @@ func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreStorage(_ context.Co
 	return status, client.storageErr
 }
 
-func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreConfig(_ context.Context, dataDir string, content string, dryRun bool) (string, error) {
+func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreConfig(_ context.Context, dataDir string, content string, _ bool, dryRun bool) (string, error) {
 	client.recordBitcoinCoreConfig("ensure", dataDir, content, dryRun)
 	return client.bitcoinCoreConfigStatus(dryRun), client.configErr
+}
+
+func (client *fakePrivilegedServiceClient) ReadBitcoinCoreCredentials(context.Context, string) (string, string, error) {
+	return "lightningos", strings.Repeat("a", 64), nil
 }
 
 func (client *fakePrivilegedServiceClient) ReadBitcoinCoreConfig(_ context.Context, dataDir string) (string, error) {
 	content := client.configContent
 	client.recordBitcoinCoreConfig("read", dataDir, "", false)
 	return content, client.configErr
+}
+
+func (client *fakePrivilegedServiceClient) BitcoinCoreStatus(_ context.Context) (string, error) {
+	client.bitcoinStatusCalls++
+	return client.bitcoinStatusJSON, client.bitcoinStatusErr
 }
 
 func (client *fakePrivilegedServiceClient) WriteBitcoinCoreConfig(_ context.Context, dataDir string, content string, dryRun bool) (string, error) {
@@ -717,7 +730,7 @@ func TestBitcoinCoreConfigBrokerHelpersAreEnforceOnly(t *testing.T) {
 		client := &fakePrivilegedServiceClient{mode: "shadow"}
 		ConfigurePrivilegedClient(client)
 		t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
-		handled, err := EnsureBitcoinCoreConfigWithBroker(context.Background(), dataDir, content)
+		handled, err := EnsureBitcoinCoreConfigWithBroker(context.Background(), dataDir, content, true)
 		if err != nil || handled || client.configCalls != 1 || client.configOperation != "ensure" || !client.configDryRun || client.configContent != content {
 			t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
 		}
@@ -736,4 +749,34 @@ func TestBitcoinCoreConfigBrokerHelpersAreEnforceOnly(t *testing.T) {
 			t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
 		}
 	})
+}
+
+func TestBitcoinCoreStatusBrokerHelperUsesReadOnlyCapability(t *testing.T) {
+	const statusJSON = `{"chain":"main","blocks":100}`
+	for _, test := range []struct {
+		name        string
+		mode        string
+		brokerErr   error
+		wantHandled bool
+		wantErr     bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce failure", mode: "enforce", brokerErr: errors.New("unavailable"), wantHandled: true, wantErr: true, wantCalls: 1},
+		{name: "shadow preserves compatibility status", mode: "shadow"},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, bitcoinStatusJSON: statusJSON, bitcoinStatusErr: test.brokerErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			raw, handled, err := ReadBitcoinCoreStatusWithBroker(context.Background())
+			if handled != test.wantHandled || (err != nil) != test.wantErr || client.bitcoinStatusCalls != test.wantCalls {
+				t.Fatalf("raw/handled/error/client=%q/%v/%v/%#v", raw, handled, err, client)
+			}
+			if test.wantHandled && !test.wantErr && raw != statusJSON {
+				t.Fatalf("status=%q want=%q", raw, statusJSON)
+			}
+		})
+	}
 }

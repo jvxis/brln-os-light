@@ -157,8 +157,9 @@ func TestBitcoinCoreStorageRequestUsesCanonicalClosedPath(t *testing.T) {
 func TestBitcoinCoreConfigRequestsAreClosedAndSecretBounded(t *testing.T) {
 	valid := []string{
 		`{"version":1,"request_id":"bitcoin_config_1","operation":"app.bitcoincore.config.read","params":{"data_dir":"/mnt/bitcoin-ssd/bitcoin"}}`,
-		`{"version":1,"request_id":"bitcoin_config_2","operation":"app.bitcoincore.config.ensure","params":{"data_dir":"/mnt/bitcoin-ssd/bitcoin","content":"server=1\nrpcpassword=secret\n"}}`,
+		`{"version":1,"request_id":"bitcoin_config_2","operation":"app.bitcoincore.config.ensure","params":{"data_dir":"/mnt/bitcoin-ssd/bitcoin","content":"server=1\n","generate_rpcauth":true}}`,
 		`{"version":1,"request_id":"bitcoin_config_3","operation":"app.bitcoincore.config.write","dry_run":true,"params":{"data_dir":"/data/bitcoin","content":"server=1\n"}}`,
+		`{"version":1,"request_id":"bitcoin_credentials_1","operation":"app.bitcoincore.credentials.read","params":{"data_dir":"/data/bitcoin"}}`,
 	}
 	for _, payload := range valid {
 		if _, err := DecodeRequest(strings.NewReader(payload)); err != nil {
@@ -172,10 +173,29 @@ func TestBitcoinCoreConfigRequestsAreClosedAndSecretBounded(t *testing.T) {
 		`{"version":1,"request_id":"bitcoin_config_6","operation":"app.bitcoincore.config.ensure","params":{"data_dir":"/data/bitcoin","content":"server=1"}}`,
 		`{"version":1,"request_id":"bitcoin_config_7","operation":"app.bitcoincore.config.write","params":{"data_dir":"/data/bitcoin","content":"server=1\r\n"}}`,
 		`{"version":1,"request_id":"bitcoin_config_8","operation":"app.bitcoincore.config.write","params":{"data_dir":"/data/bitcoin","content":"server=1\n","path":"/etc/passwd"}}`,
+		`{"version":1,"request_id":"bitcoin_config_9","operation":"app.bitcoincore.config.write","params":{"data_dir":"/data/bitcoin","content":"server=1\n","generate_rpcauth":true}}`,
+		`{"version":1,"request_id":"bitcoin_credentials_2","operation":"app.bitcoincore.credentials.read","dry_run":true,"params":{"data_dir":"/data/bitcoin"}}`,
+		`{"version":1,"request_id":"bitcoin_credentials_3","operation":"app.bitcoincore.credentials.read","params":{"data_dir":"/data/bitcoin","user":"attacker"}}`,
 	}
 	for _, payload := range invalid {
 		if _, err := DecodeRequest(strings.NewReader(payload)); err == nil {
 			t.Fatalf("unsafe bitcoin config request accepted: %s", payload)
+		}
+	}
+}
+
+func TestBitcoinCoreStatusRequestIsReadOnlyAndParameterless(t *testing.T) {
+	valid := `{"version":1,"request_id":"bitcoin_status_1","operation":"app.bitcoincore.status","params":{}}`
+	if _, err := DecodeRequest(strings.NewReader(valid)); err != nil {
+		t.Fatalf("valid bitcoin status request rejected: %v", err)
+	}
+	for _, payload := range []string{
+		`{"version":1,"request_id":"bitcoin_status_2","operation":"app.bitcoincore.status","dry_run":true,"params":{}}`,
+		`{"version":1,"request_id":"bitcoin_status_3","operation":"app.bitcoincore.status","params":{"method":"stop"}}`,
+		`{"version":1,"request_id":"bitcoin_status_4","operation":"app.bitcoincore.status","params":{"data_dir":"/etc"}}`,
+	} {
+		if _, err := DecodeRequest(strings.NewReader(payload)); err == nil {
+			t.Fatalf("unsafe bitcoin status request accepted: %s", payload)
 		}
 	}
 }

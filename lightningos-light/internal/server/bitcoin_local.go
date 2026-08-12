@@ -31,6 +31,7 @@ const (
 	bitcoinCadenceMinBudget          = 3 * time.Second
 	bitcoinCLIRPCWaitTimeoutSec      = 10
 	bitcoinCLIRPCClientTimeoutSec    = 8
+	maxBitcoinBrokerStatusBytes      = 64 * 1024
 )
 
 type bitcoinLocalStatus struct {
@@ -168,6 +169,26 @@ func (s *Server) bitcoinLocalStatus(ctx context.Context) (bitcoinLocalStatus, er
 	}
 	resp.Installed = true
 	resp.Source = "app"
+
+	if brokerRaw, handled, brokerErr := system.ReadBitcoinCoreStatusWithBroker(ctx); handled {
+		resp.Status = "running"
+		if brokerErr != nil {
+			resp.Status = "unknown"
+			resp.RPCOk = false
+			return resp, nil
+		}
+		brokerStatus, err := parseBitcoinCoreBrokerStatus(brokerRaw)
+		if err != nil {
+			resp.Status = "unknown"
+			resp.RPCOk = false
+			return resp, nil
+		}
+		brokerStatus.Installed = resp.Installed
+		brokerStatus.Status = resp.Status
+		brokerStatus.Source = resp.Source
+		brokerStatus.DataDir = resp.DataDir
+		return brokerStatus, nil
+	}
 
 	status, err := inspectBitcoinCoreStatus(ctx)
 	if err != nil {
@@ -343,20 +364,27 @@ func readBitcoinCoreAppRPCConfig(ctx context.Context, paths bitcoinCorePaths) (b
 		return bitcoinRPCConfig{}, false
 	}
 	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
-	if err != nil {
-		return bitcoinRPCConfig{}, false
+	if err == nil {
+		user, pass, zmqBlock, zmqTx := parseBitcoinCoreRPCConfig(raw)
+		if user != "" && pass != "" {
+			return bitcoinRPCConfig{
+				Host:     "127.0.0.1:8332",
+				User:     user,
+				Pass:     pass,
+				ZMQBlock: normalizeLocalZMQ(zmqBlock, "tcp://127.0.0.1:28332"),
+				ZMQTx:    normalizeLocalZMQ(zmqTx, "tcp://127.0.0.1:28333"),
+			}, true
+		}
 	}
-	user, pass, zmqBlock, zmqTx := parseBitcoinCoreRPCConfig(raw)
-	if user == "" || pass == "" {
-		return bitcoinRPCConfig{}, false
+
+	// Older source-switching flows retained the App Store credential in the
+	// commented LightningOS Bitcoin Local block while LND used a remote node.
+	// Reuse it only for this compatibility status path and only when its host
+	// remains local. The enforce path authenticates through the runtime cookie.
+	if cfg, ok := readBitcoinTaggedRPCConfigFromLNDConf("local"); ok && isLocalRPCHost(cfg.Host) {
+		return cfg, true
 	}
-	return bitcoinRPCConfig{
-		Host:     "127.0.0.1:8332",
-		User:     user,
-		Pass:     pass,
-		ZMQBlock: normalizeLocalZMQ(zmqBlock, "tcp://127.0.0.1:28332"),
-		ZMQTx:    normalizeLocalZMQ(zmqTx, "tcp://127.0.0.1:28333"),
-	}, true
+	return bitcoinRPCConfig{}, false
 }
 
 func bitcoinInfoToCLIChainInfo(info bitcoinInfo) bitcoinCLIChainInfo {
@@ -785,6 +813,20 @@ func applyBitcoinLogTipToLocalStatus(status *bitcoinLocalStatus, tip bitcoinLogT
 	status.BestBlockTime = tip.Time
 	status.VerificationProgress = tip.Progress
 	status.InitialBlockDownload = tip.Progress < 0.999999
+}
+
+func parseBitcoinCoreBrokerStatus(raw string) (bitcoinLocalStatus, error) {
+	var status bitcoinLocalStatus
+	if len(raw) == 0 || len(raw) > maxBitcoinBrokerStatusBytes {
+		return status, errors.New("bitcoin broker status is invalid")
+	}
+	if err := json.Unmarshal([]byte(raw), &status); err != nil || status.Chain != "main" ||
+		status.Blocks < 0 || status.Headers < 0 || status.Blocks > status.Headers ||
+		status.VerificationProgress < 0 || status.VerificationProgress > 1 || strings.TrimSpace(status.BestBlockHash) == "" {
+		return bitcoinLocalStatus{}, errors.New("bitcoin broker status is invalid")
+	}
+	status.RPCOk = true
+	return status, nil
 }
 
 func applyBitcoinInfoToLocalStatus(status *bitcoinLocalStatus, info bitcoinInfo) {

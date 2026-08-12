@@ -1,0 +1,75 @@
+{
+  "schema": "lightningos.privilege-hardening.elements-boundary.v1",
+  "captured_at": "2026-08-12T13:42:00Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "node": "LOS-TESTE2",
+  "scope": "state-preserving Elements native boundary migration",
+  "source": {
+    "project": "ElementsProject/elements",
+    "release": "elements-23.3.3",
+    "amd64_sha256": "90d6659a4f5d6d94bbf2321f6114e1286fbec8031cfc614b2f2319ddfcd9b3e1",
+    "arm64_sha256": "279c6cf96ca0583e93fa8531ca671ffde91694254fce4719e6f3b1d0d883dd34",
+    "broker_binary_sha256": "2b7a329d44f599c6361099b6fefbe634db71f6872ab2180f6506371a6bd19df6"
+  },
+  "preserved_state": {
+    "elements_before": {
+      "enabled": "disabled",
+      "active": "inactive",
+      "config_sha256": "1f8876b3ba756ba4105feebc008db17b04cea234acb0256b109bd6d3e111e8f8",
+      "rpc_env_sha256": "1262c4ee71db0a705bc8ca5eb74e6176e5c052a88f0309ef2272d19de3a8a7b4"
+    },
+    "elements_after": {
+      "enabled": "disabled",
+      "active": "inactive",
+      "config_sha256": "1f8876b3ba756ba4105feebc008db17b04cea234acb0256b109bd6d3e111e8f8",
+      "rpc_env_sha256": "1262c4ee71db0a705bc8ca5eb74e6176e5c052a88f0309ef2272d19de3a8a7b4"
+    },
+    "bitcoin_container_started_at_before": "2026-08-07T15:01:47.444810527Z",
+    "bitcoin_container_started_at_after": "2026-08-07T15:01:47.444810527Z",
+    "lnd_active_enter_timestamp_before": "Sun 2026-08-09 12:55:52 UTC",
+    "lnd_active_enter_timestamp_after": "Sun 2026-08-09 12:55:52 UTC"
+  },
+  "boundary": {
+    "service_user": "lightningos-elements",
+    "human_operator_user_removed_from_app_tree": true,
+    "human_operator_user_removed_from_data_tree": true,
+    "manager_can_read_config_directly": false,
+    "app_root_mode": "2750",
+    "data_root_mode": "0750",
+    "config_mode": "0600",
+    "storage_metadata_owner": "root:root",
+    "storage_metadata_mode": "0600",
+    "unregistered_config_read_rejected": true,
+    "systemd_verify": "passed",
+    "systemd_confinement": [
+      "ProtectSystem=strict",
+      "ProtectHome=true",
+      "PrivateDevices=true",
+      "NoNewPrivileges=true",
+      "MemoryDenyWriteExecute=true",
+      "ReadWritePaths=<enrolled Elements data directory>"
+    ]
+  },
+  "broker_gates": {
+    "ensure_dry_run": "passed",
+    "ensure_existing_inactive": "passed",
+    "status_existing_inactive": "stopped",
+    "lifecycle_start_dry_run": "passed",
+    "remove_dry_run": "passed",
+    "config_read_enrolled": "passed",
+    "config_read_unenrolled": "rejected"
+  },
+  "local_gates": {
+    "focused_go_tests": "passed",
+    "go_vet": "passed",
+    "manager_build": "passed",
+    "broker_build_linux_amd64": "passed",
+    "privileged_manager_call_sites": 0,
+    "privileged_shell_literals": 0,
+    "git_diff_check": "passed"
+  },
+  "network_mutation": false,
+  "service_lifecycle_mutation": false,
+  "temporary_files_cleaned": true,
+  "secrets_captured": false
+}

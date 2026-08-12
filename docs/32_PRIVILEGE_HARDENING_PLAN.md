@@ -846,6 +846,38 @@ remote gate files were removed. Clean install, reboot persistence, and
 Ubuntu 24.04/26.04 remain in the shared final matrix. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-lightning-loop-boundary-2026-08-12.json`.
 
+The Elements half of the coupled Elements/PeerSwap domain is accepted. The
+manager now has zero direct privileged call sites for Elements. A closed broker
+contract owns storage enrollment, the dedicated `lightningos-elements`
+identity, official release download and fixed SHA-256 verification, bounded
+archive extraction, config merge/read, hardened unit, typed status/RPC,
+lifecycle, and removal. The official `elements-23.3.3` amd64 and arm64 digests
+are fixed in the shared catalog; callers cannot select a release URL, checksum,
+binary, service identity, unit, RPC method, or unenrolled config path.
+
+Existing configs are merged inside the broker only after the operator-selected
+storage target passes canonical mounted-filesystem validation. The default
+path remains supported, while a distinct/external volume remains a first-class
+installation choice and is persisted as the active enrolled target. The broker
+forces loopback-only RPC values, rejects any additional public `rpcbind` or
+`rpcallowip`, preserves
+unknown operator options, and permits later config reads only for the
+root-enrolled target. The service no longer runs as human operator `losop`; its
+unit uses `ProtectSystem=strict`, `ProtectHome=true`, private devices, no new
+privileges, and write access only to the enrolled data tree.
+
+LOS TESTE2 supplied the state-preserving gate with Elements installed but
+inactive/disabled on its existing external mounted storage. Real ensure
+migrated ownership and the unit without starting the daemon. Config and RPC
+credential hashes were unchanged, an unenrolled config read failed closed,
+dry-run start/removal passed, and no legacy `losop` ownership remained in the
+app or data tree. Bitcoin and LND retained their exact timestamps. PeerSwap
+remains the open half of this domain and must consume the enrolled local
+Elements boundary without recreating a config/storage shell path, while
+preserving its independent remote/external Elements RPC mode. Evidence is
+stored in
+`docs/baselines/privilege-hardening-phase2-elements-boundary-2026-08-12.json`.
+
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC
 cookie, root-owned execution snapshot, typed lifecycle/inspect/remove, and

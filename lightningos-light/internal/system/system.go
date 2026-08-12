@@ -66,6 +66,101 @@ type loopPrivilegedClient interface {
 	EnsureLoopClientMaterial(ctx context.Context, dryRun bool) error
 }
 
+type elementsPrivilegedClient interface {
+	ElementsStatus(ctx context.Context, dataDir string) (statusJSON string, err error)
+	ReadElementsConfig(ctx context.Context, dataDir string) (content string, err error)
+	EnsureElements(ctx context.Context, dataDir string, content string, dryRun bool) (status string, err error)
+	ElementsLifecycle(ctx context.Context, dataDir string, action string, dryRun bool) (status string, err error)
+	RemoveElements(ctx context.Context, dataDir string, dryRun bool) error
+}
+
+func ElementsStatusWithBroker(ctx context.Context, dataDir string) (bool, string, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, "", nil
+	}
+	elementsClient, ok := client.(elementsPrivilegedClient)
+	if !ok {
+		return true, "", errors.New("privileged broker does not support Elements")
+	}
+	raw, err := elementsClient.ElementsStatus(ctx, dataDir)
+	return true, raw, err
+}
+
+func ReadElementsConfigWithBroker(ctx context.Context, dataDir string) (bool, string, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, "", nil
+	}
+	elementsClient, ok := client.(elementsPrivilegedClient)
+	if !ok {
+		return true, "", errors.New("privileged broker does not support Elements")
+	}
+	content, err := elementsClient.ReadElementsConfig(ctx, dataDir)
+	return true, content, err
+}
+
+func EnsureElementsWithBroker(ctx context.Context, dataDir, content string) (bool, error) {
+	return elementsMutationWithBroker(ctx, func(callCtx context.Context, client elementsPrivilegedClient, dryRun bool) error {
+		_, err := client.EnsureElements(callCtx, dataDir, content, dryRun)
+		return err
+	})
+}
+
+func ElementsLifecycleWithBroker(ctx context.Context, dataDir, action string) (bool, error) {
+	return elementsMutationWithBroker(ctx, func(callCtx context.Context, client elementsPrivilegedClient, dryRun bool) error {
+		_, err := client.ElementsLifecycle(callCtx, dataDir, action, dryRun)
+		return err
+	})
+}
+
+func RemoveElementsWithBroker(ctx context.Context, dataDir string) (bool, error) {
+	return elementsMutationWithBroker(ctx, func(callCtx context.Context, client elementsPrivilegedClient, dryRun bool) error {
+		return client.RemoveElements(callCtx, dataDir, dryRun)
+	})
+}
+
+func RestartElementsWithBroker(ctx context.Context) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, nil
+	}
+	return true, client.RestartService(ctx, "lightningos-elements", false, false)
+}
+
+func elementsMutationWithBroker(ctx context.Context, operation func(context.Context, elementsPrivilegedClient, bool) error) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	elementsClient, ok := client.(elementsPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker does not support Elements")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, operation(ctx, elementsClient, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		_ = operation(shadowCtx, elementsClient, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
 type LoopBrokerState struct {
 	Installed          bool
 	Status             string

@@ -11,8 +11,8 @@ The registry exposes 20 app IDs through the common `Info`, `Install`,
 | Family | App IDs | Current lifecycle boundary | Additional privileged dependencies |
 | --- | --- | --- | --- |
 | Docker Compose | `bitcoincore`, `bark-wallet`, `electrs`, `mempool`, `fedimint-guardian`, `fedimint-gateway`, `lndg`, `lnbits`, `btcpay`, `robosats`, `publicpool`, `cpuminer`, `tapd` | Generic `runCompose(root, composePath, args...)` with caller-selected paths and argument slices | Docker/Compose installation, image probes and pulls, container inspect/stats/exec/update, Docker network inspection, UFW, LND compatibility changes, and storage repair, depending on the app |
-| Native systemd | `elements`, `peerswap` | Generic privileged systemd and shell helpers | Units, binaries, config/data trees, users/groups, ownership, firewall, and credential material |
-| Native systemd (migrated) | `loop` | Closed typed broker operations; no direct privileged manager call | Final Ubuntu 24.04/26.04 clean-install, reboot, and shared cutover matrix |
+| Native systemd | `peerswap` | Generic privileged systemd and shell helpers | Units, bundled binaries, config trees, dedicated LND/Elements credentials, firewall, and ownership |
+| Native systemd (migrated) | `loop`, `elements` | Closed typed broker operations; no direct privileged manager call | Final Ubuntu 24.04/26.04 clean-install, reboot, and shared cutover matrix; PeerSwap integration for Elements |
 | In-process feature toggle | `depixbuy`, `fswap`, `loopout-brln`, `magma-sales` | Manager service state/configuration | Persistent database or fixed environment state; no container lifecycle |
 
 The 13 Compose apps do not share one safe free-form command shape. Observed
@@ -184,6 +184,23 @@ Cleanup removed the tmpfs, marker, and storage metadata while preserving the
 official image attestation; Bitcoin never started and LOS-TEST2 was untouched.
 Secret-bearing `bitcoin.conf` read/write is the next slice. Lifecycle admission
 follows only after config and fixed Compose mounts are independently validated.
+
+## Accepted native Elements boundary
+
+Elements has moved out of the generic native-systemd bucket. The broker now
+owns the operator-selected default or distinct/external root-enrolled mounted
+storage target, the dedicated `lightningos-elements` identity, digest-pinned
+official release binaries,
+bounded extraction, safe existing-config merge, post-enrollment config reads,
+the hardened fixed unit, two allowlisted read-only RPC status calls, lifecycle,
+and removal. The manager-side Elements files have zero direct privileged calls
+and their Phase 0 budget entries were removed. LOS TESTE2 proved the real
+existing-node migration while inactive/disabled, with config/credential hashes
+and Bitcoin/LND timestamps unchanged. PeerSwap remains pending and must consume
+this provider boundary rather than access Elements storage through a privileged
+shell; its existing remote/external Elements RPC mode must remain independent
+of the locally enrolled volume. Evidence is in
+`docs/baselines/privilege-hardening-phase2-elements-boundary-2026-08-12.json`.
 
 ## Migration order
 

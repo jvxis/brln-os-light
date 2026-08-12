@@ -56,6 +56,7 @@ func main() {
 		BitcoinStorage: privileged.NewBitcoinCoreStorageManager(),
 		BitcoinConfig:  privileged.NewBitcoinCoreConfigManager(),
 		Loop:           privileged.NewNativeLoopManager(runner),
+		Elements:       privileged.NewNativeElementsManager(runner),
 		Caller:         caller,
 		Timeout:        15 * time.Second,
 	}

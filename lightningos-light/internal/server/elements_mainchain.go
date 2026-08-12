@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"lightningos-light/internal/config"
+	"lightningos-light/internal/system"
 )
 
 type elementsMainchainState struct {
@@ -93,7 +94,10 @@ func (s *Server) handleElementsMainchainPost(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if _, err := runSystemd(ctx, "systemctl", "restart", elementsServiceName); err != nil {
+	if handled, err := system.RestartElementsWithBroker(ctx); !handled {
+		writeError(w, http.StatusInternalServerError, "elements restart requires privileged broker enforce mode")
+		return
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "elements restart failed")
 		return
 	}

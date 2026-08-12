@@ -2,23 +2,22 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 
 	"lightningos-light/internal/config"
+	"lightningos-light/internal/system"
 )
 
 const (
 	elementsAppID            = "elements"
-	elementsVersion          = "23.3.3"
-	elementsUser             = "losop"
 	elementsServiceName      = "lightningos-elements"
 	elementsRPCPort          = 7041
 	elementsFallbackFee      = "0.00001"
@@ -236,9 +235,6 @@ func (s *Server) installElementsWithOptions(ctx context.Context, opts elementsIn
 				return err
 			}
 		} else {
-			if err := validateElementsInstallDataDir(ctx, normalized); err != nil {
-				return err
-			}
 			if err := writeElementsDataDir(normalized); err != nil {
 				return err
 			}
@@ -252,22 +248,17 @@ func (s *Server) installElementsWithOptions(ctx context.Context, opts elementsIn
 	if err := os.MkdirAll(paths.AppDataDir, 0750); err != nil {
 		return fmt.Errorf("failed to create app data directory: %w", err)
 	}
-	if err := ensureElementsDataDir(ctx, paths); err != nil {
+	handled, err := s.prepareElementsWithBroker(ctx, paths)
+	if !handled {
+		return errors.New("Elements preparation requires privileged broker enforce mode")
+	}
+	if err != nil {
 		return err
 	}
-	if err := ensureElementsBinary(ctx, paths); err != nil {
-		return err
+	if lifecycleHandled, lifecycleErr := system.ElementsLifecycleWithBroker(ctx, paths.DataDir, "start"); lifecycleHandled {
+		return lifecycleErr
 	}
-	if err := ensureElementsConfig(ctx, paths, s.cfg); err != nil {
-		return err
-	}
-	if err := ensureElementsService(ctx, paths); err != nil {
-		return err
-	}
-	if _, err := runSystemd(ctx, elementsStartSystemctlArgs()...); err != nil {
-		return err
-	}
-	return nil
+	return errors.New("Elements lifecycle requires privileged broker enforce mode")
 }
 
 func resolveElementsInstallDataDir(ctx context.Context, opts elementsInstallOptions) (string, bool, error) {
@@ -289,117 +280,22 @@ func resolveElementsInstallDataDir(ctx context.Context, opts elementsInstallOpti
 	return "", false, nil
 }
 
-func validateElementsInstallDataDir(ctx context.Context, dataDir string) error {
-	normalized, err := normalizeElementsDataDir(dataDir)
-	if err != nil {
-		return err
-	}
-	parent := path.Dir(normalized)
-	script := fmt.Sprintf(`set -e
-parent=%s
-data=%s
-user=%s
-if ! id "$user" >/dev/null 2>&1; then
-  echo "service user does not exist: $user" >&2
-  exit 11
-fi
-nearest="$parent"
-while [ ! -e "$nearest" ] && [ "$nearest" != "/" ]; do
-  nearest="$(dirname "$nearest")"
-done
-if [ ! -d "$nearest" ]; then
-  echo "nearest existing parent is not a directory: $nearest" >&2
-  exit 12
-fi
-if command -v findmnt >/dev/null 2>&1; then
-  mount_target="$(findmnt -T "$nearest" -no TARGET 2>/dev/null | head -n1 || true)"
-  if [ -z "$mount_target" ]; then
-    echo "parent directory is not on a mounted filesystem: $nearest" >&2
-    exit 13
-  fi
-  if [ "$mount_target" = "/" ]; then
-    echo "parent directory is on the root filesystem; mount the target volume first: $parent" >&2
-    exit 14
-  fi
-fi
-mkdir -p "$parent"
-mkdir -p "$data"
-if [ ! -d "$data" ]; then
-  echo "data directory is not a directory: $data" >&2
-  exit 15
-fi
-grant_traverse() {
-  dir="$1"
-  if command -v setfacl >/dev/null 2>&1; then
-    setfacl -m "u:$user:x" "$dir" 2>/dev/null || chmod o+x "$dir"
-  else
-    chmod o+x "$dir"
-  fi
-}
-current=""
-rest="${parent#/}"
-old_ifs="$IFS"
-IFS="/"
-for part in $rest; do
-  current="$current/$part"
-  if [ -d "$current" ]; then
-    grant_traverse "$current"
-  fi
-done
-IFS="$old_ifs"
-chown "$user:$user" "$data"
-chmod 750 "$data"
-if ! command -v runuser >/dev/null 2>&1; then
-  echo "runuser is required to validate $user access" >&2
-  exit 16
-fi
-runuser -u "$user" -- test -x "$parent"
-runuser -u "$user" -- /bin/sh -c 'set -e
-data="$1"
-test -d "$data"
-test -r "$data"
-test -w "$data"
-touch "$data/.lightningos-user-write-test"
-rm -f "$data/.lightningos-user-write-test"
-' sh "$data"
-available="$(df -Pk "$data" | awk 'NR==2 {print $4}')"
-if [ -n "$available" ] && [ "$available" -lt %d ]; then
-  echo "not enough free space in $data" >&2
-  exit 17
-fi
-`, shellQuote(parent), shellQuote(normalized), shellQuote(elementsUser), elementsMinFreeKiB)
-	out, err := runSystemd(ctx, "/bin/sh", "-c", script)
-	if err != nil {
-		msg := strings.TrimSpace(out)
-		if msg == "" {
-			return fmt.Errorf("elements data_dir validation failed: %w", err)
-		}
-		return fmt.Errorf("elements data_dir validation failed: %s", msg)
-	}
-	return nil
-}
-
 func (s *Server) startElements(ctx context.Context) error {
 	paths := elementsAppPaths()
 	if !fileExists(paths.ElementsdPath) {
 		return errors.New("Elements is not installed")
 	}
-	if err := ensureElementsDataDir(ctx, paths); err != nil {
+	handled, err := s.prepareElementsWithBroker(ctx, paths)
+	if !handled {
+		return errors.New("Elements preparation requires privileged broker enforce mode")
+	}
+	if err != nil {
 		return err
 	}
-	if err := ensureElementsBinary(ctx, paths); err != nil {
-		return err
+	if lifecycleHandled, lifecycleErr := system.ElementsLifecycleWithBroker(ctx, paths.DataDir, "start"); lifecycleHandled {
+		return lifecycleErr
 	}
-	if err := ensureElementsConfig(ctx, paths, s.cfg); err != nil {
-		return err
-	}
-	if err := ensureElementsService(ctx, paths); err != nil {
-		return err
-	}
-	if _, err := runSystemd(ctx, elementsStartSystemctlArgs()...); err != nil {
-		return err
-	}
-	return nil
+	return errors.New("Elements lifecycle requires privileged broker enforce mode")
 }
 
 func (s *Server) stopElements(ctx context.Context) error {
@@ -407,167 +303,24 @@ func (s *Server) stopElements(ctx context.Context) error {
 	if !fileExists(paths.ElementsdPath) {
 		return errors.New("Elements is not installed")
 	}
-	if _, err := runSystemd(ctx, elementsStopSystemctlArgs()...); err != nil {
+	if handled, err := system.ElementsLifecycleWithBroker(ctx, paths.DataDir, "stop"); handled {
 		return err
 	}
-	return nil
-}
-
-func elementsStartSystemctlArgs() []string {
-	return []string{"systemctl", "enable", "--now", elementsServiceName}
-}
-
-func elementsStopSystemctlArgs() []string {
-	return []string{"systemctl", "disable", "--now", elementsServiceName}
+	return errors.New("Elements lifecycle requires privileged broker enforce mode")
 }
 
 func (s *Server) uninstallElements(ctx context.Context) error {
 	paths := elementsAppPaths()
-	_, _ = runSystemd(ctx, "systemctl", "disable", "--now", elementsServiceName)
-	_, _ = runSystemd(ctx, "/bin/sh", "-c", "rm -f "+paths.ServicePath+" /etc/systemd/system/elementsd.service /etc/systemd/system/multi-user.target.wants/"+elementsServiceName+".service /etc/systemd/system/multi-user.target.wants/elementsd.service")
-	_, _ = runSystemd(ctx, "systemctl", "daemon-reload")
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", "rm -rf "+paths.Root); err != nil {
-		return fmt.Errorf("failed to remove app files: %w", err)
-	}
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", "rm -rf "+paths.AppDataDir); err != nil {
-		return fmt.Errorf("failed to remove app data: %w", err)
-	}
-	return nil
-}
-
-func ensureElementsDataDir(ctx context.Context, paths elementsPaths) error {
-	script := fmt.Sprintf(`set -e
-data=%s
-user=%s
-default_data=%s
-parent="$(dirname "$data")"
-if [ ! -d "$parent" ]; then
-  if [ "$data" = "$default_data" ]; then
-    mkdir -p "$parent"
-    chmod 755 "$parent"
-  else
-    nearest="$parent"
-    while [ ! -e "$nearest" ] && [ "$nearest" != "/" ]; do
-      nearest="$(dirname "$nearest")"
-    done
-    if [ ! -d "$nearest" ]; then
-      echo "nearest existing parent is not a directory: $nearest" >&2
-      exit 10
-    fi
-    if command -v findmnt >/dev/null 2>&1; then
-      mount_target="$(findmnt -T "$nearest" -no TARGET 2>/dev/null | head -n1 || true)"
-      if [ -z "$mount_target" ]; then
-        echo "parent directory is not on a mounted filesystem: $nearest" >&2
-        exit 12
-      fi
-      if [ "$mount_target" = "/" ]; then
-        echo "parent directory is on the root filesystem; mount the target volume first: $parent" >&2
-        exit 13
-      fi
-    fi
-    mkdir -p "$parent"
-  fi
-fi
-if ! id "$user" >/dev/null 2>&1; then
-  echo "service user does not exist: $user" >&2
-  exit 11
-fi
-if [ "$data" != "$default_data" ] && command -v findmnt >/dev/null 2>&1; then
-  mount_target="$(findmnt -T "$parent" -no TARGET 2>/dev/null | head -n1 || true)"
-  if [ -z "$mount_target" ]; then
-    echo "parent directory is not on a mounted filesystem: $parent" >&2
-    exit 12
-  fi
-  if [ "$mount_target" = "/" ]; then
-    echo "parent directory is on the root filesystem; mount the target volume first: $parent" >&2
-    exit 13
-  fi
-fi
-grant_traverse() {
-  dir="$1"
-  if command -v setfacl >/dev/null 2>&1; then
-    setfacl -m "u:$user:x" "$dir" 2>/dev/null || chmod o+x "$dir"
-  else
-    chmod o+x "$dir"
-  fi
-}
-current=""
-rest="${parent#/}"
-old_ifs="$IFS"
-IFS="/"
-for part in $rest; do
-  current="$current/$part"
-  if [ -d "$current" ]; then
-    grant_traverse "$current"
-  fi
-done
-IFS="$old_ifs"
-mkdir -p "$data"
-chown "$user:$user" "$data"
-chmod 750 "$data"
-if ! command -v runuser >/dev/null 2>&1; then
-  echo "runuser is required to validate $user access" >&2
-  exit 14
-fi
-runuser -u "$user" -- test -x "$parent"
-runuser -u "$user" -- /bin/sh -c 'set -e
-data="$1"
-test -d "$data"
-test -r "$data"
-test -w "$data"
-touch "$data/.lightningos-user-write-test"
-rm -f "$data/.lightningos-user-write-test"
-' sh "$data"
-`, shellQuote(paths.DataDir), shellQuote(elementsUser), shellQuote(elementsDefaultDataDir))
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return fmt.Errorf("failed to prepare %s: %w", paths.DataDir, err)
-	}
-	link := fmt.Sprintf(`
-if [ -d "/home/%[1]s" ]; then
-  if [ -L "/home/%[1]s/.elements" ]; then
-    target="$(readlink "/home/%[1]s/.elements" || true)"
-    if [ "$target" != "%[2]s" ]; then
-      ln -sf "%[2]s" "/home/%[1]s/.elements"
-    fi
-  elif [ ! -e "/home/%[1]s/.elements" ]; then
-    ln -s "%[2]s" "/home/%[1]s/.elements"
-  fi
-  chown -h %[1]s:%[1]s "/home/%[1]s/.elements" 2>/dev/null || true
-fi
-`, elementsUser, paths.DataDir)
-	_, _ = runSystemd(ctx, "/bin/sh", "-c", link)
-	return nil
-}
-
-func ensureElementsBinary(ctx context.Context, paths elementsPaths) error {
-	if readSecretFile(paths.VersionPath) == elementsVersion && fileExists(paths.ElementsdPath) && fileExists(paths.ElementsCliPath) {
+	if handled, err := system.RemoveElementsWithBroker(ctx, paths.DataDir); handled {
+		if err != nil {
+			return err
+		}
+		if err := os.RemoveAll(paths.AppDataDir); err != nil {
+			return fmt.Errorf("failed to remove app data: %w", err)
+		}
 		return nil
 	}
-	arch, err := elementsArchiveSuffix()
-	if err != nil {
-		return err
-	}
-	script := fmt.Sprintf(`set -e
-version=%s
-archive=elements-$version-%s.tar.gz
-base=https://github.com/ElementsProject/elements/releases/download/elements-$version
-tmp="$(mktemp -d)"
-cleanup() { rm -rf "$tmp"; }
-trap cleanup EXIT
-mkdir -p "%s"
-curl -fsSL "$base/$archive" -o "$tmp/$archive"
-curl -fsSL "$base/SHA256SUMS.asc" -o "$tmp/SHA256SUMS.asc"
-cd "$tmp"
-sha256sum --ignore-missing --check SHA256SUMS.asc
-tar -xzf "$archive"
-install -m 0755 "$tmp/elements-$version/bin/elementsd" "%s"
-install -m 0755 "$tmp/elements-$version/bin/elements-cli" "%s"
-chown %s:%s "%s" "%s"
-`, elementsVersion, arch, paths.BinDir, paths.ElementsdPath, paths.ElementsCliPath, elementsUser, elementsUser, paths.ElementsdPath, paths.ElementsCliPath)
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return err
-	}
-	return writeFile(paths.VersionPath, elementsVersion+"\n", 0640)
+	return errors.New("Elements removal requires privileged broker enforce mode")
 }
 
 func ensureElementsConfig(ctx context.Context, paths elementsPaths, cfg *config.Config) error {
@@ -598,42 +351,37 @@ func ensureElementsConfig(ctx context.Context, paths elementsPaths, cfg *config.
 		MainchainUser: mainchain.User,
 		MainchainPass: mainchain.Pass,
 	}
-	raw, err := readElementsConfig(ctx, paths)
-	if err != nil {
+	if handled, err := system.EnsureElementsWithBroker(ctx, paths.DataDir, defaultElementsConfig(values)); handled {
 		return err
 	}
-	updated := raw
-	if raw == "" {
-		updated = defaultElementsConfig(values)
-	} else {
-		updated = updateElementsConfig(raw, values)
-	}
-	if updated == raw {
-		return nil
-	}
-	return writeElementsConfig(ctx, paths, updated)
+	return errors.New("Elements config write requires privileged broker enforce mode")
 }
 
-func ensureElementsService(ctx context.Context, paths elementsPaths) error {
-	content := elementsServiceContents(paths)
-	if existing, err := os.ReadFile(paths.ServicePath); err == nil && string(existing) == content {
-		return nil
+func (s *Server) prepareElementsWithBroker(ctx context.Context, paths elementsPaths) (bool, error) {
+	if s == nil || s.cfg == nil {
+		return false, errors.New("config unavailable")
 	}
-	tmpPath := filepath.Join(paths.Root, "elements.service.tmp")
-	if err := writeFile(tmpPath, content, 0644); err != nil {
-		return err
+	if err := os.MkdirAll(paths.AppDataDir, 0750); err != nil {
+		return false, fmt.Errorf("failed to create app data directory: %w", err)
 	}
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-	script := fmt.Sprintf("install -m 0644 %s %s", tmpPath, paths.ServicePath)
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return err
+	rpcUser, rpcPass, err := ensureElementsCredentials(paths)
+	if err != nil {
+		return false, err
 	}
-	if _, err := runSystemd(ctx, "systemctl", "daemon-reload"); err != nil {
-		return err
+	mainchain, err := resolveElementsMainchainConfig(ctx, s.cfg, paths)
+	if err != nil {
+		return false, err
 	}
-	return nil
+	if storedSource, sourceSet := readElementsMainchainSourceState(paths); !sourceSet || storedSource != mainchain.Source {
+		if err := writeElementsMainchainSource(paths, mainchain.Source); err != nil {
+			return false, err
+		}
+	}
+	values := elementsConfigValues{
+		RPCUser: rpcUser, RPCPass: rpcPass, MainchainHost: mainchain.Host, MainchainPort: mainchain.Port,
+		MainchainUser: mainchain.User, MainchainPass: mainchain.Pass,
+	}
+	return system.EnsureElementsWithBroker(ctx, paths.DataDir, defaultElementsConfig(values))
 }
 
 func ensureElementsCredentials(paths elementsPaths) (string, string, error) {
@@ -807,70 +555,11 @@ func updateElementsConfig(raw string, values elementsConfigValues) string {
 	return strings.Join(updated, "\n") + "\n"
 }
 
-func writeElementsConfig(ctx context.Context, paths elementsPaths, content string) error {
-	tmpPath := filepath.Join(paths.Root, "elements.conf.tmp")
-	if err := writeFile(tmpPath, content, 0640); err != nil {
-		return err
-	}
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-	script := fmt.Sprintf("install -m 0600 -o %s -g %s %s %s", elementsUser, elementsUser, tmpPath, paths.ConfigPath)
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return err
-	}
-	return nil
-}
-
 func readElementsConfig(ctx context.Context, paths elementsPaths) (string, error) {
-	out, err := runSystemd(ctx, "/bin/sh", "-c", "cat "+paths.ConfigPath)
-	if err != nil {
-		msg := strings.ToLower(out)
-		if strings.Contains(msg, "no such file") || strings.Contains(strings.ToLower(err.Error()), "no such file") {
-			return "", nil
-		}
-		return "", err
+	if handled, content, err := system.ReadElementsConfigWithBroker(ctx, paths.DataDir); handled {
+		return content, err
 	}
-	return strings.TrimRight(out, "\n") + "\n", nil
-}
-
-func elementsServiceContents(paths elementsPaths) string {
-	return fmt.Sprintf(`[Unit]
-Description=LightningOS Elements (Liquid)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=%s
-Group=%s
-ExecStart=%s -datadir=%s -conf=%s
-Restart=on-failure
-RestartSec=3
-TimeoutStartSec=infinity
-TimeoutStopSec=600
-PrivateTmp=true
-ProtectSystem=full
-NoNewPrivileges=true
-PrivateDevices=true
-MemoryDenyWriteExecute=true
-ReadWritePaths=%s
-
-[Install]
-WantedBy=multi-user.target
-Alias=elementsd.service
-`, elementsUser, elementsUser, paths.ElementsdPath, paths.DataDir, paths.ConfigPath, paths.DataDir)
-}
-
-func elementsArchiveSuffix() (string, error) {
-	switch runtime.GOARCH {
-	case "amd64":
-		return "x86_64-linux-gnu", nil
-	case "arm64":
-		return "aarch64-linux-gnu", nil
-	default:
-		return "", fmt.Errorf("unsupported architecture for Elements: %s", runtime.GOARCH)
-	}
+	return "", errors.New("Elements config read requires privileged broker enforce mode")
 }
 
 func parseMainchainRPC(host string) (string, int) {
@@ -1097,24 +786,18 @@ func parseElementsMainchainConfig(raw string) (string, int) {
 }
 
 func elementsServiceStatus(ctx context.Context) (string, error) {
-	out, err := runSystemd(ctx, "systemctl", "is-active", elementsServiceName)
-	if err != nil {
-		state := strings.TrimSpace(out)
-		if state == "activating" {
-			return "running", nil
+	paths := elementsAppPaths()
+	if handled, raw, err := system.ElementsStatusWithBroker(ctx, paths.DataDir); handled {
+		if err != nil {
+			return "unknown", err
 		}
-		if state == "inactive" || state == "failed" || state == "deactivating" {
-			return "stopped", nil
+		var state struct {
+			Status string `json:"status"`
 		}
-		return "unknown", err
+		if err := json.Unmarshal([]byte(raw), &state); err != nil {
+			return "unknown", errors.New("invalid Elements broker status")
+		}
+		return state.Status, nil
 	}
-	state := strings.TrimSpace(out)
-	switch state {
-	case "active", "activating":
-		return "running", nil
-	case "inactive", "failed", "deactivating":
-		return "stopped", nil
-	default:
-		return "unknown", nil
-	}
+	return "unknown", errors.New("Elements status requires privileged broker enforce mode")
 }

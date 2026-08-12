@@ -1,16 +1,12 @@
 package server
 
 import (
-	"reflect"
 	"testing"
 )
 
-func TestElementsServiceLifecyclePersistsAcrossReboots(t *testing.T) {
-	if got, want := elementsStartSystemctlArgs(), []string{"systemctl", "enable", "--now", elementsServiceName}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected Elements start args: got %#v want %#v", got, want)
-	}
-	if got, want := elementsStopSystemctlArgs(), []string{"systemctl", "disable", "--now", elementsServiceName}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected Elements stop args: got %#v want %#v", got, want)
+func TestElementsDefinitionHasNoLNDDisclaimer(t *testing.T) {
+	if notices := elementsDefinition().SecurityNotices; len(notices) != 0 {
+		t.Fatalf("Elements must not declare an unrelated LND disclaimer: %v", notices)
 	}
 }
 

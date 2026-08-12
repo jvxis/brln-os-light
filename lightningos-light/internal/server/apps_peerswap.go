@@ -502,8 +502,11 @@ func (s *Server) peerswapConfigDefaults(ctx context.Context) (peerswapConfigValu
 	return values, nil
 }
 
-func ensurePeerswapElementsDataDir(ctx context.Context) error {
-	return ensureElementsDataDir(ctx, elementsAppPaths())
+func ensurePeerswapElementsDataDir(_ context.Context) error {
+	// Local Elements readiness is validated before this point; storage ownership
+	// is exclusively maintained by the typed Elements broker. Remote mode does
+	// not need local Elements storage at all.
+	return nil
 }
 
 func readElementsRPCConfig(ctx context.Context) (string, string, int, error) {

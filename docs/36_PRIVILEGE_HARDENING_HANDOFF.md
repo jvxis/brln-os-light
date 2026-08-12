@@ -105,6 +105,7 @@ Application state at this checkpoint:
 | LNbits | Official stable digest, dedicated nine-permission LND credential, root-owned Compose/environment/credential snapshot, non-root read-only runtime, typed lifecycle/status/uninstall/REST/firewall, and data-preserving legacy SQLite/Admin UI migration accepted on LOS TESTE2 | Final Ubuntu 24.04/26.04 matrix and shared rollout/rollback acceptance only |
 | BRLN Loop Out and Magma | Native non-root/PostgreSQL lifecycle confirmed free of OS-privileged execution; permanent source gate added; authenticated LOS TESTE2 state-preserving gate passed; no third-party disclaimer applies | Shared removal of the manager's temporary Docker-group membership and final cross-version matrix only |
 | Lightning Loop | Closed native broker contract for fixed official release, user/directories, config/unit, dedicated LND material, lifecycle/status/removal and client-material repair; existing stopped installation preserved through real LOS TESTE2 gate | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
+| Elements | Closed native broker for official digest-pinned release, dedicated identity, enrolled storage, safe config merge/read, bounded RPC status, hardened unit and lifecycle/removal; preserved inactive LOS TESTE2 install migrated without dependency restarts | PeerSwap integration, clean install/reboot, and shared final matrix |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
 | Native apps and in-process features | Inventory plus isolated shared primitives only | Migrate privileged systemd, files, users, binaries, storage, firewall, and credential paths as applicable |
@@ -255,9 +256,22 @@ macaroon, Loop API macaroon, or TLS private key. Global mode remained `shadow`;
 the broker was called directly as `lightningos`. Bitcoin/LND timestamps were
 preserved and gate files were removed. Evidence:
 `docs/baselines/privilege-hardening-phase2-lightning-loop-boundary-2026-08-12.json`.
-The next coupled native domain is Elements plus PeerSwap; treat their shared
-storage/RPC/firewall contract together rather than copying the old generic
-shell paths.
+The Elements provider half of the coupled native domain is accepted.
+`apps_elements.go`, `elements_status.go`, and `elements_mainchain.go` now have
+zero direct privileged calls. The broker fixes official `23.3.3` Linux release
+digests, extracts only `elementsd`/`elements-cli`, creates the dedicated
+`lightningos-elements` identity, enrolls the operator-selected default or
+distinct/external mounted storage target, merges existing config while forcing
+loopback-only RPC, confines the systemd unit,
+and exposes only two read-only status RPC methods. Config reads fail unless the
+target is already root-enrolled. On LOS TESTE2 the real ensure retained
+inactive/disabled state, config and RPC credential hashes, and Bitcoin/LND
+timestamps while removing `losop` ownership from both trees. Evidence:
+`docs/baselines/privilege-hardening-phase2-elements-boundary-2026-08-12.json`.
+PeerSwap is now the immediate next slice. It must consume this Elements
+boundary and migrate its own two units, dedicated LND credential, bundled
+binary provenance, local store-managed or remote/external Elements source,
+config and firewall without reintroducing storage/config shell access.
 
 ## Test-node and network constraints
 

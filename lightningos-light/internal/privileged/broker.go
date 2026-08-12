@@ -78,6 +78,14 @@ type LoopManager interface {
 	EnsureClientMaterial(ctx context.Context, dryRun bool) error
 }
 
+type ElementsManager interface {
+	Status(ctx context.Context, dataDir string) (ElementsState, error)
+	Config(ctx context.Context, dataDir string) (ElementsConfigState, error)
+	Ensure(ctx context.Context, params ElementsEnsureParams, dryRun bool) (ElementsState, error)
+	Lifecycle(ctx context.Context, dataDir string, action AppLifecycleAction, dryRun bool) (ElementsState, error)
+	Remove(ctx context.Context, dataDir string, dryRun bool) error
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -100,6 +108,7 @@ type Broker struct {
 	BitcoinStorage BitcoinStorageManager
 	BitcoinConfig  BitcoinConfigManager
 	Loop           LoopManager
+	Elements       ElementsManager
 	Caller         string
 	Timeout        time.Duration
 	Now            func() time.Time
@@ -172,7 +181,7 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		return configured
 	}
 	switch operation {
-	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove:
+	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}
@@ -537,6 +546,70 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "loop_client_material_failed", errors.New("Lightning Loop client material preparation failed")
 		}
 		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationElementsStatus:
+		if broker.Elements == nil {
+			return nil, "broker_unavailable", errors.New("Elements manager is unavailable")
+		}
+		var params ElementsTargetParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.elements.status params")
+		}
+		state, err := broker.Elements.Status(ctx, params.DataDir)
+		if err != nil {
+			return nil, "elements_status_failed", errors.New("Elements status failed")
+		}
+		return state, "", nil
+	case OperationElementsConfigRead:
+		if broker.Elements == nil {
+			return nil, "broker_unavailable", errors.New("Elements manager is unavailable")
+		}
+		var params ElementsTargetParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.elements.config.read params")
+		}
+		state, err := broker.Elements.Config(ctx, params.DataDir)
+		if err != nil {
+			return nil, "elements_config_failed", errors.New("Elements configuration read failed")
+		}
+		return state, "", nil
+	case OperationElementsEnsure:
+		if broker.Elements == nil {
+			return nil, "broker_unavailable", errors.New("Elements manager is unavailable")
+		}
+		var params ElementsEnsureParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.elements.ensure params")
+		}
+		state, err := broker.Elements.Ensure(ctx, params, request.DryRun)
+		if err != nil {
+			return nil, "elements_ensure_failed", errors.New("Elements preparation failed")
+		}
+		return state, "", nil
+	case OperationElementsLifecycle:
+		if broker.Elements == nil {
+			return nil, "broker_unavailable", errors.New("Elements manager is unavailable")
+		}
+		var params ElementsLifecycleParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.elements.lifecycle params")
+		}
+		state, err := broker.Elements.Lifecycle(ctx, params.DataDir, params.Action, request.DryRun)
+		if err != nil {
+			return nil, "elements_lifecycle_failed", errors.New("Elements lifecycle failed")
+		}
+		return state, "", nil
+	case OperationElementsRemove:
+		if broker.Elements == nil {
+			return nil, "broker_unavailable", errors.New("Elements manager is unavailable")
+		}
+		var params ElementsTargetParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.elements.remove params")
+		}
+		if err := broker.Elements.Remove(ctx, params.DataDir, request.DryRun); err != nil {
+			return nil, "elements_remove_failed", errors.New("Elements removal failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -573,7 +646,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove:
 		return true
 	default:
 		return false
@@ -582,7 +655,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove:
 		return true
 	default:
 		return false

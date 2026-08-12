@@ -50,6 +50,11 @@ const (
 	OperationLoopRemove                   Operation = "app.loop.remove"
 	OperationLoopPermissionsEnsure        Operation = "app.loop.permissions.ensure"
 	OperationLoopClientMaterialEnsure     Operation = "app.loop.client-material.ensure"
+	OperationElementsStatus               Operation = "app.elements.status"
+	OperationElementsConfigRead           Operation = "app.elements.config.read"
+	OperationElementsEnsure               Operation = "app.elements.ensure"
+	OperationElementsLifecycle            Operation = "app.elements.lifecycle"
+	OperationElementsRemove               Operation = "app.elements.remove"
 )
 
 type Request struct {
@@ -218,6 +223,41 @@ type LoopState struct {
 	Status             string `json:"status"`
 	HasLNDMacaroon     bool   `json:"has_lnd_macaroon"`
 	HasPersistentState bool   `json:"has_persistent_state"`
+}
+
+type ElementsTargetParams struct {
+	DataDir string `json:"data_dir"`
+}
+
+type ElementsEnsureParams struct {
+	DataDir string `json:"data_dir"`
+	Content string `json:"content"`
+}
+
+type ElementsLifecycleParams struct {
+	DataDir string             `json:"data_dir"`
+	Action  AppLifecycleAction `json:"action"`
+}
+
+type ElementsConfigState struct {
+	Status  string `json:"status"`
+	Content string `json:"content,omitempty"`
+}
+
+type ElementsState struct {
+	Installed            bool    `json:"installed"`
+	Status               string  `json:"status"`
+	DataDir              string  `json:"data_dir"`
+	RPCOK                bool    `json:"rpc_ok"`
+	Chain                string  `json:"chain,omitempty"`
+	Blocks               int64   `json:"blocks,omitempty"`
+	Headers              int64   `json:"headers,omitempty"`
+	VerificationProgress float64 `json:"verification_progress,omitempty"`
+	InitialBlockDownload bool    `json:"initial_block_download,omitempty"`
+	Peers                int     `json:"peers,omitempty"`
+	Version              int     `json:"version,omitempty"`
+	Subversion           string  `json:"subversion,omitempty"`
+	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
 }
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -510,6 +550,39 @@ func ValidateRequest(request Request) error {
 		}
 		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
 			return errors.New("Loop lifecycle action is not allowed")
+		}
+	case OperationElementsStatus, OperationElementsConfigRead, OperationElementsRemove:
+		if request.DryRun && (request.Operation == OperationElementsStatus || request.Operation == OperationElementsConfigRead) {
+			return fmt.Errorf("dry_run is not valid for %s", request.Operation)
+		}
+		var params ElementsTargetParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
+		if normalized, err := appmanifest.NormalizeElementsDataDir(params.DataDir); err != nil || normalized != params.DataDir {
+			return errors.New("Elements data directory is not allowed")
+		}
+	case OperationElementsEnsure:
+		var params ElementsEnsureParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.elements.ensure params: %w", err)
+		}
+		if normalized, err := appmanifest.NormalizeElementsDataDir(params.DataDir); err != nil || normalized != params.DataDir {
+			return errors.New("Elements data directory is not allowed")
+		}
+		if err := appmanifest.ValidateElementsConfig(params.Content); err != nil {
+			return err
+		}
+	case OperationElementsLifecycle:
+		var params ElementsLifecycleParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.elements.lifecycle params: %w", err)
+		}
+		if normalized, err := appmanifest.NormalizeElementsDataDir(params.DataDir); err != nil || normalized != params.DataDir {
+			return errors.New("Elements data directory is not allowed")
+		}
+		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
+			return errors.New("Elements lifecycle action is not allowed")
 		}
 	default:
 		return errors.New("unknown operation")

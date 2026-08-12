@@ -127,6 +127,75 @@ func (client *Client) LoopStatus(ctx context.Context) (bool, string, bool, bool,
 	return state.Installed, state.Status, state.HasLNDMacaroon, state.HasPersistentState, err
 }
 
+func (client *Client) ElementsStatus(ctx context.Context, dataDir string) (string, error) {
+	response, err := client.call(ctx, OperationElementsStatus, ElementsTargetParams{DataDir: dataDir}, false)
+	if err != nil {
+		return "", err
+	}
+	var state ElementsState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", errors.New("invalid broker Elements status response")
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return "", errors.New("invalid broker Elements status response")
+	}
+	return string(raw), nil
+}
+
+func (client *Client) ReadElementsConfig(ctx context.Context, dataDir string) (string, error) {
+	response, err := client.call(ctx, OperationElementsConfigRead, ElementsTargetParams{DataDir: dataDir}, false)
+	if err != nil {
+		return "", err
+	}
+	var state ElementsConfigState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", errors.New("invalid broker Elements config response")
+	}
+	if state.Status == "missing" {
+		return "", nil
+	}
+	if state.Status != "ready" {
+		return "", errors.New("invalid broker Elements config status")
+	}
+	return state.Content, nil
+}
+
+func (client *Client) EnsureElements(ctx context.Context, dataDir, content string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationElementsEnsure, ElementsEnsureParams{DataDir: dataDir, Content: content}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	return decodeElementsStateStatus(response, dryRun)
+}
+
+func (client *Client) ElementsLifecycle(ctx context.Context, dataDir, action string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationElementsLifecycle, ElementsLifecycleParams{DataDir: dataDir, Action: AppLifecycleAction(action)}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	return decodeElementsStateStatus(response, dryRun)
+}
+
+func (client *Client) RemoveElements(ctx context.Context, dataDir string, dryRun bool) error {
+	_, err := client.call(ctx, OperationElementsRemove, ElementsTargetParams{DataDir: dataDir}, dryRun)
+	return err
+}
+
+func decodeElementsStateStatus(response Response, dryRun bool) (string, error) {
+	var state ElementsState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", errors.New("invalid broker Elements state response")
+	}
+	if dryRun && state.Status == "validated" {
+		return state.Status, nil
+	}
+	if state.Status != "running" && state.Status != "stopped" && state.Status != "unknown" {
+		return "", errors.New("invalid broker Elements status")
+	}
+	return state.Status, nil
+}
+
 func (client *Client) EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (string, error) {
 	response, err := client.call(ctx, OperationLoopEnsure, LoopEnsureParams{
 		LNDTLSCertificate: tlsCertificate,

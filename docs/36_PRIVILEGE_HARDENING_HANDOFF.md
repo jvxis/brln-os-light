@@ -692,11 +692,11 @@ Operational rules from the owner:
   approximately 99.86%, with no container restart or OOM. The UI's `0%` was an
   RPC-authentication reporting failure, not blockchain loss or a stopped
   indexer.
-- The active config predates the broker migration and contains `rpcauth`
-  without recoverable `rpcuser`/`rpcpassword`. Existing manager credential
-  discovery cannot authenticate, so the hardening branch must preserve the
-  file and report this as an authentication/configuration state rather than
-  `0%`. Do not silently rotate credentials or restart Bitcoin.
+- The managed App Store installation keeps `rpcauth`; its generated RPC secret
+  is retained in root-protected LightningOS state and consumed through the
+  typed broker. The 2026-08-13 regression fix restored authenticated telemetry
+  without rotating Bitcoin credentials or restarting Bitcoin. Missing RPC
+  telemetry must still be reported as unknown, never as synthetic `0%`.
 - Existing nodes may instead use an external native/systemd Bitcoin Core. The
   fixed native-consumer gateway path is part of the supported contract.
 - Electrs and Mempool require a synchronized, unpruned Full Node with
@@ -775,3 +775,27 @@ completion audit. In particular:
 Only the seven completion criteria in
 `docs/32_PRIVILEGE_HARDENING_PLAN.md` authorize declaring the full PR work
 complete.
+
+## Final regression and rollback closure (2026-08-13)
+
+Commit `e92f1c6fd3ef778310d6d45f6fa10d3bd83af333` is the accepted runtime
+checkpoint after the late Bitcoin/App Store regression. The system-integration
+marker moved from manager-shared state to
+`/var/lib/lightningos-privileged/system-integrations-20260813-v6`; the broker's
+root-owned directory helper now rejects the three manager-shared roots. The
+confined broker has only the additional optional `/etc/avahi/services` write
+path needed by its fixed mDNS helper.
+
+The post-upgrade rollback bundle is schema v5. It captures and restores actual
+pre-existing manager-macaroon/state bytes when those files existed, migrates v4
+fail-closed, restores the Manager/UI/access boundary, waits for the previous
+Manager to respond, and never touches node or application data. Operator entry
+point: `sudo /usr/local/sbin/lightningos-rollback-privilege-cutover`.
+
+Disposable Ubuntu 24.04 passed forward upgrade, broker reconciliation, exact
+Manager/UI hash rollback, and dependency-preservation checks. LOS TESTE2 passed
+the forward gate with its managed external-volume Bitcoin container unchanged:
+authenticated API status is installed/running, RPC is healthy, mainnet is fully
+synchronized and unpruned, and LND/Docker/PostgreSQL were not restarted. The
+temporary trusted checkout and verification scripts were removed. Evidence:
+`docs/baselines/privilege-hardening-final-regression-rollback-2026-08-13.json`.

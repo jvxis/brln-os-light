@@ -1562,10 +1562,11 @@ configuration updates, and root-only transaction state. The credential lives
 at `/var/lib/lightningos-credentials/lnd/manager.macaroon` as
 `root:lightningos:0640`; its root-owned ancestor prevents the manager from
 replacing the boundary. After commit, native `admin.macaroon` is
-`lnd:lnd:0600`. Upgrade rollback schema v4 records credential
-metadata/existence and the Manager UI snapshot, never credential bytes, and
-restores the previous Manager/UI/access boundary while revoking the dedicated
-root key. An unavailable or locked LND returns `pending` without
+`lnd:lnd:0600`. Upgrade rollback schema v5 records the Manager UI snapshot and
+the exact pre-upgrade manager-credential files when they existed. The bundle is
+root-only, migrates legacy v4 state fail-closed, and restores the previous
+Manager/UI/access and credential boundary while revoking a credential created
+by the cutover. An unavailable or locked LND returns `pending` without
 filesystem/config mutation.
 
 The real existing-wallet ensure/rollback gate passed on LOS TESTE2. The root
@@ -1587,6 +1588,22 @@ is complete after the final Ubuntu 24.04 fresh/existing matrix. Evidence
 is in
 `docs/baselines/privilege-hardening-phase5-first-unlock-reboot-2026-08-13.json`.
 
+Final regression closure (2026-08-13) exercised a real trusted-checkout upgrade
+and post-upgrade rollback on disposable Ubuntu 24.04. It found and fixed two
+late boundary defects: the confined broker lacked the exact optional
+`/etc/avahi/services` write path needed for its mDNS reconciliation, and the
+v4 rollback bundle retained only existence markers for a pre-existing manager
+macaroon. The accepted gate created the integration marker only under
+`/var/lib/lightningos-privileged`, kept the shared manager state root owned by
+`lightningos`, restored the previous Manager and UI hashes exactly, and left
+LND, Docker, and PostgreSQL activation identities unchanged. LOS TESTE2 then
+passed the same forward upgrade at commit `e92f1c6fd3ef778310d6d45f6fa10d3bd83af333`:
+the authenticated API reported Bitcoin installed/running with working RPC,
+mainnet, equal blocks/headers, progress 1, and full-node storage on the existing
+external volume. The Bitcoin container identity/start time/restart count, LND
+PID, and Docker/PostgreSQL activation identities were unchanged. Evidence is in
+`docs/baselines/privilege-hardening-final-regression-rollback-2026-08-13.json`.
+
 Exit criterion: compromising one app does not automatically grant another
 app's permissions, host administration, or unrestricted LND administration.
 
@@ -1602,6 +1619,14 @@ The migration must be transactional:
 5. Remove old sudoers rules and Docker group membership last.
 6. Preserve a root-run rollback command that restores the previous service and
    sudoers files without touching LND or app data.
+
+For an accepted in-place 0.5.3 upgrade, the post-upgrade operator rollback is
+`sudo /usr/local/sbin/lightningos-rollback-privilege-cutover`. It restores the
+captured pre-upgrade Manager binary, UI, service/access boundary, sudoers/group
+state, broker files, and LND manager-credential boundary. It does not downgrade
+or rewrite Bitcoin, LND, wallet, channel, PostgreSQL, or App Store data. The
+helper requires the root-only schema-v5 bundle, verifies Manager responsiveness,
+and restores/removes the prior helper itself after one successful rollback.
 
 The mandatory acceptance target for PR #33 is Ubuntu 24.04: new `install.sh`
 nodes, recognized `install_existing.sh` nodes with native/systemd Bitcoin and

@@ -52,6 +52,9 @@ The scope includes:
   The subsequent first-wallet/reboot checkpoint is the commit carrying this
   handoff and its evidence in
   `docs/baselines/privilege-hardening-phase5-first-unlock-reboot-2026-08-13.json`.
+- The accepted one-time Electrs legacy `rpcauth` migration checkpoint is
+  `aadea00a`; its disposable Ubuntu 24.04 evidence is in
+  `docs/baselines/privilege-hardening-phase2-electrs-rpcauth-migration-2026-08-13.json`.
 - The shared Docker cutover checkpoint is `3d12bf53`. A subsequent disposable
   Ubuntu 26.04 fresh-install gate found and fixed sudo/Go VCS ownership failure
   and setup-token leakage into captured installer logs. The exact gate and
@@ -306,7 +309,7 @@ Application state at this checkpoint:
 | --- | --- | --- |
 | CPU Miner | Image, Docker readiness, install, config apply, inspect, lifecycle, and uninstall passed without manager Docker access | Cross-version final matrix only |
 | RoboSats | Closed images, install, root-owned snapshot, lifecycle, inspect, firewall, and data-preserving uninstall passed | Cross-version final matrix only |
-| Bitcoin Core | Official-source verified image, attestation, storage enrollment, secret config operations, lifecycle, consumer network, native-consumer path, cookie-backed typed local status, and brokered bounded logs passed | Dedicated Electrs credential migration for legacy `rpcauth` nodes, mainnet P2P firewall, and final matrix |
+| Bitcoin Core | Official-source verified image, attestation, storage enrollment, secret config operations, lifecycle, consumer network, native-consumer path, cookie-backed typed local status, brokered bounded logs, and confirmed one-time Electrs credential migration passed | Mainnet P2P firewall and final matrix |
 | BTCPay Server/NBXplorer | Official fixed security release, image refresh, root-owned secret snapshot, dedicated LND macaroon, brokered LND host-access reconciliation, remote/native Bitcoin gates, lifecycle, data preservation, and real functional gate passed | Final cross-version matrix |
 | LNDg | Exact-source non-root image, official digest-pinned private PostgreSQL, dedicated 13-permission LND credential, root-owned snapshot, typed lifecycle/inspect/remove/admin reset, firewall/host policy, SQLite-to-PostgreSQL migration, data preservation, and real functional gate passed | Cross-version final matrix only |
 | LNbits | Official stable digest, dedicated nine-permission LND credential, root-owned Compose/environment/credential snapshot, non-root read-only runtime, typed lifecycle/status/uninstall/REST/firewall, and data-preserving legacy SQLite/Admin UI migration accepted on LOS TESTE2 | Final Ubuntu 24.04/26.04 matrix and shared rollout/rollback acceptance only |
@@ -317,7 +320,7 @@ Application state at this checkpoint:
 | Tapd | Official stable v0.8.0 manifest digest, five-signature release gate, exact closed Compose snapshot, dedicated nine-permission LND credential, typed lifecycle/status/remove/CLI, server-allowlisted REST universe discovery with pinned public DNS, and sensitive-action reauthentication; configurable hosts remain limited to typed `tapcli` sync; stopped LOS TESTE2 installation migrated without dependency restarts | Clean install, real functional lifecycle on a disposable node, reboot persistence, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
 | Public Pool | Immutable backend/UI manifest digests correlated to fixed source revisions, exact root-only non-root/read-only runtime, typed Bitcoin modes/status/lifecycle/remove/firewall, CPU Miner broker dependency, and state-preserving stopped LOS TESTE2 gate | Clean install, real mining/API/UI lifecycle on a disposable node, reboot persistence, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
 | Bark Wallet | Official digest-pinned Bark Web v0.7.2/Bark 0.6.1/Caddy images, architecture-specific daemon binary attestation, exact root-only snapshot, non-root read-only runtime, typed status/lifecycle/remove/firewall/password operations, protected seed routes, three-minute LightningOS fresh reauthentication for mnemonic reveal, and real stopped-to-running-to-stopped LOS TESTE2 gate | Clean install/reboot, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
-| Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
+| Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, isolated functional gate, and legacy `rpcauth` migration passed | Cross-version final matrix |
 | Mempool | Closed official images, Full Node/Electrs admission, root-owned snapshot, lifecycle, inspection, removal, firewall and legacy MariaDB upgrade passed | Final cross-version matrix |
 | Fedimint Guardian/Gateway | Closed official images, exact private runtimes, dedicated Gateway LND credential, lifecycle, logs, firewall and data-preserving migration passed | Final cross-version matrix |
 | Native apps and in-process features | Closed broker boundary where OS privilege is required; otherwise non-root manager/PostgreSQL with permanent source gates | Final cross-version application regression matrix |
@@ -423,9 +426,13 @@ on disk. Its active remote LND block contains credentials, but the preserved
 local block has empty user/password fields; the current `rpcauth` hash cannot
 recover them. The final shadow gate nevertheless returned running at block
 961534 and progress 0.998754 from the bounded log fallback. The node was not
-used as the Electrs positive gate. Its legacy `rpcauth` still needs a one-time
-dedicated Electrs credential migration once it is synchronized; this status
-fix deliberately does not rotate credentials or restart Bitcoin.
+used as the Electrs positive gate. That status fix deliberately did not rotate
+credentials or restart Bitcoin. The later `aadea00a` migration now adds a
+fixed dedicated credential through the broker, requires explicit operator
+confirmation, preserves the legacy credential, restarts App Store Bitcoin at
+most once only when activation is required, and never mutates external
+native/systemd Bitcoin. Its Ubuntu 24.04 root gate preserved both credentials,
+rejected wrong passwords, and proved idempotence after the single restart.
 
 The App Store Bitcoin bootstrap now closes the credential gap for future
 installs. The manager sends a credential-free standard config template; the

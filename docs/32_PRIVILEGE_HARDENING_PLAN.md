@@ -373,8 +373,8 @@ the broker-owned Bitcoin tree. The typed credential read verifies that this
 record and the active `rpcauth` match before LND or a managed app can consume
 it. The operation is local-only and its result is absent from HTTP, audit, and
 logs. Existing configs remain byte-for-byte preserved and are never silently
-rotated or restarted; a legacy `rpcauth` with no retained password requires a
-separate, explicit maintenance migration.
+rotated or restarted by bootstrap. The later explicit Electrs maintenance
+migration closes the legacy `rpcauth` case without replacing that credential.
 
 The disposable Ubuntu 24.04 functional gate used the official-source verified
 Bitcoin Core 31.1 image and the config produced by this broker path. Correct
@@ -1154,6 +1154,27 @@ Read-only LOS TESTE2 validation confirmed the preserved node was running,
 unpruned, and approximately 99.87% synchronized; the former UI value was an
 authentication/reporting failure, not blockchain loss. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-bitcoincore-status-2026-08-11.json`.
+
+The one-time legacy Electrs credential migration is now accepted. The typed
+`app.bitcoincore.electrs-credentials.ensure` operation generates a fixed
+`electrs` credential into root-only `0600` state, preserves every existing RPC
+credential, and atomically inserts only its additive `rpcauth` line before
+network sections. App Store install/start requires explicit API/UI operator
+confirmation. If authentication proves that activation is pending, the manager
+performs exactly one closed Bitcoin lifecycle restart, waits for the credential
+to work, and reruns the strict Full Node/`txindex` gate. An already-active
+credential causes no restart. External native/systemd Bitcoin remains
+read-only and is never reconfigured or restarted by this migration.
+
+The Ubuntu 24.04 disposable gate used the authenticated official Bitcoin Core
+31.1 image on regtest. The original credential worked before and after the one
+restart, the dedicated credential became active after it, wrong passwords were
+rejected, and a second ensure was ready and idempotent. Local full Go tests,
+vet/build, UI build and diff checks passed; Ubuntu vet/build and the root
+functional gate passed. The test container was removed, the checkout restored,
+the official image and root-only attestation retained, and the VM powered off.
+LOS TESTE2 was not touched. Evidence is in
+`docs/baselines/privilege-hardening-phase2-electrs-rpcauth-migration-2026-08-13.json`.
 
 The remaining dependent products, operational Bitcoin CLI/log paths, and the
 mainnet P2P firewall contract remain open. The completed Mempool gate preserves

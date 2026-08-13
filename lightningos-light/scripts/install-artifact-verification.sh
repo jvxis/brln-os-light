@@ -135,3 +135,89 @@ lightningos_install_verified_apt_key() {
   fi
   rm -rf -- "$tmp"
 }
+
+lightningos_verify_inrelease_envelope() {
+  local inrelease="$1"
+  local label="$2"
+  local begin_signed="-----BEGIN PGP SIGNED MESSAGE-----"
+  local begin_signature="-----BEGIN PGP SIGNATURE-----"
+  local end_signature="-----END PGP SIGNATURE-----"
+  local expected_suffix_hash=""
+  local actual_suffix_hash=""
+  local suffix_bytes=0
+
+  if [[ ! -f "$inrelease" || -L "$inrelease" ]]; then
+    echo "Downloaded ${label} metadata is not a regular file" >&2
+    return 1
+  fi
+  if [[ "$(head -n 1 -- "$inrelease")" != "$begin_signed" ]]; then
+    echo "Repository metadata envelope is invalid for ${label}" >&2
+    return 1
+  fi
+  if [[ "$(grep -Fxc -- "$begin_signed" "$inrelease" || true)" != "1" || \
+        "$(grep -Fxc -- "$begin_signature" "$inrelease" || true)" != "1" || \
+        "$(grep -Fxc -- "$end_signature" "$inrelease" || true)" != "1" ]]; then
+    echo "Repository metadata envelope is ambiguous for ${label}" >&2
+    return 1
+  fi
+  suffix_bytes=$((${#end_signature} + 1))
+  expected_suffix_hash=$(printf '%s\n' "$end_signature" | sha256sum | awk '{print $1}')
+  actual_suffix_hash=$(tail -c "$suffix_bytes" -- "$inrelease" | sha256sum | awk '{print $1}')
+  if [[ "$actual_suffix_hash" != "$expected_suffix_hash" ]]; then
+    echo "Repository metadata has trailing or malformed bytes for ${label}" >&2
+    return 1
+  fi
+}
+
+lightningos_install_authenticated_apt_key() {
+  local key_url="$1"
+  local expected_fingerprint="$2"
+  local expected_key_sha256="$3"
+  local inrelease_url="$4"
+  local destination="$5"
+  local label="$6"
+  local tmp=""
+
+  case "$inrelease_url" in
+    https://*) ;;
+    *)
+      echo "Refusing non-HTTPS ${label} metadata URL" >&2
+      return 1
+      ;;
+  esac
+  if [[ "$destination" != /* || -L "$destination" ]]; then
+    echo "Refusing unsafe ${label} key destination" >&2
+    return 1
+  fi
+  if ! command -v gpgv >/dev/null 2>&1; then
+    echo "gpgv is required to authenticate ${label} metadata" >&2
+    return 1
+  fi
+
+  tmp=$(mktemp -d)
+  if ! lightningos_install_verified_apt_key "$key_url" "$expected_fingerprint" \
+    "$expected_key_sha256" "$tmp/keyring.gpg" "$label"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if ! curl --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    "$inrelease_url" --output "$tmp/InRelease"; then
+    rm -rf -- "$tmp"
+    echo "Download failed for ${label} repository metadata" >&2
+    return 1
+  fi
+  if ! lightningos_verify_inrelease_envelope "$tmp/InRelease" "$label"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if ! gpgv --keyring "$tmp/keyring.gpg" "$tmp/InRelease" >/dev/null 2>&1; then
+    rm -rf -- "$tmp"
+    echo "Repository metadata authentication failed for ${label}" >&2
+    return 1
+  fi
+  if ! install -o root -g root -m 0644 "$tmp/keyring.gpg" "$destination"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  rm -rf -- "$tmp"
+}

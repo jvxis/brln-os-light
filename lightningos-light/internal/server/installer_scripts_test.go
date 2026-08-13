@@ -187,7 +187,8 @@ func TestInstallersUseFingerprintPinnedAPTRepositories(t *testing.T) {
 				`NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"`,
 				`NODESOURCE_KEY_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"`,
 				`NODESOURCE_KEY_SHA256="b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d"`,
-				`lightningos_install_verified_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256"`,
+				`NODESOURCE_INRELEASE_URL="https://deb.nodesource.com/node_${NODE_VERSION}.x/dists/nodistro/InRelease"`,
+				`lightningos_install_authenticated_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256"`,
 				`URIs: https://deb.nodesource.com/node_${NODE_VERSION}.x`,
 				`Suites: nodistro`,
 				`Signed-By: ${NODESOURCE_KEYRING}`,
@@ -216,7 +217,8 @@ func TestInstallersUseFingerprintPinnedAPTRepositories(t *testing.T) {
 		`I2PD_KEY_URL="https://repo.i2pd.xyz/r4sas.gpg"`,
 		`I2PD_KEY_FINGERPRINT="951928BB317024EFD053D73C66F6C87B98EBCFE2"`,
 		`I2PD_KEY_SHA256="c9db4fa521b75bb2821c103e595173f289efe282aa5cbe9613f523983000140f"`,
-		`lightningos_install_verified_apt_key "$I2PD_KEY_URL" "$I2PD_KEY_FINGERPRINT" "$I2PD_KEY_SHA256"`,
+		`lightningos_install_authenticated_apt_key "$I2PD_KEY_URL" "$I2PD_KEY_FINGERPRINT" "$I2PD_KEY_SHA256"`,
+		`"https://repo.i2pd.xyz/ubuntu/dists/${codename}/InRelease"`,
 		`URIs: https://repo.i2pd.xyz/ubuntu`,
 		`Signed-By: ${I2PD_KEYRING}`,
 	} {
@@ -235,16 +237,90 @@ func TestInstallersUseFingerprintPinnedAPTRepositories(t *testing.T) {
 	helper := strings.ReplaceAll(string(helperRaw), "\r\n", "\n")
 	for _, expected := range []string{
 		`lightningos_verify_openpgp_primary_fingerprint()`,
+		`lightningos_install_authenticated_apt_key()`,
+		`lightningos_verify_inrelease_envelope()`,
 		`primary_count=$(printf '%s\n' "$listing" | grep -c '^pub:' || true)`,
 		`actual=$(printf '%s\n' "$listing" | grep '^fpr:' | head -n1 | cut -d: -f10 || true)`,
 		`if [[ "$primary_count" != "1" || "$actual" != "$expected" ]]`,
 		`lightningos_verify_sha256 "$tmp/key.asc" "$expected_sha256" "${label} key"`,
 		`--proto '=https' --proto-redir '=https' --tlsv1.2`,
 		`gpg --batch --yes --dearmor`,
+		`gpgv --keyring "$tmp/keyring.gpg" "$tmp/InRelease"`,
+		`Repository metadata has trailing or malformed bytes`,
 	} {
 		if !strings.Contains(helper, expected) {
 			t.Fatalf("artifact verifier is missing OpenPGP fail-closed policy %q", expected)
 		}
+	}
+}
+
+func TestInstallersAuthenticatePGDGAndTorRepositories(t *testing.T) {
+	for _, name := range []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		for _, expected := range []string{
+			`PGDG_KEY_URL="https://www.postgresql.org/media/keys/ACCC4CF8.asc"`,
+			`PGDG_KEY_FINGERPRINT="B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"`,
+			`PGDG_KEY_SHA256="0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76"`,
+			`lightningos_install_authenticated_apt_key "$PGDG_KEY_URL" "$PGDG_KEY_FINGERPRINT" "$PGDG_KEY_SHA256"`,
+			`"https://apt.postgresql.org/pub/repos/apt/dists/${codename}-pgdg/InRelease"`,
+			`URIs: https://apt.postgresql.org/pub/repos/apt`,
+			`Signed-By: ${PGDG_KEYRING}`,
+		} {
+			if !strings.Contains(content, expected) {
+				t.Fatalf("%s lacks authenticated PGDG policy %q", name, expected)
+			}
+		}
+		for _, forbidden := range []string{
+			`http://apt.postgresql.org`,
+			`ACCC4CF8.asc | gpg`,
+			`> /etc/apt/sources.list.d/pgdg.list`,
+		} {
+			if strings.Contains(content, forbidden) {
+				t.Fatalf("%s retains unauthenticated PGDG behavior %q", name, forbidden)
+			}
+		}
+	}
+
+	freshRaw, err := os.ReadFile(filepath.Join("..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := strings.ReplaceAll(string(freshRaw), "\r\n", "\n")
+	for _, expected := range []string{
+		`TOR_KEY_FINGERPRINT="A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89"`,
+		`TOR_KEY_SHA256="3a17ae045c544aecc065cf401a4ed96dfc99b6081c8b8989716772773c4f2d1d"`,
+		`lightningos_install_authenticated_apt_key "$TOR_KEY_URL" "$TOR_KEY_FINGERPRINT" "$TOR_KEY_SHA256"`,
+		`"${TOR_REPO_URL}/dists/${codename}/InRelease"`,
+		`URIs: ${TOR_REPO_URL}/`,
+		`Signed-By: ${TOR_KEYRING}`,
+	} {
+		if !strings.Contains(fresh, expected) {
+			t.Fatalf("fresh installer lacks authenticated Tor policy %q", expected)
+		}
+	}
+	for _, forbidden := range []string{
+		`falling back to jammy`,
+		`| tee /usr/share/keyrings/deb.torproject.org-keyring.gpg`,
+		`cat > /etc/apt/sources.list.d/tor.list`,
+	} {
+		if strings.Contains(fresh, forbidden) {
+			t.Fatalf("fresh installer retains unauthenticated Tor behavior %q", forbidden)
+		}
+	}
+
+	helperRaw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install-artifact-verification.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := strings.ReplaceAll(string(helperRaw), "\r\n", "\n")
+	metadataAuth := strings.Index(helper, `gpgv --keyring "$tmp/keyring.gpg" "$tmp/InRelease"`)
+	systemInstall := strings.LastIndex(helper, `install -o root -g root -m 0644 "$tmp/keyring.gpg" "$destination"`)
+	if metadataAuth < 0 || systemInstall <= metadataAuth {
+		t.Fatal("APT keyring can be installed before repository metadata authentication")
 	}
 }
 

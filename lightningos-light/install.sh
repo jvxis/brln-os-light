@@ -33,6 +33,7 @@ NODE_VERSION="24"
 NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
 NODESOURCE_KEY_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
 NODESOURCE_KEY_SHA256="b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d"
+NODESOURCE_INRELEASE_URL="https://deb.nodesource.com/node_${NODE_VERSION}.x/dists/nodistro/InRelease"
 NODESOURCE_KEYRING="/usr/share/keyrings/nodesource.gpg"
 NODESOURCE_SOURCE="/etc/apt/sources.list.d/nodesource.sources"
 
@@ -41,6 +42,19 @@ I2PD_KEY_FINGERPRINT="951928BB317024EFD053D73C66F6C87B98EBCFE2"
 I2PD_KEY_SHA256="c9db4fa521b75bb2821c103e595173f289efe282aa5cbe9613f523983000140f"
 I2PD_KEYRING="/usr/share/keyrings/purplei2p.gpg"
 I2PD_SOURCE="/etc/apt/sources.list.d/purplei2p.sources"
+
+PGDG_KEY_URL="https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+PGDG_KEY_FINGERPRINT="B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
+PGDG_KEY_SHA256="0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76"
+PGDG_KEYRING="/usr/share/keyrings/postgresql.gpg"
+PGDG_SOURCE="/etc/apt/sources.list.d/pgdg.sources"
+
+TOR_REPO_URL="https://deb.torproject.org/torproject.org"
+TOR_KEY_URL="${TOR_REPO_URL}/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc"
+TOR_KEY_FINGERPRINT="A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89"
+TOR_KEY_SHA256="3a17ae045c544aecc065cf401a4ed96dfc99b6081c8b8989716772773c4f2d1d"
+TOR_KEYRING="/usr/share/keyrings/deb.torproject.org-keyring.gpg"
+TOR_SOURCE="/etc/apt/sources.list.d/tor.sources"
 
 POSTGRES_VERSION="${POSTGRES_VERSION:-latest}"
 
@@ -550,39 +564,55 @@ stop_unattended_upgrades() {
 
 setup_postgres_repo() {
   print_step "Configuring PostgreSQL repository"
-  local codename
+  local architecture codename source_tmp
   codename=$(get_os_codename)
-  if [[ -z "$codename" ]]; then
-    print_warn "Could not detect OS codename; skipping PGDG repo"
-    return
+  architecture=$(dpkg --print-architecture)
+  if [[ ! "$codename" =~ ^[a-z][a-z0-9-]{1,31}$ || ( "$architecture" != "amd64" && "$architecture" != "arm64" ) ]]; then
+    print_warn "Could not resolve a supported PGDG suite/architecture"
+    return 1
   fi
   apt_get install -y ca-certificates curl gnupg
-  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --batch --yes --dearmor -o /usr/share/keyrings/postgresql.gpg
-  echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main" \
-    > /etc/apt/sources.list.d/pgdg.list
+  install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+  lightningos_install_authenticated_apt_key "$PGDG_KEY_URL" "$PGDG_KEY_FINGERPRINT" "$PGDG_KEY_SHA256" \
+    "https://apt.postgresql.org/pub/repos/apt/dists/${codename}-pgdg/InRelease" "$PGDG_KEYRING" "PGDG repository"
+  source_tmp=$(mktemp)
+  cat > "$source_tmp" <<EOF
+Types: deb
+URIs: https://apt.postgresql.org/pub/repos/apt
+Suites: ${codename}-pgdg
+Components: main
+Architectures: ${architecture}
+Signed-By: ${PGDG_KEYRING}
+EOF
+  install -o root -g root -m 0644 "$source_tmp" "$PGDG_SOURCE"
+  rm -f -- "$source_tmp" /etc/apt/sources.list.d/pgdg.list
   print_ok "PostgreSQL repo ready (${codename}-pgdg)"
 }
 
 setup_tor_repo() {
   print_step "Configuring Tor repository"
-  local codename
+  local architecture codename source_tmp
   codename=$(get_os_codename)
-  if [[ -z "$codename" ]]; then
-    print_warn "Could not detect OS codename; skipping Tor repo"
-    return
+  architecture=$(dpkg --print-architecture)
+  if [[ ! "$codename" =~ ^[a-z][a-z0-9-]{1,31}$ || ( "$architecture" != "amd64" && "$architecture" != "arm64" ) ]]; then
+    print_warn "Could not resolve a supported Tor suite/architecture"
+    return 1
   fi
   apt_get install -y ca-certificates curl gnupg
-  if ! curl -fsI "https://deb.torproject.org/torproject.org/dists/${codename}/InRelease" >/dev/null 2>&1; then
-    print_warn "Tor repo not available for ${codename}, falling back to jammy"
-    codename="jammy"
-  fi
-  curl -fsSL https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc \
-    | gpg --batch --yes --dearmor \
-    | tee /usr/share/keyrings/deb.torproject.org-keyring.gpg >/dev/null
-  cat > /etc/apt/sources.list.d/tor.list <<EOF
-deb     [arch=amd64 signed-by=/usr/share/keyrings/deb.torproject.org-keyring.gpg] https://deb.torproject.org/torproject.org ${codename} main
-deb-src [arch=amd64 signed-by=/usr/share/keyrings/deb.torproject.org-keyring.gpg] https://deb.torproject.org/torproject.org ${codename} main
+  install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+  lightningos_install_authenticated_apt_key "$TOR_KEY_URL" "$TOR_KEY_FINGERPRINT" "$TOR_KEY_SHA256" \
+    "${TOR_REPO_URL}/dists/${codename}/InRelease" "$TOR_KEYRING" "Tor Project repository"
+  source_tmp=$(mktemp)
+  cat > "$source_tmp" <<EOF
+Types: deb
+URIs: ${TOR_REPO_URL}/
+Suites: ${codename}
+Components: main
+Architectures: ${architecture}
+Signed-By: ${TOR_KEYRING}
 EOF
+  install -o root -g root -m 0644 "$source_tmp" "$TOR_SOURCE"
+  rm -f -- "$source_tmp" /etc/apt/sources.list.d/tor.list
   print_ok "Tor repo ready (${codename})"
 }
 
@@ -873,7 +903,8 @@ install_i2pd() {
       return 1
     fi
     install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
-    lightningos_install_verified_apt_key "$I2PD_KEY_URL" "$I2PD_KEY_FINGERPRINT" "$I2PD_KEY_SHA256" "$I2PD_KEYRING" "i2pd repository"
+    lightningos_install_authenticated_apt_key "$I2PD_KEY_URL" "$I2PD_KEY_FINGERPRINT" "$I2PD_KEY_SHA256" \
+      "https://repo.i2pd.xyz/ubuntu/dists/${codename}/InRelease" "$I2PD_KEYRING" "i2pd repository"
     source_tmp=$(mktemp)
     cat > "$source_tmp" <<EOF
 Types: deb
@@ -948,7 +979,8 @@ install_node() {
     return 1
   fi
   install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
-  lightningos_install_verified_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256" "$NODESOURCE_KEYRING" "NodeSource repository"
+  lightningos_install_authenticated_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256" \
+    "$NODESOURCE_INRELEASE_URL" "$NODESOURCE_KEYRING" "NodeSource repository"
   source_tmp=$(mktemp)
   cat > "$source_tmp" <<EOF
 Types: deb

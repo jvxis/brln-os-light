@@ -25,12 +25,18 @@ NODE_VERSION="24"
 NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
 NODESOURCE_KEY_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
 NODESOURCE_KEY_SHA256="b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d"
+NODESOURCE_INRELEASE_URL="https://deb.nodesource.com/node_${NODE_VERSION}.x/dists/nodistro/InRelease"
 NODESOURCE_KEYRING="/usr/share/keyrings/nodesource.gpg"
 NODESOURCE_SOURCE="/etc/apt/sources.list.d/nodesource.sources"
 GOTTY_VERSION="1.8.0"
 GOTTY_ARTIFACT="gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"
 GOTTY_URL="https://github.com/sorenisanerd/gotty/releases/download/v${GOTTY_VERSION}/${GOTTY_ARTIFACT}"
 GOTTY_SHA256="9cf032e1f3a49d33da3ba32c79f49892aad94e52edc6417524a76b623ced2f5f"
+PGDG_KEY_URL="https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+PGDG_KEY_FINGERPRINT="B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
+PGDG_KEY_SHA256="0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76"
+PGDG_KEYRING="/usr/share/keyrings/postgresql.gpg"
+PGDG_SOURCE="/etc/apt/sources.list.d/pgdg.sources"
 POSTGRES_VERSION="${POSTGRES_VERSION:-latest}"
 LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
@@ -431,7 +437,8 @@ install_node() {
     return 1
   fi
   install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
-  lightningos_install_verified_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256" "$NODESOURCE_KEYRING" "NodeSource repository"
+  lightningos_install_authenticated_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256" \
+    "$NODESOURCE_INRELEASE_URL" "$NODESOURCE_KEYRING" "NodeSource repository"
   source_tmp=$(mktemp)
   cat > "$source_tmp" <<EOF
 Types: deb
@@ -1270,16 +1277,28 @@ detect_installed_postgres_major() {
 
 setup_postgres_repo() {
   print_step "Configuring PostgreSQL repository"
-  local codename
+  local architecture codename source_tmp
   codename=$(get_os_codename)
-  if [[ -z "$codename" ]]; then
-    print_warn "Could not detect OS codename; skipping PGDG repo"
-    return
+  architecture=$(dpkg --print-architecture)
+  if [[ ! "$codename" =~ ^[a-z][a-z0-9-]{1,31}$ || ( "$architecture" != "amd64" && "$architecture" != "arm64" ) ]]; then
+    print_warn "Could not resolve a supported PGDG suite/architecture"
+    return 1
   fi
   apt-get install -y ca-certificates curl gnupg
-  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --batch --yes --dearmor -o /usr/share/keyrings/postgresql.gpg
-  echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main" \
-    > /etc/apt/sources.list.d/pgdg.list
+  install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+  lightningos_install_authenticated_apt_key "$PGDG_KEY_URL" "$PGDG_KEY_FINGERPRINT" "$PGDG_KEY_SHA256" \
+    "https://apt.postgresql.org/pub/repos/apt/dists/${codename}-pgdg/InRelease" "$PGDG_KEYRING" "PGDG repository"
+  source_tmp=$(mktemp)
+  cat > "$source_tmp" <<EOF
+Types: deb
+URIs: https://apt.postgresql.org/pub/repos/apt
+Suites: ${codename}-pgdg
+Components: main
+Architectures: ${architecture}
+Signed-By: ${PGDG_KEYRING}
+EOF
+  install -o root -g root -m 0644 "$source_tmp" "$PGDG_SOURCE"
+  rm -f -- "$source_tmp" /etc/apt/sources.list.d/pgdg.list
   print_ok "PostgreSQL repo ready (${codename}-pgdg)"
 }
 

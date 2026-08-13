@@ -1360,8 +1360,7 @@ wrong fingerprints, HTTP, a symlink destination, and trailing junk all failed
 closed. The VM's newer existing Node.js, installed packages, binary hashes,
 service state, and system repository files remained unchanged. Evidence is in
 `docs/baselines/privilege-hardening-phase3-installer-apt-repositories-2026-08-13.json`.
-Authentication of the remaining installer repository keys and the complete
-cross-version install matrices remain open.
+The complete cross-version install matrices remain open.
 
 Issue #34's LND installer release gate is now accepted. The obsolete
 `scripts/upgrade-lnd.sh`, which accepted a caller URL and extracted an
@@ -1383,6 +1382,25 @@ real Ubuntu 24.04 container gate authenticated six signatures for official LND
 LND/Bitcoin/manager/PostgreSQL state and binary hashes were unchanged; the
 container and temporary image were removed. Evidence is in
 `docs/baselines/privilege-hardening-phase3-installer-lnd-release-2026-08-13.json`.
+
+Issue #34's installer repository-authentication slice is complete. The shared
+verifier now authenticates the complete clearsigned `InRelease` envelope and
+its `gpgv` signature with the exact downloaded-key SHA-256 and pinned primary
+fingerprint before installing a system keyring. The strict envelope gate was
+added after a negative test proved that `gpgv` alone accepts trailing bytes.
+NodeSource and i2pd gained this pre-install metadata gate; PGDG moved from HTTP
+to HTTPS deb822 sources with the official full fingerprint; Tor moved to the
+same closed flow and no longer falls back silently to `jammy`.
+
+The Ubuntu 24.04 gate authenticated NodeSource `nodistro` plus i2pd, PGDG, and
+Tor metadata for both Ubuntu 24.04 `noble` and Ubuntu 26.04 `resolute`. A
+trailing byte, a valid signature from the wrong repository key, and an HTTP
+metadata URL all failed before keyring installation. Isolated APT state found
+valid PGDG and Tor candidates while real system keyrings, sources, packages,
+and service activation state stayed unchanged. Evidence is in
+`docs/baselines/privilege-hardening-phase3-installer-repository-auth-2026-08-13.json`.
+The remaining issue #34 work is the complete fresh-install, upgrade, and
+negative matrix on both supported Ubuntu releases.
 
 1. Replace arbitrary package arguments with fixed dependency sets.
 2. Replace direct UFW access with the manager-access policy operation.

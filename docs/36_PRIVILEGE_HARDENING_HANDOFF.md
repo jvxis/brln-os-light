@@ -535,8 +535,7 @@ Ubuntu 24.04 authenticated the real NodeSource and i2pd metadata in isolated
 APT state, rejected five negative cases, and preserved system repositories,
 packages, binaries, and services. Evidence:
 `docs/baselines/privilege-hardening-phase3-installer-apt-repositories-2026-08-13.json`.
-Do not close #34 yet: other repository-key authentication and the full Ubuntu
-24.04/26.04 matrices remain.
+Do not close #34 yet: the full Ubuntu 24.04/26.04 matrices remain.
 
 The installer LND release slice of issue #34 is accepted. The duplicate legacy
 helper that accepted a URL and extracted without authentication was deleted;
@@ -549,8 +548,20 @@ both expected binaries without touching host LND, Bitcoin, manager, PostgreSQL,
 or their activation state. The container/image/temp artifacts were removed.
 Evidence:
 `docs/baselines/privilege-hardening-phase3-installer-lnd-release-2026-08-13.json`.
-Issue #34 still remains open for other repository-key authentication and the
-full Ubuntu 24.04/26.04 installation and negative matrices.
+Issue #34 still remains open for the full Ubuntu 24.04/26.04 installation and
+negative matrices.
+
+The remaining installer repository keys are accepted. The shared verifier now
+requires exact key bytes, a pinned primary fingerprint, a strict single-block
+clearsigned `InRelease` envelope, and a valid `gpgv` signature before installing
+the system keyring. This closes a negative-gate finding that `gpgv` by itself
+accepts trailing bytes. PGDG now uses HTTPS deb822 sources instead of HTTP; Tor
+uses an authenticated deb822 source and no longer silently falls back to
+`jammy`; NodeSource and i2pd gained the same metadata-before-keyring gate.
+Real metadata for NodeSource plus i2pd/PGDG/Tor on `noble` and `resolute` passed,
+three negative cases failed closed, and system package/repository/service state
+was preserved. Evidence:
+`docs/baselines/privilege-hardening-phase3-installer-repository-auth-2026-08-13.json`.
 
 ## Test-node and network constraints
 

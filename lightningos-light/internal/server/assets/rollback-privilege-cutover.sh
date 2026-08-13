@@ -20,7 +20,7 @@ if [[ "${EUID}" -ne 0 ]]; then
   echo "Run this rollback as root." >&2
   exit 1
 fi
-if [[ ! -d "$STATE_ROOT" || -L "$STATE_ROOT" || ! -f "$STATE_ROOT/prepared" || -L "$STATE_ROOT/prepared" || ! -f "$STATE_ROOT/schema-v4" || -L "$STATE_ROOT/schema-v4" ]]; then
+if [[ ! -d "$STATE_ROOT" || -L "$STATE_ROOT" || ! -f "$STATE_ROOT/prepared" || -L "$STATE_ROOT/prepared" || ! -f "$STATE_ROOT/schema-v5" || -L "$STATE_ROOT/schema-v5" ]]; then
   echo "No trusted LightningOS privilege-cutover rollback state is available." >&2
   exit 1
 fi
@@ -80,10 +80,16 @@ restore_lnd_manager_credential_boundary() {
     chown lnd:lnd "$LND_ADMIN_MACAROON"
     chmod 0640 "$LND_ADMIN_MACAROON"
   fi
-  if [[ ! -f "$STATE_ROOT/lnd-manager-macaroon.existed" ]]; then
+  if [[ -f "$STATE_ROOT/lnd-manager-macaroon.existed" && ! -L "$STATE_ROOT/lnd-manager-macaroon.existed" ]]; then
+    [[ -f "$STATE_ROOT/lnd-manager-macaroon" && ! -L "$STATE_ROOT/lnd-manager-macaroon" ]] || return 1
+    restore_file "$STATE_ROOT/lnd-manager-macaroon" "$LND_MANAGER_MACAROON"
+  else
     rm -f -- "$LND_MANAGER_MACAROON"
   fi
-  if [[ ! -f "$STATE_ROOT/lnd-manager-state.existed" ]]; then
+  if [[ -f "$STATE_ROOT/lnd-manager-state.existed" && ! -L "$STATE_ROOT/lnd-manager-state.existed" ]]; then
+    [[ -f "$STATE_ROOT/lnd-manager-state" && ! -L "$STATE_ROOT/lnd-manager-state" ]] || return 1
+    restore_file "$STATE_ROOT/lnd-manager-state" "$LND_MANAGER_STATE"
+  else
     rm -f -- "$LND_MANAGER_STATE"
   fi
 }

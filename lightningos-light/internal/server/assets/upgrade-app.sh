@@ -464,12 +464,34 @@ capture_lnd_manager_credential_boundary() {
   fi
   if [[ -e "$credential_path" ]]; then
     [[ -f "$credential_path" ]] || return 1
-    : > "$state_root/lnd-manager-macaroon.existed"
+    capture_optional_file "$credential_path" "$state_root" "lnd-manager-macaroon" || return 1
   fi
   if [[ -e "$credential_state_path" ]]; then
     [[ -f "$credential_state_path" ]] || return 1
-    : > "$state_root/lnd-manager-state.existed"
+    capture_optional_file "$credential_state_path" "$state_root" "lnd-manager-state" || return 1
   fi
+}
+
+upgrade_lnd_manager_credential_rollback_state() {
+  local state_root="$1"
+  local source=""
+  local name=""
+
+  for entry in \
+    "/var/lib/lightningos-credentials/lnd/manager.macaroon:lnd-manager-macaroon" \
+    "/var/lib/lightningos-credentials/lnd/manager-state.json:lnd-manager-state"; do
+    source="${entry%%:*}"
+    name="${entry#*:}"
+    if [[ -f "$state_root/${name}.existed" && ! -L "$state_root/${name}.existed" ]]; then
+      if [[ ! -f "$state_root/$name" ]]; then
+        [[ -f "$source" && ! -L "$source" ]] || return 1
+        "$CP_BIN" -a -- "$source" "$state_root/$name" || return 1
+      fi
+      [[ -f "$state_root/$name" && ! -L "$state_root/$name" ]] || return 1
+    elif [[ -e "$state_root/$name" ]]; then
+      return 1
+    fi
+  done
 }
 
 capture_manager_ui_boundary() {
@@ -527,6 +549,11 @@ prepare_privilege_cutover() {
     fi
     validate_root_regular_file "$state_root/schema-v4" || return 1
     validate_root_regular_file "$state_root/manager-ui.tar" || return 1
+    if [[ ! -f "$state_root/schema-v5" ]]; then
+      upgrade_lnd_manager_credential_rollback_state "$state_root" || return 1
+      : > "$state_root/schema-v5"
+    fi
+    validate_root_regular_file "$state_root/schema-v5" || return 1
     "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
     return 0
   fi
@@ -562,6 +589,7 @@ prepare_privilege_cutover() {
   : > "$state_root/schema-v2"
   : > "$state_root/schema-v3"
   : > "$state_root/schema-v4"
+  : > "$state_root/schema-v5"
   : > "$state_root/prepared"
   "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
   print_ok "Root-only privilege rollback bundle prepared"

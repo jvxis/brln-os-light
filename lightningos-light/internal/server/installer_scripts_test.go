@@ -717,8 +717,12 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 		`[[ -S /run/lightningos-privileged/broker.sock ]]`,
 		`for _ in $(seq 1 20)`,
 		`capture_lnd_manager_credential_boundary`,
+		`capture_optional_file "$credential_path" "$state_root" "lnd-manager-macaroon"`,
+		`capture_optional_file "$credential_state_path" "$state_root" "lnd-manager-state"`,
+		`upgrade_lnd_manager_credential_rollback_state`,
 		`: > "$state_root/schema-v3"`,
 		`: > "$state_root/schema-v4"`,
+		`: > "$state_root/schema-v5"`,
 		`capture_manager_ui_boundary`,
 		`manager-ui.tar`,
 		`lightningos-manager lnd-manager-credential-ensure`,
@@ -786,7 +790,7 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		`systemctl restart lightningos-manager`,
 		`curl -sk --max-time 3 https://127.0.0.1:8443/api/health`,
 		`The previous LightningOS Manager did not respond after rollback.`,
-		`! -f "$STATE_ROOT/schema-v4"`,
+		`! -f "$STATE_ROOT/schema-v5"`,
 		`runuser -u lightningos -- "$MANAGER_BIN" lnd-manager-credential-rollback`,
 		`chown "$admin_uid:$admin_gid" "$LND_ADMIN_MACAROON"`,
 		`chmod "$admin_mode" "$LND_ADMIN_MACAROON"`,
@@ -794,6 +798,8 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		`chmod 0640 "$LND_ADMIN_MACAROON"`,
 		`rm -f -- "$LND_MANAGER_MACAROON"`,
 		`rm -f -- "$LND_MANAGER_STATE"`,
+		`restore_file "$STATE_ROOT/lnd-manager-macaroon" "$LND_MANAGER_MACAROON"`,
+		`restore_file "$STATE_ROOT/lnd-manager-state" "$LND_MANAGER_STATE"`,
 	} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("privilege rollback is missing %q", expected)

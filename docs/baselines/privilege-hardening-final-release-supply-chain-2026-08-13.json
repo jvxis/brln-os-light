@@ -1,0 +1,28 @@
+{
+  "captured_at": "2026-08-13",
+  "checkpoint": "9109cfb5c77f869001b20721dc2695330e141652",
+  "issue": "https://github.com/jvxis/brln-os-light/issues/34",
+  "result": "passed",
+  "dependency_authentication": {
+    "lnd": "signed manifest quorum plus authenticated archive checksum",
+    "go": "official pinned checksum",
+    "gotty": "version and architecture pinned checksum",
+    "nodesource_i2pd_pgdg_tor": "HTTPS, pinned key material and fingerprint, dedicated keyring, authenticated complete InRelease envelope",
+    "remote_curl_pipe_shell": "removed from installer variants"
+  },
+  "lightningos_release": {
+    "required_state": "published immutable GitHub release",
+    "attestation": "release tag, commit and assets are bound by the immutable-release attestation",
+    "source_checks": "requested tag resolves to expected full commit and version.txt matches",
+    "repository_policy": "immutable releases enabled for future releases",
+    "historical_negative_gate": "mutable 0.5.1-Beta rejected before build or log mutation while Manager, LND and native Bitcoin PIDs remained unchanged"
+  },
+  "verification": [
+    "go test ./...",
+    "go vet ./...",
+    "go build ./...",
+    "npm ci and production UI build",
+    "Linux bash -n for bootstrap and upgrade helpers",
+    "CodeQL Go and JavaScript/TypeScript"
+  ]
+}

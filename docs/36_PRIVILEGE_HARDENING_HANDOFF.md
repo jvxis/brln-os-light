@@ -5,7 +5,7 @@ This document is the entry point for continuing pull request
 an operational index, not a replacement for the accepted implementation plan
 in `docs/32_PRIVILEGE_HARDENING_PLAN.md`.
 
-Last reconciled: 2026-08-13.
+Last reconciled: 2026-08-13, final Ubuntu 24 acceptance.
 
 ## Authoritative objective
 
@@ -25,10 +25,21 @@ The scope includes:
    only after the complete compatibility and lifecycle matrix passes;
 4. manager and broker systemd confinement;
 5. manager and per-app LND credential separation;
-6. fresh-install and supported-upgrade acceptance on Ubuntu 24.04 and 26.04;
+6. fresh-install and supported-upgrade acceptance on Ubuntu 24.04; Ubuntu
+   26.04 is a non-blocking follow-up;
 7. rollback, failure-injection, security, operator, and architecture evidence.
 
 ## Repository checkpoint
+
+Final checkpoint: `9109cfb5`, subject
+`0.5.3-Beta: require immutable release attestations`. Phases 0-5 and the
+mandatory Ubuntu 24.04 clean/existing matrices are complete. PR #33 may leave
+draft after the LOS TESTE2 controlled rollout and final PR/issue reconciliation.
+The final disposable fresh app/runtime checkpoint was `682c94fa`; the only
+subsequent production change is the fail-closed LightningOS immutable-release
+attestation gate, which passed local tests, Linux syntax checks, an Ubuntu 24
+negative no-mutation gate, and the exact existing-node installer gate at
+`9109cfb5`.
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote Draft PR: `#33`, targeting `main`.

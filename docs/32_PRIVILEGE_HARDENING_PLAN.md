@@ -17,6 +17,23 @@ Target release: `0.5.3`.
 
 Implementation branch: `agent/0.5.3-privilege-hardening`.
 
+Final implementation status (2026-08-13): Phases 0 through 5 are complete for
+the mandatory Ubuntu 24.04 production target. The complete catalog was covered
+by its individual functional/security gates and the final Ubuntu 24.04 matrix
+covered clean install, existing native Bitcoin/LND install, lifecycle,
+restart/reboot, confinement, rollback, and state preservation. Statements
+below saying work "remains open" describe historical checkpoints and are
+superseded by this final status. Ubuntu 26.04 is a non-blocking follow-up target
+for this release, by product decision; its already-passed platform and Phase 4
+gates remain useful evidence but a complete Ubuntu 26 app matrix is not a PR
+#33 acceptance condition.
+
+Final Ubuntu 24 evidence:
+
+- `docs/baselines/privilege-hardening-final-ubuntu24-fresh-2026-08-13.json`;
+- `docs/baselines/privilege-hardening-final-ubuntu24-existing-2026-08-13.json`;
+- `docs/baselines/privilege-hardening-final-release-supply-chain-2026-08-13.json`.
+
 Persistent continuation checkpoint:
 `docs/36_PRIVILEGE_HARDENING_HANDOFF.md`. The checkpoint is an operational
 index for resuming work in another session; this plan remains the authority for
@@ -1110,10 +1127,11 @@ require a fixed app user absent from this clone; all tests added or changed by
 this slice passed. Evidence is in
 `docs/baselines/privilege-hardening-phase2-shared-cutover-2026-08-13.json`.
 
-Phase 2 remains open only for its supported cross-version acceptance matrix:
-complete per-app lifecycle/reboot coverage on Ubuntu 24.04 and 26.04. The
-manager/Docker code boundary and controlled rollback path are no longer open
-implementation items.
+Phase 2 is complete for the mandatory Ubuntu 24.04 target. Individual gates
+cover the full catalog; the final clean-node matrix additionally exercised the
+highest-coupling native and container apps through install, stop, start and
+reboot. Existing stopped-app choices were preserved by the migration gates.
+The manager/Docker code boundary and controlled rollback path are closed.
 
 The Ubuntu 26.04 fresh-install platform gate passed on 2026-08-13. An official
 release upgrade of a disposable `brln-os-basica` clone reached Ubuntu 26.04
@@ -1176,10 +1194,10 @@ the official image and root-only attestation retained, and the VM powered off.
 LOS TESTE2 was not touched. Evidence is in
 `docs/baselines/privilege-hardening-phase2-electrs-rpcauth-migration-2026-08-13.json`.
 
-The remaining dependent products, operational Bitcoin CLI/log paths, and the
-mainnet P2P firewall contract remain open. The completed Mempool gate preserves
-the permanent synchronized/unpruned/`txindex=1` contract; regtest was used only
-as the isolated positive test chain satisfying that same full-index contract.
+The dependent products, operational Bitcoin CLI/log paths, and mainnet P2P
+firewall contract are complete. The Mempool and Electrs gates preserve the
+permanent synchronized/unpruned/`txindex=1` contract; regtest was used only as
+the isolated positive test chain satisfying that same full-index contract.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.
@@ -1350,9 +1368,12 @@ gate audit. A real password/login test remains reserved for the final
 disposable fresh-install matrix. Evidence is in
 `docs/baselines/privilege-hardening-phase3-terminal-credential-2026-08-13.json`.
 
-Policy application/reconciliation, installer artifact verification, the real
-Tor and LightningOS upgrade/rollback matrices, release publisher attestation,
-and the remaining package/storage paths are still open.
+Policy application/reconciliation, installer artifact verification, upgrade
+rollback and package/storage paths are complete for Ubuntu 24. The LightningOS
+release path additionally fails closed unless GitHub reports the requested
+release as published and immutable, whose release attestation binds the tag,
+commit and assets. Repository release immutability was enabled for future
+releases; the historical mutable release fails before build or mutation.
 
 The now-unused manager-side `RunCommandWithSudo` and `WriteFileWithSudo`
 implementations were removed after all runtime consumers reached zero. A
@@ -1492,8 +1513,8 @@ acceptance. Docker was not restarted on either VM and the pre-existing LND
 activation cycles were not caused or changed intentionally. Evidence is in
 `docs/baselines/privilege-hardening-phase4-socket-cutover-2026-08-13.json`.
 
-The Phase 4 operating-system cutover gates are complete. Phase 4 remains open
-only for the final supported-upgrade and application regression matrices.
+Phase 4 is complete, including the final Ubuntu 24 supported-upgrade and
+application regression matrices.
 
 Exit criterion: a test running as the manager user cannot access the Docker
 socket, launch a root process, modify root-owned configuration, alter the
@@ -1551,7 +1572,7 @@ converged automatically without a manual ensure, survived a real reboot, and
 remained idempotent. Post-reboot broker rollback revoked and removed the
 dedicated credential, restored the native admin path/metadata, preserved the
 manager, LND and isolated Bitcoin processes, and kept HTTPS health. Phase 5
-remains open only for the final supported Ubuntu 24.04/26.04 matrix. Evidence
+is complete after the final Ubuntu 24.04 fresh/existing matrix. Evidence
 is in
 `docs/baselines/privilege-hardening-phase5-first-unlock-reboot-2026-08-13.json`.
 
@@ -1571,11 +1592,13 @@ The migration must be transactional:
 6. Preserve a root-run rollback command that restores the previous service and
    sudoers files without touching LND or app data.
 
-Supported acceptance targets are new `install.sh` nodes on Ubuntu 24 and Ubuntu
-26 plus in-place upgrades from a declared LightningOS release baseline.
-Generic support for arbitrary `install_existing.sh` layouts is not an acceptance
-requirement. Recognized existing layouts may receive a guided migration;
-unrecognized layouts must stop before the cutover with actionable diagnostics.
+The mandatory acceptance target for PR #33 is Ubuntu 24.04: new `install.sh`
+nodes, recognized `install_existing.sh` nodes with native/systemd Bitcoin and
+LND, and in-place upgrades from a declared LightningOS release baseline.
+Ubuntu 26.04 is a non-blocking follow-up. Generic support for arbitrary
+`install_existing.sh` layouts is not an acceptance requirement. Recognized
+existing layouts may receive a guided migration; unrecognized layouts must
+stop before the cutover with actionable diagnostics.
 
 ## Required validation
 
@@ -1583,7 +1606,7 @@ unrecognized layouts must stop before the cutover with actionable diagnostics.
   validation.
 - Tests for command injection, traversal, symlinks, malicious app IDs, unknown
   units, arbitrary packages, mounts, images, and firewall rules.
-- Disposable-VM tests on Ubuntu 24 and Ubuntu 26.
+- Disposable-VM tests on Ubuntu 24. Ubuntu 26 is a post-PR compatibility gate.
 - Full App Store lifecycle matrix, including reboot persistence and stopped-app
   persistence.
 - LND restart, upgrade, maintenance mode, wallet, channel, rebalance, report,

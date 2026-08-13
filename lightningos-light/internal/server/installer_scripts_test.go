@@ -487,7 +487,7 @@ func TestManagerAndBrokerSystemdBoundary(t *testing.T) {
 		"StandardInput=socket",
 		"StandardOutput=socket",
 		"ProtectSystem=full",
-		"ReadWritePaths=/usr/local /etc/lightningos /etc/ufw /etc/systemd/system",
+		"ReadWritePaths=/usr/local /etc/lightningos /etc/ufw /etc/systemd/system -/etc/avahi/services",
 		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
 	} {
 		if !strings.Contains(string(serviceRaw), expected) {
@@ -785,7 +785,7 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		`usermod -a -G docker "$manager_user"`,
 		`systemctl restart lightningos-manager`,
 		`curl -sk --max-time 3 https://127.0.0.1:8443/api/health`,
-		`The previous LightningOS Manager did not become healthy after rollback.`,
+		`The previous LightningOS Manager did not respond after rollback.`,
 		`! -f "$STATE_ROOT/schema-v4"`,
 		`runuser -u lightningos -- "$MANAGER_BIN" lnd-manager-credential-rollback`,
 		`chown "$admin_uid:$admin_gid" "$LND_ADMIN_MACAROON"`,

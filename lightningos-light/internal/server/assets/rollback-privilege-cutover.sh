@@ -48,7 +48,7 @@ restore_or_remove() {
   fi
 }
 
-wait_manager_health() {
+wait_manager_ready() {
   local attempt
   for attempt in $(seq 1 30); do
     if curl -sk --max-time 3 https://127.0.0.1:8443/api/health >/dev/null 2>&1; then
@@ -56,7 +56,7 @@ wait_manager_health() {
     fi
     sleep 1
   done
-  echo "The previous LightningOS Manager did not become healthy after rollback." >&2
+  echo "The previous LightningOS Manager did not respond after rollback." >&2
   return 1
 }
 
@@ -153,6 +153,6 @@ else
 fi
 systemctl restart lightningos-manager
 systemctl is-active --quiet lightningos-manager
-wait_manager_health
+wait_manager_ready
 restore_or_remove "rollback-command" "$ROLLBACK_BIN"
 echo "LightningOS privilege cutover rolled back. Bitcoin, wallet, channel, and app data were preserved."

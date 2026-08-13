@@ -78,6 +78,7 @@ type recordingBitcoinConfig struct {
 	dryRun             bool
 	state              BitcoinCoreConfigState
 	credentials        BitcoinCoreCredentialsState
+	ensuredCredentials BitcoinCoreCredentialsEnsureState
 	electrsCredentials BitcoinCoreElectrsCredentialsState
 	err                error
 }
@@ -182,6 +183,13 @@ func (config *recordingBitcoinConfig) Credentials(_ context.Context, dataDir str
 	config.operation = "credentials"
 	config.dataDir = dataDir
 	return config.credentials, config.err
+}
+
+func (config *recordingBitcoinConfig) EnsureCredentials(_ context.Context, dataDir string, dryRun bool) (BitcoinCoreCredentialsEnsureState, error) {
+	config.operation = "credentials-ensure"
+	config.dataDir = dataDir
+	config.dryRun = dryRun
+	return config.ensuredCredentials, config.err
 }
 
 func (config *recordingBitcoinConfig) EnsureElectrsCredentials(_ context.Context, dataDir string, dryRun bool) (BitcoinCoreElectrsCredentialsState, error) {

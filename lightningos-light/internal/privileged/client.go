@@ -1076,6 +1076,33 @@ func (client *Client) ReadBitcoinCoreCredentials(ctx context.Context, dataDir st
 	return result.User, result.Password, nil
 }
 
+func (client *Client) EnsureBitcoinCoreCredentials(ctx context.Context, dataDir string, dryRun bool) (string, string, string, bool, error) {
+	response, err := client.call(ctx, OperationBitcoinCredentialsEnsure, BitcoinCoreConfigTargetParams{DataDir: dataDir}, dryRun)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	var result BitcoinCoreCredentialsEnsureState
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return "", "", "", false, errors.New("invalid broker bitcoin credentials response")
+	}
+	if dryRun {
+		if result.Status != "validated" || result.User != "" || result.Password != "" || result.ConfigChanged {
+			return "", "", "", false, errors.New("invalid broker bitcoin credentials dry-run response")
+		}
+		return "", "", result.Status, false, nil
+	}
+	if result.Status != "ready" && result.Status != "restart_required" {
+		return "", "", "", false, errors.New("invalid broker bitcoin credentials state")
+	}
+	if result.User != appmanifest.BitcoinCoreRPCUser || len(result.Password) != 64 {
+		return "", "", "", false, errors.New("invalid broker bitcoin credentials response")
+	}
+	if _, err := hex.DecodeString(result.Password); err != nil {
+		return "", "", "", false, errors.New("invalid broker bitcoin credentials response")
+	}
+	return result.User, result.Password, result.Status, result.ConfigChanged, nil
+}
+
 func (client *Client) EnsureBitcoinCoreElectrsCredentials(ctx context.Context, dataDir string, dryRun bool) (string, string, string, bool, error) {
 	response, err := client.call(ctx, OperationBitcoinElectrsCredentialsEnsure, BitcoinCoreConfigTargetParams{DataDir: dataDir}, dryRun)
 	if err != nil {

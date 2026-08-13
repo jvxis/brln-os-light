@@ -522,6 +522,13 @@ func (client *fakePrivilegedServiceClient) ReadBitcoinCoreCredentials(context.Co
 	return "lightningos", strings.Repeat("a", 64), nil
 }
 
+func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreCredentials(_ context.Context, _ string, dryRun bool) (string, string, string, bool, error) {
+	if dryRun {
+		return "", "", "validated", false, nil
+	}
+	return "lightningos", strings.Repeat("a", 64), "ready", false, nil
+}
+
 func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreElectrsCredentials(_ context.Context, _ string, dryRun bool) (string, string, string, bool, error) {
 	client.electrsCredentialCalls++
 	client.electrsCredentialDryRun = dryRun

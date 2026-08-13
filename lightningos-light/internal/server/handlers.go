@@ -444,6 +444,8 @@ type bitcoinRPCConfig struct {
 	ZMQTx    string
 }
 
+var errBitcoinRPCCredentialsRestartConfirmationRequired = errors.New("confirm the one-time Bitcoin Core restart to activate managed RPC credentials")
+
 func (s *Server) handleBitcoin(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
@@ -477,8 +479,9 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		Source        string `json:"source"`
-		AllowUnsynced bool   `json:"allow_unsynced"`
+		Source                string `json:"source"`
+		AllowUnsynced         bool   `json:"allow_unsynced"`
+		ConfirmBitcoinRestart bool   `json:"confirm_bitcoin_restart"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -492,16 +495,6 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "source must be local or remote")
 		return
 	}
-	if source == "local" && !req.AllowUnsynced {
-		readyCtx, readyCancel := context.WithTimeout(r.Context(), 6*time.Second)
-		defer readyCancel()
-		ready, _ := s.bitcoinLocalReady(readyCtx)
-		if !ready {
-			writeError(w, http.StatusBadRequest, "local bitcoin is not fully synced")
-			return
-		}
-	}
-
 	remoteUser, remotePass := readBitcoinSecrets()
 	if source == "remote" && (remoteUser == "" || remotePass == "") {
 		writeError(w, http.StatusBadRequest, "remote RPC credentials missing")
@@ -515,7 +508,17 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 		ZMQTx:    s.cfg.BitcoinRemote.ZMQRawTx,
 	}
 
-	localCfg, err := readBitcoinLocalRPCConfig(r.Context())
+	var localCfg bitcoinRPCConfig
+	var err error
+	if source == "local" {
+		localCfg, err = s.resolveBitcoinLocalRPCConfigForSource(r.Context(), req.ConfirmBitcoinRestart)
+		if errors.Is(err, errBitcoinRPCCredentialsRestartConfirmationRequired) {
+			writeErrorCode(w, http.StatusConflict, "bitcoin_rpc_credentials_restart_required", err.Error())
+			return
+		}
+	} else {
+		localCfg, err = readBitcoinLocalRPCConfig(r.Context())
+	}
 	if err != nil && source == "local" {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -525,6 +528,15 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 			Host:     "127.0.0.1:8332",
 			ZMQBlock: "tcp://127.0.0.1:28332",
 			ZMQTx:    "tcp://127.0.0.1:28333",
+		}
+	}
+	if source == "local" && !req.AllowUnsynced {
+		readyCtx, readyCancel := context.WithTimeout(r.Context(), 6*time.Second)
+		defer readyCancel()
+		ready, _ := bitcoinRPCReady(readyCtx, localCfg)
+		if !ready {
+			writeError(w, http.StatusBadRequest, "local bitcoin is not fully synced")
+			return
 		}
 	}
 
@@ -575,6 +587,97 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 	s.markLNDRestart()
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) resolveBitcoinLocalRPCConfigForSource(ctx context.Context, confirmBitcoinRestart bool) (bitcoinRPCConfig, error) {
+	paths := bitcoinCoreAppPaths()
+	cfg, readErr := readBitcoinLocalRPCConfig(ctx)
+	if !fileExists(paths.ComposePath) {
+		return cfg, readErr
+	}
+	if readErr == nil {
+		probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		_, probeErr := fetchBitcoinInfo(probeCtx, cfg.Host, cfg.User, cfg.Pass)
+		cancel()
+		if probeErr == nil {
+			return cfg, nil
+		}
+		var statusErr rpcStatusError
+		if !errors.As(probeErr, &statusErr) || statusErr.statusCode != http.StatusForbidden {
+			return cfg, nil
+		}
+	}
+	if !confirmBitcoinRestart {
+		return bitcoinRPCConfig{}, errBitcoinRPCCredentialsRestartConfirmationRequired
+	}
+
+	ensureCtx, ensureCancel := context.WithTimeout(ctx, 12*time.Second)
+	user, password, status, _, handled, err := system.EnsureBitcoinCoreCredentialsWithBroker(ensureCtx, paths.DataDir, false)
+	ensureCancel()
+	if !handled {
+		return bitcoinRPCConfig{}, errors.New("local RPC credential repair requires privileged broker enforce mode")
+	}
+	if err != nil {
+		return bitcoinRPCConfig{}, fmt.Errorf("failed to prepare local RPC credentials: %w", err)
+	}
+	if status != "ready" && status != "restart_required" {
+		return bitcoinRPCConfig{}, errors.New("local RPC credential repair returned an invalid state")
+	}
+	cfg = bitcoinRPCConfig{
+		Host:     "127.0.0.1:8332",
+		User:     user,
+		Pass:     password,
+		ZMQBlock: "tcp://127.0.0.1:28332",
+		ZMQTx:    "tcp://127.0.0.1:28333",
+	}
+	if raw, configErr := readBitcoinCoreConfigRaw(ctx, paths); configErr == nil {
+		_, _, cfg.ZMQBlock, cfg.ZMQTx = parseBitcoinCoreRPCConfig(raw)
+		cfg.ZMQBlock = normalizeLocalZMQ(cfg.ZMQBlock, "tcp://127.0.0.1:28332")
+		cfg.ZMQTx = normalizeLocalZMQ(cfg.ZMQTx, "tcp://127.0.0.1:28333")
+	}
+	if status == "restart_required" {
+		restartCtx, restartCancel := context.WithTimeout(ctx, 20*time.Second)
+		err := runBitcoinCoreLifecycle(restartCtx, "restart")
+		restartCancel()
+		if err != nil {
+			return bitcoinRPCConfig{}, fmt.Errorf("failed to restart Bitcoin Core after RPC credential migration: %w", err)
+		}
+		if err := waitForBitcoinRPC(ctx, cfg, 2*time.Minute); err != nil {
+			return bitcoinRPCConfig{}, err
+		}
+	}
+	return cfg, nil
+}
+
+func waitForBitcoinRPC(ctx context.Context, cfg bitcoinRPCConfig, timeout time.Duration) error {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		probeCtx, probeCancel := context.WithTimeout(waitCtx, 4*time.Second)
+		_, err := fetchBitcoinInfo(probeCtx, cfg.Host, cfg.User, cfg.Pass)
+		probeCancel()
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return errors.New("Bitcoin Core RPC did not return after credential migration")
+		case <-ticker.C:
+		}
+	}
+}
+
+func bitcoinRPCReady(ctx context.Context, cfg bitcoinRPCConfig) (bool, string) {
+	info, err := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
+	if err != nil {
+		return false, "rpc_unavailable"
+	}
+	if info.InitialBlockDownload || info.VerificationProgress < 0.9999 || (info.Headers > 0 && info.Blocks < info.Headers) {
+		return false, "syncing"
+	}
+	return true, "ready"
 }
 
 func (s *Server) bitcoinStatus(ctx context.Context) (bitcoinStatus, error) {

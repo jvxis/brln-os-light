@@ -15,6 +15,10 @@ func (manager *BitcoinCoreConfigManager) Credentials(context.Context, string) (B
 	return BitcoinCoreCredentialsState{}, errors.New("bitcoin credentials are supported only on Linux")
 }
 
+func (manager *BitcoinCoreConfigManager) EnsureCredentials(context.Context, string, bool) (BitcoinCoreCredentialsEnsureState, error) {
+	return BitcoinCoreCredentialsEnsureState{}, errors.New("bitcoin credentials are supported only on Linux")
+}
+
 func (manager *BitcoinCoreConfigManager) EnsureElectrsCredentials(context.Context, string, bool) (BitcoinCoreElectrsCredentialsState, error) {
 	return BitcoinCoreElectrsCredentialsState{}, errors.New("Electrs bitcoin credentials are supported only on Linux")
 }

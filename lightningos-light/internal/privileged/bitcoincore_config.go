@@ -137,8 +137,15 @@ func validateBitcoinCoreCredentialsForUser(credentials bitcoinCoreStoredCredenti
 }
 
 func bitcoinCoreConfigWithElectrsRPCAuth(content string, rpcAuth string) (string, bool, error) {
+	return bitcoinCoreConfigWithManagedRPCAuth(content, rpcAuth, appmanifest.ElectrsBitcoinRPCUser, false)
+}
+
+func bitcoinCoreConfigWithManagedRPCAuth(content string, rpcAuth string, expectedUser string, preserveLegacySameUser bool) (string, bool, error) {
 	if err := validateBitcoinCoreConfigContent(content); err != nil {
 		return "", false, err
+	}
+	if expectedUser != appmanifest.BitcoinCoreRPCUser && expectedUser != appmanifest.ElectrsBitcoinRPCUser {
+		return "", false, errors.New("bitcoin RPC credential user is invalid")
 	}
 	want := "rpcauth=" + rpcAuth
 	for _, line := range strings.Split(content, "\n") {
@@ -154,8 +161,14 @@ func bitcoinCoreConfigWithElectrsRPCAuth(content string, rpcAuth string) (string
 		if value == rpcAuth {
 			return content, false, nil
 		}
-		if strings.HasPrefix(value, appmanifest.ElectrsBitcoinRPCUser+":") {
-			return "", false, errors.New("bitcoin config contains an unmanaged Electrs RPC credential")
+		if strings.HasPrefix(value, expectedUser+":") {
+			if !preserveLegacySameUser {
+				return "", false, errors.New("bitcoin config contains an unmanaged RPC credential")
+			}
+			// Multiple rpcauth entries for the same user are accepted by Bitcoin
+			// Core. Keep the legacy hash during migration because rpcauth is
+			// deliberately non-reversible, and append the new managed hash.
+			continue
 		}
 	}
 	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")

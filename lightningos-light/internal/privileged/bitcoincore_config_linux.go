@@ -93,6 +93,72 @@ func (manager *BitcoinCoreConfigManager) Credentials(_ context.Context, dataDir 
 	}, nil
 }
 
+func (manager *BitcoinCoreConfigManager) EnsureCredentials(ctx context.Context, dataDir string, dryRun bool) (BitcoinCoreCredentialsEnsureState, error) {
+	directoryFD, err := manager.openEnrolledDataDir(dataDir)
+	if err != nil {
+		return BitcoinCoreCredentialsEnsureState{}, err
+	}
+	defer unix.Close(directoryFD)
+
+	content, exists, original, _, err := readBitcoinCoreConfigForEnsureAt(directoryFD)
+	if err != nil || !exists {
+		return BitcoinCoreCredentialsEnsureState{}, errors.New("bitcoin config does not exist")
+	}
+	if err := validateBitcoinCoreConfigContent(content); err != nil {
+		return BitcoinCoreCredentialsEnsureState{}, errors.New("existing bitcoin config is invalid")
+	}
+
+	credentials, credentialErr := manager.readCredentials()
+	if credentialErr != nil && !os.IsNotExist(credentialErr) {
+		return BitcoinCoreCredentialsEnsureState{}, errors.New("bitcoin RPC credential state is invalid")
+	}
+	if os.IsNotExist(credentialErr) {
+		placeholder := appmanifest.BitcoinCoreRPCUser + ":00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000"
+		if _, _, err := bitcoinCoreConfigWithManagedRPCAuth(content, placeholder, appmanifest.BitcoinCoreRPCUser, true); err != nil {
+			return BitcoinCoreCredentialsEnsureState{}, err
+		}
+		if dryRun {
+			return BitcoinCoreCredentialsEnsureState{Status: "validated"}, nil
+		}
+		credentials, err = generateBitcoinCoreCredentials()
+		if err != nil {
+			return BitcoinCoreCredentialsEnsureState{}, errors.New("generate bitcoin RPC credentials failed")
+		}
+		if err := manager.writeCredentialsFile(bitcoinCoreCredentialsFile, credentials, appmanifest.BitcoinCoreRPCUser); err != nil {
+			return BitcoinCoreCredentialsEnsureState{}, err
+		}
+	} else if dryRun {
+		if _, _, err := bitcoinCoreConfigWithManagedRPCAuth(content, credentials.RPCAuth, appmanifest.BitcoinCoreRPCUser, true); err != nil {
+			return BitcoinCoreCredentialsEnsureState{}, err
+		}
+		return BitcoinCoreCredentialsEnsureState{Status: "validated"}, nil
+	}
+
+	updated, changed, err := bitcoinCoreConfigWithManagedRPCAuth(content, credentials.RPCAuth, appmanifest.BitcoinCoreRPCUser, true)
+	if err != nil {
+		return BitcoinCoreCredentialsEnsureState{}, err
+	}
+	if changed {
+		if err := writeBitcoinCoreConfigAt(ctx, directoryFD, updated, &original); err != nil {
+			return BitcoinCoreCredentialsEnsureState{}, err
+		}
+		return BitcoinCoreCredentialsEnsureState{
+			Status: "restart_required", User: credentials.User, Password: credentials.Password, ConfigChanged: true,
+		}, nil
+	}
+	if err := probeBitcoinCoreElectrsCredential(ctx, credentials.User, credentials.Password); err != nil {
+		if errors.Is(err, errElectrsBitcoinRPCAuthentication) {
+			return BitcoinCoreCredentialsEnsureState{
+				Status: "restart_required", User: credentials.User, Password: credentials.Password,
+			}, nil
+		}
+		return BitcoinCoreCredentialsEnsureState{}, errors.New("bitcoin RPC credential activation check failed")
+	}
+	return BitcoinCoreCredentialsEnsureState{
+		Status: "ready", User: credentials.User, Password: credentials.Password, ConfigChanged: changed,
+	}, nil
+}
+
 func (manager *BitcoinCoreConfigManager) EnsureElectrsCredentials(ctx context.Context, dataDir string, dryRun bool) (BitcoinCoreElectrsCredentialsState, error) {
 	directoryFD, err := manager.openEnrolledDataDir(dataDir)
 	if err != nil {

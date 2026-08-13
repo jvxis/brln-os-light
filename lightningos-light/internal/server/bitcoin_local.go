@@ -946,18 +946,5 @@ func (s *Server) bitcoinLocalReady(ctx context.Context) (bool, string) {
 		}
 		return false, "rpc_unavailable"
 	}
-	info, err := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
-	if err != nil {
-		return false, "rpc_unavailable"
-	}
-	if info.InitialBlockDownload {
-		return false, "syncing"
-	}
-	if info.VerificationProgress < 0.9999 {
-		return false, "syncing"
-	}
-	if info.Headers > 0 && info.Blocks < info.Headers {
-		return false, "syncing"
-	}
-	return true, "ready"
+	return bitcoinRPCReady(ctx, cfg)
 }

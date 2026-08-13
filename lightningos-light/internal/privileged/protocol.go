@@ -60,6 +60,7 @@ const (
 	OperationBitcoinConfigRead               Operation = "app.bitcoincore.config.read"
 	OperationBitcoinConfigWrite              Operation = "app.bitcoincore.config.write"
 	OperationBitcoinCredentialsRead          Operation = "app.bitcoincore.credentials.read"
+	OperationBitcoinCredentialsEnsure        Operation = "app.bitcoincore.credentials.ensure"
 	OperationBitcoinElectrsCredentialsEnsure Operation = "app.bitcoincore.electrs-credentials.ensure"
 	OperationBitcoinStatus                   Operation = "app.bitcoincore.status"
 	OperationBitcoinConsumerNetworkEnsure    Operation = "bitcoin.consumer-network.ensure"
@@ -344,6 +345,13 @@ type BitcoinCoreCredentialsState struct {
 	Status   string `json:"status"`
 	User     string `json:"user"`
 	Password string `json:"password"`
+}
+
+type BitcoinCoreCredentialsEnsureState struct {
+	Status        string `json:"status"`
+	User          string `json:"user,omitempty"`
+	Password      string `json:"password,omitempty"`
+	ConfigChanged bool   `json:"config_changed,omitempty"`
 }
 
 type BitcoinCoreElectrsCredentialsState struct {
@@ -918,10 +926,10 @@ func ValidateRequest(request Request) error {
 		if err := validateBitcoinCoreConfigDataDir(params.DataDir); err != nil {
 			return err
 		}
-	case OperationBitcoinElectrsCredentialsEnsure:
+	case OperationBitcoinCredentialsEnsure, OperationBitcoinElectrsCredentialsEnsure:
 		var params BitcoinCoreConfigTargetParams
 		if err := decodeStrict(request.Params, &params); err != nil {
-			return fmt.Errorf("invalid app.bitcoincore.electrs-credentials.ensure params: %w", err)
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
 		}
 		if err := validateBitcoinCoreConfigDataDir(params.DataDir); err != nil {
 			return err

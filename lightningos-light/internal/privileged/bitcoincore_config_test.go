@@ -90,6 +90,22 @@ func TestBitcoinCoreConfigWithElectrsRPCAuthPreservesLegacyCredentialAndIsIdempo
 	}
 }
 
+func TestBitcoinCoreManagedRPCAuthPreservesIrreversibleLegacyHash(t *testing.T) {
+	legacy := "server=1\nrpcauth=lightningos:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n[main]\nrpcport=8332\n"
+	managed := "lightningos:cccccccccccccccccccccccccccccccc$dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	updated, changed, err := bitcoinCoreConfigWithManagedRPCAuth(legacy, managed, appmanifest.BitcoinCoreRPCUser, true)
+	if err != nil || !changed {
+		t.Fatalf("managed migration changed/error=%v/%v", changed, err)
+	}
+	if !strings.Contains(updated, "rpcauth=lightningos:aaaaaaaa") || !strings.Contains(updated, "rpcauth="+managed) {
+		t.Fatalf("managed migration did not preserve both hashes:\n%s", updated)
+	}
+	again, changed, err := bitcoinCoreConfigWithManagedRPCAuth(updated, managed, appmanifest.BitcoinCoreRPCUser, true)
+	if err != nil || changed || again != updated {
+		t.Fatalf("managed migration is not idempotent: changed/error=%v/%v", changed, err)
+	}
+}
+
 func TestGenerateBitcoinCoreElectrsCredentialsUsesFixedUser(t *testing.T) {
 	credentials, err := generateBitcoinCoreCredentialsForUser(appmanifest.ElectrsBitcoinRPCUser)
 	if err != nil {

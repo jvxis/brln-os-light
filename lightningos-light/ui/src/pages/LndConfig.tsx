@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getBitcoinLocalStatus, getBitcoinSource, getLndConfig, getLndMaintenance, getLndStatus, getLndUpgradeStatus, getLogs, setBitcoinSource, setLndMaintenance, startLndUpgrade, updateLndConfig, updateLndRawConfig, type LndMaintenanceStatus } from '../api'
+import { APIError, getBitcoinLocalStatus, getBitcoinSource, getLndConfig, getLndMaintenance, getLndStatus, getLndUpgradeStatus, getLogs, setBitcoinSource, setLndMaintenance, startLndUpgrade, updateLndConfig, updateLndRawConfig, type LndMaintenanceStatus } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
 
 type BitcoinLocalStatus = {
@@ -45,6 +45,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
   const [bitcoinSource, setBitcoinSourceState] = useState<'remote' | 'local'>('remote')
   const [bitcoinLocalStatus, setBitcoinLocalStatus] = useState<BitcoinLocalStatus | null>(null)
   const [sourceBusy, setSourceBusy] = useState(false)
+  const [bitcoinRestartConfirmOpen, setBitcoinRestartConfirmOpen] = useState(false)
   const [upgrade, setUpgrade] = useState<any>(null)
   const [upgradeMessage, setUpgradeMessage] = useState('')
   const [upgradeChecking, setUpgradeChecking] = useState(false)
@@ -495,17 +496,22 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
     }
   }
 
-  const handleToggleSource = async () => {
+  const handleToggleSource = async (confirmBitcoinRestart = false) => {
     if (externalBitcoinDetected || sourceBusy || localToggleBlocked || maintenance?.enabled) return
     const next = bitcoinSource === 'remote' ? 'local' : 'remote'
     const targetLabel = next === 'local' ? t('common.local') : t('common.remote')
     setSourceBusy(true)
     setStatus(t('lndConfig.switchingBitcoin', { target: targetLabel }))
     try {
-      await setBitcoinSource({ source: next })
+      await setBitcoinSource({ source: next, confirm_bitcoin_restart: confirmBitcoinRestart || undefined })
       setBitcoinSourceState(next)
       setStatus(t('lndConfig.bitcoinSourceSet', { target: targetLabel }))
     } catch (err) {
+      if (err instanceof APIError && err.code === 'bitcoin_rpc_credentials_restart_required') {
+        setBitcoinRestartConfirmOpen(true)
+        setStatus(t('lndConfig.bitcoinRpcCredentialsRestartRequired'))
+        return
+      }
       setStatus(err instanceof Error ? err.message : t('lndConfig.switchFailed'))
     } finally {
       setSourceBusy(false)
@@ -530,7 +536,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
             ) : (
               <button
                 className={`relative flex h-9 w-32 items-center rounded-full border border-white/10 bg-ink/60 px-2 transition ${toggleDisabled ? 'opacity-70 cursor-not-allowed' : 'hover:border-white/30'}`}
-                onClick={handleToggleSource}
+                onClick={() => { void handleToggleSource(false) }}
                 type="button"
                 disabled={toggleDisabled}
                 aria-label={t('lndConfig.toggleBitcoinSource')}
@@ -1008,6 +1014,29 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
                       : t('lndUpgrade.confirmUpgrade'))}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bitcoinRestartConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div role="dialog" aria-modal="true" className="w-full max-w-lg rounded-lg border border-amber-400/25 bg-ink p-5 shadow-xl">
+            <h3 className="text-lg font-semibold">{t('lndConfig.bitcoinRpcRestartTitle')}</h3>
+            <p className="mt-2 text-sm text-fog/70">{t('lndConfig.bitcoinRpcRestartBody')}</p>
+            <p className="mt-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm text-amber-100/85">
+              {t('lndConfig.bitcoinRpcRestartImpact')}
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button className="btn-secondary" type="button" disabled={sourceBusy} onClick={() => setBitcoinRestartConfirmOpen(false)}>
+                {t('common.cancel')}
+              </button>
+              <button className="btn-primary" type="button" disabled={sourceBusy} onClick={() => {
+                setBitcoinRestartConfirmOpen(false)
+                void handleToggleSource(true)
+              }}>
+                {t('lndConfig.bitcoinRpcRestartConfirm')}
+              </button>
             </div>
           </div>
         </div>

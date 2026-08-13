@@ -70,6 +70,10 @@ type fakePrivilegedServiceClient struct {
 	firewallDryRun      bool
 	firewallStatus      string
 	firewallErr         error
+	lndHostCalls        int
+	lndHostAppID        string
+	lndHostDryRun       bool
+	lndHostErr          error
 	storageCalls        int
 	storageDataDir      string
 	storageDryRun       bool
@@ -306,6 +310,13 @@ func (client *fakePrivilegedServiceClient) EnsureAppFirewall(_ context.Context, 
 	client.firewallAppID = appID
 	client.firewallDryRun = dryRun
 	return client.firewallStatus, client.firewallErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureAppLNDHostAccess(_ context.Context, appID string, dryRun bool) error {
+	client.lndHostCalls++
+	client.lndHostAppID = appID
+	client.lndHostDryRun = dryRun
+	return client.lndHostErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -563,6 +574,36 @@ func TestEnsureAppFirewallWithBrokerModes(t *testing.T) {
 				t.Fatalf("unexpected firewall call: %#v", client)
 			}
 			if test.wantCalls == 1 && client.firewallAppID != "robosats" {
+				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestEnsureAppLNDHostAccessWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		hostErr     error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", hostErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", hostErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, lndHostErr: test.hostErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := EnsureAppLNDHostAccessWithBroker(context.Background(), "btcpay")
+			if handled != test.wantHandled || (err != nil) != test.wantError || client.lndHostCalls != test.wantCalls || client.lndHostDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+			if test.wantCalls == 1 && client.lndHostAppID != "btcpay" {
 				t.Fatalf("unexpected typed app params: %#v", client)
 			}
 		})

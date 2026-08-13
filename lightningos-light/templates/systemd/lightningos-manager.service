@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 User=lightningos
 Group=lightningos
-SupplementaryGroups=lnd systemd-journal docker
+SupplementaryGroups=lnd systemd-journal
 Type=simple
 EnvironmentFile=/etc/lightningos/secrets.env
 ExecStart=/opt/lightningos/manager/lightningos-manager --config /etc/lightningos/config.yaml

@@ -725,23 +725,15 @@ privileged_broker_is_trusted() {
 configure_sudoers() {
   print_step "Configuring sudoers"
   local manager_user="lightningos"
-  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path ufw_path tee_path
+  local systemctl_path apt_get_path apt_path dpkg_path systemd_run_path smartctl_path ufw_path tee_path
   systemctl_path=$(command -v systemctl || true)
   apt_get_path=$(command -v apt-get || true)
   apt_path=$(command -v apt || true)
   dpkg_path=$(command -v dpkg || true)
-  docker_path=$(command -v docker || true)
-  docker_compose_path=$(command -v docker-compose || true)
   systemd_run_path=$(command -v systemd-run || true)
   smartctl_path=$(command -v smartctl || true)
   ufw_path=$(command -v ufw || true)
   tee_path=$(command -v tee || true)
-  if [[ -z "$docker_path" ]]; then
-    docker_path="/usr/bin/docker"
-  fi
-  if [[ -z "$docker_compose_path" ]]; then
-    docker_compose_path="/usr/bin/docker-compose"
-  fi
   if [[ -z "$systemd_run_path" ]]; then
     systemd_run_path="/usr/bin/systemd-run"
   fi
@@ -764,8 +756,6 @@ configure_sudoers() {
   [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
   [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
   [[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")
-  [[ -n "$docker_path" ]] && app_cmds+=("${docker_path} *")
-  [[ -n "$docker_compose_path" ]] && app_cmds+=("${docker_compose_path} *")
   [[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")
   [[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")
   local app_cmds_line
@@ -1654,7 +1644,6 @@ main() {
   ensure_user lightningos /var/lib/lightningos
   ensure_group_member lightningos lnd
   ensure_group_member lightningos systemd-journal
-  ensure_group_member lightningos docker
   install_i2pd
   install_go
   install_node

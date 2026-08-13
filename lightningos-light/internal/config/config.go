@@ -116,7 +116,7 @@ func Load(path string) (*Config, error) {
 		cfg.Privileged.Mode = raw
 	}
 	if cfg.Privileged.Mode == "" {
-		cfg.Privileged.Mode = "disabled"
+		cfg.Privileged.Mode = "enforce"
 	}
 	cfg.Privileged.Mode = strings.ToLower(strings.TrimSpace(cfg.Privileged.Mode))
 	switch cfg.Privileged.Mode {

@@ -185,22 +185,6 @@ func TestParseBitcoinCoreBrokerStatusPreservesUnknownZeroValues(t *testing.T) {
 	}
 }
 
-func TestBitcoinCLIExecArgsUseContainerDataDir(t *testing.T) {
-	args := bitcoinCLIExecArgs("bitcoin-container", "getblockchaininfo")
-	wants := []string{
-		"bitcoin-container",
-		"-datadir=" + bitcoinCoreDataDirInContainer,
-		"-conf=" + bitcoinCoreConfigPathInContainer,
-		"-rpcclienttimeout=8",
-		"getblockchaininfo",
-	}
-	for _, want := range wants {
-		if !stringInSlice(want, args) {
-			t.Fatalf("expected bitcoin-cli arguments to contain %q, got %#v", want, args)
-		}
-	}
-}
-
 func TestParseBitcoinLogTipUsesLatestValidUpdate(t *testing.T) {
 	raw := `2026-08-02T15:41:53Z UpdateTip: new best=00000000000000000001aaaa height=939713 version=0x1 date='2026-03-07T12:36:32Z' progress=0.950235 cache=3.8MiB
 malformed UpdateTip: new best=broken height=nope date='bad' progress=two

@@ -103,22 +103,6 @@ func (s *Server) decorateFullIndexAppInfo(ctx context.Context, info *appInfo) {
 	info.UnavailableMessage = availability.Message
 }
 
-func bitcoinCoreTxIndexReady(ctx context.Context, paths bitcoinCorePaths, rawConf string) (bool, bool, error) {
-	out, err := execBitcoinCLI(ctx, paths, "getindexinfo", "txindex")
-	if err == nil {
-		ready, known, parseErr := parseBitcoinCoreTxIndexInfo(out)
-		if parseErr != nil {
-			return false, true, parseErr
-		}
-		return ready, known, nil
-	}
-
-	if !parseBitcoinCoreBool(rawConf, "txindex") {
-		return false, true, nil
-	}
-	return false, true, fmt.Errorf("txindex is configured but current index status is unavailable: %w", err)
-}
-
 func parseBitcoinCoreTxIndexInfo(raw string) (bool, bool, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {

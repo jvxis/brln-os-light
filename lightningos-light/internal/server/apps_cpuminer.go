@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
 	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
@@ -121,18 +120,16 @@ func (a cpuMinerApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	status := "unknown"
 	handled, brokerStatus, _, err := system.InspectAppWithBroker(ctx, cpuMinerAppID)
-	if handled {
-		status = brokerStatus
-	} else {
-		status, err = getComposeStatus(ctx, paths.Root, paths.ComposePath, cpuMinerAppID)
+	if !handled {
+		info.Status = "unknown"
+		return info, errors.New("CPU Lottery Miner status requires privileged broker enforce mode")
 	}
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
 	}
-	info.Status = status
+	info.Status = brokerStatus
 	return info, nil
 }
 
@@ -204,10 +201,11 @@ func (s *Server) startCpuMiner(ctx context.Context) error {
 }
 
 func applyCpuMinerCompose(ctx context.Context, paths cpuMinerPaths) error {
-	if handled, err := system.AppLifecycleWithBroker(ctx, cpuMinerAppID, "start"); handled {
+	if handled, err := system.AppLifecycleWithBroker(ctx, cpuMinerAppID, "start"); !handled {
+		return errors.New("CPU Lottery Miner lifecycle requires privileged broker enforce mode")
+	} else {
 		return err
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
 }
 
 func (s *Server) stopCpuMiner(ctx context.Context) error {
@@ -215,10 +213,11 @@ func (s *Server) stopCpuMiner(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("CPU Lottery Miner is not installed")
 	}
-	if handled, err := system.AppLifecycleWithBroker(ctx, cpuMinerAppID, "stop"); handled {
+	if handled, err := system.AppLifecycleWithBroker(ctx, cpuMinerAppID, "stop"); !handled {
+		return errors.New("CPU Lottery Miner lifecycle requires privileged broker enforce mode")
+	} else {
 		return err
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
 }
 
 func (s *Server) uninstallCpuMiner(ctx context.Context) error {
@@ -227,12 +226,10 @@ func (s *Server) uninstallCpuMiner(ctx context.Context) error {
 
 func removeCpuMinerApp(ctx context.Context, paths cpuMinerPaths) error {
 	if fileExists(paths.ComposePath) {
-		if handled, err := system.RemoveAppWithBroker(ctx, cpuMinerAppID); handled {
-			if err != nil {
-				return err
-			}
-		} else {
-			_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		if handled, err := system.RemoveAppWithBroker(ctx, cpuMinerAppID); !handled {
+			return errors.New("CPU Lottery Miner removal requires privileged broker enforce mode")
+		} else if err != nil {
+			return err
 		}
 	}
 	if err := os.RemoveAll(paths.Root); err != nil {
@@ -303,7 +300,7 @@ func prepareCpuMinerImage(ctx context.Context, image string) error {
 	if handled, err := system.PrepareAppImageWithBroker(ctx, cpuMinerAppID, string(variant)); handled {
 		return err
 	}
-	return ensureDockerImage(ctx, image)
+	return errors.New("CPU Lottery Miner image preparation requires privileged broker enforce mode")
 }
 
 // probeCpuMinerImage runs a brief benchmark to confirm the binary executes on
@@ -316,11 +313,7 @@ func (s *Server) probeCpuMinerImage(ctx context.Context, image string) bool {
 	if handled, runnable, err := system.ProbeAppImageWithBroker(ctx, cpuMinerAppID, string(variant)); handled {
 		return err == nil && runnable
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
-	defer cancel()
-	_, err := system.RunCommandWithSudo(probeCtx, "docker", "run", "--rm", image,
-		"cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2")
-	return err == nil
+	return false
 }
 
 // cpuinfoHasFlag reports whether /proc/cpuinfo advertises the given CPU flag.

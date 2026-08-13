@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/system"
 )
@@ -1422,13 +1423,11 @@ func isBitcoinLogService(service string) bool {
 
 func (s *Server) readBitcoinLocalLogLines(ctx context.Context, lines int, since string) ([]string, string, error) {
 	paths := bitcoinCoreAppPaths()
-	var dockerErr error
 	if fileExists(paths.ComposePath) {
-		out, err := readBitcoinComposeLogLines(ctx, paths, lines, since)
-		if err == nil {
-			return out, "docker:bitcoind", nil
+		if handled, out, source, err := system.ReadAppLogsWithBroker(ctx, appmanifest.BitcoinCoreID, lines, since); handled {
+			return out, source, err
 		}
-		dockerErr = err
+		return nil, "", errors.New("Bitcoin Core logs require privileged broker enforce mode")
 	}
 
 	if service := bitcoinSystemdLogService(ctx); service != "" {
@@ -1436,14 +1435,7 @@ func (s *Server) readBitcoinLocalLogLines(ctx context.Context, lines int, since 
 		if err == nil {
 			return out, "systemd:" + service, nil
 		}
-		if dockerErr != nil {
-			return nil, "", fmt.Errorf("docker log read failed: %v; systemd log read failed: %w", dockerErr, err)
-		}
 		return nil, "", err
-	}
-
-	if dockerErr != nil {
-		return nil, "", dockerErr
 	}
 
 	out, err := system.JournalTailSince(ctx, "bitcoind", lines, since)
@@ -1451,32 +1443,6 @@ func (s *Server) readBitcoinLocalLogLines(ctx context.Context, lines int, since 
 		return nil, "", errors.New("local bitcoin logs not available")
 	}
 	return out, "systemd:bitcoind", nil
-}
-
-func readBitcoinComposeLogLines(ctx context.Context, paths bitcoinCorePaths, lines int, since string) ([]string, error) {
-	return readComposeServiceLogLines(ctx, paths.Root, paths.ComposePath, "bitcoind", lines, since)
-}
-
-func readComposeServiceLogLines(ctx context.Context, root string, composePath string, serviceName string, lines int, since string) ([]string, error) {
-	if lines <= 0 {
-		lines = 200
-	}
-	cmd, baseArgs, err := resolveCompose(ctx)
-	if err != nil {
-		return nil, err
-	}
-	fullArgs := append(baseArgs, composeBaseArgs(root, composePath)...)
-	fullArgs = append(fullArgs, "logs", "--no-color", "--tail", strconv.Itoa(lines))
-	if strings.TrimSpace(since) != "" {
-		fullArgs = append(fullArgs, "--since", strings.TrimSpace(since))
-	}
-	fullArgs = append(fullArgs, serviceName)
-
-	out, err := system.RunCommandWithSudo(ctx, cmd, fullArgs...)
-	if err != nil {
-		return nil, err
-	}
-	return splitLogLines(out), nil
 }
 
 func bitcoinSystemdLogService(ctx context.Context) string {

@@ -567,23 +567,15 @@ privileged_broker_is_trusted() {
 configure_sudoers() {
   local manager_user="${1:-lightningos}"
   print_step "Configuring sudoers"
-  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path ufw_path tee_path
+  local systemctl_path apt_get_path apt_path dpkg_path systemd_run_path smartctl_path ufw_path tee_path
   systemctl_path=$(command -v systemctl || true)
   apt_get_path=$(command -v apt-get || true)
   apt_path=$(command -v apt || true)
   dpkg_path=$(command -v dpkg || true)
-  docker_path=$(command -v docker || true)
-  docker_compose_path=$(command -v docker-compose || true)
   systemd_run_path=$(command -v systemd-run || true)
   smartctl_path=$(command -v smartctl || true)
   ufw_path=$(command -v ufw || true)
   tee_path=$(command -v tee || true)
-  if [[ -z "$docker_path" ]]; then
-    docker_path="/usr/bin/docker"
-  fi
-  if [[ -z "$docker_compose_path" ]]; then
-    docker_compose_path="/usr/bin/docker-compose"
-  fi
   if [[ -z "$systemd_run_path" ]]; then
     systemd_run_path="/usr/bin/systemd-run"
   fi
@@ -610,8 +602,6 @@ configure_sudoers() {
   [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
   [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
   [[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")
-  [[ -n "$docker_path" ]] && app_cmds+=("${docker_path} *")
-  [[ -n "$docker_compose_path" ]] && app_cmds+=("${docker_compose_path} *")
   [[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")
   [[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")
   local app_cmds_line
@@ -887,7 +877,6 @@ ensure_manager_service() {
   else
     getent group bitcoin >/dev/null 2>&1 && groups+=("bitcoin")
   fi
-  getent group docker >/dev/null 2>&1 && groups+=("docker")
   local group_line
   group_line=$(IFS=' '; echo "${groups[*]}")
   sed -i "s|^SupplementaryGroups=.*|SupplementaryGroups=${group_line}|" "$dst"
@@ -1681,8 +1670,11 @@ main() {
   else
     membership_groups+=("bitcoin")
   fi
-  membership_groups+=("docker" "systemd-journal")
+  membership_groups+=("systemd-journal")
   ensure_group_membership "$manager_user" "${membership_groups[@]}"
+  if getent group docker >/dev/null 2>&1 && id -nG "$manager_user" | tr ' ' '\n' | grep -qx docker; then
+    gpasswd -d "$manager_user" docker >/dev/null
+  fi
   if [[ -n "$LND_USER" && -n "$BITCOIN_GROUP" ]]; then
     if ! id -nG "$LND_USER" | tr ' ' '\n' | grep -qx "$BITCOIN_GROUP"; then
       if prompt_yes_no "Add ${LND_USER} to ${BITCOIN_GROUP} group for Bitcoin RPC cookie access?" "y"; then

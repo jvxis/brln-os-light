@@ -29,19 +29,19 @@ type privilegeCallBudget struct {
 var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/server/app_upgrade.go":              {runSudo: 2, runSystemd: 1, shell: 1},
 	"internal/server/apps_bark_wallet.go":         {},
-	"internal/server/apps_bitcoincore.go":         {runSudo: 5, runSystemd: 1, shell: 1},
-	"internal/server/apps_btcpay.go":              {runSudo: 2},
-	"internal/server/apps_cpuminer.go":            {runSudo: 1},
-	"internal/server/apps_cpuminer_status.go":     {runSudo: 2},
-	"internal/server/apps_docker.go":              {runSudo: 16, shell: 2},
-	"internal/server/apps_fedimint.go":            {runSudo: 10},
-	"internal/server/apps_lnd_access_compat.go":   {runSudo: 4},
+	"internal/server/apps_bitcoincore.go":         {},
+	"internal/server/apps_btcpay.go":              {},
+	"internal/server/apps_cpuminer.go":            {},
+	"internal/server/apps_cpuminer_status.go":     {},
+	"internal/server/apps_docker.go":              {},
+	"internal/server/apps_fedimint.go":            {},
+	"internal/server/apps_lnd_access_compat.go":   {},
 	"internal/server/apps_mempool.go":             {},
 	"internal/server/apps_publicpool.go":          {},
-	"internal/server/apps_robosats.go":            {runSudo: 4},
+	"internal/server/apps_robosats.go":            {},
 	"internal/server/apps_storage_permissions.go": {runSystemd: 1},
 	"internal/server/auth_enable.go":              {runSystemd: 1, writeSudo: 2, restart: 1, shell: 1},
-	"internal/server/bitcoin_local.go":            {runSudo: 5},
+	"internal/server/bitcoin_local.go":            {},
 	"internal/server/elements_mainchain.go":       {runSystemd: 1},
 	"internal/server/elements_status.go":          {runSystemd: 1},
 	"internal/server/firewall_status.go":          {runSudo: 1},
@@ -57,63 +57,45 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 
 var legacyWildcardSudoLines = map[string]struct{}{
 	`install.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
-	`install.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:               {},
-	`install.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                       {},
-	`install.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:                     {},
-	`install.sh:[[ -n "$docker_path" ]] && app_cmds+=("${docker_path} *")`:                 {},
-	`install.sh:[[ -n "$docker_compose_path" ]] && app_cmds+=("${docker_compose_path} *")`: {},
-	`install.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`:       {},
-	`install.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                       {},
-	`install_existing.sh:${user} ALL=NOPASSWD: ${smartctl_path} *`:                         {},
+	`install.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:         {},
+	`install.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                 {},
+	`install.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:               {},
+	`install.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`: {},
+	`install.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                 {},
+	`install_existing.sh:${user} ALL=NOPASSWD: ${smartctl_path} *`:                   {},
 	`install_existing.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
-	`install_existing.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:               {},
-	`install_existing.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                       {},
-	`install_existing.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:                     {},
-	`install_existing.sh:[[ -n "$docker_path" ]] && app_cmds+=("${docker_path} *")`:                 {},
-	`install_existing.sh:[[ -n "$docker_compose_path" ]] && app_cmds+=("${docker_compose_path} *")`: {},
-	`install_existing.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`:       {},
-	`install_existing.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                       {},
-	`install_existing_pi.sh:${user} ALL=NOPASSWD: ${smartctl_path} *`:                               {},
+	`install_existing.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:         {},
+	`install_existing.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                 {},
+	`install_existing.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:               {},
+	`install_existing.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`: {},
+	`install_existing.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                 {},
+	`install_existing_pi.sh:${user} ALL=NOPASSWD: ${smartctl_path} *`:                         {},
 	`install_existing_pi.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
-	`install_existing_pi.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:               {},
-	`install_existing_pi.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                       {},
-	`install_existing_pi.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:                     {},
-	`install_existing_pi.sh:[[ -n "$docker_path" ]] && app_cmds+=("${docker_path} *")`:                 {},
-	`install_existing_pi.sh:[[ -n "$docker_compose_path" ]] && app_cmds+=("${docker_compose_path} *")`: {},
-	`install_existing_pi.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`:       {},
-	`install_existing_pi.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                       {},
+	`install_existing_pi.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:         {},
+	`install_existing_pi.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                 {},
+	`install_existing_pi.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:               {},
+	`install_existing_pi.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`: {},
+	`install_existing_pi.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                 {},
 	`internal/server/assets/upgrade-app.sh:system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, /usr/local/sbin/lightningos-upgrade-lnd, /usr/local/sbin/lightningos-upgrade-app, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"`: {},
 	`internal/server/assets/upgrade-app.sh:[[ -n "${APT_GET_BIN:-}" ]] && app_cmds+=("${APT_GET_BIN} *")`:                                                                          {},
 	`internal/server/assets/upgrade-app.sh:[[ -n "${APT_BIN:-}" ]] && app_cmds+=("${APT_BIN} *")`:                                                                                  {},
 	`internal/server/assets/upgrade-app.sh:[[ -n "${DPKG_BIN:-}" ]] && app_cmds+=("${DPKG_BIN} *")`:                                                                                {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${DOCKER_BIN:-}" ]] && app_cmds+=("${DOCKER_BIN} *")`:                                                                            {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${DOCKER_COMPOSE_BIN:-}" ]] && app_cmds+=("${DOCKER_COMPOSE_BIN} *")`:                                                            {},
 	`internal/server/assets/upgrade-app.sh:[[ -n "${SYSTEMD_RUN_BIN:-}" ]] && app_cmds+=("${SYSTEMD_RUN_BIN} *")`:                                                                  {},
 	`internal/server/assets/upgrade-app.sh:[[ -n "${UFW_BIN:-}" ]] && app_cmds+=("${UFW_BIN} *")`:                                                                                  {},
 	`internal/server/auth_enable.go:fmt.Sprintf("%s ALL=NOPASSWD: %s %s, %s restart lightningos-manager, %s *", managerUser, teePath, configPath, systemctlPath, systemdRunPath),`: {},
 }
 
-var legacyDockerGroupLines = map[string]struct{}{
-	`install.sh:ensure_group_member lightningos docker`:                                            {},
-	`install_existing.sh:getent group docker >/dev/null 2>&1 && groups+=("docker")`:                {},
-	`install_existing.sh:ensure_system_group docker`:                                               {},
-	`install_existing.sh:membership_groups+=("docker" "systemd-journal")`:                          {},
-	`install_existing_pi.sh:getent group docker >/dev/null 2>&1 && groups+=("docker")`:             {},
-	`install_existing_pi.sh:membership_groups+=("docker" "systemd-journal")`:                       {},
-	`templates/systemd/lightningos-manager.service:SupplementaryGroups=lnd systemd-journal docker`: {},
-}
+var legacyDockerGroupLines = map[string]struct{}{}
 
 var legacyPrivilegedShellLiteralBudgets = map[string]int{
 	// Closed non-root container entrypoints copy the immutable upstream web/API
 	// payloads to bounded tmpfs so their roots can remain read-only. No host
 	// path, command, argument, image, mount, or identity is request-selectable.
-	"internal/appmanifest/mempool.go":     2,
-	"internal/server/app_upgrade.go":      1,
-	"internal/server/apps_bitcoincore.go": 1,
-	"internal/server/apps_docker.go":      2,
-	"internal/server/auth_enable.go":      1,
-	"internal/server/lnd_upgrade.go":      1,
-	"internal/server/tor_upgrade.go":      1,
+	"internal/appmanifest/mempool.go": 2,
+	"internal/server/app_upgrade.go":  1,
+	"internal/server/auth_enable.go":  1,
+	"internal/server/lnd_upgrade.go":  1,
+	"internal/server/tor_upgrade.go":  1,
 }
 
 func TestPrivilegeBoundaryCallSiteBudgets(t *testing.T) {
@@ -217,6 +199,58 @@ func TestBTCPayLifecycleHasNoLegacyDockerExecution(t *testing.T) {
 		}
 		return true
 	})
+}
+
+func TestManagerHasNoLegacyDockerExecution(t *testing.T) {
+	root := moduleRoot(t)
+	serverRoot := filepath.Join(root, "internal", "server")
+	forbiddenHelpers := map[string]bool{
+		"runCompose":                 true,
+		"getComposeStatus":           true,
+		"resolveCompose":             true,
+		"composeContainerID":         true,
+		"ensureDockerImage":          true,
+		"pullDockerImage":            true,
+		"installDocker":              true,
+		"installComposePluginBinary": true,
+	}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(serverRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		parsed, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			name := calledFunctionName(call.Fun)
+			if forbiddenHelpers[name] {
+				position := fset.Position(call.Pos())
+				t.Errorf("legacy Docker helper %s remains in manager at %s:%d", name, filepath.ToSlash(rel), position.Line)
+			}
+			if name == "RunCommandWithSudo" {
+				args := stringArguments(call)
+				if args["docker"] || args["docker-compose"] || args["/usr/bin/docker"] || args["/usr/bin/docker-compose"] {
+					position := fset.Position(call.Pos())
+					t.Errorf("direct privileged Docker command remains in manager at %s:%d", filepath.ToSlash(rel), position.Line)
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestLNbitsLifecycleHasNoLegacyPrivilegedExecution(t *testing.T) {

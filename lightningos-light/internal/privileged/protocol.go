@@ -38,6 +38,7 @@ const (
 	OperationAppImageStatus               Operation = "app.image.status"
 	OperationAppImageProbe                Operation = "app.image.probe"
 	OperationAppFirewallEnsure            Operation = "app.firewall.ensure"
+	OperationAppLNDHostAccessEnsure       Operation = "app.lnd-host-access.ensure"
 	OperationBitcoinStorageEnsure         Operation = "app.bitcoincore.storage.ensure"
 	OperationBitcoinConfigEnsure          Operation = "app.bitcoincore.config.ensure"
 	OperationBitcoinConfigRead            Operation = "app.bitcoincore.config.read"
@@ -170,6 +171,10 @@ type AppFirewallParams struct {
 
 type AppFirewallState struct {
 	Status string `json:"status"`
+}
+
+type AppLNDHostAccessParams struct {
+	AppID string `json:"app_id"`
 }
 
 type BitcoinCoreStorageParams struct {
@@ -522,7 +527,7 @@ func ValidateRequest(request Request) error {
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid app.compose.logs params: %w", err)
 		}
-		if params.AppID != appmanifest.FedimintGuardianID && params.AppID != appmanifest.FedimintGatewayID {
+		if params.AppID != appmanifest.BitcoinCoreID && params.AppID != appmanifest.FedimintGuardianID && params.AppID != appmanifest.FedimintGatewayID {
 			return errors.New("app log manifest is not allowed")
 		}
 		if params.Lines < 1 || params.Lines > 500 || !validComposeLogSince(params.Since) {
@@ -610,6 +615,14 @@ func ValidateRequest(request Request) error {
 		}
 		if _, err := appmanifest.CatalogExternalTCPPort(params.AppID); err != nil {
 			return errors.New("app external access manifest is not allowed")
+		}
+	case OperationAppLNDHostAccessEnsure:
+		var params AppLNDHostAccessParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.lnd-host-access.ensure params: %w", err)
+		}
+		if params.AppID != appmanifest.BTCPayID {
+			return errors.New("app LND host access manifest is not allowed")
 		}
 	case OperationBitcoinStorageEnsure:
 		var params BitcoinCoreStorageParams

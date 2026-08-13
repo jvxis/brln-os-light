@@ -19,19 +19,15 @@ import (
 )
 
 const (
-	bitcoinCoreMinPruneMiB           = 550
-	bitcoinCoreDataDirInContainer    = "/home/bitcoin/.bitcoin"
-	bitcoinCoreConfigPathInContainer = bitcoinCoreDataDirInContainer + "/bitcoin.conf"
-	blockCadenceWindowSec            = 600
-	blockCadenceBucketCount          = 12
-	blockCadenceCacheTTL             = 60 * time.Second
-	blockCadenceMaxSteps             = 144
-	bitcoinNetworkInfoTimeout        = 2 * time.Second
-	bitcoinCadenceTimeout            = 8 * time.Second
-	bitcoinCadenceMinBudget          = 3 * time.Second
-	bitcoinCLIRPCWaitTimeoutSec      = 10
-	bitcoinCLIRPCClientTimeoutSec    = 8
-	maxBitcoinBrokerStatusBytes      = 64 * 1024
+	bitcoinCoreMinPruneMiB      = 550
+	blockCadenceWindowSec       = 600
+	blockCadenceBucketCount     = 12
+	blockCadenceCacheTTL        = 60 * time.Second
+	blockCadenceMaxSteps        = 144
+	bitcoinNetworkInfoTimeout   = 2 * time.Second
+	bitcoinCadenceTimeout       = 8 * time.Second
+	bitcoinCadenceMinBudget     = 3 * time.Second
+	maxBitcoinBrokerStatusBytes = 64 * 1024
 )
 
 type bitcoinLocalStatus struct {
@@ -190,38 +186,8 @@ func (s *Server) bitcoinLocalStatus(ctx context.Context) (bitcoinLocalStatus, er
 		return brokerStatus, nil
 	}
 
-	status, err := inspectBitcoinCoreStatus(ctx)
-	if err != nil {
-		resp.Status = "unknown"
-		return resp, nil
-	}
-	resp.Status = status
-	if status != "running" {
-		return resp, nil
-	}
-
-	logTip, logTipOK := fetchBitcoinLocalLogTip(ctx, paths)
-	chainInfo, err := fetchBitcoinLocalChainInfoBest(ctx, paths)
-	if err != nil {
-		resp.RPCOk = false
-		if logTipOK {
-			applyBitcoinLogTipToLocalStatus(&resp, logTip)
-		}
-		return resp, nil
-	}
-
-	applyBitcoinCLIChainInfoToLocalStatus(&resp, chainInfo)
-	if netInfo, ok := fetchBitcoinLocalNetworkInfoBestEffort(ctx, paths); ok {
-		applyBitcoinCLINetworkInfoToLocalStatus(&resp, netInfo)
-	}
-
-	bestTime, buckets, cadenceOk := fetchBitcoinLocalCadenceBestEffort(ctx, paths, chainInfo.BestBlockHash)
-	if cadenceOk {
-		resp.BestBlockTime = bestTime
-		resp.BlockCadenceWindowSec = blockCadenceWindowSec
-		resp.BlockCadence = buckets
-	}
-
+	resp.Status = "unknown"
+	resp.RPCOk = false
 	return resp, nil
 }
 
@@ -315,50 +281,6 @@ func (s *Server) handleBitcoinLocalConfigPost(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func fetchBitcoinLocalChainInfo(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLIChainInfo, error) {
-	out, err := execBitcoinCLI(ctx, paths, "getblockchaininfo")
-	if err != nil {
-		return bitcoinCLIChainInfo{}, err
-	}
-	chainInfo := bitcoinCLIChainInfo{}
-	if err := json.Unmarshal([]byte(out), &chainInfo); err != nil {
-		return bitcoinCLIChainInfo{}, err
-	}
-	return chainInfo, nil
-}
-
-func fetchBitcoinLocalChainInfoBest(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLIChainInfo, error) {
-	if cfg, ok := readBitcoinCoreAppRPCConfig(ctx, paths); ok {
-		info, err := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
-		if err == nil {
-			return bitcoinInfoToCLIChainInfo(info), nil
-		}
-	}
-	return fetchBitcoinLocalChainInfo(ctx, paths)
-}
-
-func fetchBitcoinLocalNetworkInfo(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLINetworkInfo, error) {
-	netOut, err := execBitcoinCLI(ctx, paths, "getnetworkinfo")
-	if err != nil {
-		return bitcoinCLINetworkInfo{}, err
-	}
-	netInfo := bitcoinCLINetworkInfo{}
-	if err := json.Unmarshal([]byte(netOut), &netInfo); err != nil {
-		return bitcoinCLINetworkInfo{}, err
-	}
-	return netInfo, nil
-}
-
-func fetchBitcoinLocalNetworkInfoBest(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLINetworkInfo, error) {
-	if cfg, ok := readBitcoinCoreAppRPCConfig(ctx, paths); ok {
-		info, err := fetchBitcoinNetworkInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
-		if err == nil {
-			return bitcoinNetworkInfoToCLINetworkInfo(info), nil
-		}
-	}
-	return fetchBitcoinLocalNetworkInfo(ctx, paths)
-}
-
 func readBitcoinCoreAppRPCConfig(ctx context.Context, paths bitcoinCorePaths) (bitcoinRPCConfig, bool) {
 	if !fileExists(paths.ComposePath) {
 		return bitcoinRPCConfig{}, false
@@ -430,15 +352,10 @@ func getBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHas
 	var buckets []blockCadenceBucket
 	var err error
 	if fileExists(paths.ComposePath) {
-		computed := false
 		if cfg, ok := readBitcoinCoreAppRPCConfig(ctx, paths); ok {
 			bestTime, buckets, err = computeBitcoinLocalCadenceRPC(ctx, cfg, trimmed)
-			if err == nil {
-				computed = true
-			}
-		}
-		if !computed {
-			bestTime, buckets, err = computeBitcoinLocalCadence(ctx, paths, trimmed)
+		} else {
+			err = errors.New("local Bitcoin RPC credentials are unavailable")
 		}
 	} else {
 		cfg, cfgErr := readBitcoinLocalRPCConfig(ctx)
@@ -459,63 +376,6 @@ func getBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHas
 		ExpiresAt: time.Now().Add(blockCadenceCacheTTL),
 	}
 	blockCadenceMu.Unlock()
-
-	return bestTime, buckets, nil
-}
-
-func computeBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHash string) (int64, []blockCadenceBucket, error) {
-	header, err := fetchBitcoinLocalBlockHeader(ctx, paths, bestHash)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	bestTime := header.Time
-	if bestTime == 0 {
-		return 0, nil, errors.New("best block time missing")
-	}
-
-	windowSec := int64(blockCadenceWindowSec)
-	startTime := bestTime - (windowSec * int64(blockCadenceBucketCount))
-	buckets := make([]blockCadenceBucket, blockCadenceBucketCount)
-	for i := 0; i < blockCadenceBucketCount; i++ {
-		start := startTime + (int64(i) * windowSec)
-		buckets[i] = blockCadenceBucket{
-			StartTime: start,
-			EndTime:   start + windowSec,
-			Count:     0,
-		}
-	}
-
-	current := header
-	complete := false
-	for steps := 0; steps < blockCadenceMaxSteps; steps++ {
-		if current.Time < startTime {
-			complete = true
-			break
-		}
-		idx := int((current.Time - startTime) / windowSec)
-		if idx >= 0 && idx < len(buckets) {
-			buckets[idx].Count++
-		}
-
-		nextHash := strings.TrimSpace(current.PreviousBlockHash)
-		if nextHash == "" {
-			complete = true
-			break
-		}
-
-		nextHeader, err := fetchBitcoinLocalBlockHeader(ctx, paths, nextHash)
-		if err != nil {
-			return 0, nil, fmt.Errorf("fetch previous block header failed: %w", err)
-		}
-		current = nextHeader
-	}
-	if !complete && current.Time < startTime {
-		complete = true
-	}
-	if !complete {
-		return 0, nil, errors.New("block cadence scan limit reached before window start")
-	}
 
 	return bestTime, buckets, nil
 }
@@ -577,18 +437,6 @@ func computeBitcoinLocalCadenceRPC(ctx context.Context, cfg bitcoinRPCConfig, be
 	return bestTime, buckets, nil
 }
 
-func fetchBitcoinLocalBlockHeader(ctx context.Context, paths bitcoinCorePaths, hash string) (bitcoinCLIBlockHeader, error) {
-	out, err := execBitcoinCLI(ctx, paths, "getblockheader", hash, "true")
-	if err != nil {
-		return bitcoinCLIBlockHeader{}, err
-	}
-	header := bitcoinCLIBlockHeader{}
-	if err := json.Unmarshal([]byte(out), &header); err != nil {
-		return bitcoinCLIBlockHeader{}, err
-	}
-	return header, nil
-}
-
 func fetchBitcoinNetworkInfoBestEffort(ctx context.Context, host, user, pass string) (bitcoinNetworkInfo, bool) {
 	if !contextHasBudget(ctx, bitcoinCadenceMinBudget) {
 		return bitcoinNetworkInfo{}, false
@@ -598,19 +446,6 @@ func fetchBitcoinNetworkInfoBestEffort(ctx context.Context, host, user, pass str
 	info, err := fetchBitcoinNetworkInfo(infoCtx, host, user, pass)
 	if err != nil {
 		return bitcoinNetworkInfo{}, false
-	}
-	return info, true
-}
-
-func fetchBitcoinLocalNetworkInfoBestEffort(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLINetworkInfo, bool) {
-	if !contextHasBudget(ctx, bitcoinCadenceMinBudget) {
-		return bitcoinCLINetworkInfo{}, false
-	}
-	infoCtx, cancel := context.WithTimeout(ctx, bitcoinNetworkInfoTimeout)
-	defer cancel()
-	info, err := fetchBitcoinLocalNetworkInfoBest(infoCtx, paths)
-	if err != nil {
-		return bitcoinCLINetworkInfo{}, false
 	}
 	return info, true
 }
@@ -716,46 +551,6 @@ func fetchBitcoinBlockHeaderRPC(ctx context.Context, host, user, pass, hash stri
 		return bitcoinCLIBlockHeader{}, err
 	}
 	return parseBitcoinBlockHeaderRPC(body)
-}
-
-func execBitcoinCLI(ctx context.Context, paths bitcoinCorePaths, args ...string) (string, error) {
-	containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind")
-	if err != nil {
-		return "", err
-	}
-	if containerID == "" {
-		return "", errors.New("bitcoind container not running")
-	}
-	cliArgs := bitcoinCLIExecArgs(containerID, args...)
-	out, err := system.RunCommandWithSudo(ctx, "docker", cliArgs...)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
-}
-
-func bitcoinCLIExecArgs(containerID string, args ...string) []string {
-	return append([]string{
-		"exec", "-i", containerID,
-		"bitcoin-cli",
-		"-datadir=" + bitcoinCoreDataDirInContainer,
-		"-conf=" + bitcoinCoreConfigPathInContainer,
-		fmt.Sprintf("-rpcclienttimeout=%d", bitcoinCLIRPCClientTimeoutSec),
-		"-rpcwait",
-		fmt.Sprintf("-rpcwaittimeout=%d", bitcoinCLIRPCWaitTimeoutSec),
-	}, args...)
-}
-
-func fetchBitcoinLocalLogTip(ctx context.Context, paths bitcoinCorePaths) (bitcoinLogTip, bool) {
-	containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind")
-	if err != nil || containerID == "" {
-		return bitcoinLogTip{}, false
-	}
-	out, err := system.RunCommandWithSudo(ctx, "docker", "logs", "--tail", "500", containerID)
-	if err != nil {
-		return bitcoinLogTip{}, false
-	}
-	return parseBitcoinLogTip(out)
 }
 
 func parseBitcoinLogTip(raw string) (bitcoinLogTip, bool) {

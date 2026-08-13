@@ -391,11 +391,13 @@ func probeBtcpayBitcoin(ctx context.Context, wiring btcpayBitcoinWiring) error {
 }
 
 // ensureBtcpayLndMaterial prepares the LND surface BTCPay needs: REST access
-// from Docker (shared lnbits helper), a private copy of tls.cert, and a
+// from Docker (through the privileged broker), a private copy of tls.cert, and a
 // dedicated macaroon baked with the minimal permission set documented by
 // BTCPay — never the admin macaroon.
 func (s *Server) ensureBtcpayLndMaterial(ctx context.Context, paths btcpayPaths) error {
-	if err := ensureLnbitsRestAccess(ctx); err != nil {
+	if handled, err := system.EnsureAppLNDHostAccessWithBroker(ctx, appmanifest.BTCPayID); !handled {
+		return errors.New("BTCPay LND host access requires privileged broker enforce mode")
+	} else if err != nil {
 		return err
 	}
 	if err := copyBtcpayLndCert(paths); err != nil {
@@ -449,8 +451,8 @@ func btcpayMacaroonPermissions() []lndclient.MacaroonPermission {
 // copyBtcpayLndCert keeps a private copy of tls.cert in the app data dir. The
 // copy (not /data/lnd itself) is what gets mounted: a whole-dir mount would
 // expose admin.macaroon and a single-file mount would pin a stale inode after
-// LND regenerates the cert. ensureLnbitsRestAccess may have just restarted LND,
-// so wait for the regenerated cert to appear.
+// LND regenerates the cert. The broker may have just restarted LND while
+// reconciling REST access, so wait for the regenerated cert to appear.
 func copyBtcpayLndCert(paths btcpayPaths) error {
 	const certSource = "/data/lnd/tls.cert"
 	var raw []byte
@@ -544,10 +546,9 @@ func btcpayComposeContents(paths btcpayPaths, wiring btcpayBitcoinWiring) string
 }
 
 func ensureBtcpayUfwAccess(ctx context.Context) error {
-	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
-	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
-		return nil
+	if handled, _, err := system.EnsureAppFirewallWithBroker(ctx, appmanifest.BTCPayID); !handled {
+		return errors.New("BTCPay firewall requires privileged broker enforce mode")
+	} else {
+		return err
 	}
-	_, err = system.RunCommandWithSudo(ctx, "ufw", "allow", fmt.Sprintf("%d/tcp", btcpayPort))
-	return err
 }

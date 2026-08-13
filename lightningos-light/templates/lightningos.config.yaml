@@ -22,9 +22,9 @@ ui:
   static_dir: "/opt/lightningos/ui"
 
 privileged:
-  # Keep disabled until the broker is installed and its self-test passes.
-  # Shadow validates typed requests while preserving all legacy behavior.
-  mode: "disabled"
+  # The installer validates the root-owned broker before starting the manager.
+  # App Store operations fail closed unless this boundary is enforced.
+  mode: "enforce"
   timeout_seconds: 5
 
 features:

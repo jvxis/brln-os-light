@@ -1,66 +1,13 @@
 package server
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"net"
-	"os"
 	"strings"
-
-	"lightningos-light/internal/system"
 )
 
-// dockerGatewayIP remains a compatibility helper for the unmigrated Fedimint
-// and BTCPay LND-access paths. Migrated apps resolve their fixed network inside the
-// privileged broker instead of calling this manager-side helper.
-func dockerGatewayIP(ctx context.Context) (string, error) {
-	out, err := system.RunCommandWithSudo(ctx, "docker", "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}")
-	if err == nil {
-		ip := strings.TrimSpace(out)
-		if ip != "" && ip != "<no value>" {
-			return ip, nil
-		}
-	}
-	out, err = system.RunCommandWithSudo(ctx, "ip", "-4", "addr", "show", "docker0")
-	if err == nil {
-		fields := strings.Fields(out)
-		for index, token := range fields {
-			if token == "inet" && index+1 < len(fields) {
-				ip := strings.Split(fields[index+1], "/")[0]
-				if ip != "" {
-					return ip, nil
-				}
-			}
-		}
-	}
-	return "", errors.New("unable to determine docker bridge gateway IP")
-}
-
-func ensureLnbitsRestAccess(ctx context.Context) error {
-	bridgeIP, err := dockerGatewayIP(ctx)
-	if err != nil || bridgeIP == "" {
-		return errors.New("unable to determine docker gateway IPs")
-	}
-	content, err := os.ReadFile(lndConfPath)
-	if err != nil {
-		return fmt.Errorf("failed to read lnd.conf: %w", err)
-	}
-	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
-	lines, changed := updateLndRestOptions(lines, []string{bridgeIP})
-	if !changed {
-		return nil
-	}
-	if err := os.WriteFile(lndConfPath, []byte(strings.Join(lines, "\n")+"\n"), 0640); err != nil {
-		return fmt.Errorf("failed to update lnd.conf: %w", err)
-	}
-	_, _ = system.RunCommandWithSudo(ctx, "rm", "-f", "/data/lnd/tls.cert", "/data/lnd/tls.key")
-	if _, err := system.RunCommandWithSudo(ctx, "systemctl", "restart", "lnd"); err != nil {
-		return fmt.Errorf("failed to restart lnd: %w", err)
-	}
-	return nil
-}
-
+// updateLndRestOptions is retained only as a pure parser for recognized legacy
+// configuration. All host mutation and LND reconciliation now belongs to the
+// typed broker operations used by the individual applications.
 func updateLndRestOptions(lines []string, gateways []string) ([]string, bool) {
 	uniqueGateways := []string{}
 	for _, gateway := range gateways {

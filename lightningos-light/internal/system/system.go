@@ -63,6 +63,10 @@ type appLogsPrivilegedClient interface {
 	AppLogs(ctx context.Context, appID string, lines int, since string) ([]string, string, error)
 }
 
+type appLNDHostAccessPrivilegedClient interface {
+	EnsureAppLNDHostAccess(ctx context.Context, appID string, dryRun bool) error
+}
+
 type loopPrivilegedClient interface {
 	LoopStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, hasPersistentState bool, err error)
 	EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (status string, err error)
@@ -1080,6 +1084,30 @@ func EnsureAppFirewallWithBroker(ctx context.Context, appID string) (bool, strin
 		return false, "", nil
 	default:
 		return false, "", nil
+	}
+}
+
+func EnsureAppLNDHostAccessWithBroker(ctx context.Context, appID string) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	hostClient, ok := client.(appLNDHostAccessPrivilegedClient)
+	if !ok {
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, hostClient.EnsureAppLNDHostAccess(ctx, appID, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_ = hostClient.EnsureAppLNDHostAccess(shadowCtx, appID, true)
+		return false, nil
+	default:
+		return false, nil
 	}
 }
 

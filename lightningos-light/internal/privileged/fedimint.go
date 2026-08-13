@@ -371,17 +371,24 @@ func (manager *ComposeAppManager) ensureFedimintGatewayInternalFirewall(ctx cont
 
 func (manager *ComposeAppManager) Logs(ctx context.Context, appID string, lines int, since string) (AppLogsState, error) {
 	var state AppLogsState
-	if appID != appmanifest.FedimintGuardianID && appID != appmanifest.FedimintGatewayID {
-		return state, errors.New("Fedimint log manifest is not allowed")
-	}
 	if lines < 1 || lines > 500 || !validComposeLogSince(since) {
-		return state, errors.New("Fedimint log query is invalid")
+		return state, errors.New("app log query is invalid")
 	}
-	files, err := manager.validatedFedimintFiles(appID)
-	if err != nil {
-		return state, err
+	var snapshot composeAppSnapshot
+	var cleanup func()
+	var err error
+	switch appID {
+	case appmanifest.BitcoinCoreID:
+		snapshot, cleanup, err = manager.createBitcoinCoreInspectionSnapshot(ctx)
+	case appmanifest.FedimintGuardianID, appmanifest.FedimintGatewayID:
+		var files fedimintValidatedFiles
+		files, err = manager.validatedFedimintFiles(appID)
+		if err == nil {
+			snapshot, cleanup, err = manager.createFedimintSnapshot(appID, files)
+		}
+	default:
+		return state, errors.New("app log manifest is not allowed")
 	}
-	snapshot, cleanup, err := manager.createFedimintSnapshot(appID, files)
 	if err != nil {
 		return state, err
 	}
@@ -407,14 +414,14 @@ func (manager *ComposeAppManager) Logs(ctx context.Context, appID string, lines 
 	args = append(args, manifest.PrimaryService)
 	output, err := manager.Runner.Run(ctx, commandPath, args...)
 	if err != nil {
-		return state, errors.New("Fedimint log command failed")
+		return state, errors.New("app log command failed")
 	}
 	state.Source = "docker:" + manifest.PrimaryService
-	state.Lines = boundedFedimintLogLines(output)
+	state.Lines = boundedAppLogLines(output)
 	return state, nil
 }
 
-func boundedFedimintLogLines(output string) []string {
+func boundedAppLogLines(output string) []string {
 	const maxTotal = 48 * 1024
 	const maxLine = 4096
 	result := make([]string, 0)

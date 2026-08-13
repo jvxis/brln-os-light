@@ -24,7 +24,7 @@ ui:
 privileged:
   # disabled: legacy path only; shadow: broker validates then legacy executes;
   # enforce: broker executes and the legacy privileged path is not used.
-  mode: "disabled"
+  mode: "enforce"
   timeout_seconds: 5
 
 features:

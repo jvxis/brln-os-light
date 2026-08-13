@@ -207,8 +207,8 @@ image preparation/status, fixed compatibility probes, and the brokered
 first-container creation when Docker is already installed. Its Ubuntu 24.04
 gate completed a 90-second pull plus install/start/stop/uninstall with the live
 manager lacking the Docker GID; all transient pull units were collected.
-The remaining apps, Ubuntu 26 execution, and final Docker-group removal remain
-open; Phase 2 is not complete. Evidence is stored in
+At this historical CPU Miner checkpoint, the remaining apps, Ubuntu 26
+execution, and final Docker-group removal were still open. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-cpuminer-inspect-enforce-2026-08-10.json`
 and
 `docs/baselines/privilege-hardening-phase2-cpuminer-config-enforce-2026-08-10.json`,
@@ -615,7 +615,7 @@ root-owned `0600`, used only the declared metadata fields, and contained no
 credential terms. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-btcpay-functional-lifecycle-2026-08-11.json`.
 
-The remaining App Store order is now driven by observed use: LNDg first,
+The subsequent App Store order was driven by observed use: LNDg first,
 LNbits second, then the native BRLN Loop and Magma paths. Fedimint, Electrs,
 and Mempool are lower priority; Electrs and Mempool remain last because their
 functional gate requires a synchronized, unpruned Full Node with `txindex=1`.
@@ -805,9 +805,9 @@ channel opens retain fresh funds reauthentication, and the tested installation
 remained in monitor mode. The authenticated LOS TESTE2 gate preserved both
 apps as installed/running with no active Loop job or transient Magma order and
 moved no funds or channels. LND and Bitcoin retained their timestamps. The node
-still has the manager's legacy Docker-group membership because the shared Phase
-2 `enforce` cutover remains open; neither native app uses it, and final removal
-is still mandatory.
+still had the manager's legacy Docker-group membership because the shared Phase
+2 `enforce` cutover had not yet run; neither native app used it. The later
+shared cutover implements and tests final removal.
 Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-native-brln-boundary-2026-08-12.json`.
 
@@ -1054,7 +1054,29 @@ remained stopped, their data remained present, and Bitcoin, LND, and manager
 timestamps were unchanged. Evidence is in
 `docs/baselines/privilege-hardening-phase2-fedimint-functional-2026-08-13.json`.
 
-The shared Phase 2 matrix and final Docker cutover are next.
+The shared Docker cutover implementation is now complete. The manager's final
+legacy Compose/Docker fallbacks were removed, Bitcoin logs and BTCPay LND host
+access moved behind typed broker operations, and fresh configuration defaults
+to `enforce`. Fresh/existing installers and the in-place upgrade no longer
+grant Docker/Compose sudo or Docker group membership. The upgrade stages a
+root-only rollback bundle and preserves existing config ownership, mode, ACLs,
+supplementary groups other than Docker, sudoers state, and the prior Docker
+membership.
+
+On the disposable Ubuntu 24.04 clone, a simulated legacy Docker-group manager
+passed forward cutover, broker self-test, manager restart, rollback, and a
+second forward cutover. Both account and live-process Docker GIDs were removed;
+the rollback restored the old boundary; Bitcoin and LND activation timestamps
+did not change. The gate caught and repaired ACL loss before acceptance. The
+Linux privileged package passed except for two pre-existing Loop fixtures that
+require a fixed app user absent from this clone; all tests added or changed by
+this slice passed. Evidence is in
+`docs/baselines/privilege-hardening-phase2-shared-cutover-2026-08-13.json`.
+
+Phase 2 remains open only for its supported cross-version acceptance matrix:
+complete per-app lifecycle/reboot coverage on Ubuntu 24.04 and 26.04. The
+manager/Docker code boundary and controlled rollback path are no longer open
+implementation items.
 
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC

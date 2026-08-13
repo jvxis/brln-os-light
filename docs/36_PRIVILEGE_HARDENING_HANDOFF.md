@@ -109,11 +109,11 @@ Application state at this checkpoint:
 | --- | --- | --- |
 | CPU Miner | Image, Docker readiness, install, config apply, inspect, lifecycle, and uninstall passed without manager Docker access | Cross-version final matrix only |
 | RoboSats | Closed images, install, root-owned snapshot, lifecycle, inspect, firewall, and data-preserving uninstall passed | Cross-version final matrix only |
-| Bitcoin Core | Official-source verified image, attestation, storage enrollment, secret config operations, lifecycle, consumer network, native-consumer path, and cookie-backed typed local status passed | Dedicated Electrs credential migration for legacy `rpcauth` nodes, operational CLI/log paths, mainnet P2P firewall, and final matrix |
-| BTCPay Server/NBXplorer | Official fixed security release, image refresh, root-owned secret snapshot, dedicated LND macaroon, remote/native Bitcoin gates, lifecycle, data preservation, and real functional gate passed | Final matrix and any remaining shared host dependencies found by inventory |
+| Bitcoin Core | Official-source verified image, attestation, storage enrollment, secret config operations, lifecycle, consumer network, native-consumer path, cookie-backed typed local status, and brokered bounded logs passed | Dedicated Electrs credential migration for legacy `rpcauth` nodes, mainnet P2P firewall, and final matrix |
+| BTCPay Server/NBXplorer | Official fixed security release, image refresh, root-owned secret snapshot, dedicated LND macaroon, brokered LND host-access reconciliation, remote/native Bitcoin gates, lifecycle, data preservation, and real functional gate passed | Final cross-version matrix |
 | LNDg | Exact-source non-root image, official digest-pinned private PostgreSQL, dedicated 13-permission LND credential, root-owned snapshot, typed lifecycle/inspect/remove/admin reset, firewall/host policy, SQLite-to-PostgreSQL migration, data preservation, and real functional gate passed | Cross-version final matrix only |
 | LNbits | Official stable digest, dedicated nine-permission LND credential, root-owned Compose/environment/credential snapshot, non-root read-only runtime, typed lifecycle/status/uninstall/REST/firewall, and data-preserving legacy SQLite/Admin UI migration accepted on LOS TESTE2 | Final Ubuntu 24.04/26.04 matrix and shared rollout/rollback acceptance only |
-| BRLN Loop Out and Magma | Native non-root/PostgreSQL lifecycle confirmed free of OS-privileged execution; permanent source gate added; authenticated LOS TESTE2 state-preserving gate passed; no third-party disclaimer applies | Shared removal of the manager's temporary Docker-group membership and final cross-version matrix only |
+| BRLN Loop Out and Magma | Native non-root/PostgreSQL lifecycle confirmed free of OS-privileged execution; permanent source gate added; authenticated LOS TESTE2 state-preserving gate passed; no third-party disclaimer applies | Final cross-version matrix only |
 | Lightning Loop | Closed native broker contract for fixed official release, user/directories, config/unit, dedicated LND material, lifecycle/status/removal and client-material repair; existing stopped installation preserved through real LOS TESTE2 gate | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
 | Elements | Closed native broker for official digest-pinned release, dedicated identity, enrolled storage, safe config merge/read, bounded RPC status, hardened unit and lifecycle/removal; preserved inactive LOS TESTE2 install migrated without dependency restarts | Clean install/reboot and shared final matrix |
 | PeerSwap | Fixed upstream v6.0.0 and official PSWeb commit `09983da` (v6.0.0.1 package) hashes in the compatible legacy asset folder, dedicated identity and nine-permission LND credential, root-only local/remote Elements policy, state-preserving migration, hardened units, typed status/lifecycle/removal/firewall; remote-mode LOS TESTE2 gate passed without starting services | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
@@ -121,12 +121,20 @@ Application state at this checkpoint:
 | Public Pool | Immutable backend/UI manifest digests correlated to fixed source revisions, exact root-only non-root/read-only runtime, typed Bitcoin modes/status/lifecycle/remove/firewall, CPU Miner broker dependency, and state-preserving stopped LOS TESTE2 gate | Clean install, real mining/API/UI lifecycle on a disposable node, reboot persistence, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
 | Bark Wallet | Official digest-pinned Bark Web v0.7.2/Bark 0.6.1/Caddy images, architecture-specific daemon binary attestation, exact root-only snapshot, non-root read-only runtime, typed status/lifecycle/remove/firewall/password operations, protected seed routes, and real stopped-to-running-to-stopped LOS TESTE2 gate | Decide whether mnemonic reveal needs fresh password reauthentication before final security sign-off; clean install/reboot, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
-| Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
-| Native apps and in-process features | Inventory plus isolated shared primitives only | Migrate privileged systemd, files, users, binaries, storage, firewall, and credential paths as applicable |
+| Mempool | Closed official images, Full Node/Electrs admission, root-owned snapshot, lifecycle, inspection, removal, firewall and legacy MariaDB upgrade passed | Final cross-version matrix |
+| Fedimint Guardian/Gateway | Closed official images, exact private runtimes, dedicated Gateway LND credential, lifecycle, logs, firewall and data-preserving migration passed | Final cross-version matrix |
+| Native apps and in-process features | Closed broker boundary where OS privilege is required; otherwise non-root manager/PostgreSQL with permanent source gates | Final cross-version application regression matrix |
 
-No phase is complete merely because the applications listed as accepted above
-work individually. Phase 2 exits only when the complete supported App Store
-works while the manager has no Docker group/socket access.
+The 20-app code boundary and shared Docker cutover are implemented. A permanent
+source test rejects manager-side Docker/Compose execution and Docker socket
+access; fresh installs default to `enforce`; upgrade rollback restores the
+previous sudoers, config, service/drop-in and Docker membership without touching
+node or app data. The Ubuntu 24.04 disposable gate passed forward, rollback and
+forward again while preserving config ACLs and Bitcoin/LND timestamps. Evidence:
+`docs/baselines/privilege-hardening-phase2-shared-cutover-2026-08-13.json`.
+
+Phase 2 is still not accepted until the complete supported App Store lifecycle
+and reboot matrix passes on both Ubuntu 24.04 and 26.04.
 
 ## Accepted slice: Electrs and Bitcoin Local status
 
@@ -344,9 +352,10 @@ to 10.11.18 without losing its row. LOS TESTE2 remained read-only, with Mempool
 and Electrs absent and Bitcoin/LND/manager timestamps preserved. Evidence:
 `docs/baselines/privilege-hardening-phase2-mempool-functional-2026-08-13.json`.
 
-Both Fedimint apps now follow as the remaining lower-priority Docker family.
-Do not remove the manager's Docker-group membership until they and the final
-matrix pass.
+Both Fedimint apps are accepted. The shared cutover subsequently removed the
+manager's Docker-group membership and direct Docker/Compose path on the
+disposable gate. The remaining Phase 2 work is the Ubuntu 24.04/26.04 complete
+lifecycle and reboot acceptance matrix, not another Docker app migration.
 
 ## Test-node and network constraints
 

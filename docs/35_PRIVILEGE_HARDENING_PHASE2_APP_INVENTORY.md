@@ -10,15 +10,61 @@ The registry exposes 20 app IDs through the common `Info`, `Install`,
 
 | Family | App IDs | Current lifecycle boundary | Additional privileged dependencies |
 | --- | --- | --- | --- |
-| Docker Compose | `bitcoincore`, `bark-wallet`, `electrs`, `mempool`, `fedimint-guardian`, `fedimint-gateway`, `lndg`, `lnbits`, `btcpay`, `robosats`, `publicpool`, `cpuminer`, `tapd` | Generic `runCompose(root, composePath, args...)` with caller-selected paths and argument slices | Docker/Compose installation, image probes and pulls, container inspect/stats/exec/update, Docker network inspection, UFW, LND compatibility changes, and storage repair, depending on the app |
+| Docker Compose | `bitcoincore`, `bark-wallet`, `electrs`, `mempool`, `fedimint-guardian`, `fedimint-gateway`, `lndg`, `lnbits`, `btcpay`, `robosats`, `publicpool`, `cpuminer`, `tapd` | Closed typed broker manifests and operations; the manager has no Docker/Compose execution path | Final Ubuntu 24.04/26.04 lifecycle, reboot, and rollback matrix |
 | Native systemd (migrated) | `loop`, `elements`, `peerswap` | Closed typed broker operations; no direct privileged manager call | Final Ubuntu 24.04/26.04 clean-install, reboot, and shared cutover matrix |
-| In-process feature toggle | `depixbuy`, `fswap`, `loopout-brln`, `magma-sales` | Manager service state/configuration | Persistent database or fixed environment state; no container lifecycle |
+| In-process feature toggle | `depixbuy`, `fswap`, `loopout-brln`, `magma-sales` | Non-root manager/database state only; permanent source gates reject OS-privileged execution | Cross-version application regression matrix |
 
-The 13 Compose apps do not share one safe free-form command shape. Observed
+The table above reflects the implementation boundary after the shared cutover
+on 2026-08-13. The historical inventory below explains the incremental slices
+that replaced the original generic manager-side execution.
+
+The 13 Compose apps did not share one safe free-form command shape. Observed
 fixed behavior includes whole-project `up -d`, `stop`, and `down`; destructive
 `down --volumes`; service-specific start/stop; build; `up --no-start`; Bitcoin
-dependency restarts; and container/network inspection. These must become
-separate catalog capabilities rather than an argument allowlist.
+dependency restarts; and container/network inspection. These became separate
+catalog capabilities rather than an argument allowlist.
+
+## Final 20-app manager boundary
+
+| App ID | Runtime class | Privileged owner after cutover | Direct manager Docker/privileged execution |
+| --- | --- | --- | --- |
+| `bitcoincore` | Compose | Broker: verified image, storage/config, lifecycle, status, logs, network and firewall | None |
+| `bark-wallet` | Compose | Broker: exact images/runtime, lifecycle, firewall and password operations | None |
+| `electrs` | Compose | Broker: verified build, private Bitcoin credential, lifecycle and inspection | None |
+| `mempool` | Compose | Broker: images, Full Node/Electrs gate, lifecycle, removal and firewall | None |
+| `fedimint-guardian` | Compose | Broker: exact runtime, lifecycle, logs and firewall | None |
+| `fedimint-gateway` | Compose | Broker: exact runtime, dedicated LND material, lifecycle, logs and firewall | None |
+| `lndg` | Compose | Broker: PostgreSQL runtime, dedicated LND material and full lifecycle | None |
+| `lnbits` | Compose | Broker: exact runtime, dedicated LND material, host access and lifecycle | None |
+| `btcpay` | Compose | Broker: exact runtime, Bitcoin source, LND host access, lifecycle and firewall | None |
+| `robosats` | Compose | Broker: exact runtime, lifecycle, inspection, firewall and removal | None |
+| `publicpool` | Compose | Broker: exact runtime, Bitcoin source, lifecycle and firewall | None |
+| `cpuminer` | Compose | Broker: Docker readiness, image, lifecycle, inspection and removal | None |
+| `tapd` | Compose | Broker: exact runtime, dedicated LND material, lifecycle and typed CLI | None |
+| `loop` | Native systemd | Broker: release, identity, config, credentials, service and lifecycle | None |
+| `elements` | Native systemd | Broker: release, storage, config, RPC status, service and lifecycle | None |
+| `peerswap` | Native systemd | Broker: binaries, Elements source, credentials, services and firewall | None |
+| `depixbuy` | In process | Non-root manager and PostgreSQL | None |
+| `fswap` | In process | Non-root manager and PostgreSQL | None |
+| `loopout-brln` | In process | Non-root manager and PostgreSQL | None |
+| `magma-sales` | In process | Non-root manager and PostgreSQL | None |
+
+The permanent boundary tests scan every production Go file in
+`internal/server` and reject legacy Compose helpers, direct privileged Docker
+commands, Docker socket access, or a new unreviewed privilege call site. Fresh
+configuration now defaults to broker `enforce`; installers and the in-place
+upgrade remove Docker/Compose sudoers grants and Docker group membership.
+
+The disposable Ubuntu 24.04 cutover gate simulated a legacy manager user with
+the Docker GID, proved removal from both account and live process, broker
+self-test, manager restart, full rollback (including Docker membership), and a
+second forward cutover. It also caught and fixed ACL loss on an existing
+`config.yaml`. Bitcoin and LND activation timestamps were unchanged. Evidence:
+`docs/baselines/privilege-hardening-phase2-shared-cutover-2026-08-13.json`.
+
+This closes the shared implementation boundary, not Phase 2 acceptance. The
+complete per-app lifecycle/reboot matrix on Ubuntu 24.04 and 26.04 remains the
+exit gate.
 
 ## First broker manifest
 

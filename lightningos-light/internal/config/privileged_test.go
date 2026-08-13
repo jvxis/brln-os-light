@@ -16,7 +16,7 @@ func TestLoadPrivilegedDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Privileged.Mode != "disabled" || cfg.Privileged.TimeoutSeconds != 5 {
+	if cfg.Privileged.Mode != "enforce" || cfg.Privileged.TimeoutSeconds != 5 {
 		t.Fatalf("unexpected defaults: %#v", cfg.Privileged)
 	}
 }

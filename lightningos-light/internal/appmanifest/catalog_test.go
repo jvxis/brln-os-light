@@ -196,7 +196,7 @@ func TestCatalogExternalTCPPortIsClosedByApp(t *testing.T) {
 	for _, test := range []struct {
 		appID string
 		port  int
-	}{{RoboSatsID, RoboSatsPort}, {LNDgID, LNDgPort}, {BarkWalletID, BarkWalletPort}, {MempoolID, MempoolPort}} {
+	}{{BTCPayID, BTCPayPort}, {RoboSatsID, RoboSatsPort}, {LNDgID, LNDgPort}, {BarkWalletID, BarkWalletPort}, {MempoolID, MempoolPort}} {
 		port, err := CatalogExternalTCPPort(test.appID)
 		if err != nil || port != test.port {
 			t.Fatalf("port/error for %s = %d/%v", test.appID, port, err)

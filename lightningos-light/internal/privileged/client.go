@@ -679,6 +679,21 @@ func (client *Client) EnsureAppFirewall(ctx context.Context, appID string, dryRu
 	}
 }
 
+func (client *Client) EnsureAppLNDHostAccess(ctx context.Context, appID string, dryRun bool) error {
+	response, err := client.call(ctx, OperationAppLNDHostAccessEnsure, AppLNDHostAccessParams{AppID: appID}, dryRun)
+	if err != nil {
+		return err
+	}
+	var result struct {
+		Ready   bool `json:"ready"`
+		Changed bool `json:"changed"`
+	}
+	if err := decodeStrict(response.Result, &result); err != nil || !result.Ready {
+		return errors.New("invalid broker app LND host access response")
+	}
+	return nil
+}
+
 func (client *Client) EnsureBitcoinCoreStorage(ctx context.Context, dataDir string, dryRun bool) (string, error) {
 	response, err := client.call(ctx, OperationBitcoinStorageEnsure, BitcoinCoreStorageParams{DataDir: dataDir}, dryRun)
 	if err != nil {

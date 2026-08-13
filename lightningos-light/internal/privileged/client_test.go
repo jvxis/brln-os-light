@@ -395,6 +395,24 @@ func TestClientAppLogsBuildsClosedTypedRequest(t *testing.T) {
 	}
 }
 
+func TestClientAppLNDHostAccessBuildsClosedTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: map[string]any{"ready": true, "changed": true}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	if err := client.EnsureAppLNDHostAccess(context.Background(), appmanifest.BTCPayID, false); err != nil {
+		t.Fatal(err)
+	}
+	if transport.request.Operation != OperationAppLNDHostAccessEnsure || transport.request.DryRun {
+		t.Fatalf("unexpected request: %#v", transport.request)
+	}
+	var params AppLNDHostAccessParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.AppID != appmanifest.BTCPayID {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+}
+
 func TestClientBitcoinStorageBuildsClosedTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: BitcoinCoreStorageState{Status: "ready"}}
 	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)

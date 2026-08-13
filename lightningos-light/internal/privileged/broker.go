@@ -57,6 +57,10 @@ type AppLogManager interface {
 	Logs(ctx context.Context, appID string, lines int, since string) (AppLogsState, error)
 }
 
+type AppLNDHostAccessManager interface {
+	EnsureLNDHostAccess(ctx context.Context, appID string, dryRun bool) error
+}
+
 type PackageManager interface {
 	EnsureFeature(ctx context.Context, feature PackageFeature, dryRun bool) (PackageFeatureState, error)
 	FeatureStatus(ctx context.Context, feature PackageFeature) (PackageFeatureState, error)
@@ -225,6 +229,10 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		return configured
 	}
 	switch operation {
+	case OperationAppLNDHostAccessEnsure:
+		if configured < privilegedLongOperationTimeout {
+			return privilegedLongOperationTimeout
+		}
 	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
@@ -469,6 +477,19 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "app_firewall_failed", errors.New("app firewall operation failed")
 		}
 		return state, "", nil
+	case OperationAppLNDHostAccessEnsure:
+		manager, ok := broker.Apps.(AppLNDHostAccessManager)
+		if !ok {
+			return nil, "broker_unavailable", errors.New("privileged app LND host access manager is unavailable")
+		}
+		var params AppLNDHostAccessParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.lnd-host-access.ensure params")
+		}
+		if err := manager.EnsureLNDHostAccess(ctx, params.AppID, request.DryRun); err != nil {
+			return nil, "app_lnd_host_access_failed", errors.New("app LND host access operation failed")
+		}
+		return map[string]any{"ready": true, "changed": !request.DryRun}, "", nil
 	case OperationBitcoinStorageEnsure:
 		if broker.BitcoinStorage == nil {
 			return nil, "broker_unavailable", errors.New("bitcoin storage manager is unavailable")
@@ -942,6 +963,8 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
+	case OperationAppLNDHostAccessEnsure:
+		return true
 	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppLogs, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdStatus, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolStatus, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall, OperationBarkWalletStatus, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove, OperationBarkWalletFirewall, OperationBarkWalletPasswordRead, OperationBarkWalletPasswordReset:
 		return true
 	default:
@@ -951,6 +974,8 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
+	case OperationAppLNDHostAccessEnsure:
+		return true
 	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove, OperationBarkWalletFirewall, OperationBarkWalletPasswordReset:
 		return true
 	default:

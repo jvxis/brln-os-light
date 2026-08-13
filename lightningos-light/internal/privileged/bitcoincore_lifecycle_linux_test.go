@@ -92,6 +92,36 @@ func TestBitcoinCoreInspectAndRemovePreserveEnrollmentAndAttestation(t *testing.
 	}
 }
 
+func TestBitcoinCoreLogsUseBrokerOwnedInspectionSnapshot(t *testing.T) {
+	manager, runner, privilegedRoot, _ := newTestBitcoinCoreLifecycleManager(t)
+	runner.hook = func(path string, args []string) (string, error, bool) {
+		if hasArgsSuffix(args, "logs", "--no-color", "--tail", "25", "--since", "2h", appmanifest.BitcoinCorePrimaryService) {
+			return "line one\nline two\n", nil, true
+		}
+		if path == dockerPath && reflect.DeepEqual(args, []string{"image", "inspect", "--format", "{{.Id}}", appmanifest.BitcoinCoreImage}) {
+			return lifecycleTestBitcoinCoreImageID + "\n", nil, true
+		}
+		return "", nil, false
+	}
+
+	state, err := manager.Logs(context.Background(), appmanifest.BitcoinCoreID, 25, "2h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Source != "docker:"+appmanifest.BitcoinCorePrimaryService || !reflect.DeepEqual(state.Lines, []string{"line one", "line two"}) {
+		t.Fatalf("unexpected Bitcoin log state: %#v", state)
+	}
+	last := runner.commands[len(runner.commands)-1]
+	joined := strings.Join(last.args, " ")
+	expectedRoot := filepath.Join(privilegedRoot, appmanifest.BitcoinCoreID)
+	if !strings.Contains(joined, "--project-directory ") || strings.Contains(joined, "/var/lib/lightningos/apps/") || strings.Contains(joined, "--follow") {
+		t.Fatalf("Bitcoin logs escaped the closed broker snapshot: %#v", last)
+	}
+	if strings.Contains(joined, expectedRoot+"/../") {
+		t.Fatalf("Bitcoin log snapshot traversal accepted: %#v", last)
+	}
+}
+
 func TestBitcoinCoreStatusUsesCookieBackedFixedCLICommands(t *testing.T) {
 	manager, runner, _, _ := newTestBitcoinCoreLifecycleManager(t)
 	containerID := strings.Repeat("b", 64)

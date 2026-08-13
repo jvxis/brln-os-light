@@ -307,6 +307,19 @@ func (manager *ComposeAppManager) ensureLNbitsHostAccess(ctx context.Context) er
 	return nil
 }
 
+func (manager *ComposeAppManager) EnsureLNDHostAccess(ctx context.Context, appID string, dryRun bool) error {
+	if manager == nil || manager.Runner == nil {
+		return errors.New("compose app manager is unavailable")
+	}
+	if appID != appmanifest.BTCPayID {
+		return errors.New("app LND host access manifest is not allowed")
+	}
+	if dryRun {
+		return nil
+	}
+	return manager.ensureLNbitsHostAccess(ctx)
+}
+
 func (manager *ComposeAppManager) migrateLNbitsLegacySettings(ctx context.Context) error {
 	appsDataRoot := manager.AppsDataRoot
 	if appsDataRoot == "" {

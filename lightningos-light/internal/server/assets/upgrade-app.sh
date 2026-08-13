@@ -126,8 +126,6 @@ VISUDO_BIN="$(resolve_bin visudo /usr/sbin/visudo /usr/bin/visudo /sbin/visudo)"
 APT_GET_BIN="$(resolve_bin apt-get /usr/bin/apt-get /bin/apt-get)" || true
 APT_BIN="$(resolve_bin apt /usr/bin/apt /bin/apt)" || true
 DPKG_BIN="$(resolve_bin dpkg /usr/bin/dpkg /bin/dpkg)" || true
-DOCKER_BIN="$(resolve_bin docker /usr/bin/docker /usr/local/bin/docker)" || true
-DOCKER_COMPOSE_BIN="$(resolve_bin docker-compose /usr/bin/docker-compose /usr/local/bin/docker-compose)" || true
 SMARTCTL_BIN="$(resolve_bin smartctl /usr/sbin/smartctl /usr/bin/smartctl /sbin/smartctl)" || SMARTCTL_BIN="/usr/sbin/smartctl"
 UFW_BIN="$(resolve_bin ufw /usr/sbin/ufw /usr/bin/ufw)" || true
 exec 9>"$LOCK_FILE"
@@ -230,8 +228,6 @@ configure_manager_sudoers() {
   [[ -n "${APT_GET_BIN:-}" ]] && app_cmds+=("${APT_GET_BIN} *")
   [[ -n "${APT_BIN:-}" ]] && app_cmds+=("${APT_BIN} *")
   [[ -n "${DPKG_BIN:-}" ]] && app_cmds+=("${DPKG_BIN} *")
-  [[ -n "${DOCKER_BIN:-}" ]] && app_cmds+=("${DOCKER_BIN} *")
-  [[ -n "${DOCKER_COMPOSE_BIN:-}" ]] && app_cmds+=("${DOCKER_COMPOSE_BIN} *")
   [[ -n "${SYSTEMD_RUN_BIN:-}" ]] && app_cmds+=("${SYSTEMD_RUN_BIN} *")
   [[ -n "${UFW_BIN:-}" ]] && app_cmds+=("${UFW_BIN} *")
   app_cmds_line="$(join_by_comma "${app_cmds[@]}")"
@@ -257,6 +253,113 @@ EOF
     "$VISUDO_BIN" -cf "$sudoers_path" >/dev/null
   fi
   print_ok "Sudoers refreshed for manager user: ${manager_user}"
+}
+
+stage_privilege_cutover() {
+  local state_root="/var/lib/lightningos/rollback/0.5.3-privilege-cutover"
+  local config_path="/etc/lightningos/config.yaml"
+  local service_path="/etc/systemd/system/lightningos-manager.service"
+  local dropin_dir="/etc/systemd/system/lightningos-manager.service.d"
+  local dropin_path="${dropin_dir}/30-privilege-hardening.conf"
+  local rollback_src="$project_dir/internal/server/assets/rollback-privilege-cutover.sh"
+  local rollback_bin="/usr/local/sbin/lightningos-rollback-privilege-cutover"
+  local manager_user=""
+  local sudoers_path=""
+  local config_tmp=""
+  local dropin_tmp=""
+  local raw_groups=""
+  local group=""
+  local safe_groups=()
+
+  manager_user="$($SYSTEMCTL_BIN show -p User --value lightningos-manager 2>/dev/null | tr -d '[:space:]')"
+  [[ -n "$manager_user" ]] || manager_user="lightningos"
+  [[ "$manager_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || return 1
+  sudoers_path="/etc/sudoers.d/lightningos"
+  if [[ "$manager_user" != "lightningos" ]]; then
+    sudoers_path="/etc/sudoers.d/lightningos-${manager_user}"
+  fi
+
+  [[ -f "$config_path" && ! -L "$config_path" ]] || return 1
+  [[ -f "$rollback_src" && ! -L "$rollback_src" ]] || return 1
+  for path in "$state_root" "$dropin_dir" "$dropin_path" "$rollback_bin"; do
+    [[ ! -L "$path" ]] || return 1
+  done
+  "$INSTALL_BIN" -d -o root -g root -m 0700 "$state_root"
+  "$INSTALL_BIN" -d -o root -g root -m 0755 "$dropin_dir"
+  "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
+
+  if [[ ! -f "$state_root/prepared" ]]; then
+    "$CP_BIN" -a -- "$config_path" "$state_root/config.yaml"
+    if [[ -f "$service_path" && ! -L "$service_path" ]]; then
+      "$CP_BIN" -a -- "$service_path" "$state_root/lightningos-manager.service"
+    fi
+    if [[ -f "$dropin_path" ]]; then
+      [[ ! -L "$dropin_path" ]] || return 1
+      "$CP_BIN" -a -- "$dropin_path" "$state_root/30-privilege-hardening.conf"
+      : > "$state_root/dropin.existed"
+    fi
+    printf '%s\n' "$sudoers_path" > "$state_root/sudoers.path"
+    if [[ -f "$sudoers_path" && ! -L "$sudoers_path" ]]; then
+      "$CP_BIN" -a -- "$sudoers_path" "$state_root/sudoers"
+      : > "$state_root/sudoers.existed"
+    fi
+    printf '%s\n' "$manager_user" > "$state_root/manager.user"
+    if id -nG "$manager_user" | tr ' ' '\n' | grep -qx docker; then
+      : > "$state_root/had-docker-group"
+    fi
+    : > "$state_root/prepared"
+  fi
+
+  config_tmp="$(mktemp /etc/lightningos/.config.yaml.privilege-cutover.XXXXXX)"
+  if ! "$CP_BIN" -a -- "$config_path" "$config_tmp"; then
+    "$RM_BIN" -f -- "$config_tmp"
+    return 1
+  fi
+  if ! awk '/^privileged:[[:space:]]*$/ { count++ } END { exit(count > 1) }' "$config_path"; then
+    "$RM_BIN" -f -- "$config_tmp"
+    return 1
+  fi
+  if ! awk '
+    BEGIN { in_privileged = 0; saw_privileged = 0; saw_mode = 0 }
+    /^privileged:[[:space:]]*$/ { in_privileged = 1; saw_privileged = 1; print; next }
+    in_privileged && /^[^[:space:]#]/ {
+      if (!saw_mode) print "  mode: \"enforce\""
+      in_privileged = 0
+    }
+    in_privileged && /^[[:space:]]+mode:[[:space:]]*/ { print "  mode: \"enforce\""; saw_mode = 1; next }
+    { print }
+    END {
+      if (in_privileged && !saw_mode) print "  mode: \"enforce\""
+      if (!saw_privileged) print "\nprivileged:\n  mode: \"enforce\""
+    }
+  ' "$config_path" > "$config_tmp"; then
+    "$RM_BIN" -f -- "$config_tmp"
+    return 1
+  fi
+  mv -f -- "$config_tmp" "$config_path"
+
+  raw_groups="$($SYSTEMCTL_BIN show -p SupplementaryGroups --value lightningos-manager 2>/dev/null || true)"
+  for group in $raw_groups; do
+    [[ "$group" != "docker" ]] || continue
+    [[ "$group" =~ ^[a-zA-Z0-9_.@-]+$ ]] || return 1
+    safe_groups+=("$group")
+  done
+  dropin_tmp="$(mktemp "${dropin_dir}/.30-privilege-hardening.conf.XXXXXX")"
+  {
+    printf '%s\n' '[Service]' 'SupplementaryGroups='
+    if [[ ${#safe_groups[@]} -gt 0 ]]; then
+      printf 'SupplementaryGroups=%s\n' "${safe_groups[*]}"
+    fi
+  } > "$dropin_tmp"
+  chmod 0644 "$dropin_tmp"
+  chown root:root "$dropin_tmp"
+  mv -f -- "$dropin_tmp" "$dropin_path"
+
+  if id -nG "$manager_user" | tr ' ' '\n' | grep -qx docker; then
+    gpasswd -d "$manager_user" docker >/dev/null
+  fi
+  "$SYSTEMCTL_BIN" daemon-reload
+  print_ok "Privilege cutover staged with root-only rollback state"
 }
 
 stage_peerswap_assets() {
@@ -468,15 +571,20 @@ configure_lnd_restart_policy
 configure_manager_tls_mdns
 configure_manager_firewall
 
-print_step "Refreshing manager sudoers"
-configure_manager_sudoers
+print_step "Staging privilege cutover"
+if ! (stage_privilege_cutover && configure_manager_sudoers); then
+  print_warn "Privilege cutover staging failed; restoring the previous boundary"
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+  die "Privilege cutover could not be staged safely"
+fi
 
 print_step "Restarting lightningos-manager"
-"$SYSTEMCTL_BIN" restart lightningos-manager
-if "$SYSTEMCTL_BIN" is-active --quiet lightningos-manager; then
+if "$SYSTEMCTL_BIN" restart lightningos-manager && "$SYSTEMCTL_BIN" is-active --quiet lightningos-manager; then
   print_ok "lightningos-manager is active"
 else
-  die "lightningos-manager failed to start"
+  print_warn "Manager failed after privilege cutover; restoring the previous boundary"
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+  die "lightningos-manager failed to start after cutover"
 fi
 
 print_ok "App upgrade complete to ${VERSION} (${TAG})"

@@ -93,7 +93,7 @@ func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
 
 	handled, composeStatus, cpuPercentRaw, err := system.InspectAppWithBroker(ctx, cpuMinerAppID)
 	if !handled {
-		composeStatus, err = getComposeStatus(ctx, paths.Root, paths.ComposePath, cpuMinerAppID)
+		return status
 	}
 	if err != nil || composeStatus != "running" {
 		return status
@@ -106,11 +106,7 @@ func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
 		status.SharesRejected = rejected
 	}
 
-	if handled {
-		status.CPUPercent = normalizeHostCPUPercent(cpuPercentRaw, runtime.NumCPU())
-	} else {
-		status.CPUPercent = cpuMinerCPUPercent(ctx, paths)
-	}
+	status.CPUPercent = normalizeHostCPUPercent(cpuPercentRaw, runtime.NumCPU())
 
 	if pool.StatsBase != "" {
 		if status.Address != "" {
@@ -175,23 +171,6 @@ func parseCpuMinerSummary(raw string) map[string]string {
 	return fields
 }
 
-func cpuMinerCPUPercent(ctx context.Context, paths cpuMinerPaths) float64 {
-	id, err := composeContainerID(ctx, paths.Root, paths.ComposePath, cpuMinerAppID)
-	if err != nil || strings.TrimSpace(id) == "" {
-		return 0
-	}
-	out, err := system.RunCommandWithSudo(ctx, "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}", id)
-	if err == nil {
-		if value, ok := parseDockerCPUPercent(out); ok && value > 0 {
-			return normalizeHostCPUPercent(value, runtime.NumCPU())
-		}
-	}
-	if value, ok := sampleContainerCgroupCPUPercent(ctx, id); ok {
-		return normalizeHostCPUPercent(value, runtime.NumCPU())
-	}
-	return 0
-}
-
 // normalizeHostCPUPercent converts Docker's per-core percentage into the
 // fraction of the node's total logical CPU capacity. For example, two fully
 // busy mining threads on a 16-CPU node are reported as 12.5%, not 200%.
@@ -235,39 +214,6 @@ var containerCPUCounterCandidates = []containerCPUCounter{
 // returns 0 or an output format the CLI parser cannot consume. This function
 // returns Docker's raw per-core percentage; cpuMinerCPUPercent normalizes it to
 // the node's total logical CPU capacity before exposing it through the API.
-func sampleContainerCgroupCPUPercent(ctx context.Context, id string) (float64, bool) {
-	for _, counter := range containerCPUCounterCandidates {
-		first, ok := readContainerCPUCounter(ctx, id, counter)
-		if !ok {
-			continue
-		}
-		started := time.Now()
-		timer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return 0, false
-		case <-timer.C:
-		}
-		second, ok := readContainerCPUCounter(ctx, id, counter)
-		elapsed := time.Since(started)
-		if !ok || second < first || elapsed <= 0 {
-			return 0, false
-		}
-		used := time.Duration(second-first) * counter.unit
-		return (float64(used) / float64(elapsed)) * 100, true
-	}
-	return 0, false
-}
-
-func readContainerCPUCounter(ctx context.Context, id string, counter containerCPUCounter) (uint64, bool) {
-	out, err := system.RunCommandWithSudo(ctx, "docker", "exec", id, "cat", counter.path)
-	if err != nil {
-		return 0, false
-	}
-	return parseContainerCPUCounter(out, counter)
-}
-
 func parseContainerCPUCounter(out string, counter containerCPUCounter) (uint64, bool) {
 	if strings.HasSuffix(counter.path, "cpu.stat") {
 		for _, line := range strings.Split(out, "\n") {

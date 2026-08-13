@@ -361,8 +361,7 @@ func runBitcoinCoreLifecycle(ctx context.Context, action string) error {
 
 func inspectBitcoinCoreStatus(ctx context.Context) (string, error) {
 	if handled, status, _, err := system.InspectAppWithBroker(ctx, appmanifest.BitcoinCoreID); !handled {
-		paths := bitcoinCoreAppPaths()
-		return getComposeStatus(ctx, paths.Root, paths.ComposePath, appmanifest.BitcoinCorePrimaryService)
+		return "unknown", errors.New("Bitcoin Core status requires privileged broker enforce mode")
 	} else if err != nil {
 		return "unknown", fmt.Errorf("Bitcoin Core status failed: %w", err)
 	} else {

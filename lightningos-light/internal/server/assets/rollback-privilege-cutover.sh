@@ -127,12 +127,14 @@ if [[ -f "$STATE_ROOT/had-docker-group" ]] && getent group docker >/dev/null 2>&
 fi
 
 systemctl daemon-reload
-if [[ -f "$STATE_ROOT/socket-enabled" && ! -L "$STATE_ROOT/socket-enabled" ]]; then
+if [[ -f "$STATE_ROOT/socket-enabled" && ! -L "$STATE_ROOT/socket-enabled" ]] \
+  && systemctl cat lightningos-privileged.socket >/dev/null 2>&1; then
   systemctl enable lightningos-privileged.socket >/dev/null 2>&1 || true
 else
   systemctl disable lightningos-privileged.socket >/dev/null 2>&1 || true
 fi
-if [[ -f "$STATE_ROOT/socket-active" && ! -L "$STATE_ROOT/socket-active" ]]; then
+if [[ -f "$STATE_ROOT/socket-active" && ! -L "$STATE_ROOT/socket-active" ]] \
+  && systemctl cat lightningos-privileged.socket >/dev/null 2>&1; then
   systemctl start lightningos-privileged.socket
 else
   systemctl stop lightningos-privileged.socket >/dev/null 2>&1 || true

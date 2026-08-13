@@ -954,7 +954,17 @@ if [[ "$broker_response" != *'"request_id":"upgrade_self_test"'* || "$broker_res
 fi
 "$SYSTEMCTL_BIN" daemon-reload
 "$SYSTEMCTL_BIN" enable --now lightningos-privileged.socket
-if ! "$RUNUSER_BIN" -u lightningos -- /opt/lightningos/manager/lightningos-manager broker-self-test >/dev/null; then
+broker_ready=0
+for _ in $(seq 1 20); do
+  if "$SYSTEMCTL_BIN" is-active --quiet lightningos-privileged.socket \
+    && [[ -S /run/lightningos-privileged/broker.sock ]] \
+    && "$RUNUSER_BIN" -u lightningos -- /opt/lightningos/manager/lightningos-manager broker-self-test >/dev/null 2>&1; then
+    broker_ready=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$broker_ready" -ne 1 ]]; then
   /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "Privileged broker service-user self-test failed"
 fi

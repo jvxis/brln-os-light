@@ -735,6 +735,9 @@ func TestAppUpgradeRecognizesDocumentedLegacyDockerSudoers(t *testing.T) {
 			t.Fatalf("documented legacy App Store sudoers is missing %q", expected)
 		}
 	}
+	if !strings.Contains(content, `((saw_broker == 0)) || return 1`) || strings.Contains(content, `saw_broker == 1 && saw_lnd_upgrade`) {
+		t.Fatal("legacy sudoers must accept zero or one known broker command, never duplicates")
+	}
 }
 
 func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {

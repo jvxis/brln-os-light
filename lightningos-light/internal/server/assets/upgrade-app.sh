@@ -379,6 +379,7 @@ validate_legacy_system_commands() {
         saw_manager_restart=1
         ;;
       /usr/local/libexec/lightningos-privileged\ \"\")
+        ((saw_broker == 0)) || return 1
         saw_broker=1
         ;;
       /usr/local/sbin/lightningos-upgrade-lnd)
@@ -393,7 +394,7 @@ validate_legacy_system_commands() {
     esac
     count=$((count + 1))
   done
-  ((count >= 10 && count <= 16 && saw_manager_restart == 1 && saw_broker == 1 && saw_lnd_upgrade == saw_app_upgrade))
+  ((count >= 10 && count <= 16 && saw_manager_restart == 1 && saw_lnd_upgrade == saw_app_upgrade))
 }
 
 validate_legacy_app_commands() {

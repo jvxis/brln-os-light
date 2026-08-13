@@ -40,6 +40,7 @@ const (
 	OperationPackageEnsure                Operation = "packages.feature.ensure"
 	OperationPackageStatus                Operation = "packages.feature.status"
 	OperationAppStorageEnsure             Operation = "storage.apps.ensure"
+	OperationSMARTRead                    Operation = "storage.smart.read"
 	OperationAppImagePrepare              Operation = "app.image.prepare"
 	OperationAppImageStatus               Operation = "app.image.status"
 	OperationAppImageProbe                Operation = "app.image.probe"
@@ -133,6 +134,16 @@ type ManagerFirewallState struct {
 type AppStorageState struct {
 	Status  string `json:"status"`
 	Changed bool   `json:"changed,omitempty"`
+}
+
+type SMARTReadParams struct {
+	Device string `json:"device"`
+}
+
+type SMARTReadState struct {
+	Device    string `json:"device"`
+	Output    string `json:"output,omitempty"`
+	Available bool   `json:"available"`
 }
 
 type LNDUpgradeStartParams struct {
@@ -449,6 +460,7 @@ var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 var (
 	lndUpgradeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z\.-]*)?$`)
 	gitCommitPattern         = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	smartDevicePattern       = regexp.MustCompile(`^/dev/[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
 
 var allowedServiceUnits = map[string]struct{}{
@@ -702,6 +714,17 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid storage.apps.ensure params: %w", err)
+		}
+	case OperationSMARTRead:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for storage.smart.read")
+		}
+		var params SMARTReadParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid storage.smart.read params: %w", err)
+		}
+		if !smartDevicePattern.MatchString(params.Device) {
+			return errors.New("SMART device is invalid")
 		}
 	case OperationAppImagePrepare:
 		var params AppImageParams

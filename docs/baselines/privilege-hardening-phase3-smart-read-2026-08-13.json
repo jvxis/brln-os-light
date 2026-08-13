@@ -1,0 +1,68 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-smart-read.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "typed read-only SMART diagnostics",
+  "operation": {
+    "name": "storage.smart.read",
+    "caller_fields": ["device"],
+    "device_policy": "bounded /dev basename that must exactly match a broker-enumerated TYPE=disk entry",
+    "inventory_executable": "/usr/bin/lsblk",
+    "smartctl_executables": [
+      "/usr/sbin/smartctl",
+      "/usr/bin/smartctl"
+    ],
+    "fixed_arguments": ["-a"],
+    "root_owned_executables_required": true,
+    "output_bounded": true,
+    "read_only": true,
+    "manager_direct_sudo": false
+  },
+  "tests": {
+    "strict_device_shape": "passed",
+    "unknown_argument_field_rejected": "passed",
+    "traversal_rejected": "passed",
+    "non_disk_rejected": "passed",
+    "symlinked_smartctl_rejected": "passed",
+    "fixed_lsblk_and_smartctl_arguments": "passed",
+    "empty_failed_read_rejected": "passed",
+    "oversized_response_rejected": "passed",
+    "strict_client_response_decode": "passed",
+    "system_enforce_and_shadow_routing": "passed",
+    "focused_go_test": "passed",
+    "go_test_all": "passed",
+    "go_vet_all": "passed"
+  },
+  "ubuntu24_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "amd64",
+    "caller": "lightningos service user through the exact broker sudo entry",
+    "enumerated_disk_read": "passed",
+    "caller_selected_flags_rejected": true,
+    "traversal_rejected": true,
+    "non_disk_and_symlink_unit_gates": "passed",
+    "manager_service_state_changed": false,
+    "lnd_service_state_changed": false,
+    "bitcoin_service_state_changed": false,
+    "integration_node_mutated": false
+  },
+  "cleanup": {
+    "original_broker_restored_by_hash": true,
+    "remote_temporary_artifacts_removed": true,
+    "vm_powered_off_cleanly": true,
+    "loopback_nat_forward_removed": true,
+    "original_bridged_adapter_restored": true
+  },
+  "remaining": [
+    "remove the now-unused smartctl wildcard sudoers grants during the coordinated Phase 4 cutover"
+  ],
+  "excluded": [
+    "SMART output and hardware serials",
+    "ip addresses",
+    "credentials",
+    "tokens",
+    "private node identifiers"
+  ]
+}

@@ -1223,6 +1223,18 @@ and temporary-tree owner/mode mutation without changing the real App Store
 tree or Manager/LND/Bitcoin states. Evidence is in
 `docs/baselines/privilege-hardening-phase3-app-storage-2026-08-13.json`.
 
+SMART diagnostics now use the read-only `storage.smart.read` operation. The
+manager has no direct `sudo smartctl` call. A requested bounded `/dev` basename
+must independently match the broker's fixed `lsblk` inventory as a whole disk;
+the broker then permits only fixed root-owned `smartctl -a <device>` and bounds
+the unaudited raw response before the manager reduces it to existing health
+fields. Flags, traversal, non-disk devices, symlinked executables, empty failed
+reads, and oversized responses fail closed. The Ubuntu 24.04 service-user gate
+passed without changing Manager/LND/Bitcoin states. Evidence is in
+`docs/baselines/privilege-hardening-phase3-smart-read-2026-08-13.json`. The
+now-unused smartctl wildcard grants remain scheduled for the coordinated
+sudoers cutover, so this slice does not claim their removal yet.
+
 Policy application/reconciliation, installer artifact verification, the real
 Tor and LightningOS upgrade/rollback matrices, release publisher attestation,
 and the remaining package/storage paths are still open.

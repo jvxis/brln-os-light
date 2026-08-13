@@ -4,7 +4,7 @@ import (
   "bufio"
   "bytes"
   "context"
-  "os/exec"
+  "errors"
   "path/filepath"
   "strconv"
   "strings"
@@ -326,7 +326,10 @@ func sumPartitionUsage(parts []DiskPartition) (float64, float64) {
 }
 
 func smartctlDevice(ctx context.Context, device string) (DiskSmart, error) {
-  out, err := RunCommandWithSudo(ctx, smartctlPath(), "-a", device)
+  out, handled, err := ReadSMARTWithBroker(ctx, device)
+  if !handled {
+    return DiskSmart{}, errors.New("SMART reads require privileged broker enforce or shadow mode")
+  }
   if err != nil && strings.TrimSpace(out) == "" {
     return DiskSmart{}, err
   }
@@ -398,13 +401,6 @@ func smartctlDevice(ctx context.Context, device string) (DiskSmart, error) {
 
   smart = addSmartAlerts(smart)
   return smart, nil
-}
-
-func smartctlPath() string {
-  if path, err := exec.LookPath("smartctl"); err == nil {
-    return path
-  }
-  return "smartctl"
 }
 
 func guessDiskType(device string) string {

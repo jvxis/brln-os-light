@@ -100,6 +100,11 @@ type fakePrivilegedServiceClient struct {
 	appStorageStatus         string
 	appStorageChanged        bool
 	appStorageErr            error
+	smartCalls               int
+	smartDevice              string
+	smartOutput              string
+	smartAvailable           bool
+	smartErr                 error
 	storageCalls             int
 	storageDataDir           string
 	storageDryRun            bool
@@ -450,6 +455,12 @@ func (client *fakePrivilegedServiceClient) EnsureAppStorage(_ context.Context, d
 		}
 	}
 	return status, client.appStorageChanged, client.appStorageErr
+}
+
+func (client *fakePrivilegedServiceClient) ReadSMART(_ context.Context, device string) (string, bool, error) {
+	client.smartCalls++
+	client.smartDevice = device
+	return client.smartOutput, client.smartAvailable, client.smartErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -1188,6 +1199,20 @@ func TestAppStorageBrokerHelperRequiresEnforceForMutation(t *testing.T) {
 			handled, err := EnsureAppStorageWithBroker(context.Background())
 			if err != nil || handled != test.wantHandled || client.appStorageCalls != test.wantCalls || client.appStorageDryRun != test.wantDryRun {
 				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+		})
+	}
+}
+
+func TestSMARTBrokerHelperHandlesEnforceAndShadowReads(t *testing.T) {
+	for _, mode := range []string{"enforce", "shadow"} {
+		t.Run(mode, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: mode, smartOutput: "SMART payload", smartAvailable: true}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			output, handled, err := ReadSMARTWithBroker(context.Background(), "/dev/sda")
+			if err != nil || !handled || output != "SMART payload" || client.smartCalls != 1 || client.smartDevice != "/dev/sda" {
+				t.Fatalf("output/handled/error/client=%q/%v/%v/%#v", output, handled, err, client)
 			}
 		})
 	}

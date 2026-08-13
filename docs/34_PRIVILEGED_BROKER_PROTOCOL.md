@@ -853,6 +853,23 @@ and left the actual App Store tree and Manager/LND/Bitcoin service states
 unchanged. Evidence is in
 `docs/baselines/privilege-hardening-phase3-app-storage-2026-08-13.json`.
 
+### SMART diagnostics
+
+`storage.smart.read` accepts one bounded `/dev/<basename>` value, but the path
+shape alone is not authorization. The broker independently runs fixed
+root-owned `/usr/bin/lsblk -dn -o PATH,TYPE` and proceeds only when the exact
+value is enumerated as `TYPE=disk`. It then runs only root-owned
+`/usr/sbin/smartctl` or `/usr/bin/smartctl` with fixed arguments `-a <device>`.
+The caller cannot add an option, select an executable, use traversal, target a
+partition/loop device, or request a write command. Combined output is bounded,
+never audited, and is parsed by the existing manager code into the limited
+health fields returned by the API.
+
+The Ubuntu 24.04 service-user gate read the disposable VM's enumerated disk,
+rejected added flags and traversal, and passed non-disk and executable-symlink
+negative tests without changing Manager/LND/Bitcoin states. Evidence is in
+`docs/baselines/privilege-hardening-phase3-smart-read-2026-08-13.json`.
+
 ## Manager modes and rollback
 
 The `privileged` configuration block supports:

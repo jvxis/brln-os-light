@@ -62,7 +62,7 @@ Legend for the call-site table:
 | Owning feature and source | S | D | W/R/P | C | Proposed broker operations | Required negative/regression strategy |
 | --- | ---: | ---: | --- | ---: | --- | --- |
 | System boundary — `internal/system/system.go` | 1 | 0 | 0/0/0 | 0 | Remove generic sudo; `host.power` with `reboot|poweroff` enum | Reject executable names, extra arguments, shell syntax, and unknown actions |
-| SMART diagnostics — `internal/system/smart.go` | 1 | 0 | 0/0/0 | 0 | `storage.smart.read` for enumerated block devices | Reject arbitrary paths, options, non-block devices, traversal, and symlinks |
+| SMART diagnostics — `internal/system/smart.go` | 0 | 0 | 0/0/0 | 0 | `storage.smart.read` | Migrated on 2026-08-13: exact broker-enumerated disks, fixed root-owned executables/arguments, bounded response, and Ubuntu 24.04 negative/preservation gate; unused wildcard sudoers removal remains for Phase 4 |
 | General handlers — `internal/server/handlers.go` | 4 | 0 | 0/3/1 | 0 | `service.action`, `host.power`, `apps.logs`, `apps.network.inspect`, `storage.lnd.permissions.repair` | Fixed unit/action/app allowlists; reauth remains; preserve restart and log behavior |
 | Generic transient unit — `internal/server/systemd_run.go` | 1 | 0 | 0/0/0 | 0 | Delete after all typed operations migrate | Any new arbitrary executable or argument must fail the Phase 0 ceiling test |
 | Docker/App Store core — `internal/server/apps_docker.go` | 16 | 0 | 0/0/0 | 2 | `packages.install_feature`, `apps.lifecycle`, `apps.inspect`, root-owned Compose support | Fixed package sets and app manifests; reject socket mounts, host modes, devices, capabilities, arbitrary images and Compose paths |

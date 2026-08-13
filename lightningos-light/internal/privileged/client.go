@@ -616,6 +616,21 @@ func (client *Client) EnsureAppStorage(ctx context.Context, dryRun bool) (string
 	return state.Status, state.Changed, nil
 }
 
+func (client *Client) ReadSMART(ctx context.Context, device string) (string, bool, error) {
+	response, err := client.call(ctx, OperationSMARTRead, SMARTReadParams{Device: device}, false)
+	if err != nil {
+		return "", false, err
+	}
+	var state SMARTReadState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", false, errors.New("invalid broker SMART response")
+	}
+	if state.Device != device || len(state.Output) > maxCommandOutputBytes || strings.ContainsRune(state.Output, '\x00') || state.Available != (strings.TrimSpace(state.Output) != "") {
+		return "", false, errors.New("invalid broker SMART state")
+	}
+	return state.Output, state.Available, nil
+}
+
 func (client *Client) EnsureLoopClientMaterial(ctx context.Context, dryRun bool) error {
 	_, err := client.call(ctx, OperationLoopClientMaterialEnsure, struct{}{}, dryRun)
 	return err

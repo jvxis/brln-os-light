@@ -167,6 +167,15 @@ changed only a temporary test tree, and preserved the real storage metadata
 and Manager/LND/Bitcoin states. Evidence:
 `docs/baselines/privilege-hardening-phase3-app-storage-2026-08-13.json`.
 
+SMART diagnostics now use read-only `storage.smart.read`; the manager's direct
+sudo budget is zero. The broker requires a bounded device to match its own
+fixed `lsblk` whole-disk inventory and runs only root-owned fixed `smartctl -a`
+argv with bounded output. Ubuntu 24.04 passed the service-user read plus flags,
+traversal, non-disk and symlink negative gates without service changes.
+Evidence: `docs/baselines/privilege-hardening-phase3-smart-read-2026-08-13.json`.
+The now-unused wildcard smartctl grants are deliberately still listed until
+the coordinated Phase 4 sudoers cutover.
+
 Firewall policy reconciliation, real Tor/LightningOS upgrade and rollback
 matrices, LightningOS publisher attestation, remaining helper/storage
 operations, wildcard sudoers removal, installer authenticity, and the rest of

@@ -88,6 +88,10 @@ type appStoragePrivilegedClient interface {
 	EnsureAppStorage(ctx context.Context, dryRun bool) (status string, changed bool, err error)
 }
 
+type smartPrivilegedClient interface {
+	ReadSMART(ctx context.Context, device string) (output string, available bool, err error)
+}
+
 type loopPrivilegedClient interface {
 	LoopStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, hasPersistentState bool, err error)
 	EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (status string, err error)
@@ -1121,6 +1125,21 @@ func ReadManagerFirewallStatusWithBroker(ctx context.Context) (string, bool, err
 	}
 	raw, err := firewallClient.ManagerFirewallStatus(ctx)
 	return raw, true, err
+}
+
+func ReadSMARTWithBroker(ctx context.Context, device string) (string, bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || (client.Mode() != "enforce" && client.Mode() != "shadow") {
+		return "", false, nil
+	}
+	smartClient, ok := client.(smartPrivilegedClient)
+	if !ok {
+		return "", true, errors.New("privileged broker does not support SMART reads")
+	}
+	output, _, err := smartClient.ReadSMART(ctx, device)
+	return output, true, err
 }
 
 func StartLNDUpgradeWithBroker(ctx context.Context, version string, helperContent string, verifyOnly bool) (bool, string, error) {

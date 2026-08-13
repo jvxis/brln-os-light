@@ -109,6 +109,16 @@ closed-catalog image preparation and status, fixed Compose lifecycle,
 inspection and removal primitives, persistent root-owned execution snapshots,
 and fixed external-firewall admission where already migrated.
 
+### Phase 3
+
+Started on 2026-08-13. Manager firewall status is now the read-only typed
+`manager.firewall.status` broker operation; the Manager's direct privileged
+UFW call budget is zero. The Ubuntu 26.04 service-user gate changed neither
+the UFW status hash nor the rules timestamp. Evidence:
+`docs/baselines/privilege-hardening-phase3-manager-firewall-status-2026-08-13.json`.
+Firewall policy reconciliation, upgrades, remaining helper/storage operations,
+wildcard sudoers removal, and the rest of issue #34 remain open.
+
 Application state at this checkpoint:
 
 | Application or family | Accepted boundary | Still open |

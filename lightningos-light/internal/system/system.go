@@ -67,6 +67,10 @@ type appLNDHostAccessPrivilegedClient interface {
 	EnsureAppLNDHostAccess(ctx context.Context, appID string, dryRun bool) error
 }
 
+type managerFirewallPrivilegedClient interface {
+	ManagerFirewallStatus(ctx context.Context) (statusJSON string, err error)
+}
+
 type loopPrivilegedClient interface {
 	LoopStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, hasPersistentState bool, err error)
 	EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (status string, err error)
@@ -1085,6 +1089,21 @@ func EnsureAppFirewallWithBroker(ctx context.Context, appID string) (bool, strin
 	default:
 		return false, "", nil
 	}
+}
+
+func ReadManagerFirewallStatusWithBroker(ctx context.Context) (string, bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || (client.Mode() != "enforce" && client.Mode() != "shadow") {
+		return "", false, nil
+	}
+	firewallClient, ok := client.(managerFirewallPrivilegedClient)
+	if !ok {
+		return "", false, nil
+	}
+	raw, err := firewallClient.ManagerFirewallStatus(ctx)
+	return raw, true, err
 }
 
 func EnsureAppLNDHostAccessWithBroker(ctx context.Context, appID string) (bool, error) {

@@ -103,6 +103,35 @@ type fakePrivilegedServiceClient struct {
 	loopErr             error
 }
 
+type fakeManagerFirewallClient struct {
+	*fakePrivilegedServiceClient
+	raw   string
+	err   error
+	calls int
+}
+
+func (client *fakeManagerFirewallClient) ManagerFirewallStatus(context.Context) (string, error) {
+	client.calls++
+	return client.raw, client.err
+}
+
+func TestReadManagerFirewallStatusWithBrokerUsesEnforceAndShadow(t *testing.T) {
+	for _, mode := range []string{"enforce", "shadow"} {
+		t.Run(mode, func(t *testing.T) {
+			client := &fakeManagerFirewallClient{
+				fakePrivilegedServiceClient: &fakePrivilegedServiceClient{mode: mode},
+				raw:                         `{"installed":true,"active":true}`,
+			}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			raw, handled, err := ReadManagerFirewallStatusWithBroker(context.Background())
+			if err != nil || !handled || raw != client.raw || client.calls != 1 {
+				t.Fatalf("raw/handled/error/calls=%q/%v/%v/%d", raw, handled, err, client.calls)
+			}
+		})
+	}
+}
+
 func TestLoopBrokerHelpersFailClosedAndShadowValidates(t *testing.T) {
 	client := &fakePrivilegedServiceClient{
 		mode:            "enforce",

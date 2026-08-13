@@ -69,6 +69,20 @@ func TestClientRejectsDisabledAndBrokerErrors(t *testing.T) {
 	}
 }
 
+func TestClientManagerFirewallStatusUsesClosedReadOnlyRequest(t *testing.T) {
+	state := ManagerFirewallState{Installed: true, Active: true, ConfiguredCIDR: "none", ConfigValid: true, TailscaleRule: true, ManagerAccessBound: true, StatusAvailable: true}
+	transport := &fakeTransport{result: state}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	raw, err := client.ManagerFirewallStatus(context.Background())
+	if err != nil || transport.request.Operation != OperationManagerFirewallStatus || transport.request.DryRun || string(transport.request.Params) != "{}" {
+		t.Fatalf("raw/error/request=%q/%v/%#v", raw, err, transport.request)
+	}
+	var got ManagerFirewallState
+	if err := json.Unmarshal([]byte(raw), &got); err != nil || !reflect.DeepEqual(got, state) {
+		t.Fatalf("decoded/error=%#v/%v", got, err)
+	}
+}
+
 func TestClientBitcoinCoreConfigRequestsKeepSecretInTypedPayload(t *testing.T) {
 	const dataDir = "/mnt/bitcoin-ssd/bitcoin"
 	const content = "server=1\nrpcpassword=top-secret\n"

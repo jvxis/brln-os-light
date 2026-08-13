@@ -34,6 +34,10 @@ type ConfigFileManager interface {
 	EnableLogin(ctx context.Context, dryRun bool) (changed bool, err error)
 }
 
+type ManagerFirewallManager interface {
+	Status(ctx context.Context) (ManagerFirewallState, error)
+}
+
 type AppManager interface {
 	EnsureDockerRuntime(ctx context.Context, dryRun bool) (DockerRuntimeState, error)
 	DockerRuntimeStatus(ctx context.Context) (DockerRuntimeState, error)
@@ -143,23 +147,24 @@ type AuditEvent struct {
 }
 
 type Broker struct {
-	Runner         CommandRunner
-	Locker         Locker
-	Audit          AuditSink
-	Files          ConfigFileManager
-	Apps           AppManager
-	Packages       PackageManager
-	BitcoinStorage BitcoinStorageManager
-	BitcoinConfig  BitcoinConfigManager
-	Loop           LoopManager
-	Elements       ElementsManager
-	PeerSwap       PeerSwapManager
-	Tapd           TapdManager
-	PublicPool     PublicPoolManager
-	BarkWallet     BarkWalletManager
-	Caller         string
-	Timeout        time.Duration
-	Now            func() time.Time
+	Runner          CommandRunner
+	Locker          Locker
+	Audit           AuditSink
+	Files           ConfigFileManager
+	ManagerFirewall ManagerFirewallManager
+	Apps            AppManager
+	Packages        PackageManager
+	BitcoinStorage  BitcoinStorageManager
+	BitcoinConfig   BitcoinConfigManager
+	Loop            LoopManager
+	Elements        ElementsManager
+	PeerSwap        PeerSwapManager
+	Tapd            TapdManager
+	PublicPool      PublicPoolManager
+	BarkWallet      BarkWalletManager
+	Caller          string
+	Timeout         time.Duration
+	Now             func() time.Time
 }
 
 func (broker *Broker) Handle(ctx context.Context, request Request) Response {
@@ -305,6 +310,15 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "file_update_failed", errors.New("enable login config update failed")
 		}
 		return map[string]any{"validated": true, "changed": changed}, "", nil
+	case OperationManagerFirewallStatus:
+		if broker.ManagerFirewall == nil {
+			return nil, "broker_unavailable", errors.New("manager firewall inspector is unavailable")
+		}
+		state, err := broker.ManagerFirewall.Status(ctx)
+		if err != nil {
+			return nil, "firewall_status_failed", errors.New("manager firewall status failed")
+		}
+		return state, "", nil
 	case OperationDockerEnsure:
 		if broker.Apps == nil {
 			return nil, "broker_unavailable", errors.New("privileged app manager is unavailable")
@@ -965,7 +979,7 @@ func knownOperation(operation Operation) bool {
 	switch operation {
 	case OperationAppLNDHostAccessEnsure:
 		return true
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppLogs, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdStatus, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolStatus, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall, OperationBarkWalletStatus, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove, OperationBarkWalletFirewall, OperationBarkWalletPasswordRead, OperationBarkWalletPasswordReset:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationManagerFirewallStatus, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppLogs, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdStatus, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolStatus, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall, OperationBarkWalletStatus, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove, OperationBarkWalletFirewall, OperationBarkWalletPasswordRead, OperationBarkWalletPasswordReset:
 		return true
 	default:
 		return false

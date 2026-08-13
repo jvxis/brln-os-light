@@ -118,6 +118,22 @@ func (client *Client) ServiceStatus(ctx context.Context, unit string) (string, e
 	return result.Status, nil
 }
 
+func (client *Client) ManagerFirewallStatus(ctx context.Context) (string, error) {
+	response, err := client.call(ctx, OperationManagerFirewallStatus, struct{}{}, false)
+	if err != nil {
+		return "", err
+	}
+	var state ManagerFirewallState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", errors.New("invalid broker manager firewall status response")
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return "", errors.New("invalid broker manager firewall status response")
+	}
+	return string(raw), nil
+}
+
 func (client *Client) LoopStatus(ctx context.Context) (bool, string, bool, bool, error) {
 	response, err := client.call(ctx, OperationLoopStatus, struct{}{}, false)
 	if err != nil {

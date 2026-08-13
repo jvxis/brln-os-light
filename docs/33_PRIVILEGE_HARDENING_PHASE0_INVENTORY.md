@@ -72,7 +72,7 @@ Legend for the call-site table:
 | Enable-login compatibility — `internal/server/auth_enable.go` | 0 | 1 | 2/1/0 | 1 | `files.enable_login`, `service.action` | Only the configured manager YAML may change atomically; never create runtime sudoers rules |
 | System integrations — `internal/server/system_integrations.go` | 0 | 1 | 0/0/0 | 0 | `files.reconcile_integrations` | Fixed embedded assets/destinations, owner/mode checks, idempotency and rollback |
 | Terminal credentials — `internal/server/terminal_status.go` | 0 | 2 | 0/0/0 | 0 | `terminal.password.install`, `service.action` | Fixed staging/destination paths, no credential in argv/logs, invalid user and symlink tests |
-| Firewall status — `internal/server/firewall_status.go` | 1 | 0 | 0/0/0 | 0 | `firewall.status` | Read-only response, no rule contents or addresses in audit logs |
+| Firewall status — `internal/server/firewall_status.go` | 0 | 0 | 0/0/0 | 0 | `manager.firewall.status` | Migrated on 2026-08-13; broker validates fixed root-owned config/UFW paths and returns typed read-only status |
 | Local Bitcoin status/config — `internal/server/bitcoin_local.go` | 5 | 0 | 0/0/0 | 0 | `apps.inspect`, manifest-defined Bitcoin config read/sync | Known container/app only; reject arbitrary container IDs, paths, and shell commands |
 | Bitcoin Core app — `internal/server/apps_bitcoincore.go` | 5 | 1 | 0/0/0 | 1 | `apps.lifecycle(bitcoincore)`, `storage.prepare`, `files.seed_app_config` | Storage identity, canonical path, symlink and lifecycle tests; preserve data on rollback |
 | Bark Wallet app — `internal/server/apps_bark_wallet.go` | 2 | 0 | 0/0/0 | 0 | `firewall.apply_app_policy(bark-wallet)` | Fixed port/protocol; reject caller-supplied UFW arguments |

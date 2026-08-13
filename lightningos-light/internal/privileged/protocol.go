@@ -24,6 +24,7 @@ const (
 	OperationServiceStatus                Operation = "service.status"
 	OperationServiceRestart               Operation = "service.restart"
 	OperationFilesEnableLogin             Operation = "files.enable_login"
+	OperationManagerFirewallStatus        Operation = "manager.firewall.status"
 	OperationAppLifecycle                 Operation = "app.compose.lifecycle"
 	OperationAppSnapshot                  Operation = "app.compose.snapshot"
 	OperationAppInspect                   Operation = "app.compose.inspect"
@@ -110,6 +111,18 @@ type ServiceStatusParams struct {
 type ServiceRestartParams struct {
 	Unit    string `json:"unit"`
 	NoBlock bool   `json:"no_block,omitempty"`
+}
+
+type ManagerFirewallState struct {
+	Installed          bool   `json:"installed"`
+	Active             bool   `json:"active"`
+	ConfiguredCIDR     string `json:"configured_cidr"`
+	ConfigValid        bool   `json:"config_valid"`
+	LANRulePresent     bool   `json:"lan_rule_present"`
+	TailscaleRule      bool   `json:"tailscale_rule"`
+	BroadRulePresent   bool   `json:"broad_rule_present"`
+	ManagerAccessBound bool   `json:"manager_access_bound"`
+	StatusAvailable    bool   `json:"status_available"`
 }
 
 type AppLifecycleAction string
@@ -485,6 +498,14 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid files.enable_login params: %w", err)
+		}
+	case OperationManagerFirewallStatus:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for manager.firewall.status")
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid manager.firewall.status params: %w", err)
 		}
 	case OperationAppLifecycle:
 		var params AppLifecycleParams

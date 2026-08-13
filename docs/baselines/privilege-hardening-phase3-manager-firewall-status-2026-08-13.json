@@ -1,0 +1,61 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-manager-firewall-status.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "replace manager direct privileged UFW status execution with a typed read-only broker operation",
+  "operation": {
+    "name": "manager.firewall.status",
+    "parameters": "empty closed object",
+    "dry_run_allowed": false,
+    "mutating": false,
+    "lock_acquired": false,
+    "fixed_config_path": "/etc/lightningos/manager-firewall.conf",
+    "fixed_executable": "/usr/sbin/ufw",
+    "config_requirement": "root:root regular file mode 0644",
+    "executable_requirement": "root:root regular file mode 0755",
+    "response": "typed booleans plus the validated configured CIDR",
+    "manager_direct_ufw_execution": false
+  },
+  "tests": {
+    "protocol_unknown_fields_and_dry_run_rejection": "passed",
+    "fixed_command_and_parser": "passed",
+    "unsafe_symlink_rejection": "passed",
+    "unavailable_status_fail_closed": "passed",
+    "broker_read_only_dispatch_without_mutation_lock": "passed",
+    "client_strict_response_decode": "passed",
+    "system_enforce_and_shadow_routing": "passed",
+    "server_direct_sudo_call_budget": 0,
+    "go_test_all": "passed",
+    "go_vet_all": "passed"
+  },
+  "ubuntu26_gate": {
+    "vm": "brln-os-hardening-053-ubuntu26-20260813",
+    "os": "Ubuntu 26.04 LTS",
+    "kernel": "7.0.0-29-generic",
+    "caller": "lightningos service user through the exact broker sudo entry",
+    "ufw_installed": true,
+    "ufw_active": false,
+    "status_available": true,
+    "config_valid": true,
+    "broker_response": "accepted and typed",
+    "ufw_status_hash_changed": false,
+    "ufw_rules_timestamp_changed": false,
+    "network_or_adapter_mutation": false,
+    "integration_node_mutated": false
+  },
+  "remaining_phase3": [
+    "manager firewall policy apply/reconcile operation",
+    "typed LND, Tor and LightningOS upgrades",
+    "remaining storage, permission and helper operations",
+    "remove package, dpkg, systemd-run and UFW wildcard sudoers",
+    "complete issue 34 artifact authenticity gates"
+  ],
+  "excluded": [
+    "ip addresses",
+    "credentials",
+    "tokens",
+    "full firewall rule output",
+    "private node identifiers"
+  ]
+}

@@ -1141,6 +1141,17 @@ must be authenticated before it is extracted, installed, or executed. This
 track applies consistently to fresh installs, existing-node installs, and
 upgrades; it is not deferred to a later release.
 
+Phase 3 started with the Manager firewall status boundary on 2026-08-13. The
+Manager no longer executes privileged `ufw status`; it requests the read-only
+`manager.firewall.status` operation. The broker accepts no caller-controlled
+arguments, validates the fixed root-owned configuration and UFW executable,
+and returns only typed status fields. The Ubuntu 26.04 gate ran as the real
+`lightningos` service user and left both the UFW status hash and rules-file
+timestamp unchanged. Evidence is in
+`docs/baselines/privilege-hardening-phase3-manager-firewall-status-2026-08-13.json`.
+Policy application/reconciliation and the remaining package/upgrade paths are
+still open.
+
 1. Replace arbitrary package arguments with fixed dependency sets.
 2. Replace direct UFW access with the manager-access policy operation.
 3. Replace ownership and permission shell commands with typed storage actions.

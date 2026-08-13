@@ -2,9 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
 
 	"lightningos-light/internal/system"
@@ -13,15 +13,15 @@ import (
 const managerFirewallConfigPath = "/etc/lightningos/manager-firewall.conf"
 
 type managerFirewallStatus struct {
-	Installed          bool
-	Active             bool
-	ConfiguredCIDR     string
-	ConfigValid        bool
-	LANRulePresent     bool
-	TailscaleRule      bool
-	BroadRulePresent   bool
-	ManagerAccessBound bool
-	StatusAvailable    bool
+	Installed          bool   `json:"installed"`
+	Active             bool   `json:"active"`
+	ConfiguredCIDR     string `json:"configured_cidr"`
+	ConfigValid        bool   `json:"config_valid"`
+	LANRulePresent     bool   `json:"lan_rule_present"`
+	TailscaleRule      bool   `json:"tailscale_rule"`
+	BroadRulePresent   bool   `json:"broad_rule_present"`
+	ManagerAccessBound bool   `json:"manager_access_bound"`
+	StatusAvailable    bool   `json:"status_available"`
 }
 
 func inspectManagerFirewall(ctx context.Context) managerFirewallStatus {
@@ -36,16 +36,15 @@ func inspectManagerFirewall(ctx context.Context) managerFirewallStatus {
 			status.ConfigValid = false
 		}
 	}
-	if _, err := exec.LookPath("ufw"); err != nil {
+	raw, handled, err := system.ReadManagerFirewallStatusWithBroker(ctx)
+	if !handled || err != nil {
 		return status
 	}
-	status.Installed = true
-	out, err := system.RunCommandWithSudo(ctx, "ufw", "status")
-	if err != nil {
+	var brokerStatus managerFirewallStatus
+	if err := json.Unmarshal([]byte(raw), &brokerStatus); err != nil {
 		return status
 	}
-	status.StatusAvailable = true
-	return parseManagerFirewallStatus(out, status)
+	return brokerStatus
 }
 
 func readManagerFirewallCIDR(path string) string {

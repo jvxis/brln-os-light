@@ -95,6 +95,25 @@ require_root
 
 export PATH="/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
+ensure_native_app_identity() {
+  local user="$1"
+  local home="$2"
+  if ! /usr/bin/getent group "$user" >/dev/null 2>&1; then
+    /usr/sbin/groupadd --system "$user"
+  fi
+  if /usr/bin/id "$user" >/dev/null 2>&1; then
+    [[ "$(/usr/bin/id -gn "$user")" == "$user" ]] || die "Existing ${user} account has an incompatible primary group"
+    return 0
+  fi
+  /usr/sbin/useradd --system --gid "$user" --home-dir "$home" --no-create-home --shell /usr/sbin/nologin "$user"
+}
+
+ensure_native_app_identities() {
+  ensure_native_app_identity lightningos-loop /var/lib/lightningos/apps-data/loop
+  ensure_native_app_identity lightningos-elements /data/elements
+  ensure_native_app_identity lightningos-peerswap /var/lib/lightningos/apps-data/peerswap/runtime
+}
+
 VERSION="${VERSION#v}"
 VERSION="$(echo "${VERSION}" | tr -s '[:space:]' ' ' | sed 's/^ *//;s/ *$//;s/ /-/g')"
 if [[ -z "$VERSION" ]]; then
@@ -765,6 +784,10 @@ print_ok "UI installed"
 
 print_step "Preparing reversible privilege cutover"
 prepare_privilege_cutover
+
+print_step "Ensuring fixed native application identities"
+ensure_native_app_identities
+print_ok "Native application identities ready"
 
 print_step "Installing manager and socket-activated privileged broker"
 for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos /run/lightningos-privileged "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do

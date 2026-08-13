@@ -10,7 +10,7 @@ const (
 	lightningOSUpgradeHelperPath   = "/usr/local/sbin/lightningos-upgrade-app"
 	lightningOSUpgradeUnit         = "lightningos-app-upgrade"
 	lightningOSVerifyUnit          = "lightningos-app-verify"
-	lightningOSUpgradeHelperSHA256 = "a99f22b68a6500e48e35e74371fb3165ea1783b42e16ceffdcbb0549cfeaec3b"
+	lightningOSUpgradeHelperSHA256 = "4131eadf8acd8be96ca457ccdff3f656ca76d2bc29b1f5e85187aed04b241ab4"
 )
 
 type NativeLightningOSUpgradeManager struct {

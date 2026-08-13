@@ -480,6 +480,30 @@ func TestManagerAndBrokerSystemdBoundary(t *testing.T) {
 	}
 }
 
+func TestInstallersProvisionFixedNativeAppIdentities(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, relative := range []string{
+		"install.sh",
+		"install_existing.sh",
+		"install_existing_pi.sh",
+		filepath.Join("internal", "server", "assets", "upgrade-app.sh"),
+	} {
+		raw, err := os.ReadFile(filepath.Join(root, relative))
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(raw)
+		for _, identity := range []string{"lightningos-loop", "lightningos-elements", "lightningos-peerswap"} {
+			if !strings.Contains(content, "ensure_native_app_identity "+identity+" ") {
+				t.Errorf("%s does not provision fixed identity %s", relative, identity)
+			}
+		}
+		if !strings.Contains(content, "--no-create-home --shell /usr/sbin/nologin") {
+			t.Errorf("%s does not constrain native application accounts", relative)
+		}
+	}
+}
+
 func TestInstallAndUpgradeBuildsDoNotRequireTrustedGitOwnership(t *testing.T) {
 	scripts := []string{
 		filepath.Join("..", "..", "install.sh"),

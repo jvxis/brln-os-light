@@ -1187,6 +1187,25 @@ EOF
   print_ok "PostgreSQL repo ready (${codename}-pgdg)"
 }
 
+ensure_native_app_identity() {
+  local user="$1"
+  local home="$2"
+  if ! getent group "$user" >/dev/null 2>&1; then
+    groupadd --system "$user"
+  fi
+  if id "$user" >/dev/null 2>&1; then
+    [[ "$(id -gn "$user")" == "$user" ]] || die "Existing ${user} account has an incompatible primary group"
+    return 0
+  fi
+  useradd --system --gid "$user" --home-dir "$home" --no-create-home --shell /usr/sbin/nologin "$user"
+}
+
+ensure_native_app_identities() {
+  ensure_native_app_identity lightningos-loop /var/lib/lightningos/apps-data/loop
+  ensure_native_app_identity lightningos-elements /data/elements
+  ensure_native_app_identity lightningos-peerswap /var/lib/lightningos/apps-data/peerswap/runtime
+}
+
 ensure_privileged_broker_units() {
   local manager_user="$1"
   if [[ "$manager_user" != "lightningos" ]]; then
@@ -1440,6 +1459,7 @@ main() {
   ensure_secrets_file
   ensure_default_bitcoin_source "$btc_conf"
   ensure_lightningos_user
+  ensure_native_app_identities
   ensure_operator_user
 
   local manager_user="lightningos"

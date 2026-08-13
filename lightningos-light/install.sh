@@ -914,6 +914,25 @@ EOF
   print_ok "Node.js installed"
 }
 
+ensure_native_app_identity() {
+  local user="$1"
+  local home="$2"
+  if ! getent group "$user" >/dev/null 2>&1; then
+    groupadd --system "$user"
+  fi
+  if id "$user" >/dev/null 2>&1; then
+    [[ "$(id -gn "$user")" == "$user" ]] || die "Existing ${user} account has an incompatible primary group"
+    return 0
+  fi
+  useradd --system --gid "$user" --home-dir "$home" --no-create-home --shell /usr/sbin/nologin "$user"
+}
+
+ensure_native_app_identities() {
+  ensure_native_app_identity lightningos-loop /var/lib/lightningos/apps-data/loop
+  ensure_native_app_identity lightningos-elements /data/elements
+  ensure_native_app_identity lightningos-peerswap /var/lib/lightningos/apps-data/peerswap/runtime
+}
+
 install_gotty() {
   print_step "Installing GoTTY ${GOTTY_VERSION}"
   if command -v gotty >/dev/null 2>&1; then
@@ -1662,6 +1681,7 @@ main() {
   create_lnd_user
   ensure_group_member lnd debian-tor
   ensure_user lightningos /var/lib/lightningos
+  ensure_native_app_identities
   ensure_group_member lightningos lnd
   ensure_group_member lightningos systemd-journal
   install_i2pd

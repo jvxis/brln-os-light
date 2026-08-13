@@ -829,7 +829,7 @@ func validateCatalogImageParams(params AppImageParams) error {
 }
 
 func validateProbedImageParams(params AppImageParams) error {
-	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID && params.AppID != appmanifest.BarkWalletID {
+	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID && params.AppID != appmanifest.BarkWalletID && params.AppID != appmanifest.MempoolID {
 		return errors.New("app manifest is not allowed")
 	}
 	if _, err := appmanifest.CatalogImageForVariant(params.AppID, params.Variant); err != nil {

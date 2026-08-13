@@ -36,7 +36,7 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/server/apps_docker.go":              {runSudo: 16, shell: 2},
 	"internal/server/apps_fedimint.go":            {runSudo: 10},
 	"internal/server/apps_lnd_access_compat.go":   {runSudo: 4},
-	"internal/server/apps_mempool.go":             {runSudo: 2},
+	"internal/server/apps_mempool.go":             {},
 	"internal/server/apps_publicpool.go":          {},
 	"internal/server/apps_robosats.go":            {runSudo: 4},
 	"internal/server/apps_storage_permissions.go": {runSystemd: 1},
@@ -104,6 +104,10 @@ var legacyDockerGroupLines = map[string]struct{}{
 }
 
 var legacyPrivilegedShellLiteralBudgets = map[string]int{
+	// Closed non-root container entrypoints copy the immutable upstream web/API
+	// payloads to bounded tmpfs so their roots can remain read-only. No host
+	// path, command, argument, image, mount, or identity is request-selectable.
+	"internal/appmanifest/mempool.go":     2,
 	"internal/server/app_upgrade.go":      1,
 	"internal/server/apps_bitcoincore.go": 1,
 	"internal/server/apps_docker.go":      2,

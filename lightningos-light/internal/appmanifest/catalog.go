@@ -79,6 +79,12 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			StopTimeoutSeconds: ElectrsStopTimeout,
 			RemoveVolumes:      true,
 		}, nil
+	case MempoolID:
+		return ComposeManifest{
+			ID: MempoolID, Project: MempoolProject, ComposeFile: MempoolComposeFile,
+			EnvFile: MempoolEnvFile, PrimaryService: MempoolPrimaryService,
+			StopTimeoutSeconds: MempoolStopTimeout, RemoveVolumes: true,
+		}, nil
 	case TapdID:
 		return ComposeManifest{
 			ID:                 TapdID,
@@ -119,6 +125,8 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return LNbitsImageForVariant(variant)
 	case ElectrsID:
 		return ElectrsImageForVariant(variant)
+	case MempoolID:
+		return MempoolImageForVariant(variant)
 	case TapdID:
 		return TapdImageForVariant(variant)
 	case PublicPoolID:
@@ -152,6 +160,8 @@ func CatalogExternalTCPPort(appID string) (int, error) {
 		return PeerSwapWebPort, nil
 	case BarkWalletID:
 		return BarkWalletPort, nil
+	case MempoolID:
+		return MempoolPort, nil
 	default:
 		return 0, errors.New("app external access manifest is not allowed")
 	}

@@ -994,9 +994,30 @@ stopped choice was restored. Bitcoin, LND, manager, firewall, and network
 state did not change. Evidence is in
 `docs/baselines/privilege-hardening-phase2-bark-wallet-boundary-2026-08-12.json`.
 
-The next catalog slice is Mempool, now that the preserved Full Node is fully
-synchronized. Both Fedimint applications remain after it as the final
-lower-priority Docker family before the shared Phase 2 matrix and cutover.
+The Mempool slice is accepted. Its official v3.3.1 frontend/backend images and
+the official MariaDB 10.11.18 LTS image are pinned by multi-architecture
+manifest digest. The manager has no direct Docker, Compose, UFW, filesystem
+removal, or sudo call in this app. The broker validates the exact declaration,
+private runtime environment, image variants, fixed networks, port, identities,
+volumes, lifecycle and removal policy before it creates a root-only snapshot.
+All three services run non-root with read-only roots, all capabilities dropped,
+`no-new-privileges`, and bounded tmpfs; only the named MariaDB and backend cache
+volumes are persistent and writable.
+
+The independent start gate reuses the Electrs Full Node checks, requiring an
+authenticated, synchronized, unpruned Bitcoin node with synchronized
+`txindex=1`, plus the running catalog Electrs container on
+`electrs_default`. App Store Bitcoin and existing native/systemd Bitcoin remain
+supported through the fixed consumer boundary. A disposable positive gate
+used 101-block regtest with real Electrs, then passed Mempool API readiness,
+inspect, stop/start and volume-removing uninstall. A separate fixture upgraded
+a MariaDB 10.5.21 volume to 10.11.18 with `MARIADB_AUTO_UPGRADE=1` and preserved
+its test row. LOS TESTE2 was inspected read-only only: Mempool and Electrs stayed
+absent, and Bitcoin, LND and manager timestamps were unchanged. Evidence is in
+`docs/baselines/privilege-hardening-phase2-mempool-functional-2026-08-13.json`.
+
+Both Fedimint applications remain as the final lower-priority Docker family
+before the shared Phase 2 matrix and cutover.
 
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC
@@ -1023,11 +1044,10 @@ unpruned, and approximately 99.87% synchronized; the former UI value was an
 authentication/reporting failure, not blockchain loss. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-bitcoincore-status-2026-08-11.json`.
 
-The Mempool full-node gate, the remaining dependent products, operational
-Bitcoin CLI/log paths, and the mainnet P2P firewall contract remain open.
-Mempool must use a synchronized unpruned node with `txindex=1`; regtest is
-acceptable only as an isolated test chain satisfying that same full-index
-contract.
+The remaining dependent products, operational Bitcoin CLI/log paths, and the
+mainnet P2P firewall contract remain open. The completed Mempool gate preserves
+the permanent synchronized/unpruned/`txindex=1` contract; regtest was used only
+as the isolated positive test chain satisfying that same full-index contract.
 
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.

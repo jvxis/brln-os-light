@@ -18,6 +18,7 @@ func TestComposeManifestCatalogIsClosed(t *testing.T) {
 		{id: BTCPayID, project: BTCPayProject, service: BTCPayPrimaryService, timeout: BTCPayStopTimeout},
 		{id: LNDgID, project: LNDgProject, service: LNDgPrimaryService, timeout: LNDgStopTimeout},
 		{id: ElectrsID, project: ElectrsProject, service: ElectrsPrimaryService, timeout: ElectrsStopTimeout},
+		{id: MempoolID, project: MempoolProject, service: MempoolPrimaryService, timeout: MempoolStopTimeout},
 		{id: PublicPoolID, project: PublicPoolProject, service: PublicPoolPrimaryService, timeout: PublicPoolStopTimeout},
 	} {
 		manifest, err := ComposeManifestForApp(test.id)
@@ -28,6 +29,10 @@ func TestComposeManifestCatalogIsClosed(t *testing.T) {
 	electrs, err := ComposeManifestForApp(ElectrsID)
 	if err != nil || !electrs.RemoveVolumes {
 		t.Fatalf("Electrs must remove its reproducible index volume: %#v/%v", electrs, err)
+	}
+	mempool, err := ComposeManifestForApp(MempoolID)
+	if err != nil || !mempool.RemoveVolumes {
+		t.Fatalf("Mempool must remove its reproducible cache volumes: %#v/%v", mempool, err)
 	}
 	for _, id := range []string{CPUMinerID, RoboSatsID, BitcoinCoreID, BTCPayID, LNDgID} {
 		manifest, err := ComposeManifestForApp(id)
@@ -72,6 +77,9 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: LNDgID, variant: LNDgImagePostgres, image: LNDgPostgresImage},
 		{appID: LNbitsID, variant: LNbitsImageApp, image: LNbitsImage},
 		{appID: ElectrsID, variant: ElectrsImageApp, image: ElectrsImage},
+		{appID: MempoolID, variant: MempoolImageFrontend, image: MempoolFrontendImage},
+		{appID: MempoolID, variant: MempoolImageBackend, image: MempoolBackendImage},
+		{appID: MempoolID, variant: MempoolImageDatabase, image: MempoolDatabaseImage},
 		{appID: PublicPoolID, variant: PublicPoolImageBackend, image: PublicPoolBackendImage},
 		{appID: PublicPoolID, variant: PublicPoolImageUI, image: PublicPoolUIImage},
 	} {
@@ -188,7 +196,7 @@ func TestCatalogExternalTCPPortIsClosedByApp(t *testing.T) {
 	for _, test := range []struct {
 		appID string
 		port  int
-	}{{RoboSatsID, RoboSatsPort}, {LNDgID, LNDgPort}, {BarkWalletID, BarkWalletPort}} {
+	}{{RoboSatsID, RoboSatsPort}, {LNDgID, LNDgPort}, {BarkWalletID, BarkWalletPort}, {MempoolID, MempoolPort}} {
 		port, err := CatalogExternalTCPPort(test.appID)
 		if err != nil || port != test.port {
 			t.Fatalf("port/error for %s = %d/%v", test.appID, port, err)

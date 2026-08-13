@@ -331,10 +331,22 @@ password reauthentication; preserve the beta warning and resolve that policy
 before final sign-off. Evidence:
 `docs/baselines/privilege-hardening-phase2-bark-wallet-boundary-2026-08-12.json`.
 
-The next application slice should continue with Mempool because LOS TESTE2's
-Full Node is now synchronized. Both Fedimint apps follow as the remaining
-lower-priority Docker family. Do not remove the manager's Docker-group
-membership until all of them and the final matrix pass.
+The Mempool slice is accepted. Official v3.3.1 frontend/backend and MariaDB
+10.11.18 images are digest-pinned; the broker owns the closed declaration,
+private snapshot, image preparation/probes, lifecycle, status, volume-removing
+uninstall and fixed port 8999 firewall rule. All services are non-root,
+read-only, capability-free and `no-new-privileges`, with writable state limited
+to bounded tmpfs and the named database/cache volumes. The broker independently
+requires a synchronized unpruned `txindex=1` Bitcoin Full Node and running
+catalog Electrs before start. A disposable 101-block regtest/Electrs gate passed
+API readiness, stop/start and uninstall, and a MariaDB 10.5.21 fixture upgraded
+to 10.11.18 without losing its row. LOS TESTE2 remained read-only, with Mempool
+and Electrs absent and Bitcoin/LND/manager timestamps preserved. Evidence:
+`docs/baselines/privilege-hardening-phase2-mempool-functional-2026-08-13.json`.
+
+Both Fedimint apps now follow as the remaining lower-priority Docker family.
+Do not remove the manager's Docker-group membership until they and the final
+matrix pass.
 
 ## Test-node and network constraints
 

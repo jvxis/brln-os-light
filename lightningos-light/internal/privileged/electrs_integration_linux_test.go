@@ -53,6 +53,12 @@ func TestElectrsFunctionalGate(t *testing.T) {
 		{args: []string{"network", "inspect", "electrs_default"}, name: "electrs_default"},
 		{args: []string{"volume", "inspect", appmanifest.ElectrsVolume}, name: appmanifest.ElectrsVolume},
 		{args: []string{"image", "inspect", appmanifest.ElectrsImage}, name: appmanifest.ElectrsImage},
+		{args: []string{"container", "inspect", appmanifest.MempoolPrimaryService}, name: appmanifest.MempoolPrimaryService},
+		{args: []string{"container", "inspect", "mempool-api"}, name: "mempool-api"},
+		{args: []string{"container", "inspect", appmanifest.MempoolDatabase}, name: appmanifest.MempoolDatabase},
+		{args: []string{"network", "inspect", "mempool_default"}, name: "mempool_default"},
+		{args: []string{"volume", "inspect", appmanifest.MempoolDBVolume}, name: appmanifest.MempoolDBVolume},
+		{args: []string{"volume", "inspect", appmanifest.MempoolCacheVolume}, name: appmanifest.MempoolCacheVolume},
 	} {
 		if _, err := runner.Run(ctx, dockerPath, check.args...); err == nil {
 			t.Fatalf("functional gate resource %s already exists", check.name)
@@ -66,10 +72,13 @@ func TestElectrsFunctionalGate(t *testing.T) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
 		_, _ = runner.Run(cleanupCtx, dockerPath, "rm", "-f", appmanifest.ElectrsID)
+		_, _ = runner.Run(cleanupCtx, dockerPath, "rm", "-f", appmanifest.MempoolPrimaryService, "mempool-api", appmanifest.MempoolDatabase)
 		_, _ = runner.Run(cleanupCtx, dockerPath, "rm", "-f", bitcoinContainer)
 		_, _ = runner.Run(cleanupCtx, dockerPath, "network", "rm", "electrs_default")
+		_, _ = runner.Run(cleanupCtx, dockerPath, "network", "rm", "mempool_default")
 		_, _ = runner.Run(cleanupCtx, dockerPath, "network", "rm", appmanifest.BitcoinConsumerNetwork)
 		_, _ = runner.Run(cleanupCtx, dockerPath, "volume", "rm", appmanifest.ElectrsVolume)
+		_, _ = runner.Run(cleanupCtx, dockerPath, "volume", "rm", appmanifest.MempoolDBVolume, appmanifest.MempoolCacheVolume)
 		_, _ = runner.Run(cleanupCtx, dockerPath, "image", "rm", appmanifest.ElectrsImage)
 	}
 	t.Cleanup(cleanup)
@@ -224,6 +233,85 @@ func TestElectrsFunctionalGate(t *testing.T) {
 	if err != nil || inspection.Status != "running" {
 		t.Fatalf("Electrs running inspection failed: %#v/%v", inspection, err)
 	}
+
+	// Mempool's positive gate deliberately reuses the same isolated Full Node
+	// and real Electrs index. Production manager code emits only mainnet, while
+	// this closed regtest enum lets the disposable gate prove the exact image,
+	// database, network and lifecycle contract without weakening the Full Node
+	// checks or touching a retained mainnet node.
+	mempoolRuntime := appmanifest.MempoolRuntime{
+		BitcoinMode: appmanifest.MempoolBitcoinModeApp,
+		Network:     "regtest", BitcoinRPCUser: rpcUser, BitcoinRPCPass: rpcPassword,
+		DBPassword: "functional-db-password", DBRootPassword: "functional-root-password",
+	}
+	for _, variant := range appmanifest.MempoolImageVariants() {
+		state, err := manager.PrepareImage(ctx, appmanifest.MempoolID, variant, false)
+		if err != nil {
+			t.Fatalf("Mempool %s image preparation failed: %v", variant, err)
+		}
+		if state.Status != "ready" {
+			if err := waitElectrsGate(ctx, 500*time.Millisecond, func() (bool, error) {
+				current, err := manager.ImageStatus(ctx, appmanifest.MempoolID, variant)
+				return err == nil && current.Status == "ready", err
+			}); err != nil {
+				t.Fatalf("Mempool %s image did not become ready: %v", variant, err)
+			}
+		}
+		probe, err := manager.ProbeImage(ctx, appmanifest.MempoolID, variant, false)
+		if err != nil || !probe.Runnable {
+			t.Fatalf("Mempool %s image probe failed: %#v/%v", variant, probe, err)
+		}
+	}
+	mempoolRoot := filepath.Join(appsRoot, appmanifest.MempoolID)
+	if err := os.MkdirAll(mempoolRoot, 0750); err != nil {
+		t.Fatal(err)
+	}
+	mempoolEnv, _ := appmanifest.MempoolRuntimeEnv(mempoolRuntime)
+	mempoolCompose, _ := appmanifest.MempoolCompose(mempoolRuntime)
+	if err := os.WriteFile(filepath.Join(mempoolRoot, appmanifest.MempoolEnvFile), []byte(mempoolEnv), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mempoolRoot, appmanifest.MempoolComposeFile), []byte(mempoolCompose), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Lifecycle(ctx, appmanifest.MempoolID, AppLifecycleStart, false); err != nil {
+		t.Fatalf("Mempool start failed: %v", err)
+	}
+	if err := waitElectrsGate(ctx, 2*time.Second, func() (bool, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:8999/api/v1/backend-info", nil)
+		if err != nil {
+			return false, err
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			return false, nil
+		}
+		defer response.Body.Close()
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 1024*1024))
+		return response.StatusCode == http.StatusOK && len(body) > 2, nil
+	}); err != nil {
+		t.Fatal("Mempool API did not become ready")
+	}
+	mempoolInspection, err := manager.Inspect(ctx, appmanifest.MempoolID)
+	if err != nil || mempoolInspection.Status != "running" {
+		t.Fatalf("Mempool running inspection failed: %#v/%v", mempoolInspection, err)
+	}
+	if err := manager.Lifecycle(ctx, appmanifest.MempoolID, AppLifecycleStop, false); err != nil {
+		t.Fatalf("Mempool stop failed: %v", err)
+	}
+	if err := manager.Lifecycle(ctx, appmanifest.MempoolID, AppLifecycleStart, false); err != nil {
+		t.Fatalf("Mempool restart-through-start failed: %v", err)
+	}
+	if err := manager.Remove(ctx, appmanifest.MempoolID, false); err != nil {
+		t.Fatalf("Mempool remove failed: %v", err)
+	}
+	for _, volume := range []string{appmanifest.MempoolDBVolume, appmanifest.MempoolCacheVolume} {
+		if _, err := runner.Run(ctx, dockerPath, "volume", "inspect", volume); err == nil {
+			t.Fatalf("Mempool reproducible volume %s survived removal", volume)
+		}
+	}
+	t.Log("mempool_functional_lifecycle=passed bitcoin_regtest_blocks=101 pruned=false txindex_synced=true electrs=ready")
+
 	if err := manager.Lifecycle(ctx, appmanifest.ElectrsID, AppLifecycleStop, false); err != nil {
 		t.Fatalf("Electrs stop failed: %v", err)
 	}

@@ -238,7 +238,7 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 
 func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error) {
 	var probe AppImageProbe
-	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID && appID != appmanifest.BarkWalletID {
+	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID && appID != appmanifest.BarkWalletID && appID != appmanifest.MempoolID {
 		return probe, errors.New("app image probe is not allowed")
 	}
 	image, _, _, err := validatedCatalogImage(appID, variant)
@@ -322,6 +322,31 @@ func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, 
 		if variant == appmanifest.BarkWalletImageDaemon {
 			probe.Runnable = probe.Runnable && strings.TrimSpace(output) == appmanifest.BarkWalletDaemonVersionOutput
 		}
+		return probe, nil
+	}
+	if appID == appmanifest.MempoolID {
+		baseArgs := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+			"--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
+		var args []string
+		var expected string
+		switch variant {
+		case appmanifest.MempoolImageFrontend:
+			args = append(append([]string{}, baseArgs...), "--entrypoint", "/usr/sbin/nginx", image, "-v")
+			expected = "nginx/1.27.0"
+		case appmanifest.MempoolImageBackend:
+			args = append(append([]string{}, baseArgs...), "--entrypoint", "/usr/bin/node", image, "--version")
+			expected = "v24.13.0"
+		case appmanifest.MempoolImageDatabase:
+			for index := range baseArgs {
+				if baseArgs[index] == "1000:1000" {
+					baseArgs[index] = "999:999"
+				}
+			}
+			args = append(append([]string{}, baseArgs...), "--entrypoint", "/usr/sbin/mariadbd", image, "--version")
+			expected = "10.11.18-MariaDB"
+		}
+		output, runErr := manager.Runner.Run(ctx, dockerPath, args...)
+		probe.Runnable = runErr == nil && strings.Contains(strings.TrimSpace(output), expected)
 		return probe, nil
 	}
 
@@ -426,6 +451,11 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 		},
 		appmanifest.ElectrsID: {
 			appmanifest.ElectrsImageApp: "lightningos-electrs-image-app",
+		},
+		appmanifest.MempoolID: {
+			appmanifest.MempoolImageFrontend: "lightningos-mempool-image-frontend",
+			appmanifest.MempoolImageBackend:  "lightningos-mempool-image-backend",
+			appmanifest.MempoolImageDatabase: "lightningos-mempool-image-database",
 		},
 		appmanifest.TapdID: {
 			appmanifest.TapdImageApp: "lightningos-tapd-image-app",
@@ -605,6 +635,24 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			return nil
 		}
 		snapshot, cleanup, err = manager.createElectrsSnapshot(files)
+		if err != nil {
+			return err
+		}
+	case appmanifest.MempoolID:
+		files, err := manager.validatedMempoolFiles()
+		if err != nil {
+			return err
+		}
+		images = []string{appmanifest.MempoolFrontendImage, appmanifest.MempoolBackendImage, appmanifest.MempoolDatabaseImage}
+		if action == AppLifecycleStart && !dryRun {
+			if err := manager.validateMempoolDependencies(ctx, files.runtime); err != nil {
+				return err
+			}
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createMempoolSnapshot(files)
 		if err != nil {
 			return err
 		}
@@ -810,6 +858,19 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 			return err
 		}
 		removePersistentSnapshot = true
+	case appmanifest.MempoolID:
+		files, err := manager.validatedMempoolFiles()
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createMempoolSnapshot(files)
+		if err != nil {
+			return err
+		}
+		removePersistentSnapshot = true
 	default:
 		return errors.New("app manifest is not allowed")
 	}
@@ -857,6 +918,10 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 		}
 	} else if removePersistentSnapshot && appID == appmanifest.ElectrsID {
 		if err := manager.removeElectrsExecutionSnapshot(snapshot.root); err != nil {
+			return errors.New("failed to remove app execution snapshot")
+		}
+	} else if removePersistentSnapshot && appID == appmanifest.MempoolID {
+		if err := manager.removeMempoolExecutionSnapshot(snapshot.root); err != nil {
 			return errors.New("failed to remove app execution snapshot")
 		}
 	}
@@ -962,6 +1027,15 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 			return inspection, err
 		}
 		snapshot, cleanup, err = manager.createElectrsSnapshot(files)
+		if err != nil {
+			return inspection, err
+		}
+	case appmanifest.MempoolID:
+		files, err := manager.validatedMempoolFiles()
+		if err != nil {
+			return inspection, err
+		}
+		snapshot, cleanup, err = manager.createMempoolSnapshot(files)
 		if err != nil {
 			return inspection, err
 		}

@@ -297,6 +297,43 @@ func TestBitcoinCoreConfigEnsurePreservesExistingLegacyAuth(t *testing.T) {
 	}
 }
 
+func TestBitcoinCorePrimaryCredentialMigrationPreservesLegacyRPCAuth(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to validate Bitcoin storage ownership")
+	}
+	_, _, privilegedRoot, dataDir := newTestBitcoinCoreLifecycleManager(t)
+	configPath := filepath.Join(dataDir, bitcoinCoreConfigFile)
+	const legacy = "server=1\nrpcauth=lightningos:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n[main]\nrpcport=8332\n"
+	if err := os.WriteFile(configPath, []byte(legacy), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(configPath, 0, 101); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &BitcoinCoreConfigManager{PrivilegedAppsRoot: privilegedRoot}
+	dryRun, err := manager.EnsureCredentials(context.Background(), dataDir, true)
+	if err != nil || dryRun.Status != "validated" || dryRun.User != "" || dryRun.Password != "" {
+		t.Fatalf("dry-run state/error=%#v/%v", dryRun, err)
+	}
+	credentialPath := filepath.Join(privilegedRoot, appmanifest.BitcoinCoreID, bitcoinCoreCredentialsFile)
+	if _, err := os.Lstat(credentialPath); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created credential state: %v", err)
+	}
+
+	state, err := manager.EnsureCredentials(context.Background(), dataDir, false)
+	if err != nil || state.Status != "restart_required" || state.User != appmanifest.BitcoinCoreRPCUser || len(state.Password) != 64 || !state.ConfigChanged {
+		t.Fatalf("migration state/error=%#v/%v", state, err)
+	}
+	if err := validateRootOwnedRegularFile(credentialPath, 0o600); err != nil {
+		t.Fatalf("credential state is not root-only: %v", err)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil || !strings.Contains(string(raw), "rpcauth=lightningos:aaaaaaaa") || !strings.Contains(string(raw), "rpcauth="+appmanifest.BitcoinCoreRPCUser+":") {
+		t.Fatalf("migration did not preserve legacy auth: %v\n%s", err, raw)
+	}
+}
+
 func TestBitcoinCoreElectrsCredentialMigrationPreservesLegacyAuth(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to validate Bitcoin storage ownership")

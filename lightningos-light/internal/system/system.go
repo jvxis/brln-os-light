@@ -101,6 +101,16 @@ type publicPoolPrivilegedClient interface {
 	EnsurePublicPoolFirewall(ctx context.Context, dryRun bool) (status string, err error)
 }
 
+type barkWalletPrivilegedClient interface {
+	BarkWalletStatus(ctx context.Context) (installed bool, status string, ufwActive bool, passwordAvailable bool, err error)
+	EnsureBarkWallet(ctx context.Context, dryRun bool) (status string, err error)
+	BarkWalletLifecycle(ctx context.Context, action string, dryRun bool) (status string, err error)
+	RemoveBarkWallet(ctx context.Context, dryRun bool) error
+	EnsureBarkWalletFirewall(ctx context.Context, dryRun bool) (status string, err error)
+	ReadBarkWalletPassword(ctx context.Context) (password string, err error)
+	ResetBarkWalletPassword(ctx context.Context, dryRun bool) error
+}
+
 type PublicPoolBrokerState struct {
 	Installed bool
 	Status    string
@@ -166,6 +176,103 @@ func publicPoolMutationWithBroker(ctx context.Context, operation func(context.Co
 		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		_ = operation(shadowCtx, poolClient, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+type BarkWalletBrokerState struct {
+	Installed         bool
+	Status            string
+	UFWActive         bool
+	PasswordAvailable bool
+}
+
+func BarkWalletStatusWithBroker(ctx context.Context) (bool, BarkWalletBrokerState, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, BarkWalletBrokerState{}, nil
+	}
+	barkClient, ok := client.(barkWalletPrivilegedClient)
+	if !ok {
+		return true, BarkWalletBrokerState{}, errors.New("privileged broker does not support Bark Wallet")
+	}
+	installed, status, ufwActive, passwordAvailable, err := barkClient.BarkWalletStatus(ctx)
+	return true, BarkWalletBrokerState{Installed: installed, Status: status, UFWActive: ufwActive, PasswordAvailable: passwordAvailable}, err
+}
+
+func EnsureBarkWalletWithBroker(ctx context.Context) (bool, error) {
+	return barkWalletMutationWithBroker(ctx, func(callCtx context.Context, client barkWalletPrivilegedClient, dryRun bool) error {
+		_, err := client.EnsureBarkWallet(callCtx, dryRun)
+		return err
+	})
+}
+
+func BarkWalletLifecycleWithBroker(ctx context.Context, action string) (bool, error) {
+	return barkWalletMutationWithBroker(ctx, func(callCtx context.Context, client barkWalletPrivilegedClient, dryRun bool) error {
+		_, err := client.BarkWalletLifecycle(callCtx, action, dryRun)
+		return err
+	})
+}
+
+func RemoveBarkWalletWithBroker(ctx context.Context) (bool, error) {
+	return barkWalletMutationWithBroker(ctx, func(callCtx context.Context, client barkWalletPrivilegedClient, dryRun bool) error {
+		return client.RemoveBarkWallet(callCtx, dryRun)
+	})
+}
+
+func EnsureBarkWalletFirewallWithBroker(ctx context.Context) (bool, error) {
+	return barkWalletMutationWithBroker(ctx, func(callCtx context.Context, client barkWalletPrivilegedClient, dryRun bool) error {
+		_, err := client.EnsureBarkWalletFirewall(callCtx, dryRun)
+		return err
+	})
+}
+
+func ResetBarkWalletPasswordWithBroker(ctx context.Context) (bool, error) {
+	return barkWalletMutationWithBroker(ctx, func(callCtx context.Context, client barkWalletPrivilegedClient, dryRun bool) error {
+		return client.ResetBarkWalletPassword(callCtx, dryRun)
+	})
+}
+
+func ReadBarkWalletPasswordWithBroker(ctx context.Context) (bool, string, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, "", nil
+	}
+	barkClient, ok := client.(barkWalletPrivilegedClient)
+	if !ok {
+		return true, "", errors.New("privileged broker does not support Bark Wallet")
+	}
+	password, err := barkClient.ReadBarkWalletPassword(ctx)
+	return true, password, err
+}
+
+func barkWalletMutationWithBroker(ctx context.Context, operation func(context.Context, barkWalletPrivilegedClient, bool) error) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	barkClient, ok := client.(barkWalletPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker does not support Bark Wallet")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, operation(ctx, barkClient, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		_ = operation(shadowCtx, barkClient, true)
 		return false, nil
 	default:
 		return false, nil

@@ -238,7 +238,7 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 
 func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error) {
 	var probe AppImageProbe
-	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID {
+	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID && appID != appmanifest.BarkWalletID {
 		return probe, errors.New("app image probe is not allowed")
 	}
 	image, _, _, err := validatedCatalogImage(appID, variant)
@@ -291,11 +291,55 @@ func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, 
 		}
 		return probe, nil
 	}
+	if appID == appmanifest.BarkWalletID {
+		baseArgs := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+			"--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
+		var args []string
+		switch variant {
+		case appmanifest.BarkWalletImageWeb:
+			args = append(append([]string{}, baseArgs...), "--user", "101:101", "--entrypoint", "/usr/sbin/nginx", image, "-v")
+		case appmanifest.BarkWalletImageAPI:
+			args = append(append([]string{}, baseArgs...), "--user", "65530:65530", "--entrypoint", "/usr/local/bin/node", image, "--version")
+		case appmanifest.BarkWalletImageDaemon:
+			checksum, checksumErr := barkWalletDaemonChecksum()
+			if checksumErr != nil {
+				return probe, checksumErr
+			}
+			checksumArgs := append(append([]string{}, baseArgs...), "--user", "65531:65531", "--entrypoint", "/usr/bin/sha256sum", image, "/usr/local/bin/barkd")
+			checksumOutput, checksumRunErr := manager.Runner.Run(ctx, dockerPath, checksumArgs...)
+			if checksumRunErr != nil || strings.TrimSpace(checksumOutput) != checksum+"  /usr/local/bin/barkd" {
+				return probe, nil
+			}
+			args = append(append([]string{}, baseArgs...), "--user", "65531:65531", "--entrypoint", "/usr/local/bin/barkd", image, "--version")
+		case appmanifest.BarkWalletImageProxy:
+			args = append(append([]string{}, baseArgs...), "--user", "65532:65532", "--tmpfs",
+				"/run/lightningos-bin:rw,exec,nosuid,nodev,size=64m,uid=65532,gid=65532,mode=0700",
+				"--entrypoint", "/bin/sh", image, "-c",
+				"cp /usr/bin/caddy /run/lightningos-bin/caddy && exec /run/lightningos-bin/caddy version")
+		}
+		output, runErr := manager.Runner.Run(ctx, dockerPath, args...)
+		probe.Runnable = runErr == nil && strings.TrimSpace(output) != ""
+		if variant == appmanifest.BarkWalletImageDaemon {
+			probe.Runnable = probe.Runnable && strings.TrimSpace(output) == appmanifest.BarkWalletDaemonVersionOutput
+		}
+		return probe, nil
+	}
 
 	args := []string{"run", "--rm", image, "cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2"}
 	_, err = manager.Runner.Run(ctx, dockerPath, args...)
 	probe.Runnable = err == nil
 	return probe, nil
+}
+
+func barkWalletDaemonChecksum() (string, error) {
+	switch runtime.GOARCH {
+	case "amd64":
+		return appmanifest.BarkWalletDaemonAMD64BinarySHA256, nil
+	case "arm64":
+		return appmanifest.BarkWalletDaemonARM64BinarySHA256, nil
+	default:
+		return "", errors.New("Bark Wallet daemon architecture is not allowed")
+	}
 }
 
 func (manager *ComposeAppManager) imageStatus(ctx context.Context, image string, unit string) (AppImageState, error) {
@@ -389,6 +433,12 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 		appmanifest.PublicPoolID: {
 			appmanifest.PublicPoolImageBackend: "lightningos-publicpool-image-backend",
 			appmanifest.PublicPoolImageUI:      "lightningos-publicpool-image-ui",
+		},
+		appmanifest.BarkWalletID: {
+			appmanifest.BarkWalletImageWeb:    "lightningos-bark-image-web",
+			appmanifest.BarkWalletImageAPI:    "lightningos-bark-image-api",
+			appmanifest.BarkWalletImageDaemon: "lightningos-bark-image-daemon",
+			appmanifest.BarkWalletImageProxy:  "lightningos-bark-image-proxy",
 		},
 	}
 	appUnits, ok := units[appID]

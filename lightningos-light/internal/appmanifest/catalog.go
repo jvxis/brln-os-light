@@ -93,6 +93,11 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			EnvFile: PublicPoolEnvFile, PrimaryService: PublicPoolPrimaryService,
 			StopTimeoutSeconds: PublicPoolStopTimeout,
 		}, nil
+	case BarkWalletID:
+		return ComposeManifest{
+			ID: BarkWalletID, Project: BarkWalletProject, ComposeFile: BarkWalletComposeFile,
+			PrimaryService: BarkWalletPrimaryService, StopTimeoutSeconds: BarkWalletStopTimeout,
+		}, nil
 	default:
 		return ComposeManifest{}, errors.New("compose app manifest is not allowed")
 	}
@@ -118,6 +123,8 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return TapdImageForVariant(variant)
 	case PublicPoolID:
 		return PublicPoolImageForVariant(variant)
+	case BarkWalletID:
+		return BarkWalletImageForVariant(variant)
 	default:
 		return "", errors.New("app image manifest is not allowed")
 	}
@@ -143,6 +150,8 @@ func CatalogExternalTCPPort(appID string) (int, error) {
 		return LNbitsPort, nil
 	case PeerSwapID:
 		return PeerSwapWebPort, nil
+	case BarkWalletID:
+		return BarkWalletPort, nil
 	default:
 		return 0, errors.New("app external access manifest is not allowed")
 	}

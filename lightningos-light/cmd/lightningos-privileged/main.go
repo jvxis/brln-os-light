@@ -60,6 +60,7 @@ func main() {
 		PeerSwap:       privileged.NewNativePeerSwapManager(runner),
 		Tapd:           privileged.NewNativeTapdManager(runner),
 		PublicPool:     privileged.NewNativePublicPoolManager(runner),
+		BarkWallet:     privileged.NewNativeBarkWalletManager(runner),
 		Caller:         caller,
 		Timeout:        15 * time.Second,
 	}

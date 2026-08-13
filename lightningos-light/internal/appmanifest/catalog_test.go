@@ -172,6 +172,7 @@ func TestCatalogImageRefreshPolicyIsClosed(t *testing.T) {
 		{BTCPayID, BTCPayImagePostgres},
 		{RoboSatsID, RoboSatsImageClient},
 		{BitcoinCoreID, BitcoinCoreImageNode},
+		{BarkWalletID, BarkWalletImageWeb},
 	} {
 		refresh, err = CatalogImageRequiresRefresh(test.appID, test.variant)
 		if err != nil || refresh {
@@ -187,7 +188,7 @@ func TestCatalogExternalTCPPortIsClosedByApp(t *testing.T) {
 	for _, test := range []struct {
 		appID string
 		port  int
-	}{{RoboSatsID, RoboSatsPort}, {LNDgID, LNDgPort}} {
+	}{{RoboSatsID, RoboSatsPort}, {LNDgID, LNDgPort}, {BarkWalletID, BarkWalletPort}} {
 		port, err := CatalogExternalTCPPort(test.appID)
 		if err != nil || port != test.port {
 			t.Fatalf("port/error for %s = %d/%v", test.appID, port, err)

@@ -130,12 +130,18 @@ não devem ser montados.
 
 Basear o compose no manifesto oficial do Umbrel, mas adaptar a rede e o proxy.
 
-Imagens verificadas em 2026-07-10:
+Imagens atualizadas e verificadas em 2026-08-12:
 
-- `secondark/bark-web:0.3.0@sha256:d00308ef6739243ea7d5187dffe250851857deb88aa93acc9527dd23d1288ef2`
-- `secondark/bark-web-api:0.3.0@sha256:846086e4507ea1827de51aa91a8fd22ddbb93816aff6c182c704f22fd0af720a`
-- `secondark/bark:0.3.0@sha256:4cfa73136f8098af164283aa2d5a79f1d46005ea7568fff8c6ae130abfd9c599`
-- `caddy:2.8-alpine@sha256:af32e97399febea808609119bb21544d0265c58a02836576e32a2d082c262c17`.
+- `secondark/bark-web:0.7.2@sha256:7f2b4469330f287192c981c64557d9469534fb4c4919bc846b829f59e4267655`
+- `secondark/bark-web-api:0.7.2@sha256:bf23f4b89e2c759d0d498f2d2a949b5d0f7fee29d8c1cc2b01a2882315363ffc`
+- `secondark/bark:0.6.1@sha256:93bf4f806fb66aef06db071f88c8dff13ab44d5cad21bd94a9ab927ded3dcafc`
+- `caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d`.
+
+A imagem publicada do daemon contém um wrapper legado de regtest como
+entrypoint. O runtime LightningOS nunca o executa: fixa
+`/usr/local/bin/barkd`, verifica o checksum oficial por arquitetura antes do
+start (`41ca75...efd` em amd64 e `a07849...482` em arm64) e exige a versão exata
+`barkd 0.6.1`.
 
 Esses valores não são autorização para atualização automática. Os manifests
 `amd64` e `arm64` foram verificados na API do registry durante a implementação;
@@ -155,8 +161,8 @@ BARKD_URL=http://barkd:4000
 PORT=4001
 WALLET_DIR=/wallet-data/.bark
 UI_AUTH=true
-UI_PASSWORD_FILE=/auth/ui_password
-UI_SESSION_SECRET_FILE=/auth/ui_session_secret
+UI_PASSWORD_FILE=/run/lightningos-auth/ui_password
+UI_SESSION_SECRET_FILE=/run/lightningos-auth/ui_session_secret
 ```
 
 A v1 deve fixar mainnet e o operador oficial. Seleção de operador customizado é
@@ -179,7 +185,7 @@ O Caddy segue o padrão já usado pelo RoboSats Gateway, com uma adaptação de
 segurança importante:
 
 - `auto_https off`;
-- certificado local gerado pelo manager;
+- certificado local gerado e preservado pelo broker privilegiado;
 - TLS terminado no proxy;
 - `/` e assets para `web:8080`;
 - `/api/*` diretamente para `api:4001`;
@@ -197,7 +203,7 @@ do dashboard LightningOS. HTTPS é necessário para cookie seguro e câmera/QR.
 ## Layout de arquivos
 
 ```text
-/var/lib/lightningos/apps/bark-wallet/
+/var/lib/lightningos-privileged/apps/bark-wallet/
   docker-compose.yaml
   Caddyfile
   tls/
@@ -215,13 +221,12 @@ do dashboard LightningOS. HTTPS é necessário para cookie seguro e câmera/QR.
     ui_session_secret
 ```
 
-Permissões pretendidas:
+Permissões implementadas:
 
-- diretórios: `0750`;
-- senha, session secret e key TLS: `0600`;
-- certificado: `0644`;
-- wallet pertencente ao UID/GID usado pelo `barkd` (o pacote Umbrel usa UID
-  1000 depois de preparar o bind mount);
+- wallet: `65531:65531 0700`;
+- snapshot do broker: `root:root 0700`, Compose `root:root 0600`;
+- senha/session secret: `root:65530 0640` em diretório `root:65530 0750`;
+- Caddyfile, certificado e key TLS: `root:65532 0640`;
 - API com acesso somente de leitura à wallet para obter `auth_token` e logs.
 
 ## Autenticação e segurança
@@ -239,18 +244,19 @@ O `bark-web-api` já oferece um login opcional com:
 
 A instalação deve habilitar obrigatoriamente `UI_AUTH=true`.
 
-O manager deve:
+O broker privilegiado deve:
 
 1. gerar uma senha aleatória forte;
 2. gerar previamente um session secret independente;
-3. gravar ambos com `0600`;
+3. gravar ambos atomicamente como `root:65530 0640`;
 4. disponibilizar **somente a senha da UI** pelo mecanismo de “copiar senha do
    app” já existente;
 5. nunca retornar session secret, auth token do `barkd`, seed ou banco da
    carteira.
 
-Reset de senha deve invalidar sessões existentes e recriar/reiniciar o container
-`api`.
+Reset de senha invalida sessões existentes sem reiniciar `barkd`: a API 0.7.2
+relê o arquivo a cada verificação e incorpora a senha atual na assinatura da
+sessão.
 
 ### Seed
 
@@ -263,16 +269,20 @@ do `barkd`. Para preservar a interface oficial:
 - respostas e logs do manager nunca devem conter mnemonic;
 - testes não devem usar seeds reais em fixtures ou snapshots.
 
-Se uma auditoria concluir que o proxy upstream expõe a mnemonic sem reautenticação
-suficiente, a v1 deve ser bloqueada até a correção upstream ou a introdução de
-fresh reauthentication específica.
+A auditoria da v0.7.2 confirmou que o proxy genérico bloqueia o caminho da
+mnemonic e que a revelação existe apenas em `POST /api/reveal-mnemonic`, com
+sessão válida e CSRF; o Caddy adiciona um segundo 404 ao caminho direto. O
+upstream não pede novamente a senha nesse POST. Esse comportamento oficial foi
+aceito para o app Beta, mas a decisão de exigir fresh reauthentication continua
+como gate explícito da revisão final de segurança da 0.5.3.
 
 ### Dados e desinstalação
 
 Desinstalar o card deve:
 
 - parar e remover containers e networks;
-- remover arquivos gerados em `/var/lib/lightningos/apps/bark-wallet`;
+- remover o snapshot em `/var/lib/lightningos-privileged/apps/bark-wallet` e
+  qualquer diretório legado do manager;
 - **preservar** `/var/lib/lightningos/apps-data/bark-wallet` por padrão.
 
 Um app de wallet não deve destruir seed e estado off-chain usando a mesma ação

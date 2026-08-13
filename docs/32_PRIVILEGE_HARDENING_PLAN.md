@@ -962,8 +962,41 @@ probes used ephemeral no-network containers; UFW remained inactive and
 unmodified. Evidence is in
 `docs/baselines/privilege-hardening-phase2-publicpool-boundary-2026-08-12.json`.
 
-The next catalog slice is Bark. Mempool and both Fedimint applications remain
-deliberately late per owner priority and dependency gates.
+The Bark Wallet slice is accepted with a real state-preserving lifecycle on
+LOS TESTE2. Seven closed broker operations now own status, the exact runtime
+snapshot, lifecycle, data-preserving removal, fixed-port firewall admission,
+and password read/reset. The manager no longer creates or changes Bark's
+Compose declaration, TLS key, UI password, session secret, file ownership, or
+UFW rule. Uninstall preserves both wallet and authentication state.
+
+The official Bark Web `v0.7.2` web/API images, Bark `0.6.1` daemon image, and
+Caddy `2.10.2` proxy are pinned by multi-architecture manifest digest. The
+published daemon image contains a legacy regtest wrapper, so the catalog never
+executes it: the broker verifies the release checksum for the architecture,
+requires the exact `barkd 0.6.1` version output, and starts only
+`/usr/local/bin/barkd`. All four containers run non-root with read-only root
+filesystems, all capabilities dropped, `no-new-privileges`, and no Docker
+socket or host networking. Only barkd receives the writable wallet bind;
+auth, TLS, and proxy configuration are exact read-only files.
+
+The v0.7.2 authentication boundary forces UI auth, secure HttpOnly/SameSite
+cookies over HTTPS, and CSRF on state changes. Direct barkd mnemonic access
+returned 404, unauthenticated reveal returned 401, and a broker-delivered
+password created a valid session. Upstream reveal still relies on the existing
+session plus CSRF rather than fresh password reauthentication; Bark remains
+beta and this residual policy decision stays open for final `0.5.3` security
+sign-off rather than being misrepresented as solved.
+
+The four existing data files were byte-identical across broker enrollment;
+the subsequent functional start performed expected database writes. The
+legacy TLS certificate/private key were copied byte-for-byte, and the original
+stopped choice was restored. Bitcoin, LND, manager, firewall, and network
+state did not change. Evidence is in
+`docs/baselines/privilege-hardening-phase2-bark-wallet-boundary-2026-08-12.json`.
+
+The next catalog slice is Mempool, now that the preserved Full Node is fully
+synchronized. Both Fedimint applications remain after it as the final
+lower-priority Docker family before the shared Phase 2 matrix and cutover.
 
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC

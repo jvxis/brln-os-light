@@ -138,6 +138,110 @@ func preparePublicPoolWritableData(dataDir string) error {
 	})
 }
 
+func prepareBarkWalletWritableData(walletDir, authDir, passwordPath, sessionPath string) error {
+	passwdRaw, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return errors.New("host account inventory is unavailable")
+	}
+	groupRaw, err := os.ReadFile("/etc/group")
+	if err != nil {
+		return errors.New("host group inventory is unavailable")
+	}
+	for _, identity := range []struct {
+		uid, gid int
+		name     string
+	}{
+		{appmanifest.BarkWalletAPIUID, appmanifest.BarkWalletAPIGID, "API"},
+		{appmanifest.BarkWalletDaemonUID, appmanifest.BarkWalletDaemonGID, "daemon"},
+		{appmanifest.BarkWalletProxyUID, appmanifest.BarkWalletProxyGID, "proxy"},
+	} {
+		if identityFileContainsNumericID(passwdRaw, 2, identity.uid) {
+			return errors.New("Bark Wallet " + identity.name + " UID collides with a host account")
+		}
+		if identityFileContainsNumericID(groupRaw, 2, identity.gid) {
+			return errors.New("Bark Wallet " + identity.name + " GID collides with a host group")
+		}
+	}
+	if err := filepath.WalkDir(walletDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("Bark Wallet data entry is unsafe")
+		}
+		if info.IsDir() {
+			if os.Geteuid() == 0 {
+				if err := os.Chown(path, appmanifest.BarkWalletDaemonUID, appmanifest.BarkWalletDaemonGID); err != nil {
+					return err
+				}
+			}
+			return os.Chmod(path, 0700)
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("Bark Wallet data entry is not a regular file")
+		}
+		if os.Geteuid() == 0 {
+			if err := os.Chown(path, appmanifest.BarkWalletDaemonUID, appmanifest.BarkWalletDaemonGID); err != nil {
+				return err
+			}
+		}
+		return os.Chmod(path, 0600)
+	}); err != nil {
+		return err
+	}
+	if os.Geteuid() == 0 {
+		if err := os.Chown(authDir, 0, appmanifest.BarkWalletAPIGID); err != nil {
+			return err
+		}
+	}
+	if err := os.Chmod(authDir, 0750); err != nil {
+		return err
+	}
+	for _, path := range []string{passwordPath, sessionPath} {
+		if err := setPrivilegedPathGroup(path, appmanifest.BarkWalletAPIGID); err != nil {
+			return err
+		}
+		if err := os.Chmod(path, 0640); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateBarkWalletSnapshotPermissions(paths BarkWalletPaths) error {
+	checks := []struct {
+		path      string
+		mode      os.FileMode
+		uid, gid  uint32
+		directory bool
+	}{
+		{paths.SnapshotRoot, 0700, 0, 0, true},
+		{paths.TLSDir, 0700, 0, 0, true},
+		{paths.ComposePath, 0600, 0, 0, false},
+		{paths.CaddyfilePath, 0640, 0, uint32(appmanifest.BarkWalletProxyGID), false},
+		{paths.TLSCertificate, 0640, 0, uint32(appmanifest.BarkWalletProxyGID), false},
+		{paths.TLSPrivateKey, 0640, 0, uint32(appmanifest.BarkWalletProxyGID), false},
+		{paths.AuthDir, 0750, 0, uint32(appmanifest.BarkWalletAPIGID), true},
+		{paths.AdminPasswordPath, 0640, 0, uint32(appmanifest.BarkWalletAPIGID), false},
+		{paths.SessionSecretPath, 0640, 0, uint32(appmanifest.BarkWalletAPIGID), false},
+	}
+	for _, check := range checks {
+		info, err := os.Lstat(check.path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != check.mode || check.directory != info.IsDir() {
+			return errors.New("Bark Wallet snapshot permissions are unsafe")
+		}
+		if !check.directory && !info.Mode().IsRegular() {
+			return errors.New("Bark Wallet snapshot entry type is unsafe")
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != check.uid || stat.Gid != check.gid {
+			return errors.New("Bark Wallet snapshot ownership is unsafe")
+		}
+	}
+	return nil
+}
+
 func validatePublicPoolSnapshotPermissions(root, compose, env, caddy string) error {
 	checks := []struct {
 		path      string

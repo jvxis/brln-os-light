@@ -365,6 +365,84 @@ func decodePublicPoolState(response Response, dryRun bool) (PublicPoolState, err
 	return state, nil
 }
 
+func (client *Client) BarkWalletStatus(ctx context.Context) (bool, string, bool, bool, error) {
+	response, err := client.call(ctx, OperationBarkWalletStatus, struct{}{}, false)
+	if err != nil {
+		return false, "", false, false, err
+	}
+	state, err := decodeBarkWalletState(response, false)
+	return state.Installed, state.Status, state.UFWActive, state.PasswordAvailable, err
+}
+
+func (client *Client) EnsureBarkWallet(ctx context.Context, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBarkWalletEnsure, struct{}{}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeBarkWalletState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) BarkWalletLifecycle(ctx context.Context, action string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBarkWalletLifecycle, BarkWalletLifecycleParams{Action: AppLifecycleAction(action)}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeBarkWalletState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) RemoveBarkWallet(ctx context.Context, dryRun bool) error {
+	_, err := client.call(ctx, OperationBarkWalletRemove, struct{}{}, dryRun)
+	return err
+}
+
+func (client *Client) EnsureBarkWalletFirewall(ctx context.Context, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBarkWalletFirewall, struct{}{}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeBarkWalletState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) ReadBarkWalletPassword(ctx context.Context) (string, error) {
+	response, err := client.call(ctx, OperationBarkWalletPasswordRead, struct{}{}, false)
+	if err != nil {
+		return "", err
+	}
+	var result BarkWalletPasswordResult
+	if err := decodeStrict(response.Result, &result); err != nil || result.Password == "" {
+		return "", errors.New("invalid broker Bark Wallet password response")
+	}
+	return result.Password, nil
+}
+
+func (client *Client) ResetBarkWalletPassword(ctx context.Context, dryRun bool) error {
+	response, err := client.call(ctx, OperationBarkWalletPasswordReset, struct{}{}, dryRun)
+	if err != nil {
+		return err
+	}
+	_, err = decodeBarkWalletState(response, dryRun)
+	return err
+}
+
+func decodeBarkWalletState(response Response, dryRun bool) (BarkWalletState, error) {
+	var state BarkWalletState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return state, errors.New("invalid broker Bark Wallet state response")
+	}
+	if dryRun && state.Status == "validated" {
+		return state, nil
+	}
+	switch state.Status {
+	case "running", "stopped", "unknown", "active", "inactive":
+		return state, nil
+	default:
+		return BarkWalletState{}, errors.New("invalid broker Bark Wallet status")
+	}
+}
+
 func decodePeerSwapState(response Response, dryRun bool) (PeerSwapState, error) {
 	var state PeerSwapState
 	if err := decodeStrict(response.Result, &state); err != nil {

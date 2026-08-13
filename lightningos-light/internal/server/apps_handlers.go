@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 
+	"lightningos-light/internal/system"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -251,7 +253,25 @@ func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) 
 	} else if appID == fedimintGatewayAppID {
 		password = readSecretFile(fedimintGatewayAppPaths().AdminPasswordPath)
 	} else {
-		password = readSecretFile(barkWalletAppPaths().AdminPasswordPath)
+		handled, brokerPassword, err := system.ReadBarkWalletPasswordWithBroker(r.Context())
+		if !handled {
+			writeError(w, http.StatusInternalServerError, "Bark Wallet password requires privileged broker enforce mode")
+			return
+		}
+		if err != nil {
+			// Promote a legacy install once so the manager never reads its
+			// manager-owned secret directly after the broker cutover.
+			if handled, ensureErr := system.EnsureBarkWalletWithBroker(r.Context()); !handled || ensureErr != nil {
+				writeError(w, http.StatusNotFound, "admin password unavailable")
+				return
+			}
+			handled, brokerPassword, err = system.ReadBarkWalletPasswordWithBroker(r.Context())
+			if !handled || err != nil {
+				writeError(w, http.StatusNotFound, "admin password unavailable")
+				return
+			}
+		}
+		password = brokerPassword
 	}
 	if password == "" {
 		writeError(w, http.StatusNotFound, "admin password unavailable")

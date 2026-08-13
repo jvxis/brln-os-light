@@ -71,6 +71,13 @@ const (
 	OperationPublicPoolLifecycle          Operation = "app.publicpool.lifecycle"
 	OperationPublicPoolRemove             Operation = "app.publicpool.remove"
 	OperationPublicPoolFirewall           Operation = "app.publicpool.firewall"
+	OperationBarkWalletStatus             Operation = "app.bark.status"
+	OperationBarkWalletEnsure             Operation = "app.bark.ensure"
+	OperationBarkWalletLifecycle          Operation = "app.bark.lifecycle"
+	OperationBarkWalletRemove             Operation = "app.bark.remove"
+	OperationBarkWalletFirewall           Operation = "app.bark.firewall"
+	OperationBarkWalletPasswordRead       Operation = "app.bark.password.read"
+	OperationBarkWalletPasswordReset      Operation = "app.bark.password.reset"
 )
 
 type Request struct {
@@ -341,6 +348,21 @@ type PublicPoolState struct {
 	Installed bool   `json:"installed"`
 	Status    string `json:"status"`
 	UFWActive bool   `json:"ufw_active,omitempty"`
+}
+
+type BarkWalletLifecycleParams struct {
+	Action AppLifecycleAction `json:"action"`
+}
+
+type BarkWalletState struct {
+	Installed         bool   `json:"installed"`
+	Status            string `json:"status"`
+	UFWActive         bool   `json:"ufw_active,omitempty"`
+	PasswordAvailable bool   `json:"password_available,omitempty"`
+}
+
+type BarkWalletPasswordResult struct {
+	Password string `json:"password"`
 }
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -768,6 +790,23 @@ func ValidateRequest(request Request) error {
 		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
 			return errors.New("Public Pool lifecycle action is not allowed")
 		}
+	case OperationBarkWalletStatus, OperationBarkWalletEnsure, OperationBarkWalletRemove,
+		OperationBarkWalletFirewall, OperationBarkWalletPasswordRead, OperationBarkWalletPasswordReset:
+		if request.DryRun && (request.Operation == OperationBarkWalletStatus || request.Operation == OperationBarkWalletPasswordRead) {
+			return fmt.Errorf("dry_run is not valid for %s", request.Operation)
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
+	case OperationBarkWalletLifecycle:
+		var params BarkWalletLifecycleParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.bark.lifecycle params: %w", err)
+		}
+		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
+			return errors.New("Bark Wallet lifecycle action is not allowed")
+		}
 	default:
 		return errors.New("unknown operation")
 	}
@@ -790,7 +829,7 @@ func validateCatalogImageParams(params AppImageParams) error {
 }
 
 func validateProbedImageParams(params AppImageParams) error {
-	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID {
+	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID && params.AppID != appmanifest.BarkWalletID {
 		return errors.New("app manifest is not allowed")
 	}
 	if _, err := appmanifest.CatalogImageForVariant(params.AppID, params.Variant); err != nil {

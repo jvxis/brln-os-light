@@ -19,6 +19,19 @@ func preparePublicPoolWritableData(string) error { return nil }
 
 func validatePublicPoolSnapshotPermissions(string, string, string, string) error { return nil }
 
+func prepareBarkWalletWritableData(string, string, string, string) error { return nil }
+
+func validateBarkWalletSnapshotPermissions(paths BarkWalletPaths) error {
+	for _, path := range []string{paths.SnapshotRoot, paths.TLSDir, paths.ComposePath, paths.CaddyfilePath,
+		paths.TLSCertificate, paths.TLSPrivateKey, paths.AuthDir, paths.AdminPasswordPath, paths.SessionSecretPath} {
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("Bark Wallet snapshot entry is unsafe")
+		}
+	}
+	return nil
+}
+
 func validateSecretFileMode(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {

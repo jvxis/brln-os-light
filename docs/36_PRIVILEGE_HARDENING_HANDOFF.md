@@ -119,6 +119,7 @@ Application state at this checkpoint:
 | PeerSwap | Fixed upstream v6.0.0 and official PSWeb commit `09983da` (v6.0.0.1 package) hashes in the compatible legacy asset folder, dedicated identity and nine-permission LND credential, root-only local/remote Elements policy, state-preserving migration, hardened units, typed status/lifecycle/removal/firewall; remote-mode LOS TESTE2 gate passed without starting services | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
 | Tapd | Official stable v0.8.0 manifest digest, five-signature release gate, exact closed Compose snapshot, dedicated nine-permission LND credential, typed lifecycle/status/remove/CLI, SSRF-safe universe discovery, and sensitive-action reauthentication; stopped LOS TESTE2 installation migrated without dependency restarts | Clean install, real functional lifecycle on a disposable node, reboot persistence, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
 | Public Pool | Immutable backend/UI manifest digests correlated to fixed source revisions, exact root-only non-root/read-only runtime, typed Bitcoin modes/status/lifecycle/remove/firewall, CPU Miner broker dependency, and state-preserving stopped LOS TESTE2 gate | Clean install, real mining/API/UI lifecycle on a disposable node, reboot persistence, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
+| Bark Wallet | Official digest-pinned Bark Web v0.7.2/Bark 0.6.1/Caddy images, architecture-specific daemon binary attestation, exact root-only snapshot, non-root read-only runtime, typed status/lifecycle/remove/firewall/password operations, protected seed routes, and real stopped-to-running-to-stopped LOS TESTE2 gate | Decide whether mnemonic reveal needs fresh password reauthentication before final security sign-off; clean install/reboot, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
 | Native apps and in-process features | Inventory plus isolated shared primitives only | Migrate privileged systemd, files, users, binaries, storage, firewall, and credential paths as applicable |
@@ -314,10 +315,26 @@ remained content-identical across the UID/GID 65532 migration; Bitcoin, LND,
 manager and Public Pool lifecycle state remained unchanged. Evidence:
 `docs/baselines/privilege-hardening-phase2-publicpool-boundary-2026-08-12.json`.
 
-The next application slice should continue with Bark.
-Mempool and both Fedimint apps remain deliberately late per owner priority. Do
-not remove the manager's Docker-group membership until all of them and the
-final matrix pass.
+The Bark Wallet slice is accepted. Seven typed operations own its exact
+runtime, lifecycle, status, data-preserving removal, fixed port, and UI
+password read/reset. The official v0.7.2 web/API, Bark 0.6.1 daemon, and Caddy
+images are manifest-digest pinned. Because the daemon image's published
+entrypoint is a legacy regtest wrapper, the broker bypasses it and requires
+the official architecture checksum plus exact version output from
+`/usr/local/bin/barkd` before lifecycle execution. All services are non-root,
+read-only, capability-free, and `no-new-privileges`; only barkd can write the
+wallet bind. LOS TESTE2 passed HTTPS, login, direct mnemonic denial,
+unauthenticated reveal denial, start/stop, and state/TLS preservation checks,
+then returned to stopped without Bitcoin, LND, manager, firewall, or network
+changes. Upstream mnemonic reveal has session+CSRF protection but no fresh
+password reauthentication; preserve the beta warning and resolve that policy
+before final sign-off. Evidence:
+`docs/baselines/privilege-hardening-phase2-bark-wallet-boundary-2026-08-12.json`.
+
+The next application slice should continue with Mempool because LOS TESTE2's
+Full Node is now synchronized. Both Fedimint apps follow as the remaining
+lower-priority Docker family. Do not remove the manager's Docker-group
+membership until all of them and the final matrix pass.
 
 ## Test-node and network constraints
 

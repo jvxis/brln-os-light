@@ -28,7 +28,7 @@ type privilegeCallBudget struct {
 // inventory review and an intentional update to this table.
 var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/server/app_upgrade.go":              {runSudo: 2, runSystemd: 1, shell: 1},
-	"internal/server/apps_bark_wallet.go":         {runSudo: 2},
+	"internal/server/apps_bark_wallet.go":         {},
 	"internal/server/apps_bitcoincore.go":         {runSudo: 5, runSystemd: 1, shell: 1},
 	"internal/server/apps_btcpay.go":              {runSudo: 2},
 	"internal/server/apps_cpuminer.go":            {runSudo: 1},

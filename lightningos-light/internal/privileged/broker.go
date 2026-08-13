@@ -112,6 +112,16 @@ type PublicPoolManager interface {
 	EnsureFirewall(ctx context.Context, dryRun bool) (PublicPoolState, error)
 }
 
+type BarkWalletManager interface {
+	Status(ctx context.Context) (BarkWalletState, error)
+	Ensure(ctx context.Context, dryRun bool) (BarkWalletState, error)
+	Lifecycle(ctx context.Context, action AppLifecycleAction, dryRun bool) (BarkWalletState, error)
+	Remove(ctx context.Context, dryRun bool) error
+	EnsureFirewall(ctx context.Context, dryRun bool) (BarkWalletState, error)
+	ReadPassword() (string, error)
+	ResetPassword(dryRun bool) (BarkWalletState, error)
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -138,6 +148,7 @@ type Broker struct {
 	PeerSwap       PeerSwapManager
 	Tapd           TapdManager
 	PublicPool     PublicPoolManager
+	BarkWallet     BarkWalletManager
 	Caller         string
 	Timeout        time.Duration
 	Now            func() time.Time
@@ -210,7 +221,7 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		return configured
 	}
 	switch operation {
-	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove:
+	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}
@@ -811,6 +822,72 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "publicpool_firewall_failed", errors.New("Public Pool firewall preparation failed")
 		}
 		return state, "", nil
+	case OperationBarkWalletStatus:
+		if broker.BarkWallet == nil {
+			return nil, "broker_unavailable", errors.New("Bark Wallet manager is unavailable")
+		}
+		state, err := broker.BarkWallet.Status(ctx)
+		if err != nil {
+			return nil, "bark_status_failed", errors.New("Bark Wallet status failed")
+		}
+		return state, "", nil
+	case OperationBarkWalletEnsure:
+		if broker.BarkWallet == nil {
+			return nil, "broker_unavailable", errors.New("Bark Wallet manager is unavailable")
+		}
+		state, err := broker.BarkWallet.Ensure(ctx, request.DryRun)
+		if err != nil {
+			return nil, "bark_ensure_failed", errors.New("Bark Wallet preparation failed")
+		}
+		return state, "", nil
+	case OperationBarkWalletLifecycle:
+		if broker.BarkWallet == nil {
+			return nil, "broker_unavailable", errors.New("Bark Wallet manager is unavailable")
+		}
+		var params BarkWalletLifecycleParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.bark.lifecycle params")
+		}
+		state, err := broker.BarkWallet.Lifecycle(ctx, params.Action, request.DryRun)
+		if err != nil {
+			return nil, "bark_lifecycle_failed", errors.New("Bark Wallet lifecycle failed")
+		}
+		return state, "", nil
+	case OperationBarkWalletRemove:
+		if broker.BarkWallet == nil {
+			return nil, "broker_unavailable", errors.New("Bark Wallet manager is unavailable")
+		}
+		if err := broker.BarkWallet.Remove(ctx, request.DryRun); err != nil {
+			return nil, "bark_remove_failed", errors.New("Bark Wallet removal failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationBarkWalletFirewall:
+		if broker.BarkWallet == nil {
+			return nil, "broker_unavailable", errors.New("Bark Wallet manager is unavailable")
+		}
+		state, err := broker.BarkWallet.EnsureFirewall(ctx, request.DryRun)
+		if err != nil {
+			return nil, "bark_firewall_failed", errors.New("Bark Wallet firewall preparation failed")
+		}
+		return state, "", nil
+	case OperationBarkWalletPasswordRead:
+		if broker.BarkWallet == nil {
+			return nil, "broker_unavailable", errors.New("Bark Wallet manager is unavailable")
+		}
+		password, err := broker.BarkWallet.ReadPassword()
+		if err != nil {
+			return nil, "bark_password_unavailable", errors.New("Bark Wallet password is unavailable")
+		}
+		return BarkWalletPasswordResult{Password: password}, "", nil
+	case OperationBarkWalletPasswordReset:
+		if broker.BarkWallet == nil {
+			return nil, "broker_unavailable", errors.New("Bark Wallet manager is unavailable")
+		}
+		state, err := broker.BarkWallet.ResetPassword(request.DryRun)
+		if err != nil {
+			return nil, "bark_password_reset_failed", errors.New("Bark Wallet password reset failed")
+		}
+		return state, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -847,7 +924,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdStatus, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolStatus, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdStatus, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolStatus, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall, OperationBarkWalletStatus, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove, OperationBarkWalletFirewall, OperationBarkWalletPasswordRead, OperationBarkWalletPasswordReset:
 		return true
 	default:
 		return false
@@ -856,7 +933,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove, OperationBarkWalletFirewall, OperationBarkWalletPasswordReset:
 		return true
 	default:
 		return false

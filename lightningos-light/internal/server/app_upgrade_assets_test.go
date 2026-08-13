@@ -1,8 +1,11 @@
 package server
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/privileged"
 )
 
 func TestAppUpgradeRefreshesSecuritySensitiveSystemIntegrations(t *testing.T) {
@@ -39,35 +42,27 @@ func TestEmbeddedSystemIntegrationAssetsAreSafe(t *testing.T) {
 		"so stdout contains only the selected CIDR",
 		"Restart=always",
 		"setup-manager-tls-mdns.sh",
-		"system-integrations-20260811-v4",
-		"upgrade_bitcoin_storage",
-		"app.bitcoincore.storage.ensure",
+		"system-integrations-20260811-v5",
 	} {
-		combined := embeddedTerminalHelper + embeddedTerminalPasswordHelper + embeddedManagerFirewallHelper + embeddedSystemIntegrationsReconciler + embeddedAppUpgradeScript + systemIntegrationsMarkerPath
+		combined := embeddedTerminalHelper + embeddedTerminalPasswordHelper + embeddedManagerFirewallHelper + embeddedManagerTLSMDNSHelper + embeddedAppUpgradeScript + systemIntegrationsMarkerPath
 		if !strings.Contains(combined, fragment) {
 			t.Fatalf("embedded system integration assets are missing %q", fragment)
 		}
 	}
 }
 
-func TestSystemIntegrationReconcilerEnrollsLegacyBitcoinWithoutRestart(t *testing.T) {
-	for _, required := range []string{
-		"reconcile_bitcoin_storage_enrollment",
-		"app.bitcoincore.storage.ensure",
-		"Existing Bitcoin Core storage enrolled without restart",
-	} {
-		if !strings.Contains(embeddedSystemIntegrationsReconciler, required) {
-			t.Fatalf("system integration reconciler is missing %q", required)
-		}
+func TestEmbeddedSystemIntegrationAssetsMatchBrokerCatalog(t *testing.T) {
+	manager := privileged.NewNativeSystemIntegrationsManager(nil)
+	assets := []privileged.SystemIntegrationAssetInstallParams{
+		{Asset: privileged.SystemIntegrationAssetTerminal, Content: embeddedTerminalHelper},
+		{Asset: privileged.SystemIntegrationAssetTerminalPassword, Content: embeddedTerminalPasswordHelper},
+		{Asset: privileged.SystemIntegrationAssetManagerFirewall, Content: embeddedManagerFirewallHelper},
+		{Asset: privileged.SystemIntegrationAssetManagerTLSMDNS, Content: embeddedManagerTLSMDNSHelper},
 	}
-	enrollment := strings.Index(embeddedSystemIntegrationsReconciler, "reconcile_bitcoin_storage_enrollment\n")
-	marker := strings.Index(embeddedSystemIntegrationsReconciler, "touch \"$marker_path\"")
-	if enrollment < 0 || marker < 0 || enrollment > marker {
-		t.Fatal("Bitcoin storage enrollment must complete before the reconciliation marker")
-	}
-	for _, forbidden := range []string{"restart bitcoind", "restart bitcoin", "docker restart"} {
-		if strings.Contains(strings.ToLower(embeddedSystemIntegrationsReconciler), forbidden) {
-			t.Fatalf("legacy Bitcoin enrollment contains forbidden restart action %q", forbidden)
+	for _, asset := range assets {
+		state, err := manager.InstallAsset(context.Background(), asset, true)
+		if err != nil || state.Status != "validated" || state.Changed {
+			t.Fatalf("embedded asset %s does not match broker catalog: state=%+v err=%v", asset.Asset, state, err)
 		}
 	}
 }

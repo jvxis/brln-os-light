@@ -47,7 +47,7 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/server/firewall_status.go":          {},
 	"internal/server/handlers.go":                 {},
 	"internal/server/lnd_upgrade.go":              {},
-	"internal/server/system_integrations.go":      {runSystemd: 1},
+	"internal/server/system_integrations.go":      {},
 	"internal/server/systemd_run.go":              {runSudo: 1},
 	"internal/server/terminal_status.go":          {runSystemd: 2},
 	"internal/server/tor_upgrade.go":              {},

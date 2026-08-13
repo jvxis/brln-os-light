@@ -240,7 +240,22 @@ real service-user dry-run/status gate without invoking apt or changing package,
 service, audit, lock, broker, firewall, or network state. Evidence is in
 `docs/baselines/privilege-hardening-phase3-mdns-package-2026-08-13.json`.
 This closes the package prerequisite for decomposing the system-integration
-reconciler; asset/TLS/mDNS policy reconciliation itself remains the next cut.
+reconciler. The reconciler cut is now complete: the broker accepts only four
+compiled asset IDs whose bytes must match compiled SHA-256 values and whose
+destinations/modes are fixed. Separate typed stages apply the exact
+TLS/mDNS/firewall helpers and idempotent LND restart policy, enroll an existing
+Bitcoin Store data directory through `app.bitcoincore.storage.ensure` without
+restarting Bitcoin, restart only an already-active terminal when its helper
+changed, and write the v5 completion marker last. Marker readiness is itself a
+read-only broker operation that validates root ownership, mode, content and
+all four installed asset hashes. The old staged root shell
+reconciler and its manager `runSystemd` call were deleted. Ubuntu 24.04 passed
+the Linux/root filesystem test and real service-user broker dry-runs; altered
+asset bytes and a caller-supplied path failed closed, while package, lock,
+firewall and Manager/LND/Postgres activation state remained unchanged. Real
+TLS/firewall mutation is reserved for the final disposable fresh-install
+matrix. Evidence is in
+`docs/baselines/privilege-hardening-phase3-system-integrations-2026-08-13.json`.
 
 The first shared Compose catalog now admits RoboSats for typed status,
 start, and stop. The broker byte-validates the manager-owned catalog files and

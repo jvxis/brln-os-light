@@ -717,6 +717,85 @@ func (client *Client) EnableLogin(ctx context.Context, dryRun bool) error {
 	return err
 }
 
+func (client *Client) InstallSystemIntegrationAsset(ctx context.Context, asset string, content string, dryRun bool) (bool, error) {
+	response, err := client.call(ctx, OperationSystemIntegrationAssetInstall, SystemIntegrationAssetInstallParams{
+		Asset: SystemIntegrationAsset(asset), Content: content,
+	}, dryRun)
+	if err != nil {
+		return false, err
+	}
+	var state SystemIntegrationAssetState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return false, errors.New("invalid broker system integration asset response")
+	}
+	expected := "ready"
+	if dryRun {
+		expected = "validated"
+	}
+	if state.Status != expected || (dryRun && state.Changed) {
+		return false, errors.New("invalid broker system integration asset state")
+	}
+	return state.Changed, nil
+}
+
+func (client *Client) SystemIntegrationsStatus(ctx context.Context) (bool, error) {
+	response, err := client.call(ctx, OperationSystemIntegrationsStatus, struct{}{}, false)
+	if err != nil {
+		return false, err
+	}
+	var state SystemIntegrationsState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return false, errors.New("invalid broker system integrations status response")
+	}
+	if state.CertificateChanged || state.LNDPolicyChanged {
+		return false, errors.New("invalid broker system integrations status state")
+	}
+	switch state.Status {
+	case "ready":
+		return true, nil
+	case "absent":
+		return false, nil
+	default:
+		return false, errors.New("invalid broker system integrations status state")
+	}
+}
+
+func (client *Client) ApplySystemIntegrations(ctx context.Context, dryRun bool) (bool, bool, error) {
+	response, err := client.call(ctx, OperationSystemIntegrationsApply, struct{}{}, dryRun)
+	if err != nil {
+		return false, false, err
+	}
+	state, err := decodeSystemIntegrationsState(response, dryRun)
+	if err != nil {
+		return false, false, err
+	}
+	return state.CertificateChanged, state.LNDPolicyChanged, nil
+}
+
+func (client *Client) FinalizeSystemIntegrations(ctx context.Context, dryRun bool) error {
+	response, err := client.call(ctx, OperationSystemIntegrationsFinalize, struct{}{}, dryRun)
+	if err != nil {
+		return err
+	}
+	_, err = decodeSystemIntegrationsState(response, dryRun)
+	return err
+}
+
+func decodeSystemIntegrationsState(response Response, dryRun bool) (SystemIntegrationsState, error) {
+	var state SystemIntegrationsState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return SystemIntegrationsState{}, errors.New("invalid broker system integrations response")
+	}
+	expected := "ready"
+	if dryRun {
+		expected = "validated"
+	}
+	if state.Status != expected || (dryRun && (state.CertificateChanged || state.LNDPolicyChanged)) {
+		return SystemIntegrationsState{}, errors.New("invalid broker system integrations state")
+	}
+	return state, nil
+}
+
 func (client *Client) EnsureDockerRuntime(ctx context.Context, dryRun bool) (string, error) {
 	response, err := client.call(ctx, OperationDockerEnsure, struct{}{}, dryRun)
 	status := ""

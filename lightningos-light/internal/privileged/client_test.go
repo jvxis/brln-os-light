@@ -160,6 +160,36 @@ func TestClientEnableLoginBuildsEmptyTypedRequest(t *testing.T) {
 	}
 }
 
+func TestClientSystemIntegrationsUseClosedTypedRequests(t *testing.T) {
+	transport := &fakeTransport{result: SystemIntegrationAssetState{Status: "ready", Changed: true}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	changed, err := client.InstallSystemIntegrationAsset(context.Background(), "terminal", "fixed", false)
+	if err != nil || !changed || transport.request.Operation != OperationSystemIntegrationAssetInstall || transport.request.DryRun {
+		t.Fatalf("changed/error/request=%v/%v/%#v", changed, err, transport.request)
+	}
+	var params SystemIntegrationAssetInstallParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil || params.Asset != SystemIntegrationAssetTerminal || params.Content != "fixed" {
+		t.Fatalf("unexpected params/error: %#v/%v", params, err)
+	}
+
+	transport.result = SystemIntegrationsState{Status: "ready", CertificateChanged: true, LNDPolicyChanged: true}
+	certificateChanged, lndPolicyChanged, err := client.ApplySystemIntegrations(context.Background(), false)
+	if err != nil || !certificateChanged || !lndPolicyChanged || transport.request.Operation != OperationSystemIntegrationsApply || string(transport.request.Params) != "{}" {
+		t.Fatalf("certificate/lnd/error/request=%v/%v/%v/%#v", certificateChanged, lndPolicyChanged, err, transport.request)
+	}
+
+	transport.result = SystemIntegrationsState{Status: "ready"}
+	ready, err := client.SystemIntegrationsStatus(context.Background())
+	if err != nil || !ready || transport.request.Operation != OperationSystemIntegrationsStatus || transport.request.DryRun || string(transport.request.Params) != "{}" {
+		t.Fatalf("ready/error/request=%v/%v/%#v", ready, err, transport.request)
+	}
+
+	transport.result = SystemIntegrationsState{Status: "validated"}
+	if err := client.FinalizeSystemIntegrations(context.Background(), true); err != nil || transport.request.Operation != OperationSystemIntegrationsFinalize || !transport.request.DryRun || string(transport.request.Params) != "{}" {
+		t.Fatalf("unexpected finalize error/request: %v/%#v", err, transport.request)
+	}
+}
+
 func TestClientAppLifecycleBuildsTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: map[string]bool{"validated": true}}
 	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)

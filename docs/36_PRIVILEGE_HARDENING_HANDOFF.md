@@ -479,6 +479,23 @@ manager's Docker-group membership and direct Docker/Compose path on the
 disposable gate. The remaining Phase 2 work is the Ubuntu 24.04/26.04 complete
 lifecycle and reboot acceptance matrix, not another Docker app migration.
 
+The system-integration boundary is accepted. The generic staged root
+reconciler was removed and the manager's permanent `runSystemd` budget for
+this feature is now zero. The new flow first requires the closed `mdns`
+package feature, installs four broker-catalogued embedded helpers only when
+their SHA-256 values match, applies fixed TLS/mDNS/firewall and LND policy,
+enrolls any existing Bitcoin Store storage through its existing typed
+operation without restarting Bitcoin, restarts only an already-active
+terminal when needed, writes the v5 marker last, validates marker readiness
+plus every installed asset through a read-only broker operation, and schedules
+a manager restart only if its certificate actually changed. A disposable
+Ubuntu 24.04 clone passed the Linux/root filesystem test and service-user dry-run gate;
+tampered bytes and an injected path failed closed, package/lock/firewall and
+Manager/LND/Postgres activation state stayed unchanged, all artifacts were
+removed, and the original bridge was restored. Real TLS/firewall application
+remains for the final disposable fresh-install matrix. Evidence:
+`docs/baselines/privilege-hardening-phase3-system-integrations-2026-08-13.json`.
+
 ## Test-node and network constraints
 
 Access records are outside Git:

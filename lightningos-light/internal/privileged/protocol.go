@@ -20,75 +20,79 @@ const (
 type Operation string
 
 const (
-	OperationSelfTest                     Operation = "self_test"
-	OperationServiceStatus                Operation = "service.status"
-	OperationServiceRestart               Operation = "service.restart"
-	OperationHostPower                    Operation = "host.power"
-	OperationFilesEnableLogin             Operation = "files.enable_login"
-	OperationManagerFirewallStatus        Operation = "manager.firewall.status"
-	OperationLNDUpgradeStart              Operation = "upgrade.lnd.start"
-	OperationTorMetadataRefresh           Operation = "packages.tor.refresh"
-	OperationTorUpgradeStart              Operation = "upgrade.tor.start"
-	OperationLightningOSUpgradeStart      Operation = "upgrade.lightningos.start"
-	OperationAppLifecycle                 Operation = "app.compose.lifecycle"
-	OperationAppSnapshot                  Operation = "app.compose.snapshot"
-	OperationAppInspect                   Operation = "app.compose.inspect"
-	OperationAppLogs                      Operation = "app.compose.logs"
-	OperationAppRemove                    Operation = "app.compose.remove"
-	OperationAppAdminReset                Operation = "app.admin.reset"
-	OperationDockerEnsure                 Operation = "docker.runtime.ensure"
-	OperationDockerStatus                 Operation = "docker.runtime.status"
-	OperationPackageEnsure                Operation = "packages.feature.ensure"
-	OperationPackageStatus                Operation = "packages.feature.status"
-	OperationAppStorageEnsure             Operation = "storage.apps.ensure"
-	OperationSMARTRead                    Operation = "storage.smart.read"
-	OperationLNDPermissionsRepair         Operation = "storage.lnd.permissions.repair"
-	OperationAppImagePrepare              Operation = "app.image.prepare"
-	OperationAppImageStatus               Operation = "app.image.status"
-	OperationAppImageProbe                Operation = "app.image.probe"
-	OperationAppFirewallEnsure            Operation = "app.firewall.ensure"
-	OperationAppLNDHostAccessEnsure       Operation = "app.lnd-host-access.ensure"
-	OperationBitcoinStorageEnsure         Operation = "app.bitcoincore.storage.ensure"
-	OperationBitcoinConfigEnsure          Operation = "app.bitcoincore.config.ensure"
-	OperationBitcoinConfigRead            Operation = "app.bitcoincore.config.read"
-	OperationBitcoinConfigWrite           Operation = "app.bitcoincore.config.write"
-	OperationBitcoinCredentialsRead       Operation = "app.bitcoincore.credentials.read"
-	OperationBitcoinStatus                Operation = "app.bitcoincore.status"
-	OperationBitcoinConsumerNetworkEnsure Operation = "bitcoin.consumer-network.ensure"
-	OperationLoopStatus                   Operation = "app.loop.status"
-	OperationLoopEnsure                   Operation = "app.loop.ensure"
-	OperationLoopLifecycle                Operation = "app.loop.lifecycle"
-	OperationLoopRemove                   Operation = "app.loop.remove"
-	OperationLoopPermissionsEnsure        Operation = "app.loop.permissions.ensure"
-	OperationLoopClientMaterialEnsure     Operation = "app.loop.client-material.ensure"
-	OperationElementsStatus               Operation = "app.elements.status"
-	OperationElementsConfigRead           Operation = "app.elements.config.read"
-	OperationElementsEnsure               Operation = "app.elements.ensure"
-	OperationElementsLifecycle            Operation = "app.elements.lifecycle"
-	OperationElementsRemove               Operation = "app.elements.remove"
-	OperationPeerSwapStatus               Operation = "app.peerswap.status"
-	OperationPeerSwapSourceRead           Operation = "app.peerswap.source.read"
-	OperationPeerSwapSourceWrite          Operation = "app.peerswap.source.write"
-	OperationPeerSwapEnsure               Operation = "app.peerswap.ensure"
-	OperationPeerSwapLifecycle            Operation = "app.peerswap.lifecycle"
-	OperationPeerSwapRemove               Operation = "app.peerswap.remove"
-	OperationTapdStatus                   Operation = "app.tapd.status"
-	OperationTapdEnsure                   Operation = "app.tapd.ensure"
-	OperationTapdLifecycle                Operation = "app.tapd.lifecycle"
-	OperationTapdRemove                   Operation = "app.tapd.remove"
-	OperationTapdCLI                      Operation = "app.tapd.cli"
-	OperationPublicPoolStatus             Operation = "app.publicpool.status"
-	OperationPublicPoolEnsure             Operation = "app.publicpool.ensure"
-	OperationPublicPoolLifecycle          Operation = "app.publicpool.lifecycle"
-	OperationPublicPoolRemove             Operation = "app.publicpool.remove"
-	OperationPublicPoolFirewall           Operation = "app.publicpool.firewall"
-	OperationBarkWalletStatus             Operation = "app.bark.status"
-	OperationBarkWalletEnsure             Operation = "app.bark.ensure"
-	OperationBarkWalletLifecycle          Operation = "app.bark.lifecycle"
-	OperationBarkWalletRemove             Operation = "app.bark.remove"
-	OperationBarkWalletFirewall           Operation = "app.bark.firewall"
-	OperationBarkWalletPasswordRead       Operation = "app.bark.password.read"
-	OperationBarkWalletPasswordReset      Operation = "app.bark.password.reset"
+	OperationSelfTest                      Operation = "self_test"
+	OperationServiceStatus                 Operation = "service.status"
+	OperationServiceRestart                Operation = "service.restart"
+	OperationHostPower                     Operation = "host.power"
+	OperationFilesEnableLogin              Operation = "files.enable_login"
+	OperationSystemIntegrationAssetInstall Operation = "files.system-integration.install"
+	OperationSystemIntegrationsStatus      Operation = "system.integrations.status"
+	OperationSystemIntegrationsApply       Operation = "system.integrations.apply"
+	OperationSystemIntegrationsFinalize    Operation = "system.integrations.finalize"
+	OperationManagerFirewallStatus         Operation = "manager.firewall.status"
+	OperationLNDUpgradeStart               Operation = "upgrade.lnd.start"
+	OperationTorMetadataRefresh            Operation = "packages.tor.refresh"
+	OperationTorUpgradeStart               Operation = "upgrade.tor.start"
+	OperationLightningOSUpgradeStart       Operation = "upgrade.lightningos.start"
+	OperationAppLifecycle                  Operation = "app.compose.lifecycle"
+	OperationAppSnapshot                   Operation = "app.compose.snapshot"
+	OperationAppInspect                    Operation = "app.compose.inspect"
+	OperationAppLogs                       Operation = "app.compose.logs"
+	OperationAppRemove                     Operation = "app.compose.remove"
+	OperationAppAdminReset                 Operation = "app.admin.reset"
+	OperationDockerEnsure                  Operation = "docker.runtime.ensure"
+	OperationDockerStatus                  Operation = "docker.runtime.status"
+	OperationPackageEnsure                 Operation = "packages.feature.ensure"
+	OperationPackageStatus                 Operation = "packages.feature.status"
+	OperationAppStorageEnsure              Operation = "storage.apps.ensure"
+	OperationSMARTRead                     Operation = "storage.smart.read"
+	OperationLNDPermissionsRepair          Operation = "storage.lnd.permissions.repair"
+	OperationAppImagePrepare               Operation = "app.image.prepare"
+	OperationAppImageStatus                Operation = "app.image.status"
+	OperationAppImageProbe                 Operation = "app.image.probe"
+	OperationAppFirewallEnsure             Operation = "app.firewall.ensure"
+	OperationAppLNDHostAccessEnsure        Operation = "app.lnd-host-access.ensure"
+	OperationBitcoinStorageEnsure          Operation = "app.bitcoincore.storage.ensure"
+	OperationBitcoinConfigEnsure           Operation = "app.bitcoincore.config.ensure"
+	OperationBitcoinConfigRead             Operation = "app.bitcoincore.config.read"
+	OperationBitcoinConfigWrite            Operation = "app.bitcoincore.config.write"
+	OperationBitcoinCredentialsRead        Operation = "app.bitcoincore.credentials.read"
+	OperationBitcoinStatus                 Operation = "app.bitcoincore.status"
+	OperationBitcoinConsumerNetworkEnsure  Operation = "bitcoin.consumer-network.ensure"
+	OperationLoopStatus                    Operation = "app.loop.status"
+	OperationLoopEnsure                    Operation = "app.loop.ensure"
+	OperationLoopLifecycle                 Operation = "app.loop.lifecycle"
+	OperationLoopRemove                    Operation = "app.loop.remove"
+	OperationLoopPermissionsEnsure         Operation = "app.loop.permissions.ensure"
+	OperationLoopClientMaterialEnsure      Operation = "app.loop.client-material.ensure"
+	OperationElementsStatus                Operation = "app.elements.status"
+	OperationElementsConfigRead            Operation = "app.elements.config.read"
+	OperationElementsEnsure                Operation = "app.elements.ensure"
+	OperationElementsLifecycle             Operation = "app.elements.lifecycle"
+	OperationElementsRemove                Operation = "app.elements.remove"
+	OperationPeerSwapStatus                Operation = "app.peerswap.status"
+	OperationPeerSwapSourceRead            Operation = "app.peerswap.source.read"
+	OperationPeerSwapSourceWrite           Operation = "app.peerswap.source.write"
+	OperationPeerSwapEnsure                Operation = "app.peerswap.ensure"
+	OperationPeerSwapLifecycle             Operation = "app.peerswap.lifecycle"
+	OperationPeerSwapRemove                Operation = "app.peerswap.remove"
+	OperationTapdStatus                    Operation = "app.tapd.status"
+	OperationTapdEnsure                    Operation = "app.tapd.ensure"
+	OperationTapdLifecycle                 Operation = "app.tapd.lifecycle"
+	OperationTapdRemove                    Operation = "app.tapd.remove"
+	OperationTapdCLI                       Operation = "app.tapd.cli"
+	OperationPublicPoolStatus              Operation = "app.publicpool.status"
+	OperationPublicPoolEnsure              Operation = "app.publicpool.ensure"
+	OperationPublicPoolLifecycle           Operation = "app.publicpool.lifecycle"
+	OperationPublicPoolRemove              Operation = "app.publicpool.remove"
+	OperationPublicPoolFirewall            Operation = "app.publicpool.firewall"
+	OperationBarkWalletStatus              Operation = "app.bark.status"
+	OperationBarkWalletEnsure              Operation = "app.bark.ensure"
+	OperationBarkWalletLifecycle           Operation = "app.bark.lifecycle"
+	OperationBarkWalletRemove              Operation = "app.bark.remove"
+	OperationBarkWalletFirewall            Operation = "app.bark.firewall"
+	OperationBarkWalletPasswordRead        Operation = "app.bark.password.read"
+	OperationBarkWalletPasswordReset       Operation = "app.bark.password.reset"
 )
 
 type Request struct {
@@ -128,6 +132,31 @@ type HostPowerParams struct {
 type HostPowerState struct {
 	Validated bool `json:"validated"`
 	Scheduled bool `json:"scheduled"`
+}
+
+type SystemIntegrationAsset string
+
+const (
+	SystemIntegrationAssetTerminal         SystemIntegrationAsset = "terminal"
+	SystemIntegrationAssetTerminalPassword SystemIntegrationAsset = "terminal_password"
+	SystemIntegrationAssetManagerFirewall  SystemIntegrationAsset = "manager_firewall"
+	SystemIntegrationAssetManagerTLSMDNS   SystemIntegrationAsset = "manager_tls_mdns"
+)
+
+type SystemIntegrationAssetInstallParams struct {
+	Asset   SystemIntegrationAsset `json:"asset"`
+	Content string                 `json:"content"`
+}
+
+type SystemIntegrationAssetState struct {
+	Status  string `json:"status"`
+	Changed bool   `json:"changed,omitempty"`
+}
+
+type SystemIntegrationsState struct {
+	Status             string `json:"status"`
+	CertificateChanged bool   `json:"certificate_changed,omitempty"`
+	LNDPolicyChanged   bool   `json:"lnd_policy_changed,omitempty"`
 }
 
 type ManagerFirewallState struct {
@@ -592,6 +621,30 @@ func ValidateRequest(request Request) error {
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid files.enable_login params: %w", err)
 		}
+	case OperationSystemIntegrationAssetInstall:
+		var params SystemIntegrationAssetInstallParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid files.system-integration.install params: %w", err)
+		}
+		if !validSystemIntegrationAsset(params.Asset) {
+			return errors.New("system integration asset is not allowed")
+		}
+		if len(params.Content) == 0 || len(params.Content) > 16*1024 {
+			return errors.New("system integration asset content is invalid")
+		}
+	case OperationSystemIntegrationsStatus:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for system.integrations.status")
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid system.integrations.status params: %w", err)
+		}
+	case OperationSystemIntegrationsApply, OperationSystemIntegrationsFinalize:
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
 	case OperationManagerFirewallStatus:
 		if request.DryRun {
 			return errors.New("dry_run is not valid for manager.firewall.status")
@@ -1027,6 +1080,18 @@ func ValidateRequest(request Request) error {
 		return errors.New("unknown operation")
 	}
 	return nil
+}
+
+func validSystemIntegrationAsset(asset SystemIntegrationAsset) bool {
+	switch asset {
+	case SystemIntegrationAssetTerminal,
+		SystemIntegrationAssetTerminalPassword,
+		SystemIntegrationAssetManagerFirewall,
+		SystemIntegrationAssetManagerTLSMDNS:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateBitcoinCoreConfigDataDir(dataDir string) error {

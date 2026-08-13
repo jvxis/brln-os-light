@@ -6,11 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
+
+	"lightningos-light/internal/system"
 )
 
-const systemIntegrationsMarkerPath = "/var/lib/lightningos/system-integrations-20260811-v4"
+const systemIntegrationsMarkerPath = "/var/lib/lightningos/system-integrations-20260811-v5"
 
 //go:embed assets/lightningos-terminal.sh
 var embeddedTerminalHelper string
@@ -24,9 +25,6 @@ var embeddedManagerFirewallHelper string
 //go:embed assets/setup-manager-tls-mdns.sh
 var embeddedManagerTLSMDNSHelper string
 
-//go:embed assets/reconcile-system-integrations.sh
-var embeddedSystemIntegrationsReconciler string
-
 func (s *Server) startSystemIntegrationReconciler() {
 	go func() {
 		select {
@@ -35,13 +33,17 @@ func (s *Server) startSystemIntegrationReconciler() {
 			return
 		}
 
-		if _, err := os.Stat(systemIntegrationsMarkerPath); err == nil {
+		statusCtx, statusCancel := context.WithTimeout(s.shutdownContext(), 5*time.Second)
+		ready, handled, err := system.SystemIntegrationsReadyWithBroker(statusCtx)
+		statusCancel()
+		if handled && err == nil && ready {
 			return
-		} else if !errors.Is(err, os.ErrNotExist) && s.logger != nil {
+		}
+		if err != nil && s.logger != nil {
 			s.logger.Printf("system integrations marker check failed: %v", err)
 		}
 
-		ctx, cancel := context.WithTimeout(s.shutdownContext(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(s.shutdownContext(), 20*time.Minute)
 		defer cancel()
 		if err := reconcileSystemIntegrations(ctx); err != nil {
 			if s.logger != nil {
@@ -56,58 +58,97 @@ func (s *Server) startSystemIntegrationReconciler() {
 }
 
 func reconcileSystemIntegrations(ctx context.Context) error {
-	assets := []struct {
-		pattern string
-		content string
-	}{
-		{pattern: "lightningos-terminal-*.sh", content: embeddedTerminalHelper},
-		{pattern: "lightningos-terminal-password-*.sh", content: embeddedTerminalPasswordHelper},
-		{pattern: "lightningos-manager-firewall-*.sh", content: embeddedManagerFirewallHelper},
-		{pattern: "lightningos-manager-tls-mdns-*.sh", content: embeddedManagerTLSMDNSHelper},
-		{pattern: "lightningos-reconcile-system-*.sh", content: embeddedSystemIntegrationsReconciler},
+	if handled, err := system.EnsurePackageFeatureWithBroker(ctx, "mdns"); !handled {
+		return errors.New("system integrations require privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("prepare mDNS package feature: %w", err)
 	}
 
-	stageDir := "/var/lib/lightningos"
-	if err := os.MkdirAll(stageDir, 0750); err != nil {
-		return fmt.Errorf("create integration staging directory: %w", err)
+	assets := []system.SystemIntegrationAsset{
+		{Name: "terminal", Content: embeddedTerminalHelper},
+		{Name: "terminal_password", Content: embeddedTerminalPasswordHelper},
+		{Name: "manager_firewall", Content: embeddedManagerFirewallHelper},
+		{Name: "manager_tls_mdns", Content: embeddedManagerTLSMDNSHelper},
 	}
-
-	paths := make([]string, 0, len(assets))
-	defer func() {
-		for _, path := range paths {
-			_ = os.Remove(path)
-		}
-	}()
 	for _, asset := range assets {
-		if strings.TrimSpace(asset.content) == "" {
-			return fmt.Errorf("embedded integration asset %s is empty", asset.pattern)
-		}
-		file, err := os.CreateTemp(stageDir, asset.pattern)
-		if err != nil {
-			return fmt.Errorf("stage integration asset %s: %w", asset.pattern, err)
-		}
-		path := file.Name()
-		paths = append(paths, path)
-		if _, err := file.WriteString(asset.content); err != nil {
-			_ = file.Close()
-			return fmt.Errorf("write integration asset %s: %w", asset.pattern, err)
-		}
-		if err := file.Close(); err != nil {
-			return fmt.Errorf("close integration asset %s: %w", asset.pattern, err)
-		}
-		if err := os.Chmod(path, 0700); err != nil {
-			return fmt.Errorf("chmod integration asset %s: %w", asset.pattern, err)
+		if asset.Content == "" {
+			return fmt.Errorf("embedded system integration asset %s is empty", asset.Name)
 		}
 	}
-	if len(paths) != 5 {
-		return errors.New("invalid staged system integration asset count")
+	handled, terminalChanged, certificateChanged, err := system.ReconcileSystemIntegrationsWithBroker(ctx, assets)
+	if !handled {
+		return errors.New("system integrations require privileged broker enforce mode")
 	}
-	out, err := runSystemd(ctx, "/bin/bash", paths[4], paths[0], paths[1], paths[2], paths[3], systemIntegrationsMarkerPath)
 	if err != nil {
-		if detail := strings.TrimSpace(out); detail != "" {
-			return fmt.Errorf("root reconciliation failed: %w: %s", err, detail)
+		return fmt.Errorf("apply system integrations: %w", err)
+	}
+
+	if err := reconcileLegacyBitcoinStorageEnrollment(ctx); err != nil {
+		return err
+	}
+	if terminalChanged {
+		status, handled, err := system.ServiceStatusWithBroker(ctx, "lightningos-terminal")
+		if !handled {
+			return errors.New("terminal status requires privileged broker enforce mode")
 		}
-		return fmt.Errorf("root reconciliation failed: %w", err)
+		if err != nil {
+			return fmt.Errorf("read terminal service status: %w", err)
+		}
+		if status == "active" {
+			if err := system.RestartServiceWithBroker(ctx, "lightningos-terminal", false); err != nil {
+				return fmt.Errorf("restart terminal service: %w", err)
+			}
+		}
+	}
+	if handled, err := system.FinalizeSystemIntegrationsWithBroker(ctx); !handled {
+		return errors.New("system integrations finalization requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("finalize system integrations: %w", err)
+	}
+	if certificateChanged {
+		if err := system.RestartServiceWithBroker(ctx, "lightningos-manager", true); err != nil {
+			return fmt.Errorf("schedule manager restart after certificate update: %w", err)
+		}
+	}
+	return nil
+}
+
+func reconcileLegacyBitcoinStorageEnrollment(ctx context.Context) error {
+	composePath := bitcoinCoreAppPaths().ComposePath
+	composeInfo, err := os.Lstat(composePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect legacy Bitcoin Core declaration: %w", err)
+	}
+	if composeInfo.Mode()&os.ModeSymlink != 0 || !composeInfo.Mode().IsRegular() {
+		return errors.New("refusing unsafe legacy Bitcoin Core declaration")
+	}
+
+	dataDir := bitcoinCoreDefaultDataDir
+	statePath := bitcoinCoreDataDirStatePath()
+	stateInfo, err := os.Lstat(statePath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return fmt.Errorf("inspect legacy Bitcoin Core data-dir state: %w", err)
+	case stateInfo.Mode()&os.ModeSymlink != 0 || !stateInfo.Mode().IsRegular() || stateInfo.Size() > 4096:
+		return errors.New("refusing unsafe legacy Bitcoin Core data-dir state")
+	default:
+		raw, readErr := os.ReadFile(statePath)
+		if readErr != nil {
+			return fmt.Errorf("read legacy Bitcoin Core data-dir state: %w", readErr)
+		}
+		dataDir, readErr = normalizeBitcoinCoreDataDir(string(raw))
+		if readErr != nil {
+			return errors.New("legacy Bitcoin Core data-dir state is invalid")
+		}
+	}
+	if handled, err := system.EnsureBitcoinCoreStorageWithBroker(ctx, dataDir); !handled {
+		return errors.New("legacy Bitcoin Core storage enrollment requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("enroll legacy Bitcoin Core storage without restart: %w", err)
 	}
 	return nil
 }

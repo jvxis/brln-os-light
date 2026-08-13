@@ -40,6 +40,10 @@ type hostPowerPrivilegedClient interface {
 	PowerHost(ctx context.Context, action string, dryRun bool) error
 }
 
+type serviceStatusPrivilegedClient interface {
+	ServiceStatus(ctx context.Context, unit string) (status string, err error)
+}
+
 type bitcoinCoreConfigPrivilegedClient interface {
 	EnsureBitcoinCoreConfig(ctx context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (status string, err error)
 	ReadBitcoinCoreConfig(ctx context.Context, dataDir string) (content string, err error)
@@ -73,6 +77,33 @@ type appLNDHostAccessPrivilegedClient interface {
 
 type managerFirewallPrivilegedClient interface {
 	ManagerFirewallStatus(ctx context.Context) (statusJSON string, err error)
+}
+
+type systemIntegrationsPrivilegedClient interface {
+	InstallSystemIntegrationAsset(ctx context.Context, asset string, content string, dryRun bool) (changed bool, err error)
+	SystemIntegrationsStatus(ctx context.Context) (ready bool, err error)
+	ApplySystemIntegrations(ctx context.Context, dryRun bool) (certificateChanged bool, lndPolicyChanged bool, err error)
+	FinalizeSystemIntegrations(ctx context.Context, dryRun bool) error
+}
+
+func SystemIntegrationsReadyWithBroker(ctx context.Context) (bool, bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, false, nil
+	}
+	integrationClient, ok := client.(systemIntegrationsPrivilegedClient)
+	if !ok {
+		return false, true, errors.New("system integrations broker capability is unavailable")
+	}
+	ready, err := integrationClient.SystemIntegrationsStatus(ctx)
+	return ready, true, err
+}
+
+type SystemIntegrationAsset struct {
+	Name    string
+	Content string
 }
 
 type lndUpgradePrivilegedClient interface {
@@ -901,6 +932,84 @@ func EnsureBitcoinCoreStorageWithBroker(ctx context.Context, dataDir string) (bo
 		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		_, _ = client.EnsureBitcoinCoreStorage(shadowCtx, dataDir, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func ReconcileSystemIntegrationsWithBroker(ctx context.Context, assets []SystemIntegrationAsset) (handled bool, terminalChanged bool, certificateChanged bool, err error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, false, false, nil
+	}
+	integrationClient, ok := client.(systemIntegrationsPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, false, false, errors.New("system integrations broker capability is unavailable")
+		}
+		return false, false, false, nil
+	}
+	install := func(dryRun bool) (bool, error) {
+		changed := false
+		for _, asset := range assets {
+			assetChanged, installErr := integrationClient.InstallSystemIntegrationAsset(ctx, asset.Name, asset.Content, dryRun)
+			if installErr != nil {
+				return false, installErr
+			}
+			if asset.Name == "terminal" && assetChanged {
+				changed = true
+			}
+		}
+		return changed, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		terminalChanged, err = install(false)
+		if err != nil {
+			return true, false, false, err
+		}
+		certificateChanged, _, err = integrationClient.ApplySystemIntegrations(ctx, false)
+		if err != nil {
+			return true, terminalChanged, false, err
+		}
+		return true, terminalChanged, certificateChanged, nil
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		for _, asset := range assets {
+			_, _ = integrationClient.InstallSystemIntegrationAsset(shadowCtx, asset.Name, asset.Content, true)
+		}
+		_, _, _ = integrationClient.ApplySystemIntegrations(shadowCtx, true)
+		return false, false, false, nil
+	default:
+		return false, false, false, nil
+	}
+}
+
+func FinalizeSystemIntegrationsWithBroker(ctx context.Context) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	integrationClient, ok := client.(systemIntegrationsPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("system integrations broker capability is unavailable")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, integrationClient.FinalizeSystemIntegrations(ctx, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_ = integrationClient.FinalizeSystemIntegrations(shadowCtx, true)
 		return false, nil
 	default:
 		return false, nil
@@ -1778,6 +1887,21 @@ func RestartServiceWithBroker(ctx context.Context, service string, noBlock bool)
 	default:
 		return errors.New("service restart requires privileged broker enforce mode")
 	}
+}
+
+func ServiceStatusWithBroker(ctx context.Context, service string) (string, bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return "", false, nil
+	}
+	statusClient, ok := client.(serviceStatusPrivilegedClient)
+	if !ok {
+		return "", true, errors.New("service status broker capability is unavailable")
+	}
+	status, err := statusClient.ServiceStatus(ctx, service)
+	return status, true, err
 }
 
 func EnableLoginConfigWithBroker(ctx context.Context, configPath string) (bool, error) {

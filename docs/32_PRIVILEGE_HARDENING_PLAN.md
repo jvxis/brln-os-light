@@ -1169,14 +1169,34 @@ signers and left the `lnd`/`lncli` hashes and stopped LND service state
 unchanged. A modified helper was rejected before execution. Evidence is in
 `docs/baselines/privilege-hardening-phase3-lnd-upgrade-2026-08-13.json`.
 
-Policy application/reconciliation, Tor and LightningOS upgrades, installer
-artifact verification, and the remaining package/storage paths are still open.
+The Tor path now uses the serialized `packages.tor.refresh` and
+`upgrade.tor.start` operations. The former exposes no package or argument and
+runs one fixed APT refresh command. The latter accepts only the exact
+digest-pinned embedded helper and a boolean `verify_only`, installs it
+atomically at a fixed root-controlled path, and launches one of two fixed
+units. The helper requires HTTPS/TLS 1.2, validates the exact official Tor
+repository primary-key fingerprint, exports only that key, and authenticates
+the downloaded `InRelease` with `gpgv` before installing a keyring, source, or
+package. The manager's Tor direct sudo, `systemd-run`, and privileged-shell
+budgets are now zero.
+
+The Ubuntu 24.04 `noble` verify-only gate ran as the real `lightningos`
+service user. It authenticated the official repository metadata and pinned
+key, rejected a modified helper and a caller-selected URL, and preserved the
+Tor package, APT source/keyring/metadata, Tor PID, service state, and restart
+count. Evidence is in
+`docs/baselines/privilege-hardening-phase3-tor-upgrade-2026-08-13.json`.
+
+Policy application/reconciliation, LightningOS upgrades, installer artifact
+verification, the real Tor upgrade/rollback matrix, and the remaining
+package/storage paths are still open.
 
 1. Replace arbitrary package arguments with fixed dependency sets.
 2. Replace direct UFW access with the manager-access policy operation.
 3. Replace ownership and permission shell commands with typed storage actions.
 4. Move LND, Tor, and LightningOS upgrades to verified broker operations. LND
-   is complete; Tor and LightningOS remain open.
+   and the authenticated Tor launch are complete; LightningOS and the final
+   Tor upgrade/rollback matrix remain open.
 5. Verify LND archives against an authenticated official signed manifest and
    explicitly trusted release-signing keys before extraction. Complete for the
    brokered upgrade; installer variants remain open.

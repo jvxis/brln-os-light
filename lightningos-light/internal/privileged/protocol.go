@@ -26,6 +26,8 @@ const (
 	OperationFilesEnableLogin             Operation = "files.enable_login"
 	OperationManagerFirewallStatus        Operation = "manager.firewall.status"
 	OperationLNDUpgradeStart              Operation = "upgrade.lnd.start"
+	OperationTorMetadataRefresh           Operation = "packages.tor.refresh"
+	OperationTorUpgradeStart              Operation = "upgrade.tor.start"
 	OperationAppLifecycle                 Operation = "app.compose.lifecycle"
 	OperationAppSnapshot                  Operation = "app.compose.snapshot"
 	OperationAppInspect                   Operation = "app.compose.inspect"
@@ -136,6 +138,17 @@ type LNDUpgradeState struct {
 	Status     string `json:"status"`
 	Unit       string `json:"unit"`
 	Version    string `json:"version"`
+	VerifyOnly bool   `json:"verify_only,omitempty"`
+}
+
+type TorUpgradeStartParams struct {
+	HelperContent string `json:"helper_content"`
+	VerifyOnly    bool   `json:"verify_only,omitempty"`
+}
+
+type TorUpgradeState struct {
+	Status     string `json:"status"`
+	Unit       string `json:"unit,omitempty"`
 	VerifyOnly bool   `json:"verify_only,omitempty"`
 }
 
@@ -532,6 +545,19 @@ func ValidateRequest(request Request) error {
 		}
 		if len(params.HelperContent) == 0 || len(params.HelperContent) > 48*1024 {
 			return errors.New("LND upgrade helper content is invalid")
+		}
+	case OperationTorMetadataRefresh:
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid packages.tor.refresh params: %w", err)
+		}
+	case OperationTorUpgradeStart:
+		var params TorUpgradeStartParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid upgrade.tor.start params: %w", err)
+		}
+		if len(params.HelperContent) == 0 || len(params.HelperContent) > 48*1024 {
+			return errors.New("Tor upgrade helper content is invalid")
 		}
 	case OperationAppLifecycle:
 		var params AppLifecycleParams

@@ -81,6 +81,13 @@ type fakePrivilegedServiceClient struct {
 	lndUpgradeDryRun    bool
 	lndUpgradeUnit      string
 	lndUpgradeErr       error
+	torRefreshCalls     int
+	torUpgradeCalls     int
+	torUpgradeHelper    string
+	torUpgradeVerify    bool
+	torUpgradeDryRun    bool
+	torUpgradeUnit      string
+	torUpgradeErr       error
 	storageCalls        int
 	storageDataDir      string
 	storageDryRun       bool
@@ -370,6 +377,35 @@ func (client *fakePrivilegedServiceClient) StartLNDUpgrade(_ context.Context, ve
 		status = "validated"
 	}
 	return status, unit, client.lndUpgradeErr
+}
+
+func (client *fakePrivilegedServiceClient) RefreshTorMetadata(_ context.Context, dryRun bool) (string, error) {
+	client.torRefreshCalls++
+	client.torUpgradeDryRun = dryRun
+	status := "refreshed"
+	if dryRun {
+		status = "validated"
+	}
+	return status, client.torUpgradeErr
+}
+
+func (client *fakePrivilegedServiceClient) StartTorUpgrade(_ context.Context, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
+	client.torUpgradeCalls++
+	client.torUpgradeHelper = helperContent
+	client.torUpgradeVerify = verifyOnly
+	client.torUpgradeDryRun = dryRun
+	unit := client.torUpgradeUnit
+	if unit == "" {
+		unit = "lightningos-tor-upgrade"
+		if verifyOnly {
+			unit = "lightningos-tor-verify"
+		}
+	}
+	status := "started"
+	if dryRun {
+		status = "validated"
+	}
+	return status, unit, client.torUpgradeErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -1024,6 +1060,39 @@ func TestLNDUpgradeBrokerHelperEnforcesAndShadowsTypedOperation(t *testing.T) {
 			}
 			if test.wantCalls == 1 && (client.lndUpgradeVersion != "0.21.1-beta" || client.lndUpgradeHelper != "trusted helper" || client.lndUpgradeVerify) {
 				t.Fatalf("typed LND upgrade fields were not preserved: %#v", client)
+			}
+		})
+	}
+}
+
+func TestTorUpgradeBrokerHelpersEnforceAndShadowTypedOperations(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantHandled bool
+		wantDryRun  bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantDryRun: true, wantCalls: 1},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+
+			refreshHandled, err := RefreshTorMetadataWithBroker(context.Background())
+			if err != nil || refreshHandled != test.wantHandled || client.torRefreshCalls != test.wantCalls || client.torUpgradeDryRun != test.wantDryRun {
+				t.Fatalf("refresh handled/error/client=%v/%v/%#v", refreshHandled, err, client)
+			}
+
+			handled, unit, err := StartTorUpgradeWithBroker(context.Background(), "trusted helper", true)
+			if err != nil || handled != test.wantHandled || client.torUpgradeCalls != test.wantCalls || client.torUpgradeDryRun != test.wantDryRun {
+				t.Fatalf("upgrade handled/unit/error/client=%v/%q/%v/%#v", handled, unit, err, client)
+			}
+			if test.wantCalls == 1 && (client.torUpgradeHelper != "trusted helper" || !client.torUpgradeVerify) {
+				t.Fatalf("typed Tor upgrade fields were not preserved: %#v", client)
 			}
 		})
 	}

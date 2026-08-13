@@ -1,0 +1,92 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-tor-upgrade.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "typed brokered Tor metadata refresh and authenticated Tor upgrade launch",
+  "operations": [
+    {
+      "name": "packages.tor.refresh",
+      "caller_parameters": [],
+      "fixed_command": "/usr/bin/apt-get -o DPkg::Lock::Timeout=60 update",
+      "serialized": true
+    },
+    {
+      "name": "upgrade.tor.start",
+      "caller_parameters": ["verify_only"],
+      "caller_selectable_url_path_command_package_or_unit": false,
+      "helper_content_policy": "embedded manager helper accepted only when its SHA-256 equals the broker-compiled digest",
+      "helper_sha256": "3ba5b795d3a45403abc47126639ae76d0e3a0b2beaf0f8b231d51a87832240c5",
+      "fixed_helper_path": "/usr/local/sbin/lightningos-check-tor-update",
+      "fixed_launcher": "/usr/bin/systemd-run",
+      "fixed_units": ["lightningos-tor-upgrade", "lightningos-tor-verify"],
+      "serialized": true
+    }
+  ],
+  "repository_authentication": {
+    "repository": "https://deb.torproject.org/torproject.org",
+    "key_fingerprint": "A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89",
+    "key_download_requires_https_and_tls_1_2": true,
+    "exact_primary_fingerprint_checked": true,
+    "inrelease_signature_verified_with_gpgv": true,
+    "signed_by_keyring": "/usr/share/keyrings/deb.torproject.org-keyring.gpg",
+    "fail_closed": true
+  },
+  "tests": {
+    "closed_protocol_and_unknown_field_rejection": "passed",
+    "helper_size_bound": "passed",
+    "broker_serialization": "passed",
+    "strict_client_response_decode": "passed",
+    "system_enforce_and_shadow_routing": "passed",
+    "tampered_helper_rejected_before_execution": "passed",
+    "repository_fingerprint_and_signature_gate_order": "passed",
+    "server_direct_privilege_call_budget": 0,
+    "focused_go_test": "passed",
+    "focused_go_vet": "passed",
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "ui_production_build": "passed",
+    "linux_amd64_broker_build": "passed",
+    "helper_shell_syntax_and_execution": "passed on the Ubuntu 24.04 gate"
+  },
+  "ubuntu24_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04 LTS",
+    "codename": "noble",
+    "architecture": "amd64",
+    "caller": "lightningos service user through the exact broker sudo entry",
+    "mode": "verify-only",
+    "metadata_refresh_dry_run": "passed",
+    "official_inrelease_signature_valid": true,
+    "pinned_fingerprint_valid": true,
+    "fixed_verify_unit": "lightningos-tor-verify",
+    "tampered_helper_rejected": true,
+    "caller_selected_url_rejected": true,
+    "tor_package_version": "0.4.9.11-1~noble+1",
+    "tor_package_changed": false,
+    "apt_sources_changed": false,
+    "apt_keyring_changed": false,
+    "apt_metadata_changed": false,
+    "tor_service_state_changed": false,
+    "tor_service_pid_changed": false,
+    "tor_service_restart_count_changed": false,
+    "integration_node_mutated": false
+  },
+  "cleanup": {
+    "remote_temporary_artifacts_removed": true,
+    "temporary_installed_helper_removed_to_restore_baseline": true,
+    "vm_powered_off_cleanly": true,
+    "loopback_nat_forward_removed": true,
+    "original_bridged_adapter_restored": true
+  },
+  "remaining_phase3": [
+    "broker LightningOS upgrades",
+    "complete the real Tor upgrade/restart/rollback matrix on disposable nodes",
+    "apply authenticated artifact gates to every installer variant",
+    "verify Go and GoTTY artifacts",
+    "replace NodeSource and i2pd remote setup execution",
+    "finish firewall reconciliation, storage and helper operations",
+    "remove remaining package, dpkg, systemd-run and UFW wildcard sudoers"
+  ],
+  "excluded": ["ip addresses", "credentials", "tokens", "private node identifiers"]
+}

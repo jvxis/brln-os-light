@@ -50,7 +50,7 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/server/system_integrations.go":      {runSystemd: 1},
 	"internal/server/systemd_run.go":              {runSudo: 1},
 	"internal/server/terminal_status.go":          {runSystemd: 2},
-	"internal/server/tor_upgrade.go":              {runSudo: 3, runSystemd: 1, shell: 1},
+	"internal/server/tor_upgrade.go":              {},
 	"internal/system/smart.go":                    {runSudo: 1},
 	"internal/system/system.go":                   {runSudo: 1},
 }
@@ -94,7 +94,6 @@ var legacyPrivilegedShellLiteralBudgets = map[string]int{
 	"internal/appmanifest/mempool.go": 2,
 	"internal/server/app_upgrade.go":  1,
 	"internal/server/auth_enable.go":  1,
-	"internal/server/tor_upgrade.go":  1,
 }
 
 func TestPrivilegeBoundaryCallSiteBudgets(t *testing.T) {

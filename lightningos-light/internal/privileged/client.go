@@ -159,6 +159,48 @@ func (client *Client) StartLNDUpgrade(ctx context.Context, version string, helpe
 	return state.Status, state.Unit, nil
 }
 
+func (client *Client) RefreshTorMetadata(ctx context.Context, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationTorMetadataRefresh, struct{}{}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	var state TorUpgradeState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", errors.New("invalid broker Tor metadata response")
+	}
+	expected := "refreshed"
+	if dryRun {
+		expected = "validated"
+	}
+	if state.Status != expected || state.Unit != "" || state.VerifyOnly {
+		return "", errors.New("invalid broker Tor metadata state")
+	}
+	return state.Status, nil
+}
+
+func (client *Client) StartTorUpgrade(ctx context.Context, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
+	response, err := client.call(ctx, OperationTorUpgradeStart, TorUpgradeStartParams{HelperContent: helperContent, VerifyOnly: verifyOnly}, dryRun)
+	if err != nil {
+		return "", "", err
+	}
+	var state TorUpgradeState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", "", errors.New("invalid broker Tor upgrade response")
+	}
+	expectedUnit := torUpgradeUnit
+	if verifyOnly {
+		expectedUnit = torVerifyUnit
+	}
+	expectedStatus := "started"
+	if dryRun {
+		expectedStatus = "validated"
+	}
+	if state.Unit != expectedUnit || state.VerifyOnly != verifyOnly || state.Status != expectedStatus {
+		return "", "", errors.New("invalid broker Tor upgrade state")
+	}
+	return state.Status, state.Unit, nil
+}
+
 func (client *Client) LoopStatus(ctx context.Context) (bool, string, bool, bool, error) {
 	response, err := client.call(ctx, OperationLoopStatus, struct{}{}, false)
 	if err != nil {

@@ -146,6 +146,38 @@ Autofee, Elements, Peerswap, PSWeb, terminal, and the fixed upgrade units.
 Shell syntax, paths, arbitrary unit suffixes, options, and unknown units are
 rejected before execution.
 
+### `packages.tor.refresh`
+
+Accepts only `{}`. In a real request, the broker serializes and runs exactly:
+
+```text
+/usr/bin/apt-get -o DPkg::Lock::Timeout=60 update
+```
+
+No package, option, repository, environment, path, or command is supplied by
+the manager. A dry-run validates the operation without taking the mutation
+lock or invoking APT.
+
+### `upgrade.tor.start`
+
+Accepts a bounded embedded helper and `verify_only`; the helper is executable
+only when its SHA-256 equals the digest compiled into the broker. The broker
+atomically installs it at
+`/usr/local/sbin/lightningos-check-tor-update`, rejecting unsafe parents,
+symlinks, non-regular files, non-root ownership, and group/world-writable
+existing targets. It then launches exactly one fixed unit through
+`/usr/bin/systemd-run`: `lightningos-tor-verify` for verification or
+`lightningos-tor-upgrade` for the real update.
+
+The helper downloads only the fixed Tor Project key and distribution
+`InRelease` over HTTPS with TLS 1.2 or newer. It checks the exact primary-key
+fingerprint `A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89`, exports only that key,
+and authenticates the current `InRelease` with `gpgv` before installing the
+keyring, repository source, or package. `verify_only` exits after these checks
+without changing APT configuration, packages, or Tor. Unknown fields,
+caller-selected URLs/units/arguments, oversized or modified helpers, and
+unexpected result states fail closed.
+
 ### `files.enable_login`
 
 Enables login protection in the single fixed destination

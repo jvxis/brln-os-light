@@ -75,6 +75,11 @@ type lndUpgradePrivilegedClient interface {
 	StartLNDUpgrade(ctx context.Context, version string, helperContent string, verifyOnly bool, dryRun bool) (status string, unit string, err error)
 }
 
+type torUpgradePrivilegedClient interface {
+	RefreshTorMetadata(ctx context.Context, dryRun bool) (status string, err error)
+	StartTorUpgrade(ctx context.Context, helperContent string, verifyOnly bool, dryRun bool) (status string, unit string, err error)
+}
+
 type loopPrivilegedClient interface {
 	LoopStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, hasPersistentState bool, err error)
 	EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (status string, err error)
@@ -1132,6 +1137,62 @@ func StartLNDUpgradeWithBroker(ctx context.Context, version string, helperConten
 		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		_, _, _ = upgradeClient.StartLNDUpgrade(shadowCtx, version, helperContent, verifyOnly, true)
+		return false, "", nil
+	default:
+		return false, "", nil
+	}
+}
+
+func RefreshTorMetadataWithBroker(ctx context.Context) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	torClient, ok := client.(torUpgradePrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker does not support Tor metadata refresh")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		_, err := torClient.RefreshTorMetadata(ctx, false)
+		return true, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = torClient.RefreshTorMetadata(shadowCtx, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func StartTorUpgradeWithBroker(ctx context.Context, helperContent string, verifyOnly bool) (bool, string, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, "", nil
+	}
+	torClient, ok := client.(torUpgradePrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, "", errors.New("privileged broker does not support Tor upgrades")
+		}
+		return false, "", nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		_, unit, err := torClient.StartTorUpgrade(ctx, helperContent, verifyOnly, false)
+		return true, unit, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _, _ = torClient.StartTorUpgrade(shadowCtx, helperContent, verifyOnly, true)
 		return false, "", nil
 	default:
 		return false, "", nil

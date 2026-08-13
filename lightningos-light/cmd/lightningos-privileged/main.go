@@ -53,6 +53,7 @@ func main() {
 		Files:           privileged.NewAtomicConfigFiles(privileged.DefaultManagerConfigPath),
 		ManagerFirewall: privileged.NewManagerFirewallManager(runner),
 		LNDUpgrade:      privileged.NewNativeLNDUpgradeManager(runner),
+		TorUpgrade:      privileged.NewNativeTorUpgradeManager(runner),
 		Apps:            privileged.NewComposeAppManager(runner),
 		Packages:        privileged.NewCatalogPackageManager(runner),
 		BitcoinStorage:  privileged.NewBitcoinCoreStorageManager(),

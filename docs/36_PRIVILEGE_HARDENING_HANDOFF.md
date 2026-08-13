@@ -127,9 +127,21 @@ rejected. The manager direct privilege budget and direct helper sudoers entry
 for this path are zero. Evidence:
 `docs/baselines/privilege-hardening-phase3-lnd-upgrade-2026-08-13.json`.
 
-Firewall policy reconciliation, Tor/LightningOS upgrades, remaining
-helper/storage operations, wildcard sudoers removal, installer authenticity,
-and the rest of issue #34 remain open.
+Tor metadata refresh and upgrade launch are now the typed, serialized
+`packages.tor.refresh` and `upgrade.tor.start` operations. The manager has no
+direct privileged call on this path. The broker permits no caller-selected
+package, URL, path, command, or unit; it accepts only the digest-pinned embedded
+helper and chooses fixed verify/upgrade units. Before any repository state is
+installed, the helper checks the exact official Tor primary-key fingerprint
+and verifies the downloaded `InRelease` signature with that exported key.
+Ubuntu 24.04 `noble` passed the service-user verify-only gate without changing
+the Tor package, APT source/keyring/metadata, Tor PID, state, or restart count;
+a tampered helper and injected URL failed closed. Evidence:
+`docs/baselines/privilege-hardening-phase3-tor-upgrade-2026-08-13.json`.
+
+Firewall policy reconciliation, LightningOS upgrades, the real Tor
+upgrade/rollback matrix, remaining helper/storage operations, wildcard sudoers
+removal, installer authenticity, and the rest of issue #34 remain open.
 
 Application state at this checkpoint:
 

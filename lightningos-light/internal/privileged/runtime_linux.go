@@ -132,6 +132,15 @@ func (locker *FileLocker) Lock(ctx context.Context) (func(), error) {
 }
 
 func AuthorizeCaller() (string, error) {
+	if credentials, err := unix.GetsockoptUcred(int(os.Stdin.Fd()), unix.SOL_SOCKET, unix.SO_PEERCRED); err == nil {
+		return authorizeSocketCaller(os.Geteuid(), credentials.Uid, func() (string, error) {
+			expected, lookupErr := user.Lookup(ExpectedCaller)
+			if lookupErr != nil {
+				return "", lookupErr
+			}
+			return expected.Uid, nil
+		})
+	}
 	return authorizeCaller(os.Geteuid(), os.Getenv("SUDO_UID"), os.Getenv("SUDO_USER"), func() (string, error) {
 		expected, err := user.Lookup(ExpectedCaller)
 		if err != nil {
@@ -139,6 +148,21 @@ func AuthorizeCaller() (string, error) {
 		}
 		return expected.Uid, nil
 	})
+}
+
+func authorizeSocketCaller(effectiveUID int, peerUID uint32, lookupExpectedUID func() (string, error)) (string, error) {
+	if effectiveUID != 0 {
+		return "", errors.New("privileged broker must run as root")
+	}
+	expectedUIDValue, err := lookupExpectedUID()
+	if err != nil {
+		return "", errors.New("expected broker caller is unavailable")
+	}
+	expectedUID, err := strconv.ParseUint(expectedUIDValue, 10, 32)
+	if err != nil || uint64(peerUID) != expectedUID {
+		return "", errors.New("unauthorized privileged broker caller")
+	}
+	return ExpectedCaller, nil
 }
 
 func authorizeCaller(effectiveUID int, sudoUID string, sudoUser string, lookupExpectedUID func() (string, error)) (string, error) {

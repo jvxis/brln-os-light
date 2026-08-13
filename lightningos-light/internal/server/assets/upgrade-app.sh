@@ -189,19 +189,13 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 GO_BIN="$(resolve_bin go /usr/local/go/bin/go /usr/bin/go /bin/go)" || die "Required command missing: go"
 NPM_BIN="$(resolve_bin npm /usr/bin/npm /usr/local/bin/npm /bin/npm)" || die "Required command missing: npm"
 SYSTEMCTL_BIN="$(resolve_bin systemctl /usr/bin/systemctl /bin/systemctl)" || die "Required command missing: systemctl"
-SYSTEMD_RUN_BIN="$(resolve_bin systemd-run /usr/bin/systemd-run /bin/systemd-run)" || die "Required command missing: systemd-run"
 INSTALL_BIN="$(resolve_bin install /usr/bin/install /bin/install)" || die "Required command missing: install"
 CP_BIN="$(resolve_bin cp /usr/bin/cp /bin/cp)" || die "Required command missing: cp"
 FLOCK_BIN="$(resolve_bin flock /usr/bin/flock /bin/flock)" || die "Required command missing: flock"
 DATE_BIN="$(resolve_bin date /usr/bin/date /bin/date)" || die "Required command missing: date"
 STAT_BIN="$(resolve_bin stat /usr/bin/stat /bin/stat)" || die "Required command missing: stat"
-TEE_BIN="$(resolve_bin tee /usr/bin/tee /bin/tee)" || die "Required command missing: tee"
-VISUDO_BIN="$(resolve_bin visudo /usr/sbin/visudo /usr/bin/visudo /sbin/visudo)" || true
+RUNUSER_BIN="$(resolve_bin runuser /usr/sbin/runuser /usr/bin/runuser /sbin/runuser)" || die "Required command missing: runuser"
 APT_GET_BIN="$(resolve_bin apt-get /usr/bin/apt-get /bin/apt-get)" || true
-APT_BIN="$(resolve_bin apt /usr/bin/apt /bin/apt)" || true
-DPKG_BIN="$(resolve_bin dpkg /usr/bin/dpkg /bin/dpkg)" || true
-SMARTCTL_BIN="$(resolve_bin smartctl /usr/sbin/smartctl /usr/bin/smartctl /sbin/smartctl)" || SMARTCTL_BIN="/usr/sbin/smartctl"
-UFW_BIN="$(resolve_bin ufw /usr/sbin/ufw /usr/bin/ufw)" || true
 
 exec 9>"$LOCK_FILE"
 if ! "$FLOCK_BIN" -n 9; then
@@ -234,103 +228,132 @@ cleanup() {
 }
 trap cleanup EXIT
 
-join_by_comma() {
-  local first=1
-  local item=""
-  for item in "$@"; do
-    [[ -n "$item" ]] || continue
-    if [[ $first -eq 1 ]]; then
-      printf '%s' "$item"
-      first=0
-      continue
-    fi
-    printf ', %s' "$item"
-  done
-}
-
-sudoers_no_requiretty_line() {
-  local user="$1"
-  [[ -n "${VISUDO_BIN:-}" ]] || return 0
-  local tmp
-  tmp="$(mktemp)"
-  printf 'Defaults:%s !requiretty\n' "$user" > "$tmp"
-  if "$VISUDO_BIN" -cf "$tmp" >/dev/null 2>&1; then
-    printf 'Defaults:%s !requiretty\n' "$user"
-  fi
-  rm -f "$tmp"
-}
-
-privileged_broker_is_trusted() {
-  [[ -f "$PRIVILEGED_BROKER" && ! -L "$PRIVILEGED_BROKER" && -x "$PRIVILEGED_BROKER" ]] || return 1
-  local owner group mode
-  owner=$("$STAT_BIN" -c '%u' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
-  group=$("$STAT_BIN" -c '%g' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
-  mode=$("$STAT_BIN" -c '%a' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
+validate_root_regular_file() {
+  local path="$1"
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  local owner="" group="" mode=""
+  owner="$("$STAT_BIN" -c '%u' "$path" 2>/dev/null)" || return 1
+  group="$("$STAT_BIN" -c '%g' "$path" 2>/dev/null)" || return 1
+  mode="$("$STAT_BIN" -c '%a' "$path" 2>/dev/null)" || return 1
   [[ "$owner" == "0" && "$group" == "0" ]] || return 1
   (( (8#$mode & 8#022) == 0 ))
 }
 
-configure_manager_sudoers() {
-  local manager_user=""
-  manager_user="$("$SYSTEMCTL_BIN" show -p User --value lightningos-manager 2>/dev/null | tr -d '[:space:]')"
-  if [[ -z "$manager_user" ]]; then
-    manager_user="lightningos"
-  fi
-
-  local system_cmds=""
-  local app_cmds=()
-  local app_cmds_line=""
-  local sudoers_path="/etc/sudoers.d/lightningos"
-  local alias_suffix=""
-  local system_alias=""
-  local app_alias=""
-  local no_requiretty_line=""
-  local lnd_service="lnd"
-
-  if [[ "$manager_user" != "lightningos" ]]; then
-    sudoers_path="/etc/sudoers.d/lightningos-${manager_user}"
-  fi
-
-  system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"
-  if [[ "$manager_user" == "lightningos" ]] && privileged_broker_is_trusted; then
-    system_cmds+=", ${PRIVILEGED_BROKER} \"\""
-  fi
-  if ! "$SYSTEMCTL_BIN" is-active --quiet lnd && "$SYSTEMCTL_BIN" is-active --quiet lnd@default; then
-    lnd_service="lnd@default"
-    system_cmds+=", ${SYSTEMCTL_BIN} restart ${lnd_service}, ${SYSTEMCTL_BIN} restart --no-block ${lnd_service}"
-  fi
-
-  [[ -n "${APT_GET_BIN:-}" ]] && app_cmds+=("${APT_GET_BIN} *")
-  [[ -n "${APT_BIN:-}" ]] && app_cmds+=("${APT_BIN} *")
-  [[ -n "${DPKG_BIN:-}" ]] && app_cmds+=("${DPKG_BIN} *")
-  [[ -n "${SYSTEMD_RUN_BIN:-}" ]] && app_cmds+=("${SYSTEMD_RUN_BIN} *")
-  [[ -n "${UFW_BIN:-}" ]] && app_cmds+=("${UFW_BIN} *")
-  app_cmds_line="$(join_by_comma "${app_cmds[@]}")"
-  if [[ -z "$app_cmds_line" ]]; then
-    app_cmds_line="/bin/true"
-  fi
-  alias_suffix="$(printf '%s' "$manager_user" | tr '[:lower:]-' '[:upper:]_' | tr -cd 'A-Z0-9_')"
-  if [[ -z "$alias_suffix" ]]; then
-    alias_suffix="LIGHTNINGOS"
-  fi
-  system_alias="LIGHTNINGOS_SYSTEM_${alias_suffix}"
-  app_alias="LIGHTNINGOS_APPS_${alias_suffix}"
-  no_requiretty_line="$(sudoers_no_requiretty_line "$manager_user")"
-
-  cat > "$sudoers_path" <<EOF
-${no_requiretty_line}
-Cmnd_Alias ${system_alias} = ${system_cmds}
-Cmnd_Alias ${app_alias} = ${app_cmds_line}
-${manager_user} ALL=NOPASSWD: ${system_alias}, ${app_alias}
-EOF
-  chmod 440 "$sudoers_path"
-  if [[ -n "${VISUDO_BIN:-}" ]]; then
-    "$VISUDO_BIN" -cf "$sudoers_path" >/dev/null
-  fi
-  print_ok "Sudoers refreshed for manager user: ${manager_user}"
+validate_legacy_manager_sudoers() {
+  local path="$1"
+  local manager_user="$2"
+  [[ ! -e "$path" ]] && return 0
+  validate_root_regular_file "$path" || return 1
+  [[ "$manager_user" == "lightningos" ]] || return 1
+  local alias_suffix="LIGHTNINGOS"
+  local system_alias="LIGHTNINGOS_SYSTEM_${alias_suffix}"
+  local app_alias="LIGHTNINGOS_APPS_${alias_suffix}"
+  local saw_system=0 saw_apps=0 saw_grant=0 line=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" != *$'\r'* ]] || return 1
+    [[ -n "$line" ]] || continue
+    if [[ "$line" == "Defaults:${manager_user} !requiretty" ]]; then
+      continue
+    fi
+    if [[ "$line" == "Cmnd_Alias ${system_alias} = "* ]]; then
+      ((saw_system == 0)) || return 1
+      validate_legacy_system_commands "${line#*= }" || return 1
+      saw_system=1
+      continue
+    fi
+    if [[ "$line" == "Cmnd_Alias ${app_alias} = "* ]]; then
+      ((saw_apps == 0)) || return 1
+      validate_legacy_app_commands "${line#*= }" || return 1
+      saw_apps=1
+      continue
+    fi
+    if [[ "$line" == "${manager_user} ALL=NOPASSWD: ${system_alias}, ${app_alias}" ]]; then
+      ((saw_grant == 0)) || return 1
+      saw_grant=1
+      continue
+    fi
+    return 1
+  done < "$path"
+  ((saw_system == 1 && saw_apps == 1 && saw_grant == 1))
 }
 
-stage_privilege_cutover() {
+validate_legacy_system_commands() {
+  local raw="$1"
+  local command=""
+  local count=0
+  local saw_manager_restart=0
+  local saw_broker=0
+  IFS=',' read -r -a commands <<< "$raw"
+  for command in "${commands[@]}"; do
+    command="$(echo "$command" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -n "$command" ]] || return 1
+    case "$command" in
+      */systemctl\ restart\ lnd|*/systemctl\ restart\ --no-block\ lnd|*/systemctl\ restart\ lnd@default|*/systemctl\ restart\ --no-block\ lnd@default|*/systemctl\ restart\ postgresql|*/systemctl\ is-active\ lightningos-lnd-upgrade|*/systemctl\ is-active\ lightningos-app-upgrade|*/systemctl\ reboot|*/systemctl\ poweroff|/usr/local/sbin/lightningos-fix-lnd-perms|*/smartctl\ \*|*/tee\ /etc/lightningos/config.yaml)
+        ;;
+      */systemctl\ restart\ lightningos-manager)
+        saw_manager_restart=1
+        ;;
+      /usr/local/libexec/lightningos-privileged\ \"\")
+        saw_broker=1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    count=$((count + 1))
+  done
+  ((count >= 10 && count <= 15 && saw_manager_restart == 1 && saw_broker == 1))
+}
+
+validate_legacy_app_commands() {
+  local raw="$1"
+  local command=""
+  local count=0
+  IFS=',' read -r -a commands <<< "$raw"
+  for command in "${commands[@]}"; do
+    command="$(echo "$command" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    case "$command" in
+      /bin/true|*/apt-get\ \*|*/apt\ \*|*/dpkg\ \*|*/systemd-run\ \*|*/ufw\ \*) ;;
+      *) return 1 ;;
+    esac
+    count=$((count + 1))
+  done
+  ((count >= 1 && count <= 5))
+}
+
+validate_legacy_auth_enable_sudoers() {
+  local path="$1"
+  local manager_user="$2"
+  [[ ! -e "$path" ]] && return 0
+  validate_root_regular_file "$path" || return 1
+  local saw_grant=0 line=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" != *$'\r'* ]] || return 1
+    [[ -n "$line" ]] || continue
+    if [[ "$line" == "Defaults:${manager_user} !requiretty" ]]; then
+      continue
+    fi
+    if [[ "$line" =~ ^${manager_user}[[:space:]]ALL=NOPASSWD:[[:space:]]/(usr/)?bin/tee[[:space:]]/etc/lightningos/config.yaml,[[:space:]]/(usr/)?bin/systemctl[[:space:]]restart[[:space:]]lightningos-manager,[[:space:]]/(usr/)?bin/systemd-run[[:space:]]\*$ ]]; then
+      ((saw_grant == 0)) || return 1
+      saw_grant=1
+      continue
+    fi
+    return 1
+  done < "$path"
+  ((saw_grant == 1))
+}
+
+capture_optional_file() {
+  local source="$1"
+  local state_root="$2"
+  local name="$3"
+  [[ ! -e "$source" ]] && return 0
+  [[ -f "$source" && ! -L "$source" ]] || return 1
+  "$CP_BIN" -a -- "$source" "$state_root/$name"
+  : > "$state_root/${name}.existed"
+}
+
+prepare_privilege_cutover() {
   local state_root="/var/lib/lightningos/rollback/0.5.3-privilege-cutover"
   local config_path="/etc/lightningos/config.yaml"
   local service_path="/etc/systemd/system/lightningos-manager.service"
@@ -340,50 +363,86 @@ stage_privilege_cutover() {
   local rollback_bin="/usr/local/sbin/lightningos-rollback-privilege-cutover"
   local manager_user=""
   local sudoers_path=""
+  local auth_sudoers_path="/etc/sudoers.d/lightningos-auth-enable"
+
+  manager_user="$($SYSTEMCTL_BIN show -p User --value lightningos-manager 2>/dev/null | tr -d '[:space:]')"
+  [[ -n "$manager_user" ]] || manager_user="lightningos"
+  [[ "$manager_user" == "lightningos" ]] || die "Automatic privilege cutover supports the canonical lightningos manager user only."
+  sudoers_path="/etc/sudoers.d/lightningos"
+
+  [[ -f "$config_path" && ! -L "$config_path" ]] || return 1
+  [[ -f "$service_path" && ! -L "$service_path" ]] || return 1
+  [[ -f "/opt/lightningos/manager/lightningos-manager" && ! -L "/opt/lightningos/manager/lightningos-manager" ]] || return 1
+  [[ -f "$rollback_src" && ! -L "$rollback_src" ]] || return 1
+  for path in "$state_root" "$dropin_dir" "$dropin_path" "$rollback_bin"; do
+    [[ ! -L "$path" ]] || return 1
+  done
+  if [[ -e "$state_root" ]]; then
+    [[ -d "$state_root" && ! -L "$state_root" ]] || return 1
+    [[ "$("$STAT_BIN" -c '%u:%g:%a' "$state_root" 2>/dev/null)" == "0:0:700" ]] || return 1
+  fi
+  "$INSTALL_BIN" -d -o root -g root -m 0700 "$state_root"
+  "$INSTALL_BIN" -d -o root -g root -m 0755 "$dropin_dir"
+  if [[ -f "$state_root/prepared" && ! -L "$state_root/prepared" ]]; then
+    validate_root_regular_file "$state_root/prepared" || return 1
+    if [[ ! -f "$state_root/schema-v2" || -L "$state_root/schema-v2" ]]; then
+      die "Legacy privilege rollback state requires operator review before the final cutover."
+    fi
+    validate_root_regular_file "$state_root/schema-v2" || return 1
+    "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
+    return 0
+  fi
+
+  validate_legacy_manager_sudoers "$sudoers_path" "$manager_user" || die "Unrecognized manager sudoers policy; refusing privilege cutover."
+  validate_legacy_auth_enable_sudoers "$auth_sudoers_path" "$manager_user" || die "Unrecognized login-enable sudoers policy; refusing privilege cutover."
+
+  "$CP_BIN" -a -- "$config_path" "$state_root/config.yaml"
+  capture_optional_file "$service_path" "$state_root" "lightningos-manager.service"
+  capture_optional_file "$dropin_path" "$state_root" "30-privilege-hardening.conf"
+  capture_optional_file "$sudoers_path" "$state_root" "sudoers"
+  capture_optional_file "$auth_sudoers_path" "$state_root" "auth-enable-sudoers"
+  capture_optional_file "/opt/lightningos/manager/lightningos-manager" "$state_root" "lightningos-manager"
+  capture_optional_file "$PRIVILEGED_BROKER" "$state_root" "lightningos-privileged"
+  capture_optional_file "$PRIVILEGED_TMPFILES_CONFIG" "$state_root" "lightningos-privileged.conf"
+  capture_optional_file "/etc/systemd/system/lightningos-privileged.socket" "$state_root" "lightningos-privileged.socket"
+  capture_optional_file "/etc/systemd/system/lightningos-privileged@.service" "$state_root" "lightningos-privileged@.service"
+  capture_optional_file "$rollback_bin" "$state_root" "rollback-command"
+  printf '%s\n' "$sudoers_path" > "$state_root/sudoers.path"
+  printf '%s\n' "$manager_user" > "$state_root/manager.user"
+  "$DATE_BIN" --utc +'%Y-%m-%dT%H:%M:%SZ' > "$state_root/created-at"
+  if id -nG "$manager_user" | tr ' ' '\n' | grep -qx docker; then
+    : > "$state_root/had-docker-group"
+  fi
+  if "$SYSTEMCTL_BIN" is-enabled --quiet lightningos-privileged.socket 2>/dev/null; then
+    : > "$state_root/socket-enabled"
+  fi
+  if "$SYSTEMCTL_BIN" is-active --quiet lightningos-privileged.socket 2>/dev/null; then
+    : > "$state_root/socket-active"
+  fi
+  : > "$state_root/schema-v2"
+  : > "$state_root/prepared"
+  "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
+  print_ok "Root-only privilege rollback bundle prepared"
+}
+
+stage_privilege_cutover() {
+  local state_root="/var/lib/lightningos/rollback/0.5.3-privilege-cutover"
+  local config_path="/etc/lightningos/config.yaml"
+  local dropin_dir="/etc/systemd/system/lightningos-manager.service.d"
+  local dropin_path="${dropin_dir}/30-privilege-hardening.conf"
+  local manager_user="lightningos"
+  local sudoers_path="/etc/sudoers.d/lightningos"
+  local auth_sudoers_path="/etc/sudoers.d/lightningos-auth-enable"
   local config_tmp=""
   local dropin_tmp=""
   local raw_groups=""
   local group=""
   local safe_groups=()
 
-  manager_user="$($SYSTEMCTL_BIN show -p User --value lightningos-manager 2>/dev/null | tr -d '[:space:]')"
-  [[ -n "$manager_user" ]] || manager_user="lightningos"
-  [[ "$manager_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || return 1
-  sudoers_path="/etc/sudoers.d/lightningos"
-  if [[ "$manager_user" != "lightningos" ]]; then
-    sudoers_path="/etc/sudoers.d/lightningos-${manager_user}"
-  fi
-
-  [[ -f "$config_path" && ! -L "$config_path" ]] || return 1
-  [[ -f "$rollback_src" && ! -L "$rollback_src" ]] || return 1
-  for path in "$state_root" "$dropin_dir" "$dropin_path" "$rollback_bin"; do
-    [[ ! -L "$path" ]] || return 1
-  done
-  "$INSTALL_BIN" -d -o root -g root -m 0700 "$state_root"
-  "$INSTALL_BIN" -d -o root -g root -m 0755 "$dropin_dir"
-  "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
-
-  if [[ ! -f "$state_root/prepared" ]]; then
-    "$CP_BIN" -a -- "$config_path" "$state_root/config.yaml"
-    if [[ -f "$service_path" && ! -L "$service_path" ]]; then
-      "$CP_BIN" -a -- "$service_path" "$state_root/lightningos-manager.service"
-    fi
-    if [[ -f "$dropin_path" ]]; then
-      [[ ! -L "$dropin_path" ]] || return 1
-      "$CP_BIN" -a -- "$dropin_path" "$state_root/30-privilege-hardening.conf"
-      : > "$state_root/dropin.existed"
-    fi
-    printf '%s\n' "$sudoers_path" > "$state_root/sudoers.path"
-    if [[ -f "$sudoers_path" && ! -L "$sudoers_path" ]]; then
-      "$CP_BIN" -a -- "$sudoers_path" "$state_root/sudoers"
-      : > "$state_root/sudoers.existed"
-    fi
-    printf '%s\n' "$manager_user" > "$state_root/manager.user"
-    if id -nG "$manager_user" | tr ' ' '\n' | grep -qx docker; then
-      : > "$state_root/had-docker-group"
-    fi
-    : > "$state_root/prepared"
-  fi
+  [[ -f "$state_root/prepared" && ! -L "$state_root/prepared" ]] || return 1
+  "$SYSTEMCTL_BIN" is-active --quiet lightningos-privileged.socket || return 1
+  validate_legacy_manager_sudoers "$sudoers_path" "$manager_user" || return 1
+  validate_legacy_auth_enable_sudoers "$auth_sudoers_path" "$manager_user" || return 1
 
   config_tmp="$(mktemp /etc/lightningos/.config.yaml.privilege-cutover.XXXXXX)"
   if ! "$CP_BIN" -a -- "$config_path" "$config_tmp"; then
@@ -421,10 +480,34 @@ stage_privilege_cutover() {
   done
   dropin_tmp="$(mktemp "${dropin_dir}/.30-privilege-hardening.conf.XXXXXX")"
   {
-    printf '%s\n' '[Service]' 'SupplementaryGroups='
+    printf '%s\n' \
+      '[Service]' \
+      'SupplementaryGroups='
     if [[ ${#safe_groups[@]} -gt 0 ]]; then
       printf 'SupplementaryGroups=%s\n' "${safe_groups[*]}"
     fi
+    printf '%s\n' \
+      'NoNewPrivileges=true' \
+      'PrivateTmp=true' \
+      'PrivateDevices=true' \
+      'ProtectSystem=strict' \
+      'ProtectHome=true' \
+      'ProtectKernelTunables=true' \
+      'ProtectKernelModules=true' \
+      'ProtectKernelLogs=true' \
+      'ProtectControlGroups=true' \
+      'ProtectClock=true' \
+      'ProtectHostname=true' \
+      'LockPersonality=true' \
+      'RestrictRealtime=true' \
+      'RestrictSUIDSGID=true' \
+      'CapabilityBoundingSet=' \
+      'AmbientCapabilities=' \
+      'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' \
+      'SystemCallArchitectures=native' \
+      'SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap' \
+      'ReadWritePaths=' \
+      'ReadWritePaths=/var/lib/lightningos /var/log/lightningos /etc/lightningos /data/lnd'
   } > "$dropin_tmp"
   chmod 0644 "$dropin_tmp"
   chown root:root "$dropin_tmp"
@@ -433,6 +516,7 @@ stage_privilege_cutover() {
   if id -nG "$manager_user" | tr ' ' '\n' | grep -qx docker; then
     gpasswd -d "$manager_user" docker >/dev/null
   fi
+  "$RM_BIN" -f -- "$sudoers_path" "$auth_sudoers_path"
   "$SYSTEMCTL_BIN" daemon-reload
   print_ok "Privilege cutover staged with root-only rollback state"
 }
@@ -624,26 +708,11 @@ mkdir -p /opt/lightningos/go /opt/lightningos/go-cache /opt/lightningos/go/pkg/m
 print_step "Building manager binary"
 mkdir -p "$project_dir/dist"
 (cd "$project_dir" && env $go_env GOFLAGS="-mod=mod -buildvcs=false" "$GO_BIN" build -o dist/lightningos-manager ./cmd/lightningos-manager)
-"$INSTALL_BIN" -m 0755 "$project_dir/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
-print_ok "Manager installed"
+print_ok "Manager built"
 
-print_step "Installing privileged broker foundation"
+print_step "Building privileged broker"
 (cd "$project_dir" && env $go_env GOFLAGS="-mod=mod -buildvcs=false" "$GO_BIN" build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
-for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
-  [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"
-done
-[[ -f "$project_dir/templates/lightningos-privileged.tmpfiles.conf" ]] || die "Privileged broker tmpfiles template is missing"
-"$INSTALL_BIN" -d -o root -g root -m 0755 /usr/local/libexec
-"$INSTALL_BIN" -d -o root -g root -m 0755 /etc/tmpfiles.d
-"$INSTALL_BIN" -d -o root -g root -m 0750 /var/log/lightningos-privileged /run/lock/lightningos
-"$INSTALL_BIN" -o root -g root -m 0644 "$project_dir/templates/lightningos-privileged.tmpfiles.conf" "$PRIVILEGED_TMPFILES_CONFIG"
-/usr/bin/systemd-tmpfiles --create "$PRIVILEGED_TMPFILES_CONFIG"
-"$INSTALL_BIN" -o root -g root -m 0755 "$project_dir/dist/lightningos-privileged" "$PRIVILEGED_BROKER"
-broker_response="$(printf '%s\n' '{"version":1,"request_id":"upgrade_self_test","operation":"self_test","params":{}}' | env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$PRIVILEGED_BROKER")"
-if [[ "$broker_response" != *'"request_id":"upgrade_self_test"'* || "$broker_response" != *'"ok":true'* || "$broker_response" != *'"ready":true'* ]]; then
-  die "Privileged broker self-test failed"
-fi
-print_ok "Privileged broker installed and self-test passed"
+print_ok "Privileged broker built"
 
 print_step "Building UI"
 [[ -f "$project_dir/ui/package-lock.json" ]] || die "UI lockfile is missing"
@@ -652,6 +721,40 @@ print_step "Building UI"
 "$CP_BIN" -a "$project_dir/ui/dist/." /opt/lightningos/ui/
 print_ok "UI installed"
 
+print_step "Preparing reversible privilege cutover"
+prepare_privilege_cutover
+
+print_step "Installing manager and socket-activated privileged broker"
+for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos /run/lightningos-privileged "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
+  [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"
+done
+for template in \
+  "$project_dir/templates/lightningos-privileged.tmpfiles.conf" \
+  "$project_dir/templates/systemd/lightningos-privileged.socket" \
+  "$project_dir/templates/systemd/lightningos-privileged@.service"; do
+  [[ -f "$template" && ! -L "$template" ]] || die "Privileged broker template is missing or unsafe: $template"
+done
+"$INSTALL_BIN" -o root -g root -m 0755 "$project_dir/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
+"$INSTALL_BIN" -d -o root -g root -m 0755 /usr/local/libexec /etc/tmpfiles.d
+"$INSTALL_BIN" -d -o root -g root -m 0750 /var/log/lightningos-privileged /run/lock/lightningos
+"$INSTALL_BIN" -o root -g root -m 0644 "$project_dir/templates/lightningos-privileged.tmpfiles.conf" "$PRIVILEGED_TMPFILES_CONFIG"
+/usr/bin/systemd-tmpfiles --create "$PRIVILEGED_TMPFILES_CONFIG"
+"$INSTALL_BIN" -o root -g root -m 0755 "$project_dir/dist/lightningos-privileged" "$PRIVILEGED_BROKER"
+"$INSTALL_BIN" -o root -g root -m 0644 "$project_dir/templates/systemd/lightningos-privileged.socket" /etc/systemd/system/lightningos-privileged.socket
+"$INSTALL_BIN" -o root -g root -m 0644 "$project_dir/templates/systemd/lightningos-privileged@.service" /etc/systemd/system/lightningos-privileged@.service
+broker_response="$(printf '%s\n' '{"version":1,"request_id":"upgrade_self_test","operation":"self_test","params":{}}' | env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$PRIVILEGED_BROKER")"
+if [[ "$broker_response" != *'"request_id":"upgrade_self_test"'* || "$broker_response" != *'"ok":true'* || "$broker_response" != *'"ready":true'* ]]; then
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+  die "Privileged broker direct-root self-test failed"
+fi
+"$SYSTEMCTL_BIN" daemon-reload
+"$SYSTEMCTL_BIN" enable --now lightningos-privileged.socket
+if ! "$RUNUSER_BIN" -u lightningos -- /opt/lightningos/manager/lightningos-manager broker-self-test >/dev/null; then
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+  die "Privileged broker service-user self-test failed"
+fi
+print_ok "Manager and privileged broker transport installed and self-tested"
+
 stage_peerswap_assets
 refresh_terminal_helper
 configure_lnd_restart_policy
@@ -659,14 +762,25 @@ configure_manager_tls_mdns
 configure_manager_firewall
 
 print_step "Staging privilege cutover"
-if ! (stage_privilege_cutover && configure_manager_sudoers); then
+if ! stage_privilege_cutover; then
   print_warn "Privilege cutover staging failed; restoring the previous boundary"
   /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "Privilege cutover could not be staged safely"
 fi
 
 print_step "Restarting lightningos-manager"
-if "$SYSTEMCTL_BIN" restart lightningos-manager && "$SYSTEMCTL_BIN" is-active --quiet lightningos-manager; then
+manager_ready=0
+if "$SYSTEMCTL_BIN" restart lightningos-manager; then
+  for attempt in $(seq 1 20); do
+    if "$SYSTEMCTL_BIN" is-active --quiet lightningos-manager \
+      && curl -sk --max-time 3 https://127.0.0.1:8443/api/health >/dev/null; then
+      manager_ready=1
+      break
+    fi
+    sleep 1
+  done
+fi
+if [[ "$manager_ready" -eq 1 ]]; then
   print_ok "lightningos-manager is active"
 else
   print_warn "Manager failed after privilege cutover; restoring the previous boundary"

@@ -31,10 +31,26 @@ func main() {
 		case "reports-backfill":
 			runReportsBackfill(os.Args[2:])
 			return
+		case "broker-self-test":
+			runBrokerSelfTest()
+			return
 		}
 	}
 
 	runServer(os.Args[1:])
+}
+
+func runBrokerSelfTest() {
+	client, err := privileged.NewClient(string(privileged.ModeEnforce), 10*time.Second, nil)
+	if err != nil {
+		log.Fatalf("privileged broker client failed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.SelfTest(ctx); err != nil {
+		log.Fatalf("privileged broker self-test failed: %v", err)
+	}
+	fmt.Println("privileged broker self-test passed")
 }
 
 func runAuth(args []string) {

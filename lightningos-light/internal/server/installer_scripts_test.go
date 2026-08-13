@@ -356,7 +356,7 @@ func TestInstallersConfigureManagerFirewallWithoutPrompt(t *testing.T) {
 	}
 }
 
-func TestExistingInstallersAuthorizeDetectedLNDService(t *testing.T) {
+func TestExistingInstallersRequireCanonicalSocketBrokerCutover(t *testing.T) {
 	installers := []string{"install_existing.sh", "install_existing_pi.sh"}
 	for _, name := range installers {
 		t.Run(name, func(t *testing.T) {
@@ -367,12 +367,12 @@ func TestExistingInstallersAuthorizeDetectedLNDService(t *testing.T) {
 			}
 			content := string(raw)
 			for _, expected := range []string{
-				`lnd_service="${LND_SERVICE:-lnd}"`,
-				`restart ${lnd_service}`,
-				`restart --no-block ${lnd_service}`,
+				`ensure_privileged_broker_units "$manager_user"`,
+				`systemctl enable --now lightningos-privileged.socket`,
+				`manager_user" != "lightningos`,
 			} {
 				if !strings.Contains(content, expected) {
-					t.Fatalf("%s must authorize the detected LND service; missing %q", name, expected)
+					t.Fatalf("%s must use the canonical socket broker cutover; missing %q", name, expected)
 				}
 			}
 		})
@@ -385,7 +385,9 @@ func TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read broker tmpfiles template: %v", err)
 	}
-	if strings.ReplaceAll(string(templateRaw), "\r\n", "\n") != "d /run/lock/lightningos 0750 root root -\n" {
+	wantTmpfiles := "d /run/lock/lightningos 0750 root root -\n" +
+		"d /run/lightningos-privileged 0750 root lightningos -\n"
+	if strings.ReplaceAll(string(templateRaw), "\r\n", "\n") != wantTmpfiles {
 		t.Fatalf("unexpected broker tmpfiles rule: %q", string(templateRaw))
 	}
 
@@ -417,6 +419,61 @@ func TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory(t *testing.T) {
 				t.Fatalf("%s must create the runtime directory before broker self-test", path)
 			}
 		})
+	}
+}
+
+func TestManagerAndBrokerSystemdBoundary(t *testing.T) {
+	root := filepath.Join("..", "..")
+	managerRaw, err := os.ReadFile(filepath.Join(root, "templates", "systemd", "lightningos-manager.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := string(managerRaw)
+	for _, expected := range []string{
+		"Wants=network-online.target lightningos-privileged.socket",
+		"NoNewPrivileges=true",
+		"PrivateDevices=true",
+		"ProtectSystem=strict",
+		"ProtectKernelTunables=true",
+		"ProtectKernelModules=true",
+		"ProtectControlGroups=true",
+		"CapabilityBoundingSet=",
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+		"SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap",
+	} {
+		if !strings.Contains(manager, expected) {
+			t.Errorf("manager unit is missing %q", expected)
+		}
+	}
+	if strings.Contains(manager, "/etc/ufw") || strings.Contains(manager, "SupplementaryGroups=docker") {
+		t.Fatal("manager unit retains a legacy privileged writable path or group")
+	}
+
+	socketRaw, err := os.ReadFile(filepath.Join(root, "templates", "systemd", "lightningos-privileged.socket"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"SocketGroup=lightningos", "SocketMode=0660", "Accept=yes", "RemoveOnStop=true"} {
+		if !strings.Contains(string(socketRaw), expected) {
+			t.Errorf("broker socket unit is missing %q", expected)
+		}
+	}
+
+	serviceRaw, err := os.ReadFile(filepath.Join(root, "templates", "systemd", "lightningos-privileged@.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"ExecStart=/usr/local/libexec/lightningos-privileged",
+		"StandardInput=socket",
+		"StandardOutput=socket",
+		"ProtectSystem=full",
+		"ReadWritePaths=/usr/local",
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+	} {
+		if !strings.Contains(string(serviceRaw), expected) {
+			t.Errorf("broker service unit is missing %q", expected)
+		}
 	}
 }
 
@@ -504,6 +561,7 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 	}
 	content := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	for _, expected := range []string{
+		`prepare_privilege_cutover()`,
 		`stage_privilege_cutover()`,
 		`/var/lib/lightningos/rollback/0.5.3-privilege-cutover`,
 		`/usr/local/sbin/lightningos-rollback-privilege-cutover`,
@@ -511,7 +569,11 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 		`mode: \"enforce\"`,
 		`gpasswd -d "$manager_user" docker`,
 		`: > "$state_root/had-docker-group"`,
-		`: > "$state_root/sudoers.existed"`,
+		`capture_optional_file "$sudoers_path" "$state_root" "sudoers"`,
+		`capture_optional_file "/opt/lightningos/manager/lightningos-manager" "$state_root" "lightningos-manager"`,
+		`"$RM_BIN" -f -- "$sudoers_path" "$auth_sudoers_path"`,
+		`NoNewPrivileges=true`,
+		`lightningos-manager broker-self-test`,
 		`/usr/local/sbin/lightningos-rollback-privilege-cutover || true`,
 	} {
 		if !strings.Contains(content, expected) {
@@ -519,10 +581,13 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 		}
 	}
 
-	stage := strings.LastIndex(content, "if ! (stage_privilege_cutover && configure_manager_sudoers); then")
-	restart := strings.LastIndex(content, `if "$SYSTEMCTL_BIN" restart lightningos-manager`)
+	stage := strings.LastIndex(content, "if ! stage_privilege_cutover; then")
+	restart := strings.LastIndex(content, `if "$SYSTEMCTL_BIN" restart lightningos-manager; then`)
 	if stage < 0 || restart < 0 || stage > restart {
 		t.Fatal("privilege cutover must be staged before lightningos-manager restarts")
+	}
+	if !strings.Contains(content, `curl -sk --max-time 3 https://127.0.0.1:8443/api/health`) {
+		t.Fatal("privilege cutover must wait for the manager health endpoint before acceptance")
 	}
 }
 
@@ -537,8 +602,11 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		`! -f "$STATE_ROOT/prepared"`,
 		`cp -a --remove-destination -- "$backup" "$target"`,
 		`restore_file "$STATE_ROOT/config.yaml" "$CONFIG_PATH"`,
-		`restore_file "$STATE_ROOT/lightningos-manager.service" "$SERVICE_PATH"`,
-		`restore_file "$STATE_ROOT/30-privilege-hardening.conf" "$DROPIN_PATH"`,
+		`restore_or_remove "lightningos-manager.service" "$SERVICE_PATH"`,
+		`restore_or_remove "30-privilege-hardening.conf" "$DROPIN_PATH"`,
+		`restore_or_remove "lightningos-manager" "$MANAGER_BIN"`,
+		`restore_or_remove "lightningos-privileged" "$BROKER_BIN"`,
+		`restore_or_remove "lightningos-privileged.socket" "$SOCKET_UNIT"`,
 		`restore_file "$STATE_ROOT/sudoers" "$sudoers_path"`,
 		`rm -f -- "$sudoers_path"`,
 		`usermod -a -G docker "$manager_user"`,

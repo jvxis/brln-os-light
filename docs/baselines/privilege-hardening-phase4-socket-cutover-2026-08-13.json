@@ -1,0 +1,35 @@
+{
+  "schema": "lightningos.privilege-hardening.evidence.v1",
+  "date": "2026-08-13",
+  "phase": "4",
+  "slice": "socket broker transport, manager confinement, sudoers removal, and rollback",
+  "target": {
+    "kind": "disposable VirtualBox VM",
+    "name": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04",
+    "network": "loopback-only NAT SSH forward during the gate; original bridged NIC restored afterward"
+  },
+  "accepted": [
+    "The manager reached the privileged broker through an AF_UNIX systemd socket as the canonical lightningos UID.",
+    "A different local account could not use the socket and direct sudo execution of the broker was unavailable after cutover.",
+    "The manager remained healthy with NoNewPrivileges=yes, PrivateDevices=yes, ProtectSystem=strict, empty capability sets, kernel and control-group protections, restricted address families, and the audited syscall deny set.",
+    "The legacy manager sudoers file and stale login-enable sudoers file were absent after cutover; the manager had no docker supplementary group.",
+    "Docker InvocationID was unchanged through forward cutover and rollback.",
+    "The rollback restored the prior manager and broker binaries, manager unit and drop-in, config, sudoers policy, Docker membership, and prior socket state.",
+    "Bitcoin, LND, PostgreSQL, Docker, and application data were not copied, deleted, reset, reindexed, or ownership-rewritten by the cutover or rollback.",
+    "systemd-analyze security reported overall exposure 2.5 (OK) for the confined manager in this gate."
+  ],
+  "observations": [
+    "LND was already in an automatic activating/restart cycle before the privilege gate and remained in that pre-existing condition; the gate did not deliberately restart LND.",
+    "The first health probe immediately after manager restart raced startup and triggered automatic rollback as designed. The repeated gate used a bounded readiness loop and passed.",
+    "An older root-only rollback bundle from the previous disposable gate was preserved during testing and restored afterward."
+  ],
+  "cleanup": {
+    "guest_temporary_source_removed": true,
+    "guest_gate_directory_removed": true,
+    "vm_powered_off": true,
+    "nat_forward_removed": true,
+    "bridged_adapter_restored": "Realtek Gaming GbE Family Controller"
+  },
+  "secrets_in_evidence": false
+}

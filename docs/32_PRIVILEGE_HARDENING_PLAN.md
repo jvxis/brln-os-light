@@ -1259,8 +1259,8 @@ fields. Flags, traversal, non-disk devices, symlinked executables, empty failed
 reads, and oversized responses fail closed. The Ubuntu 24.04 service-user gate
 passed without changing Manager/LND/Bitcoin states. Evidence is in
 `docs/baselines/privilege-hardening-phase3-smart-read-2026-08-13.json`. The
-now-unused smartctl wildcard grants remain scheduled for the coordinated
-sudoers cutover, so this slice does not claim their removal yet.
+now-unused smartctl wildcard grants were subsequently removed by the
+coordinated Phase 4 socket cutover.
 
 The asynchronous post-wallet LND metadata repair now uses the serialized
 `storage.lnd.permissions.repair` operation and `handlers.go` has zero direct
@@ -1273,8 +1273,8 @@ temporary-tree owner/mode, byte-preservation, unmanaged-file and symlink gates
 without changing `/data/lnd` metadata or Manager/LND/Bitcoin states. Evidence
 is in
 `docs/baselines/privilege-hardening-phase3-lnd-permissions-2026-08-13.json`.
-The unused direct helper sudoers grant remains scheduled for the coordinated
-Phase 4 cutover.
+The unused direct helper sudoers grant was subsequently removed by the
+coordinated Phase 4 socket cutover.
 
 General service restarts and host reboot/poweroff now fail closed through the
 typed broker boundary. The former direct `systemctl`, `sudo`, and transient
@@ -1286,8 +1286,8 @@ so the completion audit and HTTP response precede the host state change.
 Disabled/shadow calls perform no mutation. The disposable Ubuntu 24.04 gate and
 secret-free evidence are recorded in
 `docs/baselines/privilege-hardening-phase3-service-power-2026-08-13.json`.
-Legacy installer sudoers entries are intentionally left for the coordinated
-Phase 4 cutover.
+The legacy installer sudoers entries were subsequently removed by the
+coordinated Phase 4 socket cutover.
 
 The one-time login-protection activation flow is now broker-only. The manager
 calls the existing fixed `files.enable_login` operation and schedules the
@@ -1299,9 +1299,9 @@ and generic `systemd-run` fallback were deleted, reducing the file's permanent
 privilege budget to zero. The existing real Ubuntu 24.04 activation and manager
 restart gates cover the positive path; new disabled/shadow tests prove the
 cutover fails closed. Evidence is in
-`docs/baselines/privilege-hardening-phase3-auth-enable-2026-08-13.json`. Any
-stale runtime sudoers file on an upgraded node must be removed during the
-coordinated Phase 4 cutover after its exact contents and ownership are checked.
+`docs/baselines/privilege-hardening-phase3-auth-enable-2026-08-13.json`. The
+Phase 4 cutover now removes a stale runtime sudoers file only after its expected
+contents and root ownership are validated.
 
 Runtime terminal credential rotation is now the closed
 `terminal.credential.rotate` operation. The manager no longer stages a password
@@ -1327,9 +1327,8 @@ The now-unused manager-side `RunCommandWithSudo` and `WriteFileWithSudo`
 implementations were removed after all runtime consumers reached zero. A
 permanent AST guard now rejects reintroduction of either helper or the deleted
 generic `runSystemd` wrapper anywhere under `internal/server` or
-`internal/system`. This removes dormant fallback code, but does not yet remove
-the legacy installer-generated sudoers grants; those remain part of the
-transactional Phase 4 cutover.
+`internal/system`. The legacy installer-generated sudoers grants were then
+removed by the transactional Phase 4 socket cutover.
 
 Issue #34's Go and GoTTY installer slice is accepted. `install.sh`,
 `install_existing.sh`, and `install_existing_pi.sh` now source one fixed local
@@ -1435,6 +1434,30 @@ authenticity/integrity verification succeeds.
    families, and an audited syscall policy.
 4. Give the broker a separate, narrowly scoped service policy and writable
    paths.
+
+Accepted slice (2026-08-13): the manager no longer executes the broker through
+`sudo`. It connects to a root-owned, systemd-activated AF_UNIX socket whose peer
+UID is checked against the canonical `lightningos` account before any request is
+decoded. Fresh installers install and enable the socket units and no longer
+generate manager sudoers policy. The in-place upgrade creates a schema-versioned
+root-only rollback bundle before replacing either binary, validates recognized
+legacy sudoers files, self-tests the new transport as the service user, removes
+the manager and stale login-enable sudoers files, removes Docker membership, and
+rolls back automatically on a failed restart or health gate. Unrecognized
+manager identities and sudoers layouts fail closed before cutover.
+
+The manager template and upgrade drop-in now apply `NoNewPrivileges`, strict
+filesystem protection, private devices, empty capability sets, kernel and
+control-group protections, restricted address families, and an audited syscall
+deny policy. The broker has a separate socket-activated root service policy. A
+disposable Ubuntu 24.04 gate passed forward operation, unauthorized-peer and
+direct-sudo rejection, manager health, boundary assertions, and full rollback;
+Docker was not restarted and the pre-existing LND activation condition was not
+caused or changed intentionally. Evidence is in
+`docs/baselines/privilege-hardening-phase4-socket-cutover-2026-08-13.json`.
+
+Phase 4 remains open for the Ubuntu 26.04 gate and the final supported-upgrade
+and application regression matrices.
 
 Exit criterion: a test running as the manager user cannot access the Docker
 socket, launch a root process, modify root-owned configuration, alter the

@@ -173,8 +173,8 @@ fixed `lsblk` whole-disk inventory and runs only root-owned fixed `smartctl -a`
 argv with bounded output. Ubuntu 24.04 passed the service-user read plus flags,
 traversal, non-disk and symlink negative gates without service changes.
 Evidence: `docs/baselines/privilege-hardening-phase3-smart-read-2026-08-13.json`.
-The now-unused wildcard smartctl grants are deliberately still listed until
-the coordinated Phase 4 sudoers cutover.
+The smartctl wildcard grants were removed in the coordinated Phase 4 socket
+cutover described below.
 
 Post-wallet LND metadata repair now uses empty serialized
 `storage.lnd.permissions.repair`; `handlers.go` has zero direct sudo calls.
@@ -185,8 +185,8 @@ preserved the real `/data/lnd` metadata hash and all core service states while
 the temporary-tree gate proved exact metadata repair and byte preservation.
 Evidence:
 `docs/baselines/privilege-hardening-phase3-lnd-permissions-2026-08-13.json`.
-Remove the now-unused direct helper grant only in the coordinated sudoers
-cutover.
+The now-unused direct helper grant was removed in the coordinated Phase 4
+socket cutover described below.
 
 Service restarts and host power are now enforce-only broker operations. The
 manager no longer falls back to direct `systemctl`, `sudo`, or transient
@@ -197,8 +197,8 @@ typed completion state. Disabled/shadow requests fail closed. Ubuntu 24.04
 validated dry-run rejection/preservation and a real disposable-VM poweroff,
 then restored the original broker and VM network state. Evidence:
 `docs/baselines/privilege-hardening-phase3-service-power-2026-08-13.json`.
-The now-unused service/power sudoers entries remain until the coordinated
-cutover.
+The now-unused service/power sudoers entries were removed in the coordinated
+Phase 4 socket cutover described below.
 
 The typed package catalog now includes `mdns`, fixed to
 `avahi-daemon` plus `libnss-mdns` and isolated index/install units. Ubuntu
@@ -221,9 +221,31 @@ Phase 4, detect and remove any stale
 legacy root-owned regular file.
 
 Firewall policy reconciliation, real Tor/LightningOS upgrade and rollback
-matrices, LightningOS publisher attestation, remaining helper/storage
-operations, wildcard sudoers removal, installer authenticity, and the rest of
-issue #34 remain open.
+matrices, LightningOS publisher attestation, the Ubuntu 24.04/26.04 final
+matrices, and the remaining issue #34 acceptance matrix remain open. Installer
+artifact/repository authentication and wildcard sudoers removal are complete.
+
+### Phase 4 socket cutover
+
+The manager now reaches the privileged broker through a systemd-activated Unix
+socket and the root broker authenticates the peer UID as the canonical
+`lightningos` account. Fresh installers no longer create manager sudoers policy.
+The upgrade captures a schema-versioned root-only bundle containing the previous
+manager/broker binaries, relevant units, sudoers, group membership and
+non-secret config before changing the boundary; it refuses non-canonical service
+users or unrecognized legacy sudoers and restores the prior state automatically
+on failure. The manager's Docker group and both recognized legacy sudoers files
+are removed last.
+
+The manager service now has `NoNewPrivileges`, strict filesystem protection,
+private devices, empty capabilities, kernel/control-group protections,
+restricted address families, and a syscall deny policy. The broker has a
+separate socket-activated service policy. Ubuntu 24.04 passed forward, negative
+authorization, health, confinement, and rollback gates without restarting
+Docker or touching node/app data. LND was already cycling in `activating` before
+this gate; it was not deliberately restarted. Evidence:
+`docs/baselines/privilege-hardening-phase4-socket-cutover-2026-08-13.json`.
+Ubuntu 26.04 and the final app/regression matrices remain open.
 
 Application state at this checkpoint:
 
@@ -510,9 +532,9 @@ final disposable fresh-install matrix. Evidence:
 
 The dormant manager-side `RunCommandWithSudo` and `WriteFileWithSudo`
 implementations are also deleted. An AST regression guard covers both names
-and `runSystemd` under the manager packages. This is code-surface removal only:
-the corresponding stale/installer-generated sudoers authorizations still wait
-for the rollback-protected Phase 4 cutover.
+and `runSystemd` under the manager packages. The corresponding
+stale/installer-generated sudoers authorizations were subsequently removed by
+the rollback-protected Phase 4 socket cutover.
 
 Issue #34 is partially implemented across every installer variant for Go and
 GoTTY. A shared local verifier requires HTTPS/TLS 1.2, a regular new download

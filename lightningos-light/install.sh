@@ -730,90 +730,6 @@ ensure_group_member() {
   usermod -a -G "$group" "$user"
 }
 
-sudoers_no_requiretty_line() {
-  local user="$1"
-  local visudo_path
-  visudo_path=$(command -v visudo || true)
-  [[ -n "$visudo_path" ]] || return 0
-  local tmp
-  tmp=$(mktemp)
-  printf 'Defaults:%s !requiretty\n' "$user" > "$tmp"
-  if "$visudo_path" -cf "$tmp" >/dev/null 2>&1; then
-    printf 'Defaults:%s !requiretty\n' "$user"
-  fi
-  rm -f "$tmp"
-}
-
-privileged_broker_is_trusted() {
-  [[ -f "$PRIVILEGED_BROKER" && ! -L "$PRIVILEGED_BROKER" && -x "$PRIVILEGED_BROKER" ]] || return 1
-  local owner group mode
-  owner=$(stat -c '%u' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
-  group=$(stat -c '%g' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
-  mode=$(stat -c '%a' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
-  [[ "$owner" == "0" && "$group" == "0" ]] || return 1
-  (( (8#$mode & 8#022) == 0 ))
-}
-
-configure_sudoers() {
-  print_step "Configuring sudoers"
-  local manager_user="lightningos"
-  local systemctl_path apt_get_path apt_path dpkg_path systemd_run_path smartctl_path ufw_path tee_path
-  systemctl_path=$(command -v systemctl || true)
-  apt_get_path=$(command -v apt-get || true)
-  apt_path=$(command -v apt || true)
-  dpkg_path=$(command -v dpkg || true)
-  systemd_run_path=$(command -v systemd-run || true)
-  smartctl_path=$(command -v smartctl || true)
-  ufw_path=$(command -v ufw || true)
-  tee_path=$(command -v tee || true)
-  if [[ -z "$systemd_run_path" ]]; then
-    systemd_run_path="/usr/bin/systemd-run"
-  fi
-  if [[ -z "$smartctl_path" ]]; then
-    smartctl_path="/usr/sbin/smartctl"
-  fi
-  if [[ -z "$tee_path" ]]; then
-    tee_path="/usr/bin/tee"
-  fi
-  if [[ -z "$systemctl_path" ]]; then
-    print_warn "systemctl not found; skipping sudoers setup"
-    return
-  fi
-  local system_cmds
-  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"
-  if privileged_broker_is_trusted; then
-    system_cmds+=", ${PRIVILEGED_BROKER} \"\""
-  fi
-  local app_cmds=()
-  [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
-  [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
-  [[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")
-  [[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")
-  [[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")
-  local app_cmds_line
-  app_cmds_line=$(IFS=", "; echo "${app_cmds[*]}")
-  if [[ -z "$app_cmds_line" ]]; then
-    app_cmds_line="/bin/true"
-  fi
-  local alias_suffix system_alias app_alias
-  alias_suffix=$(printf '%s' "$manager_user" | tr '[:lower:]-' '[:upper:]_' | tr -cd 'A-Z0-9_')
-  if [[ -z "$alias_suffix" ]]; then
-    alias_suffix="LIGHTNINGOS"
-  fi
-  system_alias="LIGHTNINGOS_SYSTEM_${alias_suffix}"
-  app_alias="LIGHTNINGOS_APPS_${alias_suffix}"
-  local no_requiretty_line
-  no_requiretty_line=$(sudoers_no_requiretty_line "$manager_user")
-  cat > /etc/sudoers.d/lightningos <<EOF
-${no_requiretty_line}
-Cmnd_Alias ${system_alias} = ${system_cmds}
-Cmnd_Alias ${app_alias} = ${app_cmds_line}
-${manager_user} ALL=NOPASSWD: ${system_alias}, ${app_alias}
-EOF
-  chmod 440 /etc/sudoers.d/lightningos
-  print_ok "Sudoers configured"
-}
-
 install_packages() {
   print_step "Installing base packages"
   apt_get update
@@ -1518,7 +1434,6 @@ install_manager() {
     die "Privileged broker self-test failed"
   fi
   print_ok "Privileged broker installed and self-test passed"
-  configure_sudoers
   if [[ -n "$current_stamp" ]]; then
     echo "$current_stamp" > "$stamp_file"
     chmod 0644 "$stamp_file"
@@ -1604,15 +1519,20 @@ install_systemd() {
   print_step "Installing systemd services"
   cp "$REPO_ROOT/templates/systemd/lnd.service" /etc/systemd/system/lnd.service
   cp "$REPO_ROOT/templates/systemd/lightningos-manager.service" /etc/systemd/system/lightningos-manager.service
+  cp "$REPO_ROOT/templates/systemd/lightningos-privileged.socket" /etc/systemd/system/lightningos-privileged.socket
+  cp "$REPO_ROOT/templates/systemd/lightningos-privileged@.service" /etc/systemd/system/lightningos-privileged@.service
   cp "$REPO_ROOT/templates/systemd/lightningos-terminal.service" /etc/systemd/system/lightningos-terminal.service
   cp "$REPO_ROOT/templates/systemd/lightningos-reports.service" /etc/systemd/system/lightningos-reports.service
   cp "$REPO_ROOT/templates/systemd/lightningos-reports.timer" /etc/systemd/system/lightningos-reports.timer
   strip_crlf /etc/systemd/system/lnd.service
   strip_crlf /etc/systemd/system/lightningos-manager.service
+  strip_crlf /etc/systemd/system/lightningos-privileged.socket
+  strip_crlf /etc/systemd/system/lightningos-privileged@.service
   strip_crlf /etc/systemd/system/lightningos-terminal.service
   strip_crlf /etc/systemd/system/lightningos-reports.service
   strip_crlf /etc/systemd/system/lightningos-reports.timer
   systemctl daemon-reload
+  systemctl enable --now lightningos-privileged.socket
   systemctl enable --now postgresql
   start_tor_service
   if ! wait_for_tor_control; then
@@ -1737,7 +1657,6 @@ main() {
   require_root
   print_step "LightningOS installation starting"
   ensure_operator_user
-  configure_sudoers
   install_packages
   configure_tor
   create_lnd_user

@@ -54,34 +54,7 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/system/system.go":                   {},
 }
 
-var legacyWildcardSudoLines = map[string]struct{}{
-	`install.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
-	`install.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:         {},
-	`install.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                 {},
-	`install.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:               {},
-	`install.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`: {},
-	`install.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                 {},
-	`install_existing.sh:${user} ALL=NOPASSWD: ${smartctl_path} *`:                   {},
-	`install_existing.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
-	`install_existing.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:         {},
-	`install_existing.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                 {},
-	`install_existing.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:               {},
-	`install_existing.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`: {},
-	`install_existing.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                 {},
-	`install_existing_pi.sh:${user} ALL=NOPASSWD: ${smartctl_path} *`:                         {},
-	`install_existing_pi.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
-	`install_existing_pi.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:         {},
-	`install_existing_pi.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                 {},
-	`install_existing_pi.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:               {},
-	`install_existing_pi.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`: {},
-	`install_existing_pi.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                 {},
-	`internal/server/assets/upgrade-app.sh:system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"`: {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${APT_GET_BIN:-}" ]] && app_cmds+=("${APT_GET_BIN} *")`:         {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${APT_BIN:-}" ]] && app_cmds+=("${APT_BIN} *")`:                 {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${DPKG_BIN:-}" ]] && app_cmds+=("${DPKG_BIN} *")`:               {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${SYSTEMD_RUN_BIN:-}" ]] && app_cmds+=("${SYSTEMD_RUN_BIN} *")`: {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${UFW_BIN:-}" ]] && app_cmds+=("${UFW_BIN} *")`:                 {},
-}
+var legacyWildcardSudoLines = map[string]struct{}{}
 
 var legacyDockerGroupLines = map[string]struct{}{}
 
@@ -471,7 +444,7 @@ func TestNoNewWildcardSudoOrDockerBoundary(t *testing.T) {
 	}
 }
 
-func TestPrivilegedBrokerSudoersEntryForbidsArguments(t *testing.T) {
+func TestPrivilegedBrokerUsesSocketWithoutManagerSudoers(t *testing.T) {
 	root := moduleRoot(t)
 	paths := []string{
 		"install.sh",
@@ -479,7 +452,6 @@ func TestPrivilegedBrokerSudoersEntryForbidsArguments(t *testing.T) {
 		"install_existing_pi.sh",
 		"internal/server/assets/upgrade-app.sh",
 	}
-	want := `system_cmds+=", ${PRIVILEGED_BROKER} \"\""`
 	wantRootSelfTest := `env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$PRIVILEGED_BROKER"`
 	for _, rel := range paths {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
@@ -487,11 +459,8 @@ func TestPrivilegedBrokerSudoersEntryForbidsArguments(t *testing.T) {
 			t.Fatalf("read %s: %v", rel, err)
 		}
 		content := string(data)
-		if !strings.Contains(content, want) {
-			t.Errorf("%s does not grant the broker with an explicit empty argument list", rel)
-		}
-		if strings.Contains(content, `${PRIVILEGED_BROKER} *`) {
-			t.Errorf("%s grants wildcard broker arguments", rel)
+		if strings.Contains(content, "configure_sudoers") || strings.Contains(content, "cat > /etc/sudoers") || strings.Contains(content, `app_cmds+=(`) {
+			t.Errorf("%s still generates manager sudoers policy", rel)
 		}
 		if !strings.Contains(content, wantRootSelfTest) {
 			t.Errorf("%s does not isolate the direct-root self-test from an outer sudo environment", rel)
@@ -556,6 +525,9 @@ func assertPrivilegeBudget(t *testing.T, path string, capability string, got int
 }
 
 func isWildcardSudoLine(line string) bool {
+	if strings.HasPrefix(line, `if [[ "$line"`) {
+		return false
+	}
 	if !strings.Contains(line, "*") {
 		return false
 	}

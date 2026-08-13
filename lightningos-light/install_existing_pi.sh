@@ -509,46 +509,6 @@ ensure_acl_support() {
   print_ok "Filesystem ACL support installed"
 }
 
-sudoers_no_requiretty_line() {
-  local user="$1"
-  local visudo_path
-  visudo_path=$(command -v visudo || true)
-  [[ -n "$visudo_path" ]] || return 0
-  local tmp
-  tmp=$(mktemp)
-  printf 'Defaults:%s !requiretty\n' "$user" > "$tmp"
-  if "$visudo_path" -cf "$tmp" >/dev/null 2>&1; then
-    printf 'Defaults:%s !requiretty\n' "$user"
-  fi
-  rm -f "$tmp"
-}
-
-configure_smartctl_sudoers() {
-  local user="$1"
-  if [[ "$user" == "root" ]]; then
-    print_ok "Manager user is root; smartctl sudoers not needed"
-    return 0
-  fi
-  if ! command -v sudo >/dev/null 2>&1; then
-    print_warn "sudo not found; smartctl access may fail"
-    return 1
-  fi
-  local smartctl_path
-  smartctl_path=$(command -v smartctl || true)
-  if [[ -z "$smartctl_path" ]]; then
-    smartctl_path="/usr/sbin/smartctl"
-  fi
-  local sudoers="/etc/sudoers.d/lightningos-smartctl"
-  local no_requiretty_line
-  no_requiretty_line=$(sudoers_no_requiretty_line "$user")
-  cat > "$sudoers" <<EOF
-${no_requiretty_line}
-${user} ALL=NOPASSWD: ${smartctl_path} *
-EOF
-  chmod 440 "$sudoers"
-  print_ok "Sudoers updated for smartctl"
-}
-
 install_lnd_fix_perms_script() {
   local src="$REPO_ROOT/scripts/fix-lnd-perms.sh"
   if [[ -f "$src" ]]; then
@@ -569,80 +529,6 @@ install_lnd_upgrade_script() {
   else
     print_warn "Missing helper script: $src"
   fi
-}
-
-privileged_broker_is_trusted() {
-  [[ -f "$PRIVILEGED_BROKER" && ! -L "$PRIVILEGED_BROKER" && -x "$PRIVILEGED_BROKER" ]] || return 1
-  local owner group mode
-  owner=$(stat -c '%u' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
-  group=$(stat -c '%g' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
-  mode=$(stat -c '%a' "$PRIVILEGED_BROKER" 2>/dev/null) || return 1
-  [[ "$owner" == "0" && "$group" == "0" ]] || return 1
-  (( (8#$mode & 8#022) == 0 ))
-}
-
-configure_sudoers() {
-  local manager_user="${1:-lightningos}"
-  print_step "Configuring sudoers"
-  local systemctl_path apt_get_path apt_path dpkg_path systemd_run_path smartctl_path ufw_path tee_path
-  systemctl_path=$(command -v systemctl || true)
-  apt_get_path=$(command -v apt-get || true)
-  apt_path=$(command -v apt || true)
-  dpkg_path=$(command -v dpkg || true)
-  systemd_run_path=$(command -v systemd-run || true)
-  smartctl_path=$(command -v smartctl || true)
-  ufw_path=$(command -v ufw || true)
-  tee_path=$(command -v tee || true)
-  if [[ -z "$systemd_run_path" ]]; then
-    systemd_run_path="/usr/bin/systemd-run"
-  fi
-  if [[ -z "$smartctl_path" ]]; then
-    smartctl_path="/usr/sbin/smartctl"
-  fi
-  if [[ -z "$tee_path" ]]; then
-    tee_path="/usr/bin/tee"
-  fi
-  if [[ -z "$systemctl_path" ]]; then
-    print_warn "systemctl not found; skipping sudoers setup"
-    return
-  fi
-  local system_cmds lnd_service
-  lnd_service="${LND_SERVICE:-lnd}"
-  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"
-  if privileged_broker_is_trusted; then
-    system_cmds+=", ${PRIVILEGED_BROKER} \"\""
-  fi
-  if [[ "$lnd_service" != "lnd" ]]; then
-    system_cmds+=", ${systemctl_path} restart ${lnd_service}, ${systemctl_path} restart --no-block ${lnd_service}"
-  fi
-  local app_cmds=()
-  [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
-  [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
-  [[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")
-  [[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")
-  [[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")
-  local app_cmds_line
-  app_cmds_line=$(IFS=", "; echo "${app_cmds[*]}")
-  if [[ -z "$app_cmds_line" ]]; then
-    app_cmds_line="/bin/true"
-  fi
-  local alias_suffix system_alias app_alias
-  alias_suffix=$(printf '%s' "$manager_user" | tr '[:lower:]-' '[:upper:]_' | tr -cd 'A-Z0-9_')
-  if [[ -z "$alias_suffix" ]]; then
-    alias_suffix="LIGHTNINGOS"
-  fi
-  system_alias="LIGHTNINGOS_SYSTEM_${alias_suffix}"
-  app_alias="LIGHTNINGOS_APPS_${alias_suffix}"
-  local no_requiretty_line
-  no_requiretty_line=$(sudoers_no_requiretty_line "$manager_user")
-  cat > /etc/sudoers.d/lightningos <<EOF
-${no_requiretty_line}
-Cmnd_Alias ${system_alias} = ${system_cmds}
-Cmnd_Alias ${app_alias} = ${app_cmds_line}
-${manager_user} ALL=NOPASSWD: ${system_alias}, ${app_alias}
-EOF
-  chmod 440 /etc/sudoers.d/lightningos
-  print_ok "Sudoers configured"
 }
 
 read_conf_value() {
@@ -821,7 +707,6 @@ build_manager() {
     die "Privileged broker self-test failed"
   fi
   print_ok "Privileged broker installed and self-test passed"
-  configure_sudoers "lightningos"
   print_ok "Manager built and installed"
 }
 
@@ -1342,6 +1227,20 @@ EOF
   print_ok "PostgreSQL repo ready (${codename}-pgdg)"
 }
 
+ensure_privileged_broker_units() {
+  local manager_user="$1"
+  if [[ "$manager_user" != "lightningos" ]]; then
+    die "Automatic privilege cutover supports the canonical lightningos manager user only; the existing service was not changed."
+  fi
+  local socket_src="$REPO_ROOT/templates/systemd/lightningos-privileged.socket"
+  local service_src="$REPO_ROOT/templates/systemd/lightningos-privileged@.service"
+  [[ -f "$socket_src" && ! -L "$socket_src" ]] || die "Privileged broker socket template is missing"
+  [[ -f "$service_src" && ! -L "$service_src" ]] || die "Privileged broker service template is missing"
+  [[ -f "$PRIVILEGED_BROKER" && ! -L "$PRIVILEGED_BROKER" && -x "$PRIVILEGED_BROKER" ]] || die "Privileged broker binary is unavailable"
+  install -o root -g root -m 0644 "$socket_src" /etc/systemd/system/lightningos-privileged.socket
+  install -o root -g root -m 0644 "$service_src" /etc/systemd/system/lightningos-privileged@.service
+}
+
 resolve_postgres_version() {
   print_step "Resolving PostgreSQL version"
   if [[ "$POSTGRES_VERSION" =~ ^[0-9]+$ ]]; then
@@ -1700,9 +1599,6 @@ main() {
   fi
   membership_groups+=("systemd-journal")
   ensure_group_membership "$manager_user" "${membership_groups[@]}"
-  if getent group docker >/dev/null 2>&1 && id -nG "$manager_user" | tr ' ' '\n' | grep -qx docker; then
-    gpasswd -d "$manager_user" docker >/dev/null
-  fi
   if [[ -n "$LND_USER" && -n "$BITCOIN_GROUP" ]]; then
     if ! id -nG "$LND_USER" | tr ' ' '\n' | grep -qx "$BITCOIN_GROUP"; then
       if prompt_yes_no "Add ${LND_USER} to ${BITCOIN_GROUP} group for Bitcoin RPC cookie access?" "y"; then
@@ -1712,8 +1608,6 @@ main() {
   fi
   install_lnd_fix_perms_script
   install_lnd_upgrade_script
-  configure_sudoers "$manager_user"
-  ensure_manager_service "$manager_user" "$manager_group"
   if [[ -n "$LND_USER" && -n "$LND_GROUP" ]]; then
     fix_lnd_permissions "$lnd_dir" "$LND_USER" "$LND_GROUP"
   else
@@ -1727,8 +1621,18 @@ main() {
   fi
 
   if prompt_yes_no "Build and install manager binary now?" "y"; then
+    if [[ "$manager_user" != "lightningos" ]]; then
+      die "Automatic privilege cutover supports the canonical lightningos manager user only; use a guided migration for this layout."
+    fi
     ensure_go
     build_manager
+    ensure_manager_service "$manager_user" "$manager_group"
+    ensure_privileged_broker_units "$manager_user"
+    systemctl daemon-reload
+    systemctl enable --now lightningos-privileged.socket
+    if getent group docker >/dev/null 2>&1 && id -nG "$manager_user" | tr ' ' '\n' | grep -qx docker; then
+      gpasswd -d "$manager_user" docker >/dev/null
+    fi
   fi
   if prompt_yes_no "Build and install UI now?" "y"; then
     ensure_node

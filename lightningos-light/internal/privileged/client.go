@@ -1,16 +1,14 @@
 package privileged
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"os/exec"
+	"net"
 	"strings"
 	"time"
 
@@ -19,7 +17,7 @@ import (
 
 const (
 	BrokerExecutablePath = "/usr/local/libexec/lightningos-privileged"
-	SudoExecutablePath   = "/usr/bin/sudo"
+	BrokerSocketPath     = "/run/lightningos-privileged/broker.sock"
 )
 
 type Mode string
@@ -80,7 +78,7 @@ func NewClient(modeValue string, timeout time.Duration, logger *log.Logger) (*Cl
 	return &Client{
 		mode:      mode,
 		timeout:   timeout,
-		transport: &ExecTransport{},
+		transport: &SocketTransport{},
 		logger:    logger,
 	}, nil
 }
@@ -1245,9 +1243,11 @@ func (client *Client) call(ctx context.Context, operation Operation, params any,
 	return response, nil
 }
 
-type ExecTransport struct{}
+type SocketTransport struct {
+	Path string
+}
 
-func (transport *ExecTransport) Do(ctx context.Context, request Request) (Response, error) {
+func (transport *SocketTransport) Do(ctx context.Context, request Request) (Response, error) {
 	var response Response
 	payload, err := json.Marshal(request)
 	if err != nil {
@@ -1257,18 +1257,38 @@ func (transport *ExecTransport) Do(ctx context.Context, request Request) (Respon
 		return response, errors.New("broker request too large")
 	}
 
-	command := exec.CommandContext(ctx, SudoExecutablePath, "-n", BrokerExecutablePath)
-	command.Stdin = bytes.NewReader(payload)
-	stdout := newBoundedOutput(MaxMessageBytes)
-	command.Stdout = stdout
-	command.Stderr = io.Discard
-	if err := command.Run(); err != nil {
-		return response, fmt.Errorf("privileged broker execution failed: %w", err)
+	path := strings.TrimSpace(transport.Path)
+	if path == "" {
+		path = BrokerSocketPath
 	}
-	if stdout.Overflowed() {
-		return response, errors.New("privileged broker response too large")
+	connection, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
+	if err != nil {
+		return response, fmt.Errorf("privileged broker connection failed: %w", err)
 	}
-	response, err = DecodeResponse(bytes.NewReader(stdout.Bytes()))
+	defer connection.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := connection.SetDeadline(deadline); err != nil {
+			return response, fmt.Errorf("privileged broker deadline failed: %w", err)
+		}
+	}
+	for written := 0; written < len(payload); {
+		count, writeErr := connection.Write(payload[written:])
+		if writeErr != nil {
+			return response, fmt.Errorf("privileged broker request failed: %w", writeErr)
+		}
+		if count <= 0 {
+			return response, errors.New("privileged broker request made no progress")
+		}
+		written += count
+	}
+	writer, ok := connection.(interface{ CloseWrite() error })
+	if !ok {
+		return response, errors.New("privileged broker socket does not support request framing")
+	}
+	if err := writer.CloseWrite(); err != nil {
+		return response, fmt.Errorf("privileged broker request close failed: %w", err)
+	}
+	response, err = DecodeResponse(connection)
 	if err != nil {
 		return response, err
 	}

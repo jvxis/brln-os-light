@@ -1521,7 +1521,6 @@ type RebalanceService struct {
 	sem                             chan struct{}
 	semInflight                     int
 	semDesiredCap                   int
-	semPendingResize                bool
 	cooldownProbeSem                chan struct{}
 	channelLocks                    map[uint64]bool
 	jobCancel                       map[int64]context.CancelFunc
@@ -2051,17 +2050,10 @@ func (s *RebalanceService) resetMissionControl(ctx context.Context, trigger stri
 	return state, nil
 }
 
-// resetSemaphore is called on Start() and on UpdateConfig(). It records the
-// desired capacity (from cfg.MaxConcurrent) and rebuilds the semaphore channel
-// only when there are no in-flight jobs. When a resize lands while jobs are
-// running, the new size is staged in semDesiredCap and applied by the last
-// releaseSem() of the in-flight set. This prevents leaking slots into a fresh
-// channel when defer-release of running jobs hits a replaced semaphore.
-//
-// Wave 2.3: previously this rebuilt s.sem unconditionally, which could either
-// duplicate capacity (running jobs holding the old channel + a fresh empty new
-// channel) or starve the new channel of a phantom slot when the old job
-// released onto it.
+// resetSemaphore records the bounded concurrency target and wakes blocked
+// acquirers. The channel is only a fixed-size broadcast signal; semInflight and
+// semDesiredCap enforce the limit. This avoids allocating channel capacity from
+// operator input and lets a resize safely take effect while jobs are running.
 func (s *RebalanceService) resetSemaphore() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2078,19 +2070,16 @@ func (s *RebalanceService) resetSemaphore() {
 	}
 	s.semDesiredCap = desired
 	if s.sem == nil {
-		// First-time initialization: create immediately.
-		s.sem = make(chan struct{}, desired)
+		s.sem = make(chan struct{})
 		s.semInflight = 0
-		s.semPendingResize = false
 		return
 	}
-	if s.semInflight == 0 {
-		s.sem = make(chan struct{}, desired)
-		s.semPendingResize = false
-		return
-	}
-	// Jobs are in flight on the existing channel; defer the resize.
-	s.semPendingResize = true
+	s.signalSemaphoreLocked()
+}
+
+func (s *RebalanceService) signalSemaphoreLocked() {
+	close(s.sem)
+	s.sem = make(chan struct{})
 }
 
 func (s *RebalanceService) triggerScan() {
@@ -9396,27 +9385,28 @@ group by l.target_channel_id, l.completed_at, l.target_amount_sat, l.sent_sat, l
 }
 
 func (s *RebalanceService) acquireSem(ctx context.Context) bool {
-	s.mu.Lock()
-	sem := s.sem
-	stop := s.stop
-	s.mu.Unlock()
-	if sem == nil {
-		return true
-	}
-	// Bloqueia indefinidamente esperando slot. Saída em 3 casos:
-	// 1. Slot adquirido (case sem <- struct{}{})
-	// 2. ctx cancelado pelo caller (raramente — caller usa context.Background())
-	// 3. Service shutting down (stop closed) → libera goroutines presas
-	select {
-	case sem <- struct{}{}:
+	for {
 		s.mu.Lock()
-		s.semInflight++
+		if s.sem == nil {
+			s.mu.Unlock()
+			return true
+		}
+		if s.semInflight < s.semDesiredCap {
+			s.semInflight++
+			s.mu.Unlock()
+			return true
+		}
+		wake := s.sem
+		stop := s.stop
 		s.mu.Unlock()
-		return true
-	case <-ctx.Done():
-		return false
-	case <-stop:
-		return false
+		select {
+		case <-wake:
+			continue
+		case <-ctx.Done():
+			return false
+		case <-stop:
+			return false
+		}
 	}
 }
 
@@ -9478,35 +9468,15 @@ where status in ('queued','running')
 	return err == nil && count > 0
 }
 
-// releaseSem releases the slot on the same channel the job acquired (s.sem may
-// be replaced by resetSemaphore between acquire and release). When the last
-// in-flight job releases and a resize was deferred by resetSemaphore, the new
-// capacity is applied here.
+// releaseSem returns one count-based slot and broadcasts the state change to
+// blocked acquirers.
 func (s *RebalanceService) releaseSem() {
-	s.mu.Lock()
-	sem := s.sem
-	s.mu.Unlock()
-	if sem == nil {
-		return
-	}
-	select {
-	case <-sem:
-	default:
-	}
 	s.mu.Lock()
 	if s.semInflight > 0 {
 		s.semInflight--
 	}
-	if s.semInflight == 0 && s.semPendingResize {
-		desired := s.semDesiredCap
-		if desired <= 0 {
-			desired = 1
-		}
-		if desired > rebalanceMaxConcurrent {
-			desired = rebalanceMaxConcurrent
-		}
-		s.sem = make(chan struct{}, desired)
-		s.semPendingResize = false
+	if s.sem != nil {
+		s.signalSemaphoreLocked()
 	}
 	s.mu.Unlock()
 }

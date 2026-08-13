@@ -4310,15 +4310,15 @@ func TestBuildMppShadowPlanHandlesInsufficientSourceLiquidity(t *testing.T) {
 	}
 }
 
-// Wave 2.3: resetSemaphore must defer the resize when jobs are in flight, and
-// the last release must rebuild the channel at the new desired capacity.
-func TestResetSemaphoreDefersWhileInflight(t *testing.T) {
+// A resize updates the count-based limit without replacing a capacity-sized
+// channel or losing the current in-flight count.
+func TestResetSemaphoreAppliesResizeWhileInflight(t *testing.T) {
 	s := &RebalanceService{}
 	s.cfg = RebalanceConfig{MaxConcurrent: 2}
 	s.cfgLoaded = true
 	s.resetSemaphore()
-	if s.sem == nil || cap(s.sem) != 2 {
-		t.Fatalf("expected initial sem cap=2, got %v", cap(s.sem))
+	if s.sem == nil || s.semDesiredCap != 2 {
+		t.Fatalf("expected initial desired cap=2, got %v", s.semDesiredCap)
 	}
 
 	// Acquire 2 slots (simulate 2 in-flight jobs).
@@ -4332,40 +4332,23 @@ func TestResetSemaphoreDefersWhileInflight(t *testing.T) {
 		t.Fatalf("expected inflight=2, got %d", s.semInflight)
 	}
 
-	// Bump MaxConcurrent to 5; reset must defer because inflight > 0.
+	// Bump MaxConcurrent to 5 while jobs remain in flight.
 	s.cfg.MaxConcurrent = 5
 	s.resetSemaphore()
-	if !s.semPendingResize {
-		t.Fatalf("expected pending resize after concurrent jobs holding slots")
-	}
-	if cap(s.sem) != 2 {
-		t.Fatalf("expected sem capacity unchanged (still 2) while jobs inflight, got %d", cap(s.sem))
+	if s.semDesiredCap != 5 {
+		t.Fatalf("expected desired cap=5, got %d", s.semDesiredCap)
 	}
 
-	// Release first slot — still inflight, capacity must remain 2.
+	// Release both in-flight slots under the resized limit.
 	s.releaseSem()
-	if cap(s.sem) != 2 {
-		t.Fatalf("expected sem capacity 2 after partial release, got %d", cap(s.sem))
-	}
-	if !s.semPendingResize {
-		t.Fatalf("expected pending resize still set, got cleared")
-	}
 
-	// Release last slot — resize must apply.
 	s.releaseSem()
-	if cap(s.sem) != 5 {
-		t.Fatalf("expected sem capacity 5 after final release, got %d", cap(s.sem))
-	}
-	if s.semPendingResize {
-		t.Fatalf("expected pending resize cleared after apply")
-	}
 	if s.semInflight != 0 {
 		t.Fatalf("expected inflight=0, got %d", s.semInflight)
 	}
 }
 
-// Wave 2.3: when no jobs are in flight, resetSemaphore must apply the new
-// capacity immediately.
+// When no jobs are in flight, resetSemaphore applies the limit immediately.
 func TestResetSemaphoreAppliesImmediatelyWhenIdle(t *testing.T) {
 	s := &RebalanceService{}
 	s.cfg = RebalanceConfig{MaxConcurrent: 1}
@@ -4374,11 +4357,8 @@ func TestResetSemaphoreAppliesImmediatelyWhenIdle(t *testing.T) {
 
 	s.cfg.MaxConcurrent = 4
 	s.resetSemaphore()
-	if cap(s.sem) != 4 {
-		t.Fatalf("expected immediate resize to 4 when idle, got %d", cap(s.sem))
-	}
-	if s.semPendingResize {
-		t.Fatalf("expected no pending resize after immediate apply")
+	if s.semDesiredCap != 4 {
+		t.Fatalf("expected immediate desired cap 4 when idle, got %d", s.semDesiredCap)
 	}
 }
 
@@ -4388,9 +4368,28 @@ func TestResetSemaphoreCapsOperatorControlledCapacity(t *testing.T) {
 		cfgLoaded: true,
 	}
 	s.resetSemaphore()
-	if got := cap(s.sem); got != rebalanceMaxConcurrent {
+	if got := s.semDesiredCap; got != rebalanceMaxConcurrent {
 		t.Fatalf("expected semaphore cap=%d, got %d", rebalanceMaxConcurrent, got)
 	}
+}
+
+func TestAcquireSemaphoreHonorsCountLimit(t *testing.T) {
+	s := &RebalanceService{
+		cfg:       RebalanceConfig{MaxConcurrent: 1},
+		cfgLoaded: true,
+		stop:      make(chan struct{}),
+	}
+	s.resetSemaphore()
+	if !s.acquireSem(context.Background()) {
+		t.Fatal("first semaphore acquisition failed")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if s.acquireSem(ctx) {
+		t.Fatal("second acquisition bypassed the configured limit")
+	}
+	s.releaseSem()
 }
 
 // Golden happy-path test for sortRebalanceTargets: with three healthy

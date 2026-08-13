@@ -256,8 +256,13 @@ func (n *Notifier) runRecoverable(name string, body func()) {
 
 func bootstrapNotificationsDSN(logger *log.Logger) (string, error) {
 	if existing, err := readEnvFileValue(notificationsSecretsPath, "NOTIFICATIONS_PG_DSN"); err == nil && strings.TrimSpace(existing) != "" && !isPlaceholderDSN(existing) {
-		_ = os.Setenv("NOTIFICATIONS_PG_DSN", existing)
-		return existing, nil
+		if postgresNotificationsDSNUsable(existing) {
+			_ = os.Setenv("NOTIFICATIONS_PG_DSN", existing)
+			return existing, nil
+		}
+		if logger != nil {
+			logger.Printf("notifications: stored application DSN is stale; attempting credential recovery")
+		}
 	}
 
 	adminDSN, err := ensureNotificationsAdminDSN(logger)
@@ -439,11 +444,11 @@ func ensureSecretsDir() error {
 
 func ensureNotificationsAdminDSN(logger *log.Logger) (string, error) {
 	adminDSN := os.Getenv("NOTIFICATIONS_PG_ADMIN_DSN")
-	if strings.TrimSpace(adminDSN) != "" && !isPlaceholderDSN(adminDSN) && dsnHasPassword(adminDSN) {
+	if strings.TrimSpace(adminDSN) != "" && !isPlaceholderDSN(adminDSN) && dsnHasPassword(adminDSN) && postgresNotificationsDSNUsable(adminDSN) {
 		return adminDSN, nil
 	}
 
-	if existing, err := readEnvFileValue(notificationsSecretsPath, "NOTIFICATIONS_PG_ADMIN_DSN"); err == nil && strings.TrimSpace(existing) != "" && !isPlaceholderDSN(existing) && dsnHasPassword(existing) {
+	if existing, err := readEnvFileValue(notificationsSecretsPath, "NOTIFICATIONS_PG_ADMIN_DSN"); err == nil && strings.TrimSpace(existing) != "" && !isPlaceholderDSN(existing) && dsnHasPassword(existing) && postgresNotificationsDSNUsable(existing) {
 		_ = os.Setenv("NOTIFICATIONS_PG_ADMIN_DSN", existing)
 		return existing, nil
 	}
@@ -460,6 +465,21 @@ func ensureNotificationsAdminDSN(logger *log.Logger) (string, error) {
 	}
 
 	return "", errors.New("NOTIFICATIONS_PG_ADMIN_DSN not set")
+}
+
+func postgresNotificationsDSNUsable(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || isPlaceholderDSN(raw) {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, raw)
+	if err != nil {
+		return false
+	}
+	defer pool.Close()
+	return pool.Ping(ctx) == nil
 }
 
 func deriveAdminDSNFromLND() (string, error) {

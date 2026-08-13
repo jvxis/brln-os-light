@@ -1,26 +1,35 @@
 package server
 
 import (
-  "errors"
-  "log"
-  "os"
-  "strings"
+	"errors"
+	"log"
+	"os"
+	"strings"
 )
 
 func ResolveNotificationsDSN(logger *log.Logger) (string, error) {
-  dsn := os.Getenv("NOTIFICATIONS_PG_DSN")
-  if isPlaceholderDSN(dsn) {
-    dsn = ""
-  }
-  if strings.TrimSpace(dsn) == "" {
-    bootstrapped, err := bootstrapNotificationsDSN(logger)
-    if err != nil {
-      return "", err
-    }
-    dsn = bootstrapped
-  }
-  if strings.TrimSpace(dsn) == "" {
-    return "", errors.New("NOTIFICATIONS_PG_DSN not set")
-  }
-  return dsn, nil
+	return resolveNotificationsDSN(
+		os.Getenv("NOTIFICATIONS_PG_DSN"),
+		postgresNotificationsDSNUsable,
+		func() (string, error) { return bootstrapNotificationsDSN(logger) },
+	)
+}
+
+func resolveNotificationsDSN(current string, usable func(string) bool, bootstrap func() (string, error)) (string, error) {
+	current = strings.TrimSpace(current)
+	if current != "" && !isPlaceholderDSN(current) && usable != nil && usable(current) {
+		return current, nil
+	}
+	if bootstrap == nil {
+		return "", errors.New("NOTIFICATIONS_PG_DSN not set")
+	}
+	dsn, err := bootstrap()
+	if err != nil {
+		return "", err
+	}
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" || isPlaceholderDSN(dsn) || usable == nil || !usable(dsn) {
+		return "", errors.New("NOTIFICATIONS_PG_DSN is unavailable")
+	}
+	return dsn, nil
 }

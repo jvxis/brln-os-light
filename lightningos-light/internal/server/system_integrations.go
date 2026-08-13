@@ -11,7 +11,7 @@ import (
 	"lightningos-light/internal/system"
 )
 
-const systemIntegrationsMarkerPath = "/var/lib/lightningos/system-integrations-20260811-v5"
+const systemIntegrationsMarkerPath = "/var/lib/lightningos-privileged/system-integrations-20260813-v6"
 
 //go:embed assets/lightningos-terminal.sh
 var embeddedTerminalHelper string

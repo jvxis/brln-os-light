@@ -1830,6 +1830,9 @@ func validateRegularDirectory(path string) error {
 
 func ensureDirectoryTreeNoSymlink(path string, mode os.FileMode) error {
 	cleanPath := filepath.Clean(path)
+	if isManagerSharedStorageRoot(cleanPath) {
+		return errors.New("refusing to root-own a manager shared storage root")
+	}
 	if err := os.MkdirAll(cleanPath, mode); err != nil {
 		return err
 	}
@@ -1847,6 +1850,16 @@ func ensureDirectoryTreeNoSymlink(path string, mode os.FileMode) error {
 		return err
 	}
 	return os.Chmod(cleanPath, mode)
+}
+
+func isManagerSharedStorageRoot(path string) bool {
+	cleanPath := filepath.Clean(path)
+	for _, sharedRoot := range []string{"/var/lib/lightningos", defaultAppsRoot, defaultAppsDataRoot} {
+		if cleanPath == filepath.Clean(sharedRoot) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeAtomicRegularFile(path string, data []byte, mode os.FileMode) error {

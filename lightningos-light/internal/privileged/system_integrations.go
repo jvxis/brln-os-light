@@ -18,7 +18,7 @@ const (
 	defaultManagerTLSMDNSHelperPath   = "/usr/local/sbin/lightningos-setup-manager-tls-mdns"
 	defaultLNDIntegrationDropInPath   = "/etc/systemd/system/lnd.service.d/20-lightningos-restart.conf"
 	defaultManagerTLSCertificatePath  = "/etc/lightningos/tls/server.crt"
-	defaultSystemIntegrationsMarker   = "/var/lib/lightningos/system-integrations-20260811-v5"
+	defaultSystemIntegrationsMarker   = "/var/lib/lightningos-privileged/system-integrations-20260813-v6"
 	envExecutablePath                 = "/usr/bin/env"
 	idExecutablePath                  = "/usr/bin/id"
 

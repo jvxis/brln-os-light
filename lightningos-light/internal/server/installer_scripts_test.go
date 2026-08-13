@@ -108,6 +108,25 @@ func TestInstallerArtifactVerificationRejectsModifiedBytes(t *testing.T) {
 	}
 }
 
+func TestManagedInstallerRepairsStaleNotificationsAdminCredentials(t *testing.T) {
+	path := filepath.Join("..", "..", "install.sh")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read managed installer: %v", err)
+	}
+	content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	for _, expected := range []string{
+		`ensure_notifications_admin()`,
+		`PGCONNECT_TIMEOUT=5 psql -X "$current" -tAc "select 1"`,
+		`psql_exec "Alter notifications admin password"`,
+		`update_notifications_admin_dsn "$admin_user" "$pw"`,
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("managed installer notifications recovery is missing %q", expected)
+		}
+	}
+}
+
 func TestInstallersUseAuthenticatedLNDReleaseHelper(t *testing.T) {
 	canonicalPath := filepath.Join("assets", "upgrade-lnd.sh")
 	canonicalRaw, err := os.ReadFile(canonicalPath)
@@ -765,6 +784,8 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		`rm -f -- "$sudoers_path"`,
 		`usermod -a -G docker "$manager_user"`,
 		`systemctl restart lightningos-manager`,
+		`curl -sk --max-time 3 https://127.0.0.1:8443/api/health`,
+		`The previous LightningOS Manager did not become healthy after rollback.`,
 		`! -f "$STATE_ROOT/schema-v4"`,
 		`runuser -u lightningos -- "$MANAGER_BIN" lnd-manager-credential-rollback`,
 		`chown "$admin_uid:$admin_gid" "$LND_ADMIN_MACAROON"`,

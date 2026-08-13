@@ -1385,6 +1385,24 @@ func TestComposeAppInspectRejectsTamperedManifestBeforeCommand(t *testing.T) {
 	}
 }
 
+func TestRootOwnedDirectoryHelperRejectsManagerSharedStorageRoots(t *testing.T) {
+	for _, path := range []string{
+		"/var/lib/lightningos",
+		defaultAppsRoot,
+		defaultAppsDataRoot,
+	} {
+		if !isManagerSharedStorageRoot(path) {
+			t.Fatalf("manager shared storage root was not protected: %s", path)
+		}
+		if err := ensureDirectoryTreeNoSymlink(path, 0700); err == nil {
+			t.Fatalf("root-owned directory helper accepted manager shared storage root: %s", path)
+		}
+	}
+	if isManagerSharedStorageRoot(filepath.Join(defaultAppsDataRoot, "fedimint-gateway")) {
+		t.Fatal("application-private data directory was mistaken for a shared root")
+	}
+}
+
 func TestParseDockerContainerID(t *testing.T) {
 	valid := strings.Repeat("c", 64)
 	for _, test := range []struct {

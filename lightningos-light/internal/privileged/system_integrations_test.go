@@ -225,6 +225,16 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 	}
 }
 
+func TestSystemIntegrationsMarkerIsOutsideManagerSharedState(t *testing.T) {
+	markerDir := filepath.Dir(defaultSystemIntegrationsMarker)
+	if markerDir != filepath.Clean("/var/lib/lightningos-privileged") {
+		t.Fatalf("system integrations marker is not in the broker-owned state root: %s", markerDir)
+	}
+	if isManagerSharedStorageRoot(markerDir) {
+		t.Fatalf("system integrations marker would mutate a manager shared storage root: %s", markerDir)
+	}
+}
+
 func containsRecordedCommand(commands []recordedCommand, expected recordedCommand) bool {
 	for _, command := range commands {
 		if command.path == expected.path && reflect.DeepEqual(command.args, expected.args) {

@@ -42,7 +42,7 @@ func TestEmbeddedSystemIntegrationAssetsAreSafe(t *testing.T) {
 		"so stdout contains only the selected CIDR",
 		"Restart=always",
 		"setup-manager-tls-mdns.sh",
-		"system-integrations-20260811-v5",
+		"/var/lib/lightningos-privileged/system-integrations-20260813-v6",
 	} {
 		combined := embeddedTerminalHelper + embeddedTerminalPasswordHelper + embeddedManagerFirewallHelper + embeddedManagerTLSMDNSHelper + embeddedAppUpgradeScript + systemIntegrationsMarkerPath
 		if !strings.Contains(combined, fragment) {

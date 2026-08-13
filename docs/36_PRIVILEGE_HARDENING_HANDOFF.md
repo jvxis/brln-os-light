@@ -316,7 +316,7 @@ Application state at this checkpoint:
 | PeerSwap | Fixed upstream v6.0.0 and official PSWeb commit `09983da` (v6.0.0.1 package) hashes in the compatible legacy asset folder, dedicated identity and nine-permission LND credential, root-only local/remote Elements policy, state-preserving migration, hardened units, typed status/lifecycle/removal/firewall; remote-mode LOS TESTE2 gate passed without starting services | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
 | Tapd | Official stable v0.8.0 manifest digest, five-signature release gate, exact closed Compose snapshot, dedicated nine-permission LND credential, typed lifecycle/status/remove/CLI, server-allowlisted REST universe discovery with pinned public DNS, and sensitive-action reauthentication; configurable hosts remain limited to typed `tapcli` sync; stopped LOS TESTE2 installation migrated without dependency restarts | Clean install, real functional lifecycle on a disposable node, reboot persistence, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
 | Public Pool | Immutable backend/UI manifest digests correlated to fixed source revisions, exact root-only non-root/read-only runtime, typed Bitcoin modes/status/lifecycle/remove/firewall, CPU Miner broker dependency, and state-preserving stopped LOS TESTE2 gate | Clean install, real mining/API/UI lifecycle on a disposable node, reboot persistence, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
-| Bark Wallet | Official digest-pinned Bark Web v0.7.2/Bark 0.6.1/Caddy images, architecture-specific daemon binary attestation, exact root-only snapshot, non-root read-only runtime, typed status/lifecycle/remove/firewall/password operations, protected seed routes, and real stopped-to-running-to-stopped LOS TESTE2 gate | Decide whether mnemonic reveal needs fresh password reauthentication before final security sign-off; clean install/reboot, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
+| Bark Wallet | Official digest-pinned Bark Web v0.7.2/Bark 0.6.1/Caddy images, architecture-specific daemon binary attestation, exact root-only snapshot, non-root read-only runtime, typed status/lifecycle/remove/firewall/password operations, protected seed routes, three-minute LightningOS fresh reauthentication for mnemonic reveal, and real stopped-to-running-to-stopped LOS TESTE2 gate | Clean install/reboot, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Mempool | Closed official images, Full Node/Electrs admission, root-owned snapshot, lifecycle, inspection, removal, firewall and legacy MariaDB upgrade passed | Final cross-version matrix |
 | Fedimint Guardian/Gateway | Closed official images, exact private runtimes, dedicated Gateway LND credential, lifecycle, logs, firewall and data-preserving migration passed | Final cross-version matrix |
@@ -531,10 +531,17 @@ read-only, capability-free, and `no-new-privileges`; only barkd can write the
 wallet bind. LOS TESTE2 passed HTTPS, login, direct mnemonic denial,
 unauthenticated reveal denial, start/stop, and state/TLS preservation checks,
 then returned to stopped without Bitcoin, LND, manager, firewall, or network
-changes. Upstream mnemonic reveal has session+CSRF protection but no fresh
-password reauthentication; preserve the beta warning and resolve that policy
-before final sign-off. Evidence:
-`docs/baselines/privilege-hardening-phase2-bark-wallet-boundary-2026-08-12.json`.
+changes. The final policy preserves the official session+CSRF backup flow and
+adds a three-minute `bark_seed_reveal` LightningOS reauthentication gate at the
+Caddy boundary. The proxy trusts only the fixed root-owned LightningOS CA and
+uses SNI `localhost`; the manager sees authorization state only, never Bark
+credentials or mnemonic bytes. Active UFW admits 8443 only on the validated
+Bark bridge. Login-disabled nodes retain the upstream Bark authentication
+boundary. Caddy 2.10.2 accepted the generated configuration on
+the disposable Ubuntu 26.04 VM. Evidence:
+`docs/baselines/privilege-hardening-phase2-bark-wallet-boundary-2026-08-12.json`
+and
+`docs/baselines/privilege-hardening-phase2-bark-wallet-reauth-2026-08-13.json`.
 
 The Mempool slice is accepted. Official v3.3.1 frontend/backend and MariaDB
 10.11.18 images are digest-pinned; the broker owns the closed declaration,

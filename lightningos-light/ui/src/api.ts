@@ -1118,6 +1118,8 @@ export type AppStoreInfo = {
 }
 
 export const getApps = (): Promise<AppStoreInfo[]> => request('/api/apps')
+export const getBarkWalletRevealAuthorization = () =>
+  request('/api/apps/bark-wallet/reveal-authorization')
 export const getAppStorageTargets = (app: string) =>
   request(`/api/apps/storage-targets${buildQuery({ app })}`)
 export const getElectrsStatus = () => request('/api/apps/electrs/status')

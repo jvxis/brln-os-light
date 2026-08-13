@@ -1009,10 +1009,20 @@ auth, TLS, and proxy configuration are exact read-only files.
 The v0.7.2 authentication boundary forces UI auth, secure HttpOnly/SameSite
 cookies over HTTPS, and CSRF on state changes. Direct barkd mnemonic access
 returned 404, unauthenticated reveal returned 401, and a broker-delivered
-password created a valid session. Upstream reveal still relies on the existing
-session plus CSRF rather than fresh password reauthentication; Bark remains
-beta and this residual policy decision stays open for final `0.5.3` security
-sign-off rather than being misrepresented as solved.
+password created a valid session. The final policy decision preserves that
+official backup flow but adds LightningOS fresh reauthentication: opening Bark
+requires the `bark_seed_reveal` scope and the proxy forwards the exact mnemonic
+reveal route only while that authorization is younger than three minutes. The
+proxy authenticates the manager with the fixed root-owned LightningOS CA and
+SNI `localhost`; insecure TLS verification is forbidden. The manager returns
+only 204 authorization state and never receives the mnemonic, Bark session,
+token, or UI password. When UFW is active, the broker derives the exact Bark
+bridge from Docker's validated network ID and admits manager port 8443 only on
+that bridge. Login-disabled nodes retain Bark's own authenticated session and
+CSRF boundary. Caddy 2.10.2 accepted the generated configuration on
+the disposable Ubuntu 26.04 VM using the official release checksum. Evidence is
+in
+`docs/baselines/privilege-hardening-phase2-bark-wallet-reauth-2026-08-13.json`.
 
 The four existing data files were byte-identical across broker enrollment;
 the subsequent functional start performed expected database writes. The

@@ -85,6 +85,7 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/apps/{id}/stop", s.handleAppStop)
 	r.Post("/api/apps/{id}/reset-admin", s.handleAppResetAdmin)
 	r.Get("/api/apps/{id}/admin-password", s.handleAppAdminPassword)
+	r.Get("/api/apps/bark-wallet/reveal-authorization", s.handleBarkWalletRevealAuthorization)
 	r.Get("/api/apps/electrs/status", s.handleElectrsStatus)
 	r.Get("/api/apps/cpuminer/status", s.handleCpuMinerStatus)
 	r.Post("/api/apps/cpuminer/threads", s.handleCpuMinerThreads)

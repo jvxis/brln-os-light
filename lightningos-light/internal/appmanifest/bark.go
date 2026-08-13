@@ -46,12 +46,13 @@ const (
 )
 
 type BarkWalletComposePaths struct {
-	WalletDir         string
-	AdminPasswordPath string
-	SessionSecretPath string
-	CaddyfilePath     string
-	TLSCertificate    string
-	TLSPrivateKey     string
+	WalletDir            string
+	AdminPasswordPath    string
+	SessionSecretPath    string
+	CaddyfilePath        string
+	TLSCertificate       string
+	TLSPrivateKey        string
+	ManagerCACertificate string
 }
 
 func BarkWalletImageForVariant(variant AppImageVariant) (string, error) {
@@ -86,29 +87,43 @@ func BarkWalletCaddyConfig() string {
 https://:%d {
 	tls /etc/caddy/tls/server.crt /etc/caddy/tls/server.key
 
-	@direct_mnemonic path /api/barkd/api/v1/wallet/mnemonic
-	handle @direct_mnemonic {
-		respond 404
-	}
+	route {
+		@direct_mnemonic path /api/barkd/api/v1/wallet/mnemonic
+		handle @direct_mnemonic {
+			respond 404
+		}
 
-	handle /api/* {
-		reverse_proxy api:%d
-	}
+		@reveal_mnemonic path /api/reveal-mnemonic
+		handle @reveal_mnemonic {
+			forward_auth https://host.docker.internal:8443 {
+				uri /api/apps/bark-wallet/reveal-authorization
+				transport http {
+					tls_trust_pool file /etc/caddy/manager-ca.crt
+					tls_server_name localhost
+				}
+			}
+			reverse_proxy api:%d
+		}
 
-	handle_path /barkd-ws/* {
-		reverse_proxy barkd:%d
-	}
+		handle /api/* {
+			reverse_proxy api:%d
+		}
 
-	handle {
-		reverse_proxy web:8080
+		handle_path /barkd-ws/* {
+			reverse_proxy barkd:%d
+		}
+
+		handle {
+			reverse_proxy web:8080
+		}
 	}
 }
-`, BarkWalletPort, BarkWalletAPIInternalPort, BarkWalletDaemonPort)
+`, BarkWalletPort, BarkWalletAPIInternalPort, BarkWalletAPIInternalPort, BarkWalletDaemonPort)
 }
 
 func BarkWalletCompose(paths BarkWalletComposePaths) (string, error) {
 	if paths.WalletDir == "" || paths.AdminPasswordPath == "" || paths.SessionSecretPath == "" ||
-		paths.CaddyfilePath == "" || paths.TLSCertificate == "" || paths.TLSPrivateKey == "" {
+		paths.CaddyfilePath == "" || paths.TLSCertificate == "" || paths.TLSPrivateKey == "" || paths.ManagerCACertificate == "" {
 		return "", errors.New("Bark Wallet compose path is invalid")
 	}
 	return fmt.Sprintf(`services:
@@ -208,6 +223,8 @@ func BarkWalletCompose(paths BarkWalletComposePaths) (string, error) {
         exec /run/lightningos-bin/caddy run --config /etc/caddy/Caddyfile
     ports:
       - "%d:%d"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
       - /run/lightningos-bin:rw,exec,nosuid,nodev,size=64m,uid=%d,gid=%d,mode=0700
@@ -217,6 +234,7 @@ func BarkWalletCompose(paths BarkWalletComposePaths) (string, error) {
       - %s:/etc/caddy/Caddyfile:ro
       - %s:/etc/caddy/tls/server.crt:ro
       - %s:/etc/caddy/tls/server.key:ro
+      - %s:/etc/caddy/manager-ca.crt:ro
     depends_on:
       - web
       - api
@@ -234,5 +252,6 @@ networks:
 		paths.WalletDir, BarkWalletProxyImage, BarkWalletStopTimeout, BarkWalletProxyUID,
 		BarkWalletProxyGID, BarkWalletPort, BarkWalletPort, BarkWalletProxyUID,
 		BarkWalletProxyGID, BarkWalletProxyUID, BarkWalletProxyGID, BarkWalletProxyUID,
-		BarkWalletProxyGID, paths.CaddyfilePath, paths.TLSCertificate, paths.TLSPrivateKey), nil
+		BarkWalletProxyGID, paths.CaddyfilePath, paths.TLSCertificate, paths.TLSPrivateKey,
+		paths.ManagerCACertificate), nil
 }

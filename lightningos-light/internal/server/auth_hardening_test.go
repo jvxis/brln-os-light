@@ -174,6 +174,55 @@ func TestLightningFundsScopeIsValid(t *testing.T) {
 	}
 }
 
+func TestBarkWalletRevealAuthorizationRequiresRecentReauth(t *testing.T) {
+	now := time.Date(2026, 8, 13, 15, 0, 0, 0, time.UTC)
+	auth := &AuthService{
+		enabled:  true,
+		now:      func() time.Time { return now },
+		sessions: make(map[string]*authSession),
+	}
+	auth.sessions["session-id"] = &authSession{
+		ID:           "session-id",
+		CSRFToken:    "csrf-token",
+		ExpiresAt:    now.Add(time.Hour),
+		ReauthScopes: make(map[string]time.Time),
+	}
+	server := &Server{auth: auth}
+	snapshot := authSessionSnapshot{ID: "session-id", CSRFToken: "csrf-token", ExpiresAt: now.Add(time.Hour)}
+	request := httptest.NewRequest(http.MethodGet, "/api/apps/bark-wallet/reveal-authorization", nil)
+	request = request.WithContext(context.WithValue(request.Context(), authSessionContextKey, snapshot))
+
+	recorder := httptest.NewRecorder()
+	server.handleBarkWalletRevealAuthorization(recorder, request)
+	if recorder.Code != http.StatusPreconditionRequired || !strings.Contains(recorder.Body.String(), "bark_seed_reauth_required") {
+		t.Fatalf("expected fresh reauth challenge, got status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("reveal authorization challenge must not be cached")
+	}
+
+	auth.sessions["session-id"].ReauthScopes[authScopeBarkSeedReveal] = now.Add(-4 * time.Minute)
+	recorder = httptest.NewRecorder()
+	server.handleBarkWalletRevealAuthorization(recorder, request)
+	if recorder.Code != http.StatusPreconditionRequired {
+		t.Fatalf("expired Bark reauth was accepted: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	auth.sessions["session-id"].ReauthScopes[authScopeBarkSeedReveal] = now.Add(time.Minute)
+	recorder = httptest.NewRecorder()
+	server.handleBarkWalletRevealAuthorization(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("recent reauth was rejected: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	server.auth = &AuthService{enabled: false}
+	recorder = httptest.NewRecorder()
+	server.handleBarkWalletRevealAuthorization(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("login-disabled install should retain Bark app authentication only: status=%d", recorder.Code)
+	}
+}
+
 func TestAuthAuditReasonDoesNotExposeErrorText(t *testing.T) {
 	if got := authAuditReason(errors.New("password=should-never-appear")); got != "request_failed" {
 		t.Fatalf("unexpected audit reason: %q", got)

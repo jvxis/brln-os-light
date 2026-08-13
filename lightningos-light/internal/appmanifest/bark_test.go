@@ -7,12 +7,13 @@ import (
 
 func testBarkWalletComposePaths() BarkWalletComposePaths {
 	return BarkWalletComposePaths{
-		WalletDir:         "/var/lib/lightningos/apps-data/bark-wallet/wallet",
-		AdminPasswordPath: "/var/lib/lightningos/apps-data/bark-wallet/auth/ui_password",
-		SessionSecretPath: "/var/lib/lightningos/apps-data/bark-wallet/auth/ui_session_secret",
-		CaddyfilePath:     "/var/lib/lightningos-privileged/apps/bark-wallet/Caddyfile",
-		TLSCertificate:    "/var/lib/lightningos-privileged/apps/bark-wallet/tls/server.crt",
-		TLSPrivateKey:     "/var/lib/lightningos-privileged/apps/bark-wallet/tls/server.key",
+		WalletDir:            "/var/lib/lightningos/apps-data/bark-wallet/wallet",
+		AdminPasswordPath:    "/var/lib/lightningos/apps-data/bark-wallet/auth/ui_password",
+		SessionSecretPath:    "/var/lib/lightningos/apps-data/bark-wallet/auth/ui_session_secret",
+		CaddyfilePath:        "/var/lib/lightningos-privileged/apps/bark-wallet/Caddyfile",
+		TLSCertificate:       "/var/lib/lightningos-privileged/apps/bark-wallet/tls/server.crt",
+		TLSPrivateKey:        "/var/lib/lightningos-privileged/apps/bark-wallet/tls/server.key",
+		ManagerCACertificate: "/etc/lightningos/tls/local-ca.crt",
 	}
 }
 
@@ -52,6 +53,7 @@ func TestBarkWalletComposeIsClosedAndLeastPrivilege(t *testing.T) {
 		"no-new-privileges:true", `user: "65530:65530"`, `user: "65531:65531"`, `user: "65532:65532"`,
 		"entrypoint:\n      - /usr/local/bin/barkd",
 		"/run/lightningos-auth/ui_password:ro", "/run/lightningos-auth/ui_session_secret:ro",
+		"host.docker.internal:host-gateway", "/etc/caddy/manager-ca.crt:ro",
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("compose is missing %q", required)
@@ -74,17 +76,23 @@ func TestBarkWalletProxyBlocksDirectMnemonicAndPreservesProtectedRoute(t *testin
 	config := BarkWalletCaddyConfig()
 	for _, required := range []string{
 		"/api/barkd/api/v1/wallet/mnemonic", "respond 404", "handle /api/*",
+		"/api/reveal-mnemonic", "forward_auth https://host.docker.internal:8443",
+		"uri /api/apps/bark-wallet/reveal-authorization", "tls_trust_pool file /etc/caddy/manager-ca.crt",
+		"tls_server_name localhost",
 		"handle_path /barkd-ws/*", "tls /etc/caddy/tls/server.crt /etc/caddy/tls/server.key",
 	} {
 		if !strings.Contains(config, required) {
 			t.Fatalf("proxy config is missing %q", required)
 		}
 	}
+	if strings.Contains(config, "tls_insecure_skip_verify") {
+		t.Fatal("proxy disables manager TLS verification")
+	}
 }
 
 func TestBarkWalletComposeRejectsMissingBrokerPath(t *testing.T) {
 	paths := testBarkWalletComposePaths()
-	paths.TLSPrivateKey = ""
+	paths.ManagerCACertificate = ""
 	if _, err := BarkWalletCompose(paths); err == nil {
 		t.Fatal("missing broker-owned path accepted")
 	}

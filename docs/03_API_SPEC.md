@@ -563,6 +563,11 @@ GET /api/apps
 - Public Pool firewall admission is broker-owned and fixed to its UI and Stratum ports; no executable UFW command is returned to the manager or API client.
 - `bark-wallet` reports `scheme=https`, port `4004`, and the path of its generated UI login password. Its Bark daemon and API are not published on the host.
 
+GET /api/apps/bark-wallet/reveal-authorization
+- Authorizes the Bark Wallet proxy to forward its recovery-phrase reveal endpoint.
+- Requires recent `bark_seed_reveal` reauthentication when LightningOS login protection is enabled. Missing reauthentication returns HTTP 428 with `code=bark_seed_reauth_required`.
+- Returns HTTP 204 and no sensitive data. The manager never receives the Bark mnemonic, Bark session token, or Bark UI password.
+
 POST /api/apps/{id}/install
 - Installs an app.
 - For `bitcoincore` and `elements`, optional body:

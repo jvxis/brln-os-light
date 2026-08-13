@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAppAdminPassword, getAppStorageTargets, getApps, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, type AppStoreInfo, type StorageTarget } from '../api'
+import { APIError, getAppAdminPassword, getAppStorageTargets, getApps, getBarkWalletRevealAuthorization, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, reauthAuth, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, type AppStoreInfo, type StorageTarget } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
@@ -20,6 +20,7 @@ import loopIcon from '../assets/apps/lightning-loop.svg'
 import loopOutBRLNIcon from '../assets/apps/loopout-brln.png'
 import magmaSalesIcon from '../assets/apps/magma-sales.svg'
 import CpuMinerStats from '../components/CpuMinerStats'
+import SensitiveActionModal from '../components/SensitiveActionModal'
 
 type AppInfo = AppStoreInfo
 
@@ -112,6 +113,23 @@ const hiddenStoreAppIds = new Set(['depixbuy'])
 const elevatedLndAccessNotice = 'elevated_lnd_access'
 const lndDataDirectoryReadNotice = 'lnd_data_directory_read'
 
+const validatedBarkWalletURL = (rawURL: string) => {
+  try {
+    const candidate = new URL(rawURL, window.location.href)
+    const candidateHost = candidate.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    const currentHost = window.location.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    if (
+      candidate.protocol !== 'https:' || candidateHost !== currentHost || candidate.port !== '4004' ||
+      candidate.username !== '' || candidate.password !== ''
+    ) {
+      return ''
+    }
+    return candidate.href
+  } catch {
+    return ''
+  }
+}
+
 export default function AppStore() {
   const { t } = useTranslation()
   const [apps, setApps] = useState<AppInfo[]>([])
@@ -142,6 +160,11 @@ export default function AppStore() {
   const [peerswapRemoteMessage, setPeerswapRemoteMessage] = useState('')
   const [peerswapRemoteTested, setPeerswapRemoteTested] = useState(false)
   const [barkWalletInstallOpen, setBarkWalletInstallOpen] = useState(false)
+  const [barkRevealReauthOpen, setBarkRevealReauthOpen] = useState(false)
+  const [barkRevealPassword, setBarkRevealPassword] = useState('')
+  const [barkRevealBusy, setBarkRevealBusy] = useState(false)
+  const [barkRevealError, setBarkRevealError] = useState('')
+  const [barkRevealURL, setBarkRevealURL] = useState('')
   const [pendingElevatedInstall, setPendingElevatedInstall] = useState<PendingElevatedInstall | null>(null)
   const [elevatedInstallAcknowledged, setElevatedInstallAcknowledged] = useState(false)
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
@@ -444,6 +467,76 @@ export default function AppStore() {
     await handleAction('bark-wallet', 'install', {})
   }
 
+  const openBarkWalletWindow = () => {
+    const popup = window.open('about:blank', '_blank')
+    if (popup) popup.opener = null
+    return popup
+  }
+
+  const navigateBarkWalletWindow = (popup: Window | null, url: string) => {
+    if (popup) {
+      popup.location.replace(url)
+      return
+    }
+    window.location.assign(url)
+  }
+
+  const closeBarkRevealReauth = () => {
+    if (barkRevealBusy) return
+    setBarkRevealReauthOpen(false)
+    setBarkRevealPassword('')
+    setBarkRevealError('')
+    setBarkRevealURL('')
+  }
+
+  const handleBarkWalletOpen = async (url: string) => {
+    const safeURL = validatedBarkWalletURL(url)
+    if (!safeURL) {
+      setMessage(t('appStore.barkWalletOpenFailed'))
+      return
+    }
+    const popup = openBarkWalletWindow()
+    setMessage('')
+    try {
+      await getBarkWalletRevealAuthorization()
+      navigateBarkWalletWindow(popup, safeURL)
+    } catch (err) {
+      popup?.close()
+      if (err instanceof APIError && err.code === 'bark_seed_reauth_required') {
+        setBarkRevealURL(safeURL)
+        setBarkRevealPassword('')
+        setBarkRevealError('')
+        setBarkRevealReauthOpen(true)
+        return
+      }
+      setMessage(err instanceof Error ? err.message : t('appStore.barkWalletOpenFailed'))
+    }
+  }
+
+  const handleBarkRevealReauth = async () => {
+    if (!barkRevealPassword.trim()) {
+      setBarkRevealError(t('appStore.barkWalletReauthPasswordRequired'))
+      return
+    }
+    const popup = openBarkWalletWindow()
+    setBarkRevealBusy(true)
+    setBarkRevealError('')
+    try {
+      await reauthAuth({ password: barkRevealPassword, scope: 'bark_seed_reveal' })
+      await getBarkWalletRevealAuthorization()
+      const url = barkRevealURL
+      setBarkRevealReauthOpen(false)
+      setBarkRevealPassword('')
+      setBarkRevealURL('')
+      navigateBarkWalletWindow(popup, url)
+    } catch (err) {
+      popup?.close()
+      setBarkRevealError(err instanceof Error ? err.message : t('appStore.barkWalletOpenFailed'))
+    } finally {
+      setBarkRevealBusy(false)
+    }
+  }
+
   const closeElevatedInstall = () => {
     setPendingElevatedInstall(null)
     setElevatedInstallAcknowledged(false)
@@ -742,6 +835,7 @@ export default function AppStore() {
                     <p>{t('appStore.barkWalletExternalOperator')}</p>
                     <p>{t('appStore.barkWalletNoLocalLnd')}</p>
                     <p>{t('appStore.barkWalletDataPreserved')}</p>
+                    <p>{t('appStore.barkWalletSeedReauth')}</p>
                   </>
                 )}
               </div>
@@ -763,7 +857,12 @@ export default function AppStore() {
                         {t('common.open')}
                       </a>
                     )}
-                    {!internalRoute && openUrl && (
+                    {!internalRoute && openUrl && app.id === 'bark-wallet' && (
+                      <button className="btn-primary" type="button" onClick={() => void handleBarkWalletOpen(openUrl)}>
+                        {t('common.open')}
+                      </button>
+                    )}
+                    {!internalRoute && openUrl && app.id !== 'bark-wallet' && (
                       <a className="btn-primary" href={openUrl} target="_blank" rel="noreferrer">
                         {t('common.open')}
                       </a>
@@ -1155,6 +1254,19 @@ export default function AppStore() {
           </div>
         </div>
       )}
+
+      <SensitiveActionModal
+        open={barkRevealReauthOpen}
+        title={t('appStore.barkWalletReauthTitle')}
+        description={t('appStore.barkWalletReauthBody')}
+        password={barkRevealPassword}
+        busy={barkRevealBusy}
+        error={barkRevealError}
+        confirmLabel={t('appStore.barkWalletReauthConfirm')}
+        onPasswordChange={setBarkRevealPassword}
+        onConfirm={handleBarkRevealReauth}
+        onClose={closeBarkRevealReauth}
+      />
     </section>
   )
 }

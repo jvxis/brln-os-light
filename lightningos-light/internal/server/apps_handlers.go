@@ -280,3 +280,18 @@ func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, http.StatusOK, map[string]string{"password": password})
 }
+
+func (s *Server) handleBarkWalletRevealAuthorization(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
+	if !s.requireSensitiveReauth(
+		w,
+		r,
+		authScopeBarkSeedReveal,
+		"",
+		"bark_seed_reauth_required",
+		"password confirmation required before revealing the Bark Wallet recovery phrase",
+	) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

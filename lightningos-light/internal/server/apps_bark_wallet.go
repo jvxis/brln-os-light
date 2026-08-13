@@ -95,8 +95,8 @@ func (s *Server) prepareAndStartBarkWallet(ctx context.Context) error {
 	}
 	if handled, err := system.EnsureBarkWalletFirewallWithBroker(ctx); !handled {
 		return errors.New("Bark Wallet firewall requires privileged broker enforce mode")
-	} else if err != nil && s.logger != nil {
-		s.logger.Printf("bark-wallet: firewall rule failed: %v", err)
+	} else if err != nil {
+		return fmt.Errorf("Bark Wallet firewall failed: %w", err)
 	}
 	return nil
 }

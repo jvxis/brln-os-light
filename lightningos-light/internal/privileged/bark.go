@@ -1,6 +1,7 @@
 package privileged
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -20,27 +21,32 @@ import (
 	"lightningos-light/internal/appmanifest"
 )
 
-const maxBarkWalletSecretBytes = 4096
+const (
+	maxBarkWalletSecretBytes        = 4096
+	defaultManagerCACertificatePath = "/etc/lightningos/tls/local-ca.crt"
+)
 
 type BarkWalletPaths struct {
-	SnapshotRoot      string
-	WalletDir         string
-	AuthDir           string
-	AdminPasswordPath string
-	SessionSecretPath string
-	ComposePath       string
-	CaddyfilePath     string
-	TLSDir            string
-	TLSCertificate    string
-	TLSPrivateKey     string
-	LegacyComposePath string
-	LegacyTLSCert     string
-	LegacyTLSKey      string
+	SnapshotRoot         string
+	WalletDir            string
+	AuthDir              string
+	AdminPasswordPath    string
+	SessionSecretPath    string
+	ComposePath          string
+	CaddyfilePath        string
+	TLSDir               string
+	TLSCertificate       string
+	TLSPrivateKey        string
+	ManagerCACertificate string
+	LegacyComposePath    string
+	LegacyTLSCert        string
+	LegacyTLSKey         string
 }
 
 type NativeBarkWalletManager struct {
-	Runner CommandRunner
-	Paths  BarkWalletPaths
+	Runner       CommandRunner
+	Paths        BarkWalletPaths
+	requireFixed bool
 }
 
 func NewNativeBarkWalletManager(runner CommandRunner) *NativeBarkWalletManager {
@@ -48,20 +54,21 @@ func NewNativeBarkWalletManager(runner CommandRunner) *NativeBarkWalletManager {
 	dataRoot := filepath.Join(defaultAppsDataRoot, appmanifest.BarkWalletID)
 	legacyRoot := filepath.Join(defaultAppsRoot, appmanifest.BarkWalletID)
 	tlsDir := filepath.Join(snapshotRoot, appmanifest.BarkWalletTLSDir)
-	return &NativeBarkWalletManager{Runner: runner, Paths: BarkWalletPaths{
-		SnapshotRoot:      snapshotRoot,
-		WalletDir:         filepath.Join(dataRoot, "wallet"),
-		AuthDir:           filepath.Join(dataRoot, "auth"),
-		AdminPasswordPath: filepath.Join(dataRoot, "auth", "ui_password"),
-		SessionSecretPath: filepath.Join(dataRoot, "auth", "ui_session_secret"),
-		ComposePath:       filepath.Join(snapshotRoot, appmanifest.BarkWalletComposeFile),
-		CaddyfilePath:     filepath.Join(snapshotRoot, appmanifest.BarkWalletCaddyfile),
-		TLSDir:            tlsDir,
-		TLSCertificate:    filepath.Join(tlsDir, "server.crt"),
-		TLSPrivateKey:     filepath.Join(tlsDir, "server.key"),
-		LegacyComposePath: filepath.Join(legacyRoot, appmanifest.BarkWalletComposeFile),
-		LegacyTLSCert:     filepath.Join(legacyRoot, appmanifest.BarkWalletTLSDir, "server.crt"),
-		LegacyTLSKey:      filepath.Join(legacyRoot, appmanifest.BarkWalletTLSDir, "server.key"),
+	return &NativeBarkWalletManager{Runner: runner, requireFixed: true, Paths: BarkWalletPaths{
+		SnapshotRoot:         snapshotRoot,
+		WalletDir:            filepath.Join(dataRoot, "wallet"),
+		AuthDir:              filepath.Join(dataRoot, "auth"),
+		AdminPasswordPath:    filepath.Join(dataRoot, "auth", "ui_password"),
+		SessionSecretPath:    filepath.Join(dataRoot, "auth", "ui_session_secret"),
+		ComposePath:          filepath.Join(snapshotRoot, appmanifest.BarkWalletComposeFile),
+		CaddyfilePath:        filepath.Join(snapshotRoot, appmanifest.BarkWalletCaddyfile),
+		TLSDir:               tlsDir,
+		TLSCertificate:       filepath.Join(tlsDir, "server.crt"),
+		TLSPrivateKey:        filepath.Join(tlsDir, "server.key"),
+		ManagerCACertificate: defaultManagerCACertificatePath,
+		LegacyComposePath:    filepath.Join(legacyRoot, appmanifest.BarkWalletComposeFile),
+		LegacyTLSCert:        filepath.Join(legacyRoot, appmanifest.BarkWalletTLSDir, "server.crt"),
+		LegacyTLSKey:         filepath.Join(legacyRoot, appmanifest.BarkWalletTLSDir, "server.key"),
 	}}
 }
 
@@ -70,6 +77,7 @@ func (manager *NativeBarkWalletManager) composePaths() appmanifest.BarkWalletCom
 		WalletDir: manager.Paths.WalletDir, AdminPasswordPath: manager.Paths.AdminPasswordPath,
 		SessionSecretPath: manager.Paths.SessionSecretPath, CaddyfilePath: manager.Paths.CaddyfilePath,
 		TLSCertificate: manager.Paths.TLSCertificate, TLSPrivateKey: manager.Paths.TLSPrivateKey,
+		ManagerCACertificate: manager.Paths.ManagerCACertificate,
 	}
 }
 
@@ -103,6 +111,9 @@ func (manager *NativeBarkWalletManager) Status(ctx context.Context) (BarkWalletS
 }
 
 func (manager *NativeBarkWalletManager) Ensure(_ context.Context, dryRun bool) (BarkWalletState, error) {
+	if err := manager.validateManagerCA(); err != nil {
+		return BarkWalletState{}, err
+	}
 	composeRaw, err := appmanifest.BarkWalletCompose(manager.composePaths())
 	if err != nil {
 		return BarkWalletState{}, err
@@ -215,6 +226,23 @@ func (manager *NativeBarkWalletManager) EnsureFirewall(ctx context.Context, dryR
 	status, err := manager.Runner.Run(ctx, ufwPath, "status")
 	if err != nil || !strings.Contains(strings.ToLower(status), "status: active") {
 		return BarkWalletState{Status: "inactive"}, nil
+	}
+	networkID, err := manager.Runner.Run(ctx, dockerPath, "network", "inspect", appmanifest.BarkWalletProject+"_default", "--format", "{{.Id}}")
+	if err != nil {
+		return BarkWalletState{}, errors.New("Bark Wallet network lookup failed")
+	}
+	id := strings.TrimSpace(networkID)
+	if len(id) < 12 || len(id) > 64 {
+		return BarkWalletState{}, errors.New("Bark Wallet network ID is invalid")
+	}
+	for _, char := range id {
+		if !strings.ContainsRune("0123456789abcdef", char) {
+			return BarkWalletState{}, errors.New("Bark Wallet network ID is invalid")
+		}
+	}
+	bridge := "br-" + id[:12]
+	if _, err := manager.Runner.Run(ctx, ufwPath, "allow", "in", "on", bridge, "to", "any", "port", "8443", "proto", "tcp"); err != nil {
+		return BarkWalletState{}, errors.New("Bark Wallet manager authorization firewall preparation failed")
 	}
 	if _, err := manager.Runner.Run(ctx, ufwPath, "allow", strconv.Itoa(appmanifest.BarkWalletPort)+"/tcp"); err != nil {
 		return BarkWalletState{}, errors.New("Bark Wallet firewall preparation failed")
@@ -337,6 +365,9 @@ func barkWalletPathEntryExists(path string) (bool, error) {
 }
 
 func (manager *NativeBarkWalletManager) validateSnapshot() error {
+	if err := manager.validateManagerCA(); err != nil {
+		return err
+	}
 	if err := validateBarkWalletSnapshotPermissions(manager.Paths); err != nil {
 		return err
 	}
@@ -368,6 +399,32 @@ func (manager *NativeBarkWalletManager) validateSnapshot() error {
 	}
 	if _, err := readBarkWalletSecret(manager.Paths.SessionSecretPath); err != nil {
 		return errors.New("Bark Wallet session secret is invalid")
+	}
+	return nil
+}
+
+func (manager *NativeBarkWalletManager) validateManagerCA() error {
+	if manager == nil || manager.Paths.ManagerCACertificate == "" {
+		return errors.New("manager CA certificate is unavailable")
+	}
+	if manager.requireFixed {
+		if manager.Paths.ManagerCACertificate != defaultManagerCACertificatePath ||
+			validateRootOwnedRegularFile(manager.Paths.ManagerCACertificate, 0o644) != nil {
+			return errors.New("manager CA certificate metadata is unsafe")
+		}
+	}
+	raw, err := readRegularFile(manager.Paths.ManagerCACertificate, 64*1024)
+	if err != nil {
+		return errors.New("manager CA certificate is unavailable")
+	}
+	block, rest := pem.Decode(raw)
+	if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
+		return errors.New("manager CA certificate is invalid")
+	}
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	now := time.Now()
+	if err != nil || !certificate.IsCA || now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
+		return errors.New("manager CA certificate is invalid")
 	}
 	return nil
 }

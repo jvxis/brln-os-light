@@ -15,6 +15,7 @@ func TestAuthScopeValidSensitiveControls(t *testing.T) {
 		authScopeLoopSwap,
 		authScopeLoopOutBRLN,
 		authScopeTerminalCredential,
+		authScopeBarkSeedReveal,
 	} {
 		t.Run(scope, func(t *testing.T) {
 			if !authScopeValid(scope) {

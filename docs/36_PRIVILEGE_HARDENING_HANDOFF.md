@@ -10,8 +10,8 @@ Last reconciled: 2026-08-12.
 ## Authoritative objective
 
 Complete the entire LightningOS `0.5.3` privilege-hardening plan on branch
-`agent/0.5.3-privilege-hardening`. A single application migration, including
-the current native BRLN slice, is only a subgoal. The work is complete only when
+`agent/0.5.3-privilege-hardening`. Any single application migration is only a
+subgoal. The work is complete only when
 all completion criteria in the plan are proven and Draft PR #33 is ready for
 review. Do not redefine completion around the latest migrated app.
 
@@ -32,16 +32,18 @@ The scope includes:
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote Draft PR: `#33`, targeting `main`.
-- Published checkpoint entering the PeerSwap slice: `1561dde`.
+- Published checkpoint entering the Tapd slice: `bc8d9da`.
 - The accepted PeerSwap implementation checkpoint is `a3cfb2b`, subject
   `0.5.3-Beta: harden PeerSwap runtime`.
+- The accepted Tapd implementation checkpoint is the commit carrying this
+  handoff, subject `0.5.3-Beta: harden Tapd runtime`.
 - `origin/main` was then integrated through `c0c488a` because it had a concrete
   conflict in PeerSwap and supplied the owner's updated PSWeb binary in
   `cd0ea3e`, plus the intervening 0.5.2 fee/Magma fixes. The hardening catalog
   now pins that binary to official upstream commit `09983da` and its tested
   SHA-256; this was not a routine merge merely because `main` advanced.
-- PeerSwap gate uploads and local/remote temporary files were cleaned before
-  publication.
+- Tapd gate uploads and remote files were removed, local cache directories were
+  sent to the recycle bin, and the worktree contains no temporary artifacts.
 - Every new implementation or evidence commit must start with
   `0.5.3-Beta`.
 - `main` may continue receiving `0.5.2` work. Do not merge or rebase it into
@@ -113,6 +115,7 @@ Application state at this checkpoint:
 | Lightning Loop | Closed native broker contract for fixed official release, user/directories, config/unit, dedicated LND material, lifecycle/status/removal and client-material repair; existing stopped installation preserved through real LOS TESTE2 gate | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
 | Elements | Closed native broker for official digest-pinned release, dedicated identity, enrolled storage, safe config merge/read, bounded RPC status, hardened unit and lifecycle/removal; preserved inactive LOS TESTE2 install migrated without dependency restarts | Clean install/reboot and shared final matrix |
 | PeerSwap | Fixed upstream v6.0.0 and official PSWeb commit `09983da` (v6.0.0.1 package) hashes in the compatible legacy asset folder, dedicated identity and nine-permission LND credential, root-only local/remote Elements policy, state-preserving migration, hardened units, typed status/lifecycle/removal/firewall; remote-mode LOS TESTE2 gate passed without starting services | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
+| Tapd | Official stable v0.8.0 manifest digest, five-signature release gate, exact closed Compose snapshot, dedicated nine-permission LND credential, typed lifecycle/status/remove/CLI, SSRF-safe universe discovery, and sensitive-action reauthentication; stopped LOS TESTE2 installation migrated without dependency restarts | Clean install, real functional lifecycle on a disposable node, reboot persistence, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
 | Native apps and in-process features | Inventory plus isolated shared primitives only | Migrate privileged systemd, files, users, binaries, storage, firewall, and credential paths as applicable |
@@ -289,11 +292,21 @@ and unchanged Bitcoin/LND/manager timestamps while PeerSwap stayed
 inactive/disabled. Evidence:
 `docs/baselines/privilege-hardening-phase2-peerswap-boundary-2026-08-12.json`.
 
-The next application slice should return to the remaining Docker catalog,
-starting with Tapd unless a new dependency changes the order. Public Pool and
-Bark follow; Mempool and both Fedimint apps remain deliberately late per owner
-priority. Do not remove the manager's Docker-group membership until all of
-them and the final matrix pass.
+The Tapd slice is accepted. Five typed broker operations now own its root-only
+declaration, lifecycle, removal, status, and eight CLI actions. The stable
+official `v0.8.0` image is pinned by manifest digest; a case-only correction to
+the upstream verifier proved its manifest and binaries against five developer
+signatures without weakening quorum. The production runtime probe requires the
+exact `tapd` and `tapcli` version outputs in a no-network, read-only,
+capability-free container. Tapd receives a dedicated nine-permission LND
+macaroon rather than admin access. LOS TESTE2 retained Tapd stopped and
+preserved its data hash and Bitcoin/LND/manager activation timestamps. Evidence:
+`docs/baselines/privilege-hardening-phase2-tapd-boundary-2026-08-12.json`.
+
+The next application slice should continue with Public Pool, followed by Bark.
+Mempool and both Fedimint apps remain deliberately late per owner priority. Do
+not remove the manager's Docker-group membership until all of them and the
+final matrix pass.
 
 ## Test-node and network constraints
 

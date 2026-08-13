@@ -1159,11 +1159,11 @@ export const tapdUniverseSync = (payload: { universe_host: string; group_key?: s
 export const getTapdDiscover = (host: string) => request(`/api/apps/tapd/discover${buildQuery({ host })}`)
 export const tapdMint = (payload: { name: string; supply: number; decimal_display?: number; grouped?: boolean; group_key?: string; meta?: string }) =>
   request('/api/apps/tapd/mint', { method: 'POST', body: JSON.stringify(payload) })
-export const tapdMintFinalize = (payload?: { fee_rate?: number }) =>
+export const tapdMintFinalize = (payload?: { fee_rate?: number; confirm_password?: string }) =>
   request('/api/apps/tapd/mint-finalize', { method: 'POST', body: JSON.stringify(payload || {}) })
 export const tapdDecodeAddr = (payload: { addr: string }) =>
   request('/api/apps/tapd/decode-addr', { method: 'POST', body: JSON.stringify(payload) })
-export const tapdSend = (payload: { addr: string; fee_rate?: number }) =>
+export const tapdSend = (payload: { addr: string; fee_rate?: number; confirm_password?: string }) =>
   request('/api/apps/tapd/send', { method: 'POST', body: JSON.stringify(payload) })
 
 export type LoopTerms = {

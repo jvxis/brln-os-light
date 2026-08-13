@@ -238,7 +238,7 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 
 func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error) {
 	var probe AppImageProbe
-	if appID != appmanifest.CPUMinerID {
+	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID {
 		return probe, errors.New("app image probe is not allowed")
 	}
 	image, _, _, err := validatedCatalogImage(appID, variant)
@@ -254,8 +254,27 @@ func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, 
 	if _, err := manager.Runner.Run(ctx, dockerPath, "image", "inspect", image); err != nil {
 		return probe, errors.New("app image is not available locally")
 	}
-	_, err = manager.Runner.Run(ctx, dockerPath, "run", "--rm", image,
-		"cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2")
+	if appID == appmanifest.TapdID {
+		// The v0.8.0 verifier bundled by upstream has a case mismatch in one
+		// signer name. Do not weaken its five-signature quorum here. The image
+		// is already selected by its immutable official manifest digest; probe
+		// both shipped binaries under a closed runtime and require the exact
+		// version strings from that release.
+		baseArgs := []string{"run", "--rm", "--pull", "never", "--network", "none",
+			"--read-only", "--user", "65534:65534", "--cap-drop", "ALL",
+			"--security-opt", "no-new-privileges"}
+		tapdArgs := append(append([]string{}, baseArgs...), "--entrypoint", "/bin/tapd", image, "--version")
+		tapdOutput, tapdErr := manager.Runner.Run(ctx, dockerPath, tapdArgs...)
+		tapcliArgs := append(append([]string{}, baseArgs...), "--entrypoint", "/bin/tapcli", image, "--version")
+		tapcliOutput, tapcliErr := manager.Runner.Run(ctx, dockerPath, tapcliArgs...)
+		probe.Runnable = tapdErr == nil && tapcliErr == nil &&
+			strings.TrimSpace(tapdOutput) == appmanifest.TapdDaemonVersionOutput &&
+			strings.TrimSpace(tapcliOutput) == appmanifest.TapdCLIVersionOutput
+		return probe, nil
+	}
+
+	args := []string{"run", "--rm", image, "cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2"}
+	_, err = manager.Runner.Run(ctx, dockerPath, args...)
 	probe.Runnable = err == nil
 	return probe, nil
 }
@@ -344,6 +363,9 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 		},
 		appmanifest.ElectrsID: {
 			appmanifest.ElectrsImageApp: "lightningos-electrs-image-app",
+		},
+		appmanifest.TapdID: {
+			appmanifest.TapdImageApp: "lightningos-tapd-image-app",
 		},
 	}
 	appUnits, ok := units[appID]

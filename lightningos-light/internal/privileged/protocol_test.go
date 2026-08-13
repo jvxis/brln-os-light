@@ -198,6 +198,38 @@ func TestPeerSwapRequestsAreTypedAndSourceBounded(t *testing.T) {
 	}
 }
 
+func TestTapdRequestsAreTypedAndBounded(t *testing.T) {
+	request := func(operation Operation, params any, dryRun bool) Request {
+		raw, err := MarshalParams(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Request{Version: ProtocolVersion, RequestID: "tapd_test_1", Operation: operation, DryRun: dryRun, Params: raw}
+	}
+	ensure := TapdEnsureParams{
+		DatabasePassword:  "0123456789abcdef0123456789abcdef",
+		LNDTLSCertificate: []byte("certificate"),
+		LNDMacaroon:       []byte("dedicated"),
+	}
+	if err := ValidateRequest(request(OperationTapdEnsure, ensure, true)); err != nil {
+		t.Fatalf("valid Tapd ensure rejected: %v", err)
+	}
+	if err := ValidateRequest(request(OperationTapdLifecycle, TapdLifecycleParams{Action: AppLifecycleRestart}, false)); err == nil {
+		t.Fatal("Tapd restart action was accepted")
+	}
+	if err := ValidateRequest(request(OperationTapdCLI, appmanifest.TapdCLIRequest{Command: appmanifest.TapdCLIGetInfo}, false)); err != nil {
+		t.Fatalf("valid typed Tapd CLI rejected: %v", err)
+	}
+	if err := ValidateRequest(request(OperationTapdCLI, appmanifest.TapdCLIRequest{Command: "exec", Address: "tapbc1invalid"}, false)); err == nil {
+		t.Fatal("arbitrary Tapd CLI command was accepted")
+	}
+	injected := Request{Version: ProtocolVersion, RequestID: "tapd_test_2", Operation: OperationTapdCLI,
+		Params: json.RawMessage(`{"command":"get_info","args":[";reboot"]}`)}
+	if err := ValidateRequest(injected); err == nil {
+		t.Fatal("caller-selected Tapd argv was accepted")
+	}
+}
+
 func TestDecodeRequestRejectsOversizedMessage(t *testing.T) {
 	payload := bytes.Repeat([]byte("x"), MaxMessageBytes+1)
 	if _, err := DecodeRequest(bytes.NewReader(payload)); err == nil {

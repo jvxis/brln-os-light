@@ -400,6 +400,57 @@ func TestComposeAppImageStatusAndProbeUseAllowlistedImage(t *testing.T) {
 	}
 }
 
+func TestComposeAppTapdProbeRequiresBothExactBinaryVersions(t *testing.T) {
+	image := appmanifest.TapdImage
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path != dockerPath {
+			return "", nil, false
+		}
+		if reflect.DeepEqual(args, []string{"image", "inspect", image}) {
+			return "[]", nil, true
+		}
+		if len(args) >= 3 && hasArgsSuffix(args, "--entrypoint", "/bin/tapd", image, "--version") {
+			return appmanifest.TapdDaemonVersionOutput + "\n", nil, true
+		}
+		if len(args) >= 3 && hasArgsSuffix(args, "--entrypoint", "/bin/tapcli", image, "--version") {
+			return appmanifest.TapdCLIVersionOutput + "\n", nil, true
+		}
+		return "", errors.New("unexpected command"), true
+	}}
+	manager := &ComposeAppManager{Runner: runner}
+	probe, err := manager.ProbeImage(context.Background(), appmanifest.TapdID, appmanifest.TapdImageApp, false)
+	if err != nil || !probe.Runnable {
+		t.Fatalf("probe/error=%#v/%v", probe, err)
+	}
+	if len(runner.commands) != 3 {
+		t.Fatalf("commands=%#v", runner.commands)
+	}
+	for _, command := range runner.commands[1:] {
+		for _, expected := range []string{"--pull", "never", "--network", "none", "--read-only", "--user", "65534:65534", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"} {
+			if !hasArg(command.args, expected) {
+				t.Fatalf("probe command missing %q: %#v", expected, command)
+			}
+		}
+	}
+
+	runner.hook = func(path string, args []string) (string, error, bool) {
+		if reflect.DeepEqual(args, []string{"image", "inspect", image}) {
+			return "[]", nil, true
+		}
+		if hasArgsSuffix(args, "--entrypoint", "/bin/tapd", image, "--version") {
+			return appmanifest.TapdDaemonVersionOutput, nil, true
+		}
+		if hasArgsSuffix(args, "--entrypoint", "/bin/tapcli", image, "--version") {
+			return "tapcli version unexpected", nil, true
+		}
+		return "", errors.New("unexpected command"), true
+	}
+	probe, err = manager.ProbeImage(context.Background(), appmanifest.TapdID, appmanifest.TapdImageApp, false)
+	if err != nil || probe.Runnable {
+		t.Fatalf("mismatched probe/error=%#v/%v", probe, err)
+	}
+}
+
 func TestComposeAppImageOperationsRejectUntrustedInputsBeforeCommand(t *testing.T) {
 	runner := &composeRecordingRunner{}
 	manager := &ComposeAppManager{Runner: runner}
@@ -422,6 +473,15 @@ func TestComposeAppImageOperationsRejectUntrustedInputsBeforeCommand(t *testing.
 
 func hasArgsSuffix(args []string, suffix ...string) bool {
 	return len(args) >= len(suffix) && reflect.DeepEqual(args[len(args)-len(suffix):], suffix)
+}
+
+func hasArg(args []string, expected string) bool {
+	for _, arg := range args {
+		if arg == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func hasArgsPrefix(args []string, prefix ...string) bool {

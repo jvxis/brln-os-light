@@ -79,6 +79,14 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			StopTimeoutSeconds: ElectrsStopTimeout,
 			RemoveVolumes:      true,
 		}, nil
+	case TapdID:
+		return ComposeManifest{
+			ID:                 TapdID,
+			Project:            TapdProject,
+			ComposeFile:        TapdComposeFile,
+			PrimaryService:     TapdPrimaryService,
+			StopTimeoutSeconds: TapdStopTimeout,
+		}, nil
 	default:
 		return ComposeManifest{}, errors.New("compose app manifest is not allowed")
 	}
@@ -100,6 +108,8 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return LNbitsImageForVariant(variant)
 	case ElectrsID:
 		return ElectrsImageForVariant(variant)
+	case TapdID:
+		return TapdImageForVariant(variant)
 	default:
 		return "", errors.New("app image manifest is not allowed")
 	}

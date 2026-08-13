@@ -272,3 +272,23 @@ became `root:root 0600`, and Bitcoin/LND timestamps were unchanged. Evidence:
   the broker. It requires a matching root-only attestation, fails closed in
   `enforce`, rejects caller-supplied image fields, and does not create an App
   Store root or blockchain data directory.
+
+## Accepted Tapd boundary
+
+Tapd no longer uses the generic Compose boundary recorded in the Phase 2
+baseline. Its official stable image is immutable by manifest digest and its
+root-only snapshot fixes the project, loopback endpoints, persistent data
+mount, exact configuration and dedicated LND material. The container has a
+read-only root filesystem, drops all capabilities, enables
+no-new-privileges, publishes no ports, and receives neither the LND tree nor
+the Docker socket.
+
+Five broker operations cover status, ensure, start/stop, data-preserving
+removal, and eight typed `tapcli` actions. Send and mint finalization require
+fresh UI reauthentication. Universe REST discovery is outside the privileged
+broker but now permits only strict HTTPS host syntax, resolves and pins public
+addresses, disables proxies and redirects, and caps responses at 4 MiB. The
+LOS TESTE2 state-preserving gate retained Tapd stopped and preserved its data,
+PostgreSQL database, and Bitcoin/LND/manager activation state. Public Pool and
+Bark are the next remaining Docker applications; Mempool and Fedimint stay
+late in the owner-approved sequence.

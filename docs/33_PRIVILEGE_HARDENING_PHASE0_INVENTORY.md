@@ -193,3 +193,9 @@ lifecycle/removal and firewall are owned by closed broker/catalog operations.
 The original counts remain in this document because they are the Phase 0
 baseline; their per-file privilege-budget allowances were removed from the
 permanent source gate.
+
+Post-baseline migration note (2026-08-12): the Tapd Compose, Docker inspection,
+raw `tapcli`, and HTLC-interceptor discovery rows have also reached zero direct
+privileged manager calls. A root-only catalog snapshot and five typed broker
+operations now own those boundaries. The Phase 0 counts remain historical;
+the Tapd allowance was removed from the permanent privilege-budget test.

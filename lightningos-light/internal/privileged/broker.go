@@ -95,6 +95,15 @@ type PeerSwapManager interface {
 	Remove(ctx context.Context, dryRun bool) error
 }
 
+type TapdManager interface {
+	Status(ctx context.Context) (TapdState, error)
+	Ensure(ctx context.Context, params TapdEnsureParams, dryRun bool) (TapdState, error)
+	Lifecycle(ctx context.Context, action AppLifecycleAction, dryRun bool) (TapdState, error)
+	Remove(ctx context.Context, dryRun bool) error
+	CLI(ctx context.Context, request appmanifest.TapdCLIRequest) (string, error)
+	InterceptorConflict(ctx context.Context) (bool, error)
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -119,6 +128,7 @@ type Broker struct {
 	Loop           LoopManager
 	Elements       ElementsManager
 	PeerSwap       PeerSwapManager
+	Tapd           TapdManager
 	Caller         string
 	Timeout        time.Duration
 	Now            func() time.Time
@@ -191,7 +201,7 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		return configured
 	}
 	switch operation {
-	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove:
+	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}
@@ -684,6 +694,62 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "peerswap_remove_failed", errors.New("PeerSwap removal failed")
 		}
 		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationTapdStatus:
+		if broker.Tapd == nil {
+			return nil, "broker_unavailable", errors.New("Tapd manager is unavailable")
+		}
+		state, err := broker.Tapd.Status(ctx)
+		if err != nil {
+			return nil, "tapd_status_failed", errors.New("Tapd status failed")
+		}
+		return state, "", nil
+	case OperationTapdEnsure:
+		if broker.Tapd == nil {
+			return nil, "broker_unavailable", errors.New("Tapd manager is unavailable")
+		}
+		var params TapdEnsureParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.tapd.ensure params")
+		}
+		state, err := broker.Tapd.Ensure(ctx, params, request.DryRun)
+		if err != nil {
+			return nil, "tapd_ensure_failed", errors.New("Tapd preparation failed")
+		}
+		return state, "", nil
+	case OperationTapdLifecycle:
+		if broker.Tapd == nil {
+			return nil, "broker_unavailable", errors.New("Tapd manager is unavailable")
+		}
+		var params TapdLifecycleParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.tapd.lifecycle params")
+		}
+		state, err := broker.Tapd.Lifecycle(ctx, params.Action, request.DryRun)
+		if err != nil {
+			return nil, "tapd_lifecycle_failed", errors.New("Tapd lifecycle failed")
+		}
+		return state, "", nil
+	case OperationTapdRemove:
+		if broker.Tapd == nil {
+			return nil, "broker_unavailable", errors.New("Tapd manager is unavailable")
+		}
+		if err := broker.Tapd.Remove(ctx, request.DryRun); err != nil {
+			return nil, "tapd_remove_failed", errors.New("Tapd removal failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationTapdCLI:
+		if broker.Tapd == nil {
+			return nil, "broker_unavailable", errors.New("Tapd manager is unavailable")
+		}
+		var params appmanifest.TapdCLIRequest
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.tapd.cli params")
+		}
+		output, err := broker.Tapd.CLI(ctx, params)
+		if err != nil {
+			return nil, "tapd_cli_failed", errors.New("Tapd command failed")
+		}
+		return TapdCLIResult{Output: output}, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -720,7 +786,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdStatus, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI:
 		return true
 	default:
 		return false
@@ -729,7 +795,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI:
 		return true
 	default:
 		return false

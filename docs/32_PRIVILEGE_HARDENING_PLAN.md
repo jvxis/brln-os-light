@@ -909,6 +909,40 @@ their timestamps remained unchanged. No service lifecycle or network-policy
 mutation was performed and all gate files were removed. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-peerswap-boundary-2026-08-12.json`.
 
+The Tapd slice is accepted without starting the preserved installation. The
+manager now has zero direct Docker, Compose, sudo, or raw `tapcli` execution in
+the Tapd contract. Five closed broker operations own status, root-only runtime
+preparation, lifecycle, data-preserving removal, and eight typed CLI actions.
+The official Lightning Labs stable `v0.8.0` image is fixed by its multi-arch
+manifest digest; neither the manager nor a request can select an image,
+container, mount, command, flag, port, path, user, or raw CLI argument. The
+runtime is read-only, drops every capability, enables no-new-privileges, binds
+Tapd RPC/REST to loopback, and mounts only its data plus exact config, LND TLS
+certificate, and dedicated macaroon. The LND tree, admin macaroon, Docker
+socket, and published ports are absent.
+
+The upstream `v0.8.0` verifier contains a case-only mismatch for one signer.
+The release gate did not lower its five-signature quorum: a case-only local
+correction validated the signed manifest and the exact `tapd`/`tapcli`
+checksums against five developers. The production probe then ran both binaries
+from the immutable digest with no network, no capabilities, a read-only
+filesystem, and an unprivileged UID, requiring their exact `v0.8.0` outputs.
+No release candidate was substituted for the stable release.
+
+LOS TESTE2 retained its existing Tapd data and PostgreSQL database while the
+broker created the root-only execution snapshot and a dedicated nine-permission
+LND credential. That credential authenticated `getinfo` and was denied
+macaroon administration. Image readiness, status, and start/stop dry-runs
+passed; Tapd remained stopped. Bitcoin, LND, and manager activation timestamps
+and the Tapd data metadata hash remained unchanged. Universe discovery now
+pins validated public DNS results and rejects private, local, reserved, proxy,
+and redirect targets; asset send and mint finalization require fresh
+reauthentication. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-tapd-boundary-2026-08-12.json`.
+
+The next catalog slices are Public Pool and Bark. Mempool and both Fedimint
+applications remain deliberately late per owner priority and dependency gates.
+
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC
 cookie, root-owned execution snapshot, typed lifecycle/inspect/remove, and

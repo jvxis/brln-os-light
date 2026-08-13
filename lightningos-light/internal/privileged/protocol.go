@@ -61,6 +61,11 @@ const (
 	OperationPeerSwapEnsure               Operation = "app.peerswap.ensure"
 	OperationPeerSwapLifecycle            Operation = "app.peerswap.lifecycle"
 	OperationPeerSwapRemove               Operation = "app.peerswap.remove"
+	OperationTapdStatus                   Operation = "app.tapd.status"
+	OperationTapdEnsure                   Operation = "app.tapd.ensure"
+	OperationTapdLifecycle                Operation = "app.tapd.lifecycle"
+	OperationTapdRemove                   Operation = "app.tapd.remove"
+	OperationTapdCLI                      Operation = "app.tapd.cli"
 )
 
 type Request struct {
@@ -298,6 +303,27 @@ type PeerSwapState struct {
 	ElementsMode   string `json:"elements_mode,omitempty"`
 }
 
+type TapdEnsureParams struct {
+	DatabasePassword  string `json:"database_password"`
+	LNDTLSCertificate []byte `json:"lnd_tls_certificate"`
+	LNDMacaroon       []byte `json:"lnd_macaroon,omitempty"`
+}
+
+type TapdLifecycleParams struct {
+	Action AppLifecycleAction `json:"action"`
+}
+
+type TapdState struct {
+	Installed           bool   `json:"installed"`
+	Status              string `json:"status"`
+	HasLNDMacaroon      bool   `json:"has_lnd_macaroon"`
+	InterceptorConflict bool   `json:"interceptor_conflict"`
+}
+
+type TapdCLIResult struct {
+	Output string `json:"output"`
+}
+
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 var allowedServiceUnits = map[string]struct{}{
@@ -496,7 +522,7 @@ func ValidateRequest(request Request) error {
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid app.image.probe params: %w", err)
 		}
-		if err := validateCPUMinerImageParams(params); err != nil {
+		if err := validateProbedImageParams(params); err != nil {
 			return err
 		}
 	case OperationAppImageStatus:
@@ -661,6 +687,44 @@ func ValidateRequest(request Request) error {
 		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop && params.Action != AppLifecycleRestart {
 			return errors.New("PeerSwap lifecycle action is not allowed")
 		}
+	case OperationTapdStatus, OperationTapdRemove:
+		if request.DryRun && request.Operation == OperationTapdStatus {
+			return errors.New("dry_run is not valid for app.tapd.status")
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
+	case OperationTapdEnsure:
+		var params TapdEnsureParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.tapd.ensure params: %w", err)
+		}
+		if _, err := appmanifest.TapdConfig(params.DatabasePassword); err != nil {
+			return err
+		}
+		if len(params.LNDTLSCertificate) == 0 || len(params.LNDTLSCertificate) > 64*1024 || len(params.LNDMacaroon) > 64*1024 {
+			return errors.New("Tapd LND material is invalid")
+		}
+	case OperationTapdLifecycle:
+		var params TapdLifecycleParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.tapd.lifecycle params: %w", err)
+		}
+		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
+			return errors.New("Tapd lifecycle action is not allowed")
+		}
+	case OperationTapdCLI:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for app.tapd.cli")
+		}
+		var params appmanifest.TapdCLIRequest
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.tapd.cli params: %w", err)
+		}
+		if err := appmanifest.ValidateTapdCLIRequest(params); err != nil {
+			return err
+		}
 	default:
 		return errors.New("unknown operation")
 	}
@@ -682,11 +746,11 @@ func validateCatalogImageParams(params AppImageParams) error {
 	return nil
 }
 
-func validateCPUMinerImageParams(params AppImageParams) error {
-	if params.AppID != appmanifest.CPUMinerID {
+func validateProbedImageParams(params AppImageParams) error {
+	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID {
 		return errors.New("app manifest is not allowed")
 	}
-	if _, err := appmanifest.CPUMinerImageForVariant(params.Variant); err != nil {
+	if _, err := appmanifest.CatalogImageForVariant(params.AppID, params.Variant); err != nil {
 		return errors.New("app image variant is not allowed")
 	}
 	return nil

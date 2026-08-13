@@ -1619,7 +1619,11 @@
     "previewFeeEst": "Estimated on-chain cost",
     "redeemPhase2": "Available in Phase 2 — requires the community edge node (litd) that converts the asset to sats via RFQ.",
     "result": "Result",
-    "error": "Error"
+    "error": "Error",
+    "reauthTitle": "Confirm Taproot Assets operation",
+    "reauthSend": "Enter your password to authorize this on-chain asset transfer.",
+    "reauthMint": "Enter your password to authorize broadcasting this on-chain mint.",
+    "reauthConfirm": "Confirm and execute"
   },
   "elements": {
     "blocks": "Blocks",

@@ -250,6 +250,66 @@ func (client *Client) RemovePeerSwap(ctx context.Context, dryRun bool) error {
 	return err
 }
 
+func (client *Client) TapdStatus(ctx context.Context) (bool, string, bool, bool, error) {
+	response, err := client.call(ctx, OperationTapdStatus, struct{}{}, false)
+	if err != nil {
+		return false, "", false, false, err
+	}
+	state, err := decodeTapdState(response, false)
+	return state.Installed, state.Status, state.HasLNDMacaroon, state.InterceptorConflict, err
+}
+
+func (client *Client) EnsureTapd(ctx context.Context, databasePassword string, tlsCertificate, macaroon []byte, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationTapdEnsure, TapdEnsureParams{
+		DatabasePassword: databasePassword, LNDTLSCertificate: tlsCertificate, LNDMacaroon: macaroon,
+	}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeTapdState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) TapdLifecycle(ctx context.Context, action string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationTapdLifecycle, TapdLifecycleParams{Action: AppLifecycleAction(action)}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeTapdState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) RemoveTapd(ctx context.Context, dryRun bool) error {
+	_, err := client.call(ctx, OperationTapdRemove, struct{}{}, dryRun)
+	return err
+}
+
+func (client *Client) TapdCLI(ctx context.Context, request appmanifest.TapdCLIRequest) (string, error) {
+	response, err := client.call(ctx, OperationTapdCLI, request, false)
+	if err != nil {
+		return "", err
+	}
+	var result TapdCLIResult
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return "", errors.New("invalid broker Tapd command response")
+	}
+	return result.Output, nil
+}
+
+func decodeTapdState(response Response, dryRun bool) (TapdState, error) {
+	var state TapdState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return state, errors.New("invalid broker Tapd state response")
+	}
+	if dryRun && state.Status == "validated" {
+		return state, nil
+	}
+	if state.Status != "running" && state.Status != "stopped" && state.Status != "unknown" {
+		return TapdState{}, errors.New("invalid broker Tapd status")
+	}
+	return state, nil
+}
+
 func decodePeerSwapState(response Response, dryRun bool) (PeerSwapState, error) {
 	var state PeerSwapState
 	if err := decodeStrict(response.Result, &state); err != nil {

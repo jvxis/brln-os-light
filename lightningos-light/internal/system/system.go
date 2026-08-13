@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 const installedManagerConfigPath = "/etc/lightningos/config.yaml"
@@ -81,6 +83,98 @@ type peerSwapPrivilegedClient interface {
 	EnsurePeerSwap(ctx context.Context, elementsMode string, config string, webConfig string, tlsCertificate []byte, macaroon []byte, dryRun bool) (status string, err error)
 	PeerSwapLifecycle(ctx context.Context, action string, dryRun bool) (status string, err error)
 	RemovePeerSwap(ctx context.Context, dryRun bool) error
+}
+
+type tapdPrivilegedClient interface {
+	TapdStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, interceptorConflict bool, err error)
+	EnsureTapd(ctx context.Context, databasePassword string, tlsCertificate []byte, macaroon []byte, dryRun bool) (status string, err error)
+	TapdLifecycle(ctx context.Context, action string, dryRun bool) (status string, err error)
+	RemoveTapd(ctx context.Context, dryRun bool) error
+	TapdCLI(ctx context.Context, request appmanifest.TapdCLIRequest) (output string, err error)
+}
+
+type TapdBrokerState struct {
+	Installed           bool
+	Status              string
+	HasLNDMacaroon      bool
+	InterceptorConflict bool
+}
+
+func TapdStatusWithBroker(ctx context.Context) (bool, TapdBrokerState, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, TapdBrokerState{}, nil
+	}
+	tapdClient, ok := client.(tapdPrivilegedClient)
+	if !ok {
+		return true, TapdBrokerState{}, errors.New("privileged broker does not support Tapd")
+	}
+	installed, status, hasMacaroon, conflict, err := tapdClient.TapdStatus(ctx)
+	return true, TapdBrokerState{Installed: installed, Status: status, HasLNDMacaroon: hasMacaroon, InterceptorConflict: conflict}, err
+}
+
+func EnsureTapdWithBroker(ctx context.Context, databasePassword string, tlsCertificate, macaroon []byte) (bool, error) {
+	return tapdMutationWithBroker(ctx, func(callCtx context.Context, client tapdPrivilegedClient, dryRun bool) error {
+		_, err := client.EnsureTapd(callCtx, databasePassword, tlsCertificate, macaroon, dryRun)
+		return err
+	})
+}
+
+func TapdLifecycleWithBroker(ctx context.Context, action string) (bool, error) {
+	return tapdMutationWithBroker(ctx, func(callCtx context.Context, client tapdPrivilegedClient, dryRun bool) error {
+		_, err := client.TapdLifecycle(callCtx, action, dryRun)
+		return err
+	})
+}
+
+func RemoveTapdWithBroker(ctx context.Context) (bool, error) {
+	return tapdMutationWithBroker(ctx, func(callCtx context.Context, client tapdPrivilegedClient, dryRun bool) error {
+		return client.RemoveTapd(callCtx, dryRun)
+	})
+}
+
+func TapdCLIWithBroker(ctx context.Context, request appmanifest.TapdCLIRequest) (bool, string, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, "", nil
+	}
+	tapdClient, ok := client.(tapdPrivilegedClient)
+	if !ok {
+		return true, "", errors.New("privileged broker does not support Tapd")
+	}
+	output, err := tapdClient.TapdCLI(ctx, request)
+	return true, output, err
+}
+
+func tapdMutationWithBroker(ctx context.Context, operation func(context.Context, tapdPrivilegedClient, bool) error) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	tapdClient, ok := client.(tapdPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker does not support Tapd")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, operation(ctx, tapdClient, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		_ = operation(shadowCtx, tapdClient, true)
+		return false, nil
+	default:
+		return false, nil
+	}
 }
 
 type PeerSwapBrokerState struct {

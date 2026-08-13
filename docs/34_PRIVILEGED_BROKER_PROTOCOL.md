@@ -865,3 +865,33 @@ blocking-manager requests were rejected. The original config hash and
 
 Full secret-free evidence is in
 `docs/baselines/privilege-hardening-phase1-soak-reboot-service-2026-08-10.json`.
+
+## Tapd typed boundary
+
+Tapd adds five operations with no raw command or caller-selected runtime
+fields:
+
+| Operation | Caller fields | Broker-owned boundary |
+| --- | --- | --- |
+| `app.tapd.status` | none | Fixed Compose labels, stopped/running state, dedicated credential presence, and fixed Fedimint gateway conflict check |
+| `app.tapd.ensure` | PostgreSQL password plus bounded LND TLS/macaroon bytes | Exact root-only config, official digest-pinned Compose, fixed data path, dedicated credential mounts, modes, and atomic writes |
+| `app.tapd.lifecycle` | `start` or `stop` | Fixed project/snapshot, image readiness, conflict gate, Compose argv, and timeout |
+| `app.tapd.remove` | none | Fixed project removal without `--volumes`; persistent Tapd data and PostgreSQL database are retained |
+| `app.tapd.cli` | One strict typed Tapd request | Fixed container identity and `tapcli` argv for get-info, balance, address, universe sync, mint, finalize, send, or decode only |
+
+The catalog fixes stable release `v0.8.0` and official manifest digest
+`sha256:868e8dec4174798eaff056336eb9b3ba1bd387590c0f29201781f98702cc567d`.
+The runnable probe first requires that exact image locally, then executes both
+`/bin/tapd --version` and `/bin/tapcli --version` as UID/GID 65534 with
+`--network none`, a read-only filesystem, all capabilities dropped, and
+no-new-privileges. Exact expected output is part of the catalog. The upstream
+release verifier's signer-name case mismatch is documented in the persistent
+gate evidence; production does not weaken the five-signature policy.
+
+CLI values are validated by type, size, alphabet, range, and mutual exclusion
+before argv construction. Metadata must be bounded valid JSON, asset/group
+identifiers have exact lowercase hex lengths, addresses are bounded mainnet
+Taproot Asset strings, and universe hosts cannot contain URL syntax. The broker
+resolves a single validated container ID from fixed Compose labels; the caller
+never controls a Docker identifier or flag. Audit events contain operation,
+request ID, dry-run, result, and duration only, never request parameters.

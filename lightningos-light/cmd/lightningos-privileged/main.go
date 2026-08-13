@@ -58,6 +58,7 @@ func main() {
 		Loop:           privileged.NewNativeLoopManager(runner),
 		Elements:       privileged.NewNativeElementsManager(runner),
 		PeerSwap:       privileged.NewNativePeerSwapManager(runner),
+		Tapd:           privileged.NewNativeTapdManager(runner),
 		Caller:         caller,
 		Timeout:        15 * time.Second,
 	}

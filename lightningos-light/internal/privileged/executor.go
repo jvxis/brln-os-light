@@ -6,7 +6,11 @@ import (
 	"os/exec"
 )
 
-const maxCommandOutputBytes = 16 * 1024
+// Responses must remain below the protocol's 64 KiB ceiling after command
+// output is JSON-escaped into the broker envelope. Tapd's typed balance and
+// universe reads can legitimately exceed the old 16 KiB cap; 28 KiB leaves
+// room for worst-case quote/backslash doubling plus the response metadata.
+const maxCommandOutputBytes = 28 * 1024
 
 type ExecCommandRunner struct{}
 

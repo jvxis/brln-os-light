@@ -118,7 +118,7 @@ Group=%s
 Environment=HOME=%s
 Environment=USER=%s
 WorkingDirectory=%s
-ExecStart=%s --datadir %s
+ExecStart=%s --datadir %s --configfile %s
 Restart=on-failure
 RestartSec=5
 UMask=0077
@@ -141,7 +141,7 @@ ReadWritePaths=%s
 [Install]
 WantedBy=multi-user.target
 `, elementsDependency, PeerSwapUser, PeerSwapUser, paths.RuntimeDir,
-		PeerSwapUser, paths.RuntimeDir, paths.PeerswapdPath, paths.RuntimeDir,
+		PeerSwapUser, paths.RuntimeDir, paths.PeerswapdPath, paths.RuntimeDir, paths.ConfigPath,
 		paths.RuntimeDir)
 }
 

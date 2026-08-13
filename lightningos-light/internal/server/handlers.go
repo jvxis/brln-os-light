@@ -554,8 +554,7 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 		rpcCtx, rpcCancel := context.WithTimeout(r.Context(), 4*time.Second)
 		defer rpcCancel()
 		if _, err := fetchBitcoinInfo(rpcCtx, localCfg.Host, localCfg.User, localCfg.Pass); err != nil {
-			var statusErr rpcStatusError
-			if errors.As(err, &statusErr) && statusErr.statusCode == http.StatusForbidden {
+			if isBitcoinRPCAuthenticationError(err) {
 				needsBitcoinRestart = true
 			}
 		}
@@ -602,8 +601,7 @@ func (s *Server) resolveBitcoinLocalRPCConfigForSource(ctx context.Context, conf
 		if probeErr == nil {
 			return cfg, nil
 		}
-		var statusErr rpcStatusError
-		if !errors.As(probeErr, &statusErr) || statusErr.statusCode != http.StatusForbidden {
+		if !isBitcoinRPCAuthenticationError(probeErr) {
 			return cfg, nil
 		}
 	}
@@ -659,9 +657,9 @@ func waitForBitcoinRPC(ctx context.Context, cfg bitcoinRPCConfig, timeout time.D
 	defer ticker.Stop()
 	for {
 		probeCtx, probeCancel := context.WithTimeout(waitCtx, 4*time.Second)
-		_, err := fetchBitcoinInfo(probeCtx, cfg.Host, cfg.User, cfg.Pass)
+		ready, _ := bitcoinRPCReady(probeCtx, cfg)
 		probeCancel()
-		if err == nil {
+		if ready {
 			return nil
 		}
 		select {
@@ -681,6 +679,14 @@ func bitcoinRPCReady(ctx context.Context, cfg bitcoinRPCConfig) (bool, string) {
 		return false, "syncing"
 	}
 	return true, "ready"
+}
+
+func isBitcoinRPCAuthenticationError(err error) bool {
+	var statusErr rpcStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	return statusErr.statusCode == http.StatusUnauthorized || statusErr.statusCode == http.StatusForbidden
 }
 
 func (s *Server) bitcoinStatus(ctx context.Context) (bitcoinStatus, error) {

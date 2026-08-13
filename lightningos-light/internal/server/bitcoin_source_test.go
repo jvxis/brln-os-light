@@ -1,6 +1,24 @@
 package server
 
-import "testing"
+import (
+	"errors"
+	"net/http"
+	"testing"
+)
+
+func TestBitcoinRPCAuthenticationErrorRecognizesCoreResponses(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		if !isBitcoinRPCAuthenticationError(rpcStatusError{statusCode: status}) {
+			t.Fatalf("status %d was not recognized as an authentication error", status)
+		}
+	}
+	if isBitcoinRPCAuthenticationError(rpcStatusError{statusCode: http.StatusInternalServerError}) {
+		t.Fatal("server error was misclassified as authentication failure")
+	}
+	if isBitcoinRPCAuthenticationError(errors.New("dial failed")) {
+		t.Fatal("transport error was misclassified as authentication failure")
+	}
+}
 
 func TestResolveBitcoinSourcePrefersLNDConf(t *testing.T) {
 	t.Run("lnd conf local overrides env remote", func(t *testing.T) {

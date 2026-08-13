@@ -232,6 +232,16 @@ rejected. `LOS-TEST2` was untouched and the successful gate clone was powered
 off. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-docker-package-install-enforce-2026-08-10.json`.
 
+The package catalog now also admits the fixed `mdns` feature, mapped only to
+`avahi-daemon` and `libnss-mdns` with its own index/install units. The same
+Ubuntu 24.04/26.04 OS gate, fixed dpkg query, package lock, async state machine,
+runtime ceiling, and strict caller-field rejection apply. Ubuntu 24.04 passed a
+real service-user dry-run/status gate without invoking apt or changing package,
+service, audit, lock, broker, firewall, or network state. Evidence is in
+`docs/baselines/privilege-hardening-phase3-mdns-package-2026-08-13.json`.
+This closes the package prerequisite for decomposing the system-integration
+reconciler; asset/TLS/mDNS policy reconciliation itself remains the next cut.
+
 The first shared Compose catalog now admits RoboSats for typed status,
 start, and stop. The broker byte-validates the manager-owned catalog files and
 TLS key pair, then atomically maintains a persistent root-only execution tree

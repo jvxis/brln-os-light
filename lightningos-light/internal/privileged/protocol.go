@@ -324,7 +324,10 @@ type DockerRuntimeState struct {
 
 type PackageFeature string
 
-const PackageFeatureDockerRuntime PackageFeature = "docker_runtime"
+const (
+	PackageFeatureDockerRuntime PackageFeature = "docker_runtime"
+	PackageFeatureMDNS          PackageFeature = "mdns"
+)
 
 type PackageFeatureParams struct {
 	Feature PackageFeature `json:"feature"`
@@ -720,7 +723,7 @@ func ValidateRequest(request Request) error {
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid packages.feature.ensure params: %w", err)
 		}
-		if params.Feature != PackageFeatureDockerRuntime {
+		if !validPackageFeature(params.Feature) {
 			return errors.New("package feature is not allowed")
 		}
 	case OperationPackageStatus:
@@ -731,7 +734,7 @@ func ValidateRequest(request Request) error {
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid packages.feature.status params: %w", err)
 		}
-		if params.Feature != PackageFeatureDockerRuntime {
+		if !validPackageFeature(params.Feature) {
 			return errors.New("package feature is not allowed")
 		}
 	case OperationAppStorageEnsure:
@@ -1075,6 +1078,15 @@ func ValidateServiceUnit(unit string) error {
 		return errors.New("service unit is not allowed")
 	}
 	return nil
+}
+
+func validPackageFeature(feature PackageFeature) bool {
+	switch feature {
+	case PackageFeatureDockerRuntime, PackageFeatureMDNS:
+		return true
+	default:
+		return false
+	}
 }
 
 func MarshalParams(params any) (json.RawMessage, error) {

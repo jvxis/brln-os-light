@@ -200,6 +200,15 @@ then restored the original broker and VM network state. Evidence:
 The now-unused service/power sudoers entries remain until the coordinated
 cutover.
 
+The typed package catalog now includes `mdns`, fixed to
+`avahi-daemon` plus `libnss-mdns` and isolated index/install units. Ubuntu
+24.04 passed service-user dry-run, read-only status, injected-package rejection,
+and package/service/lock preservation without apt, firewall, or network
+mutation. Evidence:
+`docs/baselines/privilege-hardening-phase3-mdns-package-2026-08-13.json`. Use
+this feature as the package prerequisite for the system-integration cut; do not
+put apt back inside the reconciler.
+
 Login-protection activation is now broker-only: fixed `files.enable_login`
 followed by delayed `service.restart`. `auth_enable.go` no longer writes YAML
 directly, invokes sudo/systemd-run/visudo, creates a runtime sudoers file, or

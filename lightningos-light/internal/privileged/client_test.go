@@ -297,6 +297,24 @@ func TestClientPackageFeatureBuildsClosedTypedRequest(t *testing.T) {
 	}
 }
 
+func TestClientMDNSPackageFeatureBuildsClosedTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: PackageFeatureState{Status: "validated"}}
+	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)
+	status, err := client.EnsurePackageFeature(context.Background(), "mdns", true)
+	if err != nil || status != "validated" || transport.request.Operation != OperationPackageEnsure || !transport.request.DryRun {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+	var params PackageFeatureParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil || params.Feature != PackageFeatureMDNS {
+		t.Fatalf("params/error=%#v/%v", params, err)
+	}
+	transport.result = PackageFeatureState{Status: "ready"}
+	status, err = client.PackageFeatureStatus(context.Background(), "mdns")
+	if err != nil || status != "ready" || transport.request.Operation != OperationPackageStatus || transport.request.DryRun {
+		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
+	}
+}
+
 func TestClientAppImageOperationsBuildTypedRequests(t *testing.T) {
 	transport := &fakeTransport{result: AppImageState{Status: "preparing"}}
 	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)

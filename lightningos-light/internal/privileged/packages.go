@@ -15,6 +15,8 @@ const (
 	packageFeatureLock   = "/run/lock/lightningos/package-feature.lock"
 	dockerIndexUnit      = "lightningos-package-docker-index"
 	dockerInstallUnit    = "lightningos-package-docker-install"
+	mdnsIndexUnit        = "lightningos-package-mdns-index"
+	mdnsInstallUnit      = "lightningos-package-mdns-install"
 )
 
 var supportedPackageOperatingSystems = map[string]struct{}{
@@ -25,6 +27,17 @@ var supportedPackageOperatingSystems = map[string]struct{}{
 type CatalogPackageManager struct {
 	Runner        CommandRunner
 	OSReleasePath string
+}
+
+type packageFeatureSpec struct {
+	IndexUnit   string
+	InstallUnit string
+	Packages    []string
+}
+
+var packageFeatureCatalog = map[PackageFeature]packageFeatureSpec{
+	PackageFeatureDockerRuntime: {IndexUnit: dockerIndexUnit, InstallUnit: dockerInstallUnit, Packages: []string{"docker.io", "docker-compose-v2"}},
+	PackageFeatureMDNS:          {IndexUnit: mdnsIndexUnit, InstallUnit: mdnsInstallUnit, Packages: []string{"avahi-daemon", "libnss-mdns"}},
 }
 
 type packageUnitState string
@@ -41,49 +54,54 @@ func NewCatalogPackageManager(runner CommandRunner) *CatalogPackageManager {
 }
 
 func (manager *CatalogPackageManager) EnsureFeature(ctx context.Context, feature PackageFeature, dryRun bool) (PackageFeatureState, error) {
-	if err := manager.validate(feature); err != nil {
+	spec, err := manager.validate(feature)
+	if err != nil {
 		return PackageFeatureState{}, err
 	}
 	if dryRun {
 		return PackageFeatureState{Status: "validated"}, nil
 	}
-	state, err := manager.FeatureStatus(ctx, feature)
+	state, err := manager.featureStatus(ctx, spec)
 	if err != nil {
 		return PackageFeatureState{}, err
 	}
 	switch state.Status {
 	case "ready":
-		if err := manager.cleanupFinishedUnits(ctx); err != nil {
+		if err := manager.cleanupFinishedUnits(ctx, spec); err != nil {
 			return PackageFeatureState{}, err
 		}
 		return state, nil
 	case "indexing", "installing":
 		return state, nil
 	case "indexed":
-		if err := manager.schedule(ctx, dockerInstallUnit, []string{
-			"-o", "DPkg::Lock::Timeout=300", "install", "-y",
-			"docker.io", "docker-compose-v2",
-		}); err != nil {
+		args := []string{"-o", "DPkg::Lock::Timeout=300", "install", "-y"}
+		args = append(args, spec.Packages...)
+		if err := manager.schedule(ctx, spec.InstallUnit, args); err != nil {
 			return PackageFeatureState{}, err
 		}
 		return PackageFeatureState{Status: "installing"}, nil
 	case "absent":
-		if err := manager.schedule(ctx, dockerIndexUnit, []string{"-o", "DPkg::Lock::Timeout=300", "update"}); err != nil {
+		if err := manager.schedule(ctx, spec.IndexUnit, []string{"-o", "DPkg::Lock::Timeout=300", "update"}); err != nil {
 			return PackageFeatureState{}, err
 		}
 		return PackageFeatureState{Status: "indexing"}, nil
 	case "failed":
-		return manager.retryFailedStage(ctx)
+		return manager.retryFailedStage(ctx, spec)
 	default:
 		return PackageFeatureState{}, errors.New("package feature state is invalid")
 	}
 }
 
 func (manager *CatalogPackageManager) FeatureStatus(ctx context.Context, feature PackageFeature) (PackageFeatureState, error) {
-	if err := manager.validate(feature); err != nil {
+	spec, err := manager.validate(feature)
+	if err != nil {
 		return PackageFeatureState{}, err
 	}
-	installState, err := manager.unitState(ctx, dockerInstallUnit)
+	return manager.featureStatus(ctx, spec)
+}
+
+func (manager *CatalogPackageManager) featureStatus(ctx context.Context, spec packageFeatureSpec) (PackageFeatureState, error) {
+	installState, err := manager.unitState(ctx, spec.InstallUnit)
 	if err != nil {
 		return PackageFeatureState{}, err
 	}
@@ -91,17 +109,17 @@ func (manager *CatalogPackageManager) FeatureStatus(ctx context.Context, feature
 	case packageUnitRunning:
 		return PackageFeatureState{Status: "installing"}, nil
 	case packageUnitSucceeded:
-		if manager.dockerFeatureInstalled(ctx) {
+		if manager.featureInstalled(ctx, spec) {
 			return PackageFeatureState{Status: "ready"}, nil
 		}
 		return PackageFeatureState{Status: "failed"}, nil
 	case packageUnitFailed:
 		return PackageFeatureState{Status: "failed"}, nil
 	}
-	if manager.dockerFeatureInstalled(ctx) {
+	if manager.featureInstalled(ctx, spec) {
 		return PackageFeatureState{Status: "ready"}, nil
 	}
-	indexState, err := manager.unitState(ctx, dockerIndexUnit)
+	indexState, err := manager.unitState(ctx, spec.IndexUnit)
 	if err != nil {
 		return PackageFeatureState{}, err
 	}
@@ -117,12 +135,13 @@ func (manager *CatalogPackageManager) FeatureStatus(ctx context.Context, feature
 	}
 }
 
-func (manager *CatalogPackageManager) validate(feature PackageFeature) error {
+func (manager *CatalogPackageManager) validate(feature PackageFeature) (packageFeatureSpec, error) {
 	if manager == nil || manager.Runner == nil {
-		return errors.New("catalog package manager is unavailable")
+		return packageFeatureSpec{}, errors.New("catalog package manager is unavailable")
 	}
-	if feature != PackageFeatureDockerRuntime {
-		return errors.New("package feature is not allowed")
+	spec, ok := packageFeatureCatalog[feature]
+	if !ok || len(spec.Packages) == 0 || spec.IndexUnit == "" || spec.InstallUnit == "" {
+		return packageFeatureSpec{}, errors.New("package feature is not allowed")
 	}
 	path := manager.OSReleasePath
 	if path == "" {
@@ -130,18 +149,20 @@ func (manager *CatalogPackageManager) validate(feature PackageFeature) error {
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return errors.New("operating system release is unavailable")
+		return packageFeatureSpec{}, errors.New("operating system release is unavailable")
 	}
 	values := parseOSRelease(string(raw))
 	key := values["ID"] + ":" + values["VERSION_ID"]
 	if _, ok := supportedPackageOperatingSystems[key]; !ok {
-		return errors.New("operating system release is not supported for package installation")
+		return packageFeatureSpec{}, errors.New("operating system release is not supported for package installation")
 	}
-	return nil
+	return spec, nil
 }
 
-func (manager *CatalogPackageManager) dockerFeatureInstalled(ctx context.Context) bool {
-	output, err := manager.Runner.Run(ctx, dpkgQueryPath, "-W", "-f=${Package}=${db:Status-Status}\\n", "docker.io", "docker-compose-v2")
+func (manager *CatalogPackageManager) featureInstalled(ctx context.Context, spec packageFeatureSpec) bool {
+	args := []string{"-W", "-f=${Package}=${db:Status-Status}\\n"}
+	args = append(args, spec.Packages...)
+	output, err := manager.Runner.Run(ctx, dpkgQueryPath, args...)
 	if err != nil {
 		return false
 	}
@@ -152,7 +173,12 @@ func (manager *CatalogPackageManager) dockerFeatureInstalled(ctx context.Context
 			installed[name] = true
 		}
 	}
-	return installed["docker.io"] && installed["docker-compose-v2"]
+	for _, packageName := range spec.Packages {
+		if !installed[packageName] {
+			return false
+		}
+	}
+	return true
 }
 
 func (manager *CatalogPackageManager) schedule(ctx context.Context, unit string, aptArgs []string) error {
@@ -177,40 +203,40 @@ func (manager *CatalogPackageManager) schedule(ctx context.Context, unit string,
 	return nil
 }
 
-func (manager *CatalogPackageManager) retryFailedStage(ctx context.Context) (PackageFeatureState, error) {
-	installState, err := manager.unitState(ctx, dockerInstallUnit)
+func (manager *CatalogPackageManager) retryFailedStage(ctx context.Context, spec packageFeatureSpec) (PackageFeatureState, error) {
+	installState, err := manager.unitState(ctx, spec.InstallUnit)
 	if err != nil {
 		return PackageFeatureState{}, err
 	}
 	if installState == packageUnitFailed || installState == packageUnitSucceeded {
-		if _, err := manager.Runner.Run(ctx, systemctlPath, "stop", dockerInstallUnit); err != nil {
+		if _, err := manager.Runner.Run(ctx, systemctlPath, "stop", spec.InstallUnit); err != nil {
 			return PackageFeatureState{}, errors.New("failed package feature unit could not be cleared")
 		}
-		if err := manager.schedule(ctx, dockerInstallUnit, []string{
-			"-o", "DPkg::Lock::Timeout=300", "install", "-y", "docker.io", "docker-compose-v2",
-		}); err != nil {
+		args := []string{"-o", "DPkg::Lock::Timeout=300", "install", "-y"}
+		args = append(args, spec.Packages...)
+		if err := manager.schedule(ctx, spec.InstallUnit, args); err != nil {
 			return PackageFeatureState{}, err
 		}
 		return PackageFeatureState{Status: "installing"}, nil
 	}
-	indexState, err := manager.unitState(ctx, dockerIndexUnit)
+	indexState, err := manager.unitState(ctx, spec.IndexUnit)
 	if err != nil {
 		return PackageFeatureState{}, err
 	}
 	if indexState != packageUnitFailed {
 		return PackageFeatureState{}, errors.New("failed package feature stage is invalid")
 	}
-	if _, err := manager.Runner.Run(ctx, systemctlPath, "stop", dockerIndexUnit); err != nil {
+	if _, err := manager.Runner.Run(ctx, systemctlPath, "stop", spec.IndexUnit); err != nil {
 		return PackageFeatureState{}, errors.New("failed package feature unit could not be cleared")
 	}
-	if err := manager.schedule(ctx, dockerIndexUnit, []string{"-o", "DPkg::Lock::Timeout=300", "update"}); err != nil {
+	if err := manager.schedule(ctx, spec.IndexUnit, []string{"-o", "DPkg::Lock::Timeout=300", "update"}); err != nil {
 		return PackageFeatureState{}, err
 	}
 	return PackageFeatureState{Status: "indexing"}, nil
 }
 
-func (manager *CatalogPackageManager) cleanupFinishedUnits(ctx context.Context) error {
-	for _, unit := range []string{dockerInstallUnit, dockerIndexUnit} {
+func (manager *CatalogPackageManager) cleanupFinishedUnits(ctx context.Context, spec packageFeatureSpec) error {
+	for _, unit := range []string{spec.InstallUnit, spec.IndexUnit} {
 		state, err := manager.unitState(ctx, unit)
 		if err != nil {
 			return err

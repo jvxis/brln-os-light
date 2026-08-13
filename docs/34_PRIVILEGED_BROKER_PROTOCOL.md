@@ -534,14 +534,21 @@ external/systemd Bitcoin service.
 
 ### `packages.feature.ensure` and `packages.feature.status`
 
-The first shared package capability accepts only this closed request:
+The shared package capability accepts one of these closed requests:
 
 ```json
 {"feature":"docker_runtime"}
+{"feature":"mdns"}
 ```
 
-The feature maps inside the broker to the fixed Ubuntu package set
-`docker.io` plus `docker-compose-v2`. Package names, repositories, versions,
+Each feature maps inside the broker to a fixed Ubuntu package set:
+
+| Feature | Packages | Fixed transient units |
+| --- | --- | --- |
+| `docker_runtime` | `docker.io`, `docker-compose-v2` | `lightningos-package-docker-{index,install}` |
+| `mdns` | `avahi-daemon`, `libnss-mdns` | `lightningos-package-mdns-{index,install}` |
+
+Package names, repositories, versions,
 executables, arguments, environment variables, unit names, and lock paths are
 never supplied by the manager. Unknown features and fields are rejected. The
 catalog currently admits only Ubuntu 24.04 and Ubuntu 26.04; every other OS or
@@ -550,7 +557,7 @@ version fails closed before a command runs.
 Preparation is a two-stage asynchronous state machine. The broker schedules a
 fixed `apt-get update` unit, reports `indexing` until its root-owned transient
 unit reaches `active/exited`, and then schedules a separate fixed `apt-get
-install -y docker.io docker-compose-v2` unit. Both commands run through a
+install -y <fixed feature packages>` unit. Both commands run through a
 fixed `flock` lock under `/run/lock/lightningos`, use dpkg's bounded lock wait,
 have a 15-minute runtime ceiling, and receive only the fixed noninteractive
 environment. The manager polls the read-only status operation and never holds
@@ -562,6 +569,13 @@ ensure call stops completed units so `--collect` removes them. A failed fixed
 stage remains observable as `failed`; a later ensure request may clear and
 retry only that same catalog stage. Readiness requires both catalog packages
 to report `installed` through fixed `/usr/bin/dpkg-query` arguments.
+
+The `mdns` feature is the package prerequisite for the typed system-integration
+reconciler. Ubuntu 24.04 accepted its real service-user dry-run and read-only
+status while rejecting an injected package list; package, service, audit, lock,
+and broker state were preserved. No apt command or network/firewall mutation
+ran. Evidence is in
+`docs/baselines/privilege-hardening-phase3-mdns-package-2026-08-13.json`.
 
 CPU Miner install invokes this capability before typed Docker-runtime
 readiness. In `enforce`, missing Docker packages can therefore be installed

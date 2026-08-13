@@ -1,0 +1,62 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-mdns-package.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "closed mDNS package feature prerequisite",
+  "feature": {
+    "name": "mdns",
+    "packages": ["avahi-daemon", "libnss-mdns"],
+    "index_unit": "lightningos-package-mdns-index",
+    "install_unit": "lightningos-package-mdns-install",
+    "supported_os": ["ubuntu:24.04", "ubuntu:26.04"],
+    "caller_selects_packages": false,
+    "caller_selects_units": false,
+    "caller_selects_arguments": false,
+    "shared_package_lock": true,
+    "asynchronous_state_machine": true
+  },
+  "tests": {
+    "fixed_index_schedule": "passed",
+    "fixed_install_schedule": "passed",
+    "both_packages_required_for_ready": "passed",
+    "docker_packages_excluded": "passed",
+    "unknown_feature_rejected": "passed",
+    "injected_package_list_rejected": "passed",
+    "strict_protocol": "passed",
+    "strict_client_request": "passed",
+    "focused_go_test": "passed"
+  },
+  "ubuntu24_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "amd64",
+    "caller": "lightningos service user through the exact broker sudo entry",
+    "dry_run": "passed",
+    "read_only_status": "passed",
+    "injected_packages_failed_closed": true,
+    "apt_executed": false,
+    "package_state_changed": false,
+    "manager_lnd_state_changed": false,
+    "mutation_lock_changed": false,
+    "firewall_changed": false,
+    "network_changed": false,
+    "integration_node_mutated": false
+  },
+  "cleanup": {
+    "original_broker_restored_by_hash": true,
+    "original_audit_restored": true,
+    "original_lock_state_restored": true,
+    "remote_temporary_artifacts_removed": true,
+    "local_temporary_artifacts_moved_to_recycle_bin": true,
+    "vm_powered_off_cleanly": true,
+    "loopback_nat_forward_removed": true,
+    "original_bridged_adapter_restored": true,
+    "host_network_adapter_restarted": false
+  },
+  "remaining": [
+    "make the system-integration reconciler request mdns readiness before installing or applying fixed assets",
+    "validate real mdns package installation only in the final fresh-install matrix where absence is intentionally preconditioned"
+  ],
+  "excluded": ["credentials", "tokens", "ip addresses", "private node identifiers"]
+}

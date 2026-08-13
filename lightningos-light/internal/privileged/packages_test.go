@@ -103,6 +103,57 @@ func TestCatalogPackageFeatureReadyRequiresBothCatalogPackages(t *testing.T) {
 	}
 }
 
+func TestCatalogPackageEnsureMDNSSchedulesOnlyFixedPackages(t *testing.T) {
+	runner := &packageRecordingRunner{hook: func(path string, args []string) (string, error) {
+		if path == dpkgQueryPath {
+			return "", errors.New("missing")
+		}
+		if path == systemctlPath && args[len(args)-1] == mdnsInstallUnit {
+			return "LoadState=not-found\nActiveState=inactive\n", errors.New("not found")
+		}
+		if path == systemctlPath && args[len(args)-1] == mdnsIndexUnit {
+			return "LoadState=loaded\nActiveState=active\nSubState=exited\nResult=success\n", nil
+		}
+		return "", nil
+	}}
+	manager := newPackageManager(t, runner, "ID=ubuntu\nVERSION_ID=24.04\n")
+	state, err := manager.EnsureFeature(context.Background(), PackageFeatureMDNS, false)
+	if err != nil || state.Status != "installing" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	last := runner.commands[len(runner.commands)-1]
+	wantTail := []string{aptGetPath, "-o", "DPkg::Lock::Timeout=300", "install", "-y", "avahi-daemon", "libnss-mdns"}
+	if last.path != systemdRunPath || last.args[3] != "--unit="+mdnsInstallUnit || !hasArgsSuffix(last.args, wantTail...) {
+		t.Fatalf("unexpected mDNS install schedule: %#v", last)
+	}
+	for _, forbidden := range []string{"docker.io", "docker-compose-v2", "ufw", "bash"} {
+		if containsArg(last.args, forbidden) {
+			t.Fatalf("mDNS schedule contains unrelated argument %q: %#v", forbidden, last)
+		}
+	}
+}
+
+func TestCatalogPackageMDNSReadyRequiresBothFixedPackages(t *testing.T) {
+	runner := &packageRecordingRunner{hook: func(path string, args []string) (string, error) {
+		if path == systemctlPath {
+			return "LoadState=not-found\nActiveState=inactive\n", errors.New("not found")
+		}
+		if path == dpkgQueryPath {
+			return "avahi-daemon=installed\nlibnss-mdns=installed\n", nil
+		}
+		return "", nil
+	}}
+	manager := newPackageManager(t, runner, "ID=ubuntu\nVERSION_ID=26.04\n")
+	state, err := manager.FeatureStatus(context.Background(), PackageFeatureMDNS)
+	if err != nil || state.Status != "ready" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	last := runner.commands[len(runner.commands)-1]
+	if !reflect.DeepEqual(last.args, []string{"-W", "-f=${Package}=${db:Status-Status}\\n", "avahi-daemon", "libnss-mdns"}) {
+		t.Fatalf("unexpected mDNS query: %#v", last)
+	}
+}
+
 func TestCatalogPackageDryRunAndUnsupportedReleaseFailClosed(t *testing.T) {
 	runner := &packageRecordingRunner{}
 	manager := newPackageManager(t, runner, "ID=ubuntu\nVERSION_ID=24.04\n")
@@ -144,4 +195,13 @@ func TestCatalogPackageEnsureRetriesOnlyFailedFixedInstallStage(t *testing.T) {
 	if last.path != systemdRunPath || !hasArgsSuffix(last.args, aptGetPath, "-o", "DPkg::Lock::Timeout=300", "install", "-y", "docker.io", "docker-compose-v2") {
 		t.Fatalf("unexpected retry schedule: %#v", last)
 	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }

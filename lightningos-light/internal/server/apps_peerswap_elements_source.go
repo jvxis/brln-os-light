@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +24,15 @@ const (
 	peerswapLNDIdentityTimeout = 6 * time.Second
 )
 
-var peerswapElementsHTTPClient = &http.Client{Timeout: 8 * time.Second}
+var (
+	peerswapElementsHTTPClient = &http.Client{
+		Timeout: 8 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	peerswapRemoteEndpointPattern = regexp.MustCompile(`^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?/?$`)
+)
 
 type peerswapInstallOptions struct {
 	ElementsMode        string `json:"elements_mode"`
@@ -396,6 +405,9 @@ func normalizePeerswapRemoteEndpoint(raw string) (peerswapRemoteEndpoint, error)
 	if value == "" {
 		return peerswapRemoteEndpoint{}, errors.New("remote Elements RPC URL is required")
 	}
+	if len(value) > 512 || !peerswapRemoteEndpointPattern.MatchString(value) {
+		return peerswapRemoteEndpoint{}, errors.New("remote Elements RPC URL has an invalid format")
+	}
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return peerswapRemoteEndpoint{}, errors.New("remote Elements RPC URL must include scheme and host")
@@ -425,10 +437,14 @@ func normalizePeerswapRemoteEndpoint(raw string) (peerswapRemoteEndpoint, error)
 	if host == "" {
 		return peerswapRemoteEndpoint{}, errors.New("remote Elements RPC URL host is required")
 	}
+	hostForURL := host
+	if strings.Contains(hostForURL, ":") {
+		hostForURL = "[" + hostForURL + "]"
+	}
 	canonicalURL := parsed.Scheme + "://" + parsed.Host
 	return peerswapRemoteEndpoint{
 		URL:  canonicalURL,
-		Host: parsed.Scheme + "://" + host,
+		Host: parsed.Scheme + "://" + hostForURL,
 		Port: port,
 	}, nil
 }
@@ -494,13 +510,14 @@ func testPeerswapElementsSource(ctx context.Context, source peerswapElementsSour
 }
 
 func testPeerswapRemoteElementsRPC(ctx context.Context, source peerswapElementsSource) (string, error) {
-	if _, err := normalizePeerswapRemoteEndpoint(source.URL); err != nil {
+	endpoint, err := normalizePeerswapRemoteEndpoint(source.URL)
+	if err != nil {
 		return "", err
 	}
 	payload := []byte(`{"jsonrpc":"1.0","id":"t","method":"getblockchaininfo","params":[]}`)
 	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, source.URL+"/", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint.URL+"/", bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}

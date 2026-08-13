@@ -21,6 +21,15 @@ func TestParseGraphCloseFundingOutpointRejectsInvalidValue(t *testing.T) {
 	}
 }
 
+func TestGraphCloseFundingOutputRangeRejectsUint32Overflow(t *testing.T) {
+	if graphCloseFundingOutputInRange(^uint32(0), 1) {
+		t.Fatal("maximum uint32 funding vout was accepted for a one-output transaction")
+	}
+	if !graphCloseFundingOutputInRange(0, 1) {
+		t.Fatal("valid funding vout was rejected")
+	}
+}
+
 func TestFindSpendingTransactionInBlock(t *testing.T) {
 	block := bitcoinVerboseBlock{
 		Tx: []bitcoinVerboseTransaction{

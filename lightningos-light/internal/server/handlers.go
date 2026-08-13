@@ -3963,13 +3963,13 @@ func (s *Server) handleOnchainUtxos(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("min_conf")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-			minConfs = int32(parsed)
+		if parsed, ok := parseNonNegativeInt32(raw); ok {
+			minConfs = parsed
 		}
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("max_conf")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-			maxConfs = int32(parsed)
+		if parsed, ok := parseNonNegativeInt32(raw); ok {
+			maxConfs = parsed
 			maxConfSet = true
 		}
 	}
@@ -4021,13 +4021,13 @@ func (s *Server) handleOnchainTransactions(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("min_conf")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-			minConfs = int32(parsed)
+		if parsed, ok := parseNonNegativeInt32(raw); ok {
+			minConfs = parsed
 		}
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("max_conf")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-			maxConfs = int32(parsed)
+		if parsed, ok := parseNonNegativeInt32(raw); ok {
+			maxConfs = parsed
 		}
 	}
 	if maxConfs > 0 && maxConfs < minConfs {
@@ -4067,6 +4067,14 @@ func (s *Server) handleOnchainTransactions(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func parseNonNegativeInt32(raw string) (int32, bool) {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 32)
+	if err != nil || parsed < 0 {
+		return 0, false
+	}
+	return int32(parsed), true
 }
 
 func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {

@@ -220,7 +220,7 @@ func estimateGraphCloseFeeSat(ctx context.Context, cfg bitcoinRPCConfig, funding
 	if err != nil {
 		return nil, err
 	}
-	if int(fundingVout) >= len(fundingTx.Vout) {
+	if !graphCloseFundingOutputInRange(fundingVout, len(fundingTx.Vout)) {
 		return nil, fmt.Errorf("funding vout %d out of range", fundingVout)
 	}
 
@@ -234,6 +234,10 @@ func estimateGraphCloseFeeSat(ctx context.Context, cfg bitcoinRPCConfig, funding
 		return nil, fmt.Errorf("negative close fee computed")
 	}
 	return &feeSat, nil
+}
+
+func graphCloseFundingOutputInRange(fundingVout uint32, outputCount int) bool {
+	return outputCount > 0 && uint64(fundingVout) < uint64(outputCount)
 }
 
 func graphCloseLooksLikeDirectPayoutScript(scriptType string) bool {

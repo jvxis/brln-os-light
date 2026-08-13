@@ -178,6 +178,31 @@ func TestNormalizePeerswapRemoteEndpointSplitsHostAndPort(t *testing.T) {
 	if endpoint.Host != "http://elements.br-ln.com" || endpoint.Port != 8086 {
 		t.Fatalf("unexpected host/port: %s %d", endpoint.Host, endpoint.Port)
 	}
+
+	ipv6, err := normalizePeerswapRemoteEndpoint("https://[2001:db8::1]:7041")
+	if err != nil {
+		t.Fatalf("unexpected IPv6 error: %v", err)
+	}
+	if ipv6.URL != "https://[2001:db8::1]:7041" || ipv6.Host != "https://[2001:db8::1]" || ipv6.Port != 7041 {
+		t.Fatalf("unexpected IPv6 endpoint: %+v", ipv6)
+	}
+}
+
+func TestNormalizePeerswapRemoteEndpointRejectsRequestSmugglingParts(t *testing.T) {
+	for _, raw := range []string{
+		"ftp://elements.example:7041",
+		"http://user:pass@elements.example:7041",
+		"http://elements.example:7041/wallet/other",
+		"http://elements.example:7041/?query=1",
+		"http://elements.example:7041/#fragment",
+		"http://elements_example:7041",
+		"http://elements.example:99999",
+		"http://elements.example:7041\nInjected: value",
+	} {
+		if _, err := normalizePeerswapRemoteEndpoint(raw); err == nil {
+			t.Fatalf("unsafe remote Elements endpoint accepted: %q", raw)
+		}
+	}
 }
 
 func TestPeerswapRemoteWalletNameFromPubkey(t *testing.T) {
@@ -245,6 +270,34 @@ func TestTestPeerswapRemoteElementsRPC(t *testing.T) {
 	}
 	if chain != "liquidv1" {
 		t.Fatalf("unexpected chain: %s", chain)
+	}
+}
+
+func TestTestPeerswapRemoteElementsRPCDoesNotFollowRedirects(t *testing.T) {
+	redirectHits := 0
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectHits++
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"result":{"chain":"liquidv1"},"error":null}`))
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer source.Close()
+
+	_, err := testPeerswapRemoteElementsRPC(context.Background(), peerswapElementsSource{
+		Mode:     peerswapElementsModeRemote,
+		URL:      source.URL,
+		User:     "elements",
+		Password: "secret",
+	})
+	if err == nil || !strings.Contains(err.Error(), "302") {
+		t.Fatalf("remote Elements redirect was not rejected: %v", err)
+	}
+	if redirectHits != 0 {
+		t.Fatalf("remote Elements credentials followed a redirect (%d target hits)", redirectHits)
 	}
 }
 

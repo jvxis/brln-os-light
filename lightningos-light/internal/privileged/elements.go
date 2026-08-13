@@ -138,6 +138,9 @@ func (manager *NativeElementsManager) Ensure(ctx context.Context, params Element
 			return ElementsState{}, err
 		}
 	}
+	if err := manager.ensureApplicationTraversal(ctx); err != nil {
+		return ElementsState{}, err
+	}
 	if err := setLoopTreeOwnership([]string{paths.Root}, appmanifest.ElementsUser, appmanifest.ElementsManagerGroup); err != nil {
 		return ElementsState{}, errors.New("Elements application ownership migration failed")
 	}
@@ -180,6 +183,15 @@ func (manager *NativeElementsManager) Ensure(ctx context.Context, params Element
 		return ElementsState{}, errors.New("Elements systemd reload failed")
 	}
 	return manager.Status(ctx, paths.DataDir)
+}
+
+func (manager *NativeElementsManager) ensureApplicationTraversal(ctx context.Context) error {
+	for _, parent := range []string{appmanifest.ElementsStateRoot, appmanifest.ElementsAppsRoot, appmanifest.ElementsAppsDataRoot} {
+		if _, err := manager.Runner.Run(ctx, setfaclPath, "-m", "u:"+appmanifest.ElementsUser+":--x", parent); err != nil {
+			return errors.New("Elements directory traversal permission failed")
+		}
+	}
+	return nil
 }
 
 func (manager *NativeElementsManager) Lifecycle(ctx context.Context, dataDir string, action AppLifecycleAction, dryRun bool) (ElementsState, error) {

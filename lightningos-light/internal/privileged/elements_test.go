@@ -10,6 +10,27 @@ import (
 	"lightningos-light/internal/appmanifest"
 )
 
+func TestNativeElementsApplicationTraversalIsLimitedToFixedParents(t *testing.T) {
+	runner := &recordingRunner{}
+	manager := &NativeElementsManager{Runner: runner}
+	if err := manager.ensureApplicationTraversal(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	want := []recordedCommand{
+		{path: setfaclPath, args: []string{"-m", "u:" + appmanifest.ElementsUser + ":--x", appmanifest.ElementsStateRoot}},
+		{path: setfaclPath, args: []string{"-m", "u:" + appmanifest.ElementsUser + ":--x", appmanifest.ElementsAppsRoot}},
+		{path: setfaclPath, args: []string{"-m", "u:" + appmanifest.ElementsUser + ":--x", appmanifest.ElementsAppsDataRoot}},
+	}
+	if len(runner.commands) != len(want) {
+		t.Fatalf("traversal commands = %#v", runner.commands)
+	}
+	for i := range want {
+		if runner.commands[i].path != want[i].path || strings.Join(runner.commands[i].args, " ") != strings.Join(want[i].args, " ") {
+			t.Fatalf("traversal command %d = %#v, want %#v", i, runner.commands[i], want[i])
+		}
+	}
+}
+
 func TestExtractElementsBinariesRejectsMissingAndExtractsFixedNames(t *testing.T) {
 	archive := elementsTestArchive(t, map[string]string{
 		"elements-23.3.3/bin/elementsd":    "daemon",

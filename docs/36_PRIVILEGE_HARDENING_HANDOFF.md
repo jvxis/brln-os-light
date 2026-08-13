@@ -200,6 +200,17 @@ then restored the original broker and VM network state. Evidence:
 The now-unused service/power sudoers entries remain until the coordinated
 cutover.
 
+Login-protection activation is now broker-only: fixed `files.enable_login`
+followed by delayed `service.restart`. `auth_enable.go` no longer writes YAML
+directly, invokes sudo/systemd-run/visudo, creates a runtime sudoers file, or
+contains a privileged shell. Disabled/shadow requests return 503 and preserve
+the in-memory setting; the previously accepted real Ubuntu 24.04 activation
+and restart gates cover enforce mode. Evidence:
+`docs/baselines/privilege-hardening-phase3-auth-enable-2026-08-13.json`. During
+Phase 4, detect and remove any stale
+`/etc/sudoers.d/lightningos-auth-enable` only after validating it as the exact
+legacy root-owned regular file.
+
 Firewall policy reconciliation, real Tor/LightningOS upgrade and rollback
 matrices, LightningOS publisher attestation, remaining helper/storage
 operations, wildcard sudoers removal, installer authenticity, and the rest of

@@ -1262,6 +1262,20 @@ secret-free evidence are recorded in
 Legacy installer sudoers entries are intentionally left for the coordinated
 Phase 4 cutover.
 
+The one-time login-protection activation flow is now broker-only. The manager
+calls the existing fixed `files.enable_login` operation and schedules the
+manager restart through `service.restart`; outside `enforce` it returns a
+service-unavailable error without changing disk or in-memory configuration.
+The manager-side YAML rewrite, `sudo tee`, runtime
+`/etc/sudoers.d/lightningos-auth-enable` creation, `visudo`, privileged shell,
+and generic `systemd-run` fallback were deleted, reducing the file's permanent
+privilege budget to zero. The existing real Ubuntu 24.04 activation and manager
+restart gates cover the positive path; new disabled/shadow tests prove the
+cutover fails closed. Evidence is in
+`docs/baselines/privilege-hardening-phase3-auth-enable-2026-08-13.json`. Any
+stale runtime sudoers file on an upgraded node must be removed during the
+coordinated Phase 4 cutover after its exact contents and ownership are checked.
+
 Policy application/reconciliation, installer artifact verification, the real
 Tor and LightningOS upgrade/rollback matrices, release publisher attestation,
 and the remaining package/storage paths are still open.

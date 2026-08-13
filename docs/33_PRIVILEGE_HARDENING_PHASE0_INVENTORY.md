@@ -69,7 +69,7 @@ Legend for the call-site table:
 | LightningOS upgrade — `internal/server/app_upgrade.go` | 0 | 0 | 0/0/0 | 0 | `upgrade.lightningos.start`, `service.status` | Migrated on 2026-08-13: fixed repository, digest-pinned helper, exact tag/version/full-commit binding, fixed units and verify-only gate; publisher signature and real upgrade/rollback matrix remain |
 | LND upgrade — `internal/server/lnd_upgrade.go` | 0 | 0 | 0/0/0 | 0 | `upgrade.lnd.start`, `service.status` | Migrated on 2026-08-13: fixed source/architecture, five-signature manifest quorum, pre-extraction SHA-256, digest-pinned helper, typed launch and verify-only gate; full restart/rollback matrix remains |
 | Tor upgrade — `internal/server/tor_upgrade.go` | 0 | 0 | 0/0/0 | 0 | `packages.tor.refresh`, `upgrade.tor.start` | Migrated on 2026-08-13: fixed package refresh, digest-pinned helper, exact official key fingerprint plus signed `InRelease`, fixed units, typed launch and verify-only health gate; real upgrade/rollback matrix remains |
-| Enable-login compatibility — `internal/server/auth_enable.go` | 0 | 1 | 2/0/0 | 1 | `files.enable_login`, `service.restart` | Scheduled manager restart is now enforce-only through the broker; legacy config write and runtime sudoers compatibility remain to be removed in their dedicated migration |
+| Enable-login — `internal/server/auth_enable.go` | 0 | 0 | 0/0/0 | 0 | `files.enable_login`, `service.restart` | Migrated on 2026-08-13: fixed installed config, atomic root-owned update and brokered delayed restart; disabled/shadow fail closed and the runtime sudoers, sudo tee, shell, and systemd-run compatibility paths were removed |
 | System integrations — `internal/server/system_integrations.go` | 0 | 1 | 0/0/0 | 0 | `files.reconcile_integrations` | Fixed embedded assets/destinations, owner/mode checks, idempotency and rollback |
 | Terminal credentials — `internal/server/terminal_status.go` | 0 | 2 | 0/0/0 | 0 | `terminal.password.install`, `service.action` | Fixed staging/destination paths, no credential in argv/logs, invalid user and symlink tests |
 | Firewall status — `internal/server/firewall_status.go` | 0 | 0 | 0/0/0 | 0 | `manager.firewall.status` | Migrated on 2026-08-13; broker validates fixed root-owned config/UFW paths and returns typed read-only status |
@@ -121,8 +121,8 @@ boundary. They must become installer-only behavior or typed broker operations:
 | `scripts/capture-privilege-baseline.sh` | Read-only metadata/status collection | Remains a Phase 0 safety tool; no file contents, addresses, credentials or node identity are emitted |
 
 The current wildcard constructors are: eight in `install.sh`, nine each in
-`install_existing.sh` and `install_existing_pi.sh`, eight in
-`internal/server/assets/upgrade-app.sh`, and one in `auth_enable.go`. The
+`install_existing.sh` and `install_existing_pi.sh`, and eight in
+`internal/server/assets/upgrade-app.sh`. The
 wildcard command families are `smartctl`, `apt-get`, `apt`, `dpkg`, `docker`,
 `docker-compose`, `systemd-run`, and `ufw`.
 

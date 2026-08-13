@@ -40,7 +40,7 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/server/apps_publicpool.go":          {},
 	"internal/server/apps_robosats.go":            {},
 	"internal/server/apps_storage_permissions.go": {},
-	"internal/server/auth_enable.go":              {runSystemd: 1, writeSudo: 2, shell: 1},
+	"internal/server/auth_enable.go":              {},
 	"internal/server/bitcoin_local.go":            {},
 	"internal/server/elements_mainchain.go":       {},
 	"internal/server/elements_status.go":          {},
@@ -77,12 +77,11 @@ var legacyWildcardSudoLines = map[string]struct{}{
 	`install_existing_pi.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`: {},
 	`install_existing_pi.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                 {},
 	`internal/server/assets/upgrade-app.sh:system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"`: {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${APT_GET_BIN:-}" ]] && app_cmds+=("${APT_GET_BIN} *")`:                                                                          {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${APT_BIN:-}" ]] && app_cmds+=("${APT_BIN} *")`:                                                                                  {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${DPKG_BIN:-}" ]] && app_cmds+=("${DPKG_BIN} *")`:                                                                                {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${SYSTEMD_RUN_BIN:-}" ]] && app_cmds+=("${SYSTEMD_RUN_BIN} *")`:                                                                  {},
-	`internal/server/assets/upgrade-app.sh:[[ -n "${UFW_BIN:-}" ]] && app_cmds+=("${UFW_BIN} *")`:                                                                                  {},
-	`internal/server/auth_enable.go:fmt.Sprintf("%s ALL=NOPASSWD: %s %s, %s restart lightningos-manager, %s *", managerUser, teePath, configPath, systemctlPath, systemdRunPath),`: {},
+	`internal/server/assets/upgrade-app.sh:[[ -n "${APT_GET_BIN:-}" ]] && app_cmds+=("${APT_GET_BIN} *")`:         {},
+	`internal/server/assets/upgrade-app.sh:[[ -n "${APT_BIN:-}" ]] && app_cmds+=("${APT_BIN} *")`:                 {},
+	`internal/server/assets/upgrade-app.sh:[[ -n "${DPKG_BIN:-}" ]] && app_cmds+=("${DPKG_BIN} *")`:               {},
+	`internal/server/assets/upgrade-app.sh:[[ -n "${SYSTEMD_RUN_BIN:-}" ]] && app_cmds+=("${SYSTEMD_RUN_BIN} *")`: {},
+	`internal/server/assets/upgrade-app.sh:[[ -n "${UFW_BIN:-}" ]] && app_cmds+=("${UFW_BIN} *")`:                 {},
 }
 
 var legacyDockerGroupLines = map[string]struct{}{}
@@ -92,7 +91,6 @@ var legacyPrivilegedShellLiteralBudgets = map[string]int{
 	// payloads to bounded tmpfs so their roots can remain read-only. No host
 	// path, command, argument, image, mount, or identity is request-selectable.
 	"internal/appmanifest/mempool.go": 2,
-	"internal/server/auth_enable.go":  1,
 }
 
 func TestPrivilegeBoundaryCallSiteBudgets(t *testing.T) {

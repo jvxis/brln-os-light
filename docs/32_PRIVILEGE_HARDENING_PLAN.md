@@ -1494,10 +1494,24 @@ credential or data-directory mount, and require no third-party disclaimer. The
 exact inventory is recorded in
 `docs/baselines/privilege-hardening-phase5-lnd-credentials-2026-08-13.json`.
 
-Phase 5 remains open for the transactional manager credential migration and its
-fresh-wallet, existing-wallet, rollback, and reboot gates. The migration must
-account for the manager's `macaroon:generate` workflow rather than treating a
-17-permission macaroon as low privilege.
+The transactional manager migration is now implemented with closed broker
+operations, a unique revocable root key, the fixed 17-permission set, atomic
+configuration updates, and root-only transaction state. The credential lives
+at `/var/lib/lightningos-credentials/lnd/manager.macaroon` as
+`root:lightningos:0640`; its root-owned ancestor prevents the manager from
+replacing the boundary. After commit, native `admin.macaroon` is
+`lnd:lnd:0600`. Upgrade rollback schema v3 records metadata and existence only,
+never credential bytes, and restores the previous path while revoking the
+dedicated root key. An unavailable or locked LND returns `pending` without
+filesystem/config mutation.
+
+The real existing-wallet ensure/rollback gate passed on LOS TESTE2. The root
+key count increased only for the migration and returned to baseline on
+rollback; native admin bytes/metadata, manager/LND PIDs, and HTTPS health were
+preserved without restarting Bitcoin, LND, or manager. Phase 5 remains open
+only for fresh-wallet/first-unlock convergence, committed reboot persistence,
+and the final supported Ubuntu 24.04/26.04 matrix. Evidence is in
+`docs/baselines/privilege-hardening-phase5-manager-credential-2026-08-13.json`.
 
 Exit criterion: compromising one app does not automatically grant another
 app's permissions, host administration, or unrestricted LND administration.

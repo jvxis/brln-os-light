@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/privileged"
 )
 
 const installedManagerConfigPath = "/etc/lightningos/config.yaml"
@@ -167,6 +168,11 @@ type smartPrivilegedClient interface {
 
 type lndPermissionsPrivilegedClient interface {
 	RepairLNDPermissions(ctx context.Context, dryRun bool) (status string, changed bool, err error)
+}
+
+type lndManagerCredentialPrivilegedClient interface {
+	EnsureLNDManagerCredential(ctx context.Context, dryRun bool) (privileged.LNDManagerCredentialState, error)
+	RollbackLNDManagerCredential(ctx context.Context, dryRun bool) (privileged.LNDManagerCredentialState, error)
 }
 
 type loopPrivilegedClient interface {
@@ -1322,6 +1328,34 @@ func RepairLNDPermissionsWithBroker(ctx context.Context) (bool, error) {
 		return false, nil
 	default:
 		return false, nil
+	}
+}
+
+func EnsureLNDManagerCredentialWithBroker(ctx context.Context) (privileged.LNDManagerCredentialState, bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return privileged.LNDManagerCredentialState{}, false, nil
+	}
+	credentialClient, ok := client.(lndManagerCredentialPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return privileged.LNDManagerCredentialState{}, true, errors.New("privileged broker does not support LND manager credential migration")
+		}
+		return privileged.LNDManagerCredentialState{}, false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		state, err := credentialClient.EnsureLNDManagerCredential(ctx, false)
+		return state, true, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = credentialClient.EnsureLNDManagerCredential(shadowCtx, true)
+		return privileged.LNDManagerCredentialState{}, false, nil
+	default:
+		return privileged.LNDManagerCredentialState{}, false, nil
 	}
 }
 

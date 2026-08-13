@@ -577,6 +577,9 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 		`"$RM_BIN" -f -- "$sudoers_path" "$auth_sudoers_path"`,
 		`NoNewPrivileges=true`,
 		`lightningos-manager broker-self-test`,
+		`capture_lnd_manager_credential_boundary`,
+		`: > "$state_root/schema-v3"`,
+		`lightningos-manager lnd-manager-credential-ensure`,
 		`/usr/local/sbin/lightningos-rollback-privilege-cutover || true`,
 	} {
 		if !strings.Contains(content, expected) {
@@ -615,12 +618,20 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		`rm -f -- "$sudoers_path"`,
 		`usermod -a -G docker "$manager_user"`,
 		`systemctl restart lightningos-manager`,
+		`! -f "$STATE_ROOT/schema-v3"`,
+		`runuser -u lightningos -- "$MANAGER_BIN" lnd-manager-credential-rollback`,
+		`chown "$admin_uid:$admin_gid" "$LND_ADMIN_MACAROON"`,
+		`chmod "$admin_mode" "$LND_ADMIN_MACAROON"`,
+		`chown lnd:lnd "$LND_ADMIN_MACAROON"`,
+		`chmod 0640 "$LND_ADMIN_MACAROON"`,
+		`rm -f -- "$LND_MANAGER_MACAROON"`,
+		`rm -f -- "$LND_MANAGER_STATE"`,
 	} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("privilege rollback is missing %q", expected)
 		}
 	}
-	for _, forbidden := range []string{"/data/bitcoin", "/data/lnd", "/data/apps", "rm -rf"} {
+	for _, forbidden := range []string{"/data/bitcoin", "/data/apps", "rm -rf", "cp -a -- /data/lnd", "rm -f -- /data/lnd"} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("privilege rollback must not modify node or app data: found %q", forbidden)
 		}

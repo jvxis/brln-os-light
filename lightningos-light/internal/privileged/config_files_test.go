@@ -65,3 +65,38 @@ func TestPrepareEnableLoginConfigRejectsUnsafeShapes(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareLNDMacaroonPathConfigIsClosedAndPreservesConfig(t *testing.T) {
+	input := []byte("server:\n  port: 8443\nlnd:\n  grpc_host: 127.0.0.1:10009\n  admin_macaroon_path: " + DefaultLNDAdminMacaroonPath + "\nfeatures:\n  enable_login: true\n")
+	output, changed, err := prepareLNDMacaroonPathConfig(input, DefaultLNDManagerMacaroonPath)
+	if err != nil || !changed {
+		t.Fatalf("output=%q changed=%v err=%v", output, changed, err)
+	}
+	if !bytes.Contains(output, []byte("admin_macaroon_path: "+DefaultLNDManagerMacaroonPath)) || !bytes.Contains(output, []byte("enable_login: true")) {
+		t.Fatalf("updated config lost fields: %s", output)
+	}
+	path, err := configuredLNDMacaroonPath(output)
+	if err != nil || path != DefaultLNDManagerMacaroonPath {
+		t.Fatalf("configured path=%q err=%v", path, err)
+	}
+	second, changed, err := prepareLNDMacaroonPathConfig(output, DefaultLNDManagerMacaroonPath)
+	if err != nil || changed || !bytes.Equal(second, output) {
+		t.Fatalf("idempotence failed: changed=%v err=%v", changed, err)
+	}
+	if _, _, err := prepareLNDMacaroonPathConfig(input, "/tmp/attacker.macaroon"); err == nil {
+		t.Fatal("caller-selected LND macaroon path was accepted")
+	}
+}
+
+func TestConfiguredLNDMacaroonPathRejectsUnsafeShapes(t *testing.T) {
+	for _, input := range [][]byte{
+		[]byte("lnd: {}\n"),
+		[]byte("lnd: disabled\n"),
+		[]byte("lnd:\n  admin_macaroon_path: /tmp/other\n"),
+		[]byte("lnd:\n  admin_macaroon_path: " + DefaultLNDAdminMacaroonPath + "\n  admin_macaroon_path: " + DefaultLNDManagerMacaroonPath + "\n"),
+	} {
+		if _, err := configuredLNDMacaroonPath(input); err == nil {
+			t.Fatalf("unsafe config accepted: %q", input)
+		}
+	}
+}

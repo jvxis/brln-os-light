@@ -48,6 +48,8 @@ const (
 	OperationAppStorageEnsure              Operation = "storage.apps.ensure"
 	OperationSMARTRead                     Operation = "storage.smart.read"
 	OperationLNDPermissionsRepair          Operation = "storage.lnd.permissions.repair"
+	OperationLNDManagerCredentialEnsure    Operation = "lnd.manager-credential.ensure"
+	OperationLNDManagerCredentialRollback  Operation = "lnd.manager-credential.rollback"
 	OperationAppImagePrepare               Operation = "app.image.prepare"
 	OperationAppImageStatus                Operation = "app.image.status"
 	OperationAppImageProbe                 Operation = "app.image.probe"
@@ -200,6 +202,13 @@ type SMARTReadState struct {
 type LNDPermissionsState struct {
 	Status  string `json:"status"`
 	Changed bool   `json:"changed,omitempty"`
+}
+
+type LNDManagerCredentialState struct {
+	Status         string `json:"status"`
+	Changed        bool   `json:"changed,omitempty"`
+	ConfiguredPath string `json:"configured_path,omitempty"`
+	AdminProtected bool   `json:"admin_protected,omitempty"`
 }
 
 type LNDUpgradeStartParams struct {
@@ -832,6 +841,11 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid storage.lnd.permissions.repair params: %w", err)
+		}
+	case OperationLNDManagerCredentialEnsure, OperationLNDManagerCredentialRollback:
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
 		}
 	case OperationAppImagePrepare:
 		var params AppImageParams

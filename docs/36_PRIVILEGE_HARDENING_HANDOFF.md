@@ -260,8 +260,14 @@ A read-only `ListPermissions` query on the synced LOS TESTE2 LND
 `0.21.2-beta.rc1` mapped the manager's authenticated RPC surface to 17 of the
 19 exposed permission pairs; only `info:write` and `macaroon:write` were not
 observed. Wallet creation and unlock use the unauthenticated WalletUnlocker
-connection. The manager is still configured with native `admin.macaroon`, so
-its transactional migration is the remaining Phase 5 implementation slice.
+connection. The preserved integration node remains configured with native
+`admin.macaroon` after the acceptance rollback, but the transactional migration
+is implemented. Two closed broker operations own ensure/rollback, a unique root
+key, the fixed 17 permissions, atomic YAML switching, a root-only state record,
+and `lnd:lnd:0600` protection of the native admin credential. The dedicated
+credential is fixed at
+`/var/lib/lightningos-credentials/lnd/manager.macaroon` with a root-owned
+ancestor and `root:lightningos:0640` metadata.
 
 BTCPay, Fedimint Gateway, LNbits, LNDg, Lightning Loop, PeerSwap, and Tapd
 already use explicit dedicated credentials and reject credentials equal to the
@@ -270,10 +276,15 @@ native admin macaroon. No App Store execution snapshot mounts
 receive no separate macaroon or LND directory, and have no third-party
 disclaimer. Do not weaken these invariants while migrating the manager.
 
-The manager candidate still needs `macaroon:generate` for app-specific and
-user-exported credentials. Treat it as highly privileged: the implementation
-must preserve fresh-wallet initialization, existing nodes, rollback, and reboot
-without exporting the admin macaroon or creating an automatic restart loop.
+The manager credential still includes `macaroon:generate` for app-specific and
+user-exported credentials, so treat it as highly privileged rather than a
+low-risk read credential. Existing-wallet ensure and exact rollback passed on
+LOS TESTE2 with the root-key count, admin bytes/metadata, manager/LND PIDs, and
+health returned to baseline and no dependency restart. An unavailable/locked
+LND remains pending without mutation. Fresh-wallet/first-unlock convergence,
+committed reboot persistence, and the final Ubuntu 24.04/26.04 matrix remain.
+Evidence:
+`docs/baselines/privilege-hardening-phase5-manager-credential-2026-08-13.json`.
 
 Application state at this checkpoint:
 

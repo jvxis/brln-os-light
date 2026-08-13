@@ -651,6 +651,40 @@ func (client *Client) RepairLNDPermissions(ctx context.Context, dryRun bool) (st
 	return state.Status, state.Changed, nil
 }
 
+func (client *Client) EnsureLNDManagerCredential(ctx context.Context, dryRun bool) (LNDManagerCredentialState, error) {
+	return client.lndManagerCredentialOperation(ctx, OperationLNDManagerCredentialEnsure, dryRun)
+}
+
+func (client *Client) RollbackLNDManagerCredential(ctx context.Context, dryRun bool) (LNDManagerCredentialState, error) {
+	return client.lndManagerCredentialOperation(ctx, OperationLNDManagerCredentialRollback, dryRun)
+}
+
+func (client *Client) lndManagerCredentialOperation(ctx context.Context, operation Operation, dryRun bool) (LNDManagerCredentialState, error) {
+	response, err := client.call(ctx, operation, struct{}{}, dryRun)
+	if err != nil {
+		return LNDManagerCredentialState{}, err
+	}
+	var state LNDManagerCredentialState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return LNDManagerCredentialState{}, errors.New("invalid broker LND manager credential response")
+	}
+	if state.ConfiguredPath != "" && state.ConfiguredPath != DefaultLNDAdminMacaroonPath && state.ConfiguredPath != DefaultLNDManagerMacaroonPath {
+		return LNDManagerCredentialState{}, errors.New("invalid broker LND manager credential path")
+	}
+	valid := false
+	switch operation {
+	case OperationLNDManagerCredentialEnsure:
+		valid = state.Status == "ready" || state.Status == "pending" || (dryRun && state.Status == "validated")
+	case OperationLNDManagerCredentialRollback:
+		valid = state.Status == "rolled_back" || state.Status == "absent" || (dryRun && state.Status == "validated")
+	}
+	if !valid || (state.Status == "ready" && (state.ConfiguredPath != DefaultLNDManagerMacaroonPath || !state.AdminProtected)) ||
+		(state.Status == "pending" && state.Changed) || (state.Status == "absent" && state.Changed) {
+		return LNDManagerCredentialState{}, errors.New("invalid broker LND manager credential state")
+	}
+	return state, nil
+}
+
 func (client *Client) EnsureLoopClientMaterial(ctx context.Context, dryRun bool) error {
 	_, err := client.call(ctx, OperationLoopClientMaterialEnsure, struct{}{}, dryRun)
 	return err

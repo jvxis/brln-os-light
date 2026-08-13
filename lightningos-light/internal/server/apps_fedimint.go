@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -458,11 +457,11 @@ func (s *Server) ensureFedimintGatewayLNDMaterial(ctx context.Context, paths fed
 }
 
 func validateFedimintGatewayCredentialNotAdmin(credential []byte) error {
-	admin, err := os.ReadFile(lndAdminMacaroonPath)
+	equal, err := lndCredentialEqualsNativeAdmin(credential)
 	if err != nil {
-		return errors.New("native LND admin credential is unavailable")
+		return err
 	}
-	if bytes.Equal(credential, admin) {
+	if equal {
 		return errors.New("Gateway LND credential must not be the admin macaroon")
 	}
 	return nil

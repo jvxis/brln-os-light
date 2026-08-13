@@ -12,12 +12,15 @@ SOCKET_UNIT="/etc/systemd/system/lightningos-privileged.socket"
 BROKER_UNIT="/etc/systemd/system/lightningos-privileged@.service"
 AUTH_SUDOERS_PATH="/etc/sudoers.d/lightningos-auth-enable"
 ROLLBACK_BIN="/usr/local/sbin/lightningos-rollback-privilege-cutover"
+LND_ADMIN_MACAROON="/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"
+LND_MANAGER_MACAROON="/var/lib/lightningos-credentials/lnd/manager.macaroon"
+LND_MANAGER_STATE="/var/lib/lightningos-credentials/lnd/manager-state.json"
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Run this rollback as root." >&2
   exit 1
 fi
-if [[ ! -d "$STATE_ROOT" || -L "$STATE_ROOT" || ! -f "$STATE_ROOT/prepared" || -L "$STATE_ROOT/prepared" || ! -f "$STATE_ROOT/schema-v2" || -L "$STATE_ROOT/schema-v2" ]]; then
+if [[ ! -d "$STATE_ROOT" || -L "$STATE_ROOT" || ! -f "$STATE_ROOT/prepared" || -L "$STATE_ROOT/prepared" || ! -f "$STATE_ROOT/schema-v3" || -L "$STATE_ROOT/schema-v3" ]]; then
   echo "No trusted LightningOS privilege-cutover rollback state is available." >&2
   exit 1
 fi
@@ -45,9 +48,43 @@ restore_or_remove() {
   fi
 }
 
+restore_lnd_manager_credential_boundary() {
+  local metadata=""
+  local admin_uid=""
+  local admin_gid=""
+  local admin_mode=""
+
+  if [[ -f "$STATE_ROOT/lnd-admin-macaroon.existed" && ! -L "$STATE_ROOT/lnd-admin-macaroon.existed" ]]; then
+    [[ -f "$STATE_ROOT/lnd-admin-macaroon.metadata" && ! -L "$STATE_ROOT/lnd-admin-macaroon.metadata" && -f "$LND_ADMIN_MACAROON" && ! -L "$LND_ADMIN_MACAROON" ]] || return 1
+    metadata="$(<"$STATE_ROOT/lnd-admin-macaroon.metadata")"
+    [[ "$metadata" =~ ^([0-9]+):([0-9]+):([0-7]{3,4})$ ]] || return 1
+    admin_uid="${BASH_REMATCH[1]}"
+    admin_gid="${BASH_REMATCH[2]}"
+    admin_mode="${BASH_REMATCH[3]}"
+    chown "$admin_uid:$admin_gid" "$LND_ADMIN_MACAROON"
+    chmod "$admin_mode" "$LND_ADMIN_MACAROON"
+  elif [[ -e "$LND_ADMIN_MACAROON" ]]; then
+    [[ -f "$LND_ADMIN_MACAROON" && ! -L "$LND_ADMIN_MACAROON" ]] || return 1
+    chown lnd:lnd "$LND_ADMIN_MACAROON"
+    chmod 0640 "$LND_ADMIN_MACAROON"
+  fi
+  if [[ ! -f "$STATE_ROOT/lnd-manager-macaroon.existed" ]]; then
+    rm -f -- "$LND_MANAGER_MACAROON"
+  fi
+  if [[ ! -f "$STATE_ROOT/lnd-manager-state.existed" ]]; then
+    rm -f -- "$LND_MANAGER_STATE"
+  fi
+}
+
+if systemctl is-active --quiet lightningos-privileged.socket 2>/dev/null \
+  && [[ -x "$MANAGER_BIN" && ! -L "$MANAGER_BIN" ]]; then
+  runuser -u lightningos -- "$MANAGER_BIN" lnd-manager-credential-rollback >/dev/null 2>&1 || true
+fi
+
 systemctl stop lightningos-privileged.socket >/dev/null 2>&1 || true
 
 restore_file "$STATE_ROOT/config.yaml" "$CONFIG_PATH"
+restore_lnd_manager_credential_boundary
 restore_or_remove "lightningos-manager.service" "$SERVICE_PATH"
 restore_or_remove "30-privilege-hardening.conf" "$DROPIN_PATH"
 restore_or_remove "lightningos-manager" "$MANAGER_BIN"
@@ -96,4 +133,4 @@ fi
 systemctl restart lightningos-manager
 systemctl is-active --quiet lightningos-manager
 restore_or_remove "rollback-command" "$ROLLBACK_BIN"
-echo "LightningOS privilege cutover rolled back. Bitcoin, LND, and app data were not modified."
+echo "LightningOS privilege cutover rolled back. Bitcoin, wallet, channel, and app data were preserved."

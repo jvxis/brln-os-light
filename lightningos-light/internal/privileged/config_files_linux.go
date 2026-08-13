@@ -14,6 +14,44 @@ import (
 )
 
 func (files *AtomicConfigFiles) EnableLogin(ctx context.Context, dryRun bool) (bool, error) {
+	return files.update(ctx, dryRun, prepareEnableLoginConfig)
+}
+
+func (files *AtomicConfigFiles) SetLNDMacaroonPath(ctx context.Context, macaroonPath string, dryRun bool) (bool, error) {
+	return files.update(ctx, dryRun, func(data []byte) ([]byte, bool, error) {
+		return prepareLNDMacaroonPathConfig(data, macaroonPath)
+	})
+}
+
+func (files *AtomicConfigFiles) LNDMacaroonPath(ctx context.Context) (string, error) {
+	if files == nil || files.path != DefaultManagerConfigPath {
+		return "", errors.New("manager config target is not allowed")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	fd, err := unix.Open(files.path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", errors.New("open manager config failed")
+	}
+	file := os.NewFile(uintptr(fd), files.path)
+	if file == nil {
+		_ = unix.Close(fd)
+		return "", errors.New("open manager config failed")
+	}
+	defer file.Close()
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Uid != 0 || os.FileMode(stat.Mode).Perm()&0o022 != 0 || stat.Size < 1 || stat.Size > maxManagerConfigBytes {
+		return "", errors.New("manager config metadata is unsafe")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxManagerConfigBytes+1))
+	if err != nil {
+		return "", errors.New("read manager config failed")
+	}
+	return configuredLNDMacaroonPath(data)
+}
+
+func (files *AtomicConfigFiles) update(ctx context.Context, dryRun bool, prepare func([]byte) ([]byte, bool, error)) (bool, error) {
 	if files == nil || files.path != DefaultManagerConfigPath {
 		return false, errors.New("manager config target is not allowed")
 	}
@@ -51,7 +89,7 @@ func (files *AtomicConfigFiles) EnableLogin(ctx context.Context, dryRun bool) (b
 	if err != nil {
 		return false, errors.New("read manager config failed")
 	}
-	updated, changed, err := prepareEnableLoginConfig(data)
+	updated, changed, err := prepare(data)
 	if err != nil {
 		return false, err
 	}

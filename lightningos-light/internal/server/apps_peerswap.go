@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -382,11 +381,11 @@ func (s *Server) peerSwapLNDMaterial(ctx context.Context, hasExistingMacaroon bo
 }
 
 func validatePeerSwapCredentialNotAdmin(credential []byte) error {
-	admin, err := os.ReadFile("/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon")
+	equal, err := lndCredentialEqualsNativeAdmin(credential)
 	if err != nil {
-		return errors.New("native LND admin credential is unavailable")
+		return err
 	}
-	if bytes.Equal(credential, admin) {
+	if equal {
 		return errors.New("PeerSwap LND credential must not be the admin macaroon")
 	}
 	return nil

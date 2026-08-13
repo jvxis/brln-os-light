@@ -166,7 +166,11 @@ func repairLNDMacaroons(chainFD, uid, gid int, dryRun bool) (bool, error) {
 	sort.Strings(names)
 	changed := false
 	for _, name := range names {
-		fileChanged, present, err := repairLNDFileAt(chainFD, name, uid, gid, 0o640, dryRun)
+		mode := uint32(0o640)
+		if name == "admin.macaroon" {
+			mode = 0o600
+		}
+		fileChanged, present, err := repairLNDFileAt(chainFD, name, uid, gid, mode, dryRun)
 		if err != nil || !present {
 			if err == nil {
 				err = errors.New("LND macaroon disappeared during repair")

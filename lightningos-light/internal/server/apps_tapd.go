@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -328,11 +327,11 @@ func (s *Server) tapdLNDMaterial(ctx context.Context, hasExistingMacaroon bool) 
 	if err != nil || len(macaroon) == 0 {
 		return nil, nil, errors.New("invalid LND macaroon response")
 	}
-	admin, err := os.ReadFile(lndAdminMacaroonPath)
+	equal, err := lndCredentialEqualsNativeAdmin(macaroon)
 	if err != nil {
-		return nil, nil, errors.New("native LND admin credential is unavailable")
+		return nil, nil, err
 	}
-	if bytes.Equal(macaroon, admin) {
+	if equal {
 		return nil, nil, errors.New("Tapd LND credential must not be the admin macaroon")
 	}
 	return certificate, macaroon, nil

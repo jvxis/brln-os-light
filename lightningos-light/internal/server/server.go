@@ -290,6 +290,7 @@ func (s *Server) Run() error {
 	go func() {
 		errCh <- httpServer.ListenAndServeTLS(s.cfg.Server.TLSCert, s.cfg.Server.TLSKey)
 	}()
+	s.scheduleLNDPermissionsFix("manager startup")
 
 	select {
 	case err := <-errCh:

@@ -73,9 +73,10 @@ func TestLNDPermissionsRepairChangesOnlyFixedMetadata(t *testing.T) {
 		assertLNDPermissionsMetadata(t, path, 12345, 12346, 0o750)
 	}
 	assertLNDPermissionsMetadata(t, filepath.Join(root, "lnd.conf"), 12345, 12346, 0o660)
-	for _, path := range []string{filepath.Join(root, "tls.cert"), filepath.Join(mainnet, "admin.macaroon"), filepath.Join(mainnet, "readonly.macaroon")} {
+	for _, path := range []string{filepath.Join(root, "tls.cert"), filepath.Join(mainnet, "readonly.macaroon")} {
 		assertLNDPermissionsMetadata(t, path, 12345, 12346, 0o640)
 	}
+	assertLNDPermissionsMetadata(t, filepath.Join(mainnet, "admin.macaroon"), 12345, 12346, 0o600)
 	unmanaged := filepath.Join(mainnet, "channel.db")
 	assertLNDPermissionsMetadata(t, unmanaged, 0, 0, 0o600)
 	for path, want := range contents {

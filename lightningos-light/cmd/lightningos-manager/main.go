@@ -34,10 +34,35 @@ func main() {
 		case "broker-self-test":
 			runBrokerSelfTest()
 			return
+		case "lnd-manager-credential-ensure":
+			runLNDManagerCredential(false)
+			return
+		case "lnd-manager-credential-rollback":
+			runLNDManagerCredential(true)
+			return
 		}
 	}
 
 	runServer(os.Args[1:])
+}
+
+func runLNDManagerCredential(rollback bool) {
+	client, err := privileged.NewClient(string(privileged.ModeEnforce), 20*time.Second, nil)
+	if err != nil {
+		log.Fatalf("privileged broker client failed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	var state privileged.LNDManagerCredentialState
+	if rollback {
+		state, err = client.RollbackLNDManagerCredential(ctx, false)
+	} else {
+		state, err = client.EnsureLNDManagerCredential(ctx, false)
+	}
+	if err != nil {
+		log.Fatalf("LND manager credential operation failed: %v", err)
+	}
+	fmt.Printf("status=%s changed=%t\n", state.Status, state.Changed)
 }
 
 func runBrokerSelfTest() {

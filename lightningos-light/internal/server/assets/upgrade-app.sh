@@ -361,6 +361,33 @@ capture_optional_file() {
   : > "$state_root/${name}.existed"
 }
 
+capture_lnd_manager_credential_boundary() {
+  local state_root="$1"
+  local admin_path="/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"
+  local credential_path="/var/lib/lightningos-credentials/lnd/manager.macaroon"
+  local credential_state_path="/var/lib/lightningos-credentials/lnd/manager-state.json"
+  local metadata=""
+
+  for path in "$admin_path" "$credential_path" "$credential_state_path"; do
+    [[ ! -L "$path" ]] || return 1
+  done
+  if [[ -e "$admin_path" ]]; then
+    [[ -f "$admin_path" ]] || return 1
+    metadata="$("$STAT_BIN" -c '%u:%g:%a' "$admin_path" 2>/dev/null)" || return 1
+    [[ "$metadata" =~ ^[0-9]+:[0-9]+:[0-7]{3,4}$ ]] || return 1
+    printf '%s\n' "$metadata" > "$state_root/lnd-admin-macaroon.metadata"
+    : > "$state_root/lnd-admin-macaroon.existed"
+  fi
+  if [[ -e "$credential_path" ]]; then
+    [[ -f "$credential_path" ]] || return 1
+    : > "$state_root/lnd-manager-macaroon.existed"
+  fi
+  if [[ -e "$credential_state_path" ]]; then
+    [[ -f "$credential_state_path" ]] || return 1
+    : > "$state_root/lnd-manager-state.existed"
+  fi
+}
+
 prepare_privilege_cutover() {
   local state_root="/var/lib/lightningos/rollback/0.5.3-privilege-cutover"
   local config_path="/etc/lightningos/config.yaml"
@@ -397,6 +424,11 @@ prepare_privilege_cutover() {
       die "Legacy privilege rollback state requires operator review before the final cutover."
     fi
     validate_root_regular_file "$state_root/schema-v2" || return 1
+    if [[ ! -f "$state_root/schema-v3" ]]; then
+      capture_lnd_manager_credential_boundary "$state_root" || return 1
+      : > "$state_root/schema-v3"
+    fi
+    validate_root_regular_file "$state_root/schema-v3" || return 1
     "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
     return 0
   fi
@@ -415,6 +447,7 @@ prepare_privilege_cutover() {
   capture_optional_file "/etc/systemd/system/lightningos-privileged.socket" "$state_root" "lightningos-privileged.socket"
   capture_optional_file "/etc/systemd/system/lightningos-privileged@.service" "$state_root" "lightningos-privileged@.service"
   capture_optional_file "$rollback_bin" "$state_root" "rollback-command"
+  capture_lnd_manager_credential_boundary "$state_root"
   printf '%s\n' "$sudoers_path" > "$state_root/sudoers.path"
   printf '%s\n' "$manager_user" > "$state_root/manager.user"
   "$DATE_BIN" --utc +'%Y-%m-%dT%H:%M:%SZ' > "$state_root/created-at"
@@ -428,6 +461,7 @@ prepare_privilege_cutover() {
     : > "$state_root/socket-active"
   fi
   : > "$state_root/schema-v2"
+  : > "$state_root/schema-v3"
   : > "$state_root/prepared"
   "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
   print_ok "Root-only privilege rollback bundle prepared"
@@ -775,6 +809,22 @@ if ! stage_privilege_cutover; then
   /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "Privilege cutover could not be staged safely"
 fi
+
+print_step "Converging the restricted LND manager credential"
+if ! lnd_manager_credential_state="$("$RUNUSER_BIN" -u lightningos -- /opt/lightningos/manager/lightningos-manager lnd-manager-credential-ensure)"; then
+  print_warn "LND manager credential migration failed; restoring the previous boundary"
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+  die "Restricted LND manager credential could not be prepared safely"
+fi
+case "$lnd_manager_credential_state" in
+  status=ready\ *|status=pending\ *) ;;
+  *)
+    print_warn "LND manager credential migration returned an invalid state; restoring the previous boundary"
+    /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+    die "Restricted LND manager credential returned an invalid state"
+    ;;
+esac
+print_ok "LND manager credential boundary checked without restarting LND"
 
 print_step "Restarting lightningos-manager"
 manager_ready=0

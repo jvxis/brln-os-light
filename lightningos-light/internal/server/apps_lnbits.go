@@ -272,11 +272,11 @@ func (s *Server) ensureLnbitsMacaroon(ctx context.Context, paths lnbitsPaths) er
 }
 
 func validateLnbitsCredentialNotAdmin(credential []byte) error {
-	admin, err := os.ReadFile(lndAdminMacaroonPath)
+	equal, err := lndCredentialEqualsNativeAdmin(credential)
 	if err != nil {
-		return errors.New("native LND admin credential is unavailable")
+		return err
 	}
-	if bytes.Equal(credential, admin) {
+	if equal {
 		return errors.New("LNbits LND credential must not be the admin macaroon")
 	}
 	return nil

@@ -5581,12 +5581,34 @@ func (s *Server) scheduleLNDPermissionsFix(reason string) {
 		waitCtx, waitCancel := context.WithTimeout(context.Background(), 12*time.Second)
 		waitForFile(waitCtx, lndAdminMacaroonPath)
 		waitCancel()
-		runCtx, runCancel := context.WithTimeout(context.Background(), 6*time.Second)
+		runCtx, runCancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer runCancel()
+		state, handled, err := system.EnsureLNDManagerCredentialWithBroker(runCtx)
+		if !handled {
+			s.logger.Printf("lnd permissions fix skipped (%s): privileged broker enforce mode is required", reason)
+			return
+		}
+		if err != nil {
+			s.logger.Printf("lnd manager credential migration failed (%s): %v", reason, err)
+			return
+		}
+		if state.Status == "pending" {
+			s.logger.Printf("lnd manager credential migration pending (%s): LND RPC is not ready", reason)
+			return
+		}
 		if handled, err := system.RepairLNDPermissionsWithBroker(runCtx); !handled {
 			s.logger.Printf("lnd permissions fix skipped (%s): privileged broker enforce mode is required", reason)
+			return
 		} else if err != nil {
 			s.logger.Printf("lnd permissions fix failed (%s): %v", reason, err)
+			return
+		}
+		if s.cfg != nil && state.Status == "ready" && s.cfg.LND.AdminMacaroonPath != state.ConfiguredPath {
+			restartCtx, restartCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer restartCancel()
+			if err := system.RestartServiceWithBroker(restartCtx, "lightningos-manager", true); err != nil {
+				s.logger.Printf("manager restart after LND credential migration failed (%s): %v", reason, err)
+			}
 		}
 	}()
 }

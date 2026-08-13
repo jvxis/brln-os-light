@@ -960,6 +960,31 @@ unmanaged `channel.db` preservation, and root/macaroon symlink rejection.
 Evidence is in
 `docs/baselines/privilege-hardening-phase3-lnd-permissions-2026-08-13.json`.
 
+### LND manager credential migration
+
+`lnd.manager-credential.ensure` and `lnd.manager-credential.rollback` are
+serialized empty requests. Callers cannot choose a path, permission, root key,
+identity, mode, LND endpoint, or configuration key. Ensure bakes the fixed
+17-permission set under a unique root key, verifies it against LND, stores it at
+`/var/lib/lightningos-credentials/lnd/manager.macaroon` as
+`root:lightningos:0640`, atomically switches the existing
+`lnd.admin_macaroon_path`, and protects native `admin.macaroon` as
+`lnd:lnd:0600`. The state record is root-only and contains rollback metadata
+and the root key identifier, never credential bytes.
+
+The credential root is directly below root-owned `/var/lib`; the existing
+manager-owned `/var/lib/lightningos` is intentionally not trusted as an
+ancestor. Missing/unready LND returns `pending` before creating directories or
+changing configuration. Unknown paths, symlinks, unsafe metadata, missing
+state, credential equality with native admin, and partial transactions fail
+closed. Rollback switches the fixed config path back, restores the original
+admin metadata, idempotently revokes the dedicated root key, and removes only
+the dedicated credential/state. Neither operation restarts LND or Bitcoin.
+
+The real existing-wallet ensure/rollback gate passed on LOS TESTE2 while the
+manager and LND PIDs and HTTPS health remained stable. Evidence is in
+`docs/baselines/privilege-hardening-phase5-manager-credential-2026-08-13.json`.
+
 ## Manager modes and rollback
 
 The `privileged` configuration block supports:

@@ -3,118 +3,125 @@ package system
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 type fakePrivilegedServiceClient struct {
-	mode                string
-	calls               int
-	unit                string
-	noBlock             bool
-	dryRun              bool
-	err                 error
-	fileCalls           int
-	fileDryRun          bool
-	fileErr             error
-	appCalls            int
-	appID               string
-	action              string
-	appDryRun           bool
-	appErr              error
-	snapshotCalls       int
-	snapshotAppID       string
-	snapshotDryRun      bool
-	snapshotErr         error
-	inspectCalls        int
-	inspectAppID        string
-	inspectStatus       string
-	inspectCPU          float64
-	inspectErr          error
-	removeCalls         int
-	removeAppID         string
-	removeDryRun        bool
-	removeErr           error
-	adminResetCalls     int
-	adminResetAppID     string
-	adminResetDryRun    bool
-	adminResetErr       error
-	dockerCalls         int
-	dockerStatusCalls   int
-	dockerDryRun        bool
-	dockerErr           error
-	dockerStatus        string
-	dockerStatusValues  []string
-	packageCalls        int
-	packageStatusCalls  int
-	packageFeature      string
-	packageDryRun       bool
-	packageStatus       string
-	packageEnsureValues []string
-	packageValues       []string
-	packageErr          error
-	prepareCalls        int
-	imageAppID          string
-	imageVariant        string
-	imageDryRun         bool
-	prepareStatus       string
-	prepareErr          error
-	statusCalls         int
-	statusValues        []string
-	statusErr           error
-	probeCalls          int
-	probeRunnable       bool
-	probeErr            error
-	firewallCalls       int
-	firewallAppID       string
-	firewallDryRun      bool
-	firewallStatus      string
-	firewallErr         error
-	lndHostCalls        int
-	lndHostAppID        string
-	lndHostDryRun       bool
-	lndHostErr          error
-	lndUpgradeCalls     int
-	lndUpgradeVersion   string
-	lndUpgradeHelper    string
-	lndUpgradeVerify    bool
-	lndUpgradeDryRun    bool
-	lndUpgradeUnit      string
-	lndUpgradeErr       error
-	torRefreshCalls     int
-	torUpgradeCalls     int
-	torUpgradeHelper    string
-	torUpgradeVerify    bool
-	torUpgradeDryRun    bool
-	torUpgradeUnit      string
-	torUpgradeErr       error
-	storageCalls        int
-	storageDataDir      string
-	storageDryRun       bool
-	storageStatus       string
-	storageErr          error
-	networkCalls        int
-	networkDryRun       bool
-	networkStatus       string
-	networkErr          error
-	configCalls         int
-	configOperation     string
-	configDataDir       string
-	configContent       string
-	configDryRun        bool
-	configStatus        string
-	configErr           error
-	bitcoinStatusCalls  int
-	bitcoinStatusJSON   string
-	bitcoinStatusErr    error
-	loopCalls           int
-	loopAction          string
-	loopDryRun          bool
-	loopInstalled       bool
-	loopStatus          string
-	loopHasMacaroon     bool
-	loopHasState        bool
-	loopErr             error
+	mode                     string
+	calls                    int
+	unit                     string
+	noBlock                  bool
+	dryRun                   bool
+	err                      error
+	fileCalls                int
+	fileDryRun               bool
+	fileErr                  error
+	appCalls                 int
+	appID                    string
+	action                   string
+	appDryRun                bool
+	appErr                   error
+	snapshotCalls            int
+	snapshotAppID            string
+	snapshotDryRun           bool
+	snapshotErr              error
+	inspectCalls             int
+	inspectAppID             string
+	inspectStatus            string
+	inspectCPU               float64
+	inspectErr               error
+	removeCalls              int
+	removeAppID              string
+	removeDryRun             bool
+	removeErr                error
+	adminResetCalls          int
+	adminResetAppID          string
+	adminResetDryRun         bool
+	adminResetErr            error
+	dockerCalls              int
+	dockerStatusCalls        int
+	dockerDryRun             bool
+	dockerErr                error
+	dockerStatus             string
+	dockerStatusValues       []string
+	packageCalls             int
+	packageStatusCalls       int
+	packageFeature           string
+	packageDryRun            bool
+	packageStatus            string
+	packageEnsureValues      []string
+	packageValues            []string
+	packageErr               error
+	prepareCalls             int
+	imageAppID               string
+	imageVariant             string
+	imageDryRun              bool
+	prepareStatus            string
+	prepareErr               error
+	statusCalls              int
+	statusValues             []string
+	statusErr                error
+	probeCalls               int
+	probeRunnable            bool
+	probeErr                 error
+	firewallCalls            int
+	firewallAppID            string
+	firewallDryRun           bool
+	firewallStatus           string
+	firewallErr              error
+	lndHostCalls             int
+	lndHostAppID             string
+	lndHostDryRun            bool
+	lndHostErr               error
+	lndUpgradeCalls          int
+	lndUpgradeVersion        string
+	lndUpgradeHelper         string
+	lndUpgradeVerify         bool
+	lndUpgradeDryRun         bool
+	lndUpgradeUnit           string
+	lndUpgradeErr            error
+	torRefreshCalls          int
+	torUpgradeCalls          int
+	torUpgradeHelper         string
+	torUpgradeVerify         bool
+	torUpgradeDryRun         bool
+	torUpgradeUnit           string
+	torUpgradeErr            error
+	lightningOSUpgradeCalls  int
+	lightningOSUpgradeParams []string
+	lightningOSUpgradeVerify bool
+	lightningOSUpgradeDryRun bool
+	lightningOSUpgradeUnit   string
+	lightningOSUpgradeErr    error
+	storageCalls             int
+	storageDataDir           string
+	storageDryRun            bool
+	storageStatus            string
+	storageErr               error
+	networkCalls             int
+	networkDryRun            bool
+	networkStatus            string
+	networkErr               error
+	configCalls              int
+	configOperation          string
+	configDataDir            string
+	configContent            string
+	configDryRun             bool
+	configStatus             string
+	configErr                error
+	bitcoinStatusCalls       int
+	bitcoinStatusJSON        string
+	bitcoinStatusErr         error
+	loopCalls                int
+	loopAction               string
+	loopDryRun               bool
+	loopInstalled            bool
+	loopStatus               string
+	loopHasMacaroon          bool
+	loopHasState             bool
+	loopErr                  error
 }
 
 type fakeManagerFirewallClient struct {
@@ -406,6 +413,25 @@ func (client *fakePrivilegedServiceClient) StartTorUpgrade(_ context.Context, he
 		status = "validated"
 	}
 	return status, unit, client.torUpgradeErr
+}
+
+func (client *fakePrivilegedServiceClient) StartLightningOSUpgrade(_ context.Context, version, tag, commit, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
+	client.lightningOSUpgradeCalls++
+	client.lightningOSUpgradeParams = []string{version, tag, commit, helperContent}
+	client.lightningOSUpgradeVerify = verifyOnly
+	client.lightningOSUpgradeDryRun = dryRun
+	unit := client.lightningOSUpgradeUnit
+	if unit == "" {
+		unit = "lightningos-app-upgrade"
+		if verifyOnly {
+			unit = "lightningos-app-verify"
+		}
+	}
+	status := "started"
+	if dryRun {
+		status = "validated"
+	}
+	return status, unit, client.lightningOSUpgradeErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -1093,6 +1119,33 @@ func TestTorUpgradeBrokerHelpersEnforceAndShadowTypedOperations(t *testing.T) {
 			}
 			if test.wantCalls == 1 && (client.torUpgradeHelper != "trusted helper" || !client.torUpgradeVerify) {
 				t.Fatalf("typed Tor upgrade fields were not preserved: %#v", client)
+			}
+		})
+	}
+}
+
+func TestLightningOSUpgradeBrokerHelperEnforcesAndShadowsTypedOperation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantHandled bool
+		wantDryRun  bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantDryRun: true, wantCalls: 1},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, unit, err := StartLightningOSUpgradeWithBroker(context.Background(), "0.5.3-beta", "0.5.3-Beta", strings.Repeat("a", 40), "trusted helper", true)
+			if err != nil || handled != test.wantHandled || client.lightningOSUpgradeCalls != test.wantCalls || client.lightningOSUpgradeDryRun != test.wantDryRun {
+				t.Fatalf("handled/unit/error/client=%v/%q/%v/%#v", handled, unit, err, client)
+			}
+			if test.wantCalls == 1 && (!client.lightningOSUpgradeVerify || !reflect.DeepEqual(client.lightningOSUpgradeParams, []string{"0.5.3-beta", "0.5.3-Beta", strings.Repeat("a", 40), "trusted helper"})) {
+				t.Fatalf("typed LightningOS upgrade fields were not preserved: %#v", client)
 			}
 		})
 	}

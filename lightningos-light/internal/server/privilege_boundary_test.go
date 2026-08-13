@@ -27,7 +27,7 @@ type privilegeCallBudget struct {
 // Removing a call is always allowed. Adding or moving one requires an explicit
 // inventory review and an intentional update to this table.
 var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
-	"internal/server/app_upgrade.go":              {runSudo: 2, runSystemd: 1, shell: 1},
+	"internal/server/app_upgrade.go":              {},
 	"internal/server/apps_bark_wallet.go":         {},
 	"internal/server/apps_bitcoincore.go":         {},
 	"internal/server/apps_btcpay.go":              {},
@@ -56,27 +56,27 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 }
 
 var legacyWildcardSudoLines = map[string]struct{}{
-	`install.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
+	`install.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
 	`install.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:         {},
 	`install.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                 {},
 	`install.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:               {},
 	`install.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`: {},
 	`install.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                 {},
 	`install_existing.sh:${user} ALL=NOPASSWD: ${smartctl_path} *`:                   {},
-	`install_existing.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
+	`install_existing.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
 	`install_existing.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:         {},
 	`install_existing.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                 {},
 	`install_existing.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:               {},
 	`install_existing.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`: {},
 	`install_existing.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                 {},
 	`install_existing_pi.sh:${user} ALL=NOPASSWD: ${smartctl_path} *`:                         {},
-	`install_existing_pi.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
+	`install_existing_pi.sh:system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"`: {},
 	`install_existing_pi.sh:[[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")`:         {},
 	`install_existing_pi.sh:[[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")`:                 {},
 	`install_existing_pi.sh:[[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")`:               {},
 	`install_existing_pi.sh:[[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")`: {},
 	`install_existing_pi.sh:[[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")`:                 {},
-	`internal/server/assets/upgrade-app.sh:system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, /usr/local/sbin/lightningos-upgrade-app, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"`: {},
+	`internal/server/assets/upgrade-app.sh:system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"`: {},
 	`internal/server/assets/upgrade-app.sh:[[ -n "${APT_GET_BIN:-}" ]] && app_cmds+=("${APT_GET_BIN} *")`:                                                                          {},
 	`internal/server/assets/upgrade-app.sh:[[ -n "${APT_BIN:-}" ]] && app_cmds+=("${APT_BIN} *")`:                                                                                  {},
 	`internal/server/assets/upgrade-app.sh:[[ -n "${DPKG_BIN:-}" ]] && app_cmds+=("${DPKG_BIN} *")`:                                                                                {},
@@ -92,7 +92,6 @@ var legacyPrivilegedShellLiteralBudgets = map[string]int{
 	// payloads to bounded tmpfs so their roots can remain read-only. No host
 	// path, command, argument, image, mount, or identity is request-selectable.
 	"internal/appmanifest/mempool.go": 2,
-	"internal/server/app_upgrade.go":  1,
 	"internal/server/auth_enable.go":  1,
 }
 

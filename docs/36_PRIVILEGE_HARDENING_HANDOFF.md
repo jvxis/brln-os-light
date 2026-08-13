@@ -139,9 +139,29 @@ the Tor package, APT source/keyring/metadata, Tor PID, state, or restart count;
 a tampered helper and injected URL failed closed. Evidence:
 `docs/baselines/privilege-hardening-phase3-tor-upgrade-2026-08-13.json`.
 
-Firewall policy reconciliation, LightningOS upgrades, the real Tor
-upgrade/rollback matrix, remaining helper/storage operations, wildcard sudoers
-removal, installer authenticity, and the rest of issue #34 remain open.
+LightningOS self-upgrade launch is now the typed, serialized
+`upgrade.lightningos.start` operation. The manager direct sudo, `systemd-run`,
+privileged-shell, and helper-install budgets are zero, and the direct helper
+sudoers authorization was removed from all installer/upgrade variants. The
+broker digest-pins the embedded helper, fixes its path and units, and permits
+only version, a matching tag, a full commit, and `verify_only`; the repository
+is fixed and no longer request-selectable. Before build, the helper binds the
+tag to the expected full commit, validates the source version, checks out that
+commit rather than the tag, and uses `npm ci`. Ubuntu 24.04 passed the
+service-user verify-only gate without changing manager/UI/config/sudoers,
+source cache, log/temp state, or Manager/LND/Bitcoin services. An injected
+repository, modified helper, and wrong commit failed closed. Evidence:
+`docs/baselines/privilege-hardening-phase3-lightningos-upgrade-2026-08-13.json`.
+
+Do not describe this as independent publisher authentication yet: the tested
+historical release/tag/commit are unsigned. Add a signed release manifest or
+equivalent trusted publisher attestation before closing issue #34's
+self-upgrade supply-chain requirement.
+
+Firewall policy reconciliation, real Tor/LightningOS upgrade and rollback
+matrices, LightningOS publisher attestation, remaining helper/storage
+operations, wildcard sudoers removal, installer authenticity, and the rest of
+issue #34 remain open.
 
 Application state at this checkpoint:
 

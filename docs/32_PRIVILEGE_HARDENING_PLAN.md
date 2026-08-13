@@ -1187,16 +1187,40 @@ Tor package, APT source/keyring/metadata, Tor PID, service state, and restart
 count. Evidence is in
 `docs/baselines/privilege-hardening-phase3-tor-upgrade-2026-08-13.json`.
 
-Policy application/reconciliation, LightningOS upgrades, installer artifact
-verification, the real Tor upgrade/rollback matrix, and the remaining
-package/storage paths are still open.
+The LightningOS self-upgrade launch now uses the serialized
+`upgrade.lightningos.start` operation. The manager no longer installs or
+executes the helper, invokes `sudo`/`systemd-run`, or falls back to a privileged
+status call. The broker accepts only the digest-pinned embedded helper, a
+normalized version, its matching tag, a full lowercase commit, and
+`verify_only`; it chooses a fixed helper path and fixed verify/upgrade units.
+The repository is no longer an argument. Before build, the helper requires the
+fixed repository tag to resolve to the expected full commit, requires the
+source `version.txt` to match, builds the worktree from the full commit rather
+than the mutable tag, and uses `npm ci` with the committed lockfile. Direct
+helper sudoers grants were removed from every installer and in-place upgrade
+variant.
+
+The Ubuntu 24.04 service-user gate bound the historical `0.5.1-Beta` release
+to commit `97240c30673039a119ae4740c57dc12dc68d0cae`, rejected an injected
+repository and modified helper, and failed a wrong commit before build. The
+manager/UI/config/sudoers/source cache/log/temp state and Manager/LND/Bitcoin
+services were unchanged. Evidence is in
+`docs/baselines/privilege-hardening-phase3-lightningos-upgrade-2026-08-13.json`.
+That historical release and commit are unsigned, so the current gate provides
+Git object integrity and tag-to-commit consistency, not an independent
+publisher-authenticity proof. A signed release manifest or equivalent trusted
+attestation, plus the real upgrade/rollback matrix, remains required.
+
+Policy application/reconciliation, installer artifact verification, the real
+Tor and LightningOS upgrade/rollback matrices, release publisher attestation,
+and the remaining package/storage paths are still open.
 
 1. Replace arbitrary package arguments with fixed dependency sets.
 2. Replace direct UFW access with the manager-access policy operation.
 3. Replace ownership and permission shell commands with typed storage actions.
-4. Move LND, Tor, and LightningOS upgrades to verified broker operations. LND
-   and the authenticated Tor launch are complete; LightningOS and the final
-   Tor upgrade/rollback matrix remain open.
+4. Move LND, Tor, and LightningOS upgrades to verified broker operations. The
+   three launches are brokered; Tor/LightningOS real upgrade and rollback
+   matrices plus LightningOS publisher attestation remain open.
 5. Verify LND archives against an authenticated official signed manifest and
    explicitly trusted release-signing keys before extraction. Complete for the
    brokered upgrade; installer variants remain open.

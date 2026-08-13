@@ -28,6 +28,7 @@ const (
 	OperationLNDUpgradeStart              Operation = "upgrade.lnd.start"
 	OperationTorMetadataRefresh           Operation = "packages.tor.refresh"
 	OperationTorUpgradeStart              Operation = "upgrade.tor.start"
+	OperationLightningOSUpgradeStart      Operation = "upgrade.lightningos.start"
 	OperationAppLifecycle                 Operation = "app.compose.lifecycle"
 	OperationAppSnapshot                  Operation = "app.compose.snapshot"
 	OperationAppInspect                   Operation = "app.compose.inspect"
@@ -149,6 +150,22 @@ type TorUpgradeStartParams struct {
 type TorUpgradeState struct {
 	Status     string `json:"status"`
 	Unit       string `json:"unit,omitempty"`
+	VerifyOnly bool   `json:"verify_only,omitempty"`
+}
+
+type LightningOSUpgradeStartParams struct {
+	Version       string `json:"version"`
+	Tag           string `json:"tag"`
+	Commit        string `json:"commit"`
+	HelperContent string `json:"helper_content"`
+	VerifyOnly    bool   `json:"verify_only,omitempty"`
+}
+
+type LightningOSUpgradeState struct {
+	Status     string `json:"status"`
+	Version    string `json:"version"`
+	Commit     string `json:"commit"`
+	Unit       string `json:"unit"`
 	VerifyOnly bool   `json:"verify_only,omitempty"`
 }
 
@@ -423,7 +440,10 @@ type BarkWalletPasswordResult struct {
 }
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-var lndUpgradeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z\.-]*)?$`)
+var (
+	lndUpgradeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z\.-]*)?$`)
+	gitCommitPattern         = regexp.MustCompile(`^[0-9a-f]{40}$`)
+)
 
 var allowedServiceUnits = map[string]struct{}{
 	"autofee":                      {},
@@ -558,6 +578,24 @@ func ValidateRequest(request Request) error {
 		}
 		if len(params.HelperContent) == 0 || len(params.HelperContent) > 48*1024 {
 			return errors.New("Tor upgrade helper content is invalid")
+		}
+	case OperationLightningOSUpgradeStart:
+		var params LightningOSUpgradeStartParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid upgrade.lightningos.start params: %w", err)
+		}
+		if !lndUpgradeVersionPattern.MatchString(params.Version) {
+			return errors.New("LightningOS upgrade version is invalid")
+		}
+		tagVersion := strings.TrimPrefix(strings.TrimPrefix(params.Tag, "v"), "V")
+		if !strings.EqualFold(tagVersion, params.Version) || !lndUpgradeVersionPattern.MatchString(strings.ToLower(tagVersion)) {
+			return errors.New("LightningOS upgrade tag is invalid")
+		}
+		if !gitCommitPattern.MatchString(params.Commit) {
+			return errors.New("LightningOS upgrade commit is invalid")
+		}
+		if len(params.HelperContent) == 0 || len(params.HelperContent) > 48*1024 {
+			return errors.New("LightningOS upgrade helper content is invalid")
 		}
 	case OperationAppLifecycle:
 		var params AppLifecycleParams

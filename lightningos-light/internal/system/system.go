@@ -80,6 +80,10 @@ type torUpgradePrivilegedClient interface {
 	StartTorUpgrade(ctx context.Context, helperContent string, verifyOnly bool, dryRun bool) (status string, unit string, err error)
 }
 
+type lightningOSUpgradePrivilegedClient interface {
+	StartLightningOSUpgrade(ctx context.Context, version, tag, commit, helperContent string, verifyOnly bool, dryRun bool) (status string, unit string, err error)
+}
+
 type loopPrivilegedClient interface {
 	LoopStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, hasPersistentState bool, err error)
 	EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (status string, err error)
@@ -1193,6 +1197,34 @@ func StartTorUpgradeWithBroker(ctx context.Context, helperContent string, verify
 		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		_, _, _ = torClient.StartTorUpgrade(shadowCtx, helperContent, verifyOnly, true)
+		return false, "", nil
+	default:
+		return false, "", nil
+	}
+}
+
+func StartLightningOSUpgradeWithBroker(ctx context.Context, version, tag, commit, helperContent string, verifyOnly bool) (bool, string, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, "", nil
+	}
+	upgradeClient, ok := client.(lightningOSUpgradePrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, "", errors.New("privileged broker does not support LightningOS upgrades")
+		}
+		return false, "", nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		_, unit, err := upgradeClient.StartLightningOSUpgrade(ctx, version, tag, commit, helperContent, verifyOnly, false)
+		return true, unit, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _, _ = upgradeClient.StartLightningOSUpgrade(shadowCtx, version, tag, commit, helperContent, verifyOnly, true)
 		return false, "", nil
 	default:
 		return false, "", nil

@@ -178,6 +178,33 @@ without changing APT configuration, packages, or Tor. Unknown fields,
 caller-selected URLs/units/arguments, oversized or modified helpers, and
 unexpected result states fail closed.
 
+### `upgrade.lightningos.start`
+
+Accepts only a normalized version, matching release tag, lowercase full
+40-character commit, bounded embedded helper, and `verify_only`. The repository
+is fixed to `https://github.com/jvxis/brln-os-light.git`; no repository, path,
+command, unit, branch, shortened revision, or build argument is caller
+selectable. The helper is executable only when its SHA-256 equals the digest
+compiled into the broker and is atomically installed at the fixed root-owned
+`/usr/local/sbin/lightningos-upgrade-app` path. The broker launches only
+`lightningos-app-verify` or `lightningos-app-upgrade` through the fixed
+`/usr/bin/systemd-run` executable.
+
+Before build or installation, the helper fetches the exact release tag from
+the fixed repository, requires it to resolve to the expected full commit,
+requires `ui/public/version.txt` in that Git object to match the requested
+version, and creates the worktree from the full commit rather than the tag. UI
+dependencies use the committed lockfile through `npm ci`. `verify_only` uses a
+bounded `/tmp/lightningos-release-verify.*` directory, removes it on success or
+failure, and exits before opening the upgrade log, creating application paths,
+building, installing, or restarting services.
+
+The current historical releases use unsigned tags and commits. This binding
+provides Git object integrity and closes tag-mutation/argument-injection gaps,
+but it is not an independent publisher signature. A signed release manifest or
+equivalent trusted publisher attestation remains required before the
+LightningOS self-upgrade supply-chain track is complete.
+
 ### `files.enable_login`
 
 Enables login protection in the single fixed destination

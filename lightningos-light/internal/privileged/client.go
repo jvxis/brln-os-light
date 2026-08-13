@@ -201,6 +201,32 @@ func (client *Client) StartTorUpgrade(ctx context.Context, helperContent string,
 	return state.Status, state.Unit, nil
 }
 
+func (client *Client) StartLightningOSUpgrade(ctx context.Context, version, tag, commit, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
+	response, err := client.call(ctx, OperationLightningOSUpgradeStart, LightningOSUpgradeStartParams{
+		Version: version, Tag: tag, Commit: commit, HelperContent: helperContent, VerifyOnly: verifyOnly,
+	}, dryRun)
+	if err != nil {
+		return "", "", err
+	}
+	var state LightningOSUpgradeState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", "", errors.New("invalid broker LightningOS upgrade response")
+	}
+	expectedUnit := lightningOSUpgradeUnit
+	if verifyOnly {
+		expectedUnit = lightningOSVerifyUnit
+	}
+	expectedStatus := "started"
+	if dryRun {
+		expectedStatus = "validated"
+	}
+	if state.Status != expectedStatus || state.Version != version || state.Commit != commit ||
+		state.Unit != expectedUnit || state.VerifyOnly != verifyOnly {
+		return "", "", errors.New("invalid broker LightningOS upgrade state")
+	}
+	return state.Status, state.Unit, nil
+}
+
 func (client *Client) LoopStatus(ctx context.Context) (bool, string, bool, bool, error) {
 	response, err := client.call(ctx, OperationLoopStatus, struct{}{}, false)
 	if err != nil {

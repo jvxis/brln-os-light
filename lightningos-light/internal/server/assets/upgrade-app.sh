@@ -3,8 +3,6 @@ set -Eeuo pipefail
 set -o errtrace
 
 LOG_FILE="/var/log/lightningos-app-upgrade.log"
-mkdir -p /var/log /var/lib/lightningos /opt/lightningos/manager /opt/lightningos/ui
-exec > >(tee -a "$LOG_FILE") 2>&1
 
 print_step() {
   echo ""
@@ -53,6 +51,8 @@ resolve_bin() {
 
 VERSION=""
 TAG=""
+EXPECTED_COMMIT=""
+VERIFY_ONLY=0
 REPO_URL="https://github.com/jvxis/brln-os-light.git"
 
 while [[ $# -gt 0 ]]; do
@@ -73,12 +73,16 @@ while [[ $# -gt 0 ]]; do
       TAG="${1#*=}"
       shift
       ;;
-    --repo-url)
-      REPO_URL="${2:-}"
+    --commit)
+      EXPECTED_COMMIT="${2:-}"
       shift 2
       ;;
-    --repo-url=*)
-      REPO_URL="${1#*=}"
+    --commit=*)
+      EXPECTED_COMMIT="${1#*=}"
+      shift
+      ;;
+    --verify-only)
+      VERIFY_ONLY=1
       shift
       ;;
     *)
@@ -106,18 +110,88 @@ fi
 if [[ "$TAG" =~ [[:space:]] ]]; then
   die "Invalid tag format."
 fi
+if [[ ! "$TAG" =~ ^[vV]?[0-9]+\.[0-9]+\.[0-9]+([\-][0-9A-Za-z][0-9A-Za-z\.-]*)?$ ]]; then
+  die "Invalid tag format."
+fi
+normalized_tag="${TAG#[vV]}"
+if [[ "${normalized_tag,,}" != "${VERSION,,}" ]]; then
+  die "Tag does not match version."
+fi
+EXPECTED_COMMIT="${EXPECTED_COMMIT,,}"
+if [[ ! "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+  die "Invalid or missing --commit."
+fi
 
 LOCK_FILE="/var/lib/lightningos/app-upgrade.lock"
 PRIVILEGED_BROKER="/usr/local/libexec/lightningos-privileged"
 PRIVILEGED_TMPFILES_CONFIG="/etc/tmpfiles.d/lightningos-privileged.conf"
 GIT_BIN="$(resolve_bin git /usr/bin/git /bin/git)" || die "Required command missing: git"
+RM_BIN="$(resolve_bin rm /usr/bin/rm /bin/rm)" || die "Required command missing: rm"
+
+verify_release_ref() {
+  local verify_root=""
+  local actual_commit=""
+  local version_path=""
+  local source_version=""
+
+  cleanup_verify_root() {
+    [[ -n "$verify_root" && -d "$verify_root" && ! -L "$verify_root" ]] || return 0
+    case "$verify_root" in
+      /tmp/lightningos-release-verify.*)
+        "$RM_BIN" -rf -- "$verify_root"
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+
+  verify_root="$(mktemp -d /tmp/lightningos-release-verify.XXXXXX)"
+  chmod 0700 "$verify_root"
+  trap cleanup_verify_root RETURN EXIT
+  "$GIT_BIN" init --bare "$verify_root/repository.git" >/dev/null
+  "$GIT_BIN" -C "$verify_root/repository.git" remote add origin "$REPO_URL"
+  "$GIT_BIN" -C "$verify_root/repository.git" fetch --force --depth=1 origin \
+    "refs/tags/${TAG}:refs/tags/${TAG}"
+  actual_commit="$("$GIT_BIN" -C "$verify_root/repository.git" rev-parse "refs/tags/${TAG}^{commit}")"
+  actual_commit="${actual_commit,,}"
+  if [[ "$actual_commit" != "$EXPECTED_COMMIT" ]]; then
+    die "Release tag does not resolve to the expected commit."
+  fi
+
+  for version_path in lightningos-light/ui/public/version.txt ui/public/version.txt; do
+    if "$GIT_BIN" -C "$verify_root/repository.git" cat-file -e "${actual_commit}:${version_path}" 2>/dev/null; then
+      source_version="$("$GIT_BIN" -C "$verify_root/repository.git" show "${actual_commit}:${version_path}")"
+      break
+    fi
+  done
+  source_version="${source_version#v}"
+  source_version="$(echo "$source_version" | tr '[:upper:]_' '[:lower:]-' | tr -d '[:space:]')"
+  if [[ "$source_version" != "${VERSION,,}" ]]; then
+    die "Release source version does not match the requested version."
+  fi
+
+  cleanup_verify_root
+  verify_root=""
+  trap - RETURN EXIT
+  print_ok "Release tag, commit, and source version are consistent"
+}
+
+if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+  verify_release_ref
+  print_ok "LightningOS release source verified; no application files or services were changed."
+  exit 0
+fi
+
+mkdir -p /var/log /var/lib/lightningos /opt/lightningos/manager /opt/lightningos/ui
+exec > >(tee -a "$LOG_FILE") 2>&1
+
 GO_BIN="$(resolve_bin go /usr/local/go/bin/go /usr/bin/go /bin/go)" || die "Required command missing: go"
 NPM_BIN="$(resolve_bin npm /usr/bin/npm /usr/local/bin/npm /bin/npm)" || die "Required command missing: npm"
 SYSTEMCTL_BIN="$(resolve_bin systemctl /usr/bin/systemctl /bin/systemctl)" || die "Required command missing: systemctl"
 SYSTEMD_RUN_BIN="$(resolve_bin systemd-run /usr/bin/systemd-run /bin/systemd-run)" || die "Required command missing: systemd-run"
 INSTALL_BIN="$(resolve_bin install /usr/bin/install /bin/install)" || die "Required command missing: install"
 CP_BIN="$(resolve_bin cp /usr/bin/cp /bin/cp)" || die "Required command missing: cp"
-RM_BIN="$(resolve_bin rm /usr/bin/rm /bin/rm)" || die "Required command missing: rm"
 FLOCK_BIN="$(resolve_bin flock /usr/bin/flock /bin/flock)" || die "Required command missing: flock"
 DATE_BIN="$(resolve_bin date /usr/bin/date /bin/date)" || die "Required command missing: date"
 STAT_BIN="$(resolve_bin stat /usr/bin/stat /bin/stat)" || die "Required command missing: stat"
@@ -128,6 +202,7 @@ APT_BIN="$(resolve_bin apt /usr/bin/apt /bin/apt)" || true
 DPKG_BIN="$(resolve_bin dpkg /usr/bin/dpkg /bin/dpkg)" || true
 SMARTCTL_BIN="$(resolve_bin smartctl /usr/sbin/smartctl /usr/bin/smartctl /sbin/smartctl)" || SMARTCTL_BIN="/usr/sbin/smartctl"
 UFW_BIN="$(resolve_bin ufw /usr/sbin/ufw /usr/bin/ufw)" || true
+
 exec 9>"$LOCK_FILE"
 if ! "$FLOCK_BIN" -n 9; then
   die "Another app upgrade is already running."
@@ -216,7 +291,7 @@ configure_manager_sudoers() {
     sudoers_path="/etc/sudoers.d/lightningos-${manager_user}"
   fi
 
-  system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, /usr/local/sbin/lightningos-upgrade-app, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"
+  system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"
   if [[ "$manager_user" == "lightningos" ]] && privileged_broker_is_trusted; then
     system_cmds+=", ${PRIVILEGED_BROKER} \"\""
   fi
@@ -513,10 +588,16 @@ if ! "$GIT_BIN" -C "$mirror_root" rev-parse -q --verify "refs/tags/$TAG^{}" >/de
   die "Tag not found in repository: ${TAG}"
 fi
 
+actual_commit="$("$GIT_BIN" -C "$mirror_root" rev-parse "refs/tags/${TAG}^{commit}")"
+actual_commit="${actual_commit,,}"
+if [[ "$actual_commit" != "$EXPECTED_COMMIT" ]]; then
+  die "Release tag does not resolve to the expected commit."
+fi
+
 print_step "Creating temporary worktree for ${TAG}"
 safe_tag="$(echo "$TAG" | tr '/\\' '__')"
 worktree_dir="${worktree_root}/app-upgrade-${safe_tag}-$("$DATE_BIN" +%Y%m%d%H%M%S)"
-"$GIT_BIN" -C "$mirror_root" worktree add --detach "$worktree_dir" "$TAG"
+"$GIT_BIN" -C "$mirror_root" worktree add --detach "$worktree_dir" "$EXPECTED_COMMIT"
 
 if [[ -f "$worktree_dir/go.mod" ]]; then
   project_dir="$worktree_dir"
@@ -530,7 +611,12 @@ if [[ ! -d "$project_dir/ui" ]]; then
   die "Could not find UI directory in worktree."
 fi
 
-print_ok "Using project directory: $project_dir"
+[[ -f "$project_dir/ui/public/version.txt" ]] || die "Release source version file is missing"
+source_version="$(tr '[:upper:]_' '[:lower:]-' <"$project_dir/ui/public/version.txt" | tr -d '[:space:]')"
+if [[ "${source_version#v}" != "${VERSION,,}" ]]; then
+  die "Release source version does not match the requested version."
+fi
+print_ok "Using authenticated project directory: $project_dir"
 
 go_env="GOPATH=/opt/lightningos/go GOCACHE=/opt/lightningos/go-cache GOMODCACHE=/opt/lightningos/go/pkg/mod"
 mkdir -p /opt/lightningos/go /opt/lightningos/go-cache /opt/lightningos/go/pkg/mod
@@ -560,7 +646,8 @@ fi
 print_ok "Privileged broker installed and self-test passed"
 
 print_step "Building UI"
-(cd "$project_dir/ui" && "$NPM_BIN" install && "$NPM_BIN" run build)
+[[ -f "$project_dir/ui/package-lock.json" ]] || die "UI lockfile is missing"
+(cd "$project_dir/ui" && "$NPM_BIN" ci && "$NPM_BIN" run build)
 "$RM_BIN" -rf /opt/lightningos/ui/*
 "$CP_BIN" -a "$project_dir/ui/dist/." /opt/lightningos/ui/
 print_ok "UI installed"

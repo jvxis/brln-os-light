@@ -266,6 +266,12 @@ RUNUSER_BIN="$(resolve_bin runuser /usr/sbin/runuser /usr/bin/runuser /sbin/runu
 TAR_BIN="$(resolve_bin tar /usr/bin/tar /bin/tar)" || die "Required command missing: tar"
 APT_GET_BIN="$(resolve_bin apt-get /usr/bin/apt-get /bin/apt-get)" || true
 
+available_kib="$(df -Pk /var/lib/lightningos | awk 'NR == 2 { print $4 }')"
+[[ "$available_kib" =~ ^[0-9]+$ ]] || die "Could not determine free space for the application upgrade."
+if (( available_kib < 3145728 )); then
+  die "Application upgrade requires at least 3 GiB of free space on the system volume."
+fi
+
 exec 9>"$LOCK_FILE"
 if ! "$FLOCK_BIN" -n 9; then
   die "Another app upgrade is already running."

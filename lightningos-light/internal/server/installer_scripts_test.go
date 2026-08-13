@@ -660,6 +660,7 @@ func TestAppUpgradeTrustedCheckoutIsRootOnlyAndCommitPinned(t *testing.T) {
 		`diff --cached --quiet --no-ext-diff --`,
 		`archive "$EXPECTED_COMMIT" | "$TAR_BIN" -x`,
 		`"$INSTALL_BIN" -d -o root -g root -m 0700 "$worktree_dir"`,
+		`available_kib < 3145728`,
 	} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("trusted checkout upgrade boundary is missing %q", expected)

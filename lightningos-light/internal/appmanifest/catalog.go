@@ -87,6 +87,12 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			PrimaryService:     TapdPrimaryService,
 			StopTimeoutSeconds: TapdStopTimeout,
 		}, nil
+	case PublicPoolID:
+		return ComposeManifest{
+			ID: PublicPoolID, Project: PublicPoolProject, ComposeFile: PublicPoolComposeFile,
+			EnvFile: PublicPoolEnvFile, PrimaryService: PublicPoolPrimaryService,
+			StopTimeoutSeconds: PublicPoolStopTimeout,
+		}, nil
 	default:
 		return ComposeManifest{}, errors.New("compose app manifest is not allowed")
 	}
@@ -110,6 +116,8 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return ElectrsImageForVariant(variant)
 	case TapdID:
 		return TapdImageForVariant(variant)
+	case PublicPoolID:
+		return PublicPoolImageForVariant(variant)
 	default:
 		return "", errors.New("app image manifest is not allowed")
 	}

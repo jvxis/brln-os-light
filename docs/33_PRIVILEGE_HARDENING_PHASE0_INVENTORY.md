@@ -199,3 +199,9 @@ raw `tapcli`, and HTLC-interceptor discovery rows have also reached zero direct
 privileged manager calls. A root-only catalog snapshot and five typed broker
 operations now own those boundaries. The Phase 0 counts remain historical;
 the Tapd allowance was removed from the permanent privilege-budget test.
+
+Post-baseline migration note (2026-08-12): Public Pool now has zero direct
+privileged manager calls. Five typed broker operations own its exact
+digest-pinned runtime, fixed Bitcoin consumer wiring, status, lifecycle,
+data-preserving removal, and fixed-port firewall policy. The historical Phase
+0 count remains above; its permanent privilege-budget allowance is now zero.

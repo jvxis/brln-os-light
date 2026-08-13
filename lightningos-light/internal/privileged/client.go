@@ -310,6 +310,61 @@ func decodeTapdState(response Response, dryRun bool) (TapdState, error) {
 	return state, nil
 }
 
+func (client *Client) PublicPoolStatus(ctx context.Context) (bool, string, bool, error) {
+	response, err := client.call(ctx, OperationPublicPoolStatus, struct{}{}, false)
+	if err != nil {
+		return false, "", false, err
+	}
+	state, err := decodePublicPoolState(response, false)
+	return state.Installed, state.Status, state.UFWActive, err
+}
+
+func (client *Client) EnsurePublicPool(ctx context.Context, runtime appmanifest.PublicPoolRuntime, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationPublicPoolEnsure, PublicPoolEnsureParams{Runtime: runtime}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodePublicPoolState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) PublicPoolLifecycle(ctx context.Context, action string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationPublicPoolLifecycle, PublicPoolLifecycleParams{Action: AppLifecycleAction(action)}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodePublicPoolState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) RemovePublicPool(ctx context.Context, dryRun bool) error {
+	_, err := client.call(ctx, OperationPublicPoolRemove, struct{}{}, dryRun)
+	return err
+}
+
+func (client *Client) EnsurePublicPoolFirewall(ctx context.Context, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationPublicPoolFirewall, struct{}{}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodePublicPoolState(response, dryRun)
+	return state.Status, err
+}
+
+func decodePublicPoolState(response Response, dryRun bool) (PublicPoolState, error) {
+	var state PublicPoolState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return state, errors.New("invalid broker Public Pool state response")
+	}
+	if dryRun && state.Status == "validated" {
+		return state, nil
+	}
+	if state.Status != "running" && state.Status != "stopped" && state.Status != "unknown" && state.Status != "active" && state.Status != "inactive" {
+		return PublicPoolState{}, errors.New("invalid broker Public Pool status")
+	}
+	return state, nil
+}
+
 func decodePeerSwapState(response Response, dryRun bool) (PeerSwapState, error) {
 	var state PeerSwapState
 	if err := decodeStrict(response.Result, &state); err != nil {

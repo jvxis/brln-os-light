@@ -95,6 +95,77 @@ func prepareLNbitsWritableData(dataDir string) error {
 	})
 }
 
+func preparePublicPoolWritableData(dataDir string) error {
+	passwdRaw, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return errors.New("host account inventory is unavailable")
+	}
+	groupRaw, err := os.ReadFile("/etc/group")
+	if err != nil {
+		return errors.New("host group inventory is unavailable")
+	}
+	if identityFileContainsNumericID(passwdRaw, 2, appmanifest.PublicPoolContainerUID) {
+		return errors.New("Public Pool container UID collides with a host account")
+	}
+	if identityFileContainsNumericID(groupRaw, 2, appmanifest.PublicPoolContainerGID) {
+		return errors.New("Public Pool container GID collides with a host group")
+	}
+	return filepath.WalkDir(dataDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("Public Pool data entry is unsafe")
+		}
+		if info.IsDir() {
+			if os.Geteuid() == 0 {
+				if err := os.Chown(path, appmanifest.PublicPoolContainerUID, appmanifest.PublicPoolContainerGID); err != nil {
+					return err
+				}
+			}
+			return os.Chmod(path, 0770)
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("Public Pool data entry is not a regular file")
+		}
+		if os.Geteuid() == 0 {
+			if err := os.Chown(path, appmanifest.PublicPoolContainerUID, appmanifest.PublicPoolContainerGID); err != nil {
+				return err
+			}
+		}
+		return os.Chmod(path, 0660)
+	})
+}
+
+func validatePublicPoolSnapshotPermissions(root, compose, env, caddy string) error {
+	checks := []struct {
+		path      string
+		mode      os.FileMode
+		uid, gid  uint32
+		directory bool
+	}{
+		{path: root, mode: 0700, uid: 0, gid: 0, directory: true},
+		{path: compose, mode: 0600, uid: 0, gid: 0},
+		{path: env, mode: 0600, uid: 0, gid: 0},
+		{path: caddy, mode: 0640, uid: 0, gid: uint32(appmanifest.PublicPoolContainerGID)},
+	}
+	for _, check := range checks {
+		info, err := os.Lstat(check.path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != check.mode {
+			return errors.New("Public Pool snapshot permissions are unsafe")
+		}
+		if check.directory != info.IsDir() || (!check.directory && !info.Mode().IsRegular()) {
+			return errors.New("Public Pool snapshot entry type is unsafe")
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != check.uid || stat.Gid != check.gid {
+			return errors.New("Public Pool snapshot ownership is unsafe")
+		}
+	}
+	return nil
+}
+
 func validateLNbitsHostIdentityFiles(passwdRaw, groupRaw []byte) error {
 	if identityFileContainsNumericID(passwdRaw, 2, appmanifest.LNbitsContainerUID) {
 		return errors.New("LNbits container UID collides with a host account")

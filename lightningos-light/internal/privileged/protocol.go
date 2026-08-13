@@ -66,6 +66,11 @@ const (
 	OperationTapdLifecycle                Operation = "app.tapd.lifecycle"
 	OperationTapdRemove                   Operation = "app.tapd.remove"
 	OperationTapdCLI                      Operation = "app.tapd.cli"
+	OperationPublicPoolStatus             Operation = "app.publicpool.status"
+	OperationPublicPoolEnsure             Operation = "app.publicpool.ensure"
+	OperationPublicPoolLifecycle          Operation = "app.publicpool.lifecycle"
+	OperationPublicPoolRemove             Operation = "app.publicpool.remove"
+	OperationPublicPoolFirewall           Operation = "app.publicpool.firewall"
 )
 
 type Request struct {
@@ -322,6 +327,20 @@ type TapdState struct {
 
 type TapdCLIResult struct {
 	Output string `json:"output"`
+}
+
+type PublicPoolEnsureParams struct {
+	Runtime appmanifest.PublicPoolRuntime `json:"runtime"`
+}
+
+type PublicPoolLifecycleParams struct {
+	Action AppLifecycleAction `json:"action"`
+}
+
+type PublicPoolState struct {
+	Installed bool   `json:"installed"`
+	Status    string `json:"status"`
+	UFWActive bool   `json:"ufw_active,omitempty"`
 }
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -725,6 +744,30 @@ func ValidateRequest(request Request) error {
 		if err := appmanifest.ValidateTapdCLIRequest(params); err != nil {
 			return err
 		}
+	case OperationPublicPoolStatus, OperationPublicPoolRemove, OperationPublicPoolFirewall:
+		if request.DryRun && request.Operation == OperationPublicPoolStatus {
+			return errors.New("dry_run is not valid for app.publicpool.status")
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
+	case OperationPublicPoolEnsure:
+		var params PublicPoolEnsureParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.publicpool.ensure params: %w", err)
+		}
+		if err := appmanifest.ValidatePublicPoolRuntime(params.Runtime); err != nil {
+			return err
+		}
+	case OperationPublicPoolLifecycle:
+		var params PublicPoolLifecycleParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.publicpool.lifecycle params: %w", err)
+		}
+		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
+			return errors.New("Public Pool lifecycle action is not allowed")
+		}
 	default:
 		return errors.New("unknown operation")
 	}
@@ -747,7 +790,7 @@ func validateCatalogImageParams(params AppImageParams) error {
 }
 
 func validateProbedImageParams(params AppImageParams) error {
-	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID {
+	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID {
 		return errors.New("app manifest is not allowed")
 	}
 	if _, err := appmanifest.CatalogImageForVariant(params.AppID, params.Variant); err != nil {

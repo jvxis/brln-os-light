@@ -37,7 +37,7 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/server/apps_fedimint.go":            {runSudo: 10},
 	"internal/server/apps_lnd_access_compat.go":   {runSudo: 4},
 	"internal/server/apps_mempool.go":             {runSudo: 2},
-	"internal/server/apps_publicpool.go":          {runSudo: 5},
+	"internal/server/apps_publicpool.go":          {},
 	"internal/server/apps_robosats.go":            {runSudo: 4},
 	"internal/server/apps_storage_permissions.go": {runSystemd: 1},
 	"internal/server/auth_enable.go":              {runSystemd: 1, writeSudo: 2, restart: 1, shell: 1},

@@ -940,8 +940,30 @@ and redirect targets; asset send and mint finalization require fresh
 reauthentication. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-tapd-boundary-2026-08-12.json`.
 
-The next catalog slices are Public Pool and Bark. Mempool and both Fedimint
-applications remain deliberately late per owner priority and dependency gates.
+The Public Pool slice is accepted without starting its preserved containers.
+Five closed broker operations now own its root-only declaration, status,
+lifecycle, data-preserving removal, and fixed `3333`/`8081` firewall policy.
+The two previously mutable image choices are fixed to reviewed publisher
+commit tags and multi-architecture manifest digests, with OCI source/revision
+correlation and exact no-network runnable probes. Both containers run as
+UID/GID 65532 with read-only roots, all capabilities dropped, and
+no-new-privileges. The backend can write only its existing database bind; the
+UI copies Caddy and static assets into bounded tmpfs and receives only a
+root-owned read-only Caddyfile.
+
+The Bitcoin contract retains App Store local, existing/native local, and
+remote modes. Local modes join only the fixed `bitcoincore_default` consumer
+network and use fixed mainnet RPC/raw-block ZMQ endpoints; no request can
+select a network, bridge, port, image, mount, user, or command. LOS TESTE2 kept
+both Public Pool containers stopped. Its three data files were
+content-identical before and after the required non-root ownership migration,
+and Bitcoin, LND, and manager activation timestamps did not change. Image
+probes used ephemeral no-network containers; UFW remained inactive and
+unmodified. Evidence is in
+`docs/baselines/privilege-hardening-phase2-publicpool-boundary-2026-08-12.json`.
+
+The next catalog slice is Bark. Mempool and both Fedimint applications remain
+deliberately late per owner priority and dependency gates.
 
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC

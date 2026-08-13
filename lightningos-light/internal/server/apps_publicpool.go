@@ -7,300 +7,139 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
 	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
-const (
-	publicPoolAppID        = "publicpool"
-	publicPoolStratumPort  = 3333
-	publicPoolAPIPort      = 3334
-	publicPoolUIPort       = 8081
-	publicPoolDefaultNet   = "mainnet"
-	publicPoolDefaultIDTag = "LightningOS-PublicPool"
-	publicPoolUfwRetries   = 5
-)
-
-var publicPoolBackendImageCandidates = []string{
-	"sethforprivacy/public-pool:latest",
-	"smolgrrr/public-pool:latest",
-}
-
-var publicPoolUIImageCandidates = []string{
-	"sethforprivacy/public-pool-ui:latest",
-	"smolgrrr/public-pool-ui:latest",
-}
+const publicPoolAppID = appmanifest.PublicPoolID
 
 type publicPoolPaths struct {
-	Root        string
-	DataDir     string
-	ComposePath string
-	EnvPath     string
+	Root, DataDir, ComposePath, EnvPath string
 }
 
-type publicPoolApp struct {
-	server *Server
-}
+type publicPoolApp struct{ server *Server }
 
-type publicPoolRuntimeValues struct {
-	BackendImage             string
-	UIImage                  string
-	BitcoinMode              string
-	BitcoinRPCURL            string
-	BitcoinRPCPort           int
-	BitcoinRPCUser           string
-	BitcoinRPCPass           string
-	BitcoinZMQHost           string
-	UseBitcoinCoreNetwork    bool
-	NeedsLocalRPCBridgeUFW   bool
-	LocalExternalBitcoinPort int
-}
-
-func newPublicPoolApp(s *Server) appHandler {
-	return publicPoolApp{server: s}
-}
-
+func newPublicPoolApp(s *Server) appHandler { return publicPoolApp{server: s} }
 func publicPoolDefinition() appDefinition {
-	return appDefinition{
-		ID:          publicPoolAppID,
-		Name:        "Public Pool",
-		Description: "Run your own Public Pool backend + web UI with local or remote Bitcoin RPC.",
-		Port:        publicPoolUIPort,
-	}
+	return appDefinition{ID: publicPoolAppID, Name: "Public Pool", Description: "Run your own Public Pool backend + web UI with local or remote Bitcoin RPC.", Port: appmanifest.PublicPoolUIPort}
 }
-
-func (a publicPoolApp) Definition() appDefinition {
-	return publicPoolDefinition()
-}
-
+func (a publicPoolApp) Definition() appDefinition { return publicPoolDefinition() }
 func (a publicPoolApp) Info(ctx context.Context) (appInfo, error) {
-	def := a.Definition()
-	info := newAppInfo(def)
-	a.server.enrichPublicPoolUfwInfo(ctx, &info)
-	paths := publicPoolAppPaths()
-	if !fileExists(paths.ComposePath) {
-		return info, nil
+	info := newAppInfo(a.Definition())
+	handled, state, err := system.PublicPoolStatusWithBroker(ctx)
+	if !handled {
+		return info, errors.New("Public Pool status requires privileged broker enforce mode")
 	}
-	info.Installed = true
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "public-pool")
-	if err != nil {
-		info.Status = "unknown"
-		return info, err
-	}
-	info.Status = status
-	return info, nil
+	info.Installed, info.Status, info.UFWActive = state.Installed, state.Status, state.UFWActive
+	return info, err
 }
-
-func (s *Server) enrichPublicPoolUfwInfo(ctx context.Context, info *appInfo) {
-	if info == nil || readBitcoinSource() != "local" || fileExists(bitcoinCoreAppPaths().ComposePath) {
-		return
-	}
-	if !ufwActive(ctx) {
-		return
-	}
-	port := 8332
-	if cfg, err := readBitcoinLocalRPCConfig(ctx); err == nil {
-		if _, parsedPort := parseMainchainRPC(cfg.Host); parsedPort > 0 {
-			port = parsedPort
-		}
-	}
-	info.UFWActive = true
-	info.UFWCommand = publicPoolUfwCommand(ctx, port)
-}
-
-func (a publicPoolApp) Install(ctx context.Context) error {
-	return a.server.installPublicPool(ctx)
-}
-
-func (a publicPoolApp) Uninstall(ctx context.Context) error {
-	return a.server.uninstallPublicPool(ctx)
-}
-
-func (a publicPoolApp) Start(ctx context.Context) error {
-	return a.server.startPublicPool(ctx)
-}
-
-func (a publicPoolApp) Stop(ctx context.Context) error {
-	return a.server.stopPublicPool(ctx)
-}
+func (a publicPoolApp) Install(ctx context.Context) error   { return a.server.installPublicPool(ctx) }
+func (a publicPoolApp) Uninstall(ctx context.Context) error { return a.server.uninstallPublicPool(ctx) }
+func (a publicPoolApp) Start(ctx context.Context) error     { return a.server.startPublicPool(ctx) }
+func (a publicPoolApp) Stop(ctx context.Context) error      { return a.server.stopPublicPool(ctx) }
 
 func publicPoolAppPaths() publicPoolPaths {
 	root := filepath.Join(appsRoot, publicPoolAppID)
-	dataDir := filepath.Join(appsDataRoot, publicPoolAppID, "db")
-	return publicPoolPaths{
-		Root:        root,
-		DataDir:     dataDir,
-		ComposePath: filepath.Join(root, "docker-compose.yaml"),
-		EnvPath:     filepath.Join(root, ".env"),
-	}
+	return publicPoolPaths{Root: root, DataDir: filepath.Join(appsDataRoot, publicPoolAppID, "db"), ComposePath: filepath.Join(root, appmanifest.PublicPoolComposeFile), EnvPath: filepath.Join(root, appmanifest.PublicPoolEnvFile)}
 }
 
 func (s *Server) installPublicPool(ctx context.Context) error {
-	if err := ensureDocker(ctx); err != nil {
-		return err
-	}
-	paths := publicPoolAppPaths()
-	if err := ensurePublicPoolPaths(paths); err != nil {
-		return err
-	}
-	values, err := s.resolvePublicPoolRuntimeValues(ctx)
-	if err != nil {
-		return err
-	}
-	if _, err := ensureFileWithChange(paths.ComposePath, publicPoolComposeContents(paths, values)); err != nil {
-		return err
-	}
-	if err := ensurePublicPoolEnv(paths, values); err != nil {
-		return err
-	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
-		return err
-	}
-	if err := ensurePublicPoolUfwAccess(ctx, values); err != nil && s.logger != nil {
-		s.logger.Printf("public-pool: ufw rule failed: %v", err)
-	}
-	return nil
+	return s.prepareAndStartPublicPool(ctx)
 }
+func (s *Server) startPublicPool(ctx context.Context) error { return s.prepareAndStartPublicPool(ctx) }
 
-func (s *Server) startPublicPool(ctx context.Context) error {
-	paths := publicPoolAppPaths()
-	if err := ensurePublicPoolPaths(paths); err != nil {
+func (s *Server) prepareAndStartPublicPool(ctx context.Context) error {
+	if err := ensureDockerForCatalogApp(ctx); err != nil {
 		return err
 	}
-	values, err := s.resolvePublicPoolRuntimeValues(ctx)
+	runtime, err := s.resolvePublicPoolRuntime(ctx)
 	if err != nil {
 		return err
 	}
-	if _, err := ensureFileWithChange(paths.ComposePath, publicPoolComposeContents(paths, values)); err != nil {
+	if runtime.BitcoinMode != appmanifest.PublicPoolBitcoinRemote {
+		if handled, err := system.EnsureBitcoinConsumerNetworkWithBroker(ctx); !handled {
+			return errors.New("Public Pool Bitcoin network requires privileged broker enforce mode")
+		} else if err != nil {
+			return err
+		}
+	}
+	if handled, err := system.EnsurePublicPoolWithBroker(ctx, runtime); !handled {
+		return errors.New("Public Pool preparation requires privileged broker enforce mode")
+	} else if err != nil {
 		return err
 	}
-	if err := ensurePublicPoolEnv(paths, values); err != nil {
+	for _, variant := range appmanifest.PublicPoolImageVariants() {
+		if handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.PublicPoolID, string(variant)); !handled {
+			return errors.New("Public Pool image preparation requires privileged broker enforce mode")
+		} else if err != nil {
+			return err
+		}
+		if handled, runnable, err := system.ProbeAppImageWithBroker(ctx, appmanifest.PublicPoolID, string(variant)); !handled {
+			return errors.New("Public Pool image verification requires privileged broker enforce mode")
+		} else if err != nil || !runnable {
+			return errors.New("Public Pool image verification failed")
+		}
+	}
+	if handled, err := system.PublicPoolLifecycleWithBroker(ctx, "start"); !handled {
+		return errors.New("Public Pool lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
 		return err
 	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
-		return err
-	}
-	if err := ensurePublicPoolUfwAccess(ctx, values); err != nil && s.logger != nil {
-		s.logger.Printf("public-pool: ufw rule failed: %v", err)
+	if handled, err := system.EnsurePublicPoolFirewallWithBroker(ctx); !handled {
+		return errors.New("Public Pool firewall requires privileged broker enforce mode")
+	} else if err != nil && s.logger != nil {
+		s.logger.Printf("public-pool: firewall rule failed: %v", err)
 	}
 	return nil
 }
 
 func (s *Server) stopPublicPool(ctx context.Context) error {
-	paths := publicPoolAppPaths()
-	if !fileExists(paths.ComposePath) {
-		return errors.New("Public Pool is not installed")
+	if handled, err := system.PublicPoolLifecycleWithBroker(ctx, "stop"); !handled {
+		return errors.New("Public Pool lifecycle requires privileged broker enforce mode")
+	} else {
+		return err
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
 }
 
 func (s *Server) uninstallPublicPool(ctx context.Context) error {
+	if handled, err := system.RemovePublicPoolWithBroker(ctx); !handled {
+		return errors.New("Public Pool removal requires privileged broker enforce mode")
+	} else if err != nil {
+		return err
+	}
 	paths := publicPoolAppPaths()
-	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
-	}
 	if err := os.RemoveAll(paths.Root); err != nil {
-		return fmt.Errorf("failed to remove app files: %w", err)
+		return fmt.Errorf("failed to remove legacy app files: %w", err)
 	}
 	return nil
 }
 
-func ensurePublicPoolPaths(paths publicPoolPaths) error {
-	if err := os.MkdirAll(paths.Root, 0750); err != nil {
-		return fmt.Errorf("failed to create app directory: %w", err)
-	}
-	if err := os.MkdirAll(paths.DataDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app data directory: %w", err)
-	}
-	return nil
-}
-
-func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPoolRuntimeValues, error) {
-	backendImage, err := ensureFirstAvailableDockerImage(ctx, publicPoolBackendImageCandidates)
-	if err != nil {
-		return publicPoolRuntimeValues{}, err
-	}
-	uiImage, err := ensureFirstAvailableDockerImage(ctx, publicPoolUIImageCandidates)
-	if err != nil {
-		return publicPoolRuntimeValues{}, err
-	}
-
-	values := publicPoolRuntimeValues{
-		BackendImage: backendImage,
-		UIImage:      uiImage,
-	}
-
-	source := readBitcoinSource()
-	if source == "remote" {
+func (s *Server) resolvePublicPoolRuntime(ctx context.Context) (appmanifest.PublicPoolRuntime, error) {
+	if readBitcoinSource() == "remote" {
 		host, port := parseMainchainRPC(s.cfg.BitcoinRemote.RPCHost)
 		user, pass := readBitcoinSecrets()
 		if user == "" || pass == "" {
-			return publicPoolRuntimeValues{}, errors.New("bitcoin remote RPC credentials missing")
+			return appmanifest.PublicPoolRuntime{}, errors.New("bitcoin remote RPC credentials missing")
 		}
-		values.BitcoinMode = "remote"
-		values.BitcoinRPCURL = toHTTPRPCURL(host)
-		values.BitcoinRPCPort = port
-		values.BitcoinRPCUser = user
-		values.BitcoinRPCPass = pass
-		values.BitcoinZMQHost = normalizePublicPoolZMQHost(s.cfg.BitcoinRemote.ZMQRawBlock)
-		return values, nil
+		runtime := appmanifest.PublicPoolRuntime{BitcoinMode: appmanifest.PublicPoolBitcoinRemote, BitcoinRPCURL: toHTTPRPCURL(host), BitcoinRPCPort: port, BitcoinRPCUser: user, BitcoinRPCPass: pass, BitcoinZMQHost: publicPoolExternalZMQHost(s.cfg.BitcoinRemote.ZMQRawBlock)}
+		return runtime, appmanifest.ValidatePublicPoolRuntime(runtime)
 	}
-
-	localCfg, err := readBitcoinLocalRPCConfig(ctx)
+	local, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
-		return publicPoolRuntimeValues{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
+		return appmanifest.PublicPoolRuntime{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
 	}
-	if strings.TrimSpace(localCfg.User) == "" || strings.TrimSpace(localCfg.Pass) == "" {
-		return publicPoolRuntimeValues{}, errors.New("local bitcoin RPC credentials missing")
+	if strings.TrimSpace(local.User) == "" || strings.TrimSpace(local.Pass) == "" {
+		return appmanifest.PublicPoolRuntime{}, errors.New("local bitcoin RPC credentials missing")
 	}
-	_, localPort := parseMainchainRPC(localCfg.Host)
-
+	runtime := appmanifest.PublicPoolRuntime{BitcoinRPCPort: 8332, BitcoinRPCUser: local.User, BitcoinRPCPass: local.Pass}
 	if fileExists(bitcoinCoreAppPaths().ComposePath) {
-		values.BitcoinMode = "local_app"
-		values.BitcoinRPCURL = "http://bitcoind"
-		values.BitcoinRPCPort = localPort
-		values.BitcoinRPCUser = localCfg.User
-		values.BitcoinRPCPass = localCfg.Pass
-		values.BitcoinZMQHost = publicPoolDockerZMQHost(localCfg.ZMQBlock, "bitcoind")
-		values.UseBitcoinCoreNetwork = true
-		return values, nil
+		runtime.BitcoinMode, runtime.BitcoinRPCURL, runtime.BitcoinZMQHost = appmanifest.PublicPoolBitcoinLocalApp, "http://bitcoind", "tcp://bitcoind:28332"
+	} else {
+		runtime.BitcoinMode, runtime.BitcoinRPCURL, runtime.BitcoinZMQHost = appmanifest.PublicPoolBitcoinLocalExternal, "http://"+appmanifest.BitcoinConsumerHostGateway, "tcp://"+appmanifest.BitcoinConsumerHostGateway+":28332"
 	}
-
-	if err := ensureLocalExternalBitcoinConsumerNetwork(ctx); err != nil {
-		return publicPoolRuntimeValues{}, err
-	}
-	values.BitcoinMode = "local_external"
-	values.BitcoinRPCURL = "http://" + appmanifest.BitcoinConsumerHostGateway
-	values.BitcoinRPCPort = localPort
-	values.BitcoinRPCUser = localCfg.User
-	values.BitcoinRPCPass = localCfg.Pass
-	values.BitcoinZMQHost = publicPoolDockerZMQHost(localCfg.ZMQBlock, appmanifest.BitcoinConsumerHostGateway)
-	values.UseBitcoinCoreNetwork = true
-	values.NeedsLocalRPCBridgeUFW = true
-	values.LocalExternalBitcoinPort = localPort
-	return values, nil
-}
-
-func ensureFirstAvailableDockerImage(ctx context.Context, candidates []string) (string, error) {
-	lastErr := error(nil)
-	for _, image := range candidates {
-		if strings.TrimSpace(image) == "" {
-			continue
-		}
-		if err := ensureDockerImage(ctx, image); err == nil {
-			return image, nil
-		} else {
-			lastErr = err
-		}
-	}
-	if lastErr != nil {
-		return "", lastErr
-	}
-	return "", errors.New("no docker image candidates provided")
+	return runtime, appmanifest.ValidatePublicPoolRuntime(runtime)
 }
 
 func toHTTPRPCURL(host string) string {
@@ -313,20 +152,6 @@ func toHTTPRPCURL(host string) string {
 	}
 	return "http://" + trimmed
 }
-
-func publicPoolDockerRPCURL(host string) string {
-	trimmed := strings.TrimSpace(host)
-	lower := strings.ToLower(trimmed)
-	if lower == "" || lower == "localhost" {
-		return "http://host.docker.internal"
-	}
-	ip := net.ParseIP(strings.Trim(trimmed, "[]"))
-	if ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
-		return "http://host.docker.internal"
-	}
-	return toHTTPRPCURL(trimmed)
-}
-
 func normalizePublicPoolZMQHost(endpoint string) string {
 	trimmed := strings.TrimSpace(endpoint)
 	if trimmed == "" {
@@ -337,28 +162,6 @@ func normalizePublicPoolZMQHost(endpoint string) string {
 	}
 	return trimmed
 }
-
-func publicPoolDockerZMQHost(endpoint string, dockerHost string) string {
-	normalized := normalizePublicPoolZMQHost(endpoint)
-	if normalized == "" {
-		return ""
-	}
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(normalized, "tcp://"))
-	if err != nil || strings.TrimSpace(port) == "" {
-		return ""
-	}
-	host = strings.Trim(host, "[]")
-	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
-		host = strings.TrimSpace(dockerHost)
-	} else if strings.EqualFold(host, "localhost") {
-		host = strings.TrimSpace(dockerHost)
-	}
-	if host == "" {
-		return ""
-	}
-	return "tcp://" + net.JoinHostPort(host, port)
-}
-
 func publicPoolExternalZMQHost(endpoint string) string {
 	normalized := normalizePublicPoolZMQHost(endpoint)
 	if normalized == "" {
@@ -376,231 +179,4 @@ func publicPoolExternalZMQHost(endpoint string) string {
 		return ""
 	}
 	return normalized
-}
-
-func publicPoolComposeContents(paths publicPoolPaths, values publicPoolRuntimeValues) string {
-	backendNetworks := ""
-	extraNetworkDecl := ""
-	if values.UseBitcoinCoreNetwork {
-		backendNetworks = "    networks:\n      - default\n      - bitcoincore\n"
-		extraNetworkDecl = "\n  bitcoincore:\n    external: true\n    name: bitcoincore_default\n"
-	}
-
-	return fmt.Sprintf(`services:
-  public-pool:
-    image: %s
-    restart: unless-stopped
-    env_file:
-      - ./.env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "%d:%d"
-      - "127.0.0.1:%d:%d"
-    volumes:
-      - %s:/public-pool/DB
-%s
-  public-pool-ui:
-    image: %s
-    restart: unless-stopped
-    depends_on:
-      - public-pool
-    ports:
-      - "%d:80"
-    environment:
-      LOGLEVEL: INFO
-      LOGFORMAT: json
-      PUBLIC_POOL_UI_API_URL: ""
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        find /var/www/html -type f \( -name '*.br' -o -name '*.gz' \) -delete
-        find /var/www/html -type f -name '*.js' -exec sed -i "s#https://public-pool.io:40557#${PUBLIC_POOL_UI_API_URL:-}#g" {} +
-        find /var/www/html -type f -name '*.js' -exec sed -i "s#http://localhost:3334#${PUBLIC_POOL_UI_API_URL:-}#g" {} +
-        find /var/www/html -type f -name '*.js' -exec sed -i "s#public-pool.io:21496##g" {} +
-        cat >/etc/Caddyfile <<EOF
-        :80 {
-          @api path /api*
-          reverse_proxy @api public-pool:%d
-          root * /var/www/html
-          file_server
-          log {
-            output stdout
-            format ${LOGFORMAT:-json}
-            level ${LOGLEVEL:-INFO}
-          }
-        }
-        EOF
-        exec caddy run --config /etc/Caddyfile
-
-networks:
-  default:
-%s`, values.BackendImage, publicPoolStratumPort, publicPoolStratumPort, publicPoolAPIPort, publicPoolAPIPort, paths.DataDir, backendNetworks, values.UIImage, publicPoolUIPort, publicPoolAPIPort, extraNetworkDecl)
-}
-
-func ensurePublicPoolEnv(paths publicPoolPaths, values publicPoolRuntimeValues) error {
-	required := [][2]string{
-		{"BITCOIN_RPC_URL", values.BitcoinRPCURL},
-		{"BITCOIN_RPC_USER", values.BitcoinRPCUser},
-		{"BITCOIN_RPC_PASSWORD", values.BitcoinRPCPass},
-		{"BITCOIN_RPC_PORT", strconv.Itoa(values.BitcoinRPCPort)},
-		{"BITCOIN_RPC_TIMEOUT", "10000"},
-		{"BITCOIN_ZMQ_HOST", values.BitcoinZMQHost},
-		{"API_PORT", strconv.Itoa(publicPoolAPIPort)},
-		{"STRATUM_PORT", strconv.Itoa(publicPoolStratumPort)},
-		{"NETWORK", publicPoolDefaultNet},
-		{"API_SECURE", "false"},
-		{"POOL_IDENTIFIER", publicPoolDefaultIDTag},
-	}
-	if !fileExists(paths.EnvPath) {
-		lines := make([]string, 0, len(required)+1)
-		for _, kv := range required {
-			lines = append(lines, kv[0]+"="+kv[1])
-		}
-		lines = append(lines, "")
-		return writeFile(paths.EnvPath, strings.Join(lines, "\n"), 0600)
-	}
-	for _, kv := range required {
-		exists, value, err := envValueState(paths.EnvPath, kv[0])
-		if err != nil {
-			return err
-		}
-		if !exists {
-			if err := appendEnvLine(paths.EnvPath, kv[0], kv[1]); err != nil {
-				return err
-			}
-			continue
-		}
-		if strings.TrimSpace(value) != kv[1] {
-			if err := setEnvValue(paths.EnvPath, kv[0], kv[1]); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func ensurePublicPoolUfwAccess(ctx context.Context, values publicPoolRuntimeValues) error {
-	if !ufwActive(ctx) {
-		return nil
-	}
-
-	var lastErr error
-	if _, err := system.RunCommandWithSudo(ctx, "ufw", "allow", fmt.Sprintf("%d/tcp", publicPoolUIPort)); err != nil {
-		lastErr = err
-	}
-	if _, err := system.RunCommandWithSudo(ctx, "ufw", "allow", fmt.Sprintf("%d/tcp", publicPoolStratumPort)); err != nil {
-		lastErr = err
-	}
-
-	if values.NeedsLocalRPCBridgeUFW {
-		port := values.LocalExternalBitcoinPort
-		if port <= 0 {
-			port = 8332
-		}
-		var bridge string
-		var err error
-		for attempt := 0; attempt < publicPoolUfwRetries; attempt++ {
-			bridge, err = publicPoolBridgeName(ctx)
-			if err == nil && bridge != "" {
-				if _, allowErr := system.RunCommandWithSudo(ctx, "ufw", "allow", "in", "on", bridge, "to", "any", "port", strconv.Itoa(port), "proto", "tcp"); allowErr == nil {
-					return lastErr
-				} else {
-					err = allowErr
-				}
-			}
-			time.Sleep(2 * time.Second)
-		}
-		if err != nil {
-			if bridge != "" {
-				lastErr = fmt.Errorf("failed to apply ufw rule for %s:%d: %w", bridge, port, err)
-			} else {
-				lastErr = fmt.Errorf("failed to apply ufw rule for public-pool bridge: %w", err)
-			}
-		}
-	}
-	return lastErr
-}
-
-func ufwActive(ctx context.Context) bool {
-	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
-	return err == nil && strings.Contains(strings.ToLower(statusOut), "status: active")
-}
-
-func (s *Server) startPublicPoolRuntimeReconciler() {
-	go func() {
-		time.Sleep(15 * time.Second)
-		for attempt := 0; attempt < publicPoolUfwRetries; attempt++ {
-			if attempt > 0 {
-				time.Sleep(10 * time.Second)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			err := s.reconcileRunningPublicPoolUfwAccess(ctx)
-			cancel()
-			if err == nil {
-				return
-			}
-			if s.logger != nil {
-				s.logger.Printf("public-pool: startup ufw reconcile failed (attempt %d/%d): %v", attempt+1, publicPoolUfwRetries, err)
-			}
-		}
-	}()
-}
-
-func (s *Server) reconcileRunningPublicPoolUfwAccess(ctx context.Context) error {
-	paths := publicPoolAppPaths()
-	if !fileExists(paths.ComposePath) {
-		return nil
-	}
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "public-pool")
-	if err != nil || status != "running" {
-		return err
-	}
-	values, err := s.resolvePublicPoolUfwRuntimeValues(ctx)
-	if err != nil {
-		return err
-	}
-	return ensurePublicPoolUfwAccess(ctx, values)
-}
-
-func (s *Server) resolvePublicPoolUfwRuntimeValues(ctx context.Context) (publicPoolRuntimeValues, error) {
-	values := publicPoolRuntimeValues{}
-	if readBitcoinSource() == "remote" {
-		return values, nil
-	}
-	if fileExists(bitcoinCoreAppPaths().ComposePath) {
-		return values, nil
-	}
-	localCfg, err := readBitcoinLocalRPCConfig(ctx)
-	if err != nil {
-		return publicPoolRuntimeValues{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
-	}
-	_, localPort := parseMainchainRPC(localCfg.Host)
-	values.NeedsLocalRPCBridgeUFW = true
-	values.LocalExternalBitcoinPort = localPort
-	return values, nil
-}
-
-func publicPoolBridgeName(ctx context.Context) (string, error) {
-	return dockerComposeBridgeName(ctx, appmanifest.BitcoinConsumerNetwork)
-}
-
-func publicPoolUfwCommand(ctx context.Context, port int) string {
-	bridge := ""
-	if resolved, err := publicPoolBridgeName(ctx); err == nil {
-		bridge = resolved
-	}
-	return publicPoolUfwCommandForBridge(bridge, port)
-}
-
-func publicPoolUfwCommandForBridge(bridge string, port int) string {
-	if port <= 0 {
-		port = 8332
-	}
-	bridge = strings.TrimSpace(bridge)
-	if bridge != "" {
-		return fmt.Sprintf("sudo ufw allow in on %s to any port %d proto tcp", bridge, port)
-	}
-	return fmt.Sprintf("NET_ID=$(sudo docker network inspect %s --format '{{.Id}}') && BR=\"br-$(printf '%%.12s' \"$NET_ID\")\" && sudo ufw allow in on \"$BR\" to any port %d proto tcp", appmanifest.BitcoinConsumerNetwork, port)
 }

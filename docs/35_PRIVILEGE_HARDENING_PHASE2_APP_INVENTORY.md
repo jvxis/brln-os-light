@@ -292,3 +292,20 @@ LOS TESTE2 state-preserving gate retained Tapd stopped and preserved its data,
 PostgreSQL database, and Bitcoin/LND/manager activation state. Public Pool and
 Bark are the next remaining Docker applications; Mempool and Fedimint stay
 late in the owner-approved sequence.
+
+## Accepted Public Pool boundary
+
+Public Pool no longer uses manager-side Compose, image, Docker inspection, UFW
+or background network reconciliation. Its backend/UI images are immutable by
+manifest digest and correlated to fixed OCI source revisions. The root-only
+snapshot fixes non-root identities, read-only filesystems, dropped
+capabilities, no-new-privileges, the one persistent database bind, bounded UI
+tmpfs, Caddyfile, public ports, and optional fixed Bitcoin consumer network.
+
+Five typed operations cover status, ensure, start/stop, data-preserving
+removal, and fixed-port firewall admission. CPU Miner's local-pool dependency
+now consumes broker status rather than Docker directly. The LOS TESTE2 gate
+kept both legacy containers stopped, preserved all data content and dependency
+timestamps, and left UFW/network configuration untouched. Bark is the next
+Docker application; Mempool and Fedimint remain late in the owner-approved
+sequence.

@@ -104,6 +104,14 @@ type TapdManager interface {
 	InterceptorConflict(ctx context.Context) (bool, error)
 }
 
+type PublicPoolManager interface {
+	Status(ctx context.Context) (PublicPoolState, error)
+	Ensure(ctx context.Context, params PublicPoolEnsureParams, dryRun bool) (PublicPoolState, error)
+	Lifecycle(ctx context.Context, action AppLifecycleAction, dryRun bool) (PublicPoolState, error)
+	Remove(ctx context.Context, dryRun bool) error
+	EnsureFirewall(ctx context.Context, dryRun bool) (PublicPoolState, error)
+}
+
 type AuditEvent struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Phase      string    `json:"phase"`
@@ -129,6 +137,7 @@ type Broker struct {
 	Elements       ElementsManager
 	PeerSwap       PeerSwapManager
 	Tapd           TapdManager
+	PublicPool     PublicPoolManager
 	Caller         string
 	Timeout        time.Duration
 	Now            func() time.Time
@@ -201,7 +210,7 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		return configured
 	}
 	switch operation {
-	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI:
+	case OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}
@@ -750,6 +759,58 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "tapd_cli_failed", errors.New("Tapd command failed")
 		}
 		return TapdCLIResult{Output: output}, "", nil
+	case OperationPublicPoolStatus:
+		if broker.PublicPool == nil {
+			return nil, "broker_unavailable", errors.New("Public Pool manager is unavailable")
+		}
+		state, err := broker.PublicPool.Status(ctx)
+		if err != nil {
+			return nil, "publicpool_status_failed", errors.New("Public Pool status failed")
+		}
+		return state, "", nil
+	case OperationPublicPoolEnsure:
+		if broker.PublicPool == nil {
+			return nil, "broker_unavailable", errors.New("Public Pool manager is unavailable")
+		}
+		var params PublicPoolEnsureParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.publicpool.ensure params")
+		}
+		state, err := broker.PublicPool.Ensure(ctx, params, request.DryRun)
+		if err != nil {
+			return nil, "publicpool_ensure_failed", errors.New("Public Pool preparation failed")
+		}
+		return state, "", nil
+	case OperationPublicPoolLifecycle:
+		if broker.PublicPool == nil {
+			return nil, "broker_unavailable", errors.New("Public Pool manager is unavailable")
+		}
+		var params PublicPoolLifecycleParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid app.publicpool.lifecycle params")
+		}
+		state, err := broker.PublicPool.Lifecycle(ctx, params.Action, request.DryRun)
+		if err != nil {
+			return nil, "publicpool_lifecycle_failed", errors.New("Public Pool lifecycle failed")
+		}
+		return state, "", nil
+	case OperationPublicPoolRemove:
+		if broker.PublicPool == nil {
+			return nil, "broker_unavailable", errors.New("Public Pool manager is unavailable")
+		}
+		if err := broker.PublicPool.Remove(ctx, request.DryRun); err != nil {
+			return nil, "publicpool_remove_failed", errors.New("Public Pool removal failed")
+		}
+		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
+	case OperationPublicPoolFirewall:
+		if broker.PublicPool == nil {
+			return nil, "broker_unavailable", errors.New("Public Pool manager is unavailable")
+		}
+		state, err := broker.PublicPool.EnsureFirewall(ctx, request.DryRun)
+		if err != nil {
+			return nil, "publicpool_firewall_failed", errors.New("Public Pool firewall preparation failed")
+		}
+		return state, "", nil
 	default:
 		return nil, "unknown_operation", errors.New("unknown operation")
 	}
@@ -786,7 +847,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdStatus, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI:
+	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdStatus, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolStatus, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall:
 		return true
 	default:
 		return false
@@ -795,7 +856,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI:
+	case OperationServiceRestart, OperationFilesEnableLogin, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall:
 		return true
 	default:
 		return false

@@ -67,8 +67,8 @@ func cpuMinerPoolPreset(mode string) cpuMinerPool {
 	return cpuMinerPool{
 		Mode:        cpuMinerPoolLocal,
 		StratumHost: cpuMinerLocalStratumHost,
-		StratumPort: publicPoolStratumPort,
-		StatsBase:   "http://127.0.0.1:" + strconv.Itoa(publicPoolAPIPort),
+		StratumPort: appmanifest.PublicPoolStratumPort,
+		StatsBase:   "http://127.0.0.1:" + strconv.Itoa(appmanifest.PublicPoolAPIPort),
 	}
 }
 
@@ -164,12 +164,8 @@ func cpuMinerAppPaths() cpuMinerPaths {
 // publicPoolRunning reports whether the local Public Pool app is up, so the
 // miner can default to (and validate) the local stratum target.
 func (s *Server) publicPoolRunning(ctx context.Context) bool {
-	poolPaths := publicPoolAppPaths()
-	if !fileExists(poolPaths.ComposePath) {
-		return false
-	}
-	status, err := getComposeStatus(ctx, poolPaths.Root, poolPaths.ComposePath, "public-pool")
-	return err == nil && status == "running"
+	handled, state, err := system.PublicPoolStatusWithBroker(ctx)
+	return handled && err == nil && state.Installed && state.Status == "running"
 }
 
 func (s *Server) installCpuMiner(ctx context.Context) error {

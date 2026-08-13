@@ -93,6 +93,85 @@ type tapdPrivilegedClient interface {
 	TapdCLI(ctx context.Context, request appmanifest.TapdCLIRequest) (output string, err error)
 }
 
+type publicPoolPrivilegedClient interface {
+	PublicPoolStatus(ctx context.Context) (installed bool, status string, ufwActive bool, err error)
+	EnsurePublicPool(ctx context.Context, runtime appmanifest.PublicPoolRuntime, dryRun bool) (status string, err error)
+	PublicPoolLifecycle(ctx context.Context, action string, dryRun bool) (status string, err error)
+	RemovePublicPool(ctx context.Context, dryRun bool) error
+	EnsurePublicPoolFirewall(ctx context.Context, dryRun bool) (status string, err error)
+}
+
+type PublicPoolBrokerState struct {
+	Installed bool
+	Status    string
+	UFWActive bool
+}
+
+func PublicPoolStatusWithBroker(ctx context.Context) (bool, PublicPoolBrokerState, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, PublicPoolBrokerState{}, nil
+	}
+	poolClient, ok := client.(publicPoolPrivilegedClient)
+	if !ok {
+		return true, PublicPoolBrokerState{}, errors.New("privileged broker does not support Public Pool")
+	}
+	installed, status, active, err := poolClient.PublicPoolStatus(ctx)
+	return true, PublicPoolBrokerState{Installed: installed, Status: status, UFWActive: active}, err
+}
+
+func EnsurePublicPoolWithBroker(ctx context.Context, runtime appmanifest.PublicPoolRuntime) (bool, error) {
+	return publicPoolMutationWithBroker(ctx, func(callCtx context.Context, client publicPoolPrivilegedClient, dryRun bool) error {
+		_, err := client.EnsurePublicPool(callCtx, runtime, dryRun)
+		return err
+	})
+}
+func PublicPoolLifecycleWithBroker(ctx context.Context, action string) (bool, error) {
+	return publicPoolMutationWithBroker(ctx, func(callCtx context.Context, client publicPoolPrivilegedClient, dryRun bool) error {
+		_, err := client.PublicPoolLifecycle(callCtx, action, dryRun)
+		return err
+	})
+}
+func RemovePublicPoolWithBroker(ctx context.Context) (bool, error) {
+	return publicPoolMutationWithBroker(ctx, func(callCtx context.Context, client publicPoolPrivilegedClient, dryRun bool) error {
+		return client.RemovePublicPool(callCtx, dryRun)
+	})
+}
+func EnsurePublicPoolFirewallWithBroker(ctx context.Context) (bool, error) {
+	return publicPoolMutationWithBroker(ctx, func(callCtx context.Context, client publicPoolPrivilegedClient, dryRun bool) error {
+		_, err := client.EnsurePublicPoolFirewall(callCtx, dryRun)
+		return err
+	})
+}
+func publicPoolMutationWithBroker(ctx context.Context, operation func(context.Context, publicPoolPrivilegedClient, bool) error) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	poolClient, ok := client.(publicPoolPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker does not support Public Pool")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, operation(ctx, poolClient, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		_ = operation(shadowCtx, poolClient, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
 type TapdBrokerState struct {
 	Installed           bool
 	Status              string

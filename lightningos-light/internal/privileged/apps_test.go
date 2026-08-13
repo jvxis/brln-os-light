@@ -451,6 +451,37 @@ func TestComposeAppTapdProbeRequiresBothExactBinaryVersions(t *testing.T) {
 	}
 }
 
+func TestComposeAppPublicPoolProbesRequireExactHardenedRuntime(t *testing.T) {
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path != dockerPath {
+			return "", nil, false
+		}
+		if len(args) == 3 && args[0] == "image" && args[1] == "inspect" {
+			return "[]", nil, true
+		}
+		if hasArgsSuffix(args, "--entrypoint", "/usr/local/bin/node", appmanifest.PublicPoolBackendImage, "--version") {
+			return appmanifest.PublicPoolBackendVersionOutput, nil, true
+		}
+		if hasArgsSuffix(args, "--entrypoint", "/bin/sh", appmanifest.PublicPoolUIImage, "-c", "cp /usr/bin/caddy /run/lightningos-bin/caddy && exec /run/lightningos-bin/caddy version") {
+			return appmanifest.PublicPoolUIVersionOutput, nil, true
+		}
+		return "", errors.New("unexpected command"), true
+	}}
+	manager := &ComposeAppManager{Runner: runner}
+	for _, variant := range appmanifest.PublicPoolImageVariants() {
+		probe, err := manager.ProbeImage(context.Background(), appmanifest.PublicPoolID, variant, false)
+		if err != nil || !probe.Runnable {
+			t.Fatalf("probe %s/error=%#v/%v", variant, probe, err)
+		}
+		command := runner.commands[len(runner.commands)-1]
+		for _, expected := range []string{"--pull", "never", "--network", "none", "--read-only", "--user", "65532:65532", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"} {
+			if !hasArg(command.args, expected) {
+				t.Fatalf("probe command missing %q: %#v", expected, command)
+			}
+		}
+	}
+}
+
 func TestComposeAppImageOperationsRejectUntrustedInputsBeforeCommand(t *testing.T) {
 	runner := &composeRecordingRunner{}
 	manager := &ComposeAppManager{Runner: runner}

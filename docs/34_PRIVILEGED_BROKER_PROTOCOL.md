@@ -895,3 +895,23 @@ Taproot Asset strings, and universe hosts cannot contain URL syntax. The broker
 resolves a single validated container ID from fixed Compose labels; the caller
 never controls a Docker identifier or flag. Audit events contain operation,
 request ID, dry-run, result, and duration only, never request parameters.
+
+## Public Pool typed boundary
+
+| Operation | Caller fields | Broker-owned boundary |
+| --- | --- | --- |
+| `app.publicpool.status` | none | Fixed project/service labels and legacy-install compatibility |
+| `app.publicpool.ensure` | Validated Bitcoin mode, RPC endpoint/credentials and optional remote ZMQ endpoint | Exact images, paths, UID/GID, mounts, ports, networks, Compose, environment and Caddyfile |
+| `app.publicpool.lifecycle` | `start` or `stop` | Exact snapshot validation, image readiness, fixed Compose argv and timeout |
+| `app.publicpool.remove` | none | Fixed project removal without data deletion; legacy container identities must be singular |
+| `app.publicpool.firewall` | none | UFW status plus only `3333/tcp` and `8081/tcp` when active |
+
+The catalog fixes backend and UI images by commit tag and manifest digest. The
+backend probe requires exact Node output as UID/GID 65532 with no network,
+capabilities or writable root. The UI probe copies Caddy to an executable
+tmpfs to strip the image binary's file capability, then requires its exact
+version under the same restrictions. Runtime validation reconstructs the
+entire environment, Compose, and Caddyfile byte-for-byte before lifecycle or
+removal. Unknown fields, arbitrary image/path/port/network/command input,
+unsafe credentials, loopback remote targets, duplicate environment keys, and
+ambiguous container identities fail closed.

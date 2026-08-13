@@ -196,7 +196,6 @@ func (s *Server) Run() error {
 	s.startLNDRuntimeMonitor()
 	s.startLNDGraphProgressWarmup()
 	s.startAppUpgradeChecker()
-	s.startPublicPoolRuntimeReconciler()
 	s.initNotifications()
 	s.initAuditLog()
 	s.initSpendingGuard()

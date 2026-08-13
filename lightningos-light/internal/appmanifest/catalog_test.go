@@ -18,6 +18,7 @@ func TestComposeManifestCatalogIsClosed(t *testing.T) {
 		{id: BTCPayID, project: BTCPayProject, service: BTCPayPrimaryService, timeout: BTCPayStopTimeout},
 		{id: LNDgID, project: LNDgProject, service: LNDgPrimaryService, timeout: LNDgStopTimeout},
 		{id: ElectrsID, project: ElectrsProject, service: ElectrsPrimaryService, timeout: ElectrsStopTimeout},
+		{id: PublicPoolID, project: PublicPoolProject, service: PublicPoolPrimaryService, timeout: PublicPoolStopTimeout},
 	} {
 		manifest, err := ComposeManifestForApp(test.id)
 		if err != nil || manifest.ID != test.id || manifest.Project != test.project || manifest.PrimaryService != test.service || manifest.StopTimeoutSeconds != test.timeout {
@@ -34,7 +35,7 @@ func TestComposeManifestCatalogIsClosed(t *testing.T) {
 			t.Fatalf("%s unexpectedly removes persistent volumes: %#v/%v", id, manifest, err)
 		}
 	}
-	for _, id := range []string{"", "publicpool", "robosats;reboot", "../robosats"} {
+	for _, id := range []string{"", "publicpool;reboot", "robosats;reboot", "../robosats"} {
 		if _, err := ComposeManifestForApp(id); err == nil {
 			t.Fatalf("expected %q to be rejected", id)
 		}
@@ -71,6 +72,8 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: LNDgID, variant: LNDgImagePostgres, image: LNDgPostgresImage},
 		{appID: LNbitsID, variant: LNbitsImageApp, image: LNbitsImage},
 		{appID: ElectrsID, variant: ElectrsImageApp, image: ElectrsImage},
+		{appID: PublicPoolID, variant: PublicPoolImageBackend, image: PublicPoolBackendImage},
+		{appID: PublicPoolID, variant: PublicPoolImageUI, image: PublicPoolUIImage},
 	} {
 		image, err := CatalogImageForVariant(test.appID, test.variant)
 		if err != nil || image != test.image {
@@ -89,6 +92,7 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		{appID: BTCPayID, variant: "latest;reboot"},
 		{appID: LNbitsID, variant: "latest"},
 		{appID: ElectrsID, variant: "latest"},
+		{appID: PublicPoolID, variant: "latest"},
 	} {
 		if _, err := CatalogImageForVariant(test.appID, test.variant); err == nil {
 			t.Fatalf("expected %s/%s to be rejected", test.appID, test.variant)

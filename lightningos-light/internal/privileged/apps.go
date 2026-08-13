@@ -238,7 +238,7 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 
 func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error) {
 	var probe AppImageProbe
-	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID {
+	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID {
 		return probe, errors.New("app image probe is not allowed")
 	}
 	image, _, _, err := validatedCatalogImage(appID, variant)
@@ -270,6 +270,25 @@ func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, 
 		probe.Runnable = tapdErr == nil && tapcliErr == nil &&
 			strings.TrimSpace(tapdOutput) == appmanifest.TapdDaemonVersionOutput &&
 			strings.TrimSpace(tapcliOutput) == appmanifest.TapdCLIVersionOutput
+		return probe, nil
+	}
+	if appID == appmanifest.PublicPoolID {
+		baseArgs := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+			"--user", "65532:65532", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
+		switch variant {
+		case appmanifest.PublicPoolImageBackend:
+			args := append(append([]string{}, baseArgs...), "--entrypoint", "/usr/local/bin/node",
+				image, "--version")
+			output, runErr := manager.Runner.Run(ctx, dockerPath, args...)
+			probe.Runnable = runErr == nil && strings.TrimSpace(output) == appmanifest.PublicPoolBackendVersionOutput
+		case appmanifest.PublicPoolImageUI:
+			args := append(append([]string{}, baseArgs...), "--tmpfs",
+				"/run/lightningos-bin:rw,exec,nosuid,nodev,size=64m,uid=65532,gid=65532,mode=0700",
+				"--entrypoint", "/bin/sh", image, "-c",
+				"cp /usr/bin/caddy /run/lightningos-bin/caddy && exec /run/lightningos-bin/caddy version")
+			output, runErr := manager.Runner.Run(ctx, dockerPath, args...)
+			probe.Runnable = runErr == nil && strings.TrimSpace(output) == appmanifest.PublicPoolUIVersionOutput
+		}
 		return probe, nil
 	}
 
@@ -366,6 +385,10 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 		},
 		appmanifest.TapdID: {
 			appmanifest.TapdImageApp: "lightningos-tapd-image-app",
+		},
+		appmanifest.PublicPoolID: {
+			appmanifest.PublicPoolImageBackend: "lightningos-publicpool-image-backend",
+			appmanifest.PublicPoolImageUI:      "lightningos-publicpool-image-ui",
 		},
 	}
 	appUnits, ok := units[appID]

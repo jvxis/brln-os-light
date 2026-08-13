@@ -237,6 +237,36 @@ func TestDecodeRequestRejectsOversizedMessage(t *testing.T) {
 	}
 }
 
+func TestPublicPoolRequestsAreTypedAndClosed(t *testing.T) {
+	request := func(operation Operation, params any, dryRun bool) Request {
+		raw, err := MarshalParams(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Request{Version: ProtocolVersion, RequestID: "publicpool_test", Operation: operation, DryRun: dryRun, Params: raw}
+	}
+	runtime := appmanifest.PublicPoolRuntime{BitcoinMode: appmanifest.PublicPoolBitcoinRemote, BitcoinRPCURL: "http://bitcoin.example", BitcoinRPCPort: 8332, BitcoinRPCUser: "rpcuser", BitcoinRPCPass: "rpcpass", BitcoinZMQHost: "tcp://bitcoin.example:28332"}
+	if err := ValidateRequest(request(OperationPublicPoolEnsure, PublicPoolEnsureParams{Runtime: runtime}, true)); err != nil {
+		t.Fatalf("valid ensure rejected: %v", err)
+	}
+	if err := ValidateRequest(request(OperationPublicPoolLifecycle, PublicPoolLifecycleParams{Action: AppLifecycleStart}, false)); err != nil {
+		t.Fatalf("valid lifecycle rejected: %v", err)
+	}
+	if err := ValidateRequest(request(OperationPublicPoolLifecycle, PublicPoolLifecycleParams{Action: AppLifecycleRestart}, false)); err == nil {
+		t.Fatal("restart accepted")
+	}
+	for _, raw := range []string{
+		`{"runtime":{"bitcoin_mode":"remote","bitcoin_rpc_url":"http://bitcoin.example","bitcoin_rpc_port":8332,"bitcoin_rpc_user":"rpcuser","bitcoin_rpc_pass":"rpcpass","image":"evil/root:latest"}}`,
+		`{"runtime":{"bitcoin_mode":"remote","bitcoin_rpc_url":"http://bitcoin.example","bitcoin_rpc_port":8332,"bitcoin_rpc_user":"rpcuser","bitcoin_rpc_pass":"bad$password"}}`,
+		`{"path":"/etc/passwd"}`,
+	} {
+		req := Request{Version: ProtocolVersion, RequestID: "publicpool_test", Operation: OperationPublicPoolEnsure, Params: json.RawMessage(raw)}
+		if err := ValidateRequest(req); err == nil {
+			t.Fatalf("unsafe request accepted: %s", raw)
+		}
+	}
+}
+
 func TestValidateServiceUnitAllowlist(t *testing.T) {
 	for _, unit := range []string{"lnd", "lnd@default", "lightningos-manager", "postgresql"} {
 		if err := ValidateServiceUnit(unit); err != nil {

@@ -32,11 +32,13 @@ The scope includes:
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote Draft PR: `#33`, targeting `main`.
-- Published checkpoint entering the Tapd slice: `bc8d9da`.
+- Published checkpoint entering the Public Pool slice: `23f2e92`.
 - The accepted PeerSwap implementation checkpoint is `a3cfb2b`, subject
   `0.5.3-Beta: harden PeerSwap runtime`.
 - The accepted Tapd implementation checkpoint is the commit carrying this
   handoff, subject `0.5.3-Beta: harden Tapd runtime`.
+- The accepted Public Pool implementation checkpoint is the commit carrying
+  this handoff, subject `0.5.3-Beta: harden Public Pool runtime`.
 - `origin/main` was then integrated through `c0c488a` because it had a concrete
   conflict in PeerSwap and supplied the owner's updated PSWeb binary in
   `cd0ea3e`, plus the intervening 0.5.2 fee/Magma fixes. The hardening catalog
@@ -116,6 +118,7 @@ Application state at this checkpoint:
 | Elements | Closed native broker for official digest-pinned release, dedicated identity, enrolled storage, safe config merge/read, bounded RPC status, hardened unit and lifecycle/removal; preserved inactive LOS TESTE2 install migrated without dependency restarts | Clean install/reboot and shared final matrix |
 | PeerSwap | Fixed upstream v6.0.0 and official PSWeb commit `09983da` (v6.0.0.1 package) hashes in the compatible legacy asset folder, dedicated identity and nine-permission LND credential, root-only local/remote Elements policy, state-preserving migration, hardened units, typed status/lifecycle/removal/firewall; remote-mode LOS TESTE2 gate passed without starting services | Clean install/reboot on final Ubuntu 24.04/26.04 matrix and shared enforce/rollback cutover |
 | Tapd | Official stable v0.8.0 manifest digest, five-signature release gate, exact closed Compose snapshot, dedicated nine-permission LND credential, typed lifecycle/status/remove/CLI, SSRF-safe universe discovery, and sensitive-action reauthentication; stopped LOS TESTE2 installation migrated without dependency restarts | Clean install, real functional lifecycle on a disposable node, reboot persistence, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
+| Public Pool | Immutable backend/UI manifest digests correlated to fixed source revisions, exact root-only non-root/read-only runtime, typed Bitcoin modes/status/lifecycle/remove/firewall, CPU Miner broker dependency, and state-preserving stopped LOS TESTE2 gate | Clean install, real mining/API/UI lifecycle on a disposable node, reboot persistence, final Ubuntu 24.04/26.04 matrix, and shared enforce/rollback cutover |
 | Electrs | Verified-source image, fixed non-root manifest, private dedicated cookie, root-owned snapshot, typed lifecycle/inspect/remove, independent Full Node gate, and isolated functional gate passed | Cross-version final matrix and one-time dedicated credential migration on legacy `rpcauth` nodes |
 | Remaining Docker apps | Inventory only unless the plan states otherwise | Migrate each complete contract and lifecycle matrix |
 | Native apps and in-process features | Inventory plus isolated shared primitives only | Migrate privileged systemd, files, users, binaries, storage, firewall, and credential paths as applicable |
@@ -303,7 +306,15 @@ macaroon rather than admin access. LOS TESTE2 retained Tapd stopped and
 preserved its data hash and Bitcoin/LND/manager activation timestamps. Evidence:
 `docs/baselines/privilege-hardening-phase2-tapd-boundary-2026-08-12.json`.
 
-The next application slice should continue with Public Pool, followed by Bark.
+The Public Pool slice is accepted. Its five typed operations own the exact
+root-only runtime, lifecycle, status, data-preserving removal and fixed-port
+firewall boundary. Both digest-pinned image probes passed without network and
+without starting the preserved containers. LOS TESTE2's three database files
+remained content-identical across the UID/GID 65532 migration; Bitcoin, LND,
+manager and Public Pool lifecycle state remained unchanged. Evidence:
+`docs/baselines/privilege-hardening-phase2-publicpool-boundary-2026-08-12.json`.
+
+The next application slice should continue with Bark.
 Mempool and both Fedimint apps remain deliberately late per owner priority. Do
 not remove the manager's Docker-group membership until all of them and the
 final matrix pass.

@@ -16,11 +16,13 @@ const (
 	bitcoinCoreStorageDataDirFile = "storage-data-dir"
 	bitcoinCoreStorageIDFile      = "storage-id"
 	bitcoinCoreStorageMinFreeKiB  = uint64(10 * 1024 * 1024)
+	defaultLegacyBitcoinStorageID = "/var/lib/lightningos/apps-data/bitcoincore/storage_id"
 )
 
 type BitcoinCoreStorageManager struct {
-	PrivilegedAppsRoot string
-	MinFreeKiB         uint64
+	PrivilegedAppsRoot  string
+	LegacyStorageIDPath string
+	MinFreeKiB          uint64
 }
 
 func NewBitcoinCoreStorageManager() *BitcoinCoreStorageManager {
@@ -76,12 +78,23 @@ func (manager *BitcoinCoreStorageManager) Ensure(_ context.Context, dataDir stri
 		if err := writeBitcoinCoreStorageMarker(normalized, storageID); err != nil {
 			return BitcoinCoreStorageState{}, err
 		}
+		if err := syncLegacyBitcoinCoreStorageID(manager.legacyStorageIDPath(), storageID); err != nil {
+			return BitcoinCoreStorageState{}, err
+		}
 		return BitcoinCoreStorageState{Status: "ready"}, nil
 	}
 
-	storageID, err = newBitcoinCoreStorageID()
-	if err != nil {
-		return BitcoinCoreStorageState{}, errors.New("bitcoin storage identity generation failed")
+	legacyID, legacyExists, legacyErr := readLegacyBitcoinCoreStorageID(manager.legacyStorageIDPath(), normalized)
+	if legacyErr != nil {
+		return BitcoinCoreStorageState{}, legacyErr
+	}
+	if legacyExists {
+		storageID = legacyID
+	} else {
+		storageID, err = newBitcoinCoreStorageID()
+		if err != nil {
+			return BitcoinCoreStorageState{}, errors.New("bitcoin storage identity generation failed")
+		}
 	}
 	if err := writeBitcoinCoreStorageMarker(normalized, storageID); err != nil {
 		return BitcoinCoreStorageState{}, err
@@ -92,7 +105,17 @@ func (manager *BitcoinCoreStorageManager) Ensure(_ context.Context, dataDir stri
 	if err := writeAtomicRegularFile(dataDirPath, []byte(normalized+"\n"), 0600); err != nil {
 		return BitcoinCoreStorageState{}, errors.New("bitcoin storage target persistence failed")
 	}
+	if err := syncLegacyBitcoinCoreStorageID(manager.legacyStorageIDPath(), storageID); err != nil {
+		return BitcoinCoreStorageState{}, err
+	}
 	return BitcoinCoreStorageState{Status: "ready"}, nil
+}
+
+func (manager *BitcoinCoreStorageManager) legacyStorageIDPath() string {
+	if strings.TrimSpace(manager.LegacyStorageIDPath) != "" {
+		return manager.LegacyStorageIDPath
+	}
+	return defaultLegacyBitcoinStorageID
 }
 
 func (manager *BitcoinCoreStorageManager) validateTarget(dataDir string) (string, string, error) {

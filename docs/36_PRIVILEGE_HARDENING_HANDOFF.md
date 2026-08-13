@@ -116,8 +116,20 @@ Started on 2026-08-13. Manager firewall status is now the read-only typed
 UFW call budget is zero. The Ubuntu 26.04 service-user gate changed neither
 the UFW status hash nor the rules timestamp. Evidence:
 `docs/baselines/privilege-hardening-phase3-manager-firewall-status-2026-08-13.json`.
-Firewall policy reconciliation, upgrades, remaining helper/storage operations,
-wildcard sudoers removal, and the rest of issue #34 remain open.
+The LND upgrade is now the typed, serialized `upgrade.lnd.start` broker
+operation. It has no caller-selected URL/path/command, accepts only the exact
+broker-digest-pinned embedded helper, authenticates the official manifest with
+at least five compiled LND primary-key fingerprints, verifies the selected
+archive hash before extraction, and supports a non-mutating `verify-only`
+gate. Ubuntu 26.04 authenticated `v0.21.1-beta` with six signers; LND/lncli
+hashes and the stopped service state were unchanged, and a tampered helper was
+rejected. The manager direct privilege budget and direct helper sudoers entry
+for this path are zero. Evidence:
+`docs/baselines/privilege-hardening-phase3-lnd-upgrade-2026-08-13.json`.
+
+Firewall policy reconciliation, Tor/LightningOS upgrades, remaining
+helper/storage operations, wildcard sudoers removal, installer authenticity,
+and the rest of issue #34 remain open.
 
 Application state at this checkpoint:
 
@@ -466,6 +478,10 @@ completion audit. In particular:
   already been thanked publicly in
   [the issue](https://github.com/jvxis/brln-os-light/issues/34#issuecomment-5246727716);
   do not post a duplicate acknowledgement merely when resuming work;
+- keep the completed brokered LND upgrade gate intact: five-signature minimum,
+  exact pinned primary-key/subkey linkage, pre-extraction archive hash, fixed
+  source/architecture, and zero direct manager privilege calls. Apply the same
+  gate to every installer variant;
 - eliminate all remaining direct `apt`, `dpkg`, UFW, `systemd-run`, Docker, and
   privileged shell call sites from the manager;
 - execute supported fresh-install and upgrade matrices on Ubuntu 24.04 and

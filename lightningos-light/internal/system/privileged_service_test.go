@@ -74,6 +74,13 @@ type fakePrivilegedServiceClient struct {
 	lndHostAppID        string
 	lndHostDryRun       bool
 	lndHostErr          error
+	lndUpgradeCalls     int
+	lndUpgradeVersion   string
+	lndUpgradeHelper    string
+	lndUpgradeVerify    bool
+	lndUpgradeDryRun    bool
+	lndUpgradeUnit      string
+	lndUpgradeErr       error
 	storageCalls        int
 	storageDataDir      string
 	storageDryRun       bool
@@ -346,6 +353,23 @@ func (client *fakePrivilegedServiceClient) EnsureAppLNDHostAccess(_ context.Cont
 	client.lndHostAppID = appID
 	client.lndHostDryRun = dryRun
 	return client.lndHostErr
+}
+
+func (client *fakePrivilegedServiceClient) StartLNDUpgrade(_ context.Context, version string, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
+	client.lndUpgradeCalls++
+	client.lndUpgradeVersion = version
+	client.lndUpgradeHelper = helperContent
+	client.lndUpgradeVerify = verifyOnly
+	client.lndUpgradeDryRun = dryRun
+	unit := client.lndUpgradeUnit
+	if unit == "" {
+		unit = "lightningos-lnd-upgrade"
+	}
+	status := "started"
+	if dryRun {
+		status = "validated"
+	}
+	return status, unit, client.lndUpgradeErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -973,6 +997,33 @@ func TestBitcoinCoreStatusBrokerHelperUsesReadOnlyCapability(t *testing.T) {
 			}
 			if test.wantHandled && !test.wantErr && raw != statusJSON {
 				t.Fatalf("status=%q want=%q", raw, statusJSON)
+			}
+		})
+	}
+}
+
+func TestLNDUpgradeBrokerHelperEnforcesAndShadowsTypedOperation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantHandled bool
+		wantDryRun  bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantDryRun: true, wantCalls: 1},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, unit, err := StartLNDUpgradeWithBroker(context.Background(), "0.21.1-beta", "trusted helper", false)
+			if err != nil || handled != test.wantHandled || client.lndUpgradeCalls != test.wantCalls || client.lndUpgradeDryRun != test.wantDryRun {
+				t.Fatalf("handled/unit/error/client=%v/%q/%v/%#v", handled, unit, err, client)
+			}
+			if test.wantCalls == 1 && (client.lndUpgradeVersion != "0.21.1-beta" || client.lndUpgradeHelper != "trusted helper" || client.lndUpgradeVerify) {
+				t.Fatalf("typed LND upgrade fields were not preserved: %#v", client)
 			}
 		})
 	}

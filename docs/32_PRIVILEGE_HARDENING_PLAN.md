@@ -1149,15 +1149,37 @@ and returns only typed status fields. The Ubuntu 26.04 gate ran as the real
 `lightningos` service user and left both the UFW status hash and rules-file
 timestamp unchanged. Evidence is in
 `docs/baselines/privilege-hardening-phase3-manager-firewall-status-2026-08-13.json`.
-Policy application/reconciliation and the remaining package/upgrade paths are
-still open.
+The LND upgrade launch moved next to the serialized `upgrade.lnd.start`
+operation. The broker accepts only a bounded version and the exact
+digest-pinned embedded helper, chooses a fixed architecture-specific official
+archive, installs the helper atomically at its fixed root-owned path, and
+launches only one of two fixed units. The manager's LND upgrade direct sudo,
+`systemd-run`, and privileged-shell budgets are now zero, and its direct helper
+sudoers authorization was removed from fresh, existing-node, Raspberry Pi, and
+in-place upgrade paths.
+
+Before extraction, the helper authenticates the official LND manifest with a
+quorum of at least five signatures. Fourteen full primary-key fingerprints are
+compiled as trust anchors; matching-tag ASCII key material is accepted only
+after exact fingerprint validation, and a signing subkey counts only when GPG
+links it to that pinned primary key. The selected archive SHA-256 and safe
+archive paths are then checked before extraction. A `verify-only` gate on the
+Ubuntu 26.04 disposable clone authenticated `v0.21.1-beta` with six pinned
+signers and left the `lnd`/`lncli` hashes and stopped LND service state
+unchanged. A modified helper was rejected before execution. Evidence is in
+`docs/baselines/privilege-hardening-phase3-lnd-upgrade-2026-08-13.json`.
+
+Policy application/reconciliation, Tor and LightningOS upgrades, installer
+artifact verification, and the remaining package/storage paths are still open.
 
 1. Replace arbitrary package arguments with fixed dependency sets.
 2. Replace direct UFW access with the manager-access policy operation.
 3. Replace ownership and permission shell commands with typed storage actions.
-4. Move LND, Tor, and LightningOS upgrades to verified broker operations.
+4. Move LND, Tor, and LightningOS upgrades to verified broker operations. LND
+   is complete; Tor and LightningOS remain open.
 5. Verify LND archives against an authenticated official signed manifest and
-   an explicitly trusted release-signing key before extraction.
+   explicitly trusted release-signing keys before extraction. Complete for the
+   brokered upgrade; installer variants remain open.
 6. Verify Go toolchain archives against the expected official checksum and pin
    each supported GoTTY version, architecture, artifact name, and checksum.
 7. Replace direct NodeSource and i2pd `curl | bash` execution with explicit APT

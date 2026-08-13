@@ -25,6 +25,7 @@ const (
 	OperationServiceRestart               Operation = "service.restart"
 	OperationFilesEnableLogin             Operation = "files.enable_login"
 	OperationManagerFirewallStatus        Operation = "manager.firewall.status"
+	OperationLNDUpgradeStart              Operation = "upgrade.lnd.start"
 	OperationAppLifecycle                 Operation = "app.compose.lifecycle"
 	OperationAppSnapshot                  Operation = "app.compose.snapshot"
 	OperationAppInspect                   Operation = "app.compose.inspect"
@@ -123,6 +124,19 @@ type ManagerFirewallState struct {
 	BroadRulePresent   bool   `json:"broad_rule_present"`
 	ManagerAccessBound bool   `json:"manager_access_bound"`
 	StatusAvailable    bool   `json:"status_available"`
+}
+
+type LNDUpgradeStartParams struct {
+	Version       string `json:"version"`
+	HelperContent string `json:"helper_content"`
+	VerifyOnly    bool   `json:"verify_only,omitempty"`
+}
+
+type LNDUpgradeState struct {
+	Status     string `json:"status"`
+	Unit       string `json:"unit"`
+	Version    string `json:"version"`
+	VerifyOnly bool   `json:"verify_only,omitempty"`
 }
 
 type AppLifecycleAction string
@@ -396,6 +410,7 @@ type BarkWalletPasswordResult struct {
 }
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+var lndUpgradeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z\.-]*)?$`)
 
 var allowedServiceUnits = map[string]struct{}{
 	"autofee":                      {},
@@ -506,6 +521,17 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid manager.firewall.status params: %w", err)
+		}
+	case OperationLNDUpgradeStart:
+		var params LNDUpgradeStartParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid upgrade.lnd.start params: %w", err)
+		}
+		if !lndUpgradeVersionPattern.MatchString(params.Version) {
+			return errors.New("LND upgrade version is invalid")
+		}
+		if len(params.HelperContent) == 0 || len(params.HelperContent) > 48*1024 {
+			return errors.New("LND upgrade helper content is invalid")
 		}
 	case OperationAppLifecycle:
 		var params AppLifecycleParams

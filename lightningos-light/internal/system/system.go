@@ -71,6 +71,10 @@ type managerFirewallPrivilegedClient interface {
 	ManagerFirewallStatus(ctx context.Context) (statusJSON string, err error)
 }
 
+type lndUpgradePrivilegedClient interface {
+	StartLNDUpgrade(ctx context.Context, version string, helperContent string, verifyOnly bool, dryRun bool) (status string, unit string, err error)
+}
+
 type loopPrivilegedClient interface {
 	LoopStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, hasPersistentState bool, err error)
 	EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (status string, err error)
@@ -1104,6 +1108,34 @@ func ReadManagerFirewallStatusWithBroker(ctx context.Context) (string, bool, err
 	}
 	raw, err := firewallClient.ManagerFirewallStatus(ctx)
 	return raw, true, err
+}
+
+func StartLNDUpgradeWithBroker(ctx context.Context, version string, helperContent string, verifyOnly bool) (bool, string, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, "", nil
+	}
+	upgradeClient, ok := client.(lndUpgradePrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, "", errors.New("privileged broker does not support LND upgrades")
+		}
+		return false, "", nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		_, unit, err := upgradeClient.StartLNDUpgrade(ctx, version, helperContent, verifyOnly, false)
+		return true, unit, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _, _ = upgradeClient.StartLNDUpgrade(shadowCtx, version, helperContent, verifyOnly, true)
+		return false, "", nil
+	default:
+		return false, "", nil
+	}
 }
 
 func EnsureAppLNDHostAccessWithBroker(ctx context.Context, appID string) (bool, error) {

@@ -216,7 +216,7 @@ configure_manager_sudoers() {
     sudoers_path="/etc/sudoers.d/lightningos-${manager_user}"
   fi
 
-  system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, /usr/local/sbin/lightningos-upgrade-lnd, /usr/local/sbin/lightningos-upgrade-app, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"
+  system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, /usr/local/sbin/lightningos-upgrade-app, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"
   if [[ "$manager_user" == "lightningos" ]] && privileged_broker_is_trusted; then
     system_cmds+=", ${PRIVILEGED_BROKER} \"\""
   fi

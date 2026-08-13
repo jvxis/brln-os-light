@@ -50,7 +50,31 @@ parse_commit_from_output() {
 }
 
 VERSION=""
-URL=""
+VERIFY_ONLY=0
+
+LND_RELEASE_BASE_URL="https://github.com/lightningnetwork/lnd/releases/download"
+LND_RELEASE_KEYS_BASE_URL="https://raw.githubusercontent.com/lightningnetwork/lnd"
+MIN_REQUIRED_SIGNATURES=5
+
+# Fingerprints and signer names are pinned from the official LND
+# scripts/verify-install.sh verifier. A signature is counted only when its
+# VALIDSIG fingerprint matches the corresponding value below exactly.
+LND_SIGNERS=(
+  "F4FC70F07310028424EFC20A8E4256593F177720:guggero"
+  "15E7ECF257098A4EF91655EB4CA7FE54A6213C91:carlaKC"
+  "A5B61896952D9FDA83BC054CDC42612E89237182:roasbeef"
+  "9FC6B0BFD597A94DBF09708280E5375C094198D8:bhandras"
+  "26984CB69EB8C4A26196F7A4D7D916376026F177:ellemouton"
+  "C97AAA1470F979878F7A6DEDC3440ACF100A33B4:ffranr"
+  "4DC235556B18694E08518DBB671103D881A5F0E4:sputn1ck"
+  "E85497D2DBA0EB9ADB0024279BCD95C4FF296868:yyforyongyu"
+  "32F7EA1E7A0339F7D37164B9F82D456EA023C9BF:hieblmi"
+  "5295A477FFC8064D7057B191FA7E65C951F12439:proofofkeags"
+  "3E9BD4436C288039CA827A9200C9E2BC2E45666F:suheb"
+  "5F75437E11695F86D50C11BB1AFF9C4DCED6D666:ziggie1984"
+  "C20A78516A0944900EBFCA29961CC8259AE675D4:ViktorT-11"
+  "1583B601BB57CC7CD2DF8A87E08DEA9B12B66AF6:georgetsagk"
+)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -62,12 +86,8 @@ while [[ $# -gt 0 ]]; do
       VERSION="${1#*=}"
       shift
       ;;
-    --url)
-      URL="${2:-}"
-      shift 2
-      ;;
-    --url=*)
-      URL="${1#*=}"
+    --verify-only)
+      VERIFY_ONLY=1
       shift
       ;;
     *)
@@ -81,15 +101,7 @@ require_root
 if [[ -z "$VERSION" && -n "${LND_UPGRADE_VERSION:-}" ]]; then
   VERSION="${LND_UPGRADE_VERSION}"
 fi
-if [[ -z "$URL" && -n "${LND_UPGRADE_URL:-}" ]]; then
-  URL="${LND_UPGRADE_URL}"
-fi
-
 VERSION="${VERSION#v}"
-if [[ -z "$VERSION" && -n "$URL" ]]; then
-  VERSION=$(echo "$URL" | grep -Eo 'v[0-9]+\.[0-9]+\.[0-9]+([\-\.][0-9A-Za-z\.-]+)?' | head -n1 || true)
-  VERSION="${VERSION#v}"
-fi
 if [[ -z "$VERSION" ]]; then
   die "Missing --version. Example: --version 0.20.1-beta.rc1"
 fi
@@ -98,9 +110,17 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([\-\.][0-9A-Za-z\.-]+)?$ ]]; then
   die "Invalid version format: ${VERSION}"
 fi
 
-if [[ -z "$URL" ]]; then
-  URL="https://github.com/lightningnetwork/lnd/releases/download/v${VERSION}/lnd-linux-amd64-v${VERSION}.tar.gz"
-fi
+case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
+  amd64|x86_64) LND_ARCH="amd64" ;;
+  arm64|aarch64) LND_ARCH="arm64" ;;
+  armhf|armv7l) LND_ARCH="armv7" ;;
+  *) die "Unsupported LND upgrade architecture." ;;
+esac
+
+ARCHIVE="lnd-linux-${LND_ARCH}-v${VERSION}.tar.gz"
+MANIFEST="manifest-v${VERSION}.txt"
+RELEASE_URL="${LND_RELEASE_BASE_URL}/v${VERSION}"
+URL="${RELEASE_URL}/${ARCHIVE}"
 
 print_step "Starting LND upgrade to v${VERSION}"
 echo "Download URL: ${URL}"
@@ -117,7 +137,7 @@ else
   print_warn "Could not parse current LND version."
 fi
 
-if [[ -n "$current_version" && "$current_version" == "$VERSION" ]]; then
+if [[ -n "$current_version" && "$current_version" == "$VERSION" && "$VERIFY_ONLY" -ne 1 ]]; then
   print_ok "Already running v${VERSION}. No upgrade needed."
   exit 0
 fi
@@ -127,6 +147,12 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 if ! command -v tar >/dev/null 2>&1; then
   die "tar is required but not installed."
+fi
+if ! command -v sha256sum >/dev/null 2>&1; then
+  die "sha256sum is required but not installed."
+fi
+if ! command -v gpg >/dev/null 2>&1; then
+  die "gpg is required but not installed."
 fi
 
 tmp_dir=""
@@ -171,13 +197,110 @@ trap on_exit EXIT
 
 print_step "Downloading LND tarball"
 tmp_dir=$(mktemp -d)
-curl -fsSL "$URL" -o "$tmp_dir/lnd.tar.gz"
-tar -xzf "$tmp_dir/lnd.tar.gz" -C "$tmp_dir"
+curl --proto '=https' --tlsv1.2 -fsSL "$URL" -o "$tmp_dir/$ARCHIVE"
 
-lnd_bin=$(find "$tmp_dir" -type f -name "lnd" | head -n1)
-lncli_bin=$(find "$tmp_dir" -type f -name "lncli" | head -n1)
-if [[ -z "$lnd_bin" || -z "$lncli_bin" ]]; then
-  die "Unexpected tarball contents. Missing lnd or lncli binaries."
+print_step "Authenticating the official LND release manifest"
+curl --proto '=https' --tlsv1.2 -fsSL "${RELEASE_URL}/${MANIFEST}" -o "$tmp_dir/$MANIFEST"
+mkdir -m 0700 "$tmp_dir/gnupg"
+
+valid_signatures=0
+for signer in "${LND_SIGNERS[@]}"; do
+  fingerprint="${signer%%:*}"
+  username="${signer#*:}"
+  signature="manifest-${username}-v${VERSION}.sig"
+  signature_path="$tmp_dir/$signature"
+
+  if ! curl --proto '=https' --tlsv1.2 -fsSL "${RELEASE_URL}/${signature}" -o "$signature_path"; then
+    rm -f "$signature_path"
+    continue
+  fi
+
+  key_path="$tmp_dir/${username}.asc"
+  curl --proto '=https' --tlsv1.2 -fsSL \
+    "${LND_RELEASE_KEYS_BASE_URL}/v${VERSION}/scripts/keys/${username}.asc" \
+    -o "$key_path" \
+    || die "Could not retrieve the LND release key for ${username}."
+  gpg --batch --homedir "$tmp_dir/gnupg" --import "$key_path" >/dev/null 2>&1 \
+    || die "Could not import the LND release key for ${username}."
+
+  imported_fingerprint=$(gpg --batch --homedir "$tmp_dir/gnupg" --with-colons \
+    --fingerprint "$fingerprint" 2>/dev/null \
+    | awk -F: '$1 == "fpr" { print $10; exit }')
+  if [[ "$imported_fingerprint" != "$fingerprint" ]]; then
+    die "Pinned LND signing key fingerprint mismatch for ${username}."
+  fi
+
+  status_file="$tmp_dir/${username}.status"
+  if ! gpg --batch --homedir "$tmp_dir/gnupg" --status-fd=1 \
+    --verify "$signature_path" "$tmp_dir/$MANIFEST" >"$status_file" 2>/dev/null; then
+    die "Invalid LND release signature from ${username}."
+  fi
+  # VALIDSIG field 3 is the key that made the signature. When a signing
+  # subkey is used, field 12 is the cryptographically linked primary-key
+  # fingerprint. Accept only the pinned primary key itself or one of its
+  # subkeys; a signature made by another imported LND key cannot count for
+  # this signer name.
+  valid_fingerprints=$(awk '
+    $1 == "[GNUPG:]" && $2 == "VALIDSIG" {
+      print $3
+      if (NF >= 12) print $12
+      exit
+    }
+  ' "$status_file")
+  if ! grep -qx "$fingerprint" <<<"$valid_fingerprints"; then
+    die "LND release signature fingerprint mismatch for ${username}."
+  fi
+  valid_signatures=$((valid_signatures + 1))
+done
+
+if [[ "$valid_signatures" -lt "$MIN_REQUIRED_SIGNATURES" ]]; then
+  die "Not enough valid LND release signatures: ${valid_signatures}/${MIN_REQUIRED_SIGNATURES}."
+fi
+print_ok "Authenticated ${MANIFEST} with ${valid_signatures} pinned LND signers."
+
+print_step "Verifying the LND archive before extraction"
+expected_hash=$(awk -v archive="$ARCHIVE" '
+  $2 == archive || $2 == "*" archive {
+    if (found) exit 2
+    print $1
+    found=1
+  }
+  END { if (!found) exit 1 }
+' "$tmp_dir/$MANIFEST") || die "The authenticated manifest has no unique checksum for ${ARCHIVE}."
+if [[ ! "$expected_hash" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  die "The authenticated manifest contains an invalid checksum for ${ARCHIVE}."
+fi
+actual_hash=$(sha256sum "$tmp_dir/$ARCHIVE" | awk '{print $1}')
+if [[ "${actual_hash,,}" != "${expected_hash,,}" ]]; then
+  die "LND archive checksum does not match the authenticated manifest."
+fi
+print_ok "Archive SHA-256 matches the authenticated manifest."
+
+archive_root="lnd-linux-${LND_ARCH}-v${VERSION}"
+if ! tar -tzf "$tmp_dir/$ARCHIVE" | awk -v root="${archive_root}/" '
+  index($0, root) != 1 || $0 ~ /(^|\/)\.\.($|\/)/ || $0 ~ /^\// { exit 1 }
+'; then
+  die "LND archive contains an unsafe path."
+fi
+tar --no-same-owner --no-same-permissions -xzf "$tmp_dir/$ARCHIVE" -C "$tmp_dir"
+
+lnd_bin="$tmp_dir/$archive_root/lnd"
+lncli_bin="$tmp_dir/$archive_root/lncli"
+if [[ ! -f "$lnd_bin" || -L "$lnd_bin" || ! -f "$lncli_bin" || -L "$lncli_bin" ]]; then
+  die "Unexpected LND archive contents."
+fi
+
+archive_lnd_version=$(parse_version_from_output "$("$lnd_bin" --version 2>/dev/null || true)")
+if [[ -z "$archive_lnd_version" ]]; then
+  die "Could not read the verified LND archive version."
+fi
+if [[ "$archive_lnd_version" != "$VERSION" && "$(base_version "$VERSION")" != "$archive_lnd_version" ]]; then
+  die "Verified LND archive version does not match the requested version."
+fi
+
+if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+  print_ok "Official LND v${VERSION} release verification complete; no service or binary was changed."
+  exit 0
 fi
 
 print_step "Stopping LND service"

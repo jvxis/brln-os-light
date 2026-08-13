@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -19,12 +20,11 @@ import (
 )
 
 const (
-	lndUpgradeUnitName   = "lightningos-lnd-upgrade"
-	lndUpgradeScriptPath = "/usr/local/sbin/lightningos-upgrade-lnd"
-	lndReleaseCachePath  = "/var/lib/lightningos/lnd-release.json"
-	lndReleaseCacheTTL   = 6 * time.Hour
-	lndReleaseAPIURL     = "https://api.github.com/repos/lightningnetwork/lnd/releases?per_page=20"
-	lndDownloadTemplate  = "https://github.com/lightningnetwork/lnd/releases/download/v%s/lnd-linux-amd64-v%s.tar.gz"
+	lndUpgradeUnitName  = "lightningos-lnd-upgrade"
+	lndReleaseCachePath = "/var/lib/lightningos/lnd-release.json"
+	lndReleaseCacheTTL  = 6 * time.Hour
+	lndReleaseAPIURL    = "https://api.github.com/repos/lightningnetwork/lnd/releases?per_page=20"
+	lndDownloadTemplate = "https://github.com/lightningnetwork/lnd/releases/download/v%s/lnd-linux-%s-v%s.tar.gz"
 )
 
 var lndVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z\.-]*)?$`)
@@ -129,10 +129,6 @@ func (s *Server) handleLNDUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := os.Stat(lndUpgradeScriptPath); err != nil {
-		// allow lazy install on demand
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
@@ -141,44 +137,27 @@ func (s *Server) handleLNDUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ensureLndUpgradeScript(ctx); err != nil {
-		if s.logger != nil {
-			s.logger.Printf("failed to install lnd upgrade script: %v", err)
-		}
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to prepare upgrade script: %v", err))
-		return
-	}
-
 	downloadURL := strings.TrimSpace(req.DownloadURL)
 	if downloadURL == "" {
-		downloadURL = fmt.Sprintf(lndDownloadTemplate, version, version)
+		downloadURL = lndOfficialDownloadURL(version)
 	} else if !isAllowedLndDownloadURL(downloadURL, version) {
 		writeError(w, http.StatusBadRequest, "invalid download_url")
 		return
 	}
 
-	args := []string{
-		"--unit", lndUpgradeUnitName,
-		"--collect",
-		"--quiet",
-		"--",
-		lndUpgradeScriptPath,
-		"--version", version,
-		"--url", downloadURL,
-	}
-
-	if out, err := system.RunCommandWithSudo(ctx, "systemd-run", args...); err != nil {
-		if s.logger != nil {
-			s.logger.Printf("lnd upgrade start failed: %v (%s)", err, strings.TrimSpace(out))
+	if handled, unit, err := system.StartLNDUpgradeWithBroker(ctx, version, embeddedUpgradeScript, false); handled {
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Printf("brokered lnd upgrade start failed: %v", err)
+			}
+			writeError(w, http.StatusInternalServerError, "failed to start upgrade (check logs)")
+			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to start upgrade (check logs)")
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "unit": unit})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":   true,
-		"unit": lndUpgradeUnitName,
-	})
+	writeError(w, http.StatusServiceUnavailable, "privileged broker is required for LND upgrades")
 }
 
 func currentLndVersion(ctx context.Context) (string, string) {
@@ -386,43 +365,8 @@ func atoi(value string) (int, error) {
 	return strconv.Atoi(value)
 }
 
-func ensureLndUpgradeScript(ctx context.Context) error {
-	if strings.TrimSpace(embeddedUpgradeScript) == "" {
-		return errors.New("embedded upgrade script is empty")
-	}
-	existing, err := os.ReadFile(lndUpgradeScriptPath)
-	if err == nil && string(existing) == embeddedUpgradeScript {
-		return nil
-	}
-
-	tmpFile, err := os.CreateTemp("", "lightningos-upgrade-lnd-*.sh")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmpFile.Name()
-	if _, err := tmpFile.WriteString(embeddedUpgradeScript); err != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	defer os.Remove(tmpPath)
-
-	installCmd := fmt.Sprintf("mkdir -p %s && install -m 0755 %s %s", filepath.Dir(lndUpgradeScriptPath), tmpPath, lndUpgradeScriptPath)
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", installCmd); err != nil {
-		return fmt.Errorf("systemd-run failed (check sudoers for lightningos): %w", err)
-	}
-	return nil
-}
-
 func lndUpgradeRunning(ctx context.Context) bool {
-	out, err := system.RunCommand(ctx, "systemctl", "is-active", lndUpgradeUnitName)
-	if err != nil {
-		out, _ = system.RunCommandWithSudo(ctx, "systemctl", "is-active", lndUpgradeUnitName)
-	}
+	out, _ := system.RunCommand(ctx, "systemctl", "is-active", lndUpgradeUnitName)
 	state := strings.TrimSpace(out)
 	return state == "active" || state == "activating"
 }
@@ -502,7 +446,7 @@ func selectLndRelease(releases []ghRelease, currentVersion string, checkedAt tim
 		version := normalizeLndVersion(currentVersion)
 		return lndReleaseInfo{
 			Version:     version,
-			DownloadURL: fmt.Sprintf(lndDownloadTemplate, version, version),
+			DownloadURL: lndOfficialDownloadURL(version),
 			Channel:     lndReleaseChannel(false),
 			CheckedAt:   checkedAt.Format(time.RFC3339),
 		}, nil
@@ -515,7 +459,7 @@ func lndReleaseInfoFromGitHub(rel ghRelease, checkedAt time.Time) (lndReleaseInf
 	if version == "" || !lndVersionPattern.MatchString(version) {
 		return lndReleaseInfo{}, false
 	}
-	assetName := fmt.Sprintf("lnd-linux-amd64-v%s.tar.gz", version)
+	assetName := fmt.Sprintf("lnd-linux-%s-v%s.tar.gz", lndReleaseArchitecture(runtime.GOARCH), version)
 	downloadURL := ""
 	for _, asset := range rel.Assets {
 		if asset.Name == assetName && asset.BrowserDownloadURL != "" {
@@ -524,7 +468,7 @@ func lndReleaseInfoFromGitHub(rel ghRelease, checkedAt time.Time) (lndReleaseInf
 		}
 	}
 	if downloadURL == "" {
-		downloadURL = fmt.Sprintf(lndDownloadTemplate, version, version)
+		downloadURL = lndOfficialDownloadURL(version)
 	}
 	return lndReleaseInfo{
 		Version:     version,
@@ -606,7 +550,7 @@ func isAllowedLndDownloadURL(value string, version string) bool {
 	if !strings.Contains(parsed.Path, "/lightningnetwork/lnd/releases/download/") {
 		return false
 	}
-	expectedFile := fmt.Sprintf("lnd-linux-amd64-v%s.tar.gz", version)
+	expectedFile := fmt.Sprintf("lnd-linux-%s-v%s.tar.gz", lndReleaseArchitecture(runtime.GOARCH), version)
 	if !strings.HasSuffix(parsed.Path, expectedFile) {
 		return false
 	}
@@ -614,4 +558,21 @@ func isAllowedLndDownloadURL(value string, version string) bool {
 		return false
 	}
 	return true
+}
+
+func lndOfficialDownloadURL(version string) string {
+	return fmt.Sprintf(lndDownloadTemplate, version, lndReleaseArchitecture(runtime.GOARCH), version)
+}
+
+func lndReleaseArchitecture(goarch string) string {
+	switch goarch {
+	case "amd64":
+		return "amd64"
+	case "arm64":
+		return "arm64"
+	case "arm":
+		return "armv7"
+	default:
+		return ""
+	}
 }

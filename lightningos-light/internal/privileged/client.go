@@ -134,6 +134,31 @@ func (client *Client) ManagerFirewallStatus(ctx context.Context) (string, error)
 	return string(raw), nil
 }
 
+func (client *Client) StartLNDUpgrade(ctx context.Context, version string, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
+	response, err := client.call(ctx, OperationLNDUpgradeStart, LNDUpgradeStartParams{
+		Version: version, HelperContent: helperContent, VerifyOnly: verifyOnly,
+	}, dryRun)
+	if err != nil {
+		return "", "", err
+	}
+	var state LNDUpgradeState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", "", errors.New("invalid broker LND upgrade response")
+	}
+	expectedUnit := lndUpgradeUnit
+	if verifyOnly {
+		expectedUnit = lndVerifyUnit
+	}
+	if state.Version != version || state.VerifyOnly != verifyOnly || state.Unit != expectedUnit ||
+		(state.Status != "validated" && state.Status != "started") {
+		return "", "", errors.New("invalid broker LND upgrade state")
+	}
+	if dryRun && state.Status != "validated" {
+		return "", "", errors.New("invalid broker LND upgrade dry-run state")
+	}
+	return state.Status, state.Unit, nil
+}
+
 func (client *Client) LoopStatus(ctx context.Context) (bool, string, bool, bool, error) {
 	response, err := client.call(ctx, OperationLoopStatus, struct{}{}, false)
 	if err != nil {

@@ -615,11 +615,11 @@ resolve_data_dir() {
     if [[ -n "$admin_target" && -d "$admin_target" ]]; then
       if prompt_yes_no "Found ${admin_link} -> ${admin_target}. Create symlink ${default} -> ${admin_target}?" "y"; then
         if [[ -e "$default" ]]; then
-          print_warn "Path ${default} already exists; skipping symlink"
+          print_warn "Path ${default} already exists; skipping symlink" >&2
         else
           mkdir -p "$(dirname "$default")"
           ln -s "$admin_target" "$default"
-          print_ok "Symlink created: ${default} -> ${admin_target}"
+          print_ok "Symlink created: ${default} -> ${admin_target}" >&2
           echo "$default"
           return
         fi
@@ -627,11 +627,11 @@ resolve_data_dir() {
     fi
   fi
 
-  print_warn "${label} directory not found at ${default}"
+  print_warn "${label} directory not found at ${default}" >&2
   if prompt_yes_no "Use a different ${label} directory?" "y"; then
     dir=$(prompt_value "Enter ${label} directory")
     if [[ -z "$dir" || ! -d "$dir" ]]; then
-      print_warn "Directory not found: ${dir}"
+      print_warn "Directory not found: ${dir}" >&2
       exit 1
     fi
   else
@@ -640,11 +640,11 @@ resolve_data_dir() {
   if [[ "$default" != "$dir" ]]; then
     if prompt_yes_no "Create symlink ${default} -> ${dir}?" "n"; then
       if [[ -e "$default" ]]; then
-        print_warn "Path ${default} already exists; skipping symlink"
+        print_warn "Path ${default} already exists; skipping symlink" >&2
       else
         mkdir -p "$(dirname "$default")"
         ln -s "$dir" "$default"
-        print_ok "Symlink created: ${default} -> ${dir}"
+        print_ok "Symlink created: ${default} -> ${dir}" >&2
       fi
     fi
   fi

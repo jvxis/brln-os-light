@@ -575,6 +575,28 @@ func TestInstallersDoNotIssueSetupTokensIntoCapturedLogs(t *testing.T) {
 	}
 }
 
+func TestExistingInstallersKeepDataDirectoryDiagnosticsOutOfCapturedPath(t *testing.T) {
+	for _, path := range []string{
+		filepath.Join("..", "..", "install_existing.sh"),
+		filepath.Join("..", "..", "install_existing_pi.sh"),
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(raw)
+		for _, required := range []string{
+			`print_warn "${label} directory not found at ${default}" >&2`,
+			`print_ok "Symlink created: ${default} -> ${dir}" >&2`,
+			`echo "$dir"`,
+		} {
+			if !strings.Contains(content, required) {
+				t.Errorf("%s can contaminate resolve_data_dir stdout; missing %q", path, required)
+			}
+		}
+	}
+}
+
 func TestAppUpgradeMigratesManagerTLSBeforeRestart(t *testing.T) {
 	path := filepath.Join("assets", "upgrade-app.sh")
 	raw, err := os.ReadFile(path)

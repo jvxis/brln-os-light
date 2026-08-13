@@ -468,12 +468,15 @@ func TestManagerAndBrokerSystemdBoundary(t *testing.T) {
 		"StandardInput=socket",
 		"StandardOutput=socket",
 		"ProtectSystem=full",
-		"ReadWritePaths=/usr/local /etc/lightningos",
+		"ReadWritePaths=/usr/local /etc/lightningos /etc/ufw",
 		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
 	} {
 		if !strings.Contains(string(serviceRaw), expected) {
 			t.Errorf("broker service unit is missing %q", expected)
 		}
+	}
+	if strings.Contains(string(serviceRaw), "ReadWritePaths=/etc ") {
+		t.Fatal("broker service makes all of /etc writable")
 	}
 }
 

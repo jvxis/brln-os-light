@@ -1329,6 +1329,20 @@ generic `runSystemd` wrapper anywhere under `internal/server` or
 the legacy installer-generated sudoers grants; those remain part of the
 transactional Phase 4 cutover.
 
+Issue #34's Go and GoTTY installer slice is accepted. `install.sh`,
+`install_existing.sh`, and `install_existing_pi.sh` now source one fixed local
+verification library and pin the exact version, Linux architecture, artifact
+name, HTTPS source, and SHA-256 for Go 1.24.12 and GoTTY 1.8.0. The hashes come
+from the official Go download metadata and the upstream GoTTY release asset
+digests. Downloaded bytes are authenticated before archive listing or
+extraction, and the existing Go toolchain is not removed until verification
+and tar validation succeed. Ubuntu 24.04 downloaded and authenticated all four
+amd64/arm64 artifacts, rejected modified bytes, and preserved installed
+binary hashes and service activation state. Evidence is in
+`docs/baselines/privilege-hardening-phase3-installer-go-gotty-2026-08-13.json`.
+LND installer verification and replacement of the NodeSource/i2pd remote setup
+scripts remain open in the same issue track.
+
 1. Replace arbitrary package arguments with fixed dependency sets.
 2. Replace direct UFW access with the manager-access policy operation.
 3. Replace ownership and permission shell commands with typed storage actions.

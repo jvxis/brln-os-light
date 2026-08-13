@@ -514,6 +514,18 @@ and `runSystemd` under the manager packages. This is code-surface removal only:
 the corresponding stale/installer-generated sudoers authorizations still wait
 for the rollback-protected Phase 4 cutover.
 
+Issue #34 is partially implemented across every installer variant for Go and
+GoTTY. A shared local verifier requires HTTPS/TLS 1.2, a regular new download
+destination, and an exact pinned SHA-256 before archive listing or extraction.
+Go 1.24.12 and GoTTY 1.8.0 have fixed amd64/arm64 artifact names and upstream
+digests; environment overrides can no longer select another version, artifact,
+architecture, or checksum. Ubuntu 24.04 authenticated all four real artifacts,
+rejected modified bytes, and preserved services and installed binaries. The
+VM/temp/network cleanup completed. Evidence:
+`docs/baselines/privilege-hardening-phase3-installer-go-gotty-2026-08-13.json`.
+Do not close #34 yet: installer LND verification, NodeSource/i2pd repository
+replacement, other repository-key authentication, and full matrices remain.
+
 ## Test-node and network constraints
 
 Access records are outside Git:

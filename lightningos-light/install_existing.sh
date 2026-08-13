@@ -10,11 +10,22 @@ if [[ -f "$REPO_ROOT/scripts/install-release-bootstrap.sh" ]]; then
   lightningos_bootstrap_latest_release "install_existing.sh" "$@"
 fi
 
-GO_VERSION="${GO_VERSION:-1.24.12}"
-GO_TARBALL_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+ARTIFACT_VERIFY_SCRIPT="$REPO_ROOT/scripts/install-artifact-verification.sh"
+if [[ ! -r "$ARTIFACT_VERIFY_SCRIPT" ]]; then
+  echo "Missing artifact verification library: $ARTIFACT_VERIFY_SCRIPT" >&2
+  exit 1
+fi
+source "$ARTIFACT_VERIFY_SCRIPT"
+
+GO_VERSION="1.24.12"
+GO_ARTIFACT="go${GO_VERSION}.linux-amd64.tar.gz"
+GO_TARBALL_URL="https://go.dev/dl/${GO_ARTIFACT}"
+GO_TARBALL_SHA256="bddf8e653c82429aea7aec2520774e79925d4bb929fe20e67ecc00dd5af44c50"
 NODE_VERSION="${NODE_VERSION:-current}"
-GOTTY_VERSION="${GOTTY_VERSION:-1.8.0}"
-GOTTY_URL="https://github.com/sorenisanerd/gotty/releases/download/v${GOTTY_VERSION}/gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"
+GOTTY_VERSION="1.8.0"
+GOTTY_ARTIFACT="gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"
+GOTTY_URL="https://github.com/sorenisanerd/gotty/releases/download/v${GOTTY_VERSION}/${GOTTY_ARTIFACT}"
+GOTTY_SHA256="9cf032e1f3a49d33da3ba32c79f49892aad94e52edc6417524a76b623ced2f5f"
 POSTGRES_VERSION="${POSTGRES_VERSION:-latest}"
 LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
@@ -371,34 +382,24 @@ install_go() {
     fi
   fi
 
+  local tmp archive
+  tmp=$(mktemp -d)
+  archive="$tmp/$GO_ARTIFACT"
+  if ! lightningos_download_verified_artifact "$GO_TARBALL_URL" "$archive" "$GO_TARBALL_SHA256" "Go ${GO_VERSION} linux-amd64"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if ! tar -tzf "$archive" >/dev/null 2>&1; then
+    rm -rf -- "$tmp"
+    print_warn "Verified Go archive is not a valid gzip tarball"
+    return 1
+  fi
   rm -rf /usr/local/go
-  local tmp=""
-  if tmp=$(mktemp /tmp/go.tgz.XXXXXX 2>/dev/null); then
-    :
-  elif tmp=$(mktemp /var/tmp/go.tgz.XXXXXX 2>/dev/null); then
-    :
-  elif tmp=$(mktemp /root/go.tgz.XXXXXX 2>/dev/null); then
-    :
-  else
-    print_warn "No writable temp directory for Go download"
-    exit 1
+  if ! tar -C /usr/local -xzf "$archive"; then
+    rm -rf -- "$tmp"
+    return 1
   fi
-  local primary_url="$GO_TARBALL_URL"
-  local fallback_url="https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz"
-  if [[ "$primary_url" == "$fallback_url" ]]; then
-    fallback_url="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
-  fi
-
-  if ! curl -fL "$primary_url" -o "$tmp" || ! tar -tzf "$tmp" >/dev/null 2>&1; then
-    print_warn "Go download failed from ${primary_url}"
-    if ! curl -fL "$fallback_url" -o "$tmp" || ! tar -tzf "$tmp" >/dev/null 2>&1; then
-      print_warn "Go download failed from ${fallback_url}"
-      exit 1
-    fi
-  fi
-
-  tar -C /usr/local -xzf "$tmp"
-  rm -f "$tmp"
+  rm -rf -- "$tmp"
   export PATH="/usr/local/go/bin:$PATH"
   print_ok "Go installed"
 }
@@ -470,10 +471,21 @@ install_gotty() {
   fi
   local tmp
   tmp=$(mktemp -d)
-  curl -fsSL "$GOTTY_URL" -o "$tmp/gotty.tar.gz"
-  tar -xzf "$tmp/gotty.tar.gz" -C "$tmp"
+  if ! lightningos_download_verified_artifact "$GOTTY_URL" "$tmp/$GOTTY_ARTIFACT" "$GOTTY_SHA256" "GoTTY ${GOTTY_VERSION} linux-amd64"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if ! tar -xzf "$tmp/$GOTTY_ARTIFACT" -C "$tmp"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if [[ ! -f "$tmp/gotty" || -L "$tmp/gotty" ]]; then
+    rm -rf -- "$tmp"
+    print_warn "Verified GoTTY archive does not contain a regular gotty binary"
+    return 1
+  fi
   install -m 0755 "$tmp/gotty" /usr/local/bin/gotty
-  rm -rf "$tmp"
+  rm -rf -- "$tmp"
   print_ok "GoTTY installed"
 }
 

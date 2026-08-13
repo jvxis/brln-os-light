@@ -1,0 +1,102 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-installer-go-gotty.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "issue 34 pinned Go and GoTTY artifact verification in all installer variants",
+  "policy": {
+    "verification_before_archive_listing": true,
+    "verification_before_extraction": true,
+    "https_only": true,
+    "minimum_tls": "1.2",
+    "caller_version_override": false,
+    "caller_architecture_override": false,
+    "caller_artifact_name_override": false,
+    "caller_checksum_override": false,
+    "modified_bytes_fail_closed": true,
+    "existing_go_removed_before_verification": false
+  },
+  "pins": [
+    {
+      "project": "Go",
+      "version": "1.24.12",
+      "os": "linux",
+      "architecture": "amd64",
+      "checksum_source": "official Go downloads metadata",
+      "verified": true
+    },
+    {
+      "project": "Go",
+      "version": "1.24.12",
+      "os": "linux",
+      "architecture": "arm64",
+      "checksum_source": "official Go downloads metadata",
+      "verified": true
+    },
+    {
+      "project": "GoTTY",
+      "version": "1.8.0",
+      "os": "linux",
+      "architecture": "amd64",
+      "checksum_source": "upstream GitHub release asset digest",
+      "verified": true
+    },
+    {
+      "project": "GoTTY",
+      "version": "1.8.0",
+      "os": "linux",
+      "architecture": "arm64",
+      "checksum_source": "upstream GitHub release asset digest",
+      "verified": true
+    }
+  ],
+  "tests": {
+    "all_three_installers_source_fixed_local_verifier": "passed",
+    "shell_syntax": "passed",
+    "valid_fixture": "passed",
+    "modified_fixture": "rejected",
+    "invalid_checksum": "rejected",
+    "non_https_url": "rejected",
+    "go_replacement_order": "passed",
+    "gotty_extraction_order": "passed",
+    "focused_go_test": "passed",
+    "full_go_test": "passed",
+    "go_vet": "passed"
+  },
+  "ubuntu24_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "amd64",
+    "official_artifacts_downloaded": 4,
+    "go_amd64_verified": true,
+    "go_arm64_verified": true,
+    "gotty_amd64_verified": true,
+    "gotty_arm64_verified": true,
+    "archives_listed_only_after_verification": true,
+    "tampered_archive_rejected": true,
+    "system_installation_executed": false,
+    "installed_binary_hashes_preserved": true,
+    "service_activation_state_preserved": true,
+    "integration_node_mutated": false
+  },
+  "cleanup": {
+    "remote_target_validated_before_removal": true,
+    "remote_temporary_artifacts_removed": true,
+    "vm_powered_off_cleanly": true,
+    "loopback_nat_forward_removed": true,
+    "original_bridged_adapter_restored": true,
+    "host_network_adapter_restarted": false
+  },
+  "remaining_issue_34_scope": [
+    "apply authenticated LND release verification to every installer variant",
+    "replace NodeSource and i2pd remote setup-script execution with explicit signed repositories",
+    "authenticate other installer repository keys before installation",
+    "complete fresh-install and upgrade negative matrices"
+  ],
+  "excluded": [
+    "credentials",
+    "tokens",
+    "ip addresses",
+    "private node identifiers"
+  ]
+}

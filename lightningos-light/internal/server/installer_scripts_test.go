@@ -1,11 +1,112 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestInstallersVerifyPinnedGoAndGoTTYBeforeExtraction(t *testing.T) {
+	tests := []struct {
+		name        string
+		goArtifact  string
+		goChecksum  string
+		gottyAsset  string
+		gottyDigest string
+	}{
+		{
+			name:        "install.sh",
+			goArtifact:  "go${GO_VERSION}.linux-amd64.tar.gz",
+			goChecksum:  "bddf8e653c82429aea7aec2520774e79925d4bb929fe20e67ecc00dd5af44c50",
+			gottyAsset:  "gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz",
+			gottyDigest: "9cf032e1f3a49d33da3ba32c79f49892aad94e52edc6417524a76b623ced2f5f",
+		},
+		{
+			name:        "install_existing.sh",
+			goArtifact:  "go${GO_VERSION}.linux-amd64.tar.gz",
+			goChecksum:  "bddf8e653c82429aea7aec2520774e79925d4bb929fe20e67ecc00dd5af44c50",
+			gottyAsset:  "gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz",
+			gottyDigest: "9cf032e1f3a49d33da3ba32c79f49892aad94e52edc6417524a76b623ced2f5f",
+		},
+		{
+			name:        "install_existing_pi.sh",
+			goArtifact:  "go${GO_VERSION}.linux-arm64.tar.gz",
+			goChecksum:  "4e02e2979e53b40f3666bba9f7e5ea0b99ea5156e0824b343fd054742c25498d",
+			gottyAsset:  "gotty_v${GOTTY_VERSION}_linux_arm64.tar.gz",
+			gottyDigest: "fcef4efcf6cbdf81540c765ebdfd533ada86f7d58322b4f831573d098712b0dd",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "..", test.name))
+			if err != nil {
+				t.Fatalf("read %s: %v", test.name, err)
+			}
+			content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+			for _, expected := range []string{
+				`source "$ARTIFACT_VERIFY_SCRIPT"`,
+				`GO_VERSION="1.24.12"`,
+				`GO_ARTIFACT="` + test.goArtifact + `"`,
+				`GO_TARBALL_SHA256="` + test.goChecksum + `"`,
+				`GOTTY_VERSION="1.8.0"`,
+				`GOTTY_ARTIFACT="` + test.gottyAsset + `"`,
+				`GOTTY_SHA256="` + test.gottyDigest + `"`,
+			} {
+				if !strings.Contains(content, expected) {
+					t.Fatalf("%s is missing pinned artifact policy %q", test.name, expected)
+				}
+			}
+
+			goVerify := strings.Index(content, `lightningos_download_verified_artifact "$GO_TARBALL_URL"`)
+			goInspect := strings.Index(content, `tar -tzf "$archive"`)
+			goReplace := strings.Index(content, `rm -rf /usr/local/go`)
+			gottyVerify := strings.Index(content, `lightningos_download_verified_artifact "$GOTTY_URL"`)
+			gottyExtract := strings.Index(content, `tar -xzf "$tmp/$GOTTY_ARTIFACT"`)
+			if goVerify < 0 || goInspect < goVerify || goReplace < goInspect {
+				t.Fatalf("%s must authenticate and inspect Go before replacing the installed toolchain", test.name)
+			}
+			if gottyVerify < 0 || gottyExtract < gottyVerify {
+				t.Fatalf("%s must authenticate GoTTY before extraction", test.name)
+			}
+		})
+	}
+}
+
+func TestInstallerArtifactVerificationRejectsModifiedBytes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash fixture runs in Linux CI and disposable installer gates")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is unavailable")
+	}
+	helper, err := filepath.Abs(filepath.Join("..", "..", "scripts", "install-artifact-verification.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(t.TempDir(), "artifact.tar.gz")
+	original := []byte("authenticated installer artifact\n")
+	if err := os.WriteFile(artifact, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(original)
+	expected := hex.EncodeToString(digest[:])
+	command := `set -Eeuo pipefail; source "$1"; lightningos_verify_sha256 "$2" "$3" fixture`
+	if output, err := exec.Command(bash, "-c", command, "test", helper, artifact, expected).CombinedOutput(); err != nil {
+		t.Fatalf("valid fixture rejected: %v (%s)", err, strings.TrimSpace(string(output)))
+	}
+	if err := os.WriteFile(artifact, append(original, 'x'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(bash, "-c", command, "test", helper, artifact, expected).Run(); err == nil {
+		t.Fatal("modified fixture passed pinned SHA-256 verification")
+	}
+}
 
 func TestInstallersConfigureManagerFirewallWithoutPrompt(t *testing.T) {
 	installers := []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"}

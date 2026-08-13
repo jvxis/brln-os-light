@@ -166,6 +166,42 @@ func TestPrivilegeBoundaryCallSiteBudgets(t *testing.T) {
 	}
 }
 
+func TestGenericManagerPrivilegeHelpersRemainDeleted(t *testing.T) {
+	root := moduleRoot(t)
+	forbidden := map[string]bool{
+		"RunCommandWithSudo": true,
+		"WriteFileWithSudo":  true,
+		"runSystemd":         true,
+	}
+	for _, rel := range []string{"internal/server", "internal/system"} {
+		err := filepath.WalkDir(filepath.Join(root, filepath.FromSlash(rel)), func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			fset := token.NewFileSet()
+			parsed, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				return err
+			}
+			for _, declaration := range parsed.Decls {
+				function, ok := declaration.(*ast.FuncDecl)
+				if !ok || !forbidden[function.Name.Name] {
+					continue
+				}
+				position := fset.Position(function.Pos())
+				t.Errorf("generic privileged helper %s reintroduced at %s:%d", function.Name.Name, filepath.ToSlash(path), position.Line)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestBTCPayLifecycleHasNoLegacyDockerExecution(t *testing.T) {
 	root := moduleRoot(t)
 	path := filepath.Join(root, "internal", "server", "apps_btcpay.go")

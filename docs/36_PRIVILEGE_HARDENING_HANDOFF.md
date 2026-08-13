@@ -508,6 +508,12 @@ and service-activation preservation gate; real rotation/login remains for the
 final disposable fresh-install matrix. Evidence:
 `docs/baselines/privilege-hardening-phase3-terminal-credential-2026-08-13.json`.
 
+The dormant manager-side `RunCommandWithSudo` and `WriteFileWithSudo`
+implementations are also deleted. An AST regression guard covers both names
+and `runSystemd` under the manager packages. This is code-surface removal only:
+the corresponding stale/installer-generated sudoers authorizations still wait
+for the rollback-protected Phase 4 cutover.
+
 ## Test-node and network constraints
 
 Access records are outside Git:

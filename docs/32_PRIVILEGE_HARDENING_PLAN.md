@@ -1321,6 +1321,14 @@ Policy application/reconciliation, installer artifact verification, the real
 Tor and LightningOS upgrade/rollback matrices, release publisher attestation,
 and the remaining package/storage paths are still open.
 
+The now-unused manager-side `RunCommandWithSudo` and `WriteFileWithSudo`
+implementations were removed after all runtime consumers reached zero. A
+permanent AST guard now rejects reintroduction of either helper or the deleted
+generic `runSystemd` wrapper anywhere under `internal/server` or
+`internal/system`. This removes dormant fallback code, but does not yet remove
+the legacy installer-generated sudoers grants; those remain part of the
+transactional Phase 4 cutover.
+
 1. Replace arbitrary package arguments with fixed dependency sets.
 2. Replace direct UFW access with the manager-access policy operation.
 3. Replace ownership and permission shell commands with typed storage actions.

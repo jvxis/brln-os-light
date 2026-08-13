@@ -5,7 +5,7 @@ This document is the entry point for continuing pull request
 an operational index, not a replacement for the accepted implementation plan
 in `docs/32_PRIVILEGE_HARDENING_PLAN.md`.
 
-Last reconciled: 2026-08-13, final Ubuntu 24 acceptance.
+Last reconciled: 2026-08-13, final Ubuntu 24 and LOS TESTE2 acceptance.
 
 ## Authoritative objective
 
@@ -31,15 +31,15 @@ The scope includes:
 
 ## Repository checkpoint
 
-Final checkpoint: `9109cfb5`, subject
-`0.5.3-Beta: require immutable release attestations`. Phases 0-5 and the
-mandatory Ubuntu 24.04 clean/existing matrices are complete. PR #33 may leave
-draft after the LOS TESTE2 controlled rollout and final PR/issue reconciliation.
-The final disposable fresh app/runtime checkpoint was `682c94fa`; the only
-subsequent production change is the fail-closed LightningOS immutable-release
-attestation gate, which passed local tests, Linux syntax checks, an Ubuntu 24
-negative no-mutation gate, and the exact existing-node installer gate at
-`9109cfb5`.
+Final checkpoint: `f02b3320`, subject
+`0.5.3-Beta: gate broker socket readiness`. Phases 0-5, the mandatory Ubuntu
+24.04 clean/existing matrices, the transactional checkout-upgrade gate, and the
+controlled LOS TESTE2 rollout are complete. The rollout correctly treated LOS
+TESTE2 as a managed `install.sh` node with App Store Bitcoin Docker, preserved
+Bitcoin/LND/Docker and all installed containers, and passed the enforced
+broker, dedicated LND credential, systemd confinement, and rollback gates.
+PR #33 is ready for final CI/review reconciliation; Ubuntu 26 remains a
+non-blocking follow-up.
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote Draft PR: `#33`, targeting `main`.

@@ -28,11 +28,21 @@ for this release, by product decision; its already-passed platform and Phase 4
 gates remain useful evidence but a complete Ubuntu 26 app matrix is not a PR
 #33 acceptance condition.
 
+The controlled in-place rollout also passed on LOS TESTE2 at checkpoint
+`f02b3320`. This node originated from `install.sh` and uses the App Store
+Bitcoin Docker container on an external volume; it is not an
+`install_existing.sh` layout. The upgrade preserved the Bitcoin container
+start time, LND PID, Docker daemon invocation, installed container set, and
+mainnet/full-node sync while moving the Manager to the enforced broker,
+dedicated LND credential, zero wildcard sudoers, zero Docker access, and the
+hardened systemd policy. Bitcoin, LND, Docker, and the host were not restarted.
+
 Final Ubuntu 24 evidence:
 
 - `docs/baselines/privilege-hardening-final-ubuntu24-fresh-2026-08-13.json`;
 - `docs/baselines/privilege-hardening-final-ubuntu24-existing-2026-08-13.json`;
 - `docs/baselines/privilege-hardening-final-release-supply-chain-2026-08-13.json`.
+- `docs/baselines/privilege-hardening-final-los-test2-2026-08-13.json`.
 
 Persistent continuation checkpoint:
 `docs/36_PRIVILEGE_HARDENING_HANDOFF.md`. The checkpoint is an operational
@@ -1552,9 +1562,10 @@ configuration updates, and root-only transaction state. The credential lives
 at `/var/lib/lightningos-credentials/lnd/manager.macaroon` as
 `root:lightningos:0640`; its root-owned ancestor prevents the manager from
 replacing the boundary. After commit, native `admin.macaroon` is
-`lnd:lnd:0600`. Upgrade rollback schema v3 records metadata and existence only,
-never credential bytes, and restores the previous path while revoking the
-dedicated root key. An unavailable or locked LND returns `pending` without
+`lnd:lnd:0600`. Upgrade rollback schema v4 records credential
+metadata/existence and the Manager UI snapshot, never credential bytes, and
+restores the previous Manager/UI/access boundary while revoking the dedicated
+root key. An unavailable or locked LND returns `pending` without
 filesystem/config mutation.
 
 The real existing-wallet ensure/rollback gate passed on LOS TESTE2. The root

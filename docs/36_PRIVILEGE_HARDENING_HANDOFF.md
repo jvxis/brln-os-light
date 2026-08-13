@@ -523,8 +523,20 @@ architecture, or checksum. Ubuntu 24.04 authenticated all four real artifacts,
 rejected modified bytes, and preserved services and installed binaries. The
 VM/temp/network cleanup completed. Evidence:
 `docs/baselines/privilege-hardening-phase3-installer-go-gotty-2026-08-13.json`.
-Do not close #34 yet: installer LND verification, NodeSource/i2pd repository
-replacement, other repository-key authentication, and full matrices remain.
+
+The NodeSource/i2pd slice of issue #34 is also accepted. Remote setup scripts
+were replaced by fixed deb822 repositories and dedicated `signed-by` keyrings.
+NodeSource is fixed to major 24 for new/older installs while a newer existing
+Node.js remains accepted and is not downgraded. Both downloaded repository-key
+files require their exact SHA-256 and primary OpenPGP fingerprint before
+dearmoring; this rejects modified bytes, extra/trailing input, and unexpected
+keys rather than relying on the OpenPGP parser to consume the complete file.
+Ubuntu 24.04 authenticated the real NodeSource and i2pd metadata in isolated
+APT state, rejected five negative cases, and preserved system repositories,
+packages, binaries, and services. Evidence:
+`docs/baselines/privilege-hardening-phase3-installer-apt-repositories-2026-08-13.json`.
+Do not close #34 yet: installer LND verification, other repository-key
+authentication, and the full Ubuntu 24.04/26.04 matrices remain.
 
 ## Test-node and network constraints
 

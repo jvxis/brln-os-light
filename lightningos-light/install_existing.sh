@@ -21,7 +21,12 @@ GO_VERSION="1.24.12"
 GO_ARTIFACT="go${GO_VERSION}.linux-amd64.tar.gz"
 GO_TARBALL_URL="https://go.dev/dl/${GO_ARTIFACT}"
 GO_TARBALL_SHA256="bddf8e653c82429aea7aec2520774e79925d4bb929fe20e67ecc00dd5af44c50"
-NODE_VERSION="${NODE_VERSION:-current}"
+NODE_VERSION="24"
+NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+NODESOURCE_KEY_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
+NODESOURCE_KEY_SHA256="b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d"
+NODESOURCE_KEYRING="/usr/share/keyrings/nodesource.gpg"
+NODESOURCE_SOURCE="/etc/apt/sources.list.d/nodesource.sources"
 GOTTY_VERSION="1.8.0"
 GOTTY_ARTIFACT="gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"
 GOTTY_URL="https://github.com/sorenisanerd/gotty/releases/download/v${GOTTY_VERSION}/${GOTTY_ARTIFACT}"
@@ -405,7 +410,6 @@ install_go() {
 }
 
 install_node() {
-  resolve_node_version
   print_step "Installing Node.js ${NODE_VERSION}.x"
   if command -v node >/dev/null 2>&1; then
     local major
@@ -419,34 +423,30 @@ install_node() {
     print_warn "apt-get not found; install Node.js manually and re-run."
     return 1
   fi
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_VERSION}.x" | bash -
+  apt-get install -y ca-certificates curl gnupg
+  local architecture source_tmp
+  architecture=$(dpkg --print-architecture)
+  if [[ "$architecture" != "amd64" && "$architecture" != "arm64" ]]; then
+    print_warn "Unsupported NodeSource architecture: ${architecture}"
+    return 1
+  fi
+  install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+  lightningos_install_verified_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256" "$NODESOURCE_KEYRING" "NodeSource repository"
+  source_tmp=$(mktemp)
+  cat > "$source_tmp" <<EOF
+Types: deb
+URIs: https://deb.nodesource.com/node_${NODE_VERSION}.x
+Suites: nodistro
+Components: main
+Architectures: ${architecture}
+Signed-By: ${NODESOURCE_KEYRING}
+EOF
+  install -o root -g root -m 0644 "$source_tmp" "$NODESOURCE_SOURCE"
+  rm -f -- "$source_tmp"
+  rm -f -- /etc/apt/sources.list.d/nodesource.list
+  apt-get update
   apt-get install -y nodejs >/dev/null
   print_ok "Node.js installed"
-}
-
-resolve_node_version() {
-  if [[ "$NODE_VERSION" =~ ^[0-9]+$ ]]; then
-    return 0
-  fi
-  local major=""
-  if command -v curl >/dev/null 2>&1; then
-    major=$(curl -fsSL https://nodejs.org/dist/index.json \
-      | grep -oE '"version":"v[0-9]+' \
-      | grep -oE '[0-9]+' \
-      | sort -nr \
-      | head -n1)
-  fi
-  while [[ -n "$major" && "$major" -ge 20 ]]; do
-    if curl -fsIL -o /dev/null "https://deb.nodesource.com/setup_${major}.x"; then
-      NODE_VERSION="$major"
-      print_ok "Using Node.js ${NODE_VERSION}.x"
-      return 0
-    fi
-    print_warn "NodeSource has no setup for Node.js ${major}.x; trying $((major - 1)).x"
-    major=$((major - 1))
-  done
-  print_warn "Could not resolve latest Node.js version; falling back to 22"
-  NODE_VERSION="22"
 }
 
 detect_go_binary() {
@@ -787,7 +787,6 @@ ensure_node() {
   local node_ok="0"
   local npm_ok="0"
   if command -v node >/dev/null 2>&1; then
-    resolve_node_version
     local major
     major=$(node -v | sed 's/v//' | cut -d. -f1)
     if [[ "$major" -ge "$NODE_VERSION" ]]; then

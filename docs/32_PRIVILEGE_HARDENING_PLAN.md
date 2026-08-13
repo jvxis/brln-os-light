@@ -1342,8 +1342,26 @@ and tar validation succeed. Ubuntu 24.04 downloaded and authenticated all four
 amd64/arm64 artifacts, rejected modified bytes, and preserved installed
 binary hashes and service activation state. Evidence is in
 `docs/baselines/privilege-hardening-phase3-installer-go-gotty-2026-08-13.json`.
-LND installer verification and replacement of the NodeSource/i2pd remote setup
-scripts remain open in the same issue track.
+
+Issue #34's NodeSource/i2pd repository slice is also accepted. All installer
+variants now pin Node.js major 24 and replace the NodeSource remote setup
+helper with an explicit `nodistro` deb822 source and a dedicated `signed-by`
+keyring. The fresh installer likewise replaces the i2pd remote shell helper
+with the Ubuntu-suite deb822 repository. Repository keys are downloaded only
+over HTTPS/TLS 1.2 with HTTPS-only redirects, authenticated by both the exact
+whole-file SHA-256 and pinned primary OpenPGP fingerprint, required to contain
+one primary key, and dearmored before root-owned installation. Whole-file
+authentication closes the parser behavior where a valid armored key followed
+by trailing junk would otherwise retain a valid fingerprint.
+
+The isolated Ubuntu 24.04 gate authenticated both real repositories and found
+Node.js 24.19.0 plus i2pd 2.61.0 without writing system APT state. Wrong hashes,
+wrong fingerprints, HTTP, a symlink destination, and trailing junk all failed
+closed. The VM's newer existing Node.js, installed packages, binary hashes,
+service state, and system repository files remained unchanged. Evidence is in
+`docs/baselines/privilege-hardening-phase3-installer-apt-repositories-2026-08-13.json`.
+LND installer verification, authentication of the remaining installer
+repository keys, and the complete cross-version install matrices remain open.
 
 1. Replace arbitrary package arguments with fixed dependency sets.
 2. Replace direct UFW access with the manager-access policy operation.
@@ -1358,7 +1376,8 @@ scripts remain open in the same issue track.
    each supported GoTTY version, architecture, artifact name, and checksum.
 7. Replace direct NodeSource and i2pd `curl | bash` execution with explicit APT
    repository definitions and dedicated `signed-by` keyrings; any unavoidable
-   downloaded helper must be authenticated before execution.
+   downloaded helper must be authenticated before execution. Complete for all
+   three installer variants, including whole-file key authentication.
 8. Add negative tests proving that altered artifacts, checksums, manifests,
    signatures, keys, architectures, and repository helpers fail closed before
    privileged execution or installation.

@@ -108,6 +108,97 @@ func TestInstallerArtifactVerificationRejectsModifiedBytes(t *testing.T) {
 	}
 }
 
+func TestInstallersUseFingerprintPinnedAPTRepositories(t *testing.T) {
+	installers := []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"}
+	for _, name := range installers {
+		t.Run(name, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "..", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+			for _, expected := range []string{
+				`NODE_VERSION="24"`,
+				`NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"`,
+				`NODESOURCE_KEY_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"`,
+				`NODESOURCE_KEY_SHA256="b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d"`,
+				`lightningos_install_verified_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256"`,
+				`URIs: https://deb.nodesource.com/node_${NODE_VERSION}.x`,
+				`Suites: nodistro`,
+				`Signed-By: ${NODESOURCE_KEYRING}`,
+			} {
+				if !strings.Contains(content, expected) {
+					t.Fatalf("%s is missing closed NodeSource policy %q", name, expected)
+				}
+			}
+			for _, forbidden := range []string{
+				`deb.nodesource.com/setup_`,
+				`resolve_node_version`,
+			} {
+				if strings.Contains(content, forbidden) {
+					t.Fatalf("%s retains remote NodeSource setup behavior %q", name, forbidden)
+				}
+			}
+		})
+	}
+
+	freshRaw, err := os.ReadFile(filepath.Join("..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := strings.ReplaceAll(string(freshRaw), "\r\n", "\n")
+	for _, expected := range []string{
+		`I2PD_KEY_URL="https://repo.i2pd.xyz/r4sas.gpg"`,
+		`I2PD_KEY_FINGERPRINT="951928BB317024EFD053D73C66F6C87B98EBCFE2"`,
+		`I2PD_KEY_SHA256="c9db4fa521b75bb2821c103e595173f289efe282aa5cbe9613f523983000140f"`,
+		`lightningos_install_verified_apt_key "$I2PD_KEY_URL" "$I2PD_KEY_FINGERPRINT" "$I2PD_KEY_SHA256"`,
+		`URIs: https://repo.i2pd.xyz/ubuntu`,
+		`Signed-By: ${I2PD_KEYRING}`,
+	} {
+		if !strings.Contains(fresh, expected) {
+			t.Fatalf("install.sh is missing closed i2pd repository policy %q", expected)
+		}
+	}
+	if strings.Contains(fresh, "repo.i2pd.xyz/.help/add_repo") {
+		t.Fatal("install.sh still executes the remote i2pd repository helper")
+	}
+
+	helperRaw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install-artifact-verification.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := strings.ReplaceAll(string(helperRaw), "\r\n", "\n")
+	for _, expected := range []string{
+		`lightningos_verify_openpgp_primary_fingerprint()`,
+		`primary_count=$(printf '%s\n' "$listing" | grep -c '^pub:' || true)`,
+		`actual=$(printf '%s\n' "$listing" | grep '^fpr:' | head -n1 | cut -d: -f10 || true)`,
+		`if [[ "$primary_count" != "1" || "$actual" != "$expected" ]]`,
+		`lightningos_verify_sha256 "$tmp/key.asc" "$expected_sha256" "${label} key"`,
+		`--proto '=https' --proto-redir '=https' --tlsv1.2`,
+		`gpg --batch --yes --dearmor`,
+	} {
+		if !strings.Contains(helper, expected) {
+			t.Fatalf("artifact verifier is missing OpenPGP fail-closed policy %q", expected)
+		}
+	}
+}
+
+func TestInstallersDoNotPipeRemoteContentToShell(t *testing.T) {
+	for _, name := range []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for lineNumber, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if (strings.Contains(trimmed, "curl ") || strings.Contains(trimmed, "wget ")) &&
+				strings.Contains(trimmed, "|") && (strings.Contains(trimmed, "bash") || strings.Contains(trimmed, "sh ")) {
+				t.Fatalf("%s:%d pipes remote content to a shell: %s", name, lineNumber+1, trimmed)
+			}
+		}
+	}
+}
+
 func TestInstallersConfigureManagerFirewallWithoutPrompt(t *testing.T) {
 	installers := []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"}
 	for _, name := range installers {

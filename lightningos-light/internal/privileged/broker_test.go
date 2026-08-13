@@ -71,14 +71,15 @@ type recordingBitcoinStorage struct {
 }
 
 type recordingBitcoinConfig struct {
-	operation       string
-	dataDir         string
-	content         string
-	generateRPCAuth bool
-	dryRun          bool
-	state           BitcoinCoreConfigState
-	credentials     BitcoinCoreCredentialsState
-	err             error
+	operation          string
+	dataDir            string
+	content            string
+	generateRPCAuth    bool
+	dryRun             bool
+	state              BitcoinCoreConfigState
+	credentials        BitcoinCoreCredentialsState
+	electrsCredentials BitcoinCoreElectrsCredentialsState
+	err                error
 }
 
 type recordingLoopManager struct {
@@ -181,6 +182,13 @@ func (config *recordingBitcoinConfig) Credentials(_ context.Context, dataDir str
 	config.operation = "credentials"
 	config.dataDir = dataDir
 	return config.credentials, config.err
+}
+
+func (config *recordingBitcoinConfig) EnsureElectrsCredentials(_ context.Context, dataDir string, dryRun bool) (BitcoinCoreElectrsCredentialsState, error) {
+	config.operation = "electrs-credentials"
+	config.dataDir = dataDir
+	config.dryRun = dryRun
+	return config.electrsCredentials, config.err
 }
 
 func (config *recordingBitcoinConfig) Read(_ context.Context, dataDir string) (BitcoinCoreConfigState, error) {
@@ -1094,6 +1102,30 @@ func TestBrokerBitcoinCredentialsReadIsTypedUnlockedAndNeverAudited(t *testing.T
 	}
 	if strings.Contains(fmt.Sprintf("%#v", audit.events), password) {
 		t.Fatal("RPC password leaked into audit")
+	}
+}
+
+func TestBrokerBitcoinElectrsCredentialsEnsureIsTypedLockedAndNeverAudited(t *testing.T) {
+	const password = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	params, err := MarshalParams(BitcoinCoreConfigTargetParams{DataDir: "/data/bitcoin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := &recordingAudit{}
+	locker := &recordingLocker{}
+	config := &recordingBitcoinConfig{electrsCredentials: BitcoinCoreElectrsCredentialsState{
+		Status: "restart_required", User: appmanifest.ElectrsBitcoinRPCUser, Password: password, ConfigChanged: true,
+	}}
+	broker := testBroker(&recordingRunner{}, audit, locker)
+	broker.BitcoinConfig = config
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "bitcoin_electrs_credentials_1", Operation: OperationBitcoinElectrsCredentialsEnsure, Params: params,
+	})
+	if !response.OK || config.operation != "electrs-credentials" || config.dataDir != "/data/bitcoin" || locker.locks != 1 {
+		t.Fatalf("response/config/locker=%#v/%#v/%#v", response, config, locker)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", audit.events), password) {
+		t.Fatal("Electrs RPC password leaked into audit")
 	}
 }
 

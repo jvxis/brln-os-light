@@ -24,6 +24,8 @@ const (
 	maxElectrsRPCResponseBytes  = 1024 * 1024
 )
 
+var errElectrsBitcoinRPCAuthentication = errors.New("Bitcoin RPC authentication failed")
+
 type electrsImageAttestation struct {
 	ImageID      string
 	Release      string
@@ -282,7 +284,7 @@ func callElectrsBitcoinRPC(ctx context.Context, client *http.Client, endpoint, u
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxElectrsRPCResponseBytes))
-		return errors.New("Bitcoin RPC authentication failed")
+		return errElectrsBitcoinRPCAuthentication
 	}
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxElectrsRPCResponseBytes))

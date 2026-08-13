@@ -130,6 +130,11 @@ type fakePrivilegedServiceClient struct {
 	configDryRun             bool
 	configStatus             string
 	configErr                error
+	electrsCredentialCalls   int
+	electrsCredentialStatus  string
+	electrsCredentialChanged bool
+	electrsCredentialDryRun  bool
+	electrsCredentialErr     error
 	bitcoinStatusCalls       int
 	bitcoinStatusJSON        string
 	bitcoinStatusErr         error
@@ -515,6 +520,23 @@ func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreConfig(_ context.Con
 
 func (client *fakePrivilegedServiceClient) ReadBitcoinCoreCredentials(context.Context, string) (string, string, error) {
 	return "lightningos", strings.Repeat("a", 64), nil
+}
+
+func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreElectrsCredentials(_ context.Context, _ string, dryRun bool) (string, string, string, bool, error) {
+	client.electrsCredentialCalls++
+	client.electrsCredentialDryRun = dryRun
+	status := client.electrsCredentialStatus
+	if status == "" {
+		if dryRun {
+			status = "validated"
+		} else {
+			status = "ready"
+		}
+	}
+	if dryRun {
+		return "", "", status, false, client.electrsCredentialErr
+	}
+	return "electrs", strings.Repeat("b", 64), status, client.electrsCredentialChanged, client.electrsCredentialErr
 }
 
 func (client *fakePrivilegedServiceClient) ReadBitcoinCoreConfig(_ context.Context, dataDir string) (string, error) {
@@ -1121,6 +1143,47 @@ func TestBitcoinCoreConfigBrokerHelpersAreEnforceOnly(t *testing.T) {
 			t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
 		}
 	})
+}
+
+func TestEnsureBitcoinCoreElectrsCredentialsWithBrokerModes(t *testing.T) {
+	const dataDir = "/mnt/bitcoin-ssd/bitcoin"
+	for _, test := range []struct {
+		name        string
+		mode        string
+		status      string
+		changed     bool
+		brokerErr   error
+		wantHandled bool
+		wantErr     bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "enforce ready", mode: "enforce", status: "ready", wantHandled: true, wantCalls: 1},
+		{name: "enforce restart required", mode: "enforce", status: "restart_required", changed: true, wantHandled: true, wantCalls: 1},
+		{name: "enforce failure", mode: "enforce", brokerErr: errors.New("rejected"), wantHandled: true, wantErr: true, wantCalls: 1},
+		{name: "shadow validates only", mode: "shadow", status: "validated", wantCalls: 1, wantDryRun: true},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{
+				mode: test.mode, electrsCredentialStatus: test.status,
+				electrsCredentialChanged: test.changed, electrsCredentialErr: test.brokerErr,
+			}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			user, password, status, changed, handled, err := EnsureBitcoinCoreElectrsCredentialsWithBroker(t.Context(), dataDir)
+			if handled != test.wantHandled || (err != nil) != test.wantErr || client.electrsCredentialCalls != test.wantCalls || client.electrsCredentialDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+			if test.wantHandled && !test.wantErr {
+				if user != "electrs" || len(password) != 64 || status != test.status || changed != test.changed {
+					t.Fatalf("credential result=%q/%d/%q/%v", user, len(password), status, changed)
+				}
+			} else if user != "" || password != "" || status != "" || changed {
+				t.Fatalf("unexpected compatibility result=%q/%q/%q/%v", user, password, status, changed)
+			}
+		})
+	}
 }
 
 func TestBitcoinCoreStatusBrokerHelperUsesReadOnlyCapability(t *testing.T) {

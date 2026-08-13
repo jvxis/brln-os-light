@@ -3,6 +3,8 @@ package privileged
 import (
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 func TestValidateBitcoinCoreConfigContent(t *testing.T) {
@@ -57,5 +59,46 @@ func TestGenerateBitcoinCoreCredentialsProducesValidRPCAuth(t *testing.T) {
 	}
 	if credentials.User != "lightningos" || len(credentials.Password) != 64 || !strings.HasPrefix(credentials.RPCAuth, "lightningos:") {
 		t.Fatalf("unexpected generated credentials metadata: user=%q password_length=%d", credentials.User, len(credentials.Password))
+	}
+}
+
+func TestBitcoinCoreConfigWithElectrsRPCAuthPreservesLegacyCredentialAndIsIdempotent(t *testing.T) {
+	const auth = "electrs:0123456789abcdef0123456789abcdef$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	legacy := "server=1\nrpcauth=legacy:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n[main]\nrpcport=8332\n"
+	configured, changed, err := bitcoinCoreConfigWithElectrsRPCAuth(legacy, auth)
+	if err != nil || !changed {
+		t.Fatalf("configured/changed/error=%q/%v/%v", configured, changed, err)
+	}
+	if !strings.Contains(configured, "rpcauth=legacy:") || !strings.Contains(configured, "rpcauth="+auth+"\n[main]") {
+		t.Fatalf("legacy credential was changed or Electrs credential misplaced:\n%s", configured)
+	}
+	again, changed, err := bitcoinCoreConfigWithElectrsRPCAuth(configured, auth)
+	if err != nil || changed || again != configured {
+		t.Fatalf("Electrs credential merge is not idempotent: changed=%v err=%v", changed, err)
+	}
+	other := strings.Replace(configured, auth, "electrs:ffffffffffffffffffffffffffffffff$eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", 1)
+	if _, _, err := bitcoinCoreConfigWithElectrsRPCAuth(other, auth); err == nil {
+		t.Fatal("unmanaged Electrs credential was overwritten")
+	}
+	for _, variant := range []string{
+		"server=1\nRPCAUTH = electrs:ffffffffffffffffffffffffffffffff$eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n",
+		"server=1\n  rpcauth=electrs:ffffffffffffffffffffffffffffffff$eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n",
+	} {
+		if _, _, err := bitcoinCoreConfigWithElectrsRPCAuth(variant, auth); err == nil {
+			t.Fatalf("unmanaged Electrs credential variant was accepted: %q", variant)
+		}
+	}
+}
+
+func TestGenerateBitcoinCoreElectrsCredentialsUsesFixedUser(t *testing.T) {
+	credentials, err := generateBitcoinCoreCredentialsForUser(appmanifest.ElectrsBitcoinRPCUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBitcoinCoreCredentialsForUser(credentials, appmanifest.ElectrsBitcoinRPCUser); err != nil {
+		t.Fatal(err)
+	}
+	if credentials.User != appmanifest.ElectrsBitcoinRPCUser || !strings.HasPrefix(credentials.RPCAuth, appmanifest.ElectrsBitcoinRPCUser+":") {
+		t.Fatalf("unexpected Electrs credentials: user=%q", credentials.User)
 	}
 }

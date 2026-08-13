@@ -32,6 +32,10 @@ func (client *bitcoinConfigTestClient) ReadBitcoinCoreCredentials(context.Contex
 	return "", "", client.err
 }
 
+func (client *bitcoinConfigTestClient) EnsureBitcoinCoreElectrsCredentials(context.Context, string, bool) (string, string, string, bool, error) {
+	return "electrs", strings.Repeat("b", 64), "ready", false, client.err
+}
+
 func (client *bitcoinConfigTestClient) ReadBitcoinCoreConfig(_ context.Context, dataDir string) (string, error) {
 	client.recordConfig("read", dataDir, "", false)
 	return client.readContent, client.err

@@ -108,6 +108,15 @@ func TestClientBitcoinCoreConfigRequestsKeepSecretInTypedPayload(t *testing.T) {
 		t.Fatalf("credentials/error/request=%q/%d/%v/%#v", user, len(password), err, transport.request)
 	}
 
+	transport.result = BitcoinCoreElectrsCredentialsState{
+		Status: "restart_required", User: appmanifest.ElectrsBitcoinRPCUser, Password: strings.Repeat("b", 64), ConfigChanged: true,
+	}
+	electrsUser, electrsPassword, electrsStatus, changed, err := client.EnsureBitcoinCoreElectrsCredentials(context.Background(), dataDir, false)
+	if err != nil || electrsUser != appmanifest.ElectrsBitcoinRPCUser || electrsPassword != strings.Repeat("b", 64) || electrsStatus != "restart_required" || !changed ||
+		transport.request.Operation != OperationBitcoinElectrsCredentialsEnsure || transport.request.DryRun {
+		t.Fatalf("Electrs credentials/error/request=%q/%d/%q/%v/%v/%#v", electrsUser, len(electrsPassword), electrsStatus, changed, err, transport.request)
+	}
+
 	transport.result = BitcoinCoreConfigState{Status: "ready", Content: content}
 	read, err := client.ReadBitcoinCoreConfig(context.Background(), dataDir)
 	if err != nil || read != content || transport.request.Operation != OperationBitcoinConfigRead || transport.request.DryRun {

@@ -58,6 +58,35 @@ func TestParseBitcoinCoreBoolFalseWhenMissing(t *testing.T) {
 	}
 }
 
+func TestManagedBitcoinFullIndexStatusAvailability(t *testing.T) {
+	ready := bitcoinLocalStatus{
+		Installed: true, Source: "app", RPCOk: true, Blocks: 900, Headers: 900,
+		VerificationProgress: 1,
+	}
+	if availability := managedBitcoinFullIndexStatusAvailability(ready, "server=1\ntxindex=1\n"); !availability.Available {
+		t.Fatalf("ready managed Bitcoin rejected: %#v", availability)
+	}
+
+	for _, test := range []struct {
+		name   string
+		status bitcoinLocalStatus
+		config string
+		reason string
+	}{
+		{name: "RPC unavailable", status: bitcoinLocalStatus{Installed: true, Source: "app"}, config: "txindex=1\n", reason: fullIndexUnavailableBitcoinRPC},
+		{name: "pruned", status: func() bitcoinLocalStatus { value := ready; value.Pruned = true; return value }(), config: "txindex=1\n", reason: fullIndexUnavailableUnpruned},
+		{name: "syncing", status: func() bitcoinLocalStatus { value := ready; value.Blocks = 899; return value }(), config: "txindex=1\n", reason: fullIndexUnavailableBitcoinSync},
+		{name: "txindex missing", status: ready, config: "server=1\n", reason: fullIndexUnavailableTxIndex},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			availability := managedBitcoinFullIndexStatusAvailability(test.status, test.config)
+			if availability.Available || availability.Reason != test.reason {
+				t.Fatalf("availability=%#v want reason=%q", availability, test.reason)
+			}
+		})
+	}
+}
+
 func TestParseBitcoinCoreTxIndexInfoSynced(t *testing.T) {
 	ready, known, err := parseBitcoinCoreTxIndexInfo(`{"txindex":{"synced":true,"best_block_height":892044}}`)
 	if err != nil {

@@ -50,6 +50,7 @@ type bitcoinCoreConfigPrivilegedClient interface {
 	ReadBitcoinCoreConfig(ctx context.Context, dataDir string) (content string, err error)
 	WriteBitcoinCoreConfig(ctx context.Context, dataDir string, content string, dryRun bool) (status string, err error)
 	ReadBitcoinCoreCredentials(ctx context.Context, dataDir string) (user string, password string, err error)
+	EnsureBitcoinCoreElectrsCredentials(ctx context.Context, dataDir string, dryRun bool) (user string, password string, status string, configChanged bool, err error)
 }
 
 type bitcoinCoreStatusPrivilegedClient interface {
@@ -872,6 +873,33 @@ func ReadBitcoinCoreCredentialsWithBroker(ctx context.Context, dataDir string) (
 	}
 	user, password, err := configClient.ReadBitcoinCoreCredentials(ctx, dataDir)
 	return user, password, true, err
+}
+
+func EnsureBitcoinCoreElectrsCredentialsWithBroker(ctx context.Context, dataDir string) (string, string, string, bool, bool, error) {
+	client, configClient := configuredBitcoinCoreConfigClient()
+	if client == nil {
+		return "", "", "", false, false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		if configClient == nil {
+			return "", "", "", false, true, errors.New("Electrs bitcoin credentials broker capability is unavailable")
+		}
+		user, password, status, changed, err := configClient.EnsureBitcoinCoreElectrsCredentials(ctx, dataDir, false)
+		if err != nil {
+			return "", "", "", false, true, err
+		}
+		return user, password, status, changed, true, err
+	case "shadow":
+		if configClient != nil {
+			shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			_, _, _, _, _ = configClient.EnsureBitcoinCoreElectrsCredentials(shadowCtx, dataDir, true)
+		}
+		return "", "", "", false, false, nil
+	default:
+		return "", "", "", false, false, nil
+	}
 }
 
 func ReadBitcoinCoreConfigWithBroker(ctx context.Context, dataDir string) (string, bool, error) {

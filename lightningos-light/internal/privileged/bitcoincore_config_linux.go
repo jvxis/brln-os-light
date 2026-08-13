@@ -8,9 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"lightningos-light/internal/appmanifest"
 
 	"golang.org/x/sys/unix"
 )
@@ -89,6 +93,81 @@ func (manager *BitcoinCoreConfigManager) Credentials(_ context.Context, dataDir 
 	}, nil
 }
 
+func (manager *BitcoinCoreConfigManager) EnsureElectrsCredentials(ctx context.Context, dataDir string, dryRun bool) (BitcoinCoreElectrsCredentialsState, error) {
+	directoryFD, err := manager.openEnrolledDataDir(dataDir)
+	if err != nil {
+		return BitcoinCoreElectrsCredentialsState{}, err
+	}
+	defer unix.Close(directoryFD)
+
+	content, exists, original, _, err := readBitcoinCoreConfigForEnsureAt(directoryFD)
+	if err != nil || !exists {
+		return BitcoinCoreElectrsCredentialsState{}, errors.New("bitcoin config does not exist")
+	}
+	if err := validateBitcoinCoreConfigContent(content); err != nil {
+		return BitcoinCoreElectrsCredentialsState{}, errors.New("existing bitcoin config is invalid")
+	}
+
+	credentials, credentialErr := manager.readCredentialsFile(bitcoinCoreElectrsCredentialsFile, appmanifest.ElectrsBitcoinRPCUser)
+	if credentialErr != nil && !os.IsNotExist(credentialErr) {
+		return BitcoinCoreElectrsCredentialsState{}, errors.New("Electrs RPC credential state is invalid")
+	}
+	if os.IsNotExist(credentialErr) {
+		placeholder := appmanifest.ElectrsBitcoinRPCUser + ":00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000"
+		if _, _, err := bitcoinCoreConfigWithElectrsRPCAuth(content, placeholder); err != nil {
+			return BitcoinCoreElectrsCredentialsState{}, err
+		}
+		if dryRun {
+			return BitcoinCoreElectrsCredentialsState{Status: "validated"}, nil
+		}
+		credentials, err = generateBitcoinCoreCredentialsForUser(appmanifest.ElectrsBitcoinRPCUser)
+		if err != nil {
+			return BitcoinCoreElectrsCredentialsState{}, errors.New("generate Electrs RPC credentials failed")
+		}
+		if err := manager.writeCredentialsFile(bitcoinCoreElectrsCredentialsFile, credentials, appmanifest.ElectrsBitcoinRPCUser); err != nil {
+			return BitcoinCoreElectrsCredentialsState{}, err
+		}
+	} else if dryRun {
+		if _, _, err := bitcoinCoreConfigWithElectrsRPCAuth(content, credentials.RPCAuth); err != nil {
+			return BitcoinCoreElectrsCredentialsState{}, err
+		}
+		return BitcoinCoreElectrsCredentialsState{Status: "validated"}, nil
+	}
+
+	updated, changed, err := bitcoinCoreConfigWithElectrsRPCAuth(content, credentials.RPCAuth)
+	if err != nil {
+		return BitcoinCoreElectrsCredentialsState{}, err
+	}
+	if changed {
+		if err := writeBitcoinCoreConfigAt(ctx, directoryFD, updated, &original); err != nil {
+			return BitcoinCoreElectrsCredentialsState{}, err
+		}
+		return BitcoinCoreElectrsCredentialsState{
+			Status: "restart_required", User: credentials.User, Password: credentials.Password, ConfigChanged: true,
+		}, nil
+	}
+	probe := manager.ElectrsCredentialProbe
+	if probe == nil {
+		probe = probeBitcoinCoreElectrsCredential
+	}
+	if err := probe(ctx, credentials.User, credentials.Password); err != nil {
+		if errors.Is(err, errElectrsBitcoinRPCAuthentication) {
+			return BitcoinCoreElectrsCredentialsState{
+				Status: "restart_required", User: credentials.User, Password: credentials.Password,
+			}, nil
+		}
+		return BitcoinCoreElectrsCredentialsState{}, errors.New("Electrs RPC credential activation check failed")
+	}
+	return BitcoinCoreElectrsCredentialsState{
+		Status: "ready", User: credentials.User, Password: credentials.Password, ConfigChanged: changed,
+	}, nil
+}
+
+func probeBitcoinCoreElectrsCredential(ctx context.Context, user string, password string) error {
+	var result struct{}
+	return callElectrsBitcoinRPC(ctx, &http.Client{Timeout: 3 * time.Second}, "http://127.0.0.1:8332/", user, password, "getblockchaininfo", nil, &result)
+}
+
 func (manager *BitcoinCoreConfigManager) ensureCredentials() (bitcoinCoreStoredCredentials, error) {
 	credentials, err := manager.readCredentials()
 	if err == nil {
@@ -119,12 +198,35 @@ func (manager *BitcoinCoreConfigManager) ensureCredentials() (bitcoinCoreStoredC
 	return credentials, nil
 }
 
+func (manager *BitcoinCoreConfigManager) writeCredentialsFile(name string, credentials bitcoinCoreStoredCredentials, expectedUser string) error {
+	raw, err := marshalBitcoinCoreCredentialsForUser(credentials, expectedUser)
+	if err != nil {
+		return errors.New("encode bitcoin RPC credentials failed")
+	}
+	root := manager.storageRoot()
+	if err := validateRootOwnedDirectory(root, 0o700); err != nil {
+		return errors.New("bitcoin credential root is unsafe")
+	}
+	path := filepath.Join(root, name)
+	if err := writeAtomicRegularFile(path, raw, 0o600); err != nil {
+		return errors.New("persist bitcoin RPC credentials failed")
+	}
+	if err := validateRootOwnedRegularFile(path, 0o600); err != nil {
+		return errors.New("bitcoin RPC credentials are unsafe")
+	}
+	return nil
+}
+
 func (manager *BitcoinCoreConfigManager) readCredentials() (bitcoinCoreStoredCredentials, error) {
+	return manager.readCredentialsFile(bitcoinCoreCredentialsFile, appmanifest.BitcoinCoreRPCUser)
+}
+
+func (manager *BitcoinCoreConfigManager) readCredentialsFile(name string, expectedUser string) (bitcoinCoreStoredCredentials, error) {
 	root := manager.storageRoot()
 	if err := validateRootOwnedDirectory(root, 0o700); err != nil {
 		return bitcoinCoreStoredCredentials{}, errors.New("bitcoin credential root is unsafe")
 	}
-	path := filepath.Join(root, bitcoinCoreCredentialsFile)
+	path := filepath.Join(root, name)
 	if err := validateRootOwnedRegularFile(path, 0o600); err != nil {
 		return bitcoinCoreStoredCredentials{}, err
 	}
@@ -138,7 +240,7 @@ func (manager *BitcoinCoreConfigManager) readCredentials() (bitcoinCoreStoredCre
 	if err := decoder.Decode(&credentials); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return bitcoinCoreStoredCredentials{}, errors.New("bitcoin RPC credentials are invalid")
 	}
-	if err := validateBitcoinCoreCredentials(credentials); err != nil {
+	if err := validateBitcoinCoreCredentialsForUser(credentials, expectedUser); err != nil {
 		return bitcoinCoreStoredCredentials{}, err
 	}
 	return credentials, nil

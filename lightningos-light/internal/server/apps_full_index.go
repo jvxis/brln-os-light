@@ -49,6 +49,48 @@ func (s *Server) fullIndexAppAvailability(ctx context.Context) fullIndexAppAvail
 	return fullIndexBitcoinConfigAvailability(checkCtx, cfg)
 }
 
+func (s *Server) electrsAppAvailability(ctx context.Context) fullIndexAppAvailability {
+	availability := s.fullIndexAppAvailability(ctx)
+	if availability.Available || availability.Reason != fullIndexUnavailableBitcoinRPC || !fileExists(bitcoinCoreAppPaths().ComposePath) {
+		return availability
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	return s.managedBitcoinFullIndexAvailability(checkCtx)
+}
+
+func (s *Server) managedBitcoinFullIndexAvailability(ctx context.Context) fullIndexAppAvailability {
+	status, err := s.bitcoinLocalStatusCached(ctx)
+	if err != nil || !status.Installed || status.Source != "app" || !status.RPCOk {
+		return fullIndexUnavailable(fullIndexUnavailableBitcoinRPC, "Local Bitcoin RPC is unavailable. Start Bitcoin Core and try again.")
+	}
+	raw, err := readBitcoinCoreConfigRaw(ctx, bitcoinCoreAppPaths())
+	if err != nil {
+		return fullIndexUnavailable(fullIndexUnavailableBitcoinRPC, "Local Bitcoin configuration could not be validated.")
+	}
+	return managedBitcoinFullIndexStatusAvailability(status, raw)
+}
+
+func managedBitcoinFullIndexStatusAvailability(status bitcoinLocalStatus, rawConfig string) fullIndexAppAvailability {
+	if !status.Installed || status.Source != "app" || !status.RPCOk {
+		return fullIndexUnavailable(fullIndexUnavailableBitcoinRPC, "Local Bitcoin RPC is unavailable. Start Bitcoin Core and try again.")
+	}
+	if status.Pruned {
+		return fullIndexUnavailable(fullIndexUnavailableUnpruned, "Electrs and Mempool require a non-pruned Bitcoin Core node. Disable pruning before installing.")
+	}
+	info := bitcoinInfo{
+		Blocks: status.Blocks, Headers: status.Headers, VerificationProgress: status.VerificationProgress,
+		InitialBlockDownload: status.InitialBlockDownload,
+	}
+	if bitcoinInfoStillSyncing(info) {
+		return fullIndexUnavailable(fullIndexUnavailableBitcoinSync, "Electrs and Mempool require Bitcoin Core to be fully synced.")
+	}
+	if !parseBitcoinCoreBool(rawConfig, "txindex") {
+		return fullIndexUnavailable(fullIndexUnavailableTxIndex, "Electrs and Mempool require txindex=1 before installing.")
+	}
+	return fullIndexAppAvailability{Available: true}
+}
+
 func fullIndexBitcoinConfigAvailability(ctx context.Context, cfg bitcoinRPCConfig) fullIndexAppAvailability {
 	if !isLocalRPCHost(cfg.Host) {
 		return fullIndexUnavailable(fullIndexUnavailableBitcoinSource, fmt.Sprintf("Local Bitcoin RPC host is not local: %s", cfg.Host))
@@ -98,6 +140,9 @@ func (s *Server) decorateFullIndexAppInfo(ctx context.Context, info *appInfo) {
 		return
 	}
 	availability := s.fullIndexAppAvailability(ctx)
+	if info.ID == electrsAppID {
+		availability = s.electrsAppAvailability(ctx)
+	}
 	info.Available = availability.Available
 	info.UnavailableReason = availability.Reason
 	info.UnavailableMessage = availability.Message

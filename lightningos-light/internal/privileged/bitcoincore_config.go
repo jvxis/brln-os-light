@@ -1,6 +1,7 @@
 package privileged
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -15,11 +16,12 @@ import (
 )
 
 const (
-	bitcoinCoreConfigFile          = "bitcoin.conf"
-	bitcoinCoreStorageMarkerFile   = appmanifest.BitcoinCoreStorageMarker
-	bitcoinCoreCredentialsFile     = "rpc-credentials.json"
-	maxBitcoinCoreConfigBytes      = 8 * 1024
-	maxBitcoinCoreCredentialsBytes = 1024
+	bitcoinCoreConfigFile             = "bitcoin.conf"
+	bitcoinCoreStorageMarkerFile      = appmanifest.BitcoinCoreStorageMarker
+	bitcoinCoreCredentialsFile        = "rpc-credentials.json"
+	bitcoinCoreElectrsCredentialsFile = "electrs-rpc-credentials.json"
+	maxBitcoinCoreConfigBytes         = 8 * 1024
+	maxBitcoinCoreCredentialsBytes    = 1024
 )
 
 type bitcoinCoreStoredCredentials struct {
@@ -30,7 +32,8 @@ type bitcoinCoreStoredCredentials struct {
 }
 
 type BitcoinCoreConfigManager struct {
-	PrivilegedAppsRoot string
+	PrivilegedAppsRoot     string
+	ElectrsCredentialProbe func(context.Context, string, string) error
 }
 
 func NewBitcoinCoreConfigManager() *BitcoinCoreConfigManager {
@@ -75,6 +78,13 @@ func newBitcoinCoreConfigTemporaryName() (string, error) {
 }
 
 func generateBitcoinCoreCredentials() (bitcoinCoreStoredCredentials, error) {
+	return generateBitcoinCoreCredentialsForUser(appmanifest.BitcoinCoreRPCUser)
+}
+
+func generateBitcoinCoreCredentialsForUser(user string) (bitcoinCoreStoredCredentials, error) {
+	if user != appmanifest.BitcoinCoreRPCUser && user != appmanifest.ElectrsBitcoinRPCUser {
+		return bitcoinCoreStoredCredentials{}, errors.New("bitcoin RPC credential user is invalid")
+	}
 	passwordRaw := make([]byte, 32)
 	if _, err := rand.Read(passwordRaw); err != nil {
 		return bitcoinCoreStoredCredentials{}, err
@@ -89,14 +99,21 @@ func generateBitcoinCoreCredentials() (bitcoinCoreStoredCredentials, error) {
 	_, _ = digest.Write([]byte(password))
 	return bitcoinCoreStoredCredentials{
 		Version:  1,
-		User:     appmanifest.BitcoinCoreRPCUser,
+		User:     user,
 		Password: password,
-		RPCAuth:  appmanifest.BitcoinCoreRPCUser + ":" + salt + "$" + hex.EncodeToString(digest.Sum(nil)),
+		RPCAuth:  user + ":" + salt + "$" + hex.EncodeToString(digest.Sum(nil)),
 	}, nil
 }
 
 func validateBitcoinCoreCredentials(credentials bitcoinCoreStoredCredentials) error {
-	if credentials.Version != 1 || credentials.User != appmanifest.BitcoinCoreRPCUser ||
+	return validateBitcoinCoreCredentialsForUser(credentials, appmanifest.BitcoinCoreRPCUser)
+}
+
+func validateBitcoinCoreCredentialsForUser(credentials bitcoinCoreStoredCredentials, expectedUser string) error {
+	if expectedUser != appmanifest.BitcoinCoreRPCUser && expectedUser != appmanifest.ElectrsBitcoinRPCUser {
+		return errors.New("bitcoin RPC credentials are invalid")
+	}
+	if credentials.Version != 1 || credentials.User != expectedUser ||
 		len(credentials.Password) != 64 || len(credentials.RPCAuth) == 0 {
 		return errors.New("bitcoin RPC credentials are invalid")
 	}
@@ -117,6 +134,47 @@ func validateBitcoinCoreCredentials(credentials bitcoinCoreStoredCredentials) er
 		return errors.New("bitcoin RPC credentials are invalid")
 	}
 	return nil
+}
+
+func bitcoinCoreConfigWithElectrsRPCAuth(content string, rpcAuth string) (string, bool, error) {
+	if err := validateBitcoinCoreConfigContent(content); err != nil {
+		return "", false, err
+	}
+	want := "rpcauth=" + rpcAuth
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "rpcauth") {
+			continue
+		}
+		value := strings.TrimSpace(parts[1])
+		if value == rpcAuth {
+			return content, false, nil
+		}
+		if strings.HasPrefix(value, appmanifest.ElectrsBitcoinRPCUser+":") {
+			return "", false, errors.New("bitcoin config contains an unmanaged Electrs RPC credential")
+		}
+	}
+	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	insertAt := len(lines)
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			insertAt = index
+			break
+		}
+	}
+	lines = append(lines, "")
+	copy(lines[insertAt+1:], lines[insertAt:])
+	lines[insertAt] = want
+	updated := strings.Join(lines, "\n") + "\n"
+	if err := validateBitcoinCoreConfigContent(updated); err != nil {
+		return "", false, err
+	}
+	return updated, true, nil
 }
 
 func bitcoinCoreConfigWithRPCAuth(content string, rpcAuth string) (string, error) {
@@ -150,7 +208,11 @@ func bitcoinCoreConfigWithRPCAuth(content string, rpcAuth string) (string, error
 }
 
 func marshalBitcoinCoreCredentials(credentials bitcoinCoreStoredCredentials) ([]byte, error) {
-	if err := validateBitcoinCoreCredentials(credentials); err != nil {
+	return marshalBitcoinCoreCredentialsForUser(credentials, appmanifest.BitcoinCoreRPCUser)
+}
+
+func marshalBitcoinCoreCredentialsForUser(credentials bitcoinCoreStoredCredentials, expectedUser string) ([]byte, error) {
+	if err := validateBitcoinCoreCredentialsForUser(credentials, expectedUser); err != nil {
 		return nil, err
 	}
 	raw, err := json.Marshal(credentials)

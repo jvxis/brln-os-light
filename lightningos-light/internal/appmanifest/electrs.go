@@ -9,6 +9,7 @@ import (
 
 const (
 	ElectrsID             = "electrs"
+	ElectrsBitcoinRPCUser = "electrs"
 	ElectrsProject        = "electrs"
 	ElectrsComposeFile    = "docker-compose.yaml"
 	ElectrsEnvFile        = ".env"

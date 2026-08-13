@@ -337,6 +337,8 @@ func TestBitcoinCoreConfigRequestsAreClosedAndSecretBounded(t *testing.T) {
 		`{"version":1,"request_id":"bitcoin_config_2","operation":"app.bitcoincore.config.ensure","params":{"data_dir":"/mnt/bitcoin-ssd/bitcoin","content":"server=1\n","generate_rpcauth":true}}`,
 		`{"version":1,"request_id":"bitcoin_config_3","operation":"app.bitcoincore.config.write","dry_run":true,"params":{"data_dir":"/data/bitcoin","content":"server=1\n"}}`,
 		`{"version":1,"request_id":"bitcoin_credentials_1","operation":"app.bitcoincore.credentials.read","params":{"data_dir":"/data/bitcoin"}}`,
+		`{"version":1,"request_id":"bitcoin_electrs_credentials_1","operation":"app.bitcoincore.electrs-credentials.ensure","params":{"data_dir":"/data/bitcoin"}}`,
+		`{"version":1,"request_id":"bitcoin_electrs_credentials_2","operation":"app.bitcoincore.electrs-credentials.ensure","dry_run":true,"params":{"data_dir":"/data/bitcoin"}}`,
 	}
 	for _, payload := range valid {
 		if _, err := DecodeRequest(strings.NewReader(payload)); err != nil {
@@ -353,6 +355,7 @@ func TestBitcoinCoreConfigRequestsAreClosedAndSecretBounded(t *testing.T) {
 		`{"version":1,"request_id":"bitcoin_config_9","operation":"app.bitcoincore.config.write","params":{"data_dir":"/data/bitcoin","content":"server=1\n","generate_rpcauth":true}}`,
 		`{"version":1,"request_id":"bitcoin_credentials_2","operation":"app.bitcoincore.credentials.read","dry_run":true,"params":{"data_dir":"/data/bitcoin"}}`,
 		`{"version":1,"request_id":"bitcoin_credentials_3","operation":"app.bitcoincore.credentials.read","params":{"data_dir":"/data/bitcoin","user":"attacker"}}`,
+		`{"version":1,"request_id":"bitcoin_electrs_credentials_3","operation":"app.bitcoincore.electrs-credentials.ensure","params":{"data_dir":"/data/bitcoin","user":"attacker"}}`,
 	}
 	for _, payload := range invalid {
 		if _, err := DecodeRequest(strings.NewReader(payload)); err == nil {

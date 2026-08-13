@@ -17,7 +17,8 @@ func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := make([]appInfo, 0, len(apps))
-	var fullIndexAvailability *fullIndexAppAvailability
+	var electrsAvailability *fullIndexAppAvailability
+	var mempoolAvailability *fullIndexAppAvailability
 	for _, app := range apps {
 		if isAppHiddenFromStore(app.Definition().ID) {
 			continue
@@ -32,13 +33,23 @@ func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if info.ID == electrsAppID || info.ID == mempoolAppID {
-			if fullIndexAvailability == nil {
-				availability := s.fullIndexAppAvailability(r.Context())
-				fullIndexAvailability = &availability
+			if info.ID == electrsAppID {
+				if electrsAvailability == nil {
+					availability := s.electrsAppAvailability(r.Context())
+					electrsAvailability = &availability
+				}
+				info.Available = electrsAvailability.Available
+				info.UnavailableReason = electrsAvailability.Reason
+				info.UnavailableMessage = electrsAvailability.Message
+			} else {
+				if mempoolAvailability == nil {
+					availability := s.fullIndexAppAvailability(r.Context())
+					mempoolAvailability = &availability
+				}
+				info.Available = mempoolAvailability.Available
+				info.UnavailableReason = mempoolAvailability.Reason
+				info.UnavailableMessage = mempoolAvailability.Message
 			}
-			info.Available = fullIndexAvailability.Available
-			info.UnavailableReason = fullIndexAvailability.Reason
-			info.UnavailableMessage = fullIndexAvailability.Message
 		}
 		resp = append(resp, info)
 	}
@@ -119,6 +130,25 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
+	if appID == electrsAppID {
+		var req electrsInstallOptions
+		if r.ContentLength != 0 {
+			if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+		}
+		if err := s.installElectrsWithOptions(r.Context(), req); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errElectrsBitcoinRestartConfirmationRequired) {
+				status = http.StatusConflict
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
 	if err := app.Install(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -167,6 +197,25 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if app == nil {
 		writeError(w, http.StatusNotFound, "app not found")
+		return
+	}
+	if appID == electrsAppID {
+		var req electrsInstallOptions
+		if r.ContentLength != 0 {
+			if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+		}
+		if err := s.startElectrsWithOptions(r.Context(), req); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errElectrsBitcoinRestartConfirmationRequired) {
+				status = http.StatusConflict
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
 	if err := app.Start(r.Context()); err != nil {

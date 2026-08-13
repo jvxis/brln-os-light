@@ -26,15 +26,14 @@ func TestBitcoinCoreGeneratedRPCAuthFunctionalGate(t *testing.T) {
 		t.Fatal("Bitcoin rpcauth functional gate requires root on a disposable host")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
 	runner := &ExecCommandRunner{}
 	const container = "lightningos-bitcoincore-rpcauth-gate"
+	ensureBitcoinRPCAuthGateImage(t, runner)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
 	if _, err := runner.Run(ctx, dockerPath, "container", "inspect", container); err == nil {
 		t.Fatalf("functional gate container %s already exists", container)
-	}
-	if _, err := runner.Run(ctx, dockerPath, "image", "inspect", appmanifest.BitcoinCoreImage); err != nil {
-		t.Fatal("verified LightningOS Bitcoin Core image is unavailable")
 	}
 
 	_, _, privilegedRoot, dataDir := newTestBitcoinCoreLifecycleManager(t)
@@ -90,7 +89,88 @@ func TestBitcoinCoreGeneratedRPCAuthFunctionalGate(t *testing.T) {
 	if _, err := bitcoinRPCAuthGateCall(ctx, credentials.User, credentials.Password+"wrong"); !errors.Is(err, errBitcoinRPCAuthGateUnauthorized) {
 		t.Fatalf("wrong Bitcoin RPC password was not rejected: %v", err)
 	}
-	t.Log("bitcoin_generated_rpcauth_functional_gate=passed chain=regtest wrong_password=rejected")
+
+	manager.ElectrsCredentialProbe = func(probeCtx context.Context, user string, password string) error {
+		_, probeErr := bitcoinRPCAuthGateCall(probeCtx, user, password)
+		if errors.Is(probeErr, errBitcoinRPCAuthGateUnauthorized) {
+			return errElectrsBitcoinRPCAuthentication
+		}
+		return probeErr
+	}
+	electrsState, err := manager.EnsureElectrsCredentials(ctx, dataDir, false)
+	if err != nil || electrsState.Status != "restart_required" || !electrsState.ConfigChanged || electrsState.User != appmanifest.ElectrsBitcoinRPCUser {
+		t.Fatalf("Electrs migration state/error=%#v/%v", electrsState, err)
+	}
+	if _, err := runner.Run(ctx, dockerPath, "restart", container); err != nil {
+		t.Fatal("isolated Bitcoin restart for Electrs credential activation failed")
+	}
+	for {
+		chain, err = bitcoinRPCAuthGateCall(ctx, credentials.User, credentials.Password)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, errBitcoinRPCAuthGateNotReady) {
+			t.Fatal(err)
+		}
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			t.Fatal("isolated Bitcoin did not return after the Electrs credential activation restart")
+		case <-timer.C:
+		}
+	}
+	if chain != "regtest" {
+		t.Fatalf("unexpected Bitcoin chain after credential activation %q", chain)
+	}
+	electrsState, err = manager.EnsureElectrsCredentials(ctx, dataDir, false)
+	if err != nil || electrsState.Status != "ready" || electrsState.ConfigChanged {
+		t.Fatalf("Electrs credential did not become ready: state=%#v error=%v", electrsState, err)
+	}
+	if _, err := bitcoinRPCAuthGateCall(ctx, electrsState.User, electrsState.Password); err != nil {
+		t.Fatalf("dedicated Electrs credential was rejected: %v", err)
+	}
+	if _, err := bitcoinRPCAuthGateCall(ctx, electrsState.User, electrsState.Password+"wrong"); !errors.Is(err, errBitcoinRPCAuthGateUnauthorized) {
+		t.Fatalf("wrong dedicated Electrs password was not rejected: %v", err)
+	}
+	t.Log("bitcoin_generated_rpcauth_functional_gate=passed chain=regtest primary_password=preserved electrs_password=activated wrong_passwords=rejected")
+}
+
+func ensureBitcoinRPCAuthGateImage(t *testing.T, runner *ExecCommandRunner) {
+	t.Helper()
+	inspectCtx, inspectCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	_, err := runner.Run(inspectCtx, dockerPath, "image", "inspect", appmanifest.BitcoinCoreImage)
+	inspectCancel()
+	if err == nil {
+		return
+	}
+	if os.Getenv("LIGHTNINGOS_BITCOIN_RPCAUTH_PREPARE_IMAGE") != "1" {
+		t.Fatal("verified LightningOS Bitcoin Core image is unavailable; set LIGHTNINGOS_BITCOIN_RPCAUTH_PREPARE_IMAGE=1 on a disposable host to build it from the authenticated official release")
+	}
+
+	prepareCtx, prepareCancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer prepareCancel()
+	manager := NewComposeAppManager(runner)
+	state, err := manager.PrepareImage(prepareCtx, appmanifest.BitcoinCoreID, appmanifest.BitcoinCoreImageNode, false)
+	if err != nil || (state.Status != "preparing" && state.Status != "ready") {
+		t.Fatalf("verified Bitcoin Core image preparation state/error=%#v/%v", state, err)
+	}
+	for state.Status != "ready" {
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-prepareCtx.Done():
+			timer.Stop()
+			t.Fatal("verified Bitcoin Core image preparation timed out")
+		case <-timer.C:
+		}
+		state, err = manager.ImageStatus(prepareCtx, appmanifest.BitcoinCoreID, appmanifest.BitcoinCoreImageNode)
+		if err != nil {
+			t.Fatalf("verified Bitcoin Core image status failed: %v", err)
+		}
+		if state.Status == "failed" || state.Status == "absent" {
+			t.Fatalf("verified Bitcoin Core image preparation ended in state %q", state.Status)
+		}
+	}
 }
 
 var (
@@ -214,5 +294,52 @@ func TestBitcoinCoreConfigEnsurePreservesExistingLegacyAuth(t *testing.T) {
 	credentialPath := filepath.Join(privilegedRoot, appmanifest.BitcoinCoreID, bitcoinCoreCredentialsFile)
 	if _, err := os.Lstat(credentialPath); !os.IsNotExist(err) {
 		t.Fatalf("credentials were unexpectedly generated for a legacy config: %v", err)
+	}
+}
+
+func TestBitcoinCoreElectrsCredentialMigrationPreservesLegacyAuth(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to validate Bitcoin storage ownership")
+	}
+	_, _, privilegedRoot, dataDir := newTestBitcoinCoreLifecycleManager(t)
+	configPath := filepath.Join(dataDir, bitcoinCoreConfigFile)
+	const legacy = "server=1\nrpcauth=legacy:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n[main]\nrpcport=8332\n"
+	if err := os.WriteFile(configPath, []byte(legacy), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(configPath, 0, 101); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &BitcoinCoreConfigManager{
+		PrivilegedAppsRoot: privilegedRoot,
+		ElectrsCredentialProbe: func(context.Context, string, string) error {
+			return nil
+		},
+	}
+	dryRun, err := manager.EnsureElectrsCredentials(context.Background(), dataDir, true)
+	if err != nil || dryRun.Status != "validated" || dryRun.User != "" || dryRun.Password != "" {
+		t.Fatalf("dry-run state/error=%#v/%v", dryRun, err)
+	}
+	credentialPath := filepath.Join(privilegedRoot, appmanifest.BitcoinCoreID, bitcoinCoreElectrsCredentialsFile)
+	if _, err := os.Lstat(credentialPath); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created credential state: %v", err)
+	}
+
+	state, err := manager.EnsureElectrsCredentials(context.Background(), dataDir, false)
+	if err != nil || state.Status != "restart_required" || state.User != appmanifest.ElectrsBitcoinRPCUser || len(state.Password) != 64 || !state.ConfigChanged {
+		t.Fatalf("migration state/error=%#v/%v", state, err)
+	}
+	if err := validateRootOwnedRegularFile(credentialPath, 0o600); err != nil {
+		t.Fatalf("Electrs credential state is not root-only: %v", err)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil || !strings.Contains(string(raw), "rpcauth=legacy:") || !strings.Contains(string(raw), "rpcauth="+appmanifest.ElectrsBitcoinRPCUser+":") {
+		t.Fatalf("migration did not preserve legacy auth: %v\n%s", err, raw)
+	}
+
+	again, err := manager.EnsureElectrsCredentials(context.Background(), dataDir, false)
+	if err != nil || again.ConfigChanged || again.Password != state.Password {
+		t.Fatalf("migration was not idempotent: state=%#v err=%v", again, err)
 	}
 }

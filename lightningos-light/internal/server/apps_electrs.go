@@ -18,10 +18,17 @@ import (
 )
 
 const (
-	electrsAppID       = appmanifest.ElectrsID
-	electrsRPCPort     = appmanifest.ElectrsRPCPort
-	electrsMonitorPort = appmanifest.ElectrsMonitorPort
+	electrsAppID                       = appmanifest.ElectrsID
+	electrsRPCPort                     = appmanifest.ElectrsRPCPort
+	electrsMonitorPort                 = appmanifest.ElectrsMonitorPort
+	electrsCredentialActivationTimeout = 90 * time.Second
 )
+
+var errElectrsBitcoinRestartConfirmationRequired = errors.New("confirm the possible one-time Bitcoin Core restart before continuing")
+
+type electrsInstallOptions struct {
+	ConfirmBitcoinRestart bool `json:"confirm_bitcoin_restart"`
+}
 
 type electrsPaths struct {
 	Root        string
@@ -84,11 +91,11 @@ func (a electrsApp) Info(ctx context.Context) (appInfo, error) {
 }
 
 func (a electrsApp) Install(ctx context.Context) error {
-	return a.server.applyElectrs(ctx)
+	return a.server.applyElectrs(ctx, false)
 }
 
 func (a electrsApp) Start(ctx context.Context) error {
-	return a.server.applyElectrs(ctx)
+	return a.server.applyElectrs(ctx, false)
 }
 
 func (a electrsApp) Stop(ctx context.Context) error {
@@ -129,24 +136,34 @@ func electrsAppPaths() electrsPaths {
 	}
 }
 
-func (s *Server) applyElectrs(ctx context.Context) error {
+func (s *Server) installElectrsWithOptions(ctx context.Context, opts electrsInstallOptions) error {
+	return s.applyElectrs(ctx, opts.ConfirmBitcoinRestart)
+}
+
+func (s *Server) startElectrsWithOptions(ctx context.Context, opts electrsInstallOptions) error {
+	return s.applyElectrs(ctx, opts.ConfirmBitcoinRestart)
+}
+
+func (s *Server) applyElectrs(ctx context.Context, confirmBitcoinRestart bool) error {
+	bitcoinPaths := bitcoinCoreAppPaths()
+	if fileExists(bitcoinPaths.ComposePath) && !confirmBitcoinRestart {
+		return errElectrsBitcoinRestartConfirmationRequired
+	}
 	if err := ensureDockerForCatalogAppEnforce(ctx); err != nil {
 		return err
 	}
-	if err := s.requireFullIndexApps(ctx); err != nil {
-		return err
-	}
-
-	bitcoinPaths := bitcoinCoreAppPaths()
 
 	paths := electrsAppPaths()
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
 
-	values, err := s.resolveElectrsRuntimeValues(ctx, bitcoinPaths)
+	values, validationConfig, err := s.resolveElectrsRuntimeValues(ctx, bitcoinPaths, confirmBitcoinRestart)
 	if err != nil {
 		return err
+	}
+	if availability := fullIndexBitcoinConfigAvailability(ctx, validationConfig); !availability.Available {
+		return errors.New(availability.Message)
 	}
 
 	// Electrs reads the credential verbatim as HTTP Basic auth, so the private
@@ -191,13 +208,13 @@ func ensureElectrsImage(ctx context.Context) error {
 	return errors.New("Electrs image preparation requires privileged broker enforce mode")
 }
 
-func (s *Server) resolveElectrsRuntimeValues(ctx context.Context, bitcoinPaths bitcoinCorePaths) (electrsRuntimeValues, error) {
-	localCfg, err := readBitcoinLocalRPCConfig(ctx)
+func (s *Server) resolveElectrsRuntimeValues(ctx context.Context, bitcoinPaths bitcoinCorePaths, confirmBitcoinRestart bool) (electrsRuntimeValues, bitcoinRPCConfig, error) {
+	localCfg, err := s.resolveElectrsBitcoinRPCConfig(ctx, bitcoinPaths, confirmBitcoinRestart)
 	if err != nil {
-		return electrsRuntimeValues{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
+		return electrsRuntimeValues{}, bitcoinRPCConfig{}, err
 	}
 	if strings.TrimSpace(localCfg.User) == "" || strings.TrimSpace(localCfg.Pass) == "" {
-		return electrsRuntimeValues{}, errors.New("local bitcoin RPC credentials missing")
+		return electrsRuntimeValues{}, bitcoinRPCConfig{}, errors.New("local bitcoin RPC credentials missing")
 	}
 	_, rpcPort := parseMainchainRPC(localCfg.Host)
 	// /data/bitcoin/bitcoin.conf is root-owned on a deployed host, so read via
@@ -206,22 +223,22 @@ func (s *Server) resolveElectrsRuntimeValues(ctx context.Context, bitcoinPaths b
 	// mainnet, misconfiguring electrs.
 	info, err := fetchBitcoinInfo(ctx, localCfg.Host, localCfg.User, localCfg.Pass)
 	if err != nil {
-		return electrsRuntimeValues{}, fmt.Errorf("failed to detect local Bitcoin chain: %w", err)
+		return electrsRuntimeValues{}, bitcoinRPCConfig{}, fmt.Errorf("failed to detect local Bitcoin chain: %w", err)
 	}
 	network, p2pPort := electrsNetworkAndP2PPort(info.Chain)
 	networkContract, err := appmanifest.ElectrsNetworkForName(network)
 	if err != nil || rpcPort != networkContract.RPCPort || p2pPort != networkContract.P2PPort {
-		return electrsRuntimeValues{}, errors.New("local Bitcoin uses a non-catalog RPC or P2P port")
+		return electrsRuntimeValues{}, bitcoinRPCConfig{}, errors.New("local Bitcoin uses a non-catalog RPC or P2P port")
 	}
 	rpcHost := "bitcoind"
 	p2pHost := "bitcoind"
 	bitcoinMode := appmanifest.ElectrsBitcoinModeApp
 	if !fileExists(bitcoinPaths.ComposePath) {
 		if !isLocalRPCHost(localCfg.Host) {
-			return electrsRuntimeValues{}, fmt.Errorf("local bitcoin RPC host is not local: %s", localCfg.Host)
+			return electrsRuntimeValues{}, bitcoinRPCConfig{}, fmt.Errorf("local bitcoin RPC host is not local: %s", localCfg.Host)
 		}
 		if err := ensureLocalExternalBitcoinConsumerNetwork(ctx); err != nil {
-			return electrsRuntimeValues{}, err
+			return electrsRuntimeValues{}, bitcoinRPCConfig{}, err
 		}
 		rpcHost = appmanifest.BitcoinConsumerHostGateway
 		p2pHost = appmanifest.BitcoinConsumerHostGateway
@@ -236,7 +253,75 @@ func (s *Server) resolveElectrsRuntimeValues(ctx context.Context, bitcoinPaths b
 		BitcoinP2PHost: p2pHost,
 		BitcoinP2PPort: p2pPort,
 		BitcoinMode:    bitcoinMode,
-	}, nil
+	}, localCfg, nil
+}
+
+func (s *Server) resolveElectrsBitcoinRPCConfig(ctx context.Context, bitcoinPaths bitcoinCorePaths, confirmBitcoinRestart bool) (bitcoinRPCConfig, error) {
+	if !fileExists(bitcoinPaths.ComposePath) {
+		cfg, err := readBitcoinLocalRPCConfig(ctx)
+		if err != nil {
+			return bitcoinRPCConfig{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
+		}
+		return cfg, nil
+	}
+	if !confirmBitcoinRestart {
+		return bitcoinRPCConfig{}, errElectrsBitcoinRestartConfirmationRequired
+	}
+	status, err := inspectBitcoinCoreStatus(ctx)
+	if err != nil {
+		return bitcoinRPCConfig{}, err
+	}
+	if status != "running" {
+		return bitcoinRPCConfig{}, errors.New("Bitcoin Core must be running before Electrs can be installed or started")
+	}
+	user, password, credentialStatus, _, handled, err := system.EnsureBitcoinCoreElectrsCredentialsWithBroker(ctx, bitcoinPaths.DataDir)
+	if !handled {
+		return bitcoinRPCConfig{}, errors.New("Electrs Bitcoin RPC credential migration requires privileged broker enforce mode")
+	}
+	if err != nil {
+		return bitcoinRPCConfig{}, fmt.Errorf("Electrs Bitcoin RPC credential migration failed: %w", err)
+	}
+	if credentialStatus == "restart_required" {
+		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
+			return bitcoinRPCConfig{}, fmt.Errorf("failed to restart Bitcoin Core after Electrs RPC credential migration: %w", err)
+		}
+		s.invalidateBitcoinStatusCaches()
+		user, password, err = s.waitForElectrsBitcoinCredential(ctx, bitcoinPaths.DataDir, user, password)
+		if err != nil {
+			return bitcoinRPCConfig{}, err
+		}
+	} else if credentialStatus != "ready" {
+		return bitcoinRPCConfig{}, errors.New("Electrs Bitcoin RPC credential returned an invalid state")
+	}
+	return bitcoinRPCConfig{Host: "127.0.0.1:8332", User: user, Pass: password}, nil
+}
+
+func (s *Server) waitForElectrsBitcoinCredential(ctx context.Context, dataDir string, expectedUser string, expectedPassword string) (string, string, error) {
+	deadline := time.Now().Add(electrsCredentialActivationTimeout)
+	for {
+		attemptCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		user, password, status, changed, handled, err := system.EnsureBitcoinCoreElectrsCredentialsWithBroker(attemptCtx, dataDir)
+		cancel()
+		if !handled {
+			return "", "", errors.New("Electrs Bitcoin RPC credential activation requires privileged broker enforce mode")
+		}
+		if err == nil && status == "ready" && !changed {
+			if user != expectedUser || password != expectedPassword {
+				return "", "", errors.New("Electrs Bitcoin RPC credential changed during activation")
+			}
+			return user, password, nil
+		}
+		if time.Now().After(deadline) {
+			return "", "", errors.New("Bitcoin Core did not activate the dedicated Electrs RPC credential before the timeout")
+		}
+		timer := time.NewTimer(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", "", ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func electrsNetworkAndP2PPort(chain string) (string, int) {

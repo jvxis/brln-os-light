@@ -53,6 +53,7 @@ type InstallPayload = {
   elements_rpc_url?: string
   elements_rpc_user?: string
   elements_rpc_password?: string
+  confirm_bitcoin_restart?: boolean
 }
 
 type PendingElevatedInstall = {
@@ -160,6 +161,7 @@ export default function AppStore() {
   const [peerswapRemoteMessage, setPeerswapRemoteMessage] = useState('')
   const [peerswapRemoteTested, setPeerswapRemoteTested] = useState(false)
   const [barkWalletInstallOpen, setBarkWalletInstallOpen] = useState(false)
+  const [pendingElectrsAction, setPendingElectrsAction] = useState<'install' | 'start' | null>(null)
   const [barkRevealReauthOpen, setBarkRevealReauthOpen] = useState(false)
   const [barkRevealPassword, setBarkRevealPassword] = useState('')
   const [barkRevealBusy, setBarkRevealBusy] = useState(false)
@@ -410,6 +412,13 @@ export default function AppStore() {
       openPeerswapRemoteInstall()
       return
     }
+    if (
+      id === 'electrs' && (action === 'install' || action === 'start') &&
+      bitcoinMode === 'local_app' && !payload?.confirm_bitcoin_restart
+    ) {
+      setPendingElectrsAction(action)
+      return
+    }
     if (action === 'install' && !options?.skipSecurityConfirmation) {
       const app = apps.find((candidate) => candidate.id === id)
       if (app?.security_notices?.includes(elevatedLndAccessNotice)) {
@@ -422,7 +431,7 @@ export default function AppStore() {
     setBusy((prev) => ({ ...prev, [id]: action }))
     try {
       if (action === 'install') await installApp(id, payload)
-      if (action === 'start') await startApp(id)
+      if (action === 'start') await startApp(id, payload)
       if (action === 'stop') await stopApp(id)
       if (action === 'uninstall') await uninstallApp(id)
       if (action === 'uninstall' && installFilter === 'installed') setInstallFilter('all')
@@ -443,6 +452,14 @@ export default function AppStore() {
     const payload = bitcoinCoreUseStorageMount ? { storage_mount: bitcoinCoreSelectedMount } : {}
     setBitcoinCoreInstallOpen(false)
     await handleAction('bitcoincore', 'install', payload)
+  }
+
+  const handleElectrsBitcoinRestartConfirm = async () => {
+    const action = pendingElectrsAction
+    setPendingElectrsAction(null)
+    if (action) {
+      await handleAction('electrs', action, { confirm_bitcoin_restart: true })
+    }
   }
 
   const handleElementsInstallConfirm = async () => {
@@ -995,6 +1012,29 @@ export default function AppStore() {
               </button>
               <button className="btn-primary" type="button" onClick={handleBarkWalletInstallConfirm}>
                 {t('appStore.install')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingElectrsAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-amber-400/25 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">{t('appStore.electrsBitcoinRestartTitle')}</h3>
+              <p className="text-sm text-fog/70">{t('appStore.electrsBitcoinRestartBody')}</p>
+            </div>
+            <div className="mt-5 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm leading-relaxed text-fog/80">
+              <p>{t('appStore.electrsBitcoinRestartImpact')}</p>
+              <p className="mt-2 text-amber-100/85">{t('appStore.electrsBitcoinRestartLimit')}</p>
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-secondary" type="button" onClick={() => setPendingElectrsAction(null)}>
+                {t('common.cancel')}
+              </button>
+              <button className="btn-primary" type="button" onClick={handleElectrsBitcoinRestartConfirm}>
+                {t('appStore.electrsBitcoinRestartConfirm')}
               </button>
             </div>
           </div>

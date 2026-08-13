@@ -577,8 +577,16 @@ POST /api/apps/{id}/install
 - `data_dir` is install-time only; existing blockchain data is not migrated.
 - `bitcoincore` defaults to `/data/bitcoin`; `elements` defaults to `/data/elements`.
 - Custom `bitcoincore` data directories must be on an already mounted volume and have at least 10 GiB free.
+- Installing `electrs` against Bitcoin Core managed by the App Store requires
+  `{"confirm_bitcoin_restart":true}`. On a legacy `rpcauth` installation the
+  manager adds a root-stored dedicated Electrs credential and may restart
+  Bitcoin Core exactly once to activate it. The restart is skipped when the
+  credential is already active. Native/systemd Bitcoin configurations and
+  services are never modified by this migration.
 
 POST /api/apps/{id}/start
+- Starting `electrs` against App Store Bitcoin accepts the same
+  `confirm_bitcoin_restart` body and restart policy as installation.
 POST /api/apps/{id}/stop
 POST /api/apps/{id}/uninstall
 - Uninstalling `bark-wallet` removes its containers and app definition but intentionally preserves `/var/lib/lightningos/apps-data/bark-wallet` so wallet/off-chain state is not destroyed by the generic App Store action.

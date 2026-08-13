@@ -1301,6 +1301,22 @@ cutover fails closed. Evidence is in
 stale runtime sudoers file on an upgraded node must be removed during the
 coordinated Phase 4 cutover after its exact contents and ownership are checked.
 
+Runtime terminal credential rotation is now the closed
+`terminal.credential.rotate` operation. The manager no longer stages a password
+file or invokes a privileged helper/transient unit. The password is carried in
+the broker's stdin JSON and then only through stdin to the fixed root-owned
+`/usr/sbin/chpasswd`; it never enters argv, error details, or structured audit
+fields. The requested operator must match the independently read `User=` of
+the fixed `lightningos-terminal.service`, and a root operator is forbidden.
+The subsequent terminal restart uses the existing typed service operation.
+This removed the last two manager `runSystemd` calls and allowed deletion of
+the generic wrapper itself. Ubuntu 24.04 accepted the real service-user dry-run,
+rejected an injected command, preserved `/etc/shadow` and Manager/terminal
+activation state, and proved the synthetic password fragment absent from the
+gate audit. A real password/login test remains reserved for the final
+disposable fresh-install matrix. Evidence is in
+`docs/baselines/privilege-hardening-phase3-terminal-credential-2026-08-13.json`.
+
 Policy application/reconciliation, installer artifact verification, the real
 Tor and LightningOS upgrade/rollback matrices, release publisher attestation,
 and the remaining package/storage paths are still open.

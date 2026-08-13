@@ -52,6 +52,7 @@ func main() {
 		Audit:              audit,
 		Files:              privileged.NewAtomicConfigFiles(privileged.DefaultManagerConfigPath),
 		SystemIntegrations: privileged.NewNativeSystemIntegrationsManager(runner),
+		TerminalCredential: privileged.NewNativeTerminalCredentialManager(runner),
 		ManagerFirewall:    privileged.NewManagerFirewallManager(runner),
 		LNDUpgrade:         privileged.NewNativeLNDUpgradeManager(runner),
 		TorUpgrade:         privileged.NewNativeTorUpgradeManager(runner),

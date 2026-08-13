@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"regexp"
@@ -11,9 +10,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-const terminalPasswordHelperPath = "/usr/local/sbin/lightningos-terminal-password"
+	"lightningos-light/internal/system"
+)
 
 var (
 	terminalCredentialRotationMu sync.Mutex
@@ -85,13 +84,6 @@ func (s *Server) handleTerminalCredentialRotate(w http.ResponseWriter, r *http.R
 		writeErrorCode(w, http.StatusInternalServerError, "terminal_credential_generation_failed", "failed to generate terminal credential")
 		return
 	}
-	stagedPath, err := stageTerminalPassword(password)
-	if err != nil {
-		writeErrorCode(w, http.StatusInternalServerError, "terminal_credential_stage_failed", "failed to stage terminal credential")
-		return
-	}
-	defer os.Remove(stagedPath)
-
 	oldCredential := os.Getenv("TERMINAL_CREDENTIAL")
 	oldOperatorPassword := os.Getenv("TERMINAL_OPERATOR_PASSWORD")
 	newCredential := operatorUser + ":" + password
@@ -108,7 +100,7 @@ func (s *Server) handleTerminalCredentialRotate(w http.ResponseWriter, r *http.R
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	if out, err := runSystemd(ctx, terminalPasswordHelperPath, stagedPath, operatorUser); err != nil {
+	if handled, err := system.RotateTerminalCredentialWithBroker(ctx, operatorUser, password); !handled || err != nil {
 		rollbackErr := authPersistSecrets(map[string]string{
 			"TERMINAL_CREDENTIAL":        oldCredential,
 			"TERMINAL_OPERATOR_PASSWORD": oldOperatorPassword,
@@ -116,17 +108,17 @@ func (s *Server) handleTerminalCredentialRotate(w http.ResponseWriter, r *http.R
 		_ = os.Setenv("TERMINAL_CREDENTIAL", oldCredential)
 		_ = os.Setenv("TERMINAL_OPERATOR_PASSWORD", oldOperatorPassword)
 		if s.logger != nil {
-			s.logger.Printf("terminal credential rotation failed: %v (%s); rollback: %v", err, strings.TrimSpace(out), rollbackErr)
+			s.logger.Printf("terminal credential rotation failed: %v; rollback: %v", err, rollbackErr)
 		}
 		writeErrorCode(w, http.StatusInternalServerError, "terminal_credential_apply_failed", "failed to apply terminal credential")
 		return
 	}
 
 	restartPending := false
-	if out, err := runSystemd(ctx, "/bin/systemctl", "restart", "lightningos-terminal.service"); err != nil {
+	if err := system.RestartServiceWithBroker(ctx, "lightningos-terminal", false); err != nil {
 		restartPending = true
 		if s.logger != nil {
-			s.logger.Printf("terminal credential rotated but terminal restart failed: %v (%s)", err, strings.TrimSpace(out))
+			s.logger.Printf("terminal credential rotated but terminal restart failed: %v", err)
 		}
 	}
 
@@ -149,30 +141,4 @@ func terminalOperatorUser() string {
 		return user
 	}
 	return "losop"
-}
-
-func stageTerminalPassword(password string) (string, error) {
-	if err := os.MkdirAll("/var/lib/lightningos", 0o750); err != nil {
-		return "", fmt.Errorf("create terminal staging directory: %w", err)
-	}
-	file, err := os.CreateTemp("/var/lib/lightningos", "terminal-password-")
-	if err != nil {
-		return "", fmt.Errorf("create terminal password staging file: %w", err)
-	}
-	path := file.Name()
-	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return "", fmt.Errorf("chmod terminal password staging file: %w", err)
-	}
-	if _, err := file.WriteString(password + "\n"); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return "", fmt.Errorf("write terminal password staging file: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("close terminal password staging file: %w", err)
-	}
-	return path, nil
 }

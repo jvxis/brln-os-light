@@ -190,6 +190,20 @@ func TestClientSystemIntegrationsUseClosedTypedRequests(t *testing.T) {
 	}
 }
 
+func TestClientTerminalCredentialUsesTypedPayload(t *testing.T) {
+	const password = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+	transport := &fakeTransport{result: TerminalCredentialState{Status: "applied", OperatorUser: "losop"}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	operator, err := client.RotateTerminalCredential(context.Background(), "losop", password, false)
+	if err != nil || operator != "losop" || transport.request.Operation != OperationTerminalCredentialRotate || transport.request.DryRun {
+		t.Fatalf("operator/error/request=%q/%v/%#v", operator, err, transport.request)
+	}
+	var params TerminalCredentialRotateParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil || params.OperatorUser != "losop" || params.Password != password {
+		t.Fatalf("unexpected params/error: operator=%q password_len=%d err=%v", params.OperatorUser, len(params.Password), err)
+	}
+}
+
 func TestClientAppLifecycleBuildsTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: map[string]bool{"validated": true}}
 	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)

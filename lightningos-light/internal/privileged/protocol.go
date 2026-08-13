@@ -29,6 +29,7 @@ const (
 	OperationSystemIntegrationsStatus      Operation = "system.integrations.status"
 	OperationSystemIntegrationsApply       Operation = "system.integrations.apply"
 	OperationSystemIntegrationsFinalize    Operation = "system.integrations.finalize"
+	OperationTerminalCredentialRotate      Operation = "terminal.credential.rotate"
 	OperationManagerFirewallStatus         Operation = "manager.firewall.status"
 	OperationLNDUpgradeStart               Operation = "upgrade.lnd.start"
 	OperationTorMetadataRefresh            Operation = "packages.tor.refresh"
@@ -157,6 +158,16 @@ type SystemIntegrationsState struct {
 	Status             string `json:"status"`
 	CertificateChanged bool   `json:"certificate_changed,omitempty"`
 	LNDPolicyChanged   bool   `json:"lnd_policy_changed,omitempty"`
+}
+
+type TerminalCredentialRotateParams struct {
+	OperatorUser string `json:"operator_user"`
+	Password     string `json:"password"`
+}
+
+type TerminalCredentialState struct {
+	Status       string `json:"status"`
+	OperatorUser string `json:"operator_user"`
 }
 
 type ManagerFirewallState struct {
@@ -644,6 +655,17 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
+	case OperationTerminalCredentialRotate:
+		var params TerminalCredentialRotateParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid terminal.credential.rotate params: %w", err)
+		}
+		if !systemIntegrationIdentityPattern.MatchString(params.OperatorUser) {
+			return errors.New("terminal operator user is invalid")
+		}
+		if !terminalCredentialPasswordPattern.MatchString(params.Password) {
+			return errors.New("terminal credential password is invalid")
 		}
 	case OperationManagerFirewallStatus:
 		if request.DryRun {

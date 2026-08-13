@@ -86,6 +86,10 @@ type systemIntegrationsPrivilegedClient interface {
 	FinalizeSystemIntegrations(ctx context.Context, dryRun bool) error
 }
 
+type terminalCredentialPrivilegedClient interface {
+	RotateTerminalCredential(ctx context.Context, operatorUser string, password string, dryRun bool) (appliedOperator string, err error)
+}
+
 func SystemIntegrationsReadyWithBroker(ctx context.Context) (bool, bool, error) {
 	privilegedState.RLock()
 	client := privilegedState.client
@@ -99,6 +103,40 @@ func SystemIntegrationsReadyWithBroker(ctx context.Context) (bool, bool, error) 
 	}
 	ready, err := integrationClient.SystemIntegrationsStatus(ctx)
 	return ready, true, err
+}
+
+func RotateTerminalCredentialWithBroker(ctx context.Context, operatorUser string, password string) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	credentialClient, ok := client.(terminalCredentialPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("terminal credential broker capability is unavailable")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		appliedOperator, err := credentialClient.RotateTerminalCredential(ctx, operatorUser, password, false)
+		if err != nil {
+			return true, err
+		}
+		if appliedOperator != operatorUser {
+			return true, errors.New("terminal credential broker returned a mismatched operator")
+		}
+		return true, nil
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = credentialClient.RotateTerminalCredential(shadowCtx, operatorUser, password, true)
+		return false, nil
+	default:
+		return false, nil
+	}
 }
 
 type SystemIntegrationAsset struct {

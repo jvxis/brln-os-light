@@ -72,8 +72,7 @@
     "host_network_adapter_restarted": false
   },
   "remaining": [
-    "exercise real TLS, mDNS, and firewall application only in the final disposable fresh-install matrix",
-    "migrate terminal credential rotation before deleting the final generic runSystemd wrapper"
+    "exercise real TLS, mDNS, and firewall application only in the final disposable fresh-install matrix"
   ],
   "excluded": [
     "credentials",

@@ -781,6 +781,28 @@ func (client *Client) FinalizeSystemIntegrations(ctx context.Context, dryRun boo
 	return err
 }
 
+func (client *Client) RotateTerminalCredential(ctx context.Context, operatorUser string, password string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationTerminalCredentialRotate, TerminalCredentialRotateParams{
+		OperatorUser: operatorUser,
+		Password:     password,
+	}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	var state TerminalCredentialState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", errors.New("invalid broker terminal credential response")
+	}
+	expectedStatus := "applied"
+	if dryRun {
+		expectedStatus = "validated"
+	}
+	if state.Status != expectedStatus || state.OperatorUser != operatorUser {
+		return "", errors.New("invalid broker terminal credential state")
+	}
+	return state.OperatorUser, nil
+}
+
 func decodeSystemIntegrationsState(response Response, dryRun bool) (SystemIntegrationsState, error) {
 	var state SystemIntegrationsState
 	if err := decodeStrict(response.Result, &state); err != nil {

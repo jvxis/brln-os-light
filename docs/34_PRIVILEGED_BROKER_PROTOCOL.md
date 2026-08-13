@@ -245,6 +245,46 @@ actual update. In `enforce`, failure of this typed operation does not fall back
 to `sudo tee` or runtime sudoers creation. Non-default manager config paths are
 unsupported in `enforce` and fail closed.
 
+### System integration operations
+
+System integration reconciliation is decomposed into closed stages:
+
+- `files.system-integration.install` accepts one of four asset IDs and bounded
+  content. Each ID maps inside the broker to one fixed destination, mode
+  `0755`, and compiled SHA-256; content with any other digest is rejected.
+- `system.integrations.status` accepts `{}` and is read-only. It returns
+  `ready` only when the v5 marker is a root-owned regular `0644` file with the
+  exact content and all four installed helpers retain their compiled hashes,
+  ownership, and modes; otherwise it returns `absent` or fails closed.
+- `system.integrations.apply` accepts `{}`. After revalidating every helper, it
+  atomically maintains only the fixed LND restart drop-in, runs the fixed
+  TLS/mDNS helper with two fixed environment values, and runs the fixed
+  manager-firewall helper. It reports whether the manager certificate or LND
+  drop-in changed; it does not install packages, enroll Bitcoin storage, write
+  the completion marker, or restart Bitcoin/Manager.
+- `system.integrations.finalize` accepts `{}` and writes the fixed root-owned
+  marker only after revalidating all assets. Manager orchestration calls it
+  only after any existing Bitcoin Store data directory has successfully passed
+  the separate typed storage enrollment.
+
+The caller cannot select destinations, owners, modes, executable paths, units,
+ports, CIDRs, environment names, or helper arguments. Package readiness uses
+the separate closed `mdns` feature. Terminal and Manager restarts, when their
+reported preconditions require them, use `service.restart` only.
+
+### `terminal.credential.rotate`
+
+Accepts a bounded alphanumeric password and operator name. The broker
+independently reads `User=` from the fixed
+`lightningos-terminal.service`; the requested name must match, and `root` is
+always forbidden. It validates the fixed root-owned mode-`0755`
+`/usr/sbin/chpasswd` and sends exactly `<operator>:<password>` through that
+process's stdin with no shell. The password is never placed in argv, output,
+errors, staging files, or structured audit fields. `dry_run` performs all
+identity and executable validation without changing the account. Restarting
+the fixed terminal unit is a separate `service.restart` call after the broker
+returns successfully.
+
 ### Native Lightning Loop operations
 
 Lightning Labs Loop uses six operations whose paths, service account, unit,

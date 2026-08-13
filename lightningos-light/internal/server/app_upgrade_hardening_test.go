@@ -9,6 +9,8 @@ func TestAppUpgradeReleaseIdentityIsClosedAndCheckedBeforeBuild(t *testing.T) {
 	script := embeddedAppUpgradeScript
 	required := []string{
 		`REPO_URL="https://github.com/jvxis/brln-os-light.git"`,
+		`RELEASE_TAG_API_BASE="https://api.github.com/repos/jvxis/brln-os-light/releases/tags"`,
+		`LightningOS release is not immutable and attested.`,
 		`--commit`,
 		`--verify-only`,
 		`Release tag does not resolve to the expected commit.`,
@@ -30,10 +32,11 @@ func TestAppUpgradeReleaseIdentityIsClosedAndCheckedBeforeBuild(t *testing.T) {
 		t.Fatal("LightningOS helper contains CRLF and cannot execute through its Linux shebang")
 	}
 	commitCheck := strings.Index(script, `if [[ "$actual_commit" != "$EXPECTED_COMMIT" ]]`)
+	attestationCheck := strings.Index(script, `verify_immutable_release`)
 	verifyExit := strings.Index(script, `LightningOS release source verified; no application files or services were changed.`)
 	logOpen := strings.Index(script, `exec > >(tee -a "$LOG_FILE") 2>&1`)
 	build := strings.Index(script, `print_step "Building manager binary"`)
-	if commitCheck < 0 || build <= commitCheck {
+	if attestationCheck < 0 || commitCheck <= attestationCheck || build <= commitCheck {
 		t.Fatal("LightningOS source commit is not checked before build")
 	}
 	if verifyExit < 0 || logOpen <= verifyExit {

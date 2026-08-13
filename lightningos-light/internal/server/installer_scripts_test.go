@@ -504,6 +504,25 @@ func TestInstallersProvisionFixedNativeAppIdentities(t *testing.T) {
 	}
 }
 
+func TestReleaseBootstrapRequiresImmutableAttestedPublishedRelease(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "lo_bootstrap.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(raw)
+	for _, required := range []string{
+		`RELEASE_TAG_API_BASE="https://api.github.com/repos/jvxis/brln-os-light/releases/tags"`,
+		`--proto '=https'`,
+		`"immutable"[[:space:]]*:[[:space:]]*true`,
+		`"draft"[[:space:]]*:[[:space:]]*false`,
+		`Immutable LightningOS release attestation verified`,
+	} {
+		if !strings.Contains(content, required) {
+			t.Errorf("release bootstrap lacks immutable-release gate %q", required)
+		}
+	}
+}
+
 func TestInstallAndUpgradeBuildsDoNotRequireTrustedGitOwnership(t *testing.T) {
 	scripts := []string{
 		filepath.Join("..", "..", "install.sh"),

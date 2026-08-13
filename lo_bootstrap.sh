@@ -6,6 +6,7 @@ REPO_URL="${REPO_URL:-$REPO_URL_DEFAULT}"
 TARGET_DIR="${BRLN_DIR:-/opt/brln-os-light}"
 REF_OVERRIDE="${BRLN_REF:-${BRLN_BRANCH:-}}"
 RELEASE_API_URL="${BRLN_RELEASE_API_URL:-https://api.github.com/repos/jvxis/brln-os-light/releases?per_page=10}"
+RELEASE_TAG_API_BASE="https://api.github.com/repos/jvxis/brln-os-light/releases/tags"
 INSTALLER="${BRLN_INSTALLER:-install.sh}"
 GIT_USER="${BRLN_GIT_USER:-}"
 
@@ -69,6 +70,24 @@ resolve_ref() {
   resolve_latest_release
 }
 
+verify_immutable_release() {
+  local tag="$1"
+  local response=""
+  response=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --connect-timeout 15 --max-time 45 --max-filesize 1048576 -fsSL \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2026-03-10" \
+    -H "User-Agent: lightningos-bootstrap" \
+    "${RELEASE_TAG_API_BASE}/${tag}") \
+    || die "Failed to retrieve the LightningOS release attestation."
+  printf '%s' "$response" | grep -Eq '"immutable"[[:space:]]*:[[:space:]]*true([,}])' \
+    || die "LightningOS release is not immutable and attested."
+  printf '%s' "$response" | grep -Eq '"draft"[[:space:]]*:[[:space:]]*false([,}])' \
+    || die "LightningOS release is not published."
+  printf '%s' "$response" | grep -Fq "\"tag_name\":\"${tag}\"" \
+    || die "LightningOS release attestation tag mismatch."
+}
+
 ensure_repo() {
   local ref="$1"
   if [[ -d "$TARGET_DIR/.git" ]]; then
@@ -119,6 +138,10 @@ main() {
   local ref
   ref=$(resolve_ref)
   log "Using LightningOS release/ref: $ref"
+  if [[ -z "$REF_OVERRIDE" || "$REF_OVERRIDE" == "latest" ]]; then
+    verify_immutable_release "$ref"
+    log "Immutable LightningOS release attestation verified"
+  fi
   ensure_repo "$ref"
 
   local install_dir="$TARGET_DIR/lightningos-light"

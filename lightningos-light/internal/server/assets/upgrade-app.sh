@@ -54,6 +54,7 @@ TAG=""
 EXPECTED_COMMIT=""
 VERIFY_ONLY=0
 REPO_URL="https://github.com/jvxis/brln-os-light.git"
+RELEASE_TAG_API_BASE="https://api.github.com/repos/jvxis/brln-os-light/releases/tags"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -145,7 +146,25 @@ LOCK_FILE="/var/lib/lightningos/app-upgrade.lock"
 PRIVILEGED_BROKER="/usr/local/libexec/lightningos-privileged"
 PRIVILEGED_TMPFILES_CONFIG="/etc/tmpfiles.d/lightningos-privileged.conf"
 GIT_BIN="$(resolve_bin git /usr/bin/git /bin/git)" || die "Required command missing: git"
+CURL_BIN="$(resolve_bin curl /usr/bin/curl /bin/curl)" || die "Required command missing: curl"
 RM_BIN="$(resolve_bin rm /usr/bin/rm /bin/rm)" || die "Required command missing: rm"
+
+verify_immutable_release() {
+  local response=""
+  response=$("$CURL_BIN" --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --connect-timeout 15 --max-time 45 --max-filesize 1048576 -fsSL \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2026-03-10" \
+    -H "User-Agent: lightningos-upgrade" \
+    "${RELEASE_TAG_API_BASE}/${TAG}") \
+    || die "Failed to retrieve the LightningOS release attestation."
+  printf '%s' "$response" | grep -Eq '"immutable"[[:space:]]*:[[:space:]]*true([,}])' \
+    || die "LightningOS release is not immutable and attested."
+  printf '%s' "$response" | grep -Eq '"draft"[[:space:]]*:[[:space:]]*false([,}])' \
+    || die "LightningOS release is not published."
+  printf '%s' "$response" | grep -Fq "\"tag_name\":\"${TAG}\"" \
+    || die "LightningOS release attestation tag mismatch."
+}
 
 verify_release_ref() {
   local verify_root=""
@@ -165,6 +184,7 @@ verify_release_ref() {
     esac
   }
 
+  verify_immutable_release
   verify_root="$(mktemp -d /tmp/lightningos-release-verify.XXXXXX)"
   chmod 0700 "$verify_root"
   trap cleanup_verify_root RETURN EXIT

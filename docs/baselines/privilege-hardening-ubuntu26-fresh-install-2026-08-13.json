@@ -1,0 +1,94 @@
+{
+  "schema": "lightningos.privilege-hardening.ubuntu26-fresh-install.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "Ubuntu 26.04 fresh-install and reboot platform gate before the complete per-app matrix",
+  "environment": {
+    "hypervisor": "VirtualBox 7.2.14",
+    "base_vm": "brln-os-basica",
+    "test_vm": "brln-os-hardening-053-ubuntu26-20260813",
+    "access": "NAT with localhost-only SSH forwarding",
+    "os": "Ubuntu 26.04 LTS",
+    "codename": "resolute",
+    "architecture": "amd64",
+    "kernel_after_reboot": "7.0.0-29-generic",
+    "lan_scan_or_host_adapter_mutation": false,
+    "integration_node_mutated": false
+  },
+  "source": {
+    "checkout_commit": "3d12bf5302e6d1aba41a65609fdc0da9a9c603f8",
+    "install_source": "checkout",
+    "go_version": "go1.24.12",
+    "node_version": "v26.7.0",
+    "npm_version": "11.19.0",
+    "manager_sha256": "fbd577a171cc56af3427da9edf6f88c697530247f5cbed859733adace221699c",
+    "broker_sha256": "7a6eeb4ea7033a5a55e08717d0a3fff8969e3d442c7785bd5d0caf0b250623a9"
+  },
+  "release_upgrade": {
+    "official_upgrade_path": "do-release-upgrade",
+    "result": "Ubuntu 26.04 LTS",
+    "clone_specific_grub_device_repair": "passed",
+    "dpkg_audit": "clean",
+    "apt_check": "passed",
+    "package_sources": "resolute, resolute-updates, resolute-backports, resolute-security"
+  },
+  "fresh_install": {
+    "installer": "lightningos-light/install.sh",
+    "privileged_mode": "enforce",
+    "postgresql_major": 18,
+    "first_attempt": "failed closed while Go VCS stamping rejected the sudo-owned checkout boundary",
+    "fix": "all install and application-upgrade builds use -buildvcs=false",
+    "retry_exit_code": 0,
+    "broker_root_self_test": "passed",
+    "broker_manager_service_user_self_test": "passed",
+    "manager_service": "active",
+    "postgresql_service": "active",
+    "tor_service": "active",
+    "i2pd_service": "active",
+    "https_health": 200,
+    "lnd_without_bitcoin_configuration": "enabled and explicitly stopped after the reboot observation",
+    "setup_token_noninteractive_gate": "passed: no token issued, state unchanged, no token written to captured output",
+    "previous_disposable_token": "invalidated without disclosure"
+  },
+  "reboot": {
+    "completed": true,
+    "manager_health_after_reboot": 200,
+    "broker_runtime_directory_recreated": true,
+    "root_only_broker_log_and_lock_roots": true,
+    "failed_systemd_units": 0
+  },
+  "privilege_boundary": {
+    "manager_account_docker_group": false,
+    "manager_process_docker_gid": false,
+    "docker_socket_present": false,
+    "broker_file": "root:root:0755",
+    "manager_config": "root:lightningos:0640",
+    "sudoers_file": "root:root:0440",
+    "phase3_wildcard_package_systemd_run_and_ufw_rules_still_open": true
+  },
+  "tests": {
+    "go_test_all_windows": "passed",
+    "go_vet_all_windows": "passed",
+    "go_test_all_linux_root": "passed after provisioning the fixed lightningos-loop identity used by the real app boundary",
+    "go_vet_all_linux": "passed",
+    "linux_shell_syntax": "passed",
+    "installer_vcs_ownership_regression": "passed",
+    "noninteractive_setup_token_log_regression": "passed"
+  },
+  "remaining": [
+    "complete per-app install/start/stop/restart/uninstall and reboot matrix on Ubuntu 24.04 and 26.04",
+    "Phase 3 package, firewall, storage, upgrade and supply-chain cutover",
+    "Phase 4 systemd confinement",
+    "Phase 5 remaining LND credential minimization",
+    "supported in-place upgrade and final rollback matrix"
+  ],
+  "excluded": [
+    "ip_addresses",
+    "credentials",
+    "setup_tokens",
+    "configuration contents",
+    "sudoers contents",
+    "private node identifiers"
+  ]
+}

@@ -81,11 +81,21 @@ print_auth_setup_token() {
     return
   fi
 
-  echo "Admin setup token:"
+  if [[ ! -t 0 || ! -t 1 || ! -w /dev/tty ]]; then
+    echo "Admin setup token was not generated because no interactive terminal is attached."
+    echo "Generate one later from an interactive terminal with:"
+    echo "  sudo $MANAGER_BIN auth setup-token new"
+    return
+  fi
+
   if token_output=$("$MANAGER_BIN" auth setup-token new 2>/dev/null); then
-    while IFS= read -r line; do
-      echo "  $line"
-    done <<<"$token_output"
+    {
+      echo ""
+      echo "Admin setup token:"
+      while IFS= read -r line; do
+        echo "  $line"
+      done <<<"$token_output"
+    } > /dev/tty
   else
     print_warn "Automatic setup token generation failed"
   fi
@@ -791,8 +801,8 @@ build_manager() {
   print_step "Building manager"
   (cd "$REPO_ROOT" && \
     GOFLAGS="-mod=mod" go mod download && \
-    GOFLAGS="-mod=mod" go build -o dist/lightningos-manager ./cmd/lightningos-manager && \
-    GOFLAGS="-mod=mod" go build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
+    GOFLAGS="-mod=mod -buildvcs=false" go build -o dist/lightningos-manager ./cmd/lightningos-manager && \
+    GOFLAGS="-mod=mod -buildvcs=false" go build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
   install -m 0755 "$REPO_ROOT/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
   local broker_path
   for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do

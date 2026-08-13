@@ -1078,6 +1078,21 @@ complete per-app lifecycle/reboot coverage on Ubuntu 24.04 and 26.04. The
 manager/Docker code boundary and controlled rollback path are no longer open
 implementation items.
 
+The Ubuntu 26.04 fresh-install platform gate passed on 2026-08-13. An official
+release upgrade of a disposable `brln-os-basica` clone reached Ubuntu 26.04
+LTS with kernel 7.0.0-29; package repair, reboot, Manager health, PostgreSQL,
+Tor, i2pd, broker runtime recreation, the manager-service-user broker
+self-test, and the complete Linux Go suite passed. The gate found two installer
+regressions before acceptance: Go VCS stamping rejected the normal case where
+`sudo` builds an operator-owned checkout, and automatic setup-token output was
+captured by the install log. Installer and application-upgrade builds now use
+`-buildvcs=false`; setup tokens are generated only with an attached interactive
+terminal and are written directly to `/dev/tty`. Non-interactive installs
+leave token issuance to a later interactive command. Evidence is in
+`docs/baselines/privilege-hardening-ubuntu26-fresh-install-2026-08-13.json`.
+This is the Ubuntu 26 platform gate, not the still-required complete per-app
+lifecycle/reboot matrix.
+
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC
 cookie, root-owned execution snapshot, typed lifecycle/inspect/remove, and

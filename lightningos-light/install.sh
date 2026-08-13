@@ -81,12 +81,21 @@ print_auth_setup_token() {
     return
   fi
 
-  echo ""
-  echo "Admin setup token:"
+  if [[ ! -t 0 || ! -t 1 || ! -w /dev/tty ]]; then
+    echo "Admin setup token was not generated because no interactive terminal is attached."
+    echo "Generate one later from an interactive terminal with:"
+    echo "  sudo $MANAGER_BIN auth setup-token new"
+    return
+  fi
+
   if token_output=$("$MANAGER_BIN" auth setup-token new 2>/dev/null); then
-    while IFS= read -r line; do
-      echo "  $line"
-    done <<<"$token_output"
+    {
+      echo ""
+      echo "Admin setup token:"
+      while IFS= read -r line; do
+        echo "  $line"
+      done <<<"$token_output"
+    } > /dev/tty
   else
     print_warn "Automatic setup token generation failed"
   fi
@@ -1395,11 +1404,11 @@ install_manager() {
   print_ok "Go modules ready"
 
   print_step "Compiling LightningOS Manager"
-  (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go build -o /opt/lightningos/manager/lightningos-manager ./cmd/lightningos-manager)
+  (cd "$REPO_ROOT" && env $go_env GOFLAGS="-mod=mod -buildvcs=false" go build -o /opt/lightningos/manager/lightningos-manager ./cmd/lightningos-manager)
 
   print_step "Installing privileged broker foundation"
   mkdir -p "$REPO_ROOT/dist"
-  (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
+  (cd "$REPO_ROOT" && env $go_env GOFLAGS="-mod=mod -buildvcs=false" go build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
   local broker_path
   for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
     [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"

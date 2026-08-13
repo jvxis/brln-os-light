@@ -785,8 +785,8 @@ build_manager() {
   print_step "Building manager"
   (cd "$REPO_ROOT" && \
     GOFLAGS="-mod=mod" go mod download && \
-    GOFLAGS="-mod=mod" go build -o dist/lightningos-manager ./cmd/lightningos-manager && \
-    GOFLAGS="-mod=mod" go build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
+    GOFLAGS="-mod=mod -buildvcs=false" go build -o dist/lightningos-manager ./cmd/lightningos-manager && \
+    GOFLAGS="-mod=mod -buildvcs=false" go build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
   install -m 0755 "$REPO_ROOT/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
   local broker_path
   for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do

@@ -87,6 +87,58 @@ func TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory(t *testing.T) {
 	}
 }
 
+func TestInstallAndUpgradeBuildsDoNotRequireTrustedGitOwnership(t *testing.T) {
+	scripts := []string{
+		filepath.Join("..", "..", "install.sh"),
+		filepath.Join("..", "..", "install_existing.sh"),
+		filepath.Join("..", "..", "install_existing_pi.sh"),
+		filepath.Join("assets", "upgrade-app.sh"),
+	}
+	for _, path := range scripts {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+			buildLines := 0
+			for _, line := range strings.Split(content, "\n") {
+				if strings.Contains(line, "go build") || strings.Contains(line, `"$GO_BIN" build`) {
+					buildLines++
+					if !strings.Contains(line, "-buildvcs=false") {
+						t.Fatalf("%s Go build may fail when sudo changes repository ownership: %q", path, line)
+					}
+				}
+			}
+			if buildLines < 2 {
+				t.Fatalf("%s must build both the manager and privileged broker; found %d Go build lines", path, buildLines)
+			}
+		})
+	}
+}
+
+func TestInstallersDoNotIssueSetupTokensIntoCapturedLogs(t *testing.T) {
+	installers := []string{
+		filepath.Join("..", "..", "install.sh"),
+		filepath.Join("..", "..", "install_existing.sh"),
+	}
+	for _, path := range installers {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+			guard := strings.Index(content, `if [[ ! -t 0 || ! -t 1 || ! -w /dev/tty ]]`)
+			issue := strings.Index(content, `token_output=$("$MANAGER_BIN" auth setup-token new`)
+			ttyOutput := strings.Index(content, `} > /dev/tty`)
+			if guard < 0 || issue < 0 || ttyOutput < 0 || guard > issue || issue > ttyOutput {
+				t.Fatalf("%s must issue setup tokens only after an interactive-terminal guard and write them directly to /dev/tty", path)
+			}
+		})
+	}
+}
+
 func TestAppUpgradeMigratesManagerTLSBeforeRestart(t *testing.T) {
 	path := filepath.Join("assets", "upgrade-app.sh")
 	raw, err := os.ReadFile(path)

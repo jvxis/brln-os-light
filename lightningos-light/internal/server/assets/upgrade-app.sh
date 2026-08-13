@@ -537,12 +537,12 @@ mkdir -p /opt/lightningos/go /opt/lightningos/go-cache /opt/lightningos/go/pkg/m
 
 print_step "Building manager binary"
 mkdir -p "$project_dir/dist"
-(cd "$project_dir" && env $go_env GOFLAGS=-mod=mod "$GO_BIN" build -o dist/lightningos-manager ./cmd/lightningos-manager)
+(cd "$project_dir" && env $go_env GOFLAGS="-mod=mod -buildvcs=false" "$GO_BIN" build -o dist/lightningos-manager ./cmd/lightningos-manager)
 "$INSTALL_BIN" -m 0755 "$project_dir/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
 print_ok "Manager installed"
 
 print_step "Installing privileged broker foundation"
-(cd "$project_dir" && env $go_env GOFLAGS=-mod=mod "$GO_BIN" build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
+(cd "$project_dir" && env $go_env GOFLAGS="-mod=mod -buildvcs=false" "$GO_BIN" build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
 for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
   [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"
 done

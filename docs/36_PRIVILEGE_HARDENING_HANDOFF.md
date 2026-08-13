@@ -5,7 +5,7 @@ This document is the entry point for continuing pull request
 an operational index, not a replacement for the accepted implementation plan
 in `docs/32_PRIVILEGE_HARDENING_PLAN.md`.
 
-Last reconciled: 2026-08-12.
+Last reconciled: 2026-08-13.
 
 ## Authoritative objective
 
@@ -48,6 +48,12 @@ The scope includes:
   sent to the recycle bin, and the worktree contains no temporary artifacts.
 - Every new implementation or evidence commit must start with
   `0.5.3-Beta`.
+- The shared Docker cutover checkpoint is `3d12bf53`. A subsequent disposable
+  Ubuntu 26.04 fresh-install gate found and fixed sudo/Go VCS ownership failure
+  and setup-token leakage into captured installer logs. The exact gate and
+  remaining scope are recorded in
+  `docs/baselines/privilege-hardening-ubuntu26-fresh-install-2026-08-13.json`;
+  the full application matrix and Phases 3-5 remain open.
 - `main` may continue receiving `0.5.2` work. Do not merge or rebase it into
   this branch merely because it advanced; first inspect whether a concrete
   dependency or conflict requires it.

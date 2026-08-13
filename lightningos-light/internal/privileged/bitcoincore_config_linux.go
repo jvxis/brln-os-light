@@ -100,7 +100,7 @@ func (manager *BitcoinCoreConfigManager) EnsureCredentials(ctx context.Context, 
 	}
 	defer unix.Close(directoryFD)
 
-	content, exists, original, _, err := readBitcoinCoreConfigForEnsureAt(directoryFD)
+	content, exists, original, legacyOwner, err := readBitcoinCoreConfigForEnsureAt(directoryFD)
 	if err != nil || !exists {
 		return BitcoinCoreCredentialsEnsureState{}, errors.New("bitcoin config does not exist")
 	}
@@ -138,12 +138,14 @@ func (manager *BitcoinCoreConfigManager) EnsureCredentials(ctx context.Context, 
 	if err != nil {
 		return BitcoinCoreCredentialsEnsureState{}, err
 	}
-	if changed {
+	if changed || legacyOwner {
 		if err := writeBitcoinCoreConfigAt(ctx, directoryFD, updated, &original); err != nil {
 			return BitcoinCoreCredentialsEnsureState{}, err
 		}
+	}
+	if changed || legacyOwner {
 		return BitcoinCoreCredentialsEnsureState{
-			Status: "restart_required", User: credentials.User, Password: credentials.Password, ConfigChanged: true,
+			Status: "restart_required", User: credentials.User, Password: credentials.Password, ConfigChanged: changed,
 		}, nil
 	}
 	if err := probeBitcoinCoreElectrsCredential(ctx, credentials.User, credentials.Password); err != nil {

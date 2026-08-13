@@ -590,6 +590,17 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) resolveBitcoinLocalRPCConfigForSource(ctx context.Context, confirmBitcoinRestart bool) (bitcoinRPCConfig, error) {
 	paths := bitcoinCoreAppPaths()
+	if fileExists(paths.ComposePath) {
+		storageCtx, storageCancel := context.WithTimeout(ctx, 12*time.Second)
+		handled, storageErr := system.EnsureBitcoinCoreStorageWithBroker(storageCtx, paths.DataDir)
+		storageCancel()
+		if !handled {
+			return bitcoinRPCConfig{}, errors.New("local Bitcoin storage repair requires privileged broker enforce mode")
+		}
+		if storageErr != nil {
+			return bitcoinRPCConfig{}, fmt.Errorf("failed to validate local Bitcoin storage: %w", storageErr)
+		}
+	}
 	cfg, readErr := readBitcoinLocalRPCConfig(ctx)
 	if !fileExists(paths.ComposePath) {
 		return cfg, readErr

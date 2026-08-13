@@ -58,7 +58,7 @@ func TestBitcoinCoreLifecycleUsesOnlyBrokerOwnedExecutionAssets(t *testing.T) {
 	if err := manager.Lifecycle(context.Background(), appmanifest.BitcoinCoreID, AppLifecycleRestart, false); err != nil {
 		t.Fatal(err)
 	}
-	if !hasArgsSuffix(runner.commands[len(runner.commands)-1].args, "restart", "--timeout", "10", "bitcoind") {
+	if !hasArgsSuffix(runner.commands[len(runner.commands)-1].args, "up", "-d", "--force-recreate", "--no-deps", "bitcoind") {
 		t.Fatalf("unexpected restart command: %#v", runner.commands)
 	}
 }

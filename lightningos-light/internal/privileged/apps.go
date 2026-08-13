@@ -837,7 +837,14 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	case AppLifecycleStop:
 		args = append(args, "stop", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds))
 	case AppLifecycleRestart:
-		args = append(args, "restart", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds), manifest.PrimaryService)
+		if manifest.ID == appmanifest.BitcoinCoreID {
+			// A plain `compose restart` keeps the legacy container image and
+			// declaration. Recreate the single service so upgrades actually cut
+			// over to the broker-attested Bitcoin Core image and storage guard.
+			args = append(args, "up", "-d", "--force-recreate", "--no-deps", manifest.PrimaryService)
+		} else {
+			args = append(args, "restart", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds), manifest.PrimaryService)
+		}
 	}
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		return errors.New("app lifecycle command failed")

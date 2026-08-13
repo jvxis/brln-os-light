@@ -334,6 +334,41 @@ func TestBitcoinCorePrimaryCredentialMigrationPreservesLegacyRPCAuth(t *testing.
 	}
 }
 
+func TestBitcoinCorePrimaryCredentialMigrationPromotesLegacyConfigOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to validate Bitcoin storage ownership")
+	}
+	_, _, privilegedRoot, dataDir := newTestBitcoinCoreLifecycleManager(t)
+	manager := &BitcoinCoreConfigManager{PrivilegedAppsRoot: privilegedRoot}
+	credentials, err := generateBitcoinCoreCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.writeCredentialsFile(bitcoinCoreCredentialsFile, credentials, appmanifest.BitcoinCoreRPCUser); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dataDir, bitcoinCoreConfigFile)
+	config := "server=1\nrpcauth=" + credentials.RPCAuth + "\n[main]\nrpcport=8332\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(configPath, 101, 101); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := manager.EnsureCredentials(context.Background(), dataDir, false)
+	if err != nil || state.Status != "restart_required" || state.ConfigChanged || state.User != appmanifest.BitcoinCoreRPCUser || state.Password != credentials.Password {
+		t.Fatalf("owner migration state/error=%#v/%v", state, err)
+	}
+	if err := validateRootOwnedGroupReadableRegularFile(configPath, 101, 0o640); err != nil {
+		t.Fatalf("legacy config owner was not promoted: %v", err)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil || string(raw) != config {
+		t.Fatalf("owner migration changed config content: %v", err)
+	}
+}
+
 func TestBitcoinCoreElectrsCredentialMigrationPreservesLegacyAuth(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to validate Bitcoin storage ownership")

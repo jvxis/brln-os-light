@@ -35,6 +35,7 @@ type NativeLoopManager struct {
 	StateRoot    string
 	AppsRoot     string
 	AppsDataRoot string
+	LNDDataRoot  string
 	TempRoot     string
 	GOARCH       string
 }
@@ -46,6 +47,7 @@ func NewNativeLoopManager(runner CommandRunner) *NativeLoopManager {
 		StateRoot:    appmanifest.LoopStateRoot,
 		AppsRoot:     appmanifest.LoopAppsRoot,
 		AppsDataRoot: appmanifest.LoopAppsDataRoot,
+		LNDDataRoot:  "/data/lnd",
 		GOARCH:       runtime.GOARCH,
 	}
 }
@@ -56,7 +58,7 @@ func (manager *NativeLoopManager) Status(ctx context.Context) (LoopState, error)
 		return state, errors.New("Lightning Loop manager is unavailable")
 	}
 	state.Installed = safeNonEmptyRegularFile(manager.Paths.LoopdPath)
-	state.HasLNDMacaroon = safeNonEmptyRegularFile(manager.Paths.LNDMacaroonPath)
+	state.HasLNDMacaroon = manager.hasDedicatedLNDMacaroon()
 	state.HasPersistentState = loopPersistentState(manager.Paths)
 	if !state.Installed {
 		state.Status = "stopped"
@@ -81,6 +83,9 @@ func (manager *NativeLoopManager) Ensure(ctx context.Context, params LoopEnsureP
 		return state, errors.New("Lightning Loop manager is unavailable")
 	}
 	if err := appmanifest.ValidateLoopMaterial(params.LNDTLSCertificate, params.LNDMacaroon); err != nil {
+		return state, err
+	}
+	if err := manager.rejectAdminLNDMacaroon(params.LNDMacaroon); err != nil {
 		return state, err
 	}
 	asset, err := appmanifest.LoopAssetForArch(manager.arch())
@@ -121,6 +126,46 @@ func (manager *NativeLoopManager) Ensure(ctx context.Context, params LoopEnsureP
 		return state, errors.New("Lightning Loop systemd reload failed")
 	}
 	return manager.Status(ctx)
+}
+
+func (manager *NativeLoopManager) lndAdminMacaroonPath() string {
+	root := strings.TrimSpace(manager.LNDDataRoot)
+	if root == "" {
+		root = "/data/lnd"
+	}
+	return filepath.Join(root, "data", "chain", "bitcoin", "mainnet", "admin.macaroon")
+}
+
+func (manager *NativeLoopManager) hasDedicatedLNDMacaroon() bool {
+	credential, err := readRegularFile(manager.Paths.LNDMacaroonPath, 64*1024)
+	if err != nil || len(credential) == 0 {
+		return false
+	}
+	admin, err := readRegularFile(manager.lndAdminMacaroonPath(), 64*1024)
+	if err != nil {
+		// Status remains available while LND is locked. Ensure performs the
+		// mandatory equality check before accepting or preserving the file.
+		return true
+	}
+	return !bytes.Equal(credential, admin)
+}
+
+func (manager *NativeLoopManager) rejectAdminLNDMacaroon(candidate []byte) error {
+	admin, err := readRegularFile(manager.lndAdminMacaroonPath(), 64*1024)
+	if err != nil || len(admin) == 0 {
+		return errors.New("LND admin macaroon is unavailable for Lightning Loop credential validation")
+	}
+	credential := candidate
+	if len(credential) == 0 {
+		credential, err = readRegularFile(manager.Paths.LNDMacaroonPath, 64*1024)
+		if err != nil {
+			return nil
+		}
+	}
+	if bytes.Equal(credential, admin) {
+		return errors.New("Lightning Loop must not use the LND admin macaroon")
+	}
+	return nil
 }
 
 func (manager *NativeLoopManager) Lifecycle(ctx context.Context, action AppLifecycleAction, dryRun bool) (LoopState, error) {

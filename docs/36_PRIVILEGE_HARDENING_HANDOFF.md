@@ -252,6 +252,29 @@ restarted. Evidence:
 `docs/baselines/privilege-hardening-phase4-socket-cutover-2026-08-13.json`.
 The final supported-upgrade and app/regression matrices remain open.
 
+### Phase 5 LND credential inventory
+
+The complete source/runtime inventory is in
+`docs/baselines/privilege-hardening-phase5-lnd-credentials-2026-08-13.json`.
+A read-only `ListPermissions` query on the synced LOS TESTE2 LND
+`0.21.2-beta.rc1` mapped the manager's authenticated RPC surface to 17 of the
+19 exposed permission pairs; only `info:write` and `macaroon:write` were not
+observed. Wallet creation and unlock use the unauthenticated WalletUnlocker
+connection. The manager is still configured with native `admin.macaroon`, so
+its transactional migration is the remaining Phase 5 implementation slice.
+
+BTCPay, Fedimint Gateway, LNbits, LNDg, Lightning Loop, PeerSwap, and Tapd
+already use explicit dedicated credentials and reject credentials equal to the
+native admin macaroon. No App Store execution snapshot mounts
+`admin.macaroon`. BRLN Loop Out and Magma execute inside the manager boundary,
+receive no separate macaroon or LND directory, and have no third-party
+disclaimer. Do not weaken these invariants while migrating the manager.
+
+The manager candidate still needs `macaroon:generate` for app-specific and
+user-exported credentials. Treat it as highly privileged: the implementation
+must preserve fresh-wallet initialization, existing nodes, rollback, and reboot
+without exporting the admin macaroon or creating an automatic restart loop.
+
 Application state at this checkpoint:
 
 | Application or family | Accepted boundary | Still open |

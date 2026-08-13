@@ -1477,6 +1477,28 @@ firewall, or install a package except through an allowed broker operation.
 4. Keep explicit warnings for apps that demonstrably require elevated LND
    access.
 
+Inventory checkpoint (2026-08-13): a source scan matched 70 authenticated
+manager RPC method names to 75 service/method rows from the 163-method
+`ListPermissions` map returned read-only by LND `0.21.2-beta.rc1` on LOS TESTE2.
+The manager currently remains the only application process configured with
+`admin.macaroon`. Its observed RPC surface requires 17 of the 19 permission
+pairs exposed by that LND build; `info:write` and `macaroon:write` were not used.
+`GenSeed`, `InitWallet`, and `UnlockWallet` use the intentionally
+unauthenticated WalletUnlocker connection.
+
+BTCPay, Fedimint Gateway, LNbits, LNDg, Lightning Loop, PeerSwap, and Tapd each
+have a named dedicated macaroon, an explicit permission set, and an admin-byte
+equality rejection gate. No App Store runtime mounts the native admin macaroon.
+BRLN Loop Out and Magma remain native manager features, receive no separate LND
+credential or data-directory mount, and require no third-party disclaimer. The
+exact inventory is recorded in
+`docs/baselines/privilege-hardening-phase5-lnd-credentials-2026-08-13.json`.
+
+Phase 5 remains open for the transactional manager credential migration and its
+fresh-wallet, existing-wallet, rollback, and reboot gates. The migration must
+account for the manager's `macaroon:generate` workflow rather than treating a
+17-permission macaroon as low privilege.
+
 Exit criterion: compromising one app does not automatically grant another
 app's permissions, host administration, or unrestricted LND administration.
 

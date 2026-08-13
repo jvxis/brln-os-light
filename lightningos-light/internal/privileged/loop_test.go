@@ -37,10 +37,15 @@ func newLoopManagerFixture(t *testing.T) (*NativeLoopManager, *loopRecordingRunn
 	appsRoot := filepath.Join(stateRoot, "apps")
 	dataRoot := filepath.Join(stateRoot, "apps-data")
 	systemdRoot := filepath.Join(stateRoot, "systemd")
-	for _, dir := range []string{appsRoot, dataRoot, systemdRoot} {
+	lndRoot := filepath.Join(stateRoot, "lnd")
+	lndMainnet := filepath.Join(lndRoot, "data", "chain", "bitcoin", "mainnet")
+	for _, dir := range []string{appsRoot, dataRoot, systemdRoot, lndMainnet} {
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(lndMainnet, "admin.macaroon"), []byte("admin-macaroon"), 0600); err != nil {
+		t.Fatal(err)
 	}
 	runner := &loopRecordingRunner{}
 	manager := &NativeLoopManager{
@@ -49,10 +54,39 @@ func newLoopManagerFixture(t *testing.T) (*NativeLoopManager, *loopRecordingRunn
 		StateRoot:    stateRoot,
 		AppsRoot:     appsRoot,
 		AppsDataRoot: dataRoot,
+		LNDDataRoot:  lndRoot,
 		TempRoot:     stateRoot,
 		GOARCH:       "amd64",
 	}
 	return manager, runner
+}
+
+func TestNativeLoopRejectsAdminLNDMacaroon(t *testing.T) {
+	manager, _ := newLoopManagerFixture(t)
+	admin, err := os.ReadFile(manager.lndAdminMacaroonPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(manager.Paths.LNDMacaroonPath), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manager.Paths.LNDMacaroonPath, admin, 0600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := manager.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.HasLNDMacaroon {
+		t.Fatal("Lightning Loop reported an admin-equivalent credential as dedicated")
+	}
+	_, err = manager.Ensure(context.Background(), LoopEnsureParams{
+		LNDTLSCertificate: []byte("certificate"),
+		LNDMacaroon:       admin,
+	}, true)
+	if err == nil || !strings.Contains(err.Error(), "must not use the LND admin macaroon") {
+		t.Fatalf("Lightning Loop accepted the LND admin macaroon: %v", err)
+	}
 }
 
 func TestNativeLoopEnsureUsesOnlyClosedManifest(t *testing.T) {

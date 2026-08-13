@@ -468,7 +468,7 @@ func TestManagerAndBrokerSystemdBoundary(t *testing.T) {
 		"StandardInput=socket",
 		"StandardOutput=socket",
 		"ProtectSystem=full",
-		"ReadWritePaths=/usr/local",
+		"ReadWritePaths=/usr/local /etc/lightningos",
 		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
 	} {
 		if !strings.Contains(string(serviceRaw), expected) {

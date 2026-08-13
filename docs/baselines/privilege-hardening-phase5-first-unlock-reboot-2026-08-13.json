@@ -1,0 +1,80 @@
+{
+  "schema": "lightningos.privilege-hardening.phase5-first-unlock-reboot.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "fresh LND wallet, automatic manager credential convergence, reboot persistence, and rollback",
+  "environment": {
+    "os": "Ubuntu 24.04",
+    "virtualization": "disposable local VirtualBox VM",
+    "wallet_database": "dedicated PostgreSQL database",
+    "bitcoin_backend": "official LightningOS Bitcoin Core 31.1 image",
+    "bitcoin_network_isolation": "no P2P, no DNS seeds, no outbound peer, RPC and ZMQ bound to localhost",
+    "persistent_test_node_used": false
+  },
+  "fixes": {
+    "first_unlock_convergence": "six bounded attempts with parent cancellation and per-attempt timeout",
+    "broker_config_write_boundary": "ReadWritePaths permits only /usr/local and /etc/lightningos under ProtectSystem=full",
+    "locked_or_uninitialized_lnd": "pending without credential, state, or configuration mutation"
+  },
+  "fresh_wallet_gate": {
+    "installer_style_empty_password_file": "lnd:lnd:0660",
+    "wallet_create_api": "HTTP 200",
+    "wallet_init_api": "HTTP 200",
+    "seed_words": "held only in process memory, cleared after initialization, never printed or persisted by the gate",
+    "automatic_convergence": "ready without manual ensure between InitWallet and observation",
+    "manager_credential": "root:lightningos:0640",
+    "transaction_state": "root:root:0600",
+    "native_admin_after_commit": "lnd:lnd:0600",
+    "manager_can_read_dedicated_credential": true,
+    "manager_can_read_native_admin": false,
+    "configured_path": "/var/lib/lightningos-credentials/lnd/manager.macaroon",
+    "idempotent_ensure": "status=ready changed=false",
+    "manager_health": "passed"
+  },
+  "reboot_gate": {
+    "boot_id_changed": true,
+    "manager_pid_changed": true,
+    "lnd_pid_changed": true,
+    "isolated_bitcoin_backend_returned": true,
+    "credential_metadata_preserved": true,
+    "native_admin_protection_preserved": true,
+    "configured_path_preserved": true,
+    "idempotent_ensure_after_reboot": "status=ready changed=false",
+    "manager_health_after_reboot": "passed"
+  },
+  "rollback_gate": {
+    "path": "socket-activated privileged broker",
+    "result": "status=rolled_back changed=true",
+    "dedicated_root_key_revoked": true,
+    "credential_and_state_removed": true,
+    "native_admin_restored": "lnd:lnd:0640",
+    "configured_path_restored": "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
+    "manager_lnd_and_bitcoin_processes_unchanged_during_rollback": true,
+    "manager_health_after_rollback": "passed"
+  },
+  "validation": {
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "manager_and_broker_build": "passed",
+    "systemd_analyze_verify_broker_template": "passed",
+    "broker_self_test": "passed",
+    "temporary_worktree_artifacts_removed": true,
+    "disposable_vm_removed": true,
+    "network_scan_or_adapter_change": false
+  },
+  "remaining_acceptance": [
+    "supported Ubuntu 24.04 and Ubuntu 26.04 fresh-install, upgrade, rollback, and application regression matrix"
+  ],
+  "excluded": [
+    "addresses",
+    "usernames",
+    "passwords",
+    "seed words",
+    "macaroon bytes",
+    "root key identifiers",
+    "node public keys",
+    "RPC credentials",
+    "configuration contents"
+  ]
+}

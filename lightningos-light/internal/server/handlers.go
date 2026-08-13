@@ -22,6 +22,7 @@ import (
 
 	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/lndclient"
+	"lightningos-light/internal/privileged"
 	"lightningos-light/internal/system"
 )
 
@@ -5581,9 +5582,13 @@ func (s *Server) scheduleLNDPermissionsFix(reason string) {
 		waitCtx, waitCancel := context.WithTimeout(context.Background(), 12*time.Second)
 		waitForFile(waitCtx, lndAdminMacaroonPath)
 		waitCancel()
-		runCtx, runCancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer runCancel()
-		state, handled, err := system.EnsureLNDManagerCredentialWithBroker(runCtx)
+		convergeCtx, convergeCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer convergeCancel()
+		state, handled, err := convergeLNDManagerCredential(convergeCtx, 6, 2*time.Second, func(parent context.Context) (privileged.LNDManagerCredentialState, bool, error) {
+			runCtx, runCancel := context.WithTimeout(parent, 20*time.Second)
+			defer runCancel()
+			return system.EnsureLNDManagerCredentialWithBroker(runCtx)
+		})
 		if !handled {
 			s.logger.Printf("lnd permissions fix skipped (%s): privileged broker enforce mode is required", reason)
 			return
@@ -5596,7 +5601,9 @@ func (s *Server) scheduleLNDPermissionsFix(reason string) {
 			s.logger.Printf("lnd manager credential migration pending (%s): LND RPC is not ready", reason)
 			return
 		}
-		if handled, err := system.RepairLNDPermissionsWithBroker(runCtx); !handled {
+		repairCtx, repairCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer repairCancel()
+		if handled, err := system.RepairLNDPermissionsWithBroker(repairCtx); !handled {
 			s.logger.Printf("lnd permissions fix skipped (%s): privileged broker enforce mode is required", reason)
 			return
 		} else if err != nil {

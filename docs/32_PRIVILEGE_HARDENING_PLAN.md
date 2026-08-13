@@ -1508,10 +1508,21 @@ filesystem/config mutation.
 The real existing-wallet ensure/rollback gate passed on LOS TESTE2. The root
 key count increased only for the migration and returned to baseline on
 rollback; native admin bytes/metadata, manager/LND PIDs, and HTTPS health were
-preserved without restarting Bitcoin, LND, or manager. Phase 5 remains open
-only for fresh-wallet/first-unlock convergence, committed reboot persistence,
-and the final supported Ubuntu 24.04/26.04 matrix. Evidence is in
+preserved without restarting Bitcoin, LND, or manager. Evidence is in
 `docs/baselines/privilege-hardening-phase5-manager-credential-2026-08-13.json`.
+
+The fresh-wallet and committed-reboot gate then passed on a disposable Ubuntu
+24.04 VM. The first-unlock hook now retries bounded transient RPC/config races,
+and the broker's `ProtectSystem=full` policy grants its transaction writer only
+the exact `/etc/lightningos` exception needed for the atomic configuration
+switch. Wallet creation and initialization returned HTTP 200; the credential
+converged automatically without a manual ensure, survived a real reboot, and
+remained idempotent. Post-reboot broker rollback revoked and removed the
+dedicated credential, restored the native admin path/metadata, preserved the
+manager, LND and isolated Bitcoin processes, and kept HTTPS health. Phase 5
+remains open only for the final supported Ubuntu 24.04/26.04 matrix. Evidence
+is in
+`docs/baselines/privilege-hardening-phase5-first-unlock-reboot-2026-08-13.json`.
 
 Exit criterion: compromising one app does not automatically grant another
 app's permissions, host administration, or unrestricted LND administration.

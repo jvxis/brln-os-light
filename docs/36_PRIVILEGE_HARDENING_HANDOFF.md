@@ -48,6 +48,10 @@ The scope includes:
   sent to the recycle bin, and the worktree contains no temporary artifacts.
 - Every new implementation or evidence commit must start with
   `0.5.3-Beta`.
+- The accepted transactional manager-credential checkpoint is `aa6114f8`.
+  The subsequent first-wallet/reboot checkpoint is the commit carrying this
+  handoff and its evidence in
+  `docs/baselines/privilege-hardening-phase5-first-unlock-reboot-2026-08-13.json`.
 - The shared Docker cutover checkpoint is `3d12bf53`. A subsequent disposable
   Ubuntu 26.04 fresh-install gate found and fixed sudo/Go VCS ownership failure
   and setup-token leakage into captured installer logs. The exact gate and
@@ -281,10 +285,20 @@ user-exported credentials, so treat it as highly privileged rather than a
 low-risk read credential. Existing-wallet ensure and exact rollback passed on
 LOS TESTE2 with the root-key count, admin bytes/metadata, manager/LND PIDs, and
 health returned to baseline and no dependency restart. An unavailable/locked
-LND remains pending without mutation. Fresh-wallet/first-unlock convergence,
-committed reboot persistence, and the final Ubuntu 24.04/26.04 matrix remain.
-Evidence:
-`docs/baselines/privilege-hardening-phase5-manager-credential-2026-08-13.json`.
+LND remains pending without mutation.
+
+Fresh-wallet/first-unlock convergence and committed reboot persistence passed
+on a disposable Ubuntu 24.04 VM. The manager retries bounded transient races,
+the broker service has the exact `/etc/lightningos` write exception required
+by its atomic config transaction, and no manual ensure was needed after the
+successful API `InitWallet`. Credential/admin metadata and health survived a
+real reboot; broker rollback after reboot restored the native boundary without
+restarting manager, LND, or the isolated Bitcoin backend. The VM and all local
+gate artifacts were removed. Only the final Ubuntu 24.04/26.04 matrix remains
+for Phase 5. Evidence:
+`docs/baselines/privilege-hardening-phase5-manager-credential-2026-08-13.json`
+and
+`docs/baselines/privilege-hardening-phase5-first-unlock-reboot-2026-08-13.json`.
 
 Application state at this checkpoint:
 
@@ -728,7 +742,8 @@ completion audit. In particular:
 - remove wildcard sudo and Docker group access only in the final controlled
   cutover with a tested rollback bundle;
 - enable and validate manager/broker systemd confinement;
-- finish manager and per-app LND credential minimization;
+- preserve the completed manager/per-app LND credential boundaries while
+  running the final cross-version matrix;
 - update the security/operator documentation and PR body so they describe the
   final, not intermediate, trust boundary.
 

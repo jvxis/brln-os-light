@@ -108,6 +108,71 @@ func TestInstallerArtifactVerificationRejectsModifiedBytes(t *testing.T) {
 	}
 }
 
+func TestInstallersUseAuthenticatedLNDReleaseHelper(t *testing.T) {
+	canonicalPath := filepath.Join("assets", "upgrade-lnd.sh")
+	canonicalRaw, err := os.ReadFile(canonicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := strings.ReplaceAll(string(canonicalRaw), "\r\n", "\n")
+	for _, expected := range []string{
+		`MIN_REQUIRED_SIGNATURES=5`,
+		`--proto '=https' --proto-redir '=https' --tlsv1.2`,
+		`if [[ "$valid_signatures" -lt "$MIN_REQUIRED_SIGNATURES" ]]`,
+		`actual_hash=$(sha256sum`,
+		`tar --no-same-owner --no-same-permissions -xzf`,
+		`--install-new`,
+		`Refusing new LND installation over existing binaries.`,
+	} {
+		if !strings.Contains(canonical, expected) {
+			t.Fatalf("canonical LND installer helper lacks %q", expected)
+		}
+	}
+
+	for _, name := range []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		if !strings.Contains(content, `"$REPO_ROOT/internal/server/assets/upgrade-lnd.sh"`) {
+			t.Fatalf("%s does not install the canonical authenticated LND helper", name)
+		}
+		if strings.Contains(content, `"$REPO_ROOT/scripts/upgrade-lnd.sh"`) {
+			t.Fatalf("%s still installs the obsolete unauthenticated LND helper", name)
+		}
+	}
+
+	freshRaw, err := os.ReadFile(filepath.Join("..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := strings.ReplaceAll(string(freshRaw), "\r\n", "\n")
+	for _, expected := range []string{
+		`LND_VERSION="0.21.1-beta"`,
+		`"$LND_UPGRADE_SCRIPT" --version "$LND_VERSION" --install-new`,
+		`Unable to authenticate the installed LND version; refusing replacement`,
+	} {
+		if !strings.Contains(fresh, expected) {
+			t.Fatalf("fresh installer lacks closed LND policy %q", expected)
+		}
+	}
+	for _, forbidden := range []string{
+		`LND_VERSION="${LND_VERSION:-`,
+		`LND_URL`,
+		`curl -L "$LND_URL"`,
+		`tar -xzf "$tmp/lnd.tar.gz"`,
+	} {
+		if strings.Contains(fresh, forbidden) {
+			t.Fatalf("fresh installer retains unauthenticated LND behavior %q", forbidden)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join("..", "..", "scripts", "upgrade-lnd.sh")); !os.IsNotExist(err) {
+		t.Fatalf("obsolete unauthenticated LND helper still exists: %v", err)
+	}
+}
+
 func TestInstallersUseFingerprintPinnedAPTRepositories(t *testing.T) {
 	installers := []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"}
 	for _, name := range installers {

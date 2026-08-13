@@ -51,6 +51,7 @@ parse_commit_from_output() {
 
 VERSION=""
 VERIFY_ONLY=0
+INSTALL_NEW=0
 
 LND_RELEASE_BASE_URL="https://github.com/lightningnetwork/lnd/releases/download"
 LND_RELEASE_KEYS_BASE_URL="https://raw.githubusercontent.com/lightningnetwork/lnd"
@@ -90,6 +91,10 @@ while [[ $# -gt 0 ]]; do
       VERIFY_ONLY=1
       shift
       ;;
+    --install-new)
+      INSTALL_NEW=1
+      shift
+      ;;
     *)
       die "Unknown argument: $1"
       ;;
@@ -122,19 +127,30 @@ MANIFEST="manifest-v${VERSION}.txt"
 RELEASE_URL="${LND_RELEASE_BASE_URL}/v${VERSION}"
 URL="${RELEASE_URL}/${ARCHIVE}"
 
+if [[ "$VERIFY_ONLY" -eq 1 && "$INSTALL_NEW" -eq 1 ]]; then
+  die "--verify-only and --install-new are mutually exclusive."
+fi
+
 print_step "Starting LND upgrade to v${VERSION}"
 echo "Download URL: ${URL}"
 
-if [[ ! -x /usr/local/bin/lnd ]]; then
+if [[ "$INSTALL_NEW" -eq 1 ]]; then
+  if [[ -e /usr/local/bin/lnd || -L /usr/local/bin/lnd || -e /usr/local/bin/lncli || -L /usr/local/bin/lncli ]]; then
+    die "Refusing new LND installation over existing binaries."
+  fi
+elif [[ ! -x /usr/local/bin/lnd ]]; then
   die "LND binary not found at /usr/local/bin/lnd"
 fi
 
-current_raw=$(/usr/local/bin/lnd --version 2>/dev/null || true)
-current_version=$(parse_version_from_output "$current_raw")
-if [[ -n "$current_version" ]]; then
-  echo "Current LND version: v${current_version}"
-else
-  print_warn "Could not parse current LND version."
+current_version=""
+if [[ "$INSTALL_NEW" -ne 1 ]]; then
+  current_raw=$(/usr/local/bin/lnd --version 2>/dev/null || true)
+  current_version=$(parse_version_from_output "$current_raw")
+  if [[ -n "$current_version" ]]; then
+    echo "Current LND version: v${current_version}"
+  else
+    print_warn "Could not parse current LND version."
+  fi
 fi
 
 if [[ -n "$current_version" && "$current_version" == "$VERSION" && "$VERIFY_ONLY" -ne 1 ]]; then
@@ -158,12 +174,24 @@ fi
 tmp_dir=""
 backup_lnd=""
 backup_lncli=""
+lnd_bin=""
+lncli_bin=""
+lnd_staged=""
+lncli_staged=""
+install_new_lnd_committed=0
+install_new_lncli_committed=0
 rollback_ready=0
 
 cleanup() {
   if [[ -n "$tmp_dir" && -d "$tmp_dir" ]]; then
     rm -rf "$tmp_dir"
   fi
+  case "$lnd_staged" in
+    /usr/local/bin/.lightningos-lnd-new-*) rm -f -- "$lnd_staged" ;;
+  esac
+  case "$lncli_staged" in
+    /usr/local/bin/.lightningos-lncli-new-*) rm -f -- "$lncli_staged" ;;
+  esac
 }
 
 rollback() {
@@ -186,6 +214,16 @@ on_exit() {
   trap - EXIT
   if [[ $code -ne 0 ]]; then
     print_warn "Upgrade failed. Check ${LOG_FILE} for details."
+    if [[ "$INSTALL_NEW" -eq 1 ]]; then
+      if [[ "$install_new_lncli_committed" -eq 1 && -f /usr/local/bin/lncli && ! -L /usr/local/bin/lncli && -n "$lncli_bin" ]] \
+        && cmp -s -- /usr/local/bin/lncli "$lncli_bin"; then
+        rm -f -- /usr/local/bin/lncli
+      fi
+      if [[ "$install_new_lnd_committed" -eq 1 && -f /usr/local/bin/lnd && ! -L /usr/local/bin/lnd && -n "$lnd_bin" ]] \
+        && cmp -s -- /usr/local/bin/lnd "$lnd_bin"; then
+        rm -f -- /usr/local/bin/lnd
+      fi
+    fi
     if [[ $rollback_ready -eq 1 ]]; then
       rollback
     fi
@@ -197,10 +235,10 @@ trap on_exit EXIT
 
 print_step "Downloading LND tarball"
 tmp_dir=$(mktemp -d)
-curl --proto '=https' --tlsv1.2 -fsSL "$URL" -o "$tmp_dir/$ARCHIVE"
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$URL" -o "$tmp_dir/$ARCHIVE"
 
 print_step "Authenticating the official LND release manifest"
-curl --proto '=https' --tlsv1.2 -fsSL "${RELEASE_URL}/${MANIFEST}" -o "$tmp_dir/$MANIFEST"
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "${RELEASE_URL}/${MANIFEST}" -o "$tmp_dir/$MANIFEST"
 mkdir -m 0700 "$tmp_dir/gnupg"
 
 valid_signatures=0
@@ -210,13 +248,13 @@ for signer in "${LND_SIGNERS[@]}"; do
   signature="manifest-${username}-v${VERSION}.sig"
   signature_path="$tmp_dir/$signature"
 
-  if ! curl --proto '=https' --tlsv1.2 -fsSL "${RELEASE_URL}/${signature}" -o "$signature_path"; then
+  if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "${RELEASE_URL}/${signature}" -o "$signature_path"; then
     rm -f "$signature_path"
     continue
   fi
 
   key_path="$tmp_dir/${username}.asc"
-  curl --proto '=https' --tlsv1.2 -fsSL \
+  curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
     "${LND_RELEASE_KEYS_BASE_URL}/v${VERSION}/scripts/keys/${username}.asc" \
     -o "$key_path" \
     || die "Could not retrieve the LND release key for ${username}."
@@ -300,6 +338,42 @@ fi
 
 if [[ "$VERIFY_ONLY" -eq 1 ]]; then
   print_ok "Official LND v${VERSION} release verification complete; no service or binary was changed."
+  exit 0
+fi
+
+if [[ "$INSTALL_NEW" -eq 1 ]]; then
+  print_step "Installing verified LND binaries"
+  lnd_staged="/usr/local/bin/.lightningos-lnd-new-$$"
+  lncli_staged="/usr/local/bin/.lightningos-lncli-new-$$"
+  if [[ -e "$lnd_staged" || -L "$lnd_staged" || -e "$lncli_staged" || -L "$lncli_staged" ]]; then
+    die "Refusing existing LND staging paths."
+  fi
+  install -o root -g root -m 0755 "$lnd_bin" "$lnd_staged" \
+    || die "Failed to stage the verified lnd binary."
+  if ! install -o root -g root -m 0755 "$lncli_bin" "$lncli_staged"; then
+    rm -f -- "$lnd_staged"
+    die "Failed to stage the verified lncli binary."
+  fi
+  if [[ -e /usr/local/bin/lnd || -L /usr/local/bin/lnd || -e /usr/local/bin/lncli || -L /usr/local/bin/lncli ]]; then
+    rm -f -- "$lnd_staged" "$lncli_staged"
+    die "LND binaries appeared during installation."
+  fi
+  if ! mv --no-clobber -- "$lnd_staged" /usr/local/bin/lnd || [[ -e "$lnd_staged" ]]; then
+    rm -f -- "$lnd_staged" "$lncli_staged"
+    die "Failed to commit the verified lnd binary."
+  fi
+  install_new_lnd_committed=1
+  if ! mv --no-clobber -- "$lncli_staged" /usr/local/bin/lncli || [[ -e "$lncli_staged" ]]; then
+    die "Failed to commit the verified lncli binary."
+  fi
+  install_new_lncli_committed=1
+  installed_version=$(parse_version_from_output "$(/usr/local/bin/lnd --version 2>/dev/null || true)")
+  if [[ "$installed_version" != "$VERSION" && "$(base_version "$VERSION")" != "$installed_version" ]]; then
+    die "Installed LND version does not match the authenticated release."
+  fi
+  install_new_lnd_committed=0
+  install_new_lncli_committed=0
+  print_ok "Installed authenticated LND v${installed_version}; service start remains with the installer."
   exit 0
 fi
 

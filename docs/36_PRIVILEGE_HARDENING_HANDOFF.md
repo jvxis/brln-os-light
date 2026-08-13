@@ -535,8 +535,22 @@ Ubuntu 24.04 authenticated the real NodeSource and i2pd metadata in isolated
 APT state, rejected five negative cases, and preserved system repositories,
 packages, binaries, and services. Evidence:
 `docs/baselines/privilege-hardening-phase3-installer-apt-repositories-2026-08-13.json`.
-Do not close #34 yet: installer LND verification, other repository-key
-authentication, and the full Ubuntu 24.04/26.04 matrices remain.
+Do not close #34 yet: other repository-key authentication and the full Ubuntu
+24.04/26.04 matrices remain.
+
+The installer LND release slice of issue #34 is accepted. The duplicate legacy
+helper that accepted a URL and extracted without authentication was deleted;
+all three installers now deploy the exact broker-embedded helper. New installs
+fix LND at 0.21.1-beta and use its closed `--install-new` mode, which rejects
+existing binaries and performs no-clobber commits only after the five-signature
+manifest quorum, archive checksum, safe paths, and binary version pass. A real
+Ubuntu 24.04 container gate obtained six valid upstream signatures and installed
+both expected binaries without touching host LND, Bitcoin, manager, PostgreSQL,
+or their activation state. The container/image/temp artifacts were removed.
+Evidence:
+`docs/baselines/privilege-hardening-phase3-installer-lnd-release-2026-08-13.json`.
+Issue #34 still remains open for other repository-key authentication and the
+full Ubuntu 24.04/26.04 installation and negative matrices.
 
 ## Test-node and network constraints
 

@@ -15,6 +15,9 @@ func TestLNDUpgradeAuthenticatesReleaseBeforeExtraction(t *testing.T) {
 		`actual_hash=$(sha256sum`,
 		`--no-same-owner --no-same-permissions`,
 		`--verify-only`,
+		`--install-new`,
+		`Refusing new LND installation over existing binaries.`,
+		`mv --no-clobber -- "$lnd_staged" /usr/local/bin/lnd`,
 	}
 	for _, value := range required {
 		if !strings.Contains(script, value) {
@@ -31,5 +34,9 @@ func TestLNDUpgradeAuthenticatesReleaseBeforeExtraction(t *testing.T) {
 	extractIndex := strings.Index(script, `tar --no-same-owner --no-same-permissions -xzf`)
 	if signatureIndex < 0 || hashIndex <= signatureIndex || extractIndex <= hashIndex {
 		t.Fatalf("LND helper does not authenticate manifest and checksum before extraction")
+	}
+	installIndex := strings.Index(script, `print_step "Installing verified LND binaries"`)
+	if installIndex <= extractIndex {
+		t.Fatalf("new LND installation can occur before authenticated extraction")
 	}
 }

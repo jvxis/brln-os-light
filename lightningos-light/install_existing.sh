@@ -571,7 +571,7 @@ install_lnd_fix_perms_script() {
 }
 
 install_lnd_upgrade_script() {
-  local src="$REPO_ROOT/scripts/upgrade-lnd.sh"
+  local src="$REPO_ROOT/internal/server/assets/upgrade-lnd.sh"
   if [[ -f "$src" ]]; then
     mkdir -p "$(dirname "$LND_UPGRADE_SCRIPT")"
     install -m 0755 "$src" "$LND_UPGRADE_SCRIPT"

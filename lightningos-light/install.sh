@@ -17,9 +17,7 @@ if [[ ! -r "$ARTIFACT_VERIFY_SCRIPT" ]]; then
 fi
 source "$ARTIFACT_VERIFY_SCRIPT"
 
-LND_VERSION="${LND_VERSION:-0.21.1-beta}"
-LND_URL_DEFAULT="https://github.com/lightningnetwork/lnd/releases/download/v${LND_VERSION}/lnd-linux-amd64-v${LND_VERSION}.tar.gz"
-LND_URL="${LND_URL:-$LND_URL_DEFAULT}"
+LND_VERSION="0.21.1-beta"
 
 GOTTY_VERSION="1.8.0"
 GOTTY_ARTIFACT="gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"
@@ -1038,7 +1036,7 @@ install_helper_scripts() {
     print_warn "Missing helper script: $firewall_src"
   fi
 
-  local upgrade_src="$REPO_ROOT/scripts/upgrade-lnd.sh"
+  local upgrade_src="$REPO_ROOT/internal/server/assets/upgrade-lnd.sh"
   if [[ -f "$upgrade_src" ]]; then
     mkdir -p "$(dirname "$LND_UPGRADE_SCRIPT")"
     install -m 0755 "$upgrade_src" "$LND_UPGRADE_SCRIPT"
@@ -1348,6 +1346,7 @@ update_notifications_admin_dsn() {
 
 install_lnd() {
   print_step "Installing LND ${LND_VERSION}"
+  local install_mode="new"
   if [[ -x /usr/local/bin/lnd && -x /usr/local/bin/lncli ]]; then
     local current
     current=$(extract_lnd_version "$(/usr/local/bin/lnd --version 2>/dev/null || true)")
@@ -1383,32 +1382,27 @@ install_lnd() {
             print_warn "Target LND version v${LND_VERSION} is a release candidate (RC). Proceeding without extra confirmation."
           fi
         fi
+        install_mode="upgrade"
       else
         print_ok "LND already installed (v${current})"
         return
       fi
     else
-      print_warn "LND version mismatch (installed v${current:-unknown}, target v${LND_VERSION}); upgrading"
+      echo "Unable to authenticate the installed LND version; refusing replacement" >&2
+      return 1
     fi
   fi
 
-  local tmp
-  tmp=$(mktemp -d)
-  curl -L "$LND_URL" -o "$tmp/lnd.tar.gz"
-  tar -xzf "$tmp/lnd.tar.gz" -C "$tmp"
-  local lnd_bin lncli_bin
-  lnd_bin=$(find "$tmp" -type f -name "lnd" | head -n1)
-  lncli_bin=$(find "$tmp" -type f -name "lncli" | head -n1)
-  if [[ -z "$lnd_bin" || -z "$lncli_bin" ]]; then
-    echo "LND tarball structure unexpected" >&2
-    echo "Contents:" >&2
-    find "$tmp" -maxdepth 3 -type f >&2
-    exit 1
+  if [[ ! -f "$LND_UPGRADE_SCRIPT" || -L "$LND_UPGRADE_SCRIPT" || ! -x "$LND_UPGRADE_SCRIPT" ]]; then
+    echo "Authenticated LND installer helper is unavailable" >&2
+    return 1
   fi
-  install -m 0755 "$lnd_bin" /usr/local/bin/lnd
-  install -m 0755 "$lncli_bin" /usr/local/bin/lncli
-  rm -rf "$tmp"
-  print_ok "LND installed"
+  if [[ "$install_mode" == "upgrade" ]]; then
+    "$LND_UPGRADE_SCRIPT" --version "$LND_VERSION"
+  else
+    "$LND_UPGRADE_SCRIPT" --version "$LND_VERSION" --install-new
+  fi
+  print_ok "Authenticated LND release installed"
 }
 
 build_ui() {

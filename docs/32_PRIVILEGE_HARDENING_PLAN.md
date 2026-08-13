@@ -1360,8 +1360,29 @@ wrong fingerprints, HTTP, a symlink destination, and trailing junk all failed
 closed. The VM's newer existing Node.js, installed packages, binary hashes,
 service state, and system repository files remained unchanged. Evidence is in
 `docs/baselines/privilege-hardening-phase3-installer-apt-repositories-2026-08-13.json`.
-LND installer verification, authentication of the remaining installer
-repository keys, and the complete cross-version install matrices remain open.
+Authentication of the remaining installer repository keys and the complete
+cross-version install matrices remain open.
+
+Issue #34's LND installer release gate is now accepted. The obsolete
+`scripts/upgrade-lnd.sh`, which accepted a caller URL and extracted an
+unauthenticated archive, was removed. Fresh, existing-amd64, and existing-arm64
+installers all install the single broker-embedded helper from
+`internal/server/assets/upgrade-lnd.sh`. The fresh installer fixes LND at
+`0.21.1-beta`, exposes no version or URL override, and selects the helper's
+closed `--install-new` mode. Existing binaries cannot be overwritten by that
+mode; an unparseable existing version fails closed and a newer version is not
+downgraded.
+
+The canonical helper requires at least five valid signatures from pinned LND
+primary fingerprints, takes the archive checksum only from that authenticated
+manifest, rejects unsafe archive paths, and validates the binary version before
+staging. New binaries use root-owned same-filesystem staging and no-clobber
+commits, with failure cleanup limited to files whose bytes match this run. A
+real Ubuntu 24.04 container gate authenticated six signatures for official LND
+0.21.1-beta, installed both binaries, and left no staging files. The VM host's
+LND/Bitcoin/manager/PostgreSQL state and binary hashes were unchanged; the
+container and temporary image were removed. Evidence is in
+`docs/baselines/privilege-hardening-phase3-installer-lnd-release-2026-08-13.json`.
 
 1. Replace arbitrary package arguments with fixed dependency sets.
 2. Replace direct UFW access with the manager-access policy operation.
@@ -1371,7 +1392,7 @@ repository keys, and the complete cross-version install matrices remain open.
    matrices plus LightningOS publisher attestation remain open.
 5. Verify LND archives against an authenticated official signed manifest and
    explicitly trusted release-signing keys before extraction. Complete for the
-   brokered upgrade; installer variants remain open.
+   brokered upgrade and every installer path.
 6. Verify Go toolchain archives against the expected official checksum and pin
    each supported GoTTY version, architecture, artifact name, and checksum.
 7. Replace direct NodeSource and i2pd `curl | bash` execution with explicit APT

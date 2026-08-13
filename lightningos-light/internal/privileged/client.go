@@ -597,6 +597,25 @@ func (client *Client) EnsureLoopPermissions(ctx context.Context, dryRun bool) er
 	return err
 }
 
+func (client *Client) EnsureAppStorage(ctx context.Context, dryRun bool) (string, bool, error) {
+	response, err := client.call(ctx, OperationAppStorageEnsure, struct{}{}, dryRun)
+	if err != nil {
+		return "", false, err
+	}
+	var state AppStorageState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", false, errors.New("invalid broker app storage response")
+	}
+	wantStatus := "ready"
+	if dryRun {
+		wantStatus = "validated"
+	}
+	if state.Status != wantStatus {
+		return "", false, errors.New("invalid broker app storage state")
+	}
+	return state.Status, state.Changed, nil
+}
+
 func (client *Client) EnsureLoopClientMaterial(ctx context.Context, dryRun bool) error {
 	_, err := client.call(ctx, OperationLoopClientMaterialEnsure, struct{}{}, dryRun)
 	return err

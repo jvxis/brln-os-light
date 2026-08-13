@@ -57,6 +57,7 @@ func main() {
 		LightningOSUpgrade: privileged.NewNativeLightningOSUpgradeManager(runner),
 		Apps:               privileged.NewComposeAppManager(runner),
 		Packages:           privileged.NewCatalogPackageManager(runner),
+		AppStorage:         privileged.NewNativeAppStorageManager(),
 		BitcoinStorage:     privileged.NewBitcoinCoreStorageManager(),
 		BitcoinConfig:      privileged.NewBitcoinCoreConfigManager(),
 		Loop:               privileged.NewNativeLoopManager(runner),

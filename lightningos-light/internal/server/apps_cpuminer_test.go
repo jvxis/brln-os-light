@@ -91,6 +91,12 @@ func (client *cpuMinerPrivilegedClient) EnsureBitcoinCoreStorage(_ context.Conte
 	}
 	return "ready", nil
 }
+func (client *cpuMinerPrivilegedClient) EnsureAppStorage(_ context.Context, dryRun bool) (string, bool, error) {
+	if dryRun {
+		return "validated", false, nil
+	}
+	return "ready", false, nil
+}
 func (client *cpuMinerPrivilegedClient) RestartService(context.Context, string, bool, bool) error {
 	return nil
 }

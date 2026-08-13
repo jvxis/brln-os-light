@@ -84,6 +84,10 @@ type lightningOSUpgradePrivilegedClient interface {
 	StartLightningOSUpgrade(ctx context.Context, version, tag, commit, helperContent string, verifyOnly bool, dryRun bool) (status string, unit string, err error)
 }
 
+type appStoragePrivilegedClient interface {
+	EnsureAppStorage(ctx context.Context, dryRun bool) (status string, changed bool, err error)
+}
+
 type loopPrivilegedClient interface {
 	LoopStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, hasPersistentState bool, err error)
 	EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (status string, err error)
@@ -1249,6 +1253,34 @@ func EnsureAppLNDHostAccessWithBroker(ctx context.Context, appID string) (bool, 
 		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		_ = hostClient.EnsureAppLNDHostAccess(shadowCtx, appID, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func EnsureAppStorageWithBroker(ctx context.Context) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	storageClient, ok := client.(appStoragePrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker does not support app storage preparation")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		_, _, err := storageClient.EnsureAppStorage(ctx, false)
+		return true, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _, _ = storageClient.EnsureAppStorage(shadowCtx, true)
 		return false, nil
 	default:
 		return false, nil

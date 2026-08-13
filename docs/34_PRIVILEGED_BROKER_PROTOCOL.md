@@ -832,6 +832,27 @@ passed; no preserved integration node was used as the positive gate. Evidence
 is in
 `docs/baselines/privilege-hardening-phase2-electrs-functional-2026-08-11.json`.
 
+## Shared App Store storage reconciliation
+
+`storage.apps.ensure` is a serialized mutation with an empty parameter object.
+The broker resolves the fixed `lightningos` account and owns the only three
+eligible paths: `/var/lib/lightningos`, `/var/lib/lightningos/apps`, and
+`/var/lib/lightningos/apps-data`, all at mode `0750`. The caller cannot supply
+a path, uid, gid, mode, command, or executable.
+
+On Linux the broker opens `/var/lib` and each descendant directory relative to
+an already-open directory descriptor with `O_NOFOLLOW`. Missing directories
+may be created only by their fixed single-component names; existing symlinks
+or non-directories fail closed. Ownership, mode, and durability are applied by
+descriptor. Dry-run reports whether reconciliation would change state without
+creating or modifying anything.
+
+The Ubuntu 24.04 service-user gate rejected an injected path and a symlinked
+state root, exercised real owner/mode reconciliation only in a temporary tree,
+and left the actual App Store tree and Manager/LND/Bitcoin service states
+unchanged. Evidence is in
+`docs/baselines/privilege-hardening-phase3-app-storage-2026-08-13.json`.
+
 ## Manager modes and rollback
 
 The `privileged` configuration block supports:

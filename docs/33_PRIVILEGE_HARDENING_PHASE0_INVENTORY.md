@@ -89,12 +89,14 @@ Legend for the call-site table:
 | Peerswap Elements source — `internal/server/apps_peerswap_elements_source.go` | 0 | 2 | 0/0/0 | 0 | `service.action(peerswap|psweb)` | Exact two-unit allowlist and source-change regression |
 | Public Pool app — `internal/server/apps_publicpool.go` | 5 | 0 | 0/0/0 | 0 | `firewall.apply_app_policy(publicpool)`, `apps.network.inspect` | Fixed UI/Stratum ports and bridge; reject interface/port injection |
 | RoboSats app — `internal/server/apps_robosats.go` | 4 | 0 | 0/0/0 | 0 | Manifest image/lifecycle operations and `firewall.apply_app_policy` | Known image/source and fixed port; lifecycle/rollback tests |
-| App storage permissions — `internal/server/apps_storage_permissions.go` | 0 | 1 | 0/0/0 | 0 | `storage.repair_app` | Approved app roots and UID/GID pairs only; traversal, symlink and root-path tests |
+| App storage permissions — `internal/server/apps_storage_permissions.go` | 0 | 0 | 0/0/0 | 0 | `storage.apps.ensure` | Migrated on 2026-08-13: empty request, fixed identity/tree/mode, descriptor-relative `O_NOFOLLOW`, serialized dry-run/repair, and Ubuntu 24.04 symlink/preservation gate |
 | Taproot Assets app — `internal/server/apps_tapd.go` | 1 | 0 | 0/0/0 | 0 | `apps.exec_migration(tapd)` | Fixed container/command; reject arbitrary exec arguments and preserve asset state |
 | Elements mainchain switch — `internal/server/elements_mainchain.go` | 0 | 1 | 0/0/0 | 0 | `service.action(elements)` | Exact unit/action and mainchain-switch regression |
 | Elements status — `internal/server/elements_status.go` | 0 | 1 | 0/0/0 | 0 | `apps.status(elements)` | Fixed CLI and config path; no arbitrary executable or arguments |
 
-The row totals are exactly `S=92`, `D=70`, `W=2`, `R=4`, and `P=1`.
+The original Phase 0 row totals before accepted migrations were `S=92`,
+`D=70`, `W=2`, `R=4`, and `P=1`; migrated rows above are reduced to their
+current permanent ceilings as each direct path reaches zero.
 The shell column totals 36 because the Loop credential-sync argument builder is
 also a privileged shell vector even though its `runSystemd` call receives a
 prebuilt argument slice.

@@ -95,6 +95,11 @@ type fakePrivilegedServiceClient struct {
 	lightningOSUpgradeDryRun bool
 	lightningOSUpgradeUnit   string
 	lightningOSUpgradeErr    error
+	appStorageCalls          int
+	appStorageDryRun         bool
+	appStorageStatus         string
+	appStorageChanged        bool
+	appStorageErr            error
 	storageCalls             int
 	storageDataDir           string
 	storageDryRun            bool
@@ -432,6 +437,19 @@ func (client *fakePrivilegedServiceClient) StartLightningOSUpgrade(_ context.Con
 		status = "validated"
 	}
 	return status, unit, client.lightningOSUpgradeErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureAppStorage(_ context.Context, dryRun bool) (string, bool, error) {
+	client.appStorageCalls++
+	client.appStorageDryRun = dryRun
+	status := client.appStorageStatus
+	if status == "" {
+		status = "ready"
+		if dryRun {
+			status = "validated"
+		}
+	}
+	return status, client.appStorageChanged, client.appStorageErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -1146,6 +1164,30 @@ func TestLightningOSUpgradeBrokerHelperEnforcesAndShadowsTypedOperation(t *testi
 			}
 			if test.wantCalls == 1 && (!client.lightningOSUpgradeVerify || !reflect.DeepEqual(client.lightningOSUpgradeParams, []string{"0.5.3-beta", "0.5.3-Beta", strings.Repeat("a", 40), "trusted helper"})) {
 				t.Fatalf("typed LightningOS upgrade fields were not preserved: %#v", client)
+			}
+		})
+	}
+}
+
+func TestAppStorageBrokerHelperRequiresEnforceForMutation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantHandled bool
+		wantDryRun  bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantDryRun: true, wantCalls: 1},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := EnsureAppStorageWithBroker(context.Background())
+			if err != nil || handled != test.wantHandled || client.appStorageCalls != test.wantCalls || client.appStorageDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
 			}
 		})
 	}

@@ -1211,6 +1211,18 @@ Git object integrity and tag-to-commit consistency, not an independent
 publisher-authenticity proof. A signed release manifest or equivalent trusted
 attestation, plus the real upgrade/rollback matrix, remains required.
 
+The App Store shared-root repair is now the closed, serialized
+`storage.apps.ensure` operation. It accepts no fields; the broker resolves the
+fixed `lightningos` identity and reconciles only `/var/lib/lightningos`,
+`apps`, and `apps-data` at mode `0750`. Linux traversal is descriptor-relative
+with `O_NOFOLLOW`, so caller paths, uid/gid values, symlinks, commands, and
+executables cannot reach the root operation. The manager's former privileged
+`systemd-run install -d` path and permanent call budget are zero. The Ubuntu
+24.04 service-user gate passed dry-run, injected-path and symlink rejection,
+and temporary-tree owner/mode mutation without changing the real App Store
+tree or Manager/LND/Bitcoin states. Evidence is in
+`docs/baselines/privilege-hardening-phase3-app-storage-2026-08-13.json`.
+
 Policy application/reconciliation, installer artifact verification, the real
 Tor and LightningOS upgrade/rollback matrices, release publisher attestation,
 and the remaining package/storage paths are still open.

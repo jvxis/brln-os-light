@@ -39,6 +39,7 @@ const (
 	OperationDockerStatus                 Operation = "docker.runtime.status"
 	OperationPackageEnsure                Operation = "packages.feature.ensure"
 	OperationPackageStatus                Operation = "packages.feature.status"
+	OperationAppStorageEnsure             Operation = "storage.apps.ensure"
 	OperationAppImagePrepare              Operation = "app.image.prepare"
 	OperationAppImageStatus               Operation = "app.image.status"
 	OperationAppImageProbe                Operation = "app.image.probe"
@@ -127,6 +128,11 @@ type ManagerFirewallState struct {
 	BroadRulePresent   bool   `json:"broad_rule_present"`
 	ManagerAccessBound bool   `json:"manager_access_bound"`
 	StatusAvailable    bool   `json:"status_available"`
+}
+
+type AppStorageState struct {
+	Status  string `json:"status"`
+	Changed bool   `json:"changed,omitempty"`
 }
 
 type LNDUpgradeStartParams struct {
@@ -691,6 +697,11 @@ func ValidateRequest(request Request) error {
 		}
 		if params.Feature != PackageFeatureDockerRuntime {
 			return errors.New("package feature is not allowed")
+		}
+	case OperationAppStorageEnsure:
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid storage.apps.ensure params: %w", err)
 		}
 	case OperationAppImagePrepare:
 		var params AppImageParams

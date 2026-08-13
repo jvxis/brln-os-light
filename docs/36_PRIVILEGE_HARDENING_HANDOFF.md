@@ -158,6 +158,15 @@ historical release/tag/commit are unsigned. Add a signed release manifest or
 equivalent trusted publisher attestation before closing issue #34's
 self-upgrade supply-chain requirement.
 
+Shared App Store storage repair is now the empty, serialized
+`storage.apps.ensure` operation. The broker fixes the `lightningos` identity,
+the three shared paths and mode `0750`, and walks by directory descriptor with
+`O_NOFOLLOW`; the manager's direct `systemd-run install -d` budget is zero.
+The Ubuntu 24.04 service-user gate rejected an injected path and symlink,
+changed only a temporary test tree, and preserved the real storage metadata
+and Manager/LND/Bitcoin states. Evidence:
+`docs/baselines/privilege-hardening-phase3-app-storage-2026-08-13.json`.
+
 Firewall policy reconciliation, real Tor/LightningOS upgrade and rollback
 matrices, LightningOS publisher attestation, remaining helper/storage
 operations, wildcard sudoers removal, installer authenticity, and the rest of

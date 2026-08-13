@@ -146,6 +146,23 @@ Autofee, Elements, Peerswap, PSWeb, terminal, and the fixed upgrade units.
 Shell syntax, paths, arbitrary unit suffixes, options, and unknown units are
 rejected before execution.
 
+### `host.power`
+
+Accepts exactly one `action`: `reboot` or `poweroff`. Paths, executables,
+arguments, force flags, shell syntax, and alternate action names are rejected.
+The broker schedules one fixed transient command:
+
+```text
+/usr/bin/systemd-run --quiet --collect \
+  --unit=lightningos-host-<action>-<request_id> --on-active=2s \
+  /usr/bin/systemctl <action>
+```
+
+The validated action enum and request ID are the only derived fragments. The
+delay allows the broker to persist its completion audit and the manager to
+return the HTTP response before systemd performs the action. `dry_run: true`
+validates and audits without taking the mutation lock or executing a command.
+
 ### `packages.tor.refresh`
 
 Accepts only `{}`. In a real request, the broker serializes and runs exactly:
@@ -893,10 +910,14 @@ Evidence is in
 
 The `privileged` configuration block supports:
 
-- `disabled`: default; only the reviewed legacy path executes;
-- `shadow`: the broker validates and audits a dry-run request, then the legacy
-  path executes regardless of the shadow result;
+- `disabled`: only reviewed, still-unmigrated compatibility paths may execute;
+- `shadow`: still-unmigrated paths may validate through the broker before their
+  compatibility path executes;
 - `enforce`: the broker executes and the legacy fallback is disabled.
+
+The installed default is `enforce`. Migrated service restarts and host power
+actions fail closed in `disabled` and `shadow`; neither operation has a direct
+`systemctl`, `sudo`, or `systemd-run` fallback in the manager.
 
 Environment overrides are `LIGHTNINGOS_PRIVILEGED_MODE` and
 `LIGHTNINGOS_PRIVILEGED_TIMEOUT_SECONDS`.

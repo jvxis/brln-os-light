@@ -40,19 +40,19 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/server/apps_publicpool.go":          {},
 	"internal/server/apps_robosats.go":            {},
 	"internal/server/apps_storage_permissions.go": {},
-	"internal/server/auth_enable.go":              {runSystemd: 1, writeSudo: 2, restart: 1, shell: 1},
+	"internal/server/auth_enable.go":              {runSystemd: 1, writeSudo: 2, shell: 1},
 	"internal/server/bitcoin_local.go":            {},
 	"internal/server/elements_mainchain.go":       {},
 	"internal/server/elements_status.go":          {},
 	"internal/server/firewall_status.go":          {},
-	"internal/server/handlers.go":                 {restart: 3, power: 1},
+	"internal/server/handlers.go":                 {},
 	"internal/server/lnd_upgrade.go":              {},
 	"internal/server/system_integrations.go":      {runSystemd: 1},
 	"internal/server/systemd_run.go":              {runSudo: 1},
 	"internal/server/terminal_status.go":          {runSystemd: 2},
 	"internal/server/tor_upgrade.go":              {},
 	"internal/system/smart.go":                    {},
-	"internal/system/system.go":                   {runSudo: 1},
+	"internal/system/system.go":                   {},
 }
 
 var legacyWildcardSudoLines = map[string]struct{}{

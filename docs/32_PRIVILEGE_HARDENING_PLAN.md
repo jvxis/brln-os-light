@@ -1249,6 +1249,19 @@ is in
 The unused direct helper sudoers grant remains scheduled for the coordinated
 Phase 4 cutover.
 
+General service restarts and host reboot/poweroff now fail closed through the
+typed broker boundary. The former direct `systemctl`, `sudo`, and transient
+`systemd-run` compatibility chain was removed from `internal/system`; the
+general handler restart/power budgets and system-boundary sudo budget are zero.
+`service.restart` retains its fixed unit allowlist, while the new `host.power`
+accepts only `reboot|poweroff` and schedules a fixed two-second transient action
+so the completion audit and HTTP response precede the host state change.
+Disabled/shadow calls perform no mutation. The disposable Ubuntu 24.04 gate and
+secret-free evidence are recorded in
+`docs/baselines/privilege-hardening-phase3-service-power-2026-08-13.json`.
+Legacy installer sudoers entries are intentionally left for the coordinated
+Phase 4 cutover.
+
 Policy application/reconciliation, installer artifact verification, the real
 Tor and LightningOS upgrade/rollback matrices, release publisher attestation,
 and the remaining package/storage paths are still open.

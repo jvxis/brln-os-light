@@ -82,7 +82,7 @@ func (s *Server) scheduleManagerRestart(delay time.Duration) {
 	time.AfterFunc(delay, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		if err := system.SystemctlRestart(ctx, "lightningos-manager"); err != nil && s.logger != nil {
+		if err := system.RestartServiceWithBroker(ctx, "lightningos-manager", true); err != nil && s.logger != nil {
 			s.logger.Printf("auth enable restart failed: %v", err)
 		}
 	})

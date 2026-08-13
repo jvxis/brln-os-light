@@ -1,0 +1,99 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-service-power.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "base_commit": "36372b871c34bcfcdaa7524831dcb3cc4a804b10",
+  "scope": "enforce-only service restart and host power broker cutover",
+  "operations": {
+    "service_restart": {
+      "name": "service.restart",
+      "caller_fields": ["unit", "no_block"],
+      "fixed_unit_allowlist": true,
+      "manager_restart_delayed": true,
+      "dry_run_supported": true
+    },
+    "host_power": {
+      "name": "host.power",
+      "caller_fields": ["action"],
+      "allowed_actions": ["reboot", "poweroff"],
+      "fixed_executable": "/usr/bin/systemctl",
+      "fixed_transport": "/usr/bin/systemd-run",
+      "scheduled_delay_seconds": 2,
+      "dry_run_supported": true
+    },
+    "manager_fallbacks": {
+      "direct_systemctl_restart": false,
+      "direct_systemctl_power": false,
+      "direct_sudo": false,
+      "direct_systemd_run": false,
+      "disabled_mode_mutation": false,
+      "shadow_mode_mutation": false
+    }
+  },
+  "tests": {
+    "unknown_power_action_rejected": "passed",
+    "caller_executable_rejected": "passed",
+    "caller_arguments_rejected": "passed",
+    "fixed_delayed_power_command": "passed",
+    "dry_run_executes_no_command": "passed",
+    "dry_run_takes_no_mutation_lock": "passed",
+    "strict_client_response_decode": "passed",
+    "service_enforce_routing": "passed",
+    "service_shadow_and_disabled_fail_closed": "passed",
+    "power_enforce_routing": "passed",
+    "power_shadow_and_disabled_fail_closed": "passed",
+    "focused_go_test": "passed",
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "permanent_privilege_boundary_tests": "passed"
+  },
+  "ubuntu24_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "amd64",
+    "network_access": "temporary loopback-only NAT forwarding",
+    "network_scan_performed": false,
+    "caller": "lightningos service user through the exact broker sudo entry",
+    "service_restart_dry_run": "passed",
+    "host_reboot_dry_run": "passed",
+    "host_poweroff_dry_run": "passed",
+    "injected_command_field_rejected": true,
+    "mutation_lock_changed_by_dry_run": false,
+    "manager_state_changed_by_dry_run": false,
+    "lnd_state_changed_by_dry_run": false,
+    "baseline_manager_state": "active/running",
+    "baseline_lnd_state": "activating/auto-restart",
+    "final_manager_state": "active/running",
+    "final_lnd_state": "activating/auto-restart",
+    "real_poweroff_response_scheduled": true,
+    "real_poweroff_audit_start_count": 1,
+    "real_poweroff_audit_complete_success_count": 1,
+    "real_poweroff_observed": true,
+    "bitcoin_touched": false,
+    "integration_node_mutated": false
+  },
+  "cleanup": {
+    "original_broker_restored_by_hash": true,
+    "original_broker_sha256": "306eba4f2f61a903470d9f878d1f4825cf4db15711bc18aeb9148dc4b722bd41",
+    "original_audit_restored": true,
+    "original_lock_state_restored": true,
+    "remote_temporary_artifacts_removed": true,
+    "local_temporary_artifacts_moved_to_recycle_bin": true,
+    "vm_powered_off_cleanly": true,
+    "loopback_nat_forward_removed": true,
+    "original_bridged_adapter_restored": true,
+    "host_network_adapter_restarted": false
+  },
+  "remaining": [
+    "remove the now-unused service restart and host power sudoers entries during the coordinated Phase 4 cutover",
+    "migrate the remaining generic sudo and systemd-run compatibility paths before removing their installer grants"
+  ],
+  "excluded": [
+    "ip addresses",
+    "credentials",
+    "tokens",
+    "private node identifiers",
+    "audit event caller identity"
+  ]
+}

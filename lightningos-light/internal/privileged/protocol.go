@@ -23,6 +23,7 @@ const (
 	OperationSelfTest                     Operation = "self_test"
 	OperationServiceStatus                Operation = "service.status"
 	OperationServiceRestart               Operation = "service.restart"
+	OperationHostPower                    Operation = "host.power"
 	OperationFilesEnableLogin             Operation = "files.enable_login"
 	OperationManagerFirewallStatus        Operation = "manager.firewall.status"
 	OperationLNDUpgradeStart              Operation = "upgrade.lnd.start"
@@ -118,6 +119,15 @@ type ServiceStatusParams struct {
 type ServiceRestartParams struct {
 	Unit    string `json:"unit"`
 	NoBlock bool   `json:"no_block,omitempty"`
+}
+
+type HostPowerParams struct {
+	Action string `json:"action"`
+}
+
+type HostPowerState struct {
+	Validated bool `json:"validated"`
+	Scheduled bool `json:"scheduled"`
 }
 
 type ManagerFirewallState struct {
@@ -565,6 +575,14 @@ func ValidateRequest(request Request) error {
 		}
 		if params.Unit == "lightningos-manager" && !params.NoBlock {
 			return errors.New("manager restart must be non-blocking")
+		}
+	case OperationHostPower:
+		var params HostPowerParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid host.power params: %w", err)
+		}
+		if params.Action != "reboot" && params.Action != "poweroff" {
+			return errors.New("host power action is not allowed")
 		}
 	case OperationFilesEnableLogin:
 		var params struct{}

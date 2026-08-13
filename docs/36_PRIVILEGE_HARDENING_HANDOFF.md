@@ -188,6 +188,18 @@ Evidence:
 Remove the now-unused direct helper grant only in the coordinated sudoers
 cutover.
 
+Service restarts and host power are now enforce-only broker operations. The
+manager no longer falls back to direct `systemctl`, `sudo`, or transient
+`systemd-run`; `handlers.go` has zero restart/power compatibility calls and
+`internal/system/system.go` has zero sudo calls. `host.power` accepts only
+`reboot|poweroff`, schedules a fixed delayed command, and validates strict
+typed completion state. Disabled/shadow requests fail closed. Ubuntu 24.04
+validated dry-run rejection/preservation and a real disposable-VM poweroff,
+then restored the original broker and VM network state. Evidence:
+`docs/baselines/privilege-hardening-phase3-service-power-2026-08-13.json`.
+The now-unused service/power sudoers entries remain until the coordinated
+cutover.
+
 Firewall policy reconciliation, real Tor/LightningOS upgrade and rollback
 matrices, LightningOS publisher attestation, remaining helper/storage
 operations, wildcard sudoers removal, installer authenticity, and the rest of

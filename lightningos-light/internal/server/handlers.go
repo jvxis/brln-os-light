@@ -1231,16 +1231,16 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	if service == "lnd" {
-		err = system.SystemctlRestartNoBlock(ctx, service)
+		err = system.RestartServiceWithBroker(ctx, service, true)
 	} else {
-		err = system.SystemctlRestart(ctx, service)
+		err = system.RestartServiceWithBroker(ctx, service, service == "lightningos-manager")
 	}
 	if err != nil {
 		if service == "lnd" && s.logger != nil {
 			s.logger.Printf("lnd restart command failed: %v", err)
 		}
 		if service == "lnd" {
-			writeError(w, http.StatusInternalServerError, "lnd restart command failed; check manager sudoers for systemctl restart --no-block lnd")
+			writeError(w, http.StatusInternalServerError, "lnd restart failed through the privileged broker")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "restart failed")
@@ -1280,7 +1280,7 @@ func (s *Server) handleSystemAction(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
 
-	if err := system.SystemctlPower(ctx, action); err != nil {
+	if err := system.PowerHostWithBroker(ctx, action); err != nil {
 		writeError(w, http.StatusInternalServerError, "system action failed")
 		return
 	}
@@ -3730,7 +3730,7 @@ func restartLNDService(ctx context.Context) error {
 	if !system.SystemctlIsActive(ctx, service) && system.SystemctlIsActive(ctx, "lnd@default") {
 		service = "lnd@default"
 	}
-	return system.SystemctlRestartNoBlock(ctx, service)
+	return system.RestartServiceWithBroker(ctx, service, true)
 }
 
 type lndOptionUpdate struct {

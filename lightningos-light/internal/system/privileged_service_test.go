@@ -15,6 +15,10 @@ type fakePrivilegedServiceClient struct {
 	noBlock                  bool
 	dryRun                   bool
 	err                      error
+	powerCalls               int
+	powerAction              string
+	powerDryRun              bool
+	powerErr                 error
 	fileCalls                int
 	fileDryRun               bool
 	fileErr                  error
@@ -555,26 +559,33 @@ func (client *fakePrivilegedServiceClient) RestartService(_ context.Context, uni
 	return client.err
 }
 
+func (client *fakePrivilegedServiceClient) PowerHost(_ context.Context, action string, dryRun bool) error {
+	client.powerCalls++
+	client.powerAction = action
+	client.powerDryRun = dryRun
+	return client.powerErr
+}
+
 func TestRestartServiceWithBrokerEnforce(t *testing.T) {
 	client := &fakePrivilegedServiceClient{mode: "enforce", err: errors.New("rejected")}
 	ConfigurePrivilegedClient(client)
 	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
 
-	handled, err := restartServiceWithBroker(context.Background(), "lnd", true)
-	if !handled || err == nil {
-		t.Fatalf("handled/error = %v/%v, want true/non-nil", handled, err)
+	err := RestartServiceWithBroker(context.Background(), "lnd", true)
+	if err == nil {
+		t.Fatal("expected broker rejection")
 	}
 	if client.calls != 1 || client.unit != "lnd" || !client.noBlock || client.dryRun {
 		t.Fatalf("unexpected broker call: %#v", client)
 	}
 }
 
-func TestSystemctlRestartManagerUsesBrokerNoBlock(t *testing.T) {
+func TestRestartServiceWithBrokerManagerUsesNoBlock(t *testing.T) {
 	client := &fakePrivilegedServiceClient{mode: "enforce"}
 	ConfigurePrivilegedClient(client)
 	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
 
-	if err := SystemctlRestart(context.Background(), "lightningos-manager"); err != nil {
+	if err := RestartServiceWithBroker(context.Background(), "lightningos-manager", true); err != nil {
 		t.Fatalf("restart manager: %v", err)
 	}
 	if client.calls != 1 || client.unit != "lightningos-manager" || !client.noBlock || client.dryRun {
@@ -582,28 +593,59 @@ func TestSystemctlRestartManagerUsesBrokerNoBlock(t *testing.T) {
 	}
 }
 
-func TestRestartServiceWithBrokerShadowFallsBack(t *testing.T) {
+func TestRestartServiceWithBrokerShadowValidatesAndFailsClosed(t *testing.T) {
 	client := &fakePrivilegedServiceClient{mode: "shadow", err: errors.New("rejected")}
 	ConfigurePrivilegedClient(client)
 	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
 
-	handled, err := restartServiceWithBroker(context.Background(), "lnd", false)
-	if handled || err != nil {
-		t.Fatalf("handled/error = %v/%v, want false/nil", handled, err)
+	err := RestartServiceWithBroker(context.Background(), "lnd", false)
+	if err == nil || !strings.Contains(err.Error(), "enforce mode") {
+		t.Fatalf("error = %v, want enforce-mode failure", err)
 	}
 	if client.calls != 1 || !client.dryRun {
 		t.Fatalf("shadow mode did not issue exactly one dry-run: %#v", client)
 	}
 }
 
-func TestRestartServiceWithBrokerDisabledUsesLegacyPath(t *testing.T) {
+func TestRestartServiceWithBrokerDisabledFailsClosed(t *testing.T) {
 	client := &fakePrivilegedServiceClient{mode: "disabled"}
 	ConfigurePrivilegedClient(client)
 	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
 
-	handled, err := restartServiceWithBroker(context.Background(), "lnd", false)
-	if handled || err != nil || client.calls != 0 {
-		t.Fatalf("disabled mode result = %v/%v, calls=%d", handled, err, client.calls)
+	err := RestartServiceWithBroker(context.Background(), "lnd", false)
+	if err == nil || client.calls != 0 {
+		t.Fatalf("disabled mode error/calls = %v/%d", err, client.calls)
+	}
+}
+
+func TestPowerHostWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name       string
+		mode       string
+		wantErr    bool
+		wantCalls  int
+		wantDryRun bool
+	}{
+		{name: "enforce", mode: "enforce", wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantErr: true, wantCalls: 1, wantDryRun: true},
+		{name: "disabled", mode: "disabled", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			err := PowerHostWithBroker(context.Background(), "poweroff")
+			if (err != nil) != test.wantErr {
+				t.Fatalf("error = %v", err)
+			}
+			if client.powerCalls != test.wantCalls || client.powerDryRun != test.wantDryRun {
+				t.Fatalf("unexpected power call: %#v", client)
+			}
+			if client.powerCalls > 0 && client.powerAction != "poweroff" {
+				t.Fatalf("power action = %q", client.powerAction)
+			}
+		})
 	}
 }
 

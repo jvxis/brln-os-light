@@ -36,6 +36,10 @@ type PrivilegedClient interface {
 	EnsureBitcoinCoreStorage(ctx context.Context, dataDir string, dryRun bool) (status string, err error)
 }
 
+type hostPowerPrivilegedClient interface {
+	PowerHost(ctx context.Context, action string, dryRun bool) error
+}
+
 type bitcoinCoreConfigPrivilegedClient interface {
 	EnsureBitcoinCoreConfig(ctx context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (status string, err error)
 	ReadBitcoinCoreConfig(ctx context.Context, dataDir string) (content string, err error)
@@ -1756,63 +1760,23 @@ func SystemctlIsActive(ctx context.Context, service string) bool {
 	return strings.TrimSpace(out) == "active"
 }
 
-func SystemctlRestart(ctx context.Context, service string) error {
-	return systemctlRestart(ctx, service, service == "lightningos-manager")
-}
-
-func SystemctlRestartNoBlock(ctx context.Context, service string) error {
-	return systemctlRestart(ctx, service, true)
-}
-
-func systemctlRestart(ctx context.Context, service string, noBlock bool) error {
-	if handled, err := restartServiceWithBroker(ctx, service, noBlock); handled {
-		return err
-	}
-	systemctl := systemctlPath()
-	args := []string{"restart"}
-	if noBlock {
-		args = append(args, "--no-block")
-	}
-	args = append(args, service)
-	_, err := RunCommand(ctx, systemctl, args...)
-	if err == nil {
-		return nil
-	}
-	sudoPath, sudoErr := exec.LookPath("sudo")
-	if sudoErr != nil {
-		return err
-	}
-	sudoArgs := append([]string{"-n", systemctl}, args...)
-	if _, sudoErr = RunCommand(ctx, sudoPath, sudoArgs...); sudoErr == nil {
-		return nil
-	}
-	if !noBlock {
-		return fmt.Errorf("systemctl restart failed: %w; sudo restart failed: %v", err, sudoErr)
-	}
-	if runErr := systemdRunSystemctlRestartNoBlock(ctx, sudoPath, systemctl, service); runErr == nil {
-		return nil
-	} else {
-		return fmt.Errorf("systemctl restart --no-block failed: %w; sudo restart failed: %v; sudo systemd-run restart failed: %v", err, sudoErr, runErr)
-	}
-}
-
-func restartServiceWithBroker(ctx context.Context, service string, noBlock bool) (bool, error) {
+func RestartServiceWithBroker(ctx context.Context, service string, noBlock bool) error {
 	privilegedState.RLock()
 	client := privilegedState.client
 	privilegedState.RUnlock()
 	if client == nil {
-		return false, nil
+		return errors.New("service restart requires privileged broker enforce mode")
 	}
 	switch client.Mode() {
 	case "enforce":
-		return true, client.RestartService(ctx, service, noBlock, false)
+		return client.RestartService(ctx, service, noBlock, false)
 	case "shadow":
 		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		_ = client.RestartService(shadowCtx, service, noBlock, true)
-		return false, nil
+		return errors.New("service restart requires privileged broker enforce mode")
 	default:
-		return false, nil
+		return errors.New("service restart requires privileged broker enforce mode")
 	}
 }
 
@@ -1842,54 +1806,28 @@ func EnableLoginConfigWithBroker(ctx context.Context, configPath string) (bool, 
 	}
 }
 
-func systemdRunSystemctlRestartNoBlock(ctx context.Context, sudoPath string, systemctl string, service string) error {
-	systemdRunPath, err := exec.LookPath("systemd-run")
-	if err != nil {
-		return err
+func PowerHostWithBroker(ctx context.Context, action string) error {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return errors.New("host power action requires privileged broker enforce mode")
 	}
-	unit := transientRestartUnitName(service)
-	_, err = RunCommand(
-		ctx,
-		sudoPath,
-		"-n",
-		systemdRunPath,
-		"--quiet",
-		"--collect",
-		"--unit",
-		unit,
-		systemctl,
-		"restart",
-		"--no-block",
-		service,
-	)
-	return err
-}
-
-func transientRestartUnitName(service string) string {
-	var b strings.Builder
-	for _, r := range service {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			b.WriteRune(r)
-			continue
-		}
-		b.WriteByte('-')
+	powerClient, ok := client.(hostPowerPrivilegedClient)
+	if !ok {
+		return errors.New("privileged broker does not support host power actions")
 	}
-	name := strings.Trim(b.String(), "-")
-	if name == "" {
-		name = "service"
+	switch client.Mode() {
+	case "enforce":
+		return powerClient.PowerHost(ctx, action, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_ = powerClient.PowerHost(shadowCtx, action, true)
+		return errors.New("host power action requires privileged broker enforce mode")
+	default:
+		return errors.New("host power action requires privileged broker enforce mode")
 	}
-	return fmt.Sprintf("lightningos-restart-%s-%d", name, time.Now().UnixNano())
-}
-
-func SystemctlPower(ctx context.Context, action string) error {
-	if action != "reboot" && action != "poweroff" {
-		return fmt.Errorf("unsupported system action")
-	}
-	systemctl := systemctlPath()
-	if _, err := RunCommandWithSudo(ctx, systemctl, action); err != nil {
-		return fmt.Errorf("systemctl %s failed: %w", action, err)
-	}
-	return nil
 }
 
 func JournalTail(ctx context.Context, service string, lines int) ([]string, error) {

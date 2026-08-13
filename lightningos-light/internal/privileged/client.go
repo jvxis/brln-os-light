@@ -687,6 +687,24 @@ func (client *Client) RestartService(ctx context.Context, unit string, noBlock b
 	return err
 }
 
+func (client *Client) PowerHost(ctx context.Context, action string, dryRun bool) error {
+	response, err := client.call(ctx, OperationHostPower, HostPowerParams{Action: action}, dryRun)
+	if err != nil {
+		return err
+	}
+	var state HostPowerState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return errors.New("invalid broker host power response")
+	}
+	if !state.Validated || state.Scheduled == dryRun {
+		return errors.New("invalid broker host power state")
+	}
+	if dryRun && client != nil && client.logger != nil {
+		client.logger.Printf("privileged broker shadow validation accepted host.power for %s", action)
+	}
+	return nil
+}
+
 func (client *Client) EnableLogin(ctx context.Context, dryRun bool) error {
 	_, err := client.call(ctx, OperationFilesEnableLogin, struct{}{}, dryRun)
 	if dryRun && client != nil && client.logger != nil {

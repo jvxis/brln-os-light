@@ -526,6 +526,10 @@ func TestClientBitcoinConsumerNetworkBuildsClosedTypedRequest(t *testing.T) {
 	if err != nil || status != "ready" || transport.request.Operation != OperationBitcoinConsumerNetworkEnsure || transport.request.DryRun || string(transport.request.Params) != "{}" {
 		t.Fatalf("status/error/request=%q/%v/%#v", status, err, transport.request)
 	}
+	remaining := time.Until(transport.deadline)
+	if remaining < privilegedLongOperationTimeout-time.Second || remaining > privilegedLongOperationTimeout {
+		t.Fatalf("bitcoin consumer network deadline has %v remaining, want %v", remaining, privilegedLongOperationTimeout)
+	}
 
 	transport.result = BitcoinConsumerNetworkState{Status: "attacker-controlled"}
 	if _, err := client.EnsureBitcoinConsumerNetwork(context.Background(), false); err == nil {

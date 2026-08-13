@@ -213,37 +213,39 @@ func (storage *recordingBitcoinStorage) Ensure(_ context.Context, dataDir string
 }
 
 type recordingApps struct {
-	calls                int
-	inspectCalls         int
-	snapshotCalls        int
-	removeCalls          int
-	adminResetCalls      int
-	dockerCalls          int
-	dockerStatusCalls    int
-	prepareCalls         int
-	statusCalls          int
-	probeCalls           int
-	firewallCalls        int
-	consumerNetworkCalls int
-	bitcoinStatusCalls   int
-	appID                string
-	action               AppLifecycleAction
-	dryRun               bool
-	inspection           AppInspection
-	err                  error
-	imageState           AppImageState
-	imageProbe           AppImageProbe
-	firewallState        AppFirewallState
-	consumerNetworkState BitcoinConsumerNetworkState
-	bitcoinStatusState   BitcoinCoreStatusState
-	dockerState          DockerRuntimeState
-	variant              appmanifest.CPUMinerImageVariant
-	lifecycleDeadline    time.Time
+	calls                   int
+	inspectCalls            int
+	snapshotCalls           int
+	removeCalls             int
+	adminResetCalls         int
+	dockerCalls             int
+	dockerStatusCalls       int
+	prepareCalls            int
+	statusCalls             int
+	probeCalls              int
+	firewallCalls           int
+	consumerNetworkCalls    int
+	bitcoinStatusCalls      int
+	appID                   string
+	action                  AppLifecycleAction
+	dryRun                  bool
+	inspection              AppInspection
+	err                     error
+	imageState              AppImageState
+	imageProbe              AppImageProbe
+	firewallState           AppFirewallState
+	consumerNetworkState    BitcoinConsumerNetworkState
+	consumerNetworkDeadline time.Time
+	bitcoinStatusState      BitcoinCoreStatusState
+	dockerState             DockerRuntimeState
+	variant                 appmanifest.CPUMinerImageVariant
+	lifecycleDeadline       time.Time
 }
 
-func (apps *recordingApps) EnsureBitcoinConsumerNetwork(_ context.Context, dryRun bool) (BitcoinConsumerNetworkState, error) {
+func (apps *recordingApps) EnsureBitcoinConsumerNetwork(ctx context.Context, dryRun bool) (BitcoinConsumerNetworkState, error) {
 	apps.consumerNetworkCalls++
 	apps.dryRun = dryRun
+	apps.consumerNetworkDeadline, _ = ctx.Deadline()
 	return apps.consumerNetworkState, apps.err
 }
 
@@ -974,6 +976,14 @@ func TestBrokerBitcoinConsumerNetworkIsClosedLockedAndSanitized(t *testing.T) {
 			})
 			if response.OK != test.wantOK || locker.locks != test.wantLocks || test.apps.consumerNetworkCalls != 1 || test.apps.dryRun != test.dryRun {
 				t.Fatalf("response/locker/apps=%#v/%#v/%#v", response, locker, test.apps)
+			}
+			remaining := time.Until(test.apps.consumerNetworkDeadline)
+			if test.dryRun {
+				if remaining < 500*time.Millisecond || remaining > time.Second {
+					t.Fatalf("dry-run consumer network deadline has %v remaining, want configured short timeout", remaining)
+				}
+			} else if remaining < privilegedLongOperationTimeout-time.Second || remaining > privilegedLongOperationTimeout {
+				t.Fatalf("consumer network deadline has %v remaining, want %v", remaining, privilegedLongOperationTimeout)
 			}
 			if !test.wantOK && (response.Error == nil || response.Error.Code != "bitcoin_consumer_network_failed" || response.Error.Message != "bitcoin consumer network ensure failed") {
 				t.Fatalf("unsanitized failure response: %#v", response)

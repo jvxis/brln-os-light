@@ -282,7 +282,7 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}
-	case OperationSystemIntegrationsApply, OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove:
+	case OperationSystemIntegrationsApply, OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}

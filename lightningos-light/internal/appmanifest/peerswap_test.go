@@ -26,7 +26,7 @@ func TestPeerSwapCatalogPinsUpdatedBinariesInLegacyPackageDirectory(t *testing.T
 func TestPeerSwapServicesUseDedicatedIdentityAndRemoteSourceIsIndependent(t *testing.T) {
 	paths := DefaultPeerSwapPaths()
 	local := PeerSwapServiceUnit(paths, PeerSwapElementsModeLocal)
-	for _, want := range []string{"User=" + PeerSwapUser, "ProtectSystem=strict", "ProtectHome=true", "NoNewPrivileges=true", "ReadWritePaths=" + paths.RuntimeDir, ElementsService + ".service", "--configfile " + paths.ConfigPath} {
+	for _, want := range []string{"User=" + PeerSwapUser, "ProtectSystem=strict", "ProtectHome=true", "NoNewPrivileges=true", "ReadWritePaths=" + paths.RuntimeDir, ElementsService + ".service", "--configfile " + paths.ConfigPath, "TimeoutStopSec=15s"} {
 		if !strings.Contains(local, want) {
 			t.Fatalf("local service missing %q", want)
 		}

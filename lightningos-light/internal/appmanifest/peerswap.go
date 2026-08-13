@@ -121,6 +121,7 @@ WorkingDirectory=%s
 ExecStart=%s --datadir %s --configfile %s
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=15s
 UMask=0077
 PrivateTmp=true
 PrivateDevices=true

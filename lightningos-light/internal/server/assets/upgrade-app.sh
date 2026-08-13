@@ -53,6 +53,8 @@ VERSION=""
 TAG=""
 EXPECTED_COMMIT=""
 VERIFY_ONLY=0
+CUTOVER_ONLY_MODE=""
+TRUSTED_CHECKOUT=0
 REPO_URL="https://github.com/jvxis/brln-os-light.git"
 RELEASE_TAG_API_BASE="https://api.github.com/repos/jvxis/brln-os-light/releases/tags"
 
@@ -86,6 +88,20 @@ while [[ $# -gt 0 ]]; do
       VERIFY_ONLY=1
       shift
       ;;
+    --prepare-cutover-only)
+      [[ -z "$CUTOVER_ONLY_MODE" ]] || die "Only one cutover-only mode is allowed."
+      CUTOVER_ONLY_MODE="prepare"
+      shift
+      ;;
+    --stage-cutover-only)
+      [[ -z "$CUTOVER_ONLY_MODE" ]] || die "Only one cutover-only mode is allowed."
+      CUTOVER_ONLY_MODE="stage"
+      shift
+      ;;
+    --trusted-checkout)
+      TRUSTED_CHECKOUT=1
+      shift
+      ;;
     *)
       die "Unknown argument: $1"
       ;;
@@ -93,6 +109,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 require_root
+
+if [[ -n "$CUTOVER_ONLY_MODE" && "$TRUSTED_CHECKOUT" -eq 1 ]]; then
+  die "Cutover-only and trusted-checkout modes cannot be combined."
+fi
+if [[ "$VERIFY_ONLY" -eq 1 && "$TRUSTED_CHECKOUT" -eq 1 ]]; then
+  die "Trusted-checkout mode performs a local operator upgrade and cannot be verify-only."
+fi
 
 export PATH="/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
@@ -115,31 +138,37 @@ ensure_native_app_identities() {
   ensure_native_app_identity lightningos-peerswap /var/lib/lightningos/apps-data/peerswap/runtime
 }
 
-VERSION="${VERSION#v}"
-VERSION="$(echo "${VERSION}" | tr -s '[:space:]' ' ' | sed 's/^ *//;s/ *$//;s/ /-/g')"
-if [[ -z "$VERSION" ]]; then
-  die "Missing --version."
-fi
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([\-][0-9A-Za-z][0-9A-Za-z\.-]*)?$ ]]; then
-  die "Invalid version format: ${VERSION}"
-fi
+if [[ -z "$CUTOVER_ONLY_MODE" ]]; then
+  VERSION="${VERSION#v}"
+  VERSION="$(echo "${VERSION}" | tr -s '[:space:]' ' ' | sed 's/^ *//;s/ *$//;s/ /-/g')"
+  if [[ -z "$VERSION" ]]; then
+    die "Missing --version."
+  fi
+  if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([\-][0-9A-Za-z][0-9A-Za-z\.-]*)?$ ]]; then
+    die "Invalid version format: ${VERSION}"
+  fi
 
-if [[ -z "$TAG" ]]; then
-  TAG="v${VERSION}"
-fi
-if [[ "$TAG" =~ [[:space:]] ]]; then
-  die "Invalid tag format."
-fi
-if [[ ! "$TAG" =~ ^[vV]?[0-9]+\.[0-9]+\.[0-9]+([\-][0-9A-Za-z][0-9A-Za-z\.-]*)?$ ]]; then
-  die "Invalid tag format."
-fi
-normalized_tag="${TAG#[vV]}"
-if [[ "${normalized_tag,,}" != "${VERSION,,}" ]]; then
-  die "Tag does not match version."
-fi
-EXPECTED_COMMIT="${EXPECTED_COMMIT,,}"
-if [[ ! "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-  die "Invalid or missing --commit."
+  if [[ "$TRUSTED_CHECKOUT" -eq 0 ]]; then
+    if [[ -z "$TAG" ]]; then
+      TAG="v${VERSION}"
+    fi
+    if [[ "$TAG" =~ [[:space:]] ]]; then
+      die "Invalid tag format."
+    fi
+    if [[ ! "$TAG" =~ ^[vV]?[0-9]+\.[0-9]+\.[0-9]+([\-][0-9A-Za-z][0-9A-Za-z\.-]*)?$ ]]; then
+      die "Invalid tag format."
+    fi
+    normalized_tag="${TAG#[vV]}"
+    if [[ "${normalized_tag,,}" != "${VERSION,,}" ]]; then
+      die "Tag does not match version."
+    fi
+  elif [[ -n "$TAG" ]]; then
+    die "Trusted-checkout mode does not accept --tag."
+  fi
+  EXPECTED_COMMIT="${EXPECTED_COMMIT,,}"
+  if [[ ! "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+    die "Invalid or missing --commit."
+  fi
 fi
 
 LOCK_FILE="/var/lib/lightningos/app-upgrade.lock"
@@ -234,6 +263,7 @@ FLOCK_BIN="$(resolve_bin flock /usr/bin/flock /bin/flock)" || die "Required comm
 DATE_BIN="$(resolve_bin date /usr/bin/date /bin/date)" || die "Required command missing: date"
 STAT_BIN="$(resolve_bin stat /usr/bin/stat /bin/stat)" || die "Required command missing: stat"
 RUNUSER_BIN="$(resolve_bin runuser /usr/sbin/runuser /usr/bin/runuser /sbin/runuser)" || die "Required command missing: runuser"
+TAR_BIN="$(resolve_bin tar /usr/bin/tar /bin/tar)" || die "Required command missing: tar"
 APT_GET_BIN="$(resolve_bin apt-get /usr/bin/apt-get /bin/apt-get)" || true
 
 exec 9>"$LOCK_FILE"
@@ -602,6 +632,42 @@ stage_privilege_cutover() {
   print_ok "Privilege cutover staged with root-only rollback state"
 }
 
+if [[ -n "$CUTOVER_ONLY_MODE" ]]; then
+  project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+  [[ "$project_dir" == */lightningos-light ]] || die "Cutover-only mode requires a trusted LightningOS checkout."
+  [[ -f "$project_dir/internal/server/assets/rollback-privilege-cutover.sh" ]] || die "Cutover rollback asset is missing."
+  case "$CUTOVER_ONLY_MODE" in
+    prepare)
+      prepare_privilege_cutover
+      print_ok "Existing-node privilege cutover prepared"
+      ;;
+    stage)
+      if ! stage_privilege_cutover; then
+        /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+        die "Existing-node privilege cutover could not be staged safely."
+      fi
+      if ! "$SYSTEMCTL_BIN" restart lightningos-manager; then
+        /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+        die "Manager restart failed after existing-node privilege cutover."
+      fi
+      ready=0
+      for _ in $(seq 1 30); do
+        if "$CURL_BIN" -ksSf https://127.0.0.1:8443/api/health >/dev/null 2>&1; then
+          ready=1
+          break
+        fi
+        sleep 1
+      done
+      if [[ "$ready" != 1 ]] || ! "$RUNUSER_BIN" -u lightningos -- /opt/lightningos/manager/lightningos-manager broker-self-test >/dev/null; then
+        /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+        die "Existing-node privilege cutover health gate failed and was rolled back."
+      fi
+      print_ok "Existing-node privilege cutover committed"
+      ;;
+  esac
+  exit 0
+fi
+
 stage_peerswap_assets() {
   local src="$project_dir/assets/binaries/peerswap/version_5_0/amd64"
   local dest="/opt/lightningos/manager/assets/binaries/peerswap/version_5_0/amd64"
@@ -718,51 +784,70 @@ configure_manager_firewall() {
   fi
 }
 
-print_step "Preparing repository mirror"
 mkdir -p "$(dirname "$mirror_root")" "$worktree_root"
-if [[ -d "$mirror_root" && ! -d "$mirror_root/.git" ]]; then
-  print_warn "Repository mirror path is not a git repository. Recreating it."
-  "$RM_BIN" -rf "$mirror_root"
-fi
-if [[ -d "$mirror_root" ]] && ! owned_by_root "$mirror_root" "$mirror_root/.git"; then
-  print_warn "Repository mirror ownership is incompatible with root. Recreating it."
-  "$RM_BIN" -rf "$mirror_root"
-fi
-if [[ ! -d "$mirror_root/.git" ]]; then
-  "$RM_BIN" -rf "$mirror_root"
-  "$GIT_BIN" clone --no-checkout "$REPO_URL" "$mirror_root"
+if [[ "$TRUSTED_CHECKOUT" -eq 1 ]]; then
+  print_step "Preparing root-owned source from trusted checkout"
+  source_project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+  [[ "$source_project_dir" == */lightningos-light ]] || die "Trusted-checkout mode must run from the LightningOS source tree."
+  source_repo_dir="$("$GIT_BIN" -C "$source_project_dir" rev-parse --show-toplevel 2>/dev/null)" \
+    || die "Trusted-checkout source is not a git repository."
+  actual_commit="$("$GIT_BIN" -C "$source_repo_dir" rev-parse HEAD)"
+  actual_commit="${actual_commit,,}"
+  [[ "$actual_commit" == "$EXPECTED_COMMIT" ]] || die "Trusted checkout HEAD does not match --commit."
+  "$GIT_BIN" -C "$source_repo_dir" diff --quiet --no-ext-diff -- \
+    || die "Trusted checkout has modified tracked files."
+  "$GIT_BIN" -C "$source_repo_dir" diff --cached --quiet --no-ext-diff -- \
+    || die "Trusted checkout has staged changes."
+  worktree_dir="${worktree_root}/app-upgrade-trusted-$($DATE_BIN +%Y%m%d%H%M%S)"
+  "$INSTALL_BIN" -d -o root -g root -m 0700 "$worktree_dir"
+  "$GIT_BIN" -C "$source_repo_dir" archive "$EXPECTED_COMMIT" | "$TAR_BIN" -x -C "$worktree_dir"
+  TAG="trusted-checkout"
 else
-  "$GIT_BIN" -C "$mirror_root" remote set-url origin "$REPO_URL" || true
-fi
-"$GIT_BIN" -C "$mirror_root" fetch --tags --prune origin
-
-if ! "$GIT_BIN" -C "$mirror_root" rev-parse -q --verify "refs/tags/$TAG^{}" >/dev/null 2>&1; then
-  alt_tag=""
-  while IFS= read -r candidate; do
-    if [[ "${candidate,,}" == "${TAG,,}" ]]; then
-      alt_tag="$candidate"
-      break
-    fi
-  done < <("$GIT_BIN" -C "$mirror_root" tag --list)
-  if [[ -n "$alt_tag" ]]; then
-    TAG="$alt_tag"
+  print_step "Preparing repository mirror"
+  if [[ -d "$mirror_root" && ! -d "$mirror_root/.git" ]]; then
+    print_warn "Repository mirror path is not a git repository. Recreating it."
+    "$RM_BIN" -rf "$mirror_root"
   fi
-fi
+  if [[ -d "$mirror_root" ]] && ! owned_by_root "$mirror_root" "$mirror_root/.git"; then
+    print_warn "Repository mirror ownership is incompatible with root. Recreating it."
+    "$RM_BIN" -rf "$mirror_root"
+  fi
+  if [[ ! -d "$mirror_root/.git" ]]; then
+    "$RM_BIN" -rf "$mirror_root"
+    "$GIT_BIN" clone --no-checkout "$REPO_URL" "$mirror_root"
+  else
+    "$GIT_BIN" -C "$mirror_root" remote set-url origin "$REPO_URL" || true
+  fi
+  "$GIT_BIN" -C "$mirror_root" fetch --tags --prune origin
 
-if ! "$GIT_BIN" -C "$mirror_root" rev-parse -q --verify "refs/tags/$TAG^{}" >/dev/null 2>&1; then
-  die "Tag not found in repository: ${TAG}"
-fi
+  if ! "$GIT_BIN" -C "$mirror_root" rev-parse -q --verify "refs/tags/$TAG^{}" >/dev/null 2>&1; then
+    alt_tag=""
+    while IFS= read -r candidate; do
+      if [[ "${candidate,,}" == "${TAG,,}" ]]; then
+        alt_tag="$candidate"
+        break
+      fi
+    done < <("$GIT_BIN" -C "$mirror_root" tag --list)
+    if [[ -n "$alt_tag" ]]; then
+      TAG="$alt_tag"
+    fi
+  fi
 
-actual_commit="$("$GIT_BIN" -C "$mirror_root" rev-parse "refs/tags/${TAG}^{commit}")"
-actual_commit="${actual_commit,,}"
-if [[ "$actual_commit" != "$EXPECTED_COMMIT" ]]; then
-  die "Release tag does not resolve to the expected commit."
-fi
+  if ! "$GIT_BIN" -C "$mirror_root" rev-parse -q --verify "refs/tags/$TAG^{}" >/dev/null 2>&1; then
+    die "Tag not found in repository: ${TAG}"
+  fi
 
-print_step "Creating temporary worktree for ${TAG}"
-safe_tag="$(echo "$TAG" | tr '/\\' '__')"
-worktree_dir="${worktree_root}/app-upgrade-${safe_tag}-$("$DATE_BIN" +%Y%m%d%H%M%S)"
-"$GIT_BIN" -C "$mirror_root" worktree add --detach "$worktree_dir" "$EXPECTED_COMMIT"
+  actual_commit="$("$GIT_BIN" -C "$mirror_root" rev-parse "refs/tags/${TAG}^{commit}")"
+  actual_commit="${actual_commit,,}"
+  if [[ "$actual_commit" != "$EXPECTED_COMMIT" ]]; then
+    die "Release tag does not resolve to the expected commit."
+  fi
+
+  print_step "Creating temporary worktree for ${TAG}"
+  safe_tag="$(echo "$TAG" | tr '/\\' '__')"
+  worktree_dir="${worktree_root}/app-upgrade-${safe_tag}-$("$DATE_BIN" +%Y%m%d%H%M%S)"
+  "$GIT_BIN" -C "$mirror_root" worktree add --detach "$worktree_dir" "$EXPECTED_COMMIT"
+fi
 
 if [[ -f "$worktree_dir/go.mod" ]]; then
   project_dir="$worktree_dir"

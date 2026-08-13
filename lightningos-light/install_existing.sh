@@ -1605,14 +1605,13 @@ main() {
       die "Automatic privilege cutover supports the canonical lightningos manager user only; use a guided migration for this layout."
     fi
     ensure_go
+    bash "$REPO_ROOT/internal/server/assets/upgrade-app.sh" --prepare-cutover-only
     build_manager
     ensure_manager_service "$manager_user" "$manager_group"
     ensure_privileged_broker_units "$manager_user"
     systemctl daemon-reload
     systemctl enable --now lightningos-privileged.socket
-    if getent group docker >/dev/null 2>&1 && id -nG "$manager_user" | tr ' ' '\n' | grep -qx docker; then
-      gpasswd -d "$manager_user" docker >/dev/null
-    fi
+    bash "$REPO_ROOT/internal/server/assets/upgrade-app.sh" --stage-cutover-only
   fi
   if prompt_yes_no "Build and install UI now?" "y"; then
     ensure_node

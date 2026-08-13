@@ -597,6 +597,30 @@ func TestExistingInstallersKeepDataDirectoryDiagnosticsOutOfCapturedPath(t *test
 	}
 }
 
+func TestExistingInstallersUseTransactionalPrivilegeCutover(t *testing.T) {
+	for _, path := range []string{
+		filepath.Join("..", "..", "install_existing.sh"),
+		filepath.Join("..", "..", "install_existing_pi.sh"),
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(raw)
+		prepare := strings.Index(content, `upgrade-app.sh" --prepare-cutover-only`)
+		stage := strings.Index(content, `upgrade-app.sh" --stage-cutover-only`)
+		build := -1
+		if prepare >= 0 {
+			if relative := strings.Index(content[prepare:], "\n    build_manager"); relative >= 0 {
+				build = prepare + relative
+			}
+		}
+		if prepare < 0 || build < 0 || stage < 0 || stage < build {
+			t.Errorf("%s does not prepare rollback before build and stage cutover afterward", path)
+		}
+	}
+}
+
 func TestAppUpgradeMigratesManagerTLSBeforeRestart(t *testing.T) {
 	path := filepath.Join("assets", "upgrade-app.sh")
 	raw, err := os.ReadFile(path)
@@ -618,6 +642,31 @@ func TestAppUpgradeMigratesManagerTLSBeforeRestart(t *testing.T) {
 	restart := strings.LastIndex(content, `"$SYSTEMCTL_BIN" restart lightningos-manager`)
 	if migration < 0 || restart < 0 || migration > restart {
 		t.Fatal("manager TLS migration must run before lightningos-manager restarts")
+	}
+}
+
+func TestAppUpgradeTrustedCheckoutIsRootOnlyAndCommitPinned(t *testing.T) {
+	path := filepath.Join("assets", "upgrade-app.sh")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read upgrade app script: %v", err)
+	}
+	content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	for _, expected := range []string{
+		`require_root`,
+		`--trusted-checkout`,
+		`Trusted checkout HEAD does not match --commit.`,
+		`diff --quiet --no-ext-diff --`,
+		`diff --cached --quiet --no-ext-diff --`,
+		`archive "$EXPECTED_COMMIT" | "$TAR_BIN" -x`,
+		`"$INSTALL_BIN" -d -o root -g root -m 0700 "$worktree_dir"`,
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("trusted checkout upgrade boundary is missing %q", expected)
+		}
+	}
+	if strings.Contains(content, `verify_immutable_release ||`) {
+		t.Fatal("release attestation must remain fail-closed for API-triggered upgrades")
 	}
 }
 

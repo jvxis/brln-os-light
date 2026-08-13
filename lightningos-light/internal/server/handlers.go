@@ -636,6 +636,9 @@ func (s *Server) resolveBitcoinLocalRPCConfigForSource(ctx context.Context, conf
 		cfg.ZMQTx = normalizeLocalZMQ(cfg.ZMQTx, "tcp://127.0.0.1:28333")
 	}
 	if status == "restart_required" {
+		if err := ensureBitcoinCoreImage(ctx); err != nil {
+			return bitcoinRPCConfig{}, fmt.Errorf("failed to attest Bitcoin Core before RPC credential migration: %w", err)
+		}
 		restartCtx, restartCancel := context.WithTimeout(ctx, 20*time.Second)
 		err := runBitcoinCoreLifecycle(restartCtx, "restart")
 		restartCancel()

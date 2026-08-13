@@ -79,9 +79,26 @@ func (manager *ComposeAppManager) EnsureFirewallAccess(ctx context.Context, appI
 	if manager == nil || manager.Runner == nil {
 		return state, errors.New("compose app manager is unavailable")
 	}
-	port, err := appmanifest.CatalogExternalTCPPort(appID)
-	if err != nil {
-		return state, err
+	rules := [][2]string{}
+	switch appID {
+	case appmanifest.FedimintGuardianID:
+		rules = [][2]string{
+			{strconv.Itoa(appmanifest.FedimintGuardianP2PPort), "tcp"},
+			{strconv.Itoa(appmanifest.FedimintGuardianP2PPort), "udp"},
+			{strconv.Itoa(appmanifest.FedimintGuardianAPIPort), "udp"},
+			{strconv.Itoa(appmanifest.FedimintGuardianUIPort), "tcp"},
+		}
+	case appmanifest.FedimintGatewayID:
+		rules = [][2]string{
+			{strconv.Itoa(appmanifest.FedimintGatewayUIPort), "tcp"},
+			{strconv.Itoa(appmanifest.FedimintGatewayIrohPort), "udp"},
+		}
+	default:
+		port, err := appmanifest.CatalogExternalTCPPort(appID)
+		if err != nil {
+			return state, err
+		}
+		rules = append(rules, [2]string{strconv.Itoa(port), "tcp"})
 	}
 	if dryRun {
 		return AppFirewallState{Status: "validated"}, nil
@@ -93,8 +110,15 @@ func (manager *ComposeAppManager) EnsureFirewallAccess(ctx context.Context, appI
 	if !strings.Contains(strings.ToLower(statusOut), "status: active") {
 		return AppFirewallState{Status: "inactive"}, nil
 	}
-	if _, err := manager.Runner.Run(ctx, ufwPath, "allow", strconv.Itoa(port)+"/tcp"); err != nil {
-		return state, err
+	for _, rule := range rules {
+		if _, err := manager.Runner.Run(ctx, ufwPath, "allow", rule[0]+"/"+rule[1]); err != nil {
+			return state, err
+		}
+	}
+	if appID == appmanifest.FedimintGatewayID {
+		if err := manager.ensureFedimintGatewayInternalFirewall(ctx); err != nil {
+			return state, err
+		}
 	}
 	return AppFirewallState{Status: "active"}, nil
 }
@@ -238,7 +262,7 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 
 func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error) {
 	var probe AppImageProbe
-	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID && appID != appmanifest.BarkWalletID && appID != appmanifest.MempoolID {
+	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID && appID != appmanifest.BarkWalletID && appID != appmanifest.MempoolID && appID != appmanifest.FedimintGuardianID && appID != appmanifest.FedimintGatewayID {
 		return probe, errors.New("app image probe is not allowed")
 	}
 	image, _, _, err := validatedCatalogImage(appID, variant)
@@ -349,6 +373,19 @@ func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, 
 		probe.Runnable = runErr == nil && strings.Contains(strings.TrimSpace(output), expected)
 		return probe, nil
 	}
+	if appID == appmanifest.FedimintGuardianID || appID == appmanifest.FedimintGatewayID {
+		args := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+			"--user", strconv.Itoa(appmanifest.FedimintContainerUID) + ":" + strconv.Itoa(appmanifest.FedimintContainerGID),
+			"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--entrypoint"}
+		binary := "fedimintd"
+		if appID == appmanifest.FedimintGatewayID {
+			binary = "gatewayd"
+		}
+		args = append(args, binary, image, "--version")
+		output, runErr := manager.Runner.Run(ctx, dockerPath, args...)
+		probe.Runnable = runErr == nil && strings.Contains(strings.TrimSpace(output), appmanifest.FedimintRelease)
+		return probe, nil
+	}
 
 	args := []string{"run", "--rm", image, "cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2"}
 	_, err = manager.Runner.Run(ctx, dockerPath, args...)
@@ -456,6 +493,12 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 			appmanifest.MempoolImageFrontend: "lightningos-mempool-image-frontend",
 			appmanifest.MempoolImageBackend:  "lightningos-mempool-image-backend",
 			appmanifest.MempoolImageDatabase: "lightningos-mempool-image-database",
+		},
+		appmanifest.FedimintGuardianID: {
+			appmanifest.FedimintImageApp: "lightningos-fedimint-guardian-image-app",
+		},
+		appmanifest.FedimintGatewayID: {
+			appmanifest.FedimintImageApp: "lightningos-fedimint-gateway-image-app",
 		},
 		appmanifest.TapdID: {
 			appmanifest.TapdImageApp: "lightningos-tapd-image-app",
@@ -656,6 +699,29 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		if err != nil {
 			return err
 		}
+	case appmanifest.FedimintGuardianID, appmanifest.FedimintGatewayID:
+		files, err := manager.validatedFedimintFiles(manifest.ID)
+		if err != nil {
+			return err
+		}
+		image, err := appmanifest.FedimintImageForApp(manifest.ID, appmanifest.FedimintImageApp)
+		if err != nil {
+			return err
+		}
+		images = []string{image}
+		if action == AppLifecycleStart && !dryRun {
+			state, imageErr := manager.ImageStatus(ctx, manifest.ID, appmanifest.FedimintImageApp)
+			if imageErr != nil || state.Status != "ready" {
+				return errors.New("verified Fedimint image is not ready")
+			}
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createFedimintSnapshot(manifest.ID, files)
+		if err != nil {
+			return err
+		}
 	default:
 		return errors.New("app manifest is not allowed")
 	}
@@ -744,6 +810,29 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 				return err
 			}
 		}
+		if manifest.ID == appmanifest.FedimintGuardianID || manifest.ID == appmanifest.FedimintGatewayID {
+			if err := manager.migrateLegacyFedimint(ctx, manifest.ID); err != nil {
+				return err
+			}
+			if err := manager.prepareFedimintDataForStart(ctx, manifest.ID); err != nil {
+				return err
+			}
+		}
+		if manifest.ID == appmanifest.FedimintGatewayID {
+			createArgs := append(append([]string(nil), args...), "create")
+			if _, err := manager.Runner.Run(ctx, commandPath, createArgs...); err != nil {
+				return errors.New("Fedimint Gateway container preparation failed")
+			}
+			if err := manager.ensureFedimintGatewayHostAccess(ctx); err != nil {
+				return err
+			}
+			if err := manager.ensureFedimintGatewayInternalFirewall(ctx); err != nil {
+				return err
+			}
+			if err := manager.refreshFedimintGatewaySnapshotCertificate(snapshot.root); err != nil {
+				return err
+			}
+		}
 		args = append(args, "up", "-d")
 	case AppLifecycleStop:
 		args = append(args, "stop", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds))
@@ -793,6 +882,19 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 			return nil
 		}
 		snapshot, cleanup, err = manager.createRoboSatsSnapshot(manifest, files)
+		if err != nil {
+			return err
+		}
+		removePersistentSnapshot = true
+	case appmanifest.FedimintGuardianID, appmanifest.FedimintGatewayID:
+		files, err := manager.validatedFedimintFiles(appID)
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			return nil
+		}
+		snapshot, cleanup, err = manager.createFedimintSnapshot(appID, files)
 		if err != nil {
 			return err
 		}
@@ -924,6 +1026,20 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 		if err := manager.removeMempoolExecutionSnapshot(snapshot.root); err != nil {
 			return errors.New("failed to remove app execution snapshot")
 		}
+	} else if removePersistentSnapshot && (appID == appmanifest.FedimintGuardianID || appID == appmanifest.FedimintGatewayID) {
+		if err := manager.removeFedimintExecutionSnapshot(appID, snapshot.root); err != nil {
+			return errors.New("failed to remove app execution snapshot")
+		}
+		appsDataRoot := manager.AppsDataRoot
+		if appsDataRoot == "" {
+			appsDataRoot = defaultAppsDataRoot
+		}
+		dataRoot := filepath.Join(filepath.Clean(appsDataRoot), appID)
+		if validateRegularDirectory(dataRoot) == nil {
+			if err := os.RemoveAll(dataRoot); err != nil {
+				return errors.New("failed to remove Fedimint data")
+			}
+		}
 	}
 	return nil
 }
@@ -1036,6 +1152,15 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 			return inspection, err
 		}
 		snapshot, cleanup, err = manager.createMempoolSnapshot(files)
+		if err != nil {
+			return inspection, err
+		}
+	case appmanifest.FedimintGuardianID, appmanifest.FedimintGatewayID:
+		files, err := manager.validatedFedimintFiles(appID)
+		if err != nil {
+			return inspection, err
+		}
+		snapshot, cleanup, err = manager.createFedimintSnapshot(appID, files)
 		if err != nil {
 			return inspection, err
 		}

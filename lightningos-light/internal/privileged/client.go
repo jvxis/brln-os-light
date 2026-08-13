@@ -889,6 +889,21 @@ func (client *Client) InspectApp(ctx context.Context, appID string) (string, flo
 	return result.Status, result.CPUPercentRaw, nil
 }
 
+func (client *Client) AppLogs(ctx context.Context, appID string, lines int, since string) ([]string, string, error) {
+	response, err := client.call(ctx, OperationAppLogs, AppLogsParams{AppID: appID, Lines: lines, Since: since}, false)
+	if err != nil {
+		return nil, "", err
+	}
+	var result AppLogsState
+	if err := decodeStrict(response.Result, &result); err != nil {
+		return nil, "", errors.New("invalid broker app log response")
+	}
+	if result.Source == "" || len(result.Lines) > 500 {
+		return nil, "", errors.New("invalid broker app log result")
+	}
+	return result.Lines, result.Source, nil
+}
+
 func (client *Client) call(ctx context.Context, operation Operation, params any, dryRun bool) (Response, error) {
 	var response Response
 	if client == nil || client.transport == nil {

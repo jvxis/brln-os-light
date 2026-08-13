@@ -15,6 +15,14 @@ func prepareLNbitsWritableData(string) error {
 	return nil
 }
 
+func prepareFedimintWritableData(string) error { return nil }
+
+func fedimintWritableDataReady(string) bool { return true }
+
+func setFedimintCredentialOwnership(string, ...string) error { return nil }
+
+func setFedimintCredentialFileOwnership(string) error { return nil }
+
 func preparePublicPoolWritableData(string) error { return nil }
 
 func validatePublicPoolSnapshotPermissions(string, string, string, string) error { return nil }

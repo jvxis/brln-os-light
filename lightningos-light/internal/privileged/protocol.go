@@ -27,6 +27,7 @@ const (
 	OperationAppLifecycle                 Operation = "app.compose.lifecycle"
 	OperationAppSnapshot                  Operation = "app.compose.snapshot"
 	OperationAppInspect                   Operation = "app.compose.inspect"
+	OperationAppLogs                      Operation = "app.compose.logs"
 	OperationAppRemove                    Operation = "app.compose.remove"
 	OperationAppAdminReset                Operation = "app.admin.reset"
 	OperationDockerEnsure                 Operation = "docker.runtime.ensure"
@@ -125,6 +126,17 @@ type AppLifecycleParams struct {
 
 type AppInspectParams struct {
 	AppID string `json:"app_id"`
+}
+
+type AppLogsParams struct {
+	AppID string `json:"app_id"`
+	Lines int    `json:"lines"`
+	Since string `json:"since,omitempty"`
+}
+
+type AppLogsState struct {
+	Lines  []string `json:"lines"`
+	Source string   `json:"source"`
 }
 
 type AppSnapshotParams struct {
@@ -502,6 +514,20 @@ func ValidateRequest(request Request) error {
 		if _, err := appmanifest.ComposeManifestForApp(params.AppID); err != nil {
 			return errors.New("app manifest is not allowed")
 		}
+	case OperationAppLogs:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for app.compose.logs")
+		}
+		var params AppLogsParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.compose.logs params: %w", err)
+		}
+		if params.AppID != appmanifest.FedimintGuardianID && params.AppID != appmanifest.FedimintGatewayID {
+			return errors.New("app log manifest is not allowed")
+		}
+		if params.Lines < 1 || params.Lines > 500 || !validComposeLogSince(params.Since) {
+			return errors.New("app log query is invalid")
+		}
 	case OperationAppRemove:
 		var params AppRemoveParams
 		if err := decodeStrict(request.Params, &params); err != nil {
@@ -829,13 +855,29 @@ func validateCatalogImageParams(params AppImageParams) error {
 }
 
 func validateProbedImageParams(params AppImageParams) error {
-	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID && params.AppID != appmanifest.BarkWalletID && params.AppID != appmanifest.MempoolID {
+	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID && params.AppID != appmanifest.BarkWalletID && params.AppID != appmanifest.MempoolID && params.AppID != appmanifest.FedimintGuardianID && params.AppID != appmanifest.FedimintGatewayID {
 		return errors.New("app manifest is not allowed")
 	}
 	if _, err := appmanifest.CatalogImageForVariant(params.AppID, params.Variant); err != nil {
 		return errors.New("app image variant is not allowed")
 	}
 	return nil
+}
+
+func validComposeLogSince(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) > 64 || strings.HasPrefix(value, "-") {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || strings.ContainsRune(".:+_-", char) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func ValidateServiceUnit(unit string) error {

@@ -85,6 +85,16 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			EnvFile: MempoolEnvFile, PrimaryService: MempoolPrimaryService,
 			StopTimeoutSeconds: MempoolStopTimeout, RemoveVolumes: true,
 		}, nil
+	case FedimintGuardianID:
+		return ComposeManifest{
+			ID: FedimintGuardianID, Project: FedimintGuardianProject, ComposeFile: FedimintGuardianComposeFile,
+			PrimaryService: FedimintGuardianPrimaryService, StopTimeoutSeconds: FedimintStopTimeout,
+		}, nil
+	case FedimintGatewayID:
+		return ComposeManifest{
+			ID: FedimintGatewayID, Project: FedimintGatewayProject, ComposeFile: FedimintGatewayComposeFile,
+			PrimaryService: FedimintGatewayPrimaryService, StopTimeoutSeconds: FedimintStopTimeout,
+		}, nil
 	case TapdID:
 		return ComposeManifest{
 			ID:                 TapdID,
@@ -127,6 +137,8 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return ElectrsImageForVariant(variant)
 	case MempoolID:
 		return MempoolImageForVariant(variant)
+	case FedimintGuardianID, FedimintGatewayID:
+		return FedimintImageForApp(appID, variant)
 	case TapdID:
 		return TapdImageForVariant(variant)
 	case PublicPoolID:
@@ -162,6 +174,10 @@ func CatalogExternalTCPPort(appID string) (int, error) {
 		return BarkWalletPort, nil
 	case MempoolID:
 		return MempoolPort, nil
+	case FedimintGuardianID:
+		return FedimintGuardianUIPort, nil
+	case FedimintGatewayID:
+		return FedimintGatewayUIPort, nil
 	default:
 		return 0, errors.New("app external access manifest is not allowed")
 	}

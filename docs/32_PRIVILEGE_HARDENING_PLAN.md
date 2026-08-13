@@ -1016,8 +1016,45 @@ its test row. LOS TESTE2 was inspected read-only only: Mempool and Electrs staye
 absent, and Bitcoin, LND and manager timestamps were unchanged. Evidence is in
 `docs/baselines/privilege-hardening-phase2-mempool-functional-2026-08-13.json`.
 
-Both Fedimint applications remain as the final lower-priority Docker family
-before the shared Phase 2 matrix and cutover.
+The Fedimint Guardian and Gateway slice is accepted as the final
+lower-priority Docker family. Both official stable v0.11.1 images are pinned by
+multi-architecture manifest digest and correlated to upstream commit
+`2620789610a2c65c1068de973ebb5657d08d549d`. The manager has no direct Docker,
+Compose, UFW, systemctl, sudo, TLS deletion, or filesystem ownership operation
+in the Fedimint handler. The broker validates exact private runtime documents,
+immutable images, mounts, ports, networks, identities, lifecycle, removal,
+firewall, logs, and root-owned execution snapshots.
+
+Both containers run as UID/GID 1000 with read-only root filesystems, all
+capabilities dropped, `no-new-privileges`, and bounded tmpfs. Existing Guardian
+and Gateway databases are retained and converted to the fixed runtime owner
+only after the legacy container is stopped. The former Gateway boundary that
+mounted all of `/data/lnd`, used `admin.macaroon`, deleted TLS material, and
+restarted LND from manager code has been removed. The new snapshot exposes
+only a copied certificate and a dedicated macaroon with the nine permissions
+actually exercised by upstream v0.11.1: `info:read`, invoice, offchain,
+onchain, and peer read/write. No macaroon administration, signer, or message
+permission is granted.
+
+App Store Bitcoin, existing native/systemd Bitcoin, and remote Bitcoin remain
+supported. Existing nodes already provisioned for Docker-to-LND RPC do not
+restart LND; a new Gateway install performs the one-time broker-controlled LND
+listener/certificate reconciliation only when the fixed host access is absent.
+Guardian public TCP/UDP and Gateway UI/Iroh plus internal LND RPC rules are
+fixed by the catalog. Fedimint log reads now use a bounded read-only broker
+operation rather than manager-side Compose.
+
+The disposable Ubuntu gate resolved the two official digests, returned
+`fedimintd 0.11.1` and `fedimint-gateway-server 0.11.1`, and proved the real
+Compose containers use UID 1000, read-only roots, `cap_drop=ALL`, and
+`no-new-privileges`. All containers, project networks, images, and the gate
+binary were removed; the VM was powered off and its bridge restored. LOS
+TESTE2 was then inspected read-only: Guardian remained running, Gateway
+remained stopped, their data remained present, and Bitcoin, LND, and manager
+timestamps were unchanged. Evidence is in
+`docs/baselines/privilege-hardening-phase2-fedimint-functional-2026-08-13.json`.
+
+The shared Phase 2 matrix and final Docker cutover are next.
 
 Electrs now has a closed source-built image from the verified upstream
 `v0.11.1` archive, fixed manifest and networking, one private dedicated RPC

@@ -95,6 +95,92 @@ func prepareLNbitsWritableData(dataDir string) error {
 	})
 }
 
+func prepareFedimintWritableData(dataDir string) error {
+	return filepath.WalkDir(dataDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("Fedimint data entry is unsafe")
+		}
+		if info.IsDir() {
+			if os.Geteuid() == 0 {
+				if err := os.Chown(path, appmanifest.FedimintContainerUID, appmanifest.FedimintContainerGID); err != nil {
+					return err
+				}
+			}
+			return os.Chmod(path, 0700)
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("Fedimint data entry is not a regular file")
+		}
+		if os.Geteuid() == 0 {
+			if err := os.Chown(path, appmanifest.FedimintContainerUID, appmanifest.FedimintContainerGID); err != nil {
+				return err
+			}
+		}
+		return os.Chmod(path, 0600)
+	})
+}
+
+func fedimintWritableDataReady(dataDir string) bool {
+	ready := true
+	err := filepath.WalkDir(dataDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("unsafe Fedimint data")
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != uint32(appmanifest.FedimintContainerUID) || stat.Gid != uint32(appmanifest.FedimintContainerGID) {
+			ready = false
+		}
+		if info.IsDir() {
+			if info.Mode().Perm() != 0700 {
+				ready = false
+			}
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("unsafe Fedimint data")
+		}
+		if info.Mode().Perm() != 0600 {
+			ready = false
+		}
+		return nil
+	})
+	return err == nil && ready
+}
+
+func setFedimintCredentialOwnership(root string, paths ...string) error {
+	if os.Geteuid() == 0 {
+		if err := os.Chown(root, 0, appmanifest.FedimintContainerGID); err != nil {
+			return err
+		}
+	}
+	if err := os.Chmod(root, 0750); err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if err := setFedimintCredentialFileOwnership(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func setFedimintCredentialFileOwnership(path string) error {
+	if os.Geteuid() == 0 {
+		if err := os.Chown(path, 0, appmanifest.FedimintContainerGID); err != nil {
+			return err
+		}
+	}
+	return os.Chmod(path, 0440)
+}
+
 func preparePublicPoolWritableData(dataDir string) error {
 	passwdRaw, err := os.ReadFile("/etc/passwd")
 	if err != nil {

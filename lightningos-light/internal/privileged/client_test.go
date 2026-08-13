@@ -376,6 +376,25 @@ func TestClientInspectAppRejectsInvalidResult(t *testing.T) {
 	}
 }
 
+func TestClientAppLogsBuildsClosedTypedRequest(t *testing.T) {
+	transport := &fakeTransport{result: AppLogsState{Lines: []string{"one", "two"}, Source: "docker:gatewayd"}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	lines, source, err := client.AppLogs(context.Background(), appmanifest.FedimintGatewayID, 20, "2h")
+	if err != nil || source != "docker:gatewayd" || !reflect.DeepEqual(lines, []string{"one", "two"}) {
+		t.Fatalf("lines/source/error=%#v/%q/%v", lines, source, err)
+	}
+	if transport.request.Operation != OperationAppLogs || transport.request.DryRun {
+		t.Fatalf("unexpected request: %#v", transport.request)
+	}
+	var params AppLogsParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.AppID != appmanifest.FedimintGatewayID || params.Lines != 20 || params.Since != "2h" {
+		t.Fatalf("unexpected params: %#v", params)
+	}
+}
+
 func TestClientBitcoinStorageBuildsClosedTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: BitcoinCoreStorageState{Status: "ready"}}
 	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)

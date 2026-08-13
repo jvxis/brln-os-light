@@ -309,3 +309,28 @@ kept both legacy containers stopped, preserved all data content and dependency
 timestamps, and left UFW/network configuration untouched. Bark is the next
 Docker application; Mempool and Fedimint remain late in the owner-approved
 sequence.
+
+## Accepted Fedimint Guardian and Gateway boundary
+
+Fedimint is the final migrated Docker family. Guardian and Gateway use the
+official stable v0.11.1 multi-architecture manifests by digest. Their exact
+Compose and private runtime documents are shared by manager and broker, while
+only the broker can snapshot them into a root-owned execution tree or operate
+Docker and UFW. Both real images passed a disposable `amd64` gate as UID/GID
+1000 with read-only roots, all capabilities dropped, and
+`no-new-privileges`.
+
+The Gateway no longer mounts the native LND tree or receives
+`admin.macaroon`. The manager bakes a dedicated credential with the nine
+permissions observed in upstream v0.11.1, and the broker independently rejects
+byte equality with the native admin credential before exposing only that file
+and a copied TLS certificate read-only. Existing fixed Docker-to-LND access is
+idempotent; only a first-time missing listener/certificate contract can cause
+the one required broker-controlled LND restart. Existing Guardian and Gateway
+databases are preserved, and the legacy stopped/running choice is not changed
+by read-only enrollment or inspection.
+
+LOS TESTE2 retained its running Guardian and stopped Gateway with 15 and 40
+data files respectively; Bitcoin, LND, and manager activation timestamps were
+unchanged. Evidence is in
+`docs/baselines/privilege-hardening-phase2-fedimint-functional-2026-08-13.json`.

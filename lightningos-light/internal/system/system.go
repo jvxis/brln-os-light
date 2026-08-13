@@ -59,6 +59,10 @@ type appAdminResetPrivilegedClient interface {
 	ResetAppAdmin(ctx context.Context, appID string, dryRun bool) error
 }
 
+type appLogsPrivilegedClient interface {
+	AppLogs(ctx context.Context, appID string, lines int, since string) ([]string, string, error)
+}
+
 type loopPrivilegedClient interface {
 	LoopStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, hasPersistentState bool, err error)
 	EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (status string, err error)
@@ -1098,6 +1102,21 @@ func InspectAppWithBroker(ctx context.Context, appID string) (handled bool, stat
 	default:
 		return false, "", 0, nil
 	}
+}
+
+func ReadAppLogsWithBroker(ctx context.Context, appID string, lines int, since string) (bool, []string, string, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil, "", nil
+	}
+	logClient, ok := client.(appLogsPrivilegedClient)
+	if !ok || client.Mode() != "enforce" {
+		return false, nil, "", nil
+	}
+	result, source, err := logClient.AppLogs(ctx, appID, lines, since)
+	return true, result, source, err
 }
 
 // AppLifecycleWithBroker routes a catalog-defined lifecycle action through the

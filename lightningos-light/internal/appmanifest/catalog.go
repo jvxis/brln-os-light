@@ -162,6 +162,8 @@ func CatalogImageRequiresRefresh(appID string, variant AppImageVariant) (bool, e
 
 func CatalogExternalTCPPort(appID string) (int, error) {
 	switch appID {
+	case BitcoinCoreID:
+		return BitcoinCoreP2PPort, nil
 	case BTCPayID:
 		return BTCPayPort, nil
 	case RoboSatsID:

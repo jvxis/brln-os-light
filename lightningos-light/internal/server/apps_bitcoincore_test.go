@@ -236,6 +236,31 @@ func TestBitcoinCoreLifecycleAndStatusRequireEnforceBroker(t *testing.T) {
 	}
 }
 
+func TestBitcoinCoreP2PFirewallRequiresClosedBrokerContract(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", firewallStatus: "active"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureBitcoinCoreP2PFirewall(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.firewallCalls != 1 || client.firewallAppID != appmanifest.BitcoinCoreID || client.firewallDryRun {
+		t.Fatalf("unexpected firewall broker call: %#v", client)
+	}
+}
+
+func TestBitcoinCoreP2PFirewallFailsClosedOutsideEnforce(t *testing.T) {
+	for _, mode := range []string{"disabled", "shadow"} {
+		t.Run(mode, func(t *testing.T) {
+			system.ConfigurePrivilegedClient(&cpuMinerPrivilegedClient{mode: mode})
+			t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+			if err := ensureBitcoinCoreP2PFirewall(context.Background()); err == nil {
+				t.Fatal("firewall unexpectedly used a legacy fallback")
+			}
+		})
+	}
+}
+
 func TestBitcoinCoreLifecycleAndStatusFailClosedOutsideEnforce(t *testing.T) {
 	for _, mode := range []string{"disabled", "shadow"} {
 		t.Run(mode, func(t *testing.T) {

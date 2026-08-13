@@ -232,7 +232,7 @@ func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoin
 			return fmt.Errorf("failed to restart Bitcoin Core after one-time RPC baseline migration: %w", err)
 		}
 	}
-	return nil
+	return ensureBitcoinCoreP2PFirewall(ctx)
 }
 
 func resolveBitcoinCoreInstallDataDir(ctx context.Context, opts bitcoinCoreInstallOptions) (string, bool, error) {
@@ -317,7 +317,7 @@ func (s *Server) startBitcoinCore(ctx context.Context) error {
 			return fmt.Errorf("failed to restart Bitcoin Core after one-time RPC baseline migration: %w", err)
 		}
 	}
-	return nil
+	return ensureBitcoinCoreP2PFirewall(ctx)
 }
 
 func (s *Server) stopBitcoinCore(ctx context.Context) error {
@@ -355,6 +355,15 @@ func runBitcoinCoreLifecycle(ctx context.Context, action string) error {
 		return errors.New("Bitcoin Core lifecycle requires privileged broker enforce mode")
 	} else if err != nil {
 		return fmt.Errorf("Bitcoin Core %s failed: %w", action, err)
+	}
+	return nil
+}
+
+func ensureBitcoinCoreP2PFirewall(ctx context.Context) error {
+	if handled, _, err := system.EnsureAppFirewallWithBroker(ctx, appmanifest.BitcoinCoreID); !handled {
+		return errors.New("Bitcoin Core P2P firewall requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Bitcoin Core P2P firewall failed: %w", err)
 	}
 	return nil
 }

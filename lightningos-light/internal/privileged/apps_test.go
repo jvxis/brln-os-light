@@ -144,6 +144,27 @@ func TestComposeAppEnsureFirewallAccessUsesFixedUFWCommands(t *testing.T) {
 	}
 }
 
+func TestComposeAppEnsureBitcoinCoreFirewallUsesOnlyMainnetP2PPort(t *testing.T) {
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == ufwPath && reflect.DeepEqual(args, []string{"status"}) {
+			return "Status: active\n", nil, true
+		}
+		return "", nil, false
+	}}
+	manager := &ComposeAppManager{Runner: runner}
+	state, err := manager.EnsureFirewallAccess(context.Background(), appmanifest.BitcoinCoreID, false)
+	if err != nil || state.Status != "active" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	want := []recordedCommand{
+		{path: ufwPath, args: []string{"status"}},
+		{path: ufwPath, args: []string{"allow", strconv.Itoa(appmanifest.BitcoinCoreP2PPort) + "/tcp"}},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands=%#v want=%#v", runner.commands, want)
+	}
+}
+
 func TestComposeAppEnsureFirewallAccessInactiveUnavailableAndDryRun(t *testing.T) {
 	for _, test := range []struct {
 		name       string

@@ -31,6 +31,7 @@ const (
 	BitcoinCoreComposeFile      = "docker-compose.yaml"
 	BitcoinCorePrimaryService   = "bitcoind"
 	BitcoinCoreStopTimeout      = 10
+	BitcoinCoreP2PPort          = 8333
 	BitcoinCoreExecutionRoot    = "/var/lib/lightningos-privileged/apps/bitcoincore"
 	BitcoinCoreStorageGuardFile = "storage-guard.sh"
 	BitcoinCoreStorageIDPath    = "/var/lib/lightningos-privileged/apps/bitcoincore/storage-id"

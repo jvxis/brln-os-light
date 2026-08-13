@@ -275,6 +275,7 @@ mirror_root="/var/lib/lightningos/src/brln-os-light"
 worktree_root="/var/lib/lightningos/worktrees"
 worktree_dir=""
 project_dir=""
+cutover_prepared=0
 
 owned_by_root() {
   local path=""
@@ -290,10 +291,17 @@ owned_by_root() {
 }
 
 cleanup() {
+  local exit_status=$?
+  trap - EXIT
+  if [[ "$exit_status" -ne 0 && "$cutover_prepared" -eq 1 && -x /usr/local/sbin/lightningos-rollback-privilege-cutover ]]; then
+    print_warn "Upgrade failed after preparing the transaction; restoring Manager, UI, and privilege boundary"
+    /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+  fi
   if [[ -n "$worktree_dir" && -d "$worktree_dir" ]]; then
     "$GIT_BIN" -C "$mirror_root" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true
     "$RM_BIN" -rf "$worktree_dir" >/dev/null 2>&1 || true
   fi
+  exit "$exit_status"
 }
 trap cleanup EXIT
 
@@ -390,12 +398,12 @@ validate_legacy_app_commands() {
   for command in "${commands[@]}"; do
     command="$(echo "$command" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     case "$command" in
-      /bin/true|*/apt-get\ \*|*/apt\ \*|*/dpkg\ \*|*/systemd-run\ \*|*/ufw\ \*) ;;
+      /bin/true|*/apt-get\ \*|*/apt\ \*|*/dpkg\ \*|*/docker\ \*|*/docker-compose\ \*|*/systemd-run\ \*|*/ufw\ \*) ;;
       *) return 1 ;;
     esac
     count=$((count + 1))
   done
-  ((count >= 1 && count <= 5))
+  ((count >= 1 && count <= 7))
 }
 
 validate_legacy_auth_enable_sudoers() {
@@ -457,6 +465,14 @@ capture_lnd_manager_credential_boundary() {
   fi
 }
 
+capture_manager_ui_boundary() {
+  local state_root="$1"
+  local ui_root="/opt/lightningos/ui"
+  [[ -d "$ui_root" && ! -L "$ui_root" ]] || return 1
+  "$TAR_BIN" -C /opt/lightningos -cpf "$state_root/manager-ui.tar" ui
+  [[ -f "$state_root/manager-ui.tar" && ! -L "$state_root/manager-ui.tar" ]]
+}
+
 prepare_privilege_cutover() {
   local state_root="/var/lib/lightningos/rollback/0.5.3-privilege-cutover"
   local config_path="/etc/lightningos/config.yaml"
@@ -498,6 +514,12 @@ prepare_privilege_cutover() {
       : > "$state_root/schema-v3"
     fi
     validate_root_regular_file "$state_root/schema-v3" || return 1
+    if [[ ! -f "$state_root/schema-v4" ]]; then
+      capture_manager_ui_boundary "$state_root" || return 1
+      : > "$state_root/schema-v4"
+    fi
+    validate_root_regular_file "$state_root/schema-v4" || return 1
+    validate_root_regular_file "$state_root/manager-ui.tar" || return 1
     "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
     return 0
   fi
@@ -517,6 +539,7 @@ prepare_privilege_cutover() {
   capture_optional_file "/etc/systemd/system/lightningos-privileged@.service" "$state_root" "lightningos-privileged@.service"
   capture_optional_file "$rollback_bin" "$state_root" "rollback-command"
   capture_lnd_manager_credential_boundary "$state_root"
+  capture_manager_ui_boundary "$state_root"
   printf '%s\n' "$sudoers_path" > "$state_root/sudoers.path"
   printf '%s\n' "$manager_user" > "$state_root/manager.user"
   "$DATE_BIN" --utc +'%Y-%m-%dT%H:%M:%SZ' > "$state_root/created-at"
@@ -531,6 +554,7 @@ prepare_privilege_cutover() {
   fi
   : > "$state_root/schema-v2"
   : > "$state_root/schema-v3"
+  : > "$state_root/schema-v4"
   : > "$state_root/prepared"
   "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
   print_ok "Root-only privilege rollback bundle prepared"
@@ -883,12 +907,16 @@ print_ok "Privileged broker built"
 print_step "Building UI"
 [[ -f "$project_dir/ui/package-lock.json" ]] || die "UI lockfile is missing"
 (cd "$project_dir/ui" && "$NPM_BIN" ci && "$NPM_BIN" run build)
-"$RM_BIN" -rf /opt/lightningos/ui/*
-"$CP_BIN" -a "$project_dir/ui/dist/." /opt/lightningos/ui/
-print_ok "UI installed"
+print_ok "UI built"
 
 print_step "Preparing reversible privilege cutover"
 prepare_privilege_cutover
+cutover_prepared=1
+
+print_step "Installing UI"
+"$RM_BIN" -rf /opt/lightningos/ui/*
+"$CP_BIN" -a "$project_dir/ui/dist/." /opt/lightningos/ui/
+print_ok "UI installed"
 
 print_step "Ensuring fixed native application identities"
 ensure_native_app_identities
@@ -974,4 +1002,5 @@ else
   die "lightningos-manager failed to start after cutover"
 fi
 
+cutover_prepared=0
 print_ok "App upgrade complete to ${VERSION} (${TAG})"

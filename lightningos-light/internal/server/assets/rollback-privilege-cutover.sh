@@ -20,7 +20,7 @@ if [[ "${EUID}" -ne 0 ]]; then
   echo "Run this rollback as root." >&2
   exit 1
 fi
-if [[ ! -d "$STATE_ROOT" || -L "$STATE_ROOT" || ! -f "$STATE_ROOT/prepared" || -L "$STATE_ROOT/prepared" || ! -f "$STATE_ROOT/schema-v3" || -L "$STATE_ROOT/schema-v3" ]]; then
+if [[ ! -d "$STATE_ROOT" || -L "$STATE_ROOT" || ! -f "$STATE_ROOT/prepared" || -L "$STATE_ROOT/prepared" || ! -f "$STATE_ROOT/schema-v4" || -L "$STATE_ROOT/schema-v4" ]]; then
   echo "No trusted LightningOS privilege-cutover rollback state is available." >&2
   exit 1
 fi
@@ -93,6 +93,13 @@ restore_or_remove "lightningos-privileged.conf" "$TMPFILES_PATH"
 restore_or_remove "lightningos-privileged.socket" "$SOCKET_UNIT"
 restore_or_remove "lightningos-privileged@.service" "$BROKER_UNIT"
 restore_or_remove "auth-enable-sudoers" "$AUTH_SUDOERS_PATH"
+if [[ -f "$STATE_ROOT/manager-ui.tar" && ! -L "$STATE_ROOT/manager-ui.tar" && -d /opt/lightningos/ui && ! -L /opt/lightningos/ui ]]; then
+  find /opt/lightningos/ui -mindepth 1 -depth -delete
+  tar -C /opt/lightningos -xpf "$STATE_ROOT/manager-ui.tar"
+else
+  echo "Manager UI rollback state is missing or unsafe." >&2
+  exit 1
+fi
 
 if [[ -f "$STATE_ROOT/sudoers.path" && ! -L "$STATE_ROOT/sudoers.path" ]]; then
   sudoers_path="$(<"$STATE_ROOT/sudoers.path")"

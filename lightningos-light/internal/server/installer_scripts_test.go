@@ -696,6 +696,9 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 		`lightningos-manager broker-self-test`,
 		`capture_lnd_manager_credential_boundary`,
 		`: > "$state_root/schema-v3"`,
+		`: > "$state_root/schema-v4"`,
+		`capture_manager_ui_boundary`,
+		`manager-ui.tar`,
 		`lightningos-manager lnd-manager-credential-ensure`,
 		`/usr/local/sbin/lightningos-rollback-privilege-cutover || true`,
 	} {
@@ -705,12 +708,31 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 	}
 
 	stage := strings.LastIndex(content, "if ! stage_privilege_cutover; then")
+	prepare := strings.LastIndex(content, "prepare_privilege_cutover\n")
+	uiInstall := strings.LastIndex(content, `"$CP_BIN" -a "$project_dir/ui/dist/." /opt/lightningos/ui/`)
 	restart := strings.LastIndex(content, `if "$SYSTEMCTL_BIN" restart lightningos-manager; then`)
+	if prepare < 0 || uiInstall < 0 || prepare > uiInstall {
+		t.Fatal("rollback state must be prepared before the manager UI is replaced")
+	}
 	if stage < 0 || restart < 0 || stage > restart {
 		t.Fatal("privilege cutover must be staged before lightningos-manager restarts")
 	}
 	if !strings.Contains(content, `curl -sk --max-time 3 https://127.0.0.1:8443/api/health`) {
 		t.Fatal("privilege cutover must wait for the manager health endpoint before acceptance")
+	}
+}
+
+func TestAppUpgradeRecognizesDocumentedLegacyDockerSudoers(t *testing.T) {
+	path := filepath.Join("assets", "upgrade-app.sh")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read upgrade app script: %v", err)
+	}
+	content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	for _, expected := range []string{`*/docker\ \*`, `*/docker-compose\ \*`, `count <= 7`} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("documented legacy App Store sudoers is missing %q", expected)
+		}
 	}
 }
 
@@ -728,6 +750,7 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		`restore_or_remove "lightningos-manager.service" "$SERVICE_PATH"`,
 		`restore_or_remove "30-privilege-hardening.conf" "$DROPIN_PATH"`,
 		`restore_or_remove "lightningos-manager" "$MANAGER_BIN"`,
+		`tar -C /opt/lightningos -xpf "$STATE_ROOT/manager-ui.tar"`,
 		`restore_or_remove "lightningos-privileged" "$BROKER_BIN"`,
 		`restore_or_remove "lightningos-privileged.socket" "$SOCKET_UNIT"`,
 		`restore_or_remove "rollback-command" "$ROLLBACK_BIN"`,
@@ -735,7 +758,7 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		`rm -f -- "$sudoers_path"`,
 		`usermod -a -G docker "$manager_user"`,
 		`systemctl restart lightningos-manager`,
-		`! -f "$STATE_ROOT/schema-v3"`,
+		`! -f "$STATE_ROOT/schema-v4"`,
 		`runuser -u lightningos -- "$MANAGER_BIN" lnd-manager-credential-rollback`,
 		`chown "$admin_uid:$admin_gid" "$LND_ADMIN_MACAROON"`,
 		`chmod "$admin_mode" "$LND_ADMIN_MACAROON"`,

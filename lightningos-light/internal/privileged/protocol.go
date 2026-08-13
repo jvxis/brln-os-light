@@ -41,6 +41,7 @@ const (
 	OperationPackageStatus                Operation = "packages.feature.status"
 	OperationAppStorageEnsure             Operation = "storage.apps.ensure"
 	OperationSMARTRead                    Operation = "storage.smart.read"
+	OperationLNDPermissionsRepair         Operation = "storage.lnd.permissions.repair"
 	OperationAppImagePrepare              Operation = "app.image.prepare"
 	OperationAppImageStatus               Operation = "app.image.status"
 	OperationAppImageProbe                Operation = "app.image.probe"
@@ -144,6 +145,11 @@ type SMARTReadState struct {
 	Device    string `json:"device"`
 	Output    string `json:"output,omitempty"`
 	Available bool   `json:"available"`
+}
+
+type LNDPermissionsState struct {
+	Status  string `json:"status"`
+	Changed bool   `json:"changed,omitempty"`
 }
 
 type LNDUpgradeStartParams struct {
@@ -725,6 +731,11 @@ func ValidateRequest(request Request) error {
 		}
 		if !smartDevicePattern.MatchString(params.Device) {
 			return errors.New("SMART device is invalid")
+		}
+	case OperationLNDPermissionsRepair:
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid storage.lnd.permissions.repair params: %w", err)
 		}
 	case OperationAppImagePrepare:
 		var params AppImageParams

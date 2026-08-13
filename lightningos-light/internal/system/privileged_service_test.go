@@ -105,6 +105,11 @@ type fakePrivilegedServiceClient struct {
 	smartOutput              string
 	smartAvailable           bool
 	smartErr                 error
+	lndPermissionsCalls      int
+	lndPermissionsDryRun     bool
+	lndPermissionsStatus     string
+	lndPermissionsChanged    bool
+	lndPermissionsErr        error
 	storageCalls             int
 	storageDataDir           string
 	storageDryRun            bool
@@ -461,6 +466,19 @@ func (client *fakePrivilegedServiceClient) ReadSMART(_ context.Context, device s
 	client.smartCalls++
 	client.smartDevice = device
 	return client.smartOutput, client.smartAvailable, client.smartErr
+}
+
+func (client *fakePrivilegedServiceClient) RepairLNDPermissions(_ context.Context, dryRun bool) (string, bool, error) {
+	client.lndPermissionsCalls++
+	client.lndPermissionsDryRun = dryRun
+	status := client.lndPermissionsStatus
+	if status == "" {
+		status = "ready"
+		if dryRun {
+			status = "validated"
+		}
+	}
+	return status, client.lndPermissionsChanged, client.lndPermissionsErr
 }
 
 func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
@@ -1213,6 +1231,30 @@ func TestSMARTBrokerHelperHandlesEnforceAndShadowReads(t *testing.T) {
 			output, handled, err := ReadSMARTWithBroker(context.Background(), "/dev/sda")
 			if err != nil || !handled || output != "SMART payload" || client.smartCalls != 1 || client.smartDevice != "/dev/sda" {
 				t.Fatalf("output/handled/error/client=%q/%v/%v/%#v", output, handled, err, client)
+			}
+		})
+	}
+}
+
+func TestLNDPermissionsBrokerHelperRequiresEnforceForMutation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantHandled bool
+		wantDryRun  bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantDryRun: true, wantCalls: 1},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := RepairLNDPermissionsWithBroker(context.Background())
+			if err != nil || handled != test.wantHandled || client.lndPermissionsCalls != test.wantCalls || client.lndPermissionsDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
 			}
 		})
 	}

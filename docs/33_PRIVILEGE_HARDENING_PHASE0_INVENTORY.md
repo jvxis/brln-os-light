@@ -63,7 +63,7 @@ Legend for the call-site table:
 | --- | ---: | ---: | --- | ---: | --- | --- |
 | System boundary — `internal/system/system.go` | 1 | 0 | 0/0/0 | 0 | Remove generic sudo; `host.power` with `reboot|poweroff` enum | Reject executable names, extra arguments, shell syntax, and unknown actions |
 | SMART diagnostics — `internal/system/smart.go` | 0 | 0 | 0/0/0 | 0 | `storage.smart.read` | Migrated on 2026-08-13: exact broker-enumerated disks, fixed root-owned executables/arguments, bounded response, and Ubuntu 24.04 negative/preservation gate; unused wildcard sudoers removal remains for Phase 4 |
-| General handlers — `internal/server/handlers.go` | 4 | 0 | 0/3/1 | 0 | `service.action`, `host.power`, `apps.logs`, `apps.network.inspect`, `storage.lnd.permissions.repair` | Fixed unit/action/app allowlists; reauth remains; preserve restart and log behavior |
+| General handlers — `internal/server/handlers.go` | 0 | 0 | 0/3/1 | 0 | `service.action`, `host.power`, `storage.lnd.permissions.repair` | LND permissions migrated on 2026-08-13 to an empty request, fixed descriptor-relative tree, exact identity/modes and non-recursive repair; service/power compatibility calls remain |
 | Generic transient unit — `internal/server/systemd_run.go` | 1 | 0 | 0/0/0 | 0 | Delete after all typed operations migrate | Any new arbitrary executable or argument must fail the Phase 0 ceiling test |
 | Docker/App Store core — `internal/server/apps_docker.go` | 16 | 0 | 0/0/0 | 2 | `packages.install_feature`, `apps.lifecycle`, `apps.inspect`, root-owned Compose support | Fixed package sets and app manifests; reject socket mounts, host modes, devices, capabilities, arbitrary images and Compose paths |
 | LightningOS upgrade — `internal/server/app_upgrade.go` | 0 | 0 | 0/0/0 | 0 | `upgrade.lightningos.start`, `service.status` | Migrated on 2026-08-13: fixed repository, digest-pinned helper, exact tag/version/full-commit binding, fixed units and verify-only gate; publisher signature and real upgrade/rollback matrix remain |
@@ -91,8 +91,8 @@ Legend for the call-site table:
 | RoboSats app — `internal/server/apps_robosats.go` | 4 | 0 | 0/0/0 | 0 | Manifest image/lifecycle operations and `firewall.apply_app_policy` | Known image/source and fixed port; lifecycle/rollback tests |
 | App storage permissions — `internal/server/apps_storage_permissions.go` | 0 | 0 | 0/0/0 | 0 | `storage.apps.ensure` | Migrated on 2026-08-13: empty request, fixed identity/tree/mode, descriptor-relative `O_NOFOLLOW`, serialized dry-run/repair, and Ubuntu 24.04 symlink/preservation gate |
 | Taproot Assets app — `internal/server/apps_tapd.go` | 1 | 0 | 0/0/0 | 0 | `apps.exec_migration(tapd)` | Fixed container/command; reject arbitrary exec arguments and preserve asset state |
-| Elements mainchain switch — `internal/server/elements_mainchain.go` | 0 | 1 | 0/0/0 | 0 | `service.action(elements)` | Exact unit/action and mainchain-switch regression |
-| Elements status — `internal/server/elements_status.go` | 0 | 1 | 0/0/0 | 0 | `apps.status(elements)` | Fixed CLI and config path; no arbitrary executable or arguments |
+| Elements mainchain switch — `internal/server/elements_mainchain.go` | 0 | 0 | 0/0/0 | 0 | `app.elements.lifecycle` | Existing typed path re-audited on 2026-08-13; external/distinct storage remains derived from the enrolled data directory and no direct privileged fallback remains |
+| Elements status — `internal/server/elements_status.go` | 0 | 0 | 0/0/0 | 0 | `app.elements.status` | Existing typed path re-audited on 2026-08-13; fixed CLI/config handling is broker-owned and the manager direct budget is zero |
 
 The original Phase 0 row totals before accepted migrations were `S=92`,
 `D=70`, `W=2`, `R=4`, and `P=1`; migrated rows above are reduced to their

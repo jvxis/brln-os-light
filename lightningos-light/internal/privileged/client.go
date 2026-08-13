@@ -631,6 +631,28 @@ func (client *Client) ReadSMART(ctx context.Context, device string) (string, boo
 	return state.Output, state.Available, nil
 }
 
+func (client *Client) RepairLNDPermissions(ctx context.Context, dryRun bool) (string, bool, error) {
+	response, err := client.call(ctx, OperationLNDPermissionsRepair, struct{}{}, dryRun)
+	if err != nil {
+		return "", false, err
+	}
+	var state LNDPermissionsState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", false, errors.New("invalid broker LND permissions response")
+	}
+	if state.Status == "absent" && !state.Changed {
+		return state.Status, false, nil
+	}
+	wantStatus := "ready"
+	if dryRun {
+		wantStatus = "validated"
+	}
+	if state.Status != wantStatus {
+		return "", false, errors.New("invalid broker LND permissions state")
+	}
+	return state.Status, state.Changed, nil
+}
+
 func (client *Client) EnsureLoopClientMaterial(ctx context.Context, dryRun bool) error {
 	_, err := client.call(ctx, OperationLoopClientMaterialEnsure, struct{}{}, dryRun)
 	return err

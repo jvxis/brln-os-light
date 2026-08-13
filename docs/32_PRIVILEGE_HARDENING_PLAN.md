@@ -1235,6 +1235,20 @@ passed without changing Manager/LND/Bitcoin states. Evidence is in
 now-unused smartctl wildcard grants remain scheduled for the coordinated
 sudoers cutover, so this slice does not claim their removal yet.
 
+The asynchronous post-wallet LND metadata repair now uses the serialized
+`storage.lnd.permissions.repair` operation and `handlers.go` has zero direct
+sudo calls. The request is empty. The broker fixes the `lnd` identity, the
+five permitted directories, `lnd.conf`, `tls.cert`, and the bounded mainnet
+`*.macaroon` set; it opens by descriptor with `O_NOFOLLOW`, performs no
+recursive walk, reads no contents, creates no paths, and excludes channel,
+wallet, graph and backup databases. Ubuntu 24.04 passed real-tree dry-run plus
+temporary-tree owner/mode, byte-preservation, unmanaged-file and symlink gates
+without changing `/data/lnd` metadata or Manager/LND/Bitcoin states. Evidence
+is in
+`docs/baselines/privilege-hardening-phase3-lnd-permissions-2026-08-13.json`.
+The unused direct helper sudoers grant remains scheduled for the coordinated
+Phase 4 cutover.
+
 Policy application/reconciliation, installer artifact verification, the real
 Tor and LightningOS upgrade/rollback matrices, release publisher attestation,
 and the remaining package/storage paths are still open.

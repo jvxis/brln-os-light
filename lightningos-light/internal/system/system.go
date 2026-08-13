@@ -92,6 +92,10 @@ type smartPrivilegedClient interface {
 	ReadSMART(ctx context.Context, device string) (output string, available bool, err error)
 }
 
+type lndPermissionsPrivilegedClient interface {
+	RepairLNDPermissions(ctx context.Context, dryRun bool) (status string, changed bool, err error)
+}
+
 type loopPrivilegedClient interface {
 	LoopStatus(ctx context.Context) (installed bool, status string, hasLNDMacaroon bool, hasPersistentState bool, err error)
 	EnsureLoop(ctx context.Context, tlsCertificate, macaroon []byte, dryRun bool) (status string, err error)
@@ -1140,6 +1144,34 @@ func ReadSMARTWithBroker(ctx context.Context, device string) (string, bool, erro
 	}
 	output, _, err := smartClient.ReadSMART(ctx, device)
 	return output, true, err
+}
+
+func RepairLNDPermissionsWithBroker(ctx context.Context) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	permissionsClient, ok := client.(lndPermissionsPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker does not support LND permissions repair")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		_, _, err := permissionsClient.RepairLNDPermissions(ctx, false)
+		return true, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _, _ = permissionsClient.RepairLNDPermissions(shadowCtx, true)
+		return false, nil
+	default:
+		return false, nil
+	}
 }
 
 func StartLNDUpgradeWithBroker(ctx context.Context, version string, helperContent string, verifyOnly bool) (bool, string, error) {

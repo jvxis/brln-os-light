@@ -59,6 +59,7 @@ func main() {
 		Packages:           privileged.NewCatalogPackageManager(runner),
 		AppStorage:         privileged.NewNativeAppStorageManager(),
 		SMART:              privileged.NewNativeSMARTManager(runner),
+		LNDPermissions:     privileged.NewNativeLNDPermissionsManager(),
 		BitcoinStorage:     privileged.NewBitcoinCoreStorageManager(),
 		BitcoinConfig:      privileged.NewBitcoinCoreConfigManager(),
 		Loop:               privileged.NewNativeLoopManager(runner),

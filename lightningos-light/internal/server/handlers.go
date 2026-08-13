@@ -32,7 +32,6 @@ const (
 	lndWalletDBPath                = "/data/lnd/data/chain/bitcoin/mainnet/wallet.db"
 	lndChannelDBPath               = "/data/lnd/data/graph/mainnet/channel.db"
 	lndAdminMacaroonPath           = "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"
-	lndFixPermsScript              = "/usr/local/sbin/lightningos-fix-lnd-perms"
 	mempoolBaseURL                 = "https://mempool.space/api/v1/lightning"
 	boostPeersDefaultLimit         = 3
 	boostPeersMaxLimit             = 10
@@ -5576,7 +5575,9 @@ func (s *Server) scheduleLNDPermissionsFix(reason string) {
 		waitCancel()
 		runCtx, runCancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer runCancel()
-		if _, err := system.RunCommandWithSudo(runCtx, lndFixPermsScript); err != nil {
+		if handled, err := system.RepairLNDPermissionsWithBroker(runCtx); !handled {
+			s.logger.Printf("lnd permissions fix skipped (%s): privileged broker enforce mode is required", reason)
+		} else if err != nil {
 			s.logger.Printf("lnd permissions fix failed (%s): %v", reason, err)
 		}
 	}()

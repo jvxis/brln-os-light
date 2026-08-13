@@ -176,6 +176,18 @@ Evidence: `docs/baselines/privilege-hardening-phase3-smart-read-2026-08-13.json`
 The now-unused wildcard smartctl grants are deliberately still listed until
 the coordinated Phase 4 sudoers cutover.
 
+Post-wallet LND metadata repair now uses empty serialized
+`storage.lnd.permissions.repair`; `handlers.go` has zero direct sudo calls.
+The broker fixes the `lnd` identity and a non-recursive descriptor-relative
+allowlist of directories, `lnd.conf`, `tls.cert` and mainnet macaroons. It
+excludes channel/wallet/graph/backup state and rejects symlinks. Ubuntu 24.04
+preserved the real `/data/lnd` metadata hash and all core service states while
+the temporary-tree gate proved exact metadata repair and byte preservation.
+Evidence:
+`docs/baselines/privilege-hardening-phase3-lnd-permissions-2026-08-13.json`.
+Remove the now-unused direct helper grant only in the coordinated sudoers
+cutover.
+
 Firewall policy reconciliation, real Tor/LightningOS upgrade and rollback
 matrices, LightningOS publisher attestation, remaining helper/storage
 operations, wildcard sudoers removal, installer authenticity, and the rest of

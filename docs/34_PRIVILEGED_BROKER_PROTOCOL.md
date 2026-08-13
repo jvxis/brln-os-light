@@ -870,6 +870,25 @@ rejected added flags and traversal, and passed non-disk and executable-symlink
 negative tests without changing Manager/LND/Bitcoin states. Evidence is in
 `docs/baselines/privilege-hardening-phase3-smart-read-2026-08-13.json`.
 
+### LND permissions repair
+
+`storage.lnd.permissions.repair` is a serialized empty request. The broker
+resolves the fixed `lnd` identity and opens only `/data/lnd`, the four fixed
+descendant directories, `lnd.conf`, `tls.cert`, and regular `*.macaroon` files
+directly inside the mainnet chain directory. It never walks the LND tree
+recursively, never reads file contents, never creates missing paths, and does
+not touch `channel.db`, wallet databases, backups, graph data, or channel
+state. Paths are opened relative to directory descriptors with `O_NOFOLLOW`;
+unexpected types and symlinks fail closed. The caller cannot choose a path,
+uid, gid, mode, filename, glob, or command.
+
+The Ubuntu 24.04 service-user gate left the actual `/data/lnd` metadata hash
+and Manager/LND/Bitcoin service states unchanged in dry-run. A root-only
+temporary-tree test proved exact owner/mode repair, byte preservation,
+unmanaged `channel.db` preservation, and root/macaroon symlink rejection.
+Evidence is in
+`docs/baselines/privilege-hardening-phase3-lnd-permissions-2026-08-13.json`.
+
 ## Manager modes and rollback
 
 The `privileged` configuration block supports:

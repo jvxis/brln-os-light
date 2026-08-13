@@ -240,32 +240,42 @@ type universeRootsResp struct {
 	} `json:"universe_roots"`
 }
 
-// handleTapdDiscover fetches a universe's public REST catalog
-// (https://<host>/v1/taproot-assets/universe/roots) and returns a compact asset
-// list so users can browse and then targeted-sync an asset. The tapcli/gRPC
-// full-sync does NOT return the whole catalog, but this read endpoint does.
+const (
+	tapdDefaultDiscoveryUniverseHost = "universe.lightning.finance"
+	tapdDefaultDiscoveryUniverseURL  = "https://universe.lightning.finance/v1/taproot-assets/universe/roots"
+)
+
+func isApprovedTapdDiscoveryUniverse(host string) bool {
+	return strings.EqualFold(strings.TrimSpace(host), tapdDefaultDiscoveryUniverseHost)
+}
+
+// handleTapdDiscover fetches the public REST catalog from a server-approved
+// universe and returns a compact asset list so users can browse and then
+// targeted-sync an asset. Arbitrary hosts remain available to the separate
+// tapcli/gRPC sync action, which does not make an HTTP request from the manager.
 func (s *Server) handleTapdDiscover(w http.ResponseWriter, r *http.Request) {
-	host := strings.TrimSpace(r.URL.Query().Get("host"))
-	if host == "" {
+	requestedHost := strings.TrimSpace(r.URL.Query().Get("host"))
+	if requestedHost == "" {
 		writeError(w, http.StatusBadRequest, "host is required")
 		return
 	}
-	if err := appmanifest.ValidateTapdCLIRequest(appmanifest.TapdCLIRequest{
-		Command: appmanifest.TapdCLIUniverseSync, UniverseHost: host,
-	}); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid host")
+	if !isApprovedTapdDiscoveryUniverse(requestedHost) {
+		writeError(w, http.StatusBadRequest, "universe discovery host is not approved")
 		return
 	}
-	client, err := publicUniverseHTTPClient(r.Context(), host)
+
+	// Both the network policy and request URL are server-owned constants. The
+	// user-provided value only selects this closed entry and never reaches the
+	// resolver, dialer, TLS authority, or HTTP request URL.
+	client, err := publicUniverseHTTPClient(r.Context(), tapdDefaultDiscoveryUniverseHost)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "universe host is not publicly routable")
 		return
 	}
-	endpoint := "https://" + host + "/v1/taproot-assets/universe/roots"
 
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tapdDefaultDiscoveryUniverseURL, nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

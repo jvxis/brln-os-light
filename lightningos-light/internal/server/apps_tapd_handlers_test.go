@@ -11,6 +11,52 @@ import (
 	"time"
 )
 
+func TestTapdUniverseDiscoveryAllowlist(t *testing.T) {
+	for _, host := range []string{
+		"universe.lightning.finance",
+		"UNIVERSE.LIGHTNING.FINANCE",
+		"  universe.lightning.finance  ",
+	} {
+		if !isApprovedTapdDiscoveryUniverse(host) {
+			t.Errorf("approved universe rejected: %q", host)
+		}
+	}
+
+	for _, host := range []string{
+		"",
+		"universe.lightning.finance:443",
+		"universe.lightning.finance.evil.test",
+		"evil-universe.lightning.finance",
+		"https://universe.lightning.finance",
+		"universe.lightning.finance/path",
+		"universe.lightning.finance?host=127.0.0.1",
+		"universe.lightning.finance#fragment",
+		"user@universe.lightning.finance",
+		"127.0.0.1",
+		"169.254.169.254",
+	} {
+		if isApprovedTapdDiscoveryUniverse(host) {
+			t.Errorf("unapproved universe accepted: %q", host)
+		}
+	}
+}
+
+func TestTapdUniverseDiscoveryRejectsUnapprovedHostBeforeRequest(t *testing.T) {
+	server := &Server{}
+	for _, host := range []string{
+		"universe.lightning.finance.evil.test",
+		"127.0.0.1",
+		"169.254.169.254",
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/api/apps/tapd/discover?host="+host, nil)
+		recorder := httptest.NewRecorder()
+		server.handleTapdDiscover(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Errorf("host %q: expected 400, got %d: %s", host, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
 func TestTapdUniverseDiscoveryRejectsInternalDestinations(t *testing.T) {
 	for _, host := range []string{"127.0.0.1", "127.0.0.1:10029", "169.254.169.254", "10.0.0.1", "100.64.0.1"} {
 		if _, err := publicUniverseHTTPClient(context.Background(), host); err == nil {

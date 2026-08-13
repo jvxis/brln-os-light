@@ -960,9 +960,11 @@ LND credential. That credential authenticated `getinfo` and was denied
 macaroon administration. Image readiness, status, and start/stop dry-runs
 passed; Tapd remained stopped. Bitcoin, LND, and manager activation timestamps
 and the Tapd data metadata hash remained unchanged. Universe discovery now
-pins validated public DNS results and rejects private, local, reserved, proxy,
-and redirect targets; asset send and mint finalization require fresh
-reauthentication. Evidence is stored in
+selects only the server-approved `universe.lightning.finance` REST endpoint,
+pins its validated public DNS results, and rejects alternate, private, local,
+reserved, proxy, and redirect targets; arbitrary universe hosts remain confined
+to the typed `tapcli` sync operation. Asset send and mint finalization require
+fresh reauthentication. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-tapd-boundary-2026-08-12.json`.
 
 The Public Pool slice is accepted without starting its preserved containers.

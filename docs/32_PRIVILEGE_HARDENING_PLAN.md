@@ -1451,13 +1451,18 @@ filesystem protection, private devices, empty capability sets, kernel and
 control-group protections, restricted address families, and an audited syscall
 deny policy. The broker has a separate socket-activated root service policy. A
 disposable Ubuntu 24.04 gate passed forward operation, unauthorized-peer and
-direct-sudo rejection, manager health, boundary assertions, and full rollback;
-Docker was not restarted and the pre-existing LND activation condition was not
-caused or changed intentionally. Evidence is in
+direct-sudo rejection, manager health, boundary assertions, and full rollback.
+The corresponding Ubuntu 26.04 gate passed the same matrix with an exact
+byte-for-byte rollback of all captured boundary artifacts. That gate first
+failed closed on a legitimate historical sudoers variant; recognition was
+limited to the known paired LightningOS LND/application upgrade helpers. It also
+found and fixed restoration of the previously captured rollback helper before
+acceptance. Docker was not restarted on either VM and the pre-existing LND
+activation cycles were not caused or changed intentionally. Evidence is in
 `docs/baselines/privilege-hardening-phase4-socket-cutover-2026-08-13.json`.
 
-Phase 4 remains open for the Ubuntu 26.04 gate and the final supported-upgrade
-and application regression matrices.
+The Phase 4 operating-system cutover gates are complete. Phase 4 remains open
+only for the final supported-upgrade and application regression matrices.
 
 Exit criterion: a test running as the manager user cannot access the Docker
 socket, launch a root process, modify root-owned configuration, alter the

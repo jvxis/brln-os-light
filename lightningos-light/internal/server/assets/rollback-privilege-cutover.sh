@@ -11,6 +11,7 @@ TMPFILES_PATH="/etc/tmpfiles.d/lightningos-privileged.conf"
 SOCKET_UNIT="/etc/systemd/system/lightningos-privileged.socket"
 BROKER_UNIT="/etc/systemd/system/lightningos-privileged@.service"
 AUTH_SUDOERS_PATH="/etc/sudoers.d/lightningos-auth-enable"
+ROLLBACK_BIN="/usr/local/sbin/lightningos-rollback-privilege-cutover"
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Run this rollback as root." >&2
@@ -94,4 +95,5 @@ else
 fi
 systemctl restart lightningos-manager
 systemctl is-active --quiet lightningos-manager
+restore_or_remove "rollback-command" "$ROLLBACK_BIN"
 echo "LightningOS privilege cutover rolled back. Bitcoin, LND, and app data were not modified."

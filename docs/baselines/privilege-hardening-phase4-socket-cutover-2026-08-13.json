@@ -3,33 +3,55 @@
   "date": "2026-08-13",
   "phase": "4",
   "slice": "socket broker transport, manager confinement, sudoers removal, and rollback",
-  "target": {
-    "kind": "disposable VirtualBox VM",
-    "name": "brln-os-hardening-053-pkg-20260810",
-    "os": "Ubuntu 24.04",
-    "network": "loopback-only NAT SSH forward during the gate; original bridged NIC restored afterward"
-  },
+  "targets": [
+    {
+      "kind": "disposable VirtualBox VM",
+      "name": "brln-os-hardening-053-pkg-20260810",
+      "os": "Ubuntu 24.04",
+      "network": "loopback-only NAT SSH forward during the gate; original bridged NIC restored afterward"
+    },
+    {
+      "kind": "disposable VirtualBox VM",
+      "name": "brln-os-hardening-053-ubuntu26-20260813",
+      "os": "Ubuntu 26.04 LTS",
+      "network": "loopback-only NAT SSH forward during the gate; original bridged NIC restored afterward"
+    }
+  ],
   "accepted": [
     "The manager reached the privileged broker through an AF_UNIX systemd socket as the canonical lightningos UID.",
     "A different local account could not use the socket and direct sudo execution of the broker was unavailable after cutover.",
     "The manager remained healthy with NoNewPrivileges=yes, PrivateDevices=yes, ProtectSystem=strict, empty capability sets, kernel and control-group protections, restricted address families, and the audited syscall deny set.",
     "The legacy manager sudoers file and stale login-enable sudoers file were absent after cutover; the manager had no docker supplementary group.",
     "Docker InvocationID was unchanged through forward cutover and rollback.",
-    "The rollback restored the prior manager and broker binaries, manager unit and drop-in, config, sudoers policy, Docker membership, and prior socket state.",
+    "The rollback restored the prior manager and broker binaries, manager unit and drop-in, config, sudoers policy, Docker membership, rollback helper, and prior socket state byte for byte.",
     "Bitcoin, LND, PostgreSQL, Docker, and application data were not copied, deleted, reset, reindexed, or ownership-rewritten by the cutover or rollback.",
-    "systemd-analyze security reported overall exposure 2.5 (OK) for the confined manager in this gate."
+    "systemd-analyze security reported overall exposure 2.5 (OK) for the confined manager on both operating-system gates.",
+    "Ubuntu 24.04 and Ubuntu 26.04 both passed forward operation, negative authorization, manager health, confinement, Docker non-restart, and exact access-boundary rollback."
   ],
   "observations": [
     "LND was already in an automatic activating/restart cycle before the privilege gate and remained in that pre-existing condition; the gate did not deliberately restart LND.",
     "The first health probe immediately after manager restart raced startup and triggered automatic rollback as designed. The repeated gate used a bounded readiness loop and passed.",
-    "An older root-only rollback bundle from the previous disposable gate was preserved during testing and restored afterward."
+    "An older root-only rollback bundle from the previous Ubuntu 24.04 disposable gate was preserved during testing and restored afterward.",
+    "The first Ubuntu 26.04 attempt failed closed before cutover because its legitimate historical sudoers policy still contained the paired LightningOS LND and application upgrade helpers. The validator was extended only for that exact paired legacy form and continued to reject unknown policy.",
+    "The Ubuntu 26.04 gate exposed that the rollback bundle captured the previous rollback helper but did not restore it. The rollback script and regression assertion were corrected before the accepted gate.",
+    "LND was also already cycling in activating state on Ubuntu 26.04 and changed its own InvocationID during the gate; no gate command restarted LND."
   ],
   "cleanup": {
-    "guest_temporary_source_removed": true,
-    "guest_gate_directory_removed": true,
-    "vm_powered_off": true,
-    "nat_forward_removed": true,
-    "bridged_adapter_restored": "Realtek Gaming GbE Family Controller"
+    "ubuntu_24": {
+      "guest_temporary_source_removed": true,
+      "guest_gate_directory_removed": true,
+      "vm_powered_off": true,
+      "nat_forward_removed": true,
+      "bridged_adapter_restored": "Realtek Gaming GbE Family Controller"
+    },
+    "ubuntu_26": {
+      "guest_temporary_source_removed": true,
+      "guest_gate_directory_removed": true,
+      "local_temporary_archive_removed": true,
+      "vm_powered_off": true,
+      "nat_forward_removed": true,
+      "bridged_adapter_restored": "Realtek Gaming GbE Family Controller"
+    }
   },
   "secrets_in_evidence": false
 }

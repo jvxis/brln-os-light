@@ -240,12 +240,17 @@ are removed last.
 The manager service now has `NoNewPrivileges`, strict filesystem protection,
 private devices, empty capabilities, kernel/control-group protections,
 restricted address families, and a syscall deny policy. The broker has a
-separate socket-activated service policy. Ubuntu 24.04 passed forward, negative
-authorization, health, confinement, and rollback gates without restarting
-Docker or touching node/app data. LND was already cycling in `activating` before
-this gate; it was not deliberately restarted. Evidence:
+separate socket-activated service policy. Ubuntu 24.04 and Ubuntu 26.04 passed
+forward, negative authorization, health, confinement, and exact rollback gates
+without restarting Docker or touching node/app data. Both managers reported
+`2.5 OK` under `systemd-analyze security`. The Ubuntu 26.04 gate first failed
+closed on the legitimate paired legacy LND/application upgrade helpers; the
+validator now recognizes only that exact historical extension. It also found
+and fixed restoration of the previously captured rollback helper. LND was
+already cycling in `activating` on both disposable VMs and was not deliberately
+restarted. Evidence:
 `docs/baselines/privilege-hardening-phase4-socket-cutover-2026-08-13.json`.
-Ubuntu 26.04 and the final app/regression matrices remain open.
+The final supported-upgrade and app/regression matrices remain open.
 
 Application state at this checkpoint:
 

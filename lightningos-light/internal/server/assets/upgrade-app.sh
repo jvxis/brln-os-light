@@ -283,6 +283,8 @@ validate_legacy_system_commands() {
   local count=0
   local saw_manager_restart=0
   local saw_broker=0
+  local saw_lnd_upgrade=0
+  local saw_app_upgrade=0
   IFS=',' read -r -a commands <<< "$raw"
   for command in "${commands[@]}"; do
     command="$(echo "$command" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
@@ -296,13 +298,19 @@ validate_legacy_system_commands() {
       /usr/local/libexec/lightningos-privileged\ \"\")
         saw_broker=1
         ;;
+      /usr/local/sbin/lightningos-upgrade-lnd)
+        saw_lnd_upgrade=1
+        ;;
+      /usr/local/sbin/lightningos-upgrade-app)
+        saw_app_upgrade=1
+        ;;
       *)
         return 1
         ;;
     esac
     count=$((count + 1))
   done
-  ((count >= 10 && count <= 15 && saw_manager_restart == 1 && saw_broker == 1))
+  ((count >= 10 && count <= 16 && saw_manager_restart == 1 && saw_broker == 1 && saw_lnd_upgrade == saw_app_upgrade))
 }
 
 validate_legacy_app_commands() {

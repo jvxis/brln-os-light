@@ -124,6 +124,9 @@ func TestSplitLightningAddressRejectsPrivateHosts(t *testing.T) {
 		"alice@localhost",
 		"alice@example.com/path",
 		"alice@@example.com",
+		"alice@example.com:99999",
+		"alice@user:pass@example.com",
+		"alice@example.com\nInjected: value",
 	} {
 		if _, _, err := splitLightningAddress(value); err == nil {
 			t.Fatalf("expected %q to be rejected", value)
@@ -131,5 +134,34 @@ func TestSplitLightningAddressRejectsPrivateHosts(t *testing.T) {
 	}
 	if user, domain, err := splitLightningAddress("alice@example.com"); err != nil || user != "alice" || domain != "example.com" {
 		t.Fatalf("valid address rejected: user=%q domain=%q err=%v", user, domain, err)
+	}
+	if user, domain, err := splitLightningAddress("alice+tips@example.com:443"); err != nil || user != "alice+tips" || domain != "example.com:443" {
+		t.Fatalf("valid address with port rejected: user=%q domain=%q err=%v", user, domain, err)
+	}
+}
+
+func TestValidateLNURLCallbackRejectsUnsafeURLs(t *testing.T) {
+	for _, value := range []string{
+		"http://example.com/callback",
+		"https://127.0.0.1/callback",
+		"https://10.0.0.2/callback",
+		"https://localhost/callback",
+		"https://user:pass@example.com/callback",
+		"https://example.com:99999/callback",
+		"https://example.com/callback#fragment",
+		"https://example.com/callback\nInjected: value",
+	} {
+		if _, err := validateLNURLCallback(value); err == nil {
+			t.Fatalf("expected unsafe callback %q to be rejected", value)
+		}
+	}
+	for _, value := range []string{
+		"https://example.com/lnurl/callback?tag=payRequest",
+		"https://example.com?tag=payRequest",
+		"https://[2001:4860:4860::8888]/callback",
+	} {
+		if _, err := validateLNURLCallback(value); err != nil {
+			t.Fatalf("valid callback %q rejected: %v", value, err)
+		}
 	}
 }

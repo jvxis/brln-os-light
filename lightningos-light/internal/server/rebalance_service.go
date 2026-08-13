@@ -31,6 +31,8 @@ const (
 	// lived nodes can compute revenue/drain signals without unbounded memory.
 	rebalanceForwardPageSize       = 50000
 	rebalanceDefaultMppMinShardSat = int64(10000)
+	// Keep operator-controlled concurrency within a practical resource bound.
+	rebalanceMaxConcurrent = 64
 )
 
 const (
@@ -2070,6 +2072,9 @@ func (s *RebalanceService) resetSemaphore() {
 	desired := cfg.MaxConcurrent
 	if desired <= 0 {
 		desired = 1
+	}
+	if desired > rebalanceMaxConcurrent {
+		desired = rebalanceMaxConcurrent
 	}
 	s.semDesiredCap = desired
 	if s.sem == nil {
@@ -9496,6 +9501,9 @@ func (s *RebalanceService) releaseSem() {
 		desired := s.semDesiredCap
 		if desired <= 0 {
 			desired = 1
+		}
+		if desired > rebalanceMaxConcurrent {
+			desired = rebalanceMaxConcurrent
 		}
 		s.sem = make(chan struct{}, desired)
 		s.semPendingResize = false

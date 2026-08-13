@@ -61,7 +61,11 @@ func runAuth(args []string) {
 	switch args[0] {
 	case "status":
 		status := server.LoadAuthStatus()
-		fmt.Printf("password_configured=%t\n", status.PasswordConfigured)
+		if status.PasswordConfigured {
+			fmt.Println("password_configured=true")
+		} else {
+			fmt.Println("password_configured=false")
+		}
 		fmt.Printf("setup_token_issued=%t\n", status.SetupTokenIssued)
 		fmt.Printf("recovery_token_issued=%t\n", status.RecoveryTokenIssued)
 	case "setup-token":

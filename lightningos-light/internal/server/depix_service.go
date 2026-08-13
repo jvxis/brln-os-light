@@ -461,7 +461,7 @@ limit $2
 	}
 	defer rows.Close()
 
-	items := make([]depixOrder, 0, limit)
+	items := make([]depixOrder, 0)
 	for rows.Next() {
 		item, scanErr := scanDepixOrder(rows)
 		if scanErr != nil {

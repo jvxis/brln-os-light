@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -29,7 +30,7 @@ type nodeRetirementRuntimeConfig struct {
 	PreapproveFCStuck     bool
 	StuckHTLCThresholdSec int64
 	DestinationAddress    string
-	SweepMinConfs         int
+	SweepMinConfs         int32
 	SweepSatPerVbyte      int64
 }
 
@@ -860,7 +861,7 @@ func (s *NodeRetirementService) processSuccessionTransfer(ctx context.Context, s
 		return false, &transfer, errors.New("lnd unavailable for succession transfer")
 	}
 
-	utxos, utxoErr := s.lnd.ListOnchainUtxos(ctx, int32(cfg.SweepMinConfs), 9999999)
+	utxos, utxoErr := s.lnd.ListOnchainUtxos(ctx, cfg.SweepMinConfs, 9999999)
 	if utxoErr != nil {
 		return false, &transfer, utxoErr
 	}
@@ -1063,7 +1064,7 @@ func parseNodeRetirementRuntimeConfig(raw json.RawMessage) nodeRetirementRuntime
 	cfg.PreapproveFCStuck = parseBoolAny(parsed["preapprove_fc_stuck_htlc"])
 	cfg.StuckHTLCThresholdSec = parseInt64Any(parsed["stuck_htlc_threshold_sec"], nodeRetirementDefaultStuckHTLCThresholdSec)
 	cfg.DestinationAddress = parseStringAny(parsed["destination_address"])
-	cfg.SweepMinConfs = parseIntAny(parsed["sweep_min_confs"], 3)
+	cfg.SweepMinConfs = parseInt32Any(parsed["sweep_min_confs"], 3)
 	cfg.SweepSatPerVbyte = parseInt64Any(parsed["sweep_sat_per_vbyte"], 0)
 	if cfg.StuckHTLCThresholdSec <= 0 {
 		cfg.StuckHTLCThresholdSec = nodeRetirementDefaultStuckHTLCThresholdSec
@@ -1152,24 +1153,30 @@ func parseStringAny(value any) string {
 	}
 }
 
-func parseIntAny(value any, fallback int) int {
+func parseInt32Any(value any, fallback int32) int32 {
 	switch v := value.(type) {
 	case float64:
-		return int(v)
+		if v < math.MinInt32 || v > math.MaxInt32 || math.Trunc(v) != v {
+			return fallback
+		}
+		return int32(v)
 	case int:
-		return v
+		return intToInt32Or(v, fallback)
 	case int64:
-		return int(v)
+		if v < math.MinInt32 || v > math.MaxInt32 {
+			return fallback
+		}
+		return int32(v)
 	case string:
 		trimmed := strings.TrimSpace(v)
 		if trimmed == "" {
 			return fallback
 		}
-		parsed, err := strconv.Atoi(trimmed)
+		parsed, err := strconv.ParseInt(trimmed, 10, 32)
 		if err != nil {
 			return fallback
 		}
-		return parsed
+		return int32(parsed)
 	default:
 		return fallback
 	}

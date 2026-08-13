@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -529,7 +530,11 @@ from rebalance_auto_target_history`
 	args := []any{}
 	conds := []string{}
 	if channelID != 0 {
-		args = append(args, int64(channelID))
+		channelIDDB, ok := uint64ToInt64(channelID)
+		if !ok {
+			return items, errors.New("channel_id exceeds database range")
+		}
+		args = append(args, channelIDDB)
 		conds = append(conds, fmt.Sprintf("channel_id = $%d", len(args)))
 	}
 	if !since.IsZero() {

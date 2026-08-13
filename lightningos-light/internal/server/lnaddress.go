@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,11 @@ import (
 const (
 	lnurlRequestTimeout = 20 * time.Second
 	lnurlResponseLimit  = 1 << 20
+)
+
+var (
+	lightningAddressPattern = regexp.MustCompile(`^[A-Za-z0-9._~!$&'()*+,;=:%-]{1,128}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?$|^[A-Za-z0-9._~!$&'()*+,;=:%-]{1,128}@\[[0-9A-Fa-f:.]+\](?::[0-9]{1,5})?$`)
+	lnurlCallbackPattern    = regexp.MustCompile(`^https://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:[/?][^\x00-\x20#]*)?$`)
 )
 
 type lnurlPayResponse struct {
@@ -43,16 +49,15 @@ func isLightningAddress(value string) bool {
 }
 
 func splitLightningAddress(value string) (string, string, error) {
-	if strings.TrimSpace(value) == "" {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return "", "", errors.New("lightning address required")
 	}
-	parts := strings.Split(value, "@")
-	if len(parts) != 2 {
+	if len(value) > 512 || !lightningAddressPattern.MatchString(value) {
 		return "", "", errors.New("invalid lightning address")
 	}
-	user := strings.TrimSpace(parts[0])
-	domain := strings.TrimSpace(parts[1])
-	if user == "" || domain == "" || strings.ContainsAny(user, "/?#") {
+	user, domain, ok := strings.Cut(value, "@")
+	if !ok {
 		return "", "", errors.New("invalid lightning address")
 	}
 	parsed, err := url.Parse("https://" + domain)
@@ -66,7 +71,13 @@ func splitLightningAddress(value string) (string, string, error) {
 	if ip := net.ParseIP(hostname); ip != nil && !isPublicLNURLIP(ip) {
 		return "", "", errors.New("lightning address host must be public")
 	}
-	return user, domain, nil
+	if parsed.Port() != "" {
+		port, err := strconv.ParseUint(parsed.Port(), 10, 16)
+		if err != nil || port == 0 {
+			return "", "", errors.New("invalid lightning address port")
+		}
+	}
+	return user, parsed.Host, nil
 }
 
 func isPublicLNURLIP(ip net.IP) bool {
@@ -114,8 +125,11 @@ func safeLNURLClient() *http.Client {
 			if len(via) >= 3 {
 				return errors.New("too many lnurl redirects")
 			}
-			if req.URL == nil || !strings.EqualFold(req.URL.Scheme, "https") || req.URL.Hostname() == "" {
+			if req.URL == nil {
 				return errors.New("lnurl redirect must use https")
+			}
+			if _, err := validateLNURLCallback(req.URL.String()); err != nil {
+				return errors.New("lnurl redirect must use a public https URL")
 			}
 			return nil
 		},
@@ -131,12 +145,26 @@ func decodeLNURLJSON(body io.Reader, target any) error {
 }
 
 func validateLNURLCallback(raw string) (*url.URL, error) {
-	callbackURL, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || callbackURL.Hostname() == "" || !strings.EqualFold(callbackURL.Scheme, "https") || callbackURL.User != nil {
+	raw = strings.TrimSpace(raw)
+	if len(raw) == 0 || len(raw) > 4096 || !lnurlCallbackPattern.MatchString(raw) {
 		return nil, errors.New("invalid lnurl callback")
 	}
-	if ip := net.ParseIP(callbackURL.Hostname()); ip != nil && !isPublicLNURLIP(ip) {
+	callbackURL, err := url.Parse(raw)
+	if err != nil || callbackURL.Hostname() == "" || callbackURL.Scheme != "https" || callbackURL.User != nil || callbackURL.Fragment != "" {
+		return nil, errors.New("invalid lnurl callback")
+	}
+	hostname := strings.ToLower(strings.TrimSuffix(callbackURL.Hostname(), "."))
+	if hostname == "localhost" || strings.HasSuffix(hostname, ".localhost") {
 		return nil, errors.New("lnurl callback host must be public")
+	}
+	if ip := net.ParseIP(hostname); ip != nil && !isPublicLNURLIP(ip) {
+		return nil, errors.New("lnurl callback host must be public")
+	}
+	if callbackURL.Port() != "" {
+		port, err := strconv.ParseUint(callbackURL.Port(), 10, 16)
+		if err != nil || port == 0 {
+			return nil, errors.New("invalid lnurl callback port")
+		}
 	}
 	return callbackURL, nil
 }

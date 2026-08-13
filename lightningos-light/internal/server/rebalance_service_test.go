@@ -4382,6 +4382,17 @@ func TestResetSemaphoreAppliesImmediatelyWhenIdle(t *testing.T) {
 	}
 }
 
+func TestResetSemaphoreCapsOperatorControlledCapacity(t *testing.T) {
+	s := &RebalanceService{
+		cfg:       RebalanceConfig{MaxConcurrent: rebalanceMaxConcurrent + 1},
+		cfgLoaded: true,
+	}
+	s.resetSemaphore()
+	if got := cap(s.sem); got != rebalanceMaxConcurrent {
+		t.Fatalf("expected semaphore cap=%d, got %d", rebalanceMaxConcurrent, got)
+	}
+}
+
 // Golden happy-path test for sortRebalanceTargets: with three healthy
 // candidates differing in score and fairness age, the sorter must put the
 // top-10% bucket first (broken by oldest LastAutoAt), then fall back to raw

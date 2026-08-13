@@ -317,7 +317,7 @@ limit $1`, queryArgs...)
 		return graph, err
 	}
 	defer txRows.Close()
-	keepTxids := make(map[string]struct{}, limit)
+	keepTxids := make(map[string]struct{})
 	for txRows.Next() {
 		var t ProvenanceTx
 		if err := txRows.Scan(&t.Txid, &t.BlockHeight, &t.Confirmations, &t.Timestamp, &t.AmountSat, &t.FeeSat, &t.Label, &t.IsExternal, &t.UpdatedAt); err != nil {
@@ -537,6 +537,14 @@ func markSpentByInputs(ctx context.Context, tx pgx.Tx, t *lnrpc.Transaction) err
 		if prevVout == 0xFFFFFFFF || strings.Trim(prevTxid, "0") == "" {
 			continue
 		}
+		prevVoutDB, ok := uint32ToInt32(prevVout)
+		if !ok {
+			return fmt.Errorf("provenance input vout exceeds database range: %d", prevVout)
+		}
+		vinDB, ok := intToInt32(vinIdx)
+		if !ok {
+			return fmt.Errorf("provenance input index exceeds database range: %d", vinIdx)
+		}
 		// Ensure a placeholder row exists for the prev output so the edge
 		// is renderable even if the prev tx isn't in our wallet history yet.
 		_, err := tx.Exec(ctx, `
@@ -546,7 +554,7 @@ on conflict (txid, vout) do update set
   is_ours = provenance_output.is_ours or excluded.is_ours,
   spent_by_txid = excluded.spent_by_txid,
   spent_in_vin = excluded.spent_in_vin`,
-			prevTxid, int32(prevVout), in.GetIsOurOutput(), spenderTxid, int32(vinIdx),
+			prevTxid, prevVoutDB, in.GetIsOurOutput(), spenderTxid, vinDB,
 		)
 		if err != nil {
 			return err

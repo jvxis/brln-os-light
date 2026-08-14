@@ -197,6 +197,9 @@ func currentAppVersion(staticDir string) string {
 }
 
 func appUpgradeRunning(ctx context.Context) bool {
+	if legacyTransitionUnitRunning(ctx) {
+		return true
+	}
 	out, _ := system.RunCommand(ctx, "systemctl", "is-active", appUpgradeUnitName)
 	state := strings.TrimSpace(out)
 	return state == "active" || state == "activating"

@@ -195,6 +195,7 @@ func (s *Server) Run() error {
 	s.startSystemIntegrationReconciler()
 	s.startLNDRuntimeMonitor()
 	s.startLNDGraphProgressWarmup()
+	s.startLegacyPrivilegeTransitionReconciler()
 	s.startAppUpgradeChecker()
 	s.initNotifications()
 	s.initAuditLog()

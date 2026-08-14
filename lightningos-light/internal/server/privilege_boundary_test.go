@@ -59,6 +59,10 @@ var legacyWildcardSudoLines = map[string]struct{}{}
 var legacyDockerGroupLines = map[string]struct{}{}
 
 var legacyPrivilegedShellLiteralBudgets = map[string]int{
+	// A 0.5.2 Manager already has wildcard systemd-run authority. The 0.5.3
+	// transition uses it once to execute the digest-verified current upgrader;
+	// the upgrader installs the broker and removes the legacy sudoers grant.
+	"internal/server/legacy_upgrade_transition_linux.go": 1,
 	// Closed non-root container entrypoints copy the immutable upstream web/API
 	// payloads to bounded tmpfs so their roots can remain read-only. No host
 	// path, command, argument, image, mount, or identity is request-selectable.

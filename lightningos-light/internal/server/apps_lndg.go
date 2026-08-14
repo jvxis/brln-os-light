@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -506,8 +508,12 @@ func ensureLndgLogFile(path string) error {
 }
 
 func defaultLndgHosts(ctx context.Context) ([]string, []string) {
+	return lndgHosts(detectHostIPs(ctx))
+}
+
+func lndgHosts(dynamic []string) ([]string, []string) {
 	hosts := []string{"localhost", "127.0.0.1", "host.docker.internal"}
-	for _, ip := range detectHostIPs(ctx) {
+	for _, ip := range dynamic {
 		if !stringInSlice(ip, hosts) {
 			hosts = append(hosts, ip)
 		}
@@ -528,40 +534,68 @@ func defaultLndgHosts(ctx context.Context) ([]string, []string) {
 	return hosts, origins
 }
 
-func detectHostIPs(ctx context.Context) []string {
-	out, err := system.RunCommand(ctx, "ip", "-4", "-o", "addr", "show", "scope", "global")
+type lndgHostInterface struct {
+	name  string
+	flags net.Flags
+	addrs []string
+}
+
+func detectHostIPs(_ context.Context) []string {
+	interfaces, err := net.Interfaces()
 	if err != nil {
-		out, _ = system.RunCommand(ctx, "hostname", "-I")
+		return nil
 	}
-	ips := []string{}
-	for _, line := range strings.Split(out, "\n") {
-		if line == "" {
+	inputs := make([]lndgHostInterface, 0, len(interfaces))
+	for _, iface := range interfaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
 			continue
 		}
-		tokens := strings.Fields(line)
-		for i, token := range tokens {
-			if token == "inet" && i+1 < len(tokens) {
-				ip := strings.Split(tokens[i+1], "/")[0]
-				if ip != "" && !stringInSlice(ip, ips) {
-					ips = append(ips, ip)
-				}
+		values := make([]string, 0, len(addrs))
+		for _, addr := range addrs {
+			values = append(values, addr.String())
+		}
+		inputs = append(inputs, lndgHostInterface{name: iface.Name, flags: iface.Flags, addrs: values})
+	}
+	return lndgHostIPsFromInterfaces(inputs)
+}
+
+func lndgHostIPsFromInterfaces(interfaces []lndgHostInterface) []string {
+	const maxDynamicHosts = 13 // The manifest reserves three entries for fixed hosts.
+	virtualPrefixes := []string{"br-", "cni", "docker", "flannel", "lxc", "podman", "veth", "virbr"}
+	ips := []string{}
+	for _, iface := range interfaces {
+		if iface.flags&net.FlagUp == 0 || iface.flags&net.FlagLoopback != 0 {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(iface.name))
+		virtual := false
+		for _, prefix := range virtualPrefixes {
+			if strings.HasPrefix(name, prefix) {
+				virtual = true
+				break
 			}
 		}
-		if strings.Contains(line, ".") && strings.Contains(line, "/") && strings.Count(line, ":") == 0 && strings.Count(line, " ") > 0 {
-			for _, token := range tokens {
-				if strings.Count(token, ".") == 3 && strings.Contains(token, "/") {
-					ip := strings.Split(token, "/")[0]
-					if ip != "" && !stringInSlice(ip, ips) {
-						ips = append(ips, ip)
-					}
-				}
+		if virtual {
+			continue
+		}
+		for _, addr := range iface.addrs {
+			host, _, err := net.ParseCIDR(addr)
+			if err != nil {
+				host = net.ParseIP(addr)
+			}
+			if host == nil || host.To4() == nil || !host.IsGlobalUnicast() {
+				continue
+			}
+			value := host.String()
+			if !stringInSlice(value, ips) {
+				ips = append(ips, value)
 			}
 		}
-		if !strings.Contains(line, "inet") && strings.Count(line, ".") == 3 && !strings.Contains(line, "/") {
-			if !stringInSlice(line, ips) {
-				ips = append(ips, line)
-			}
-		}
+	}
+	sort.Strings(ips)
+	if len(ips) > maxDynamicHosts {
+		ips = ips[:maxDynamicHosts]
 	}
 	return ips
 }

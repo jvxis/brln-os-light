@@ -1050,3 +1050,31 @@ remained in use, BTCPay health returned synchronized, NBXplorer remained
 chain and graph synchronization. Temporary operator checkouts and upgrade
 worktrees were removed. Evidence:
 `docs/baselines/privilege-hardening-btcpay-lnd-compatibility-2026-08-14.json`.
+
+## Bark browser authentication regression closure (2026-08-14)
+
+Implementation commit `200e93546d0eab9ead8b5ab2215cd045a44bfdb1`
+fixes the Bark Wallet regression that remained hidden behind a successful
+`/api/login` response. The hardened API ran as UID 65530 while barkd owned its
+wallet directory as UID 65531 with mode `0700` and its bearer token with mode
+`0600`. The browser therefore received a valid UI session, but the immediately
+following wallet request failed with `401 missing auth token` and returned to
+the unlock screen.
+
+The authenticated API now shares barkd's UID only for its intentionally
+read-only wallet mount. It retains a separate primary group, read-only root
+filesystem, all capabilities dropped, `no-new-privileges`, and no writable
+wallet path. Ordinary **Open** no longer preauthorizes mnemonic disclosure;
+**Authorize backup** is a separate action protected by LightningOS
+reauthentication for three minutes. The App Store also identifies its copied
+secret specifically as the Bark interface access password.
+
+LOS TESTE2 accepted the exact trusted-checkout build. Reconciliation recreated
+only `bark-wallet-api`; barkd, web, proxy, Bitcoin Core and LND retained their
+identities and restart counts, and the non-runtime wallet-state hash was
+unchanged. A real isolated Chrome session submitted the current App Store
+password, retained the secure session cookie, received authenticated wallet
+responses with HTTP 200, and advanced from the unlock form to the wallet setup
+screen. Operator checkouts, upgrade worktrees, browser profiles and the local
+temporary automation script were removed. Evidence:
+`docs/baselines/privilege-hardening-bark-browser-auth-2026-08-14.json`.

@@ -1,0 +1,82 @@
+{
+  "schema": "lightningos-privilege-hardening-bark-browser-auth-v1",
+  "observed_at": "2026-08-14T22:51:12Z",
+  "node": "LOS TESTE2",
+  "implementation_commit": "200e93546d0eab9ead8b5ab2215cd045a44bfdb1",
+  "finding": {
+    "symptom": "The Bark login accepted the App Store password with HTTP 200 but returned to the unlock screen.",
+    "cause": "The hardened bark-web-api UID 65530 could not traverse barkd's UID-65531 mode-0700 wallet directory or read its mode-0600 auth_token, so the first proxied wallet request returned 401 missing auth token.",
+    "direct_api_false_positive": "Checking only the /api/login HTTP status did not exercise the authenticated barkd request made after the page reload."
+  },
+  "runtime_boundary": {
+    "api_user": "65531:65530",
+    "daemon_user": "65531:65531",
+    "wallet_mount_in_api": "read-only",
+    "api_root_filesystem": "read-only",
+    "api_capabilities": "all dropped",
+    "api_no_new_privileges": true,
+    "auth_token_readable_by_api": true,
+    "wallet_writable_by_api": false
+  },
+  "ui_boundary": {
+    "ordinary_open_requires_lightningos_reauth": false,
+    "backup_authorization_is_separate": true,
+    "backup_authorization_ttl_minutes": 3,
+    "app_store_password_label": "Bark Wallet interface access password"
+  },
+  "local_validation": {
+    "go_test_all": "pass",
+    "go_build_manager": "pass",
+    "ui_build": "pass",
+    "focused_packages": [
+      "internal/appmanifest",
+      "internal/privileged",
+      "internal/server"
+    ]
+  },
+  "live_gate": {
+    "manager_build_stamp": "200e93546d0eab9ead8b5ab2215cd045a44bfdb1 0.5.3-Beta",
+    "app_start_http_status": 200,
+    "containers": {
+      "api_before": "c9acee07f97e",
+      "api_after": "9fd8e34ea35a",
+      "api_after_full_id": "9fd8e34ea35af7545e3ab2a2ee23798c22a6dfd482d70f2aa4ec084957a239bb",
+      "api_after_restart_count": 0,
+      "barkd_unchanged": "02fe30a17e4c72833fd6631df1df65504d106b8198ed449730bbbbbde993bf36",
+      "barkd_restart_count": 0,
+      "web_unchanged": "dd6f54204c99",
+      "proxy_unchanged": "dd7b68e1d1ca"
+    },
+    "browser": {
+      "engine": "headless Chrome with an isolated temporary profile",
+      "before": "Unlock Bark Wallet / Enter your password to continue",
+      "login_status": 200,
+      "session_cookie_accepted": true,
+      "auth_status": {
+        "authRequired": true,
+        "authed": true
+      },
+      "wallet_request_status_before_fix": 401,
+      "wallet_request_status_after_fix": 200,
+      "after": "Setting up your wallet",
+      "password_input_after_login": false
+    }
+  },
+  "preservation": {
+    "wallet_state_hash_scope": "All regular wallet files except the runtime auth_token and debug.log.",
+    "wallet_state_hash_before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "wallet_state_hash_after": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "lnd_unit": "lnd.service",
+    "lnd_main_pid_before_after": 169808,
+    "lnd_restart_count_before_after": 3,
+    "bitcoin_container": "0dba003b0a34667a532491fbb483f799433c5f1a39816f39f3e85c60d4d5f0ec",
+    "bitcoin_started_at_before_after": "2026-08-14T20:13:51.188437451Z",
+    "bitcoin_restart_count_before_after": 0
+  },
+  "cleanup": {
+    "remote_operator_checkouts": 0,
+    "remote_upgrade_worktrees": 0,
+    "local_browser_profiles": 0,
+    "temporary_browser_script_removed": true
+  }
+}

@@ -33,6 +33,10 @@ func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 				info.Status = "unknown"
 			}
 		}
+		if operation, active := s.currentAppOperation(info.ID); active {
+			operationCopy := operation
+			info.Operation = &operationCopy
+		}
 		if info.ID == electrsAppID || info.ID == mempoolAppID {
 			if info.ID == electrsAppID {
 				if electrsAvailability == nil {
@@ -55,6 +59,10 @@ func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 		resp = append(resp, info)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleAppOperations(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.appOperationSnapshot())
 }
 
 func isAppHiddenFromStore(id string) bool {
@@ -81,6 +89,12 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "app not found")
 		return
 	}
+	finishOperation, started := s.beginAppOperation(appID, "install")
+	if !started {
+		writeErrorCode(w, http.StatusConflict, "app_operation_in_progress", "app operation already in progress")
+		return
+	}
+	defer finishOperation()
 	if err := ensureAppStorageRoots(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -198,6 +212,12 @@ func (s *Server) handleAppUninstall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "app not found")
 		return
 	}
+	finishOperation, started := s.beginAppOperation(appID, "uninstall")
+	if !started {
+		writeErrorCode(w, http.StatusConflict, "app_operation_in_progress", "app operation already in progress")
+		return
+	}
+	defer finishOperation()
 	if err := app.Uninstall(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -223,6 +243,12 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "app not found")
 		return
 	}
+	finishOperation, started := s.beginAppOperation(appID, "start")
+	if !started {
+		writeErrorCode(w, http.StatusConflict, "app_operation_in_progress", "app operation already in progress")
+		return
+	}
+	defer finishOperation()
 	if appID == electrsAppID {
 		var req electrsInstallOptions
 		if r.ContentLength != 0 {
@@ -290,6 +316,12 @@ func (s *Server) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "app not found")
 		return
 	}
+	finishOperation, started := s.beginAppOperation(appID, "stop")
+	if !started {
+		writeErrorCode(w, http.StatusConflict, "app_operation_in_progress", "app operation already in progress")
+		return
+	}
+	defer finishOperation()
 	if err := app.Stop(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -1108,6 +1108,11 @@ export type StorageTarget = {
   suggested_path: string
 }
 
+export type AppOperationInfo = {
+  action: 'install' | 'start' | 'stop' | 'uninstall'
+  started_at: string
+}
+
 export type AppStoreInfo = {
   id: string
   name: string
@@ -1124,9 +1129,11 @@ export type AppStoreInfo = {
   ufw_active?: boolean
   ufw_command?: string
   security_notices?: string[]
+  operation?: AppOperationInfo
 }
 
 export const getApps = (): Promise<AppStoreInfo[]> => request('/api/apps')
+export const getAppOperations = (): Promise<Record<string, AppOperationInfo>> => request('/api/apps/operations')
 export const getBarkWalletRevealAuthorization = () =>
   request('/api/apps/bark-wallet/reveal-authorization')
 export const getAppStorageTargets = (app: string) =>

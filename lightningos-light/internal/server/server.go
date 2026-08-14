@@ -157,6 +157,9 @@ type Server struct {
 	bitcoinLocalCache           cachedBitcoinLocalStatus
 	bitcoinMarketMu             sync.Mutex
 	bitcoinMarketCache          cachedBitcoinMarketStatus
+	appOperationsMu             sync.Mutex
+	appOperations               map[string]appOperationState
+	appOperationSequence        uint64
 	lndGraphProgressMu          sync.Mutex
 	lndGraphProgressCache       lndGraphProgressCache
 	lndGraphProgressRefreshing  bool
@@ -173,6 +176,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 		lnd:                 lndclient.New(cfg, logger),
 		networkMapGeoCache:  make(map[string]networkMapGeoCacheEntry),
 		bitcoinActiveCache:  make(map[string]cachedBitcoinStatus),
+		appOperations:       make(map[string]appOperationState),
 		spendingGuardAlerts: make(map[string]spendingGuardAlertState),
 		provenanceMetrics:   NewProvenanceMetrics(),
 	}

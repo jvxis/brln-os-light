@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { APIError, getAppAdminPassword, getAppStorageTargets, getApps, getBarkWalletRevealAuthorization, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, reauthAuth, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, type AppStoreInfo, type StorageTarget } from '../api'
+import { APIError, getAppAdminPassword, getAppOperations, getAppStorageTargets, getApps, getBarkWalletRevealAuthorization, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, reauthAuth, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, type AppStoreInfo, type StorageTarget } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
@@ -115,6 +115,8 @@ const elevatedLndAccessNotice = 'elevated_lnd_access'
 const limitedLndAccessNotice = 'limited_lnd_access'
 const lndDataDirectoryReadNotice = 'lnd_data_directory_read'
 
+const operationStatusStyle = 'bg-cyan-500/15 text-cyan-100 border border-cyan-400/30'
+
 const validatedBarkWalletURL = (rawURL: string) => {
   try {
     const candidate = new URL(rawURL, window.location.href)
@@ -195,6 +197,29 @@ export default function AppStore() {
     }
   }
 
+  const resolveOperationLabel = (action: string) => {
+    switch (action) {
+      case 'install':
+        return t('appStore.operation.installing')
+      case 'start':
+        return t('appStore.operation.starting')
+      case 'stop':
+        return t('appStore.operation.stopping')
+      case 'uninstall':
+        return t('appStore.operation.uninstalling')
+      default:
+        return t('appStore.operation.working')
+    }
+  }
+
+  const formatOperationElapsed = (startedAt: string) => {
+    const started = Date.parse(startedAt)
+    if (!Number.isFinite(started)) return t('appStore.operation.elapsedUnknown')
+    const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000))
+    if (seconds < 60) return t('appStore.operation.elapsedSeconds', { count: seconds })
+    return t('appStore.operation.elapsedMinutes', { count: Math.floor(seconds / 60) })
+  }
+
   const resolveUnavailableMessage = (app: AppInfo) => {
     switch (app.unavailable_reason) {
       case 'requires_local_bitcoin_source':
@@ -252,6 +277,22 @@ export default function AppStore() {
         setBitcoinMode('remote')
       })
   }, [])
+
+  const hasTrackedAppOperation = apps.some((app) => Boolean(app.operation))
+  const hasLocalAppOperation = Object.values(busy).some((action) => action !== 'reset-admin')
+  useEffect(() => {
+    if (!hasTrackedAppOperation && !hasLocalAppOperation) return
+    const timer = window.setInterval(() => {
+      getAppOperations().then((operations) => {
+        const operationCount = Object.keys(operations || {}).length
+        setApps((current) => current.map((app) => ({ ...app, operation: operations?.[app.id] })))
+        if (hasTrackedAppOperation && operationCount === 0) {
+          getApps().then((data: AppInfo[]) => setApps(data || [])).catch(() => undefined)
+        }
+      }).catch(() => undefined)
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [hasTrackedAppOperation, hasLocalAppOperation])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -640,6 +681,7 @@ export default function AppStore() {
     ? storeApps.filter((app) => app.id !== 'bitcoincore')
     : storeApps
   const visibleApps = baseVisibleApps.filter((app) => {
+    if (app.operation) return true
     if (installFilter === 'installed') return app.installed
     if (installFilter === 'not_installed') return !app.installed
     return true
@@ -699,12 +741,13 @@ export default function AppStore() {
       <div className="grid gap-6 lg:grid-cols-2">
         {visibleApps.map((app) => {
           const busyAction = busy[app.id]
-          const isBusy = Boolean(busyAction)
-          const isResetting = busyAction === 'reset-admin'
+          const operationAction = app.operation?.action || busyAction
+          const isBusy = Boolean(operationAction)
+          const isResetting = operationAction === 'reset-admin'
           const supportsAdminReset = app.id === 'lndg' || app.id === 'bark-wallet'
           const canResetAdmin = supportsAdminReset && app.status === 'running'
           const resetTitle = canResetAdmin ? t('appStore.resetStoredPassword') : t('appStore.startAppToReset')
-          const statusStyle = statusStyles[app.status] || statusStyles.unknown
+          const statusStyle = operationAction && !isResetting ? operationStatusStyle : (statusStyles[app.status] || statusStyles.unknown)
           const internalRoute = internalRoutes[app.id]
           const internalRouteLabel = app.id === 'bitcoincore'
             ? t('nav.bitcoinLocal')
@@ -773,9 +816,24 @@ export default function AppStore() {
                   </div>
                 </div>
                 <span className={`text-xs uppercase tracking-wide px-3 py-1 rounded-full ${statusStyle}`}>
-                  {resolveStatusLabel(app.status)}
+                  {operationAction && !isResetting ? resolveOperationLabel(operationAction) : resolveStatusLabel(app.status)}
                 </span>
               </div>
+
+              {operationAction && !isResetting && (
+                <div className="rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-4 py-3" role="status" aria-live="polite">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-semibold text-cyan-100">{resolveOperationLabel(operationAction)}</span>
+                    <span className="text-xs text-cyan-100/65">
+                      {app.operation ? formatOperationElapsed(app.operation.started_at) : t('appStore.operation.elapsedUnknown')}
+                    </span>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/30">
+                    <div className="h-full w-full animate-pulse rounded-full bg-gradient-to-r from-cyan-500/40 via-cyan-300 to-cyan-500/40" />
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-cyan-100/70">{t('appStore.operation.continuesInBackground')}</p>
+                </div>
+              )}
 
               {hasDirectLndAccess && (
                 <div className={`rounded-lg px-4 py-3 text-sm ${hasElevatedLndAccess ? 'border border-amber-400/25 bg-amber-500/10' : 'border border-cyan-400/25 bg-cyan-500/10'}`}>

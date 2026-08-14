@@ -1218,6 +1218,17 @@
     "install": "Instalar",
     "installing": "Instalando...",
     "installAnyway": "Instalar mesmo assim",
+    "operation": {
+      "installing": "Preparando e instalando",
+      "starting": "Iniciando",
+      "stopping": "Parando",
+      "uninstalling": "Desinstalando",
+      "working": "Operação em andamento",
+      "elapsedSeconds": "há {{count}} s",
+      "elapsedMinutes": "há {{count}} min",
+      "elapsedUnknown": "em andamento",
+      "continuesInBackground": "Esta operação continua no node mesmo se você sair desta página. Não inicie outra operação para este app."
+    },
     "elevatedLndAccessBadge": "Acesso LND sensível",
     "elevatedLndAccessTitle": "Acesso direto a operações sensíveis do LND",
     "elevatedLndAccessCardBody": "Este app recebe um macaroon dedicado e restrito, mas pode executar operações sensíveis diretamente no LND, fora das aprovações e reautenticações do LightningOS.",

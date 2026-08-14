@@ -559,9 +559,15 @@ POST /api/lnops/succession/simulate
 
 GET /api/apps
 - Returns app list with status.
+- While a lifecycle action is active, the affected app includes `operation` with `action` and UTC `started_at`.
 - Apps that currently receive privileged direct LND access include `security_notices=["elevated_lnd_access"]`. `lndg` additionally reports `lnd_data_directory_read`. These values are informational disclosures and do not alter lifecycle behavior.
 - Public Pool firewall admission is broker-owned and fixed to its UI and Stratum ports; no executable UFW command is returned to the manager or API client.
 - `bark-wallet` reports `scheme=https`, port `4004`, and the path of its generated UI login password. Its Bark daemon and API are not published on the host.
+
+GET /api/apps/operations
+- Returns a lightweight object keyed by app ID for active install, start, stop, and uninstall actions.
+- Each value contains `action` and UTC `started_at`; completed apps are omitted.
+- Intended for App Store progress polling without repeatedly inspecting every app runtime.
 
 GET /api/apps/bark-wallet/reveal-authorization
 - Authorizes the Bark Wallet proxy to forward its recovery-phrase reveal endpoint.

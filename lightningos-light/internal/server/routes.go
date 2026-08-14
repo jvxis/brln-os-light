@@ -75,6 +75,7 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/app/upgrade/start", s.handleAppUpgradeStart)
 	r.Post("/api/tor/upgrade/start", s.handleTorUpgradeStart)
 	r.Get("/api/apps", s.handleAppsList)
+	r.Get("/api/apps/operations", s.handleAppOperations)
 	r.Get("/api/apps/storage-targets", s.handleAppStorageTargets)
 	r.Get("/api/apps/peerswap/elements-source", s.handlePeerswapElementsSourceGet)
 	r.Post("/api/apps/peerswap/elements-source/test", s.handlePeerswapElementsSourceTest)

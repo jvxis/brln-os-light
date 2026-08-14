@@ -193,9 +193,19 @@ func (s *Server) installCpuMiner(ctx context.Context) error {
 }
 
 func (s *Server) startCpuMiner(ctx context.Context) error {
-	paths := cpuMinerAppPaths()
+	return startCpuMinerAtPaths(ctx, cpuMinerAppPaths())
+}
+
+func startCpuMinerAtPaths(ctx context.Context, paths cpuMinerPaths) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("CPU Lottery Miner is not installed")
+	}
+	// Re-apply the closed declaration before asking the broker to start it.
+	// This migrates 0.5.2 installs whose compose file is intentionally rejected
+	// by the hardened broker, while preserving pool, payout and thread settings
+	// stored in the existing .env file.
+	if err := ensureCpuMinerCompose(paths); err != nil {
+		return err
 	}
 	return applyCpuMinerCompose(ctx, paths)
 }

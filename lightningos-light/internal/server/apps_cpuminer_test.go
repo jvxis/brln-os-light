@@ -213,6 +213,48 @@ func TestApplyCpuMinerComposeEnforceFailsClosed(t *testing.T) {
 	}
 }
 
+func TestStartCpuMinerMigratesLegacyComposeAndPreservesEnv(t *testing.T) {
+	root := t.TempDir()
+	paths := cpuMinerPaths{
+		Root:        root,
+		ComposePath: filepath.Join(root, "docker-compose.yaml"),
+		EnvPath:     filepath.Join(root, ".env"),
+	}
+	legacyCompose := "services:\n  cpuminer:\n    image: ${CPUMINER_IMAGE}\n"
+	legacyEnv := "CPUMINER_IMAGE=" + cpuMinerBaselineImage + "\nPOOL_MODE=brln\nMINING_ADDRESS=bc1qlegacy\nTHREADS=1\n"
+	if err := os.WriteFile(paths.ComposePath, []byte(legacyCompose), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.EnvPath, []byte(legacyEnv), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := startCpuMinerAtPaths(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	compose, err := os.ReadFile(paths.ComposePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(compose), "stop_grace_period: 2s") {
+		t.Fatalf("legacy compose was not migrated:\n%s", compose)
+	}
+	env, err := os.ReadFile(paths.EnvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(env) != legacyEnv {
+		t.Fatalf("legacy settings changed during start:\ngot:  %q\nwant: %q", env, legacyEnv)
+	}
+	if client.appCalls != 1 || client.appID != cpuMinerAppID || client.action != "start" || client.dryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
 func TestRemoveCpuMinerAppEnforceUsesBrokerBeforeDeletingFiles(t *testing.T) {
 	root := t.TempDir()
 	paths := cpuMinerPaths{Root: root, ComposePath: filepath.Join(root, "docker-compose.yaml"), EnvPath: filepath.Join(root, ".env")}

@@ -448,6 +448,7 @@ func defaultBitcoinCoreConfig() (string, error) {
 	lines := []string{
 		"server=1",
 		"printtoconsole=1",
+		"disablewallet=0",
 		"txindex=1",
 		"natpmp=0",
 		"upnp=0",
@@ -525,23 +526,30 @@ func ensureBitcoinCoreConsumerRPCValues(raw string) (string, bool) {
 			changed = true
 		}
 	}
-	for _, key := range []string{"natpmp", "upnp"} {
+	for _, required := range []struct {
+		key   string
+		value string
+	}{
+		{key: "natpmp", value: "0"},
+		{key: "upnp", value: "0"},
+		{key: "disablewallet", value: "0"},
+	} {
 		found := false
 		for index := 0; index < sectionIndex; index++ {
 			currentKey, value, ok := bitcoinCoreConfigKeyValue(lines[index])
-			if !ok || !strings.EqualFold(currentKey, key) {
+			if !ok || !strings.EqualFold(currentKey, required.key) {
 				continue
 			}
 			found = true
-			if value != "0" {
-				lines[index] = key + "=0"
+			if value != required.value {
+				lines[index] = required.key + "=" + required.value
 				changed = true
 			}
 		}
 		if !found {
 			lines = append(lines, "")
 			copy(lines[sectionIndex+1:], lines[sectionIndex:])
-			lines[sectionIndex] = key + "=0"
+			lines[sectionIndex] = required.key + "=" + required.value
 			sectionIndex++
 			changed = true
 		}

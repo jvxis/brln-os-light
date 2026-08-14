@@ -1,16 +1,41 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/lndclient"
+	"lightningos-light/internal/system"
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestFedimintStartupRequiresStableRunningState(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", inspectStatus: "running"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	if err := waitForFedimintAppStableWithPolicy(context.Background(), fedimintGuardianAppID, time.Millisecond, 3, 3); err != nil {
+		t.Fatal(err)
+	}
+	if client.inspectCalls != 3 {
+		t.Fatalf("stability checks = %d, want 3", client.inspectCalls)
+	}
+}
+
+func TestFedimintStartupRejectsStoppedService(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", inspectStatus: "stopped"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	err := waitForFedimintAppStableWithPolicy(context.Background(), fedimintGatewayAppID, time.Millisecond, 2, 3)
+	if err == nil || !strings.Contains(err.Error(), "did not remain active") {
+		t.Fatalf("expected unstable service error, got %v", err)
+	}
+}
 
 func TestFedimintGuardianDeclarationUsesClosedHardenedRuntime(t *testing.T) {
 	runtime := appmanifest.FedimintGuardianRuntime{Bitcoin: appmanifest.FedimintBitcoinRuntime{

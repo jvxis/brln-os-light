@@ -25,6 +25,7 @@ func TestDefaultBitcoinCoreConfigAllowsDedicatedConsumerNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
+		"disablewallet=0",
 		"rpcbind=0.0.0.0:8332",
 		"rpcallowip=127.0.0.1",
 		"rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet,
@@ -47,13 +48,16 @@ func TestDefaultBitcoinCoreConfigAllowsDedicatedConsumerNetwork(t *testing.T) {
 }
 
 func TestEnsureBitcoinCoreConsumerRPCValuesMigratesOnce(t *testing.T) {
-	const legacy = "server=1\nrpcuser=lightningos\nrpcpassword=preserve-me\nrpcallowip=127.0.0.1\n"
+	const legacy = "server=1\ndisablewallet=1\nrpcuser=lightningos\nrpcpassword=preserve-me\nrpcallowip=127.0.0.1\n"
 	updated, changed := ensureBitcoinCoreConsumerRPCValues(legacy)
 	if !changed {
 		t.Fatal("expected the dedicated consumer subnet to be added")
 	}
 	if !strings.Contains(updated, "rpcpassword=preserve-me\n") {
 		t.Fatal("migration did not preserve the existing RPC password")
+	}
+	if !strings.Contains(updated, "disablewallet=0\n") || strings.Contains(updated, "disablewallet=1\n") {
+		t.Fatalf("wallet RPC baseline was not migrated: %q", updated)
 	}
 	if count := strings.Count(updated, "rpcallowip="+appmanifest.BitcoinCoreRPCSubnet+"\n"); count != 1 {
 		t.Fatalf("expected one dedicated subnet entry, got %d", count)

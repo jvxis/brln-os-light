@@ -325,7 +325,56 @@ func startFedimintWithBroker(ctx context.Context, appID string, logger interface
 	} else if err != nil && logger != nil {
 		logger.Printf("%s: broker firewall rule failed: %v", appID, err)
 	}
-	return nil
+	return waitForFedimintAppStable(ctx, appID)
+}
+
+func waitForFedimintAppStable(ctx context.Context, appID string) error {
+	return waitForFedimintAppStableWithPolicy(ctx, appID, time.Second, 8, 12)
+}
+
+func waitForFedimintAppStableWithPolicy(ctx context.Context, appID string, interval time.Duration, stableChecks, maxChecks int) error {
+	if stableChecks < 1 || maxChecks < stableChecks {
+		return errors.New("invalid Fedimint startup stability policy")
+	}
+	consecutiveRunning := 0
+	lastStatus := "unknown"
+	var lastErr error
+	for check := 0; check < maxChecks; check++ {
+		handled, status, _, err := system.InspectAppWithBroker(ctx, appID)
+		if !handled {
+			return errors.New("Fedimint startup status requires privileged broker enforce mode")
+		}
+		if err != nil {
+			lastErr = err
+			consecutiveRunning = 0
+		} else {
+			lastStatus = status
+			if status == "running" {
+				consecutiveRunning++
+				if consecutiveRunning >= stableChecks {
+					return nil
+				}
+			} else {
+				consecutiveRunning = 0
+			}
+		}
+		if check == maxChecks-1 {
+			break
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if lastErr != nil {
+		return fmt.Errorf("Fedimint service status could not be confirmed: %w", lastErr)
+	}
+	return fmt.Errorf("Fedimint service did not remain active (last status: %s)", lastStatus)
 }
 
 func (s *Server) resolveFedimintBitcoinRuntime(ctx context.Context, appName string) (appmanifest.FedimintBitcoinRuntime, error) {

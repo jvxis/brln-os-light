@@ -65,7 +65,7 @@ func main() {
 		AppStorage:           privileged.NewNativeAppStorageManager(),
 		SMART:                privileged.NewNativeSMARTManager(runner),
 		LNDPermissions:       privileged.NewNativeLNDPermissionsManager(),
-		LNDManagerCredential: privileged.NewNativeLNDManagerCredentialManager(configFiles),
+		LNDManagerCredential: privileged.NewNativeLNDManagerCredentialManager(configFiles, runner),
 		BitcoinStorage:       privileged.NewBitcoinCoreStorageManager(),
 		BitcoinConfig:        privileged.NewBitcoinCoreConfigManager(),
 		Loop:                 privileged.NewNativeLoopManager(runner),

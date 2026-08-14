@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"log"
+	osuser "os/user"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ const (
 	defaultLNDManagerCredentialState   = "/var/lib/lightningos-credentials/lnd/manager-state.json"
 	defaultLNDManagerCredentialUser    = "lightningos"
 	defaultLNDManagerCredentialLNDUser = "lnd"
+	defaultLNDServiceUnit              = "lnd.service"
 	maxLNDManagerCredentialBytes       = 64 * 1024
 )
 
@@ -67,8 +70,11 @@ type NativeLNDManagerCredentialManager struct {
 	grpcHost       string
 	managerUser    string
 	lndUser        string
+	lndServiceUnit string
 	requireFixed   bool
+	runner         CommandRunner
 	lookupIdentity func(string) (int, int, error)
+	lookupGroupGID func(string) (int, error)
 	config         lndManagerCredentialConfig
 	rpc            lndManagerCredentialRPC
 }
@@ -83,7 +89,7 @@ type lndManagerMigrationRecord struct {
 	AdminMode    uint32 `json:"admin_mode"`
 }
 
-func NewNativeLNDManagerCredentialManager(files *AtomicConfigFiles) *NativeLNDManagerCredentialManager {
+func NewNativeLNDManagerCredentialManager(files *AtomicConfigFiles, runner CommandRunner) *NativeLNDManagerCredentialManager {
 	manager := &NativeLNDManagerCredentialManager{
 		credentialRoot: defaultLNDManagerCredentialRoot,
 		credentialDir:  defaultLNDManagerCredentialDir,
@@ -94,8 +100,11 @@ func NewNativeLNDManagerCredentialManager(files *AtomicConfigFiles) *NativeLNDMa
 		grpcHost:       defaultLNDGRPCHost,
 		managerUser:    defaultLNDManagerCredentialUser,
 		lndUser:        defaultLNDManagerCredentialLNDUser,
+		lndServiceUnit: defaultLNDServiceUnit,
 		requireFixed:   true,
+		runner:         runner,
 		lookupIdentity: lookupAppStorageIdentity,
+		lookupGroupGID: lookupLNDManagerGroupGID,
 		config:         files,
 	}
 	manager.rpc = newNativeLNDManagerCredentialRPC(manager.grpcHost, manager.tlsPath, manager.adminPath)
@@ -103,7 +112,7 @@ func NewNativeLNDManagerCredentialManager(files *AtomicConfigFiles) *NativeLNDMa
 }
 
 func (manager *NativeLNDManagerCredentialManager) Ensure(ctx context.Context, dryRun bool) (LNDManagerCredentialState, error) {
-	managerUID, managerGID, lndUID, lndGID, err := manager.validate()
+	managerUID, managerGID, lndUID, lndGID, err := manager.validate(ctx)
 	if err != nil {
 		return LNDManagerCredentialState{}, err
 	}
@@ -111,14 +120,14 @@ func (manager *NativeLNDManagerCredentialManager) Ensure(ctx context.Context, dr
 }
 
 func (manager *NativeLNDManagerCredentialManager) Rollback(ctx context.Context, dryRun bool) (LNDManagerCredentialState, error) {
-	managerUID, managerGID, lndUID, lndGID, err := manager.validate()
+	managerUID, managerGID, lndUID, lndGID, err := manager.validate(ctx)
 	if err != nil {
 		return LNDManagerCredentialState{}, err
 	}
 	return manager.rollback(ctx, managerUID, managerGID, lndUID, lndGID, dryRun)
 }
 
-func (manager *NativeLNDManagerCredentialManager) validate() (int, int, int, int, error) {
+func (manager *NativeLNDManagerCredentialManager) validate(ctx context.Context) (int, int, int, int, error) {
 	if manager == nil || manager.lookupIdentity == nil || manager.config == nil || manager.rpc == nil {
 		return 0, 0, 0, 0, errors.New("LND manager credential service is unavailable")
 	}
@@ -126,18 +135,61 @@ func (manager *NativeLNDManagerCredentialManager) validate() (int, int, int, int
 		manager.credentialDir != defaultLNDManagerCredentialDir || manager.credentialPath != DefaultLNDManagerMacaroonPath ||
 		manager.statePath != defaultLNDManagerCredentialState || manager.adminPath != DefaultLNDAdminMacaroonPath ||
 		manager.tlsPath != defaultLNDTLSCertificatePath || manager.grpcHost != defaultLNDGRPCHost ||
-		manager.managerUser != defaultLNDManagerCredentialUser || manager.lndUser != defaultLNDManagerCredentialLNDUser) {
+		manager.managerUser != defaultLNDManagerCredentialUser || manager.lndUser != defaultLNDManagerCredentialLNDUser ||
+		manager.lndServiceUnit != defaultLNDServiceUnit || manager.runner == nil || manager.lookupGroupGID == nil) {
 		return 0, 0, 0, 0, errors.New("LND manager credential path policy is invalid")
 	}
 	managerUID, managerGID, err := manager.lookupIdentity(manager.managerUser)
 	if err != nil || managerUID < 1 || managerGID < 1 {
 		return 0, 0, 0, 0, errors.New("manager service identity is unavailable")
 	}
-	lndUID, lndGID, err := manager.lookupIdentity(manager.lndUser)
+	lndUID, lndGID, err := manager.resolveLNDServiceIdentity(ctx)
 	if err != nil || lndUID < 1 || lndGID < 1 {
 		return 0, 0, 0, 0, errors.New("LND service identity is unavailable")
 	}
 	return managerUID, managerGID, lndUID, lndGID, nil
+}
+
+func (manager *NativeLNDManagerCredentialManager) resolveLNDServiceIdentity(ctx context.Context) (int, int, error) {
+	// Test managers and legacy in-package fixtures deliberately omit the runner.
+	// Production always resolves the fixed lnd.service identity instead of
+	// assuming a particular distribution or installer username.
+	if manager.runner == nil || manager.lndServiceUnit == "" {
+		return manager.lookupIdentity(manager.lndUser)
+	}
+	serviceUserRaw, err := manager.runner.Run(ctx, systemctlPath, "show", "--property=User", "--value", manager.lndServiceUnit)
+	serviceUser := strings.TrimSpace(serviceUserRaw)
+	if err != nil || serviceUser == "" || serviceUser == "root" || !systemIntegrationIdentityPattern.MatchString(serviceUser) {
+		return 0, 0, errors.New("LND service user is unavailable")
+	}
+	uid, primaryGID, err := manager.lookupIdentity(serviceUser)
+	if err != nil || uid < 1 || primaryGID < 1 {
+		return 0, 0, errors.New("LND service user is unavailable")
+	}
+	serviceGroupRaw, err := manager.runner.Run(ctx, systemctlPath, "show", "--property=Group", "--value", manager.lndServiceUnit)
+	serviceGroup := strings.TrimSpace(serviceGroupRaw)
+	if err != nil {
+		return 0, 0, errors.New("LND service group is unavailable")
+	}
+	if serviceGroup == "" {
+		return uid, primaryGID, nil
+	}
+	if serviceGroup == "root" || !systemIntegrationIdentityPattern.MatchString(serviceGroup) || manager.lookupGroupGID == nil {
+		return 0, 0, errors.New("LND service group is unavailable")
+	}
+	gid, err := manager.lookupGroupGID(serviceGroup)
+	if err != nil || gid < 1 {
+		return 0, 0, errors.New("LND service group is unavailable")
+	}
+	return uid, gid, nil
+}
+
+func lookupLNDManagerGroupGID(name string) (int, error) {
+	group, err := osuser.LookupGroup(name)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(group.Gid)
 }
 
 type nativeLNDManagerCredentialRPC struct {

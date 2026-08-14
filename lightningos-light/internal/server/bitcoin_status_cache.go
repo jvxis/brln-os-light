@@ -13,8 +13,12 @@ const (
 	bitcoinStatusCacheErr           = 45 * time.Second
 	bitcoinStatusStaleOKGrace       = 2 * time.Minute
 	bitcoinActiveFetchTimeoutRemote = 4 * time.Second
-	bitcoinLocalFetchTimeout        = 10 * time.Second
-	bitcoinActiveFetchTimeoutLocal  = bitcoinLocalFetchTimeout
+	// The privileged Bitcoin status reader has a 45-second upper bound because
+	// its best-effort two-hour cadence scan performs several fixed bitcoin-cli
+	// calls. Keep the caller budget aligned so a valid slower scan is not
+	// cancelled and cached as a false offline result.
+	bitcoinLocalFetchTimeout       = 45 * time.Second
+	bitcoinActiveFetchTimeoutLocal = bitcoinLocalFetchTimeout
 )
 
 type cachedBitcoinStatus struct {

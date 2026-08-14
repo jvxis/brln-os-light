@@ -4492,7 +4492,10 @@ func (s *Server) handleWalletPayPreview(w http.ResponseWriter, r *http.Request) 
 		AmountSat       int64    `json:"amount_sat"`
 		Comment         string   `json:"comment"`
 		MaxFeeSat       int64    `json:"max_fee_sat"`
-		ConfirmPassword string   `json:"confirm_password"`
+		// Accepted and ignored. Previewing a route no longer asks for the password,
+		// but readJSON rejects unknown fields, so dropping this would turn a stale
+		// frontend still sending it into an "invalid json" error.
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -4502,9 +4505,11 @@ func (s *Server) handleWalletPayPreview(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "max_fee_sat must be zero or positive")
 		return
 	}
-	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
-		return
-	}
+	// No password here. Previewing probes the network with SendToRouteV2 under a
+	// random payment hash: nobody can produce a preimage for it, so every probe
+	// fails and a failed HTLC settles nothing. The confirmation belongs on the
+	// three buttons that actually pay, which still ask for it.
+	_ = req.ConfirmPassword
 
 	paymentRequest, outgoingChanIDs, err := s.resolveWalletPaymentInput(r.Context(), req.PaymentRequest, req.AmountSat, req.Comment, req.ChannelPoint, req.ChannelPoints)
 	if err != nil {
@@ -4611,10 +4616,11 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 		PaymentRequest string   `json:"payment_request"`
 		ChannelPoint   string   `json:"channel_point"`
 		ChannelPoints  []string `json:"channel_points"`
-		RouteToken     string   `json:"route_token"`
-		AmountSat      int64    `json:"amount_sat"`
-		Comment        string   `json:"comment"`
-		MaxFeeSat      int64    `json:"max_fee_sat"`
+		RouteToken      string   `json:"route_token"`
+		AmountSat       int64    `json:"amount_sat"`
+		Comment         string   `json:"comment"`
+		MaxFeeSat       int64    `json:"max_fee_sat"`
+		ConfirmPassword string   `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -4622,6 +4628,14 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 	}
 	if req.MaxFeeSat < 0 {
 		writeError(w, http.StatusBadRequest, "max_fee_sat must be zero or positive")
+		return
+	}
+	// This spends, so it asks - the sibling Pay buttons always did. It was reached
+	// only through a preview, and the preview used to hold the confirmation; with
+	// that gate gone the payment has to hold its own. The frontend already sends
+	// confirm_password here and already retries on lightning_funds_reauth_required,
+	// so only the server side was missing.
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 

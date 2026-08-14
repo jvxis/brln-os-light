@@ -25,6 +25,7 @@ export default function Terminal() {
   const [busy, setBusy] = useState(false)
   const [reauthAction, setReauthAction] = useState<ReauthAction | null>(null)
   const [adminPassword, setAdminPassword] = useState('')
+  const [reauthError, setReauthError] = useState('')
   const [rotated, setRotated] = useState<RotatedCredential | null>(null)
 
   const load = useCallback(async () => {
@@ -54,15 +55,23 @@ export default function Terminal() {
   const rotate = async (confirmPassword?: string) => {
     setBusy(true)
     setStatusMessage('')
+    if (confirmPassword !== undefined) setReauthError('')
     try {
       const result = await rotateTerminalCredential({ confirm_password: confirmPassword }) as RotatedCredential
       setRotated(result)
       setReauthAction(null)
       setAdminPassword('')
+      setReauthError('')
       setStatus((current) => current ? { ...current, credential_configured: true } : current)
     } catch (err: any) {
       if (err instanceof APIError && err.code === 'terminal_credential_reauth_required') {
         setReauthAction('rotate')
+        setReauthError('')
+      } else if (confirmPassword !== undefined) {
+        setReauthError(err instanceof APIError && err.code === 'auth_invalid_credentials'
+          ? t('terminal.invalidAdminPassword')
+          : err?.message || t('terminal.rotateFailed'))
+        setAdminPassword('')
       } else {
         setStatusMessage(err?.message || t('terminal.rotateFailed'))
       }
@@ -74,14 +83,22 @@ export default function Terminal() {
   const control = async (enabled: boolean, confirmPassword?: string) => {
     setBusy(true)
     setStatusMessage('')
+    if (confirmPassword !== undefined) setReauthError('')
     try {
       const result = await setTerminalEnabled({ enabled, confirm_password: confirmPassword }) as { enabled: boolean }
       setStatus((current) => current ? { ...current, enabled: result.enabled, allow_write: false } : current)
       setReauthAction(null)
       setAdminPassword('')
+      setReauthError('')
     } catch (err: any) {
       if (err instanceof APIError && err.code === 'terminal_control_reauth_required') {
         setReauthAction(enabled ? 'enable' : 'disable')
+        setReauthError('')
+      } else if (confirmPassword !== undefined) {
+        setReauthError(err instanceof APIError && err.code === 'auth_invalid_credentials'
+          ? t('terminal.invalidAdminPassword')
+          : err?.message || t('terminal.controlFailed'))
+        setAdminPassword('')
       } else {
         setStatusMessage(err?.message || t('terminal.controlFailed'))
       }
@@ -105,6 +122,7 @@ export default function Terminal() {
   const closeReauth = () => {
     setReauthAction(null)
     setAdminPassword('')
+    setReauthError('')
   }
 
   const reauthTitle = reauthAction === 'enable'
@@ -183,7 +201,21 @@ export default function Terminal() {
           <form className="section-card w-full max-w-md" onSubmit={submitReauth}>
             <h3 className="text-xl font-semibold">{reauthTitle}</h3>
             <p className="mt-2 text-sm leading-6 text-fog/65">{reauthBody}</p>
-            <input className="input-field mt-5" type="password" autoFocus required autoComplete="current-password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} />
+            <input
+              className="input-field mt-5"
+              type="password"
+              autoFocus
+              required
+              autoComplete="current-password"
+              aria-invalid={reauthError ? 'true' : undefined}
+              aria-describedby={reauthError ? 'terminal-reauth-error' : undefined}
+              value={adminPassword}
+              onChange={(event) => {
+                setAdminPassword(event.target.value)
+                if (reauthError) setReauthError('')
+              }}
+            />
+            {reauthError && <p id="terminal-reauth-error" role="alert" className="mt-2 text-sm text-rose-300">{reauthError}</p>}
             <div className="mt-5 flex justify-end gap-2">
               <button className="btn-secondary" type="button" onClick={closeReauth}>{t('common.cancel')}</button>
               <button className="btn-primary" disabled={busy} type="submit">{reauthConfirm}</button>

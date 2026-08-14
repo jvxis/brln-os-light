@@ -1779,6 +1779,7 @@
     "enable": "Enable terminal",
     "enableReauthBody": "Confirm your LightningOS administrator password to temporarily enable the read-only terminal.",
     "enableReauthTitle": "Confirm terminal enable",
+    "invalidAdminPassword": "Incorrect administrator password. Try again.",
     "kicker": "Terminal",
     "openNewTab": "Open in new tab",
     "operator": "Operator",

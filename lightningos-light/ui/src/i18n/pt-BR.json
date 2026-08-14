@@ -1779,6 +1779,7 @@
     "enable": "Habilitar terminal",
     "enableReauthBody": "Confirme sua senha de administrador do LightningOS para habilitar temporariamente o terminal somente para leitura.",
     "enableReauthTitle": "Confirmar ativação do terminal",
+    "invalidAdminPassword": "Senha de administrador incorreta. Tente novamente.",
     "kicker": "Terminal",
     "openNewTab": "Abrir em nova aba",
     "operator": "Operador",

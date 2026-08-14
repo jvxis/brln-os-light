@@ -116,6 +116,7 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/apps/loopout-brln/jobs/{id}/pause", s.handleLoopOutBRLNPauseJob)
 	r.Post("/api/apps/loopout-brln/jobs/{id}/resume", s.handleLoopOutBRLNResumeJob)
 	r.Post("/api/apps/loopout-brln/jobs/{id}/cancel", s.handleLoopOutBRLNCancelJob)
+	r.Post("/api/apps/loopout-brln/jobs/{id}/max-fee", s.handleLoopOutBRLNUpdateMaxFee)
 	r.Post("/api/apps/loopout-brln/jobs/{id}/strike-return", s.handleLoopOutBRLNStrikeReturn)
 	r.Get("/api/apps/magma-sales/overview", s.handleMagmaOverview)
 	r.Get("/api/apps/magma-sales/orders", s.handleMagmaOrders)

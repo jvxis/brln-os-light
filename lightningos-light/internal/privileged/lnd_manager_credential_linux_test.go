@@ -44,10 +44,13 @@ func (rpc *fakeLNDManagerCredentialRPC) Bake(context.Context) ([]byte, uint64, e
 	return append([]byte(nil), rpc.credential...), rpc.rootKeyID, rpc.bakeErr
 }
 
-func (rpc *fakeLNDManagerCredentialRPC) Verify(_ context.Context, path string) error {
+func (rpc *fakeLNDManagerCredentialRPC) Verify(_ context.Context, path string, rootKeyID uint64) error {
 	rpc.verifies++
 	if rpc.verifyErr != nil {
 		return rpc.verifyErr
+	}
+	if rootKeyID != rpc.rootKeyID {
+		return errors.New("unexpected root key")
 	}
 	credential, err := os.ReadFile(path)
 	if err != nil {

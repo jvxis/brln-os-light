@@ -56,7 +56,7 @@ type lndManagerCredentialConfig interface {
 
 type lndManagerCredentialRPC interface {
 	Bake(ctx context.Context) (credential []byte, rootKeyID uint64, err error)
-	Verify(ctx context.Context, macaroonPath string) error
+	Verify(ctx context.Context, macaroonPath string, rootKeyID uint64) error
 	DeleteRootKey(ctx context.Context, rootKeyID uint64) error
 }
 
@@ -240,15 +240,17 @@ func (rpc *nativeLNDManagerCredentialRPC) Bake(ctx context.Context) ([]byte, uin
 	return credential, rootKeyID, nil
 }
 
-func (rpc *nativeLNDManagerCredentialRPC) Verify(ctx context.Context, macaroonPath string) error {
-	pubkey, err := newLNDManagerCredentialClient(rpc.grpcHost, rpc.tlsPath, macaroonPath).SelfPubkey(ctx)
+func (rpc *nativeLNDManagerCredentialRPC) Verify(ctx context.Context, macaroonPath string, rootKeyID uint64) error {
+	ids, err := newLNDManagerCredentialClient(rpc.grpcHost, rpc.tlsPath, macaroonPath).ListMacaroonIDs(ctx)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(pubkey) == "" {
-		return errors.New("LND manager credential verification returned no identity")
+	for _, id := range ids {
+		if id == rootKeyID {
+			return nil
+		}
 	}
-	return nil
+	return errors.New("LND manager credential verification returned no root key")
 }
 
 func (rpc *nativeLNDManagerCredentialRPC) DeleteRootKey(ctx context.Context, rootKeyID uint64) error {

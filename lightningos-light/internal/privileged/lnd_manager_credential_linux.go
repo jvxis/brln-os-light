@@ -113,7 +113,7 @@ func (manager *NativeLNDManagerCredentialManager) ensure(ctx context.Context, ma
 	if !credentialPresent {
 		return LNDManagerCredentialState{}, errors.New("LND manager credential disappeared")
 	}
-	if err := manager.rpc.Verify(ctx, manager.credentialPath); err != nil {
+	if err := manager.rpc.Verify(ctx, manager.credentialPath, record.RootKeyID); err != nil {
 		return LNDManagerCredentialState{}, errors.New("LND manager credential verification failed")
 	}
 	if _, err := manager.config.SetLNDMacaroonPath(ctx, manager.credentialPath, false); err != nil {

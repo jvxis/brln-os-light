@@ -12,20 +12,18 @@ import (
 )
 
 const (
-	defaultTerminalHelperPath         = "/usr/local/sbin/lightningos-terminal"
-	defaultTerminalPasswordHelperPath = "/usr/local/sbin/lightningos-terminal-password"
-	defaultManagerFirewallHelperPath  = "/usr/local/sbin/lightningos-manager-firewall"
-	defaultManagerTLSMDNSHelperPath   = "/usr/local/sbin/lightningos-setup-manager-tls-mdns"
-	defaultLNDIntegrationDropInPath   = "/etc/systemd/system/lnd.service.d/20-lightningos-restart.conf"
-	defaultManagerTLSCertificatePath  = "/etc/lightningos/tls/server.crt"
-	defaultSystemIntegrationsMarker   = "/var/lib/lightningos-privileged/system-integrations-20260813-v6"
-	envExecutablePath                 = "/usr/bin/env"
-	idExecutablePath                  = "/usr/bin/id"
+	defaultTerminalHelperPath        = "/usr/local/sbin/lightningos-terminal"
+	defaultManagerFirewallHelperPath = "/usr/local/sbin/lightningos-manager-firewall"
+	defaultManagerTLSMDNSHelperPath  = "/usr/local/sbin/lightningos-setup-manager-tls-mdns"
+	defaultLNDIntegrationDropInPath  = "/etc/systemd/system/lnd.service.d/20-lightningos-restart.conf"
+	defaultManagerTLSCertificatePath = "/etc/lightningos/tls/server.crt"
+	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20260813-v6"
+	envExecutablePath                = "/usr/bin/env"
+	idExecutablePath                 = "/usr/bin/id"
 
-	terminalHelperSHA256         = "6958cc1aaee60b009774014a95cdee080e011944aa6ef23457ef5788a7ccd859"
-	terminalPasswordHelperSHA256 = "b647d8acfeaf604f7419e175c17c24e41ad18361530b685cea29f1aa084d5b68"
-	managerFirewallHelperSHA256  = "d1defb2adf65db0c2738c3c58033155f2b9c8ac87694b1127fff615b62ab7123"
-	managerTLSMDNSHelperSHA256   = "7ff9f17061eec00aec8eedc389044b0cf283e639f8e8f0cfda4ca47c6074b8f9"
+	terminalHelperSHA256        = "6958cc1aaee60b009774014a95cdee080e011944aa6ef23457ef5788a7ccd859"
+	managerFirewallHelperSHA256 = "d1defb2adf65db0c2738c3c58033155f2b9c8ac87694b1127fff615b62ab7123"
+	managerTLSMDNSHelperSHA256  = "7ff9f17061eec00aec8eedc389044b0cf283e639f8e8f0cfda4ca47c6074b8f9"
 
 	lndIntegrationDropIn            = "[Service]\nRestart=always\nRestartSec=60\n"
 	systemIntegrationsMarkerContent = "ready\n"
@@ -58,13 +56,12 @@ func (manager *NativeSystemIntegrationsManager) Status(_ context.Context) (Syste
 }
 
 type SystemIntegrationPaths struct {
-	TerminalHelper         string
-	TerminalPasswordHelper string
-	ManagerFirewallHelper  string
-	ManagerTLSMDNSHelper   string
-	LNDDropIn              string
-	ManagerTLSCertificate  string
-	Marker                 string
+	TerminalHelper        string
+	ManagerFirewallHelper string
+	ManagerTLSMDNSHelper  string
+	LNDDropIn             string
+	ManagerTLSCertificate string
+	Marker                string
 }
 
 type systemIntegrationAssetSpec struct {
@@ -82,13 +79,12 @@ func NewNativeSystemIntegrationsManager(runner CommandRunner) *NativeSystemInteg
 	return &NativeSystemIntegrationsManager{
 		Runner: runner,
 		Paths: SystemIntegrationPaths{
-			TerminalHelper:         defaultTerminalHelperPath,
-			TerminalPasswordHelper: defaultTerminalPasswordHelperPath,
-			ManagerFirewallHelper:  defaultManagerFirewallHelperPath,
-			ManagerTLSMDNSHelper:   defaultManagerTLSMDNSHelperPath,
-			LNDDropIn:              defaultLNDIntegrationDropInPath,
-			ManagerTLSCertificate:  defaultManagerTLSCertificatePath,
-			Marker:                 defaultSystemIntegrationsMarker,
+			TerminalHelper:        defaultTerminalHelperPath,
+			ManagerFirewallHelper: defaultManagerFirewallHelperPath,
+			ManagerTLSMDNSHelper:  defaultManagerTLSMDNSHelperPath,
+			LNDDropIn:             defaultLNDIntegrationDropInPath,
+			ManagerTLSCertificate: defaultManagerTLSCertificatePath,
+			Marker:                defaultSystemIntegrationsMarker,
 		},
 	}
 }
@@ -229,19 +225,17 @@ func (manager *NativeSystemIntegrationsManager) assetSpec(asset SystemIntegratio
 		return systemIntegrationAssetSpec{}, errors.New("system integrations manager is unavailable")
 	}
 	digests := map[SystemIntegrationAsset]string{
-		SystemIntegrationAssetTerminal:         terminalHelperSHA256,
-		SystemIntegrationAssetTerminalPassword: terminalPasswordHelperSHA256,
-		SystemIntegrationAssetManagerFirewall:  managerFirewallHelperSHA256,
-		SystemIntegrationAssetManagerTLSMDNS:   managerTLSMDNSHelperSHA256,
+		SystemIntegrationAssetTerminal:        terminalHelperSHA256,
+		SystemIntegrationAssetManagerFirewall: managerFirewallHelperSHA256,
+		SystemIntegrationAssetManagerTLSMDNS:  managerTLSMDNSHelperSHA256,
 	}
 	for key, value := range manager.Digests {
 		digests[key] = value
 	}
 	paths := map[SystemIntegrationAsset]string{
-		SystemIntegrationAssetTerminal:         manager.Paths.TerminalHelper,
-		SystemIntegrationAssetTerminalPassword: manager.Paths.TerminalPasswordHelper,
-		SystemIntegrationAssetManagerFirewall:  manager.Paths.ManagerFirewallHelper,
-		SystemIntegrationAssetManagerTLSMDNS:   manager.Paths.ManagerTLSMDNSHelper,
+		SystemIntegrationAssetTerminal:        manager.Paths.TerminalHelper,
+		SystemIntegrationAssetManagerFirewall: manager.Paths.ManagerFirewallHelper,
+		SystemIntegrationAssetManagerTLSMDNS:  manager.Paths.ManagerTLSMDNSHelper,
 	}
 	path, ok := paths[asset]
 	digest, digestOK := digests[asset]
@@ -257,7 +251,6 @@ func (manager *NativeSystemIntegrationsManager) assetSpec(asset SystemIntegratio
 func (manager *NativeSystemIntegrationsManager) verifyInstalledAssets() error {
 	for _, asset := range []SystemIntegrationAsset{
 		SystemIntegrationAssetTerminal,
-		SystemIntegrationAssetTerminalPassword,
 		SystemIntegrationAssetManagerFirewall,
 		SystemIntegrationAssetManagerTLSMDNS,
 	} {

@@ -142,10 +142,9 @@ type HostPowerState struct {
 type SystemIntegrationAsset string
 
 const (
-	SystemIntegrationAssetTerminal         SystemIntegrationAsset = "terminal"
-	SystemIntegrationAssetTerminalPassword SystemIntegrationAsset = "terminal_password"
-	SystemIntegrationAssetManagerFirewall  SystemIntegrationAsset = "manager_firewall"
-	SystemIntegrationAssetManagerTLSMDNS   SystemIntegrationAsset = "manager_tls_mdns"
+	SystemIntegrationAssetTerminal        SystemIntegrationAsset = "terminal"
+	SystemIntegrationAssetManagerFirewall SystemIntegrationAsset = "manager_firewall"
+	SystemIntegrationAssetManagerTLSMDNS  SystemIntegrationAsset = "manager_tls_mdns"
 )
 
 type SystemIntegrationAssetInstallParams struct {
@@ -1145,7 +1144,6 @@ func ValidateRequest(request Request) error {
 func validSystemIntegrationAsset(asset SystemIntegrationAsset) bool {
 	switch asset {
 	case SystemIntegrationAssetTerminal,
-		SystemIntegrationAssetTerminalPassword,
 		SystemIntegrationAssetManagerFirewall,
 		SystemIntegrationAssetManagerTLSMDNS:
 		return true

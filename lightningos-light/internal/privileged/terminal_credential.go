@@ -3,15 +3,18 @@ package privileged
 import (
 	"context"
 	"errors"
-	"io"
-	"os/exec"
+	"fmt"
+	"os"
+	osuser "os/user"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
 const (
-	defaultChpasswdPath = "/usr/sbin/chpasswd"
-	terminalServiceUnit = "lightningos-terminal.service"
+	defaultTerminalEnvPath = "/etc/lightningos/terminal.env"
+	terminalServiceUnit    = "lightningos-terminal.service"
 )
 
 var terminalCredentialPasswordPattern = regexp.MustCompile(`^[A-Za-z0-9]{16,128}$`)
@@ -21,10 +24,9 @@ type TerminalCredentialManager interface {
 }
 
 type NativeTerminalCredentialManager struct {
-	Runner             CommandRunner
-	ChpasswdPath       string
-	ValidateExecutable func(string) error
-	ApplyCredential    func(context.Context, string, string) error
+	Runner          CommandRunner
+	RuntimeEnvPath  string
+	ApplyCredential func(path string, operatorUser string, password string) error
 }
 
 func NewNativeTerminalCredentialManager(runner CommandRunner) *NativeTerminalCredentialManager {
@@ -44,38 +46,91 @@ func (manager *NativeTerminalCredentialManager) Rotate(ctx context.Context, para
 		return TerminalCredentialState{}, errors.New("terminal operator does not match the installed service")
 	}
 
-	chpasswdPath := manager.ChpasswdPath
-	if chpasswdPath == "" {
-		chpasswdPath = defaultChpasswdPath
-	}
-	validateExecutable := manager.ValidateExecutable
-	if validateExecutable == nil {
-		validateExecutable = func(path string) error {
-			return validateSystemIntegrationFile(path, 0755)
-		}
-	}
-	if err := validateExecutable(chpasswdPath); err != nil {
-		return TerminalCredentialState{}, errors.New("terminal credential executable is unsafe")
-	}
 	if dryRun {
 		return TerminalCredentialState{Status: "validated", OperatorUser: serviceUser}, nil
 	}
 
+	runtimeEnvPath := manager.RuntimeEnvPath
+	if runtimeEnvPath == "" {
+		runtimeEnvPath = defaultTerminalEnvPath
+	}
 	applyCredential := manager.ApplyCredential
 	if applyCredential == nil {
-		applyCredential = applyTerminalCredential
+		applyCredential = applyTerminalRuntimeCredential
 	}
-	credential := serviceUser + ":" + params.Password + "\n"
-	if err := applyCredential(ctx, chpasswdPath, credential); err != nil {
+	if err := applyCredential(runtimeEnvPath, serviceUser, params.Password); err != nil {
 		return TerminalCredentialState{}, errors.New("terminal credential update failed")
 	}
 	return TerminalCredentialState{Status: "applied", OperatorUser: serviceUser}, nil
 }
 
-func applyTerminalCredential(ctx context.Context, path string, credential string) error {
-	command := exec.CommandContext(ctx, path)
-	command.Stdin = strings.NewReader(credential)
-	command.Stdout = io.Discard
-	command.Stderr = io.Discard
-	return command.Run()
+func applyTerminalRuntimeCredential(path string, operatorUser string, password string) error {
+	if path != defaultTerminalEnvPath {
+		return errors.New("terminal runtime path is not allowlisted")
+	}
+	enabled := "0"
+	if raw, err := readRegularFile(path, 4096); err == nil {
+		for _, line := range strings.Split(string(raw), "\n") {
+			key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+			if ok && key == "TERMINAL_ENABLED" && strings.TrimSpace(value) == "1" {
+				enabled = "1"
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	group, err := osuser.LookupGroup("lightningos")
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(group.Gid)
+	if err != nil {
+		return err
+	}
+	content := terminalRuntimeEnvContent(enabled, operatorUser, password)
+	return writeAtomicTerminalRuntimeFile(path, []byte(content), gid)
+}
+
+func terminalRuntimeEnvContent(enabled string, operatorUser string, password string) string {
+	if enabled != "1" {
+		enabled = "0"
+	}
+	return fmt.Sprintf("TERMINAL_ENABLED=%s\nTERMINAL_CREDENTIAL=%s:%s\nTERMINAL_ALLOW_WRITE=0\nTERMINAL_PORT=7681\nTERMINAL_OPERATOR_USER=%s\nTERMINAL_TERM=xterm\nTERMINAL_SHELL=/bin/bash\nTERMINAL_WS_ORIGIN=\n", enabled, operatorUser, password, operatorUser)
+}
+
+func writeAtomicTerminalRuntimeFile(path string, content []byte, gid int) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".terminal-runtime-")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	cleanup := func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+	}
+	if err := temporary.Chmod(0640); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temporary.Chown(0, gid); err != nil {
+		cleanup()
+		return err
+	}
+	if _, err := temporary.Write(content); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
+	}
+	return nil
 }

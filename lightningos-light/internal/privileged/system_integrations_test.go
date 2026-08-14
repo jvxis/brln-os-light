@@ -140,13 +140,12 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 	}
 	root := t.TempDir()
 	paths := SystemIntegrationPaths{
-		TerminalHelper:         filepath.Join(root, "sbin", "lightningos-terminal"),
-		TerminalPasswordHelper: filepath.Join(root, "sbin", "lightningos-terminal-password"),
-		ManagerFirewallHelper:  filepath.Join(root, "sbin", "lightningos-manager-firewall"),
-		ManagerTLSMDNSHelper:   filepath.Join(root, "sbin", "lightningos-setup-manager-tls-mdns"),
-		LNDDropIn:              filepath.Join(root, "systemd", "lnd.service.d", "20-lightningos-restart.conf"),
-		ManagerTLSCertificate:  filepath.Join(root, "tls", "server.crt"),
-		Marker:                 filepath.Join(root, "state", "system-integrations-v5"),
+		TerminalHelper:        filepath.Join(root, "sbin", "lightningos-terminal"),
+		ManagerFirewallHelper: filepath.Join(root, "sbin", "lightningos-manager-firewall"),
+		ManagerTLSMDNSHelper:  filepath.Join(root, "sbin", "lightningos-setup-manager-tls-mdns"),
+		LNDDropIn:             filepath.Join(root, "systemd", "lnd.service.d", "20-lightningos-restart.conf"),
+		ManagerTLSCertificate: filepath.Join(root, "tls", "server.crt"),
+		Marker:                filepath.Join(root, "state", "system-integrations-v5"),
 	}
 	if err := os.MkdirAll(filepath.Dir(paths.ManagerTLSCertificate), 0755); err != nil {
 		t.Fatal(err)
@@ -160,7 +159,6 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 	digests := map[SystemIntegrationAsset]string{}
 	for _, asset := range []SystemIntegrationAsset{
 		SystemIntegrationAssetTerminal,
-		SystemIntegrationAssetTerminalPassword,
 		SystemIntegrationAssetManagerFirewall,
 		SystemIntegrationAssetManagerTLSMDNS,
 	} {
@@ -179,7 +177,6 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 
 	for _, asset := range []SystemIntegrationAsset{
 		SystemIntegrationAssetTerminal,
-		SystemIntegrationAssetTerminalPassword,
 		SystemIntegrationAssetManagerFirewall,
 		SystemIntegrationAssetManagerTLSMDNS,
 	} {

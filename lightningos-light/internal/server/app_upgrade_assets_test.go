@@ -11,7 +11,9 @@ import (
 func TestAppUpgradeRefreshesSecuritySensitiveSystemIntegrations(t *testing.T) {
 	required := []string{
 		"\"$INSTALL_BIN\" -m 0755 \"$src\" /usr/local/sbin/lightningos-terminal",
-		"/usr/local/sbin/lightningos-terminal-password",
+		"Web terminal disabled, read-only by default, isolated from Manager secrets",
+		"\"$GPASSWD_BIN\" -d \"$operator_user\" \"$group\"",
+		"\"$USERMOD_BIN\" -L \"$operator_user\"",
 		"Restart=always",
 		"20-lightningos-restart.conf",
 		"\"$INSTALL_BIN\" -m 0755 \"$src\" /usr/local/sbin/lightningos-manager-firewall",
@@ -34,7 +36,8 @@ func TestEmbeddedSystemIntegrationAssetsAreSafe(t *testing.T) {
 	}
 	for _, fragment := range []string{
 		"terminal_credential=\"${TERMINAL_CREDENTIAL:-}\"",
-		"/usr/sbin/chpasswd",
+		"TERMINAL_ALLOW_WRITE=0",
+		"/etc/lightningos/terminal.env",
 		"ufw --force delete allow \"${MANAGER_PORT}/tcp\"",
 		"ufw allow from \"$lan_cidr\"",
 		"ufw allow in on tailscale0",
@@ -44,7 +47,7 @@ func TestEmbeddedSystemIntegrationAssetsAreSafe(t *testing.T) {
 		"setup-manager-tls-mdns.sh",
 		"/var/lib/lightningos-privileged/system-integrations-20260813-v6",
 	} {
-		combined := embeddedTerminalHelper + embeddedTerminalPasswordHelper + embeddedManagerFirewallHelper + embeddedManagerTLSMDNSHelper + embeddedAppUpgradeScript + systemIntegrationsMarkerPath
+		combined := embeddedTerminalHelper + embeddedManagerFirewallHelper + embeddedManagerTLSMDNSHelper + embeddedAppUpgradeScript + systemIntegrationsMarkerPath
 		if !strings.Contains(combined, fragment) {
 			t.Fatalf("embedded system integration assets are missing %q", fragment)
 		}
@@ -55,7 +58,6 @@ func TestEmbeddedSystemIntegrationAssetsMatchBrokerCatalog(t *testing.T) {
 	manager := privileged.NewNativeSystemIntegrationsManager(nil)
 	assets := []privileged.SystemIntegrationAssetInstallParams{
 		{Asset: privileged.SystemIntegrationAssetTerminal, Content: embeddedTerminalHelper},
-		{Asset: privileged.SystemIntegrationAssetTerminalPassword, Content: embeddedTerminalPasswordHelper},
 		{Asset: privileged.SystemIntegrationAssetManagerFirewall, Content: embeddedManagerFirewallHelper},
 		{Asset: privileged.SystemIntegrationAssetManagerTLSMDNS, Content: embeddedManagerTLSMDNSHelper},
 	}

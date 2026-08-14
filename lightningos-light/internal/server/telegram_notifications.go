@@ -581,6 +581,10 @@ func (s *Server) ensureTelegramBotCommands(token string) {
 }
 
 func setTelegramBotCommands(ctx context.Context, token string) error {
+	return setTelegramBotCommandsWithClient(ctx, token, http.DefaultClient)
+}
+
+func setTelegramBotCommandsWithClient(ctx context.Context, token string, client telegramHTTPDoer) error {
 	if strings.TrimSpace(token) == "" {
 		return errors.New("telegram token missing")
 	}
@@ -599,17 +603,16 @@ func setTelegramBotCommands(ctx context.Context, token string) error {
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/setMyCommands", token)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return telegramRequestBuildError("setMyCommands")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doTelegramRequest(client, req, "setMyCommands")
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("telegram api status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return telegramAPIStatusError("setMyCommands", resp.StatusCode)
 	}
 	return nil
 }
@@ -636,6 +639,10 @@ type telegramChat struct {
 }
 
 func fetchTelegramUpdates(ctx context.Context, token string, offset int64) ([]telegramUpdate, error) {
+	return fetchTelegramUpdatesWithClient(ctx, token, offset, http.DefaultClient)
+}
+
+func fetchTelegramUpdatesWithClient(ctx context.Context, token string, offset int64, client telegramHTTPDoer) ([]telegramUpdate, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, errors.New("telegram token missing")
 	}
@@ -648,21 +655,21 @@ func fetchTelegramUpdates(ctx context.Context, token string, offset int64) ([]te
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?%s", token, params.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return nil, telegramRequestBuildError("getUpdates")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doTelegramRequest(client, req, "getUpdates")
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("telegram api status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, telegramAPIStatusError("getUpdates", resp.StatusCode)
 	}
 
 	var payload telegramUpdateResponse
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
+		return nil, errors.New("telegram getUpdates response is invalid")
 	}
 	if !payload.Ok {
 		return nil, errors.New("telegram api error")
@@ -1494,6 +1501,10 @@ func telegramShortValue(value string, max int) string {
 }
 
 func sendTelegramMessage(ctx context.Context, token, chatID, text string) error {
+	return sendTelegramMessageWithClient(ctx, token, chatID, text, http.DefaultClient)
+}
+
+func sendTelegramMessageWithClient(ctx context.Context, token, chatID, text string, client telegramHTTPDoer) error {
 	if strings.TrimSpace(token) == "" || strings.TrimSpace(chatID) == "" {
 		return errors.New("telegram config missing")
 	}
@@ -1508,17 +1519,16 @@ func sendTelegramMessage(ctx context.Context, token, chatID, text string) error 
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return err
+		return telegramRequestBuildError("sendMessage")
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doTelegramRequest(client, req, "sendMessage")
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("telegram api status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return telegramAPIStatusError("sendMessage", resp.StatusCode)
 	}
 	return nil
 }

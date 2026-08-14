@@ -1770,7 +1770,7 @@
     "credentialConfigured": "Credencial configurada",
     "credentialMissing": "Credencial ausente",
     "credentialPrivate": "Por segurança, a senha do operador não pode ser consultada. Ela só é exibida uma vez após a rotação.",
-    "disabledMessage": "Terminal desativado. Defina `TERMINAL_ENABLED=1` em `/etc/lightningos/secrets.env`.",
+    "disabledMessage": "Terminal desativado por segurança. Para habilitar o modo de leitura, defina `TERMINAL_ENABLED=1` em `/etc/lightningos/terminal.env` e habilite o serviço no host.",
     "kicker": "Terminal",
     "openNewTab": "Abrir em nova aba",
     "operator": "Operador",

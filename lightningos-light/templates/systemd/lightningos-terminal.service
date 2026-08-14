@@ -7,12 +7,28 @@ Wants=network-online.target
 Type=simple
 User=losop
 Group=losop
-SupplementaryGroups=lightningos
-EnvironmentFile=-/etc/lightningos/secrets.env
+EnvironmentFile=/etc/lightningos/terminal.env
 ExecCondition=/bin/bash -lc '[ "${TERMINAL_ENABLED}" = "1" ] && [ -n "${TERMINAL_CREDENTIAL}" ]'
 ExecStart=/usr/local/sbin/lightningos-terminal
 Restart=on-failure
 RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

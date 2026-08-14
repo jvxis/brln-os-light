@@ -18,21 +18,15 @@ func (runner *terminalCredentialRunner) Run(_ context.Context, path string, args
 	return runner.user + "\n", runner.err
 }
 
-func TestTerminalCredentialManagerKeepsSecretOutOfArguments(t *testing.T) {
+func TestTerminalCredentialManagerWritesOnlyDedicatedRuntimeCredential(t *testing.T) {
 	const password = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
 	runner := &terminalCredentialRunner{user: "losop"}
-	var appliedPath, appliedCredential string
+	var appliedPath, appliedUser, appliedPassword string
 	manager := &NativeTerminalCredentialManager{
-		Runner:       runner,
-		ChpasswdPath: "/fixed/chpasswd",
-		ValidateExecutable: func(path string) error {
-			if path != "/fixed/chpasswd" {
-				t.Fatalf("unexpected executable: %q", path)
-			}
-			return nil
-		},
-		ApplyCredential: func(_ context.Context, path string, credential string) error {
-			appliedPath, appliedCredential = path, credential
+		Runner:         runner,
+		RuntimeEnvPath: "/fixed/terminal.env",
+		ApplyCredential: func(path string, operatorUser string, password string) error {
+			appliedPath, appliedUser, appliedPassword = path, operatorUser, password
 			return nil
 		},
 	}
@@ -40,8 +34,8 @@ func TestTerminalCredentialManagerKeepsSecretOutOfArguments(t *testing.T) {
 	if err != nil || state.Status != "applied" || state.OperatorUser != "losop" {
 		t.Fatalf("state/error=%+v/%v", state, err)
 	}
-	if appliedPath != "/fixed/chpasswd" || appliedCredential != "losop:"+password+"\n" {
-		t.Fatalf("unexpected fixed apply input: path=%q credential_len=%d", appliedPath, len(appliedCredential))
+	if appliedPath != "/fixed/terminal.env" || appliedUser != "losop" || appliedPassword != password {
+		t.Fatalf("unexpected fixed apply input: path=%q user=%q password_len=%d", appliedPath, appliedUser, len(appliedPassword))
 	}
 	for _, command := range runner.commands {
 		if strings.Contains(command.path, password) || strings.Contains(strings.Join(command.args, " "), password) {
@@ -50,34 +44,61 @@ func TestTerminalCredentialManagerKeepsSecretOutOfArguments(t *testing.T) {
 	}
 }
 
-func TestTerminalCredentialManagerFailsClosedBeforePasswordMutation(t *testing.T) {
+func TestTerminalCredentialManagerFailsClosedBeforeRuntimeMutation(t *testing.T) {
 	const password = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
 	for _, test := range []struct {
-		name     string
-		user     string
-		params   TerminalCredentialRotateParams
-		validate func(string) error
+		name   string
+		user   string
+		params TerminalCredentialRotateParams
 	}{
 		{name: "service mismatch", user: "other", params: TerminalCredentialRotateParams{OperatorUser: "losop", Password: password}},
 		{name: "root service forbidden", user: "root", params: TerminalCredentialRotateParams{OperatorUser: "root", Password: password}},
 		{name: "invalid requested user", user: "losop", params: TerminalCredentialRotateParams{OperatorUser: "root;id", Password: password}},
 		{name: "invalid password", user: "losop", params: TerminalCredentialRotateParams{OperatorUser: "losop", Password: "short"}},
-		{name: "unsafe executable", user: "losop", params: TerminalCredentialRotateParams{OperatorUser: "losop", Password: password}, validate: func(string) error { return errors.New("unsafe") }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			applied := false
-			validate := test.validate
-			if validate == nil {
-				validate = func(string) error { return nil }
-			}
 			manager := &NativeTerminalCredentialManager{
-				Runner: &terminalCredentialRunner{user: test.user}, ValidateExecutable: validate,
-				ApplyCredential: func(context.Context, string, string) error { applied = true; return nil },
+				Runner:          &terminalCredentialRunner{user: test.user},
+				ApplyCredential: func(string, string, string) error { applied = true; return nil },
 			}
 			if _, err := manager.Rotate(context.Background(), test.params, false); err == nil || applied {
 				t.Fatalf("unsafe request was not rejected before mutation: err=%v applied=%v", err, applied)
 			}
 		})
+	}
+}
+
+func TestTerminalRuntimeEnvironmentIsSecretMinimalAndReadOnly(t *testing.T) {
+	const password = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+	content := terminalRuntimeEnvContent("1", "losop", password)
+	for _, required := range []string{
+		"TERMINAL_ENABLED=1\n",
+		"TERMINAL_CREDENTIAL=losop:" + password + "\n",
+		"TERMINAL_ALLOW_WRITE=0\n",
+	} {
+		if !strings.Contains(content, required) {
+			t.Fatalf("terminal runtime environment is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"NOTIFICATIONS_TG_BOT_TOKEN", "BITCOIN_RPC_PASS", "TERMINAL_OPERATOR_PASSWORD"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("terminal runtime environment contains forbidden key %q", forbidden)
+		}
+	}
+	if strings.Contains(terminalRuntimeEnvContent("unexpected", "losop", password), "TERMINAL_ENABLED=1") {
+		t.Fatal("unexpected enabled value did not fail closed")
+	}
+}
+
+func TestTerminalCredentialManagerReportsDedicatedRuntimeWriteFailure(t *testing.T) {
+	manager := &NativeTerminalCredentialManager{
+		Runner:          &terminalCredentialRunner{user: "losop"},
+		ApplyCredential: func(string, string, string) error { return errors.New("write failed") },
+	}
+	_, err := manager.Rotate(context.Background(), TerminalCredentialRotateParams{OperatorUser: "losop", Password: "AbCdEfGhIjKlMnOpQrStUvWxYz012345"}, false)
+	if err == nil || strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("runtime write failure was not safely wrapped: %v", err)
 	}
 }
 

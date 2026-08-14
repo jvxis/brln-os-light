@@ -16,9 +16,6 @@ const systemIntegrationsMarkerPath = "/var/lib/lightningos-privileged/system-int
 //go:embed assets/lightningos-terminal.sh
 var embeddedTerminalHelper string
 
-//go:embed assets/lightningos-terminal-password.sh
-var embeddedTerminalPasswordHelper string
-
 //go:embed assets/lightningos-manager-firewall.sh
 var embeddedManagerFirewallHelper string
 
@@ -66,7 +63,6 @@ func reconcileSystemIntegrations(ctx context.Context) error {
 
 	assets := []system.SystemIntegrationAsset{
 		{Name: "terminal", Content: embeddedTerminalHelper},
-		{Name: "terminal_password", Content: embeddedTerminalPasswordHelper},
 		{Name: "manager_firewall", Content: embeddedManagerFirewallHelper},
 		{Name: "manager_tls_mdns", Content: embeddedManagerTLSMDNSHelper},
 	}

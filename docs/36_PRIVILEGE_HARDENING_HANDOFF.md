@@ -609,11 +609,14 @@ remains for the final disposable fresh-install matrix. Evidence:
 `docs/baselines/privilege-hardening-phase3-system-integrations-2026-08-13.json`.
 
 The runtime terminal credential boundary is accepted. Rotation now uses the
-typed `terminal.credential.rotate` operation: the password crosses only the
-broker stdin protocol and fixed `chpasswd` stdin, never argv, staging files,
-errors, or audit fields. The broker independently resolves the fixed terminal
-service's `User=`, requires the request to match it, rejects root, validates
-the root-owned executable, and leaves restart to `service.restart`. The last
+typed `terminal.credential.rotate` operation: only the GoTTY HTTP credential
+crosses the broker stdin protocol and is atomically written to the dedicated
+secret-minimal `/etc/lightningos/terminal.env`; it never enters argv, staging
+files, errors, or audit fields and does not change a Linux password. The broker
+independently resolves the fixed terminal service's `User=`, requires the
+request to match it, rejects root, validates the root-owned executable, and
+leaves restart to `service.restart`. The `losop` account is password-locked and
+has no privileged supplementary groups. The last
 two manager `runSystemd` calls and the generic wrapper were deleted. Ubuntu
 24.04 passed the service-user dry-run, command-injection, `/etc/shadow`, audit,
 and service-activation preservation gate; real rotation/login remains for the

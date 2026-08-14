@@ -264,6 +264,10 @@ DATE_BIN="$(resolve_bin date /usr/bin/date /bin/date)" || die "Required command 
 STAT_BIN="$(resolve_bin stat /usr/bin/stat /bin/stat)" || die "Required command missing: stat"
 RUNUSER_BIN="$(resolve_bin runuser /usr/sbin/runuser /usr/bin/runuser /sbin/runuser)" || die "Required command missing: runuser"
 TAR_BIN="$(resolve_bin tar /usr/bin/tar /bin/tar)" || die "Required command missing: tar"
+OPENSSL_BIN="$(resolve_bin openssl /usr/bin/openssl /bin/openssl)" || die "Required command missing: openssl"
+GPASSWD_BIN="$(resolve_bin gpasswd /usr/bin/gpasswd /usr/sbin/gpasswd /bin/gpasswd)" || die "Required command missing: gpasswd"
+USERMOD_BIN="$(resolve_bin usermod /usr/sbin/usermod /usr/bin/usermod /sbin/usermod)" || die "Required command missing: usermod"
+USERADD_BIN="$(resolve_bin useradd /usr/sbin/useradd /usr/bin/useradd /sbin/useradd)" || die "Required command missing: useradd"
 APT_GET_BIN="$(resolve_bin apt-get /usr/bin/apt-get /bin/apt-get)" || true
 
 available_kib="$(df -Pk /var/lib/lightningos | awk 'NR == 2 { print $4 }')"
@@ -751,23 +755,70 @@ stage_peerswap_assets() {
 
 refresh_terminal_helper() {
   local src="$project_dir/internal/server/assets/lightningos-terminal.sh"
-  local password_src="$project_dir/internal/server/assets/lightningos-terminal-password.sh"
+  local service_src="$project_dir/templates/systemd/lightningos-terminal.service"
+  local secrets_path="/etc/lightningos/secrets.env"
+  local runtime_path="/etc/lightningos/terminal.env"
+  local operator_user="losop"
+  local credential=""
+  local runtime_tmp=""
   if [[ ! -f "$src" ]]; then
     print_warn "Terminal helper not found at $src; skipping"
     return 0
   fi
+  [[ -f "$service_src" && ! -L "$service_src" ]] || die "Terminal service template is missing or unsafe"
+  [[ -f "$secrets_path" && ! -L "$secrets_path" ]] || die "Terminal secrets source is missing or unsafe"
+  [[ ! -L "$runtime_path" ]] || die "Terminal runtime environment is symlinked"
+  if ! /usr/bin/id "$operator_user" >/dev/null 2>&1; then
+    "$USERADD_BIN" -m -d "/home/${operator_user}" -s /bin/bash "$operator_user"
+  fi
 
-  print_step "Refreshing terminal helper"
+  print_step "Hardening the optional web terminal"
+  "$SYSTEMCTL_BIN" disable --now lightningos-terminal >/dev/null 2>&1 || true
   "$INSTALL_BIN" -m 0755 "$src" /usr/local/sbin/lightningos-terminal
-  if [[ -f "$password_src" ]]; then
-    "$INSTALL_BIN" -m 0755 "$password_src" /usr/local/sbin/lightningos-terminal-password
-  else
-    print_warn "Terminal password helper not found at $password_src"
+  "$INSTALL_BIN" -o root -g root -m 0644 "$service_src" /etc/systemd/system/lightningos-terminal.service
+  "$RM_BIN" -f -- /usr/local/sbin/lightningos-terminal-password
+
+  credential="$(awk -F= '$1 == "TERMINAL_CREDENTIAL" { print substr($0, length($1) + 2) }' "$secrets_path" | tail -n1)"
+  if [[ ! "$credential" =~ ^losop:[A-Za-z0-9]{16,128}$ ]]; then
+    credential="losop:$($OPENSSL_BIN rand -hex 16)"
   fi
-  if "$SYSTEMCTL_BIN" is-active --quiet lightningos-terminal; then
-    "$SYSTEMCTL_BIN" restart lightningos-terminal
-  fi
-  print_ok "Terminal helper refreshed"
+  for assignment in \
+    "TERMINAL_ENABLED=0" \
+    "TERMINAL_ALLOW_WRITE=0" \
+    "TERMINAL_OPERATOR_USER=losop" \
+    "TERMINAL_OPERATOR_PASSWORD=" \
+    "TERMINAL_CREDENTIAL=${credential}"; do
+    key="${assignment%%=*}"
+    value="${assignment#*=}"
+    if grep -q "^${key}=" "$secrets_path"; then
+      sed -i "s|^${key}=.*|${key}=${value}|" "$secrets_path"
+    elif [[ "$key" != "TERMINAL_OPERATOR_PASSWORD" ]]; then
+      printf '%s=%s\n' "$key" "$value" >> "$secrets_path"
+    fi
+  done
+
+  runtime_tmp="$(mktemp /etc/lightningos/.terminal.env.XXXXXX)"
+  {
+    printf 'TERMINAL_ENABLED=0\n'
+    printf 'TERMINAL_CREDENTIAL=%s\n' "$credential"
+    printf 'TERMINAL_ALLOW_WRITE=0\n'
+    printf 'TERMINAL_PORT=7681\n'
+    printf 'TERMINAL_OPERATOR_USER=losop\n'
+    printf 'TERMINAL_TERM=xterm\n'
+    printf 'TERMINAL_SHELL=/bin/bash\n'
+    printf 'TERMINAL_WS_ORIGIN=\n'
+  } > "$runtime_tmp"
+  "$INSTALL_BIN" -o root -g lightningos -m 0640 "$runtime_tmp" "$runtime_path"
+  "$RM_BIN" -f -- "$runtime_tmp"
+
+  for group in lightningos sudo systemd-journal; do
+    if /usr/bin/id -nG "$operator_user" | tr ' ' '\n' | grep -Fxq "$group"; then
+      "$GPASSWD_BIN" -d "$operator_user" "$group" >/dev/null
+    fi
+  done
+  "$USERMOD_BIN" -L "$operator_user"
+  "$SYSTEMCTL_BIN" daemon-reload
+  print_ok "Web terminal disabled, read-only by default, isolated from Manager secrets, and removed from privileged groups"
 }
 
 configure_lnd_restart_policy() {

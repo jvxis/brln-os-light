@@ -724,7 +724,8 @@ GET /api/terminal/status
 
 POST /api/terminal/credential/rotate
 - Requires login protection and a recent reauthentication with scope `terminal_credential`.
-- Generates a new GoTTY/Linux operator credential, restarts `lightningos-terminal.service`, and returns the password once with `Cache-Control: no-store`.
+- Generates only a new GoTTY credential, updates the dedicated root-owned terminal environment, restarts `lightningos-terminal.service` when enabled, and returns the password once with `Cache-Control: no-store`.
+- It never changes or unlocks the Linux operator password.
 - Response: `{"operator_user":"losop","password":"...","restart_pending":false}`. The password cannot be retrieved after this response.
 ### Chat
 

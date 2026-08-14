@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -144,7 +143,10 @@ func (s *Server) handleTelegramBackupTest(w http.ResponseWriter, r *http.Request
 	nodeAlias := getNodeAlias(ctx, s.lnd)
 	filename, caption := telegramBackupPayload("test", "", nodeAlias, "", time.Now().UTC())
 	if err := sendTelegramDocument(ctx, cfg.BotToken, cfg.ChatID, filename, data, caption); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if s.logger != nil {
+			s.logger.Printf("notifications: telegram backup test failed: %v", err)
+		}
+		writeErrorCode(w, http.StatusBadGateway, "telegram_backup_delivery_failed", "Telegram backup delivery failed")
 		return
 	}
 
@@ -340,6 +342,10 @@ func telegramBackupPayload(reason, channelPoint, nodeAlias, peerAlias string, wh
 }
 
 func sendTelegramDocument(ctx context.Context, token, chatID, filename string, data []byte, caption string) error {
+	return sendTelegramDocumentWithClient(ctx, token, chatID, filename, data, caption, http.DefaultClient)
+}
+
+func sendTelegramDocumentWithClient(ctx context.Context, token, chatID, filename string, data []byte, caption string, client telegramHTTPDoer) error {
 	if strings.TrimSpace(token) == "" || strings.TrimSpace(chatID) == "" {
 		return errors.New("telegram config missing")
 	}
@@ -372,18 +378,17 @@ func sendTelegramDocument(ctx context.Context, token, chatID, filename string, d
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendDocument", token)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &payload)
 	if err != nil {
-		return err
+		return telegramRequestBuildError("sendDocument")
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doTelegramRequest(client, req, "sendDocument")
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("telegram api status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return telegramAPIStatusError("sendDocument", resp.StatusCode)
 	}
 	return nil
 }

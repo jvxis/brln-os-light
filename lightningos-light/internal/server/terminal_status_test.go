@@ -3,14 +3,18 @@ package server
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestTerminalStatusDoesNotExposeCredentials(t *testing.T) {
-	t.Setenv("TERMINAL_ENABLED", "1")
-	t.Setenv("TERMINAL_CREDENTIAL", "losop:secret-value")
-	t.Setenv("TERMINAL_OPERATOR_USER", "losop")
-	t.Setenv("TERMINAL_OPERATOR_PASSWORD", "secret-value")
+	originalPath := terminalRuntimeEnvPath
+	terminalRuntimeEnvPath = filepath.Join(t.TempDir(), "terminal.env")
+	t.Cleanup(func() { terminalRuntimeEnvPath = originalPath })
+	if err := os.WriteFile(terminalRuntimeEnvPath, []byte("TERMINAL_ENABLED=1\nTERMINAL_CREDENTIAL=losop:secret-value\nTERMINAL_ALLOW_WRITE=0\nTERMINAL_OPERATOR_USER=losop\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest("GET", "/api/terminal/status", nil)
@@ -31,6 +35,25 @@ func TestTerminalStatusDoesNotExposeCredentials(t *testing.T) {
 	}
 	if got := body["operator_user"]; got != "losop" {
 		t.Fatalf("operator_user = %#v, want losop", got)
+	}
+}
+
+func TestTerminalStatusFailsClosedWithoutDedicatedRuntimeEnvironment(t *testing.T) {
+	originalPath := terminalRuntimeEnvPath
+	terminalRuntimeEnvPath = filepath.Join(t.TempDir(), "missing.env")
+	t.Cleanup(func() { terminalRuntimeEnvPath = originalPath })
+	t.Setenv("TERMINAL_ENABLED", "1")
+	t.Setenv("TERMINAL_CREDENTIAL", "losop:must-not-be-used")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("GET", "/api/terminal/status", nil)
+	(&Server{}).handleTerminalStatus(recorder, request)
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["enabled"] != false || body["credential_configured"] != false {
+		t.Fatalf("terminal did not fail closed: %#v", body)
 	}
 }
 

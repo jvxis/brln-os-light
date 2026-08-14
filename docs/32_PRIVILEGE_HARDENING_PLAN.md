@@ -1364,13 +1364,15 @@ contents and root ownership are validated.
 
 Runtime terminal credential rotation is now the closed
 `terminal.credential.rotate` operation. The manager no longer stages a password
-file or invokes a privileged helper/transient unit. The password is carried in
-the broker's stdin JSON and then only through stdin to the fixed root-owned
-`/usr/sbin/chpasswd`; it never enters argv, error details, or structured audit
-fields. The requested operator must match the independently read `User=` of
-the fixed `lightningos-terminal.service`, and a root operator is forbidden.
-The subsequent terminal restart uses the existing typed service operation.
-This removed the last two manager `runSystemd` calls and allowed deletion of
+file or invokes a privileged helper/transient unit. The requested credential is
+the GoTTY HTTP credential only: the broker carries it through its stdin JSON,
+validates the independently read `User=` of the fixed terminal service, and
+atomically writes the secret-minimal `/etc/lightningos/terminal.env`. It never
+changes the Linux account password or exposes the credential in argv, errors,
+or structured audit fields. The dedicated `losop` account is password-locked,
+has no privileged supplementary groups, and root is forbidden. The subsequent
+terminal restart uses the existing typed service operation. This removed the
+last two manager `runSystemd` calls and allowed deletion of
 the generic wrapper itself. Ubuntu 24.04 accepted the real service-user dry-run,
 rejected an injected command, preserved `/etc/shadow` and Manager/terminal
 activation state, and proved the synthetic password fragment absent from the

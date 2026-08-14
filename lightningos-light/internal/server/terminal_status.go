@@ -17,6 +17,7 @@ import (
 var (
 	terminalCredentialRotationMu sync.Mutex
 	terminalOperatorUserPattern  = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+	terminalRuntimeEnvPath       = "/etc/lightningos/terminal.env"
 )
 
 type terminalStatus struct {
@@ -39,16 +40,16 @@ type terminalCredentialRotateResponse struct {
 
 func (s *Server) handleTerminalStatus(w http.ResponseWriter, r *http.Request) {
 	port := 7681
-	if raw := strings.TrimSpace(os.Getenv("TERMINAL_PORT")); raw != "" {
+	if raw := terminalRuntimeValue("TERMINAL_PORT"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {
 			port = parsed
 		}
 	}
 
 	writeJSON(w, http.StatusOK, terminalStatus{
-		Enabled:              strings.TrimSpace(os.Getenv("TERMINAL_ENABLED")) == "1",
-		CredentialConfigured: terminalCredentialConfigured(os.Getenv("TERMINAL_CREDENTIAL")),
-		AllowWrite:           strings.TrimSpace(os.Getenv("TERMINAL_ALLOW_WRITE")) == "1",
+		Enabled:              terminalRuntimeValue("TERMINAL_ENABLED") == "1",
+		CredentialConfigured: terminalCredentialConfigured(terminalRuntimeValue("TERMINAL_CREDENTIAL")),
+		AllowWrite:           terminalRuntimeValue("TERMINAL_ALLOW_WRITE") == "1",
 		OperatorUser:         terminalOperatorUser(),
 		Port:                 port,
 	})
@@ -85,28 +86,23 @@ func (s *Server) handleTerminalCredentialRotate(w http.ResponseWriter, r *http.R
 		return
 	}
 	oldCredential := os.Getenv("TERMINAL_CREDENTIAL")
-	oldOperatorPassword := os.Getenv("TERMINAL_OPERATOR_PASSWORD")
 	newCredential := operatorUser + ":" + password
 	updates := map[string]string{
-		"TERMINAL_CREDENTIAL":        newCredential,
-		"TERMINAL_OPERATOR_PASSWORD": password,
+		"TERMINAL_CREDENTIAL": newCredential,
 	}
 	if err := authPersistSecrets(updates); err != nil {
 		writeErrorCode(w, http.StatusInternalServerError, "terminal_credential_persist_failed", "failed to persist terminal credential")
 		return
 	}
 	_ = os.Setenv("TERMINAL_CREDENTIAL", newCredential)
-	_ = os.Setenv("TERMINAL_OPERATOR_PASSWORD", password)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if handled, err := system.RotateTerminalCredentialWithBroker(ctx, operatorUser, password); !handled || err != nil {
 		rollbackErr := authPersistSecrets(map[string]string{
-			"TERMINAL_CREDENTIAL":        oldCredential,
-			"TERMINAL_OPERATOR_PASSWORD": oldOperatorPassword,
+			"TERMINAL_CREDENTIAL": oldCredential,
 		})
 		_ = os.Setenv("TERMINAL_CREDENTIAL", oldCredential)
-		_ = os.Setenv("TERMINAL_OPERATOR_PASSWORD", oldOperatorPassword)
 		if s.logger != nil {
 			s.logger.Printf("terminal credential rotation failed: %v; rollback: %v", err, rollbackErr)
 		}
@@ -115,10 +111,12 @@ func (s *Server) handleTerminalCredentialRotate(w http.ResponseWriter, r *http.R
 	}
 
 	restartPending := false
-	if err := system.RestartServiceWithBroker(ctx, "lightningos-terminal", false); err != nil {
-		restartPending = true
-		if s.logger != nil {
-			s.logger.Printf("terminal credential rotated but terminal restart failed: %v", err)
+	if terminalRuntimeValue("TERMINAL_ENABLED") == "1" {
+		if err := system.RestartServiceWithBroker(ctx, "lightningos-terminal", false); err != nil {
+			restartPending = true
+			if s.logger != nil {
+				s.logger.Printf("terminal credential rotated but terminal restart failed: %v", err)
+			}
 		}
 	}
 
@@ -137,8 +135,16 @@ func terminalCredentialConfigured(raw string) bool {
 }
 
 func terminalOperatorUser() string {
-	if user := strings.TrimSpace(os.Getenv("TERMINAL_OPERATOR_USER")); user != "" {
+	if user := terminalRuntimeValue("TERMINAL_OPERATOR_USER"); user != "" {
 		return user
 	}
 	return "losop"
+}
+
+func terminalRuntimeValue(key string) string {
+	value, err := readEnvFileValue(terminalRuntimeEnvPath, key)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
 }

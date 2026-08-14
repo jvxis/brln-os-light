@@ -1770,7 +1770,7 @@
     "credentialConfigured": "Credential configured",
     "credentialMissing": "Credential missing",
     "credentialPrivate": "For security, the operator password cannot be retrieved. It is shown only once after rotation.",
-    "disabledMessage": "Terminal disabled. Set `TERMINAL_ENABLED=1` in `/etc/lightningos/secrets.env`.",
+    "disabledMessage": "Terminal disabled by default for security. To enable read-only mode, set `TERMINAL_ENABLED=1` in `/etc/lightningos/terminal.env` and enable the host service.",
     "kicker": "Terminal",
     "openNewTab": "Open in new tab",
     "operator": "Operator",

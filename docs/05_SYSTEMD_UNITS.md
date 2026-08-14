@@ -50,12 +50,18 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=lightningos
-Group=lightningos
-EnvironmentFile=/etc/lightningos/secrets.env
+User=losop
+Group=losop
+EnvironmentFile=/etc/lightningos/terminal.env
 ExecStart=/usr/local/sbin/lightningos-terminal
 Restart=on-failure
 RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+CapabilityBoundingSet=
+AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target

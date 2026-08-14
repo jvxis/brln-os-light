@@ -40,8 +40,10 @@
 - App secrets are stored in app-specific .env or data files with restrictive permissions.
 
 ## Terminal
-- Optional GoTTY terminal requires a credential in secrets.env.
-- Terminal can be disabled by setting TERMINAL_ENABLED=0.
+- Optional GoTTY terminal is disabled and read-only by default.
+- Its runtime receives only `/etc/lightningos/terminal.env`, never the Manager secrets file.
+- The `losop` Linux password is locked and the account has no `sudo`, `lightningos`, or `systemd-journal` supplementary membership.
+- GoTTY credential rotation never changes the Linux password.
 
 ## Reports and notifications
 - Reports data and notification history are stored in Postgres.

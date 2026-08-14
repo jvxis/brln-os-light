@@ -274,16 +274,15 @@ reported preconditions require them, use `service.restart` only.
 
 ### `terminal.credential.rotate`
 
-Accepts a bounded alphanumeric password and operator name. The broker
+Accepts a bounded alphanumeric GoTTY password and operator name. The broker
 independently reads `User=` from the fixed
 `lightningos-terminal.service`; the requested name must match, and `root` is
-always forbidden. It validates the fixed root-owned mode-`0755`
-`/usr/sbin/chpasswd` and sends exactly `<operator>:<password>` through that
-process's stdin with no shell. The password is never placed in argv, output,
-errors, staging files, or structured audit fields. `dry_run` performs all
-identity and executable validation without changing the account. Restarting
-the fixed terminal unit is a separate `service.restart` call after the broker
-returns successfully.
+always forbidden. It atomically replaces only the fixed root-owned
+`/etc/lightningos/terminal.env`, preserving a disabled/read-only policy and
+never touching the Linux password. The credential is never placed in argv,
+output, errors, or structured audit fields. `dry_run` performs identity
+validation without changing runtime state. Restarting the fixed terminal unit
+is a separate `service.restart` call after the broker returns successfully.
 
 ### Native Lightning Loop operations
 

@@ -66,7 +66,7 @@ LND_CONF="${LND_DIR}/lnd.conf"
 LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
 TERMINAL_SCRIPT="/usr/local/sbin/lightningos-terminal"
-TERMINAL_PASSWORD_SCRIPT="/usr/local/sbin/lightningos-terminal-password"
+TERMINAL_ENV_PATH="/etc/lightningos/terminal.env"
 MANAGER_FIREWALL_SCRIPT="/usr/local/sbin/lightningos-manager-firewall"
 PRIVILEGED_BROKER="/usr/local/libexec/lightningos-privileged"
 PRIVILEGED_TMPFILES_CONFIG="/etc/tmpfiles.d/lightningos-privileged.conf"
@@ -349,7 +349,7 @@ ensure_secrets_env_defaults() {
     echo "TERMINAL_CREDENTIAL=" >> "$file"
   fi
   if ! grep -q '^TERMINAL_ALLOW_WRITE=' "$file"; then
-    echo "TERMINAL_ALLOW_WRITE=1" >> "$file"
+    echo "TERMINAL_ALLOW_WRITE=0" >> "$file"
   fi
   if ! grep -q '^TERMINAL_PORT=' "$file"; then
     echo "TERMINAL_PORT=7681" >> "$file"
@@ -358,9 +358,6 @@ ensure_secrets_env_defaults() {
     echo "TERMINAL_OPERATOR_USER=${TERMINAL_OPERATOR_USER}" >> "$file"
   else
     sed -i "s|^TERMINAL_OPERATOR_USER=.*|TERMINAL_OPERATOR_USER=${TERMINAL_OPERATOR_USER}|" "$file"
-  fi
-  if ! grep -q '^TERMINAL_OPERATOR_PASSWORD=' "$file"; then
-    echo "TERMINAL_OPERATOR_PASSWORD=" >> "$file"
   fi
   if ! grep -q '^TERMINAL_TERM=' "$file"; then
     echo "TERMINAL_TERM=xterm" >> "$file"
@@ -371,22 +368,40 @@ ensure_secrets_env_defaults() {
   if ! grep -q '^TERMINAL_WS_ORIGIN=' "$file"; then
     echo "TERMINAL_WS_ORIGIN=" >> "$file"
   fi
-  local current_credential operator_pass
+  local current_credential
   current_credential=$(grep '^TERMINAL_CREDENTIAL=' "$file" | cut -d= -f2- || true)
-  operator_pass=$(grep '^TERMINAL_OPERATOR_PASSWORD=' "$file" | cut -d= -f2- || true)
   if [[ -z "$current_credential" || "$current_credential" == terminal:* ]]; then
-    if [[ -n "$operator_pass" ]]; then
-      sed -i "s|^TERMINAL_CREDENTIAL=.*|TERMINAL_CREDENTIAL=${TERMINAL_OPERATOR_USER}:${operator_pass}|" "$file"
-      sed -i 's|^TERMINAL_ENABLED=.*|TERMINAL_ENABLED=1|' "$file"
-    else
-      local terminal_pass
-      terminal_pass=$(openssl rand -hex 12)
-      sed -i "s|^TERMINAL_CREDENTIAL=.*|TERMINAL_CREDENTIAL=${TERMINAL_OPERATOR_USER}:${terminal_pass}|" "$file"
-      sed -i 's|^TERMINAL_ENABLED=.*|TERMINAL_ENABLED=1|' "$file"
-    fi
+    local terminal_pass
+    terminal_pass=$(openssl rand -hex 16)
+    sed -i "s|^TERMINAL_CREDENTIAL=.*|TERMINAL_CREDENTIAL=${TERMINAL_OPERATOR_USER}:${terminal_pass}|" "$file"
   fi
+  sed -i 's|^TERMINAL_ENABLED=.*|TERMINAL_ENABLED=0|' "$file"
+  sed -i 's|^TERMINAL_ALLOW_WRITE=.*|TERMINAL_ALLOW_WRITE=0|' "$file"
+  sed -i 's|^TERMINAL_OPERATOR_PASSWORD=.*|TERMINAL_OPERATOR_PASSWORD=|' "$file"
+  sync_terminal_runtime_env "$file"
   chown root:lightningos "$file"
   chmod 660 "$file"
+}
+
+sync_terminal_runtime_env() {
+  local source_file="$1"
+  local credential
+  local runtime_tmp
+  credential=$(read_env_file_value TERMINAL_CREDENTIAL "$source_file")
+  [[ ! -L "$TERMINAL_ENV_PATH" ]] || die "Refusing symlinked terminal runtime environment"
+  runtime_tmp=$(mktemp /etc/lightningos/.terminal.env.XXXXXX)
+  (umask 077; {
+    printf 'TERMINAL_ENABLED=0\n'
+    printf 'TERMINAL_CREDENTIAL=%s\n' "$credential"
+    printf 'TERMINAL_ALLOW_WRITE=0\n'
+    printf 'TERMINAL_PORT=7681\n'
+    printf 'TERMINAL_OPERATOR_USER=%s\n' "$TERMINAL_OPERATOR_USER"
+    printf 'TERMINAL_TERM=xterm\n'
+    printf 'TERMINAL_SHELL=/bin/bash\n'
+    printf 'TERMINAL_WS_ORIGIN=\n'
+  } > "$runtime_tmp")
+  install -o root -g lightningos -m 0640 "$runtime_tmp" "$TERMINAL_ENV_PATH"
+  rm -f -- "$runtime_tmp"
 }
 
 trap 'echo ""; echo "Installation failed during: ${CURRENT_STEP:-unknown}"; echo "Last command: $BASH_COMMAND"; echo "Check: systemctl status postgresql --no-pager"; echo "Also: journalctl -u postgresql -n 50 --no-pager"; exit 1' ERR
@@ -647,52 +662,18 @@ ensure_user() {
 ensure_operator_user() {
   local user="$TERMINAL_OPERATOR_USER"
   print_step "Ensuring operator user ${user}"
+  [[ "$user" == "losop" ]] || die "The web terminal requires the dedicated losop account"
 
-  local pw="${TERMINAL_OPERATOR_PASSWORD:-}"
-  if [[ -z "$pw" ]]; then
-    local file="/etc/lightningos/secrets.env"
-    mkdir -p /etc/lightningos
-    if [[ ! -f "$file" ]]; then
-      cp "$REPO_ROOT/templates/secrets.env" "$file"
-    fi
-    if ! grep -q '^TERMINAL_OPERATOR_USER=' "$file"; then
-      echo "TERMINAL_OPERATOR_USER=${user}" >> "$file"
-    fi
-    if ! grep -q '^TERMINAL_OPERATOR_PASSWORD=' "$file"; then
-      echo "TERMINAL_OPERATOR_PASSWORD=" >> "$file"
-    fi
-    pw=$(grep '^TERMINAL_OPERATOR_PASSWORD=' "$file" | cut -d= -f2- || true)
-    if [[ -z "$pw" ]]; then
-      pw=$(openssl rand -hex 12)
-      sed -i "s|^TERMINAL_OPERATOR_PASSWORD=.*|TERMINAL_OPERATOR_PASSWORD=${pw}|" "$file"
-    fi
-    TERMINAL_OPERATOR_PASSWORD="$pw"
-    export TERMINAL_OPERATOR_PASSWORD
-    if id lightningos >/dev/null 2>&1; then
-      chown root:lightningos "$file"
-      chmod 660 "$file"
-    fi
-  fi
-
-  if id "$user" >/dev/null 2>&1; then
-    ensure_group_member "$user" lightningos
-    ensure_group_member "$user" sudo
-    ensure_group_member "$user" systemd-journal
-    print_ok "Operator user ${user} already exists"
-    return
-  fi
-
-  if command -v adduser >/dev/null 2>&1; then
-    adduser --disabled-password --gecos "" "$user"
-  else
+  if ! id "$user" >/dev/null 2>&1; then
     useradd -m -d "/home/${user}" -s /bin/bash "$user"
   fi
-
-  echo "${user}:${pw}" | chpasswd
-  ensure_group_member "$user" lightningos
-  ensure_group_member "$user" sudo
-  ensure_group_member "$user" systemd-journal
-  print_ok "Operator user ${user} ready"
+  for group in lightningos sudo systemd-journal; do
+    if id -nG "$user" | tr ' ' '\n' | grep -Fxq "$group"; then
+      gpasswd -d "$user" "$group" >/dev/null
+    fi
+  done
+  usermod -L "$user"
+  print_ok "Restricted terminal user ${user} ready (password locked, no privileged groups)"
 }
 
 create_lnd_user() {
@@ -987,13 +968,6 @@ install_helper_scripts() {
     install -m 0755 "$terminal_src" "$TERMINAL_SCRIPT"
   else
     print_warn "Missing helper script: $terminal_src"
-  fi
-
-  local terminal_password_src="$REPO_ROOT/internal/server/assets/lightningos-terminal-password.sh"
-  if [[ -f "$terminal_password_src" ]]; then
-    install -m 0755 "$terminal_password_src" "$TERMINAL_PASSWORD_SCRIPT"
-  else
-    print_warn "Missing helper script: $terminal_password_src"
   fi
 
   local firewall_src="$REPO_ROOT/internal/server/assets/lightningos-manager-firewall.sh"

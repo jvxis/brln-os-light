@@ -31,8 +31,8 @@ The scope includes:
 
 ## Repository checkpoint
 
-Current implementation checkpoint: `41a95a9d`, subject
-`0.5.3-Beta Add reauthenticated terminal control`; the documentation/evidence
+Current implementation checkpoint: `c113647c`, subject
+`0.5.3-Beta Show terminal password errors in modal`; the documentation/evidence
 commit carrying this handoff follows it. Phases 0-5, the mandatory Ubuntu 24.04
 clean/existing matrices, the transactional checkout-upgrade gate, and the
 controlled LOS TESTE2 rollout are complete. The rollout correctly treated LOS
@@ -70,6 +70,12 @@ Bitcoin container/process/start identity, LND and Docker PIDs were preserved,
 and Bitcoin/LND remained fully synchronized. Both CodeQL languages passed and
 all temporary checkout/credential material was removed. Evidence:
 `docs/baselines/privilege-hardening-terminal-ui-control-los-test2-2026-08-14.json`.
+The UI follow-up at `c113647c` keeps an invalid-password error inside the open
+reauthentication modal, clears the rejected password, and exposes the message
+as an accessible alert. LOS TESTE2 accepted the exact commit, returned the
+expected `auth_invalid_credentials` without enabling the terminal, contained
+the translated modal alert in the installed bundle, preserved Bitcoin/LND/
+Docker identities, removed temporary material, and ended disabled/read-only.
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote PR: `#33`, targeting `main`, open and unmerged.

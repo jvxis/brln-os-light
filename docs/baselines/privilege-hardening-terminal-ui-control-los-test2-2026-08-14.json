@@ -1,7 +1,7 @@
 {
   "date_utc": "2026-08-14",
   "branch": "agent/0.5.3-privilege-hardening",
-  "implementation_commit": "41a95a9d0b50129fb1fe602b7cd5e77c80c0a034",
+  "implementation_commit": "c113647c6467735526eb2bb1470c94a6adda9a83",
   "scope": "fresh-reauthenticated read-only terminal enable/disable through the typed privileged broker",
   "local_validation": {
     "go_test_all": "passed",
@@ -26,6 +26,8 @@
     "terminal_control": {
       "authenticated_session": "passed",
       "missing_confirmation_challenge": "HTTP 428 terminal_control_reauth_required",
+      "invalid_confirmation": "HTTP 401 auth_invalid_credentials without enabling the terminal",
+      "invalid_confirmation_ui": "translated accessible error rendered inside the open modal; rejected password cleared",
       "enable": "HTTP 200 and enabled/active runtime verified",
       "readiness": "bounded wait for the loopback listener passed",
       "manager_proxy_with_dedicated_basic_credential": "HTTP 200",

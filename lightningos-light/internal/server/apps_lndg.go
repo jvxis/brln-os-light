@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -397,7 +396,10 @@ func copyLndgLndCert(paths lndgPaths) error {
 }
 
 func ensureLndgEnv(ctx context.Context, paths lndgPaths) error {
-	allowedHosts, _ := defaultLndgHosts(ctx)
+	allowedHosts, _ := lndgHosts(mergeLNDgAccessHosts(
+		splitEnvList(readEnvValue(paths.EnvPath, "LNDG_ALLOWED_HOSTS")),
+		lndgAccessHost(ctx),
+	))
 	adminPassword := readEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD")
 	if adminPassword == "" {
 		adminPassword = readSecretFile(paths.AdminPasswordPath)
@@ -508,7 +510,7 @@ func ensureLndgLogFile(path string) error {
 }
 
 func defaultLndgHosts(ctx context.Context) ([]string, []string) {
-	return lndgHosts(detectHostIPs(ctx))
+	return lndgHosts([]string{lndgAccessHost(ctx)})
 }
 
 func lndgHosts(dynamic []string) ([]string, []string) {
@@ -534,70 +536,39 @@ func lndgHosts(dynamic []string) ([]string, []string) {
 	return hosts, origins
 }
 
-type lndgHostInterface struct {
-	name  string
-	flags net.Flags
-	addrs []string
+type lndgAccessHostContextKey struct{}
+
+func withLNDgAccessHost(ctx context.Context, requestHost string) context.Context {
+	host := strings.TrimSpace(requestHost)
+	if parsed, _, err := net.SplitHostPort(host); err == nil {
+		host = parsed
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	if ip == nil || ip.To4() == nil || !ip.IsGlobalUnicast() {
+		return ctx
+	}
+	return context.WithValue(ctx, lndgAccessHostContextKey{}, ip.To4().String())
 }
 
-func detectHostIPs(_ context.Context) []string {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	inputs := make([]lndgHostInterface, 0, len(interfaces))
-	for _, iface := range interfaces {
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		values := make([]string, 0, len(addrs))
-		for _, addr := range addrs {
-			values = append(values, addr.String())
-		}
-		inputs = append(inputs, lndgHostInterface{name: iface.Name, flags: iface.Flags, addrs: values})
-	}
-	return lndgHostIPsFromInterfaces(inputs)
+func lndgAccessHost(ctx context.Context) string {
+	host, _ := ctx.Value(lndgAccessHostContextKey{}).(string)
+	return host
 }
 
-func lndgHostIPsFromInterfaces(interfaces []lndgHostInterface) []string {
-	const maxDynamicHosts = 13 // The manifest reserves three entries for fixed hosts.
-	virtualPrefixes := []string{"br-", "cni", "docker", "flannel", "lxc", "podman", "veth", "virbr"}
-	ips := []string{}
-	for _, iface := range interfaces {
-		if iface.flags&net.FlagUp == 0 || iface.flags&net.FlagLoopback != 0 {
+func mergeLNDgAccessHosts(existing []string, current string) []string {
+	hosts := []string{}
+	for _, candidate := range append(existing, current) {
+		ip := net.ParseIP(strings.TrimSpace(candidate))
+		if ip == nil || ip.To4() == nil || !ip.IsGlobalUnicast() {
 			continue
 		}
-		name := strings.ToLower(strings.TrimSpace(iface.name))
-		virtual := false
-		for _, prefix := range virtualPrefixes {
-			if strings.HasPrefix(name, prefix) {
-				virtual = true
-				break
-			}
-		}
-		if virtual {
-			continue
-		}
-		for _, addr := range iface.addrs {
-			host, _, err := net.ParseCIDR(addr)
-			if err != nil {
-				host = net.ParseIP(addr)
-			}
-			if host == nil || host.To4() == nil || !host.IsGlobalUnicast() {
-				continue
-			}
-			value := host.String()
-			if !stringInSlice(value, ips) {
-				ips = append(ips, value)
-			}
+		value := ip.To4().String()
+		if !stringInSlice(value, hosts) {
+			hosts = append(hosts, value)
 		}
 	}
-	sort.Strings(ips)
-	if len(ips) > maxDynamicHosts {
-		ips = ips[:maxDynamicHosts]
-	}
-	return ips
+	return hosts
 }
 
 const lndgEntrypoint = appmanifest.LNDgEntrypoint

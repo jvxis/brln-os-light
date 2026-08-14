@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 
 	"github.com/go-chi/chi/v5"
@@ -168,7 +169,11 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
-	if err := app.Install(r.Context()); err != nil {
+	appContext := r.Context()
+	if appID == appmanifest.LNDgID {
+		appContext = withLNDgAccessHost(appContext, r.Host)
+	}
+	if err := app.Install(appContext); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -256,7 +261,11 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
-	if err := app.Start(r.Context()); err != nil {
+	appContext := r.Context()
+	if appID == appmanifest.LNDgID {
+		appContext = withLNDgAccessHost(appContext, r.Host)
+	}
+	if err := app.Start(appContext); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

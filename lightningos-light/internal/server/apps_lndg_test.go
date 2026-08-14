@@ -1,7 +1,7 @@
 package server
 
 import (
-	"net"
+	"context"
 	"strings"
 	"testing"
 
@@ -28,20 +28,13 @@ func TestLNDgPostgresBackedLNDUsesPrivateChannelDBPlaceholder(t *testing.T) {
 	}
 }
 
-func TestLNDgHostIPsUseLocalInterfacesWithoutCommandExecution(t *testing.T) {
-	interfaces := []lndgHostInterface{
-		{name: "lo", flags: net.FlagUp | net.FlagLoopback, addrs: []string{"127.0.0.1/8"}},
-		{name: "enp1s0", flags: net.FlagUp, addrs: []string{"192.168.68.92/24", "fe80::1/64"}},
-		{name: "tailscale0", flags: net.FlagUp, addrs: []string{"100.101.102.103/32"}},
-		{name: "docker0", flags: net.FlagUp, addrs: []string{"172.17.0.1/16"}},
-		{name: "br-app", flags: net.FlagUp, addrs: []string{"172.20.0.1/16"}},
-		{name: "wlan0", flags: 0, addrs: []string{"10.0.0.2/24"}},
-	}
-	got := strings.Join(lndgHostIPsFromInterfaces(interfaces), ",")
-	if got != "100.101.102.103,192.168.68.92" {
-		t.Fatalf("unexpected LNDg host IPs: %q", got)
-	}
-	hosts, origins := lndgHosts(lndgHostIPsFromInterfaces(interfaces))
+func TestLNDgAccessHostComesFromAuthenticatedManagerRequest(t *testing.T) {
+	ctx := withLNDgAccessHost(context.Background(), "192.168.68.92:8443")
+	dynamic := mergeLNDgAccessHosts(
+		[]string{"localhost", "127.0.0.1", "host.docker.internal", "100.101.102.103", "*", "invalid"},
+		lndgAccessHost(ctx),
+	)
+	hosts, origins := lndgHosts(dynamic)
 	if strings.Contains(strings.Join(hosts, ","), "*") {
 		t.Fatal("LNDg allowed hosts must remain closed")
 	}

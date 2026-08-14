@@ -1,7 +1,7 @@
 {
   "date_utc": "2026-08-14",
   "branch": "agent/0.5.3-privilege-hardening",
-  "implementation_commit": "c113647c6467735526eb2bb1470c94a6adda9a83",
+  "implementation_commit": "988ceb50e4df1a368f90f6a0e5551170a011cd87",
   "scope": "fresh-reauthenticated read-only terminal enable/disable through the typed privileged broker",
   "local_validation": {
     "go_test_all": "passed",
@@ -24,12 +24,15 @@
     "broker_self_test": "passed",
     "manager_restarted": true,
     "terminal_control": {
+      "initial_failure_reproduced": "manager proxy connection refused while systemd had already reported the terminal unit active",
+      "root_cause": "the enable response could precede the fixed loopback listener becoming reachable",
       "authenticated_session": "passed",
       "missing_confirmation_challenge": "HTTP 428 terminal_control_reauth_required",
       "invalid_confirmation": "HTTP 401 auth_invalid_credentials without enabling the terminal",
       "invalid_confirmation_ui": "translated accessible error rendered inside the open modal; rejected password cleared",
       "enable": "HTTP 200 and enabled/active runtime verified",
-      "readiness": "bounded wait for the loopback listener passed",
+      "readiness": "broker waited for the fixed 127.0.0.1:7681 listener before returning the successful enable response",
+      "immediate_proxy_after_enable": "HTTP 200 with no client-side delay or retry",
       "manager_proxy_with_dedicated_basic_credential": "HTTP 200",
       "loopback_only": true,
       "permit_write_argument_absent": true,

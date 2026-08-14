@@ -31,8 +31,8 @@ The scope includes:
 
 ## Repository checkpoint
 
-Current implementation checkpoint: `c113647c`, subject
-`0.5.3-Beta Show terminal password errors in modal`; the documentation/evidence
+Current implementation checkpoint: `988ceb50`, subject
+`0.5.3-Beta Wait for terminal listener readiness`; the documentation/evidence
 commit carrying this handoff follows it. Phases 0-5, the mandatory Ubuntu 24.04
 clean/existing matrices, the transactional checkout-upgrade gate, and the
 controlled LOS TESTE2 rollout are complete. The rollout correctly treated LOS
@@ -76,6 +76,17 @@ as an accessible alert. LOS TESTE2 accepted the exact commit, returned the
 expected `auth_invalid_credentials` without enabling the terminal, contained
 the translated modal alert in the installed bundle, preserved Bitcoin/LND/
 Docker identities, removed temporary material, and ended disabled/read-only.
+The readiness follow-up at `988ceb50` fixes the reproduced first-load race:
+systemd could report the unit active before GoTTY had bound its fixed loopback
+listener, so the Manager proxy returned `connection refused` and the iframe
+remained on its one-time 502 response. The typed broker now waits, with a
+bounded deadline, for `127.0.0.1:7681` before returning a successful enable;
+any readiness failure uses the existing fail-closed disable path. On LOS
+TESTE2, the immediate proxy request after the enable response returned HTTP
+200 without a client-side delay or retry. The test preserved the Bitcoin
+container/process/start identity and the LND and Docker PIDs, removed the
+trusted checkout and temporary material, and ended with the terminal
+disabled/inactive and read-only.
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote PR: `#33`, targeting `main`, open and unmerged.
@@ -661,6 +672,7 @@ Both transitions require fresh reauthentication and use the closed
 `terminal.control` broker operation. The broker validates the fixed service
 identity and root-owned assets, reuses only the dedicated GoTTY credential,
 forces `TERMINAL_ALLOW_WRITE=0`, verifies systemd reached the requested state,
+waits for the fixed loopback listener before reporting a successful enable,
 and fails closed to a disabled runtime on transition failure. It never exposes a
 generic service name, path, command or writable flag. For 0.5.4, move terminal
 provisioning out of `install.sh`/`install_existing.sh` and into an optional

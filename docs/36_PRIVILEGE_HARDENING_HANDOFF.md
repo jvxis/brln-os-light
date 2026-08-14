@@ -5,7 +5,7 @@ This document is the entry point for continuing pull request
 an operational index, not a replacement for the accepted implementation plan
 in `docs/32_PRIVILEGE_HARDENING_PLAN.md`.
 
-Last reconciled: 2026-08-14, terminal UI control and LOS TESTE2 acceptance.
+Last reconciled: 2026-08-14, existing-Pi remote-Bitcoin upgrade acceptance.
 
 ## Authoritative objective
 
@@ -31,8 +31,8 @@ The scope includes:
 
 ## Repository checkpoint
 
-Current implementation checkpoint: `988ceb50`, subject
-`0.5.3-Beta Wait for terminal listener readiness`; the documentation/evidence
+Current implementation checkpoint: `8d374336`, subject
+`0.5.3-Beta Record upgrade build provenance`; the documentation/evidence
 commit carrying this handoff follows it. Phases 0-5, the mandatory Ubuntu 24.04
 clean/existing matrices, the transactional checkout-upgrade gate, and the
 controlled LOS TESTE2 rollout are complete. The rollout correctly treated LOS
@@ -87,6 +87,31 @@ TESTE2, the immediate proxy request after the enable response returned HTTP
 container/process/start identity and the LND and Docker PIDs, removed the
 trusted checkout and temporary material, and ended with the terminal
 disabled/inactive and read-only.
+
+The final existing-node compatibility gate upgraded a real arm64
+`install_existing_pi` node from the latest published `0.5.1-Beta` release to
+the exact PR head while retaining its remote Bitcoin source. The target runs
+Debian 13, so this is additional compatibility evidence and does not replace
+the mandatory Ubuntu 24.04 matrix. It exposed two valid legacy-layout defects:
+the native LND service runs as `admin:admin` rather than `lnd:lnd`, and some of
+its RPCs (including `GetInfo`) can remain blocked while macaroon, wallet and
+channel-balance reads are healthy. The broker now resolves only the fixed
+`lnd.service` identity, rejects root/invalid identities, and verifies the
+freshly baked credential by authenticating `ListMacaroonIDs` and requiring its
+new root key ID instead of depending on `GetInfo`. Both failed cutovers rolled
+back exactly to `0.5.1-Beta` before the fixes were retried.
+
+The accepted head `8d374336` passed forward upgrade and idempotent re-upgrade.
+LND remained `admin:admin`, unlocked and synchronized to chain/graph over the
+remote mainnet Bitcoin source; the LND configuration hash and LND/Docker PIDs
+and activation timestamps were preserved. The admin macaroon is owner-only,
+the dedicated Manager macaroon is `root:lightningos:0640`, the Manager has no
+effective sudo, privileged mode is `enforce`, and the terminal is disabled and
+read-only. Upgrade provenance now atomically records the exact commit/version
+after Manager health succeeds; rollback schema v6 restores or removes the
+prior stamp. All temporary checkouts and authentication material were removed.
+Evidence:
+`docs/baselines/privilege-hardening-install-existing-pi-remote-bitcoin-2026-08-14.json`.
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote PR: `#33`, targeting `main`, open and unmerged.
@@ -857,11 +882,12 @@ root-owned directory helper now rejects the three manager-shared roots. The
 confined broker has only the additional optional `/etc/avahi/services` write
 path needed by its fixed mDNS helper.
 
-The post-upgrade rollback bundle is schema v5. It captures and restores actual
+The post-upgrade rollback bundle is schema v6. It captures and restores actual
 pre-existing manager-macaroon/state bytes when those files existed, migrates v4
-fail-closed, restores the Manager/UI/access boundary, waits for the previous
-Manager to respond, and never touches node or application data. Operator entry
-point: `sudo /usr/local/sbin/lightningos-rollback-privilege-cutover`.
+fail-closed, restores the Manager/UI/access boundary and prior build-provenance
+stamp, waits for the previous Manager to respond, and never touches node or
+application data. Operator entry point:
+`sudo /usr/local/sbin/lightningos-rollback-privilege-cutover`.
 
 Disposable Ubuntu 24.04 passed forward upgrade, broker reconciliation, exact
 Manager/UI hash rollback, and dependency-preservation checks. LOS TESTE2 passed

@@ -1598,10 +1598,12 @@ operations, a unique revocable root key, the fixed 17-permission set, atomic
 configuration updates, and root-only transaction state. The credential lives
 at `/var/lib/lightningos-credentials/lnd/manager.macaroon` as
 `root:lightningos:0640`; its root-owned ancestor prevents the manager from
-replacing the boundary. After commit, native `admin.macaroon` is
-`lnd:lnd:0600`. Upgrade rollback schema v5 records the Manager UI snapshot and
-the exact pre-upgrade manager-credential files when they existed. The bundle is
-root-only, migrates legacy v4 state fail-closed, and restores the previous
+replacing the boundary. After commit, native `admin.macaroon` remains owned by
+the fixed `lnd.service` identity and becomes owner-only `0600`; this supports
+both canonical `lnd:lnd` and recognized existing-node identities. Upgrade
+rollback schema v6 records the Manager UI snapshot, build-provenance stamp and
+the exact pre-upgrade manager-credential files when they existed. The bundle
+is root-only, migrates legacy v4 state fail-closed, and restores the previous
 Manager/UI/access and credential boundary while revoking a credential created
 by the cutover. An unavailable or locked LND returns `pending` without
 filesystem/config mutation.
@@ -1693,8 +1695,9 @@ For an accepted in-place 0.5.3 upgrade, the post-upgrade operator rollback is
 captured pre-upgrade Manager binary, UI, service/access boundary, sudoers/group
 state, broker files, and LND manager-credential boundary. It does not downgrade
 or rewrite Bitcoin, LND, wallet, channel, PostgreSQL, or App Store data. The
-helper requires the root-only schema-v5 bundle, verifies Manager responsiveness,
-and restores/removes the prior helper itself after one successful rollback.
+helper requires the root-only schema-v6 bundle, verifies Manager
+responsiveness, and restores/removes the prior helper itself after one
+successful rollback.
 
 The mandatory acceptance target for PR #33 is Ubuntu 24.04: new `install.sh`
 nodes, recognized `install_existing.sh` nodes with native/systemd Bitcoin and

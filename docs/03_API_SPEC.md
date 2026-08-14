@@ -726,7 +726,7 @@ POST /api/terminal/control
 - Body: `{"enabled":true,"confirm_password":"..."}`.
 - Requires login protection and fresh reauthentication with scope `terminal_control` for both enable and disable.
 - Uses the typed privileged-broker operation `terminal.control`; the Manager never edits the runtime environment or invokes `systemctl` directly.
-- Enabling validates the fixed root-owned service, launcher and GoTTY binary, preserves the existing dedicated credential, forces `TERMINAL_ALLOW_WRITE=0`, and verifies the service is active and enabled. Disabling stops and disables the service. A failed transition fails closed by forcing the runtime setting off and best-effort stopping/disabling the service.
+- Enabling validates the fixed root-owned service, launcher and GoTTY binary, preserves the existing dedicated credential, forces `TERMINAL_ALLOW_WRITE=0`, verifies the service is active/enabled, and waits for the fixed loopback listener before returning success. Disabling stops and disables the service. A failed transition fails closed by forcing the runtime setting off and best-effort stopping/disabling the service.
 - Response: `{"enabled":true}`.
 
 POST /api/terminal/credential/rotate

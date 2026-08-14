@@ -3,16 +3,41 @@ package privileged
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type terminalCredentialRunner struct {
 	commands []recordedCommand
 	user     string
 	err      error
+}
+
+func TestWaitForTerminalTCPReady(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := waitForTerminalTCPReady(ctx, address); err != nil {
+		_ = listener.Close()
+		t.Fatalf("ready listener was rejected: %v", err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer timeoutCancel()
+	if err := waitForTerminalTCPReady(timeoutCtx, address); err == nil {
+		t.Fatal("closed listener was reported ready")
+	}
 }
 
 func TestTerminalControlManagerUsesExistingCredentialAndTypedState(t *testing.T) {

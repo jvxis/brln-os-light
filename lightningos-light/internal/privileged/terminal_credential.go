@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	osuser "os/user"
 	"path/filepath"
@@ -19,6 +20,7 @@ const (
 	terminalServiceUnitPath = "/etc/systemd/system/lightningos-terminal.service"
 	terminalLauncherPath    = "/usr/local/sbin/lightningos-terminal"
 	terminalGoTTYPath       = "/usr/local/bin/gotty"
+	terminalReadyAddress    = "127.0.0.1:7681"
 )
 
 var terminalCredentialPasswordPattern = regexp.MustCompile(`^[A-Za-z0-9]{16,128}$`)
@@ -149,7 +151,31 @@ func (manager *NativeTerminalCredentialManager) applyTerminalControl(ctx context
 		manager.failClosedTerminal(path, operatorUser, password, gid)
 		return errors.New("terminal service did not reach the requested state")
 	}
+	if enabled {
+		if err := waitForTerminalTCPReady(transitionCtx, terminalReadyAddress); err != nil {
+			manager.failClosedTerminal(path, operatorUser, password, gid)
+			return errors.New("terminal listener did not become ready")
+		}
+	}
 	return nil
+}
+
+func waitForTerminalTCPReady(ctx context.Context, address string) error {
+	dialer := &net.Dialer{Timeout: 250 * time.Millisecond}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		connection, err := dialer.DialContext(ctx, "tcp", address)
+		if err == nil {
+			_ = connection.Close()
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("terminal listener readiness timed out")
+		case <-ticker.C:
+		}
+	}
 }
 
 func (manager *NativeTerminalCredentialManager) terminalServiceState(ctx context.Context, command string) (string, error) {

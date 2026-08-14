@@ -5,7 +5,7 @@ This document is the entry point for continuing pull request
 an operational index, not a replacement for the accepted implementation plan
 in `docs/32_PRIVILEGE_HARDENING_PLAN.md`.
 
-Last reconciled: 2026-08-14, issue reconciliation and LOS TESTE2 follow-up.
+Last reconciled: 2026-08-14, terminal UI control and LOS TESTE2 acceptance.
 
 ## Authoritative objective
 
@@ -31,8 +31,8 @@ The scope includes:
 
 ## Repository checkpoint
 
-Current implementation checkpoint: `45cc948e`, subject
-`0.5.3-Beta Harden web terminal and Telegram errors`; the documentation/evidence
+Current implementation checkpoint: `41a95a9d`, subject
+`0.5.3-Beta Add reauthenticated terminal control`; the documentation/evidence
 commit carrying this handoff follows it. Phases 0-5, the mandatory Ubuntu 24.04
 clean/existing matrices, the transactional checkout-upgrade gate, and the
 controlled LOS TESTE2 rollout are complete. The rollout correctly treated LOS
@@ -60,6 +60,16 @@ Evidence:
 Issues #36 (effective firewall policy) and #39 (uninstall confirmations) are
 valid but remain open for the planned `0.5.4` scope. PR #33 must not be merged
 until the owner explicitly authorizes it.
+
+The terminal UI control follow-up at `41a95a9d` also passed its real LOS TESTE2
+gate. An authenticated browser-equivalent flow received the expected 428 fresh
+reauthentication challenge, enabled the terminal, verified the dedicated Basic
+credential through the Manager proxy on the loopback-only GoTTY listener with
+no write flag, and disabled it again. The final runtime and unit are off;
+Bitcoin container/process/start identity, LND and Docker PIDs were preserved,
+and Bitcoin/LND remained fully synchronized. Both CodeQL languages passed and
+all temporary checkout/credential material was removed. Evidence:
+`docs/baselines/privilege-hardening-terminal-ui-control-los-test2-2026-08-14.json`.
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote PR: `#33`, targeting `main`, open and unmerged.

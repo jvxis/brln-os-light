@@ -1111,6 +1111,7 @@ export type StorageTarget = {
 export type AppOperationInfo = {
   action: 'install' | 'start' | 'stop' | 'uninstall'
   started_at: string
+  stage?: string
 }
 
 export type AppStoreInfo = {

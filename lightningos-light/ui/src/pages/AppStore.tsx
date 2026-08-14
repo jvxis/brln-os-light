@@ -220,6 +220,24 @@ export default function AppStore() {
     return t('appStore.operation.elapsedMinutes', { count: Math.floor(seconds / 60) })
   }
 
+  const resolveOperationStageLabel = (app: AppInfo, stage?: string) => {
+    if (app.id !== 'electrs' || !stage) return ''
+    switch (stage) {
+      case 'validating':
+        return t('appStore.operation.electrs.validating')
+      case 'configuring_bitcoin':
+        return t('appStore.operation.electrs.configuringBitcoin')
+      case 'preparing_image':
+        return t('appStore.operation.electrs.preparingImage')
+      case 'configuring_runtime':
+        return t('appStore.operation.electrs.configuringRuntime')
+      case 'starting_service':
+        return t('appStore.operation.electrs.startingService')
+      default:
+        return ''
+    }
+  }
+
   const resolveUnavailableMessage = (app: AppInfo) => {
     switch (app.unavailable_reason) {
       case 'requires_local_bitcoin_source':
@@ -742,6 +760,7 @@ export default function AppStore() {
         {visibleApps.map((app) => {
           const busyAction = busy[app.id]
           const operationAction = app.operation?.action || busyAction
+          const operationStageLabel = resolveOperationStageLabel(app, app.operation?.stage)
           const isBusy = Boolean(operationAction)
           const isResetting = operationAction === 'reset-admin'
           const supportsAdminReset = app.id === 'lndg' || app.id === 'bark-wallet'
@@ -823,14 +842,15 @@ export default function AppStore() {
               {operationAction && !isResetting && (
                 <div className="rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-4 py-3" role="status" aria-live="polite">
                   <div className="flex items-center justify-between gap-3 text-sm">
-                    <span className="font-semibold text-cyan-100">{resolveOperationLabel(operationAction)}</span>
+                    <span className="font-semibold text-cyan-100">{operationStageLabel || resolveOperationLabel(operationAction)}</span>
                     <span className="text-xs text-cyan-100/65">
                       {app.operation ? formatOperationElapsed(app.operation.started_at) : t('appStore.operation.elapsedUnknown')}
                     </span>
                   </div>
                   <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/30">
-                    <div className="h-full w-full animate-pulse rounded-full bg-gradient-to-r from-cyan-500/40 via-cyan-300 to-cyan-500/40" />
+                    <div className="app-operation-progress h-full rounded-full bg-gradient-to-r from-cyan-500/30 via-cyan-200 to-cyan-500/30" />
                   </div>
+                  <p className="mt-2 text-[11px] uppercase tracking-wide text-cyan-100/55">{t('appStore.operation.indeterminate')}</p>
                   <p className="mt-2 text-xs leading-relaxed text-cyan-100/70">{t('appStore.operation.continuesInBackground')}</p>
                 </div>
               )}

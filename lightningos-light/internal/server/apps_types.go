@@ -48,6 +48,7 @@ type appInfo struct {
 type appOperationInfo struct {
 	Action    string    `json:"action"`
 	StartedAt time.Time `json:"started_at"`
+	Stage     string    `json:"stage,omitempty"`
 }
 
 type appHandler interface {

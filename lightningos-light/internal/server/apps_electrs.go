@@ -145,6 +145,7 @@ func (s *Server) startElectrsWithOptions(ctx context.Context, opts electrsInstal
 }
 
 func (s *Server) applyElectrs(ctx context.Context, confirmBitcoinRestart bool) error {
+	s.updateAppOperationStage(electrsAppID, "validating")
 	bitcoinPaths := bitcoinCoreAppPaths()
 	if fileExists(bitcoinPaths.ComposePath) && !confirmBitcoinRestart {
 		return errElectrsBitcoinRestartConfirmationRequired
@@ -158,6 +159,7 @@ func (s *Server) applyElectrs(ctx context.Context, confirmBitcoinRestart bool) e
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
 
+	s.updateAppOperationStage(electrsAppID, "configuring_bitcoin")
 	values, validationConfig, err := s.resolveElectrsRuntimeValues(ctx, bitcoinPaths, confirmBitcoinRestart)
 	if err != nil {
 		return err
@@ -169,9 +171,11 @@ func (s *Server) applyElectrs(ctx context.Context, confirmBitcoinRestart bool) e
 	// Electrs reads the credential verbatim as HTTP Basic auth, so the private
 	// manager-side file is exactly "user:password" with no trailing newline.
 	// The broker validates and copies it to the non-root container snapshot.
+	s.updateAppOperationStage(electrsAppID, "preparing_image")
 	if err := ensureElectrsImage(ctx); err != nil {
 		return err
 	}
+	s.updateAppOperationStage(electrsAppID, "configuring_runtime")
 	cookie := values.BitcoinRPCUser + ":" + values.BitcoinRPCPass
 	if err := writeFile(paths.CookiePath, cookie, 0600); err != nil {
 		return fmt.Errorf("failed to write bitcoin cookie file: %w", err)
@@ -193,6 +197,7 @@ func (s *Server) applyElectrs(ctx context.Context, confirmBitcoinRestart bool) e
 	if _, err := ensureFileWithChange(paths.ComposePath, electrsComposeContents(paths, values)); err != nil {
 		return err
 	}
+	s.updateAppOperationStage(electrsAppID, "starting_service")
 	if handled, err := system.AppLifecycleWithBroker(ctx, electrsAppID, "start"); !handled {
 		return errors.New("Electrs lifecycle requires privileged broker enforce mode")
 	} else if err != nil {

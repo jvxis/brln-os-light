@@ -23,8 +23,13 @@ func TestAppOperationLifecycle(t *testing.T) {
 	if operation.StartedAt.Location().String() != "UTC" {
 		t.Fatalf("expected UTC start time, got %s", operation.StartedAt.Location())
 	}
+	s.updateAppOperationStage("electrs", "preparing_image")
+	operation, active = s.currentAppOperation("electrs")
+	if !active || operation.Stage != "preparing_image" {
+		t.Fatalf("expected updated operation stage, got %#v, active=%v", operation, active)
+	}
 	snapshot := s.appOperationSnapshot()
-	if len(snapshot) != 1 || snapshot["electrs"].Action != "install" {
+	if len(snapshot) != 1 || snapshot["electrs"].Action != "install" || snapshot["electrs"].Stage != "preparing_image" {
 		t.Fatalf("unexpected operation snapshot: %#v", snapshot)
 	}
 

@@ -50,6 +50,20 @@ func (s *Server) currentAppOperation(appID string) (appOperationInfo, bool) {
 	return operation.appOperationInfo, exists
 }
 
+func (s *Server) updateAppOperationStage(appID, stage string) {
+	if s == nil || appID == "" {
+		return
+	}
+	s.appOperationsMu.Lock()
+	defer s.appOperationsMu.Unlock()
+	operation, exists := s.appOperations[appID]
+	if !exists {
+		return
+	}
+	operation.Stage = stage
+	s.appOperations[appID] = operation
+}
+
 func (s *Server) appOperationSnapshot() map[string]appOperationInfo {
 	operations := make(map[string]appOperationInfo)
 	if s == nil {

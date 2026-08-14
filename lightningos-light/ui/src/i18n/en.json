@@ -1227,7 +1227,15 @@
       "elapsedSeconds": "{{count}}s elapsed",
       "elapsedMinutes": "{{count}} min elapsed",
       "elapsedUnknown": "in progress",
-      "continuesInBackground": "This operation continues on the node even if you leave this page. Do not start another operation for this app."
+      "indeterminate": "Indeterminate progress",
+      "continuesInBackground": "This operation continues on the node even if you leave this page. Do not start another operation for this app.",
+      "electrs": {
+        "validating": "Validating prerequisites",
+        "configuringBitcoin": "Checking Bitcoin integration",
+        "preparingImage": "Building the official Electrs image",
+        "configuringRuntime": "Preparing the protected configuration",
+        "startingService": "Starting the Electrs service"
+      }
     },
     "elevatedLndAccessBadge": "Sensitive LND access",
     "elevatedLndAccessTitle": "Direct access to sensitive LND operations",

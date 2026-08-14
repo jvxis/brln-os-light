@@ -3,21 +3,21 @@ package appmanifest
 import "fmt"
 
 const (
-	BTCPayID               = "btcpay"
-	BTCPayProject          = "btcpay"
-	BTCPayComposeFile      = "docker-compose.yaml"
-	BTCPayEnvFile          = ".env"
-	BTCPayDBInitFile       = "init-nbxplorer.sql"
-	BTCPayLNDDir           = "lnd"
-	BTCPayMacaroonFile     = "btcpay.macaroon"
-	BTCPaySnapshotAuthFile = "btcpay.auth"
-	BTCPayTLSCertFile      = "tls.cert"
-	BTCPayPrimaryService   = "btcpayserver"
-	BTCPayPort             = 23000
-	BTCPayNbxplorerPort    = 32838
-	BTCPayStopTimeout      = 30
-	BTCPayRelease          = "2.4.2"
-	BTCPayNbxplorerRelease = "2.6.10"
+	BTCPayID                     = "btcpay"
+	BTCPayProject                = "btcpay"
+	BTCPayComposeFile            = "docker-compose.yaml"
+	BTCPayEnvFile                = ".env"
+	BTCPayDBInitFile             = "init-nbxplorer.sql"
+	BTCPayLNDDir                 = "lnd"
+	BTCPayMacaroonFile           = "btcpay.macaroon"
+	BTCPayLegacySnapshotAuthFile = "btcpay.auth"
+	BTCPayTLSCertFile            = "tls.cert"
+	BTCPayPrimaryService         = "btcpayserver"
+	BTCPayPort                   = 23000
+	BTCPayNbxplorerPort          = 32838
+	BTCPayStopTimeout            = 30
+	BTCPayRelease                = "2.4.2"
+	BTCPayNbxplorerRelease       = "2.6.10"
 
 	// BTCPayServerImage is the newest stable tag published by the official
 	// BTCPay Docker project. Upstream does not publish a usable `latest` tag.
@@ -94,11 +94,11 @@ func BTCPayCompose(paths BTCPayComposePaths, joinBitcoinNetwork bool, useTorProx
 	return btcpayCompose(paths, joinBitcoinNetwork, useTorProxy, BTCPayMacaroonFile)
 }
 
-// BTCPayExecutionCompose is the broker-only catalog form. It exposes the same
-// dedicated credential under a filename without the extension targeted by the
-// BTCPay 2.4.1 credential-disclosure exploit.
+// BTCPayExecutionCompose is the broker-only catalog form. BTCPay 2.4.2 fixes
+// the credential-disclosure vulnerability and requires the dedicated LND
+// credential path to use the .macaroon extension.
 func BTCPayExecutionCompose(paths BTCPayComposePaths, joinBitcoinNetwork bool, useTorProxy bool) string {
-	return btcpayCompose(paths, joinBitcoinNetwork, useTorProxy, BTCPaySnapshotAuthFile)
+	return btcpayCompose(paths, joinBitcoinNetwork, useTorProxy, BTCPayMacaroonFile)
 }
 
 func btcpayCompose(paths BTCPayComposePaths, joinBitcoinNetwork bool, useTorProxy bool, authFile string) string {

@@ -737,24 +737,24 @@ func TestComposeAppBTCPayCreatesSecretSafePersistentSnapshot(t *testing.T) {
 	for _, required := range []string{
 		filepath.Join(wantRoot, appmanifest.BTCPayDBInitFile),
 		filepath.Join(wantRoot, appmanifest.BTCPayLNDDir),
-		"macaroonfilepath=/etc/lnd/" + appmanifest.BTCPaySnapshotAuthFile,
+		"macaroonfilepath=/etc/lnd/" + appmanifest.BTCPayMacaroonFile,
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("execution compose missing %q:\n%s", required, compose)
 		}
 	}
-	for _, forbidden := range []string{"admin.macaroon", ".macaroon", fixture.appRoot} {
+	for _, forbidden := range []string{"admin.macaroon", appmanifest.BTCPayLegacySnapshotAuthFile, fixture.appRoot} {
 		if strings.Contains(compose, forbidden) {
 			t.Fatalf("execution compose contains forbidden manager asset %q", forbidden)
 		}
 	}
-	authPath := filepath.Join(wantRoot, appmanifest.BTCPayLNDDir, appmanifest.BTCPaySnapshotAuthFile)
+	authPath := filepath.Join(wantRoot, appmanifest.BTCPayLNDDir, appmanifest.BTCPayMacaroonFile)
 	authRaw, err := os.ReadFile(authPath)
 	if err != nil || string(authRaw) != testBTCPayDedicatedMacaroon {
 		t.Fatalf("dedicated credential was not snapshotted: %q/%v", authRaw, err)
 	}
-	if _, err := os.Lstat(filepath.Join(wantRoot, appmanifest.BTCPayLNDDir, appmanifest.BTCPayMacaroonFile)); !os.IsNotExist(err) {
-		t.Fatalf("snapshot exposed a .macaroon file: %v", err)
+	if _, err := os.Lstat(filepath.Join(wantRoot, appmanifest.BTCPayLNDDir, appmanifest.BTCPayLegacySnapshotAuthFile)); !os.IsNotExist(err) {
+		t.Fatalf("snapshot retained the legacy extensionless credential: %v", err)
 	}
 	for _, path := range []string{
 		snapshot.composePath,
@@ -782,6 +782,33 @@ func TestComposeAppBTCPayCreatesSecretSafePersistentSnapshot(t *testing.T) {
 	}
 	if _, err := os.Stat(wantRoot); err != nil {
 		t.Fatalf("persistent snapshot was unexpectedly cleaned: %v", err)
+	}
+}
+
+func TestComposeAppBTCPayMigratesLegacySnapshotCredentialName(t *testing.T) {
+	fixture := writeTestBTCPayApp(t, false, false)
+	snapshot, cleanup, err := fixture.manager.prepareBTCPaySnapshot(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	lndDir := filepath.Join(snapshot.root, appmanifest.BTCPayLNDDir)
+	macaroonPath := filepath.Join(lndDir, appmanifest.BTCPayMacaroonFile)
+	legacyPath := filepath.Join(lndDir, appmanifest.BTCPayLegacySnapshotAuthFile)
+	if err := os.Rename(macaroonPath, legacyPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, cleanup, err = fixture.manager.prepareBTCPaySnapshot(false); err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	raw, err := os.ReadFile(macaroonPath)
+	if err != nil || string(raw) != testBTCPayDedicatedMacaroon {
+		t.Fatalf("dedicated BTCPay macaroon was not restored: %q/%v", raw, err)
+	}
+	if _, err := os.Lstat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy BTCPay credential was not retired: %v", err)
 	}
 }
 
@@ -835,7 +862,7 @@ func TestComposeAppBTCPayLifecycleRunsOnlyFromPrivilegedSnapshot(t *testing.T) {
 	if databaseStart < 0 || postgresReady <= databaseStart || fullStart <= postgresReady {
 		t.Fatalf("invalid BTCPay start/database order: %#v", runner.commands)
 	}
-	if strings.Contains(runner.composeSnapshot, ".macaroon") || !strings.Contains(runner.composeSnapshot, "macaroonfilepath=/etc/lnd/"+appmanifest.BTCPaySnapshotAuthFile) {
+	if strings.Contains(runner.composeSnapshot, "admin.macaroon") || !strings.Contains(runner.composeSnapshot, "macaroonfilepath=/etc/lnd/"+appmanifest.BTCPayMacaroonFile) {
 		t.Fatalf("execution snapshot exposed the wrong LND credential: %s", runner.composeSnapshot)
 	}
 }

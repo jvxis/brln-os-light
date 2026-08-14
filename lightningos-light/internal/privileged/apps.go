@@ -1547,8 +1547,8 @@ func (manager *ComposeAppManager) validatedBTCPayFiles() (btcpayValidatedFiles, 
 }
 
 // prepareBTCPaySnapshot validates the unprivileged inputs even in dry-run and,
-// for execution, persists only a root-owned closed snapshot. The credential is
-// deliberately renamed without a .macaroon suffix inside the container.
+// for execution, persists only a root-owned closed snapshot. The fixed BTCPay
+// release requires the dedicated credential to retain its .macaroon suffix.
 func (manager *ComposeAppManager) prepareBTCPaySnapshot(dryRun bool) (composeAppSnapshot, func(), error) {
 	files, err := manager.validatedBTCPayFiles()
 	if err != nil {
@@ -1658,8 +1658,9 @@ func (manager *ComposeAppManager) createBTCPaySnapshot(files btcpayValidatedFile
 		return snapshot, func() {}, errors.New("BTCPay execution snapshot contains unexpected assets")
 	}
 	if err := validateSnapshotDirectoryEntries(lndSnapshotDir, map[string]bool{
-		appmanifest.BTCPayTLSCertFile:      true,
-		appmanifest.BTCPaySnapshotAuthFile: true,
+		appmanifest.BTCPayTLSCertFile:            true,
+		appmanifest.BTCPayMacaroonFile:           true,
+		appmanifest.BTCPayLegacySnapshotAuthFile: true,
 	}); err != nil {
 		return snapshot, func() {}, errors.New("BTCPay LND snapshot contains unexpected assets")
 	}
@@ -1671,7 +1672,7 @@ func (manager *ComposeAppManager) createBTCPaySnapshot(files btcpayValidatedFile
 	}
 	dbInitPath := filepath.Join(snapshotRoot, appmanifest.BTCPayDBInitFile)
 	certificatePath := filepath.Join(lndSnapshotDir, appmanifest.BTCPayTLSCertFile)
-	authPath := filepath.Join(lndSnapshotDir, appmanifest.BTCPaySnapshotAuthFile)
+	authPath := filepath.Join(lndSnapshotDir, appmanifest.BTCPayMacaroonFile)
 	for _, file := range []struct {
 		path    string
 		data    []byte
@@ -1686,6 +1687,23 @@ func (manager *ComposeAppManager) createBTCPaySnapshot(files btcpayValidatedFile
 			return composeAppSnapshot{}, func() {}, errors.New(file.message)
 		}
 	}
+	legacyAuthPath := filepath.Join(lndSnapshotDir, appmanifest.BTCPayLegacySnapshotAuthFile)
+	if info, err := os.Lstat(legacyAuthPath); err == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return composeAppSnapshot{}, func() {}, errors.New("legacy BTCPay LND credential is unsafe")
+		}
+		if err := os.Remove(legacyAuthPath); err != nil {
+			return composeAppSnapshot{}, func() {}, errors.New("failed to retire legacy BTCPay LND credential")
+		}
+	} else if !os.IsNotExist(err) {
+		return composeAppSnapshot{}, func() {}, errors.New("legacy BTCPay LND credential is unavailable")
+	}
+	if err := validateSnapshotDirectoryEntries(lndSnapshotDir, map[string]bool{
+		appmanifest.BTCPayTLSCertFile:  true,
+		appmanifest.BTCPayMacaroonFile: true,
+	}); err != nil {
+		return composeAppSnapshot{}, func() {}, errors.New("BTCPay LND snapshot migration failed")
+	}
 	dataRoot := filepath.Join(appsDataRoot, appmanifest.BTCPayID)
 	executionPaths := appmanifest.BTCPayComposePaths{
 		DataDir:    filepath.Join(dataRoot, "data"),
@@ -1699,7 +1717,7 @@ func (manager *ComposeAppManager) createBTCPaySnapshot(files btcpayValidatedFile
 		files.joinBitcoinNetwork,
 		files.useTorProxy,
 	)
-	if strings.Contains(executionCompose, ".macaroon") || strings.Contains(executionCompose, "admin.macaroon") {
+	if !strings.Contains(executionCompose, "macaroonfilepath=/etc/lnd/"+appmanifest.BTCPayMacaroonFile) || strings.Contains(executionCompose, "admin.macaroon") {
 		return composeAppSnapshot{}, func() {}, errors.New("BTCPay execution manifest exposes a forbidden LND credential")
 	}
 	if err := writeAtomicRegularFile(snapshot.composePath, []byte(executionCompose), 0600); err != nil {

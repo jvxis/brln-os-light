@@ -146,7 +146,7 @@ func TestBTCPayCatalogSecurityFloor(t *testing.T) {
 	}
 }
 
-func TestBTCPayExecutionCatalogHidesMacaroonExtension(t *testing.T) {
+func TestBTCPayExecutionCatalogUsesDedicatedMacaroon(t *testing.T) {
 	paths := BTCPayComposePaths{
 		DataDir:    "/data/btcpay",
 		NbxDir:     "/data/nbxplorer",
@@ -159,11 +159,11 @@ func TestBTCPayExecutionCatalogHidesMacaroonExtension(t *testing.T) {
 	if !strings.Contains(managerCompose, "macaroonfilepath=/etc/lnd/"+BTCPayMacaroonFile) {
 		t.Fatal("manager catalog lost the dedicated BTCPay macaroon")
 	}
-	if !strings.Contains(executionCompose, "macaroonfilepath=/etc/lnd/"+BTCPaySnapshotAuthFile) {
-		t.Fatal("execution catalog lost the extensionless BTCPay credential")
+	if !strings.Contains(executionCompose, "macaroonfilepath=/etc/lnd/"+BTCPayMacaroonFile) {
+		t.Fatal("execution catalog lost the dedicated BTCPay macaroon")
 	}
-	if strings.Contains(executionCompose, ".macaroon") || strings.Contains(executionCompose, "admin.macaroon") {
-		t.Fatal("execution catalog exposes a forbidden macaroon filename")
+	if strings.Contains(executionCompose, "admin.macaroon") || strings.Contains(executionCompose, BTCPayLegacySnapshotAuthFile) {
+		t.Fatal("execution catalog exposes the wrong LND credential")
 	}
 }
 

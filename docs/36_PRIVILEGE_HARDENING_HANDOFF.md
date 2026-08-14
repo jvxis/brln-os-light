@@ -1078,3 +1078,31 @@ responses with HTTP 200, and advanced from the unlock form to the wallet setup
 screen. Operator checkouts, upgrade worktrees, browser profiles and the local
 temporary automation script were removed. Evidence:
 `docs/baselines/privilege-hardening-bark-browser-auth-2026-08-14.json`.
+
+## Electrs source-build progress and live installation closure (2026-08-14)
+
+The App Store now keeps install, start, stop, and uninstall operations in
+Manager-owned state instead of relying only on the React component that issued
+the request. Active cards survive App Store navigation, remain visible through
+filters, reject a concurrent lifecycle action for the same app, show elapsed
+time, and poll the lightweight `/api/apps/operations` endpoint. The UI does not
+invent a percentage for builds that expose no trustworthy numeric progress. It
+uses an explicitly indeterminate moving segment and, for Electrs, reports the
+instrumented validation, Bitcoin integration, official image build, protected
+runtime configuration, and service-start stages.
+
+The first real LOS TESTE2 install compiled the official Electrs 0.11.1 binary
+but reached the old 20-minute unit limit at Dockerfile step 11 of 14. It failed
+closed without a partial runtime. Commit `34495131` extends the independently
+bounded build unit to 60 minutes and the Manager observer to 62 minutes while
+retaining the pinned source hash, official tag metadata, base-image digest, and
+post-build attestation. The subsequent authenticated install completed with
+HTTP 200. The attested image runs as UID/GID 1000, with read-only rootfs, all
+capabilities dropped, `no-new-privileges`, and zero restarts; indexing was
+observed advancing against the full synchronized mainnet node.
+
+The final UI refinement at `bc6ff152` was deployed from an exact clean trusted
+checkout. LND, Docker, Bitcoin Core, and the running Electrs container retained
+their process/container identities and restart counts. Temporary local files,
+operator checkouts, and upgrade worktrees were removed. Evidence:
+`docs/baselines/privilege-hardening-electrs-install-progress-2026-08-14.json`.

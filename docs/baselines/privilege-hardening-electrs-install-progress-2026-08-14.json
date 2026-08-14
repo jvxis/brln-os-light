@@ -1,0 +1,83 @@
+{
+  "schema": "lightningos-privilege-hardening-electrs-install-progress-v1",
+  "observed_at": "2026-08-14T23:38:00Z",
+  "node": "LOS TESTE2",
+  "implementation_commits": {
+    "lifecycle_progress": "0ee89d84",
+    "source_build_timeout": "34495131",
+    "stage_and_animation_clarity": "bc6ff152a5a1d5c26decfca99e61c355293d3bb5"
+  },
+  "finding": {
+    "first_install_result": "failed cleanly at the fixed 20 minute source-build runtime limit",
+    "first_install_last_stage": "Dockerfile step 11 of 14 after the official Electrs binary had compiled",
+    "first_install_partial_runtime": false,
+    "root_cause": "the bounded build unit was too short for a modest Ubuntu 24 test node",
+    "rpc_or_bitcoin_failure": false
+  },
+  "correction": {
+    "build_unit_runtime_limit_minutes": 60,
+    "manager_wait_limit_minutes": 62,
+    "build_remains_bounded": true,
+    "official_release": "romanz/electrs 0.11.1",
+    "source_hash_and_base_digest_verification_preserved": true
+  },
+  "app_store_progress": {
+    "backend_is_source_of_truth": true,
+    "tracked_actions": ["install", "start", "stop", "uninstall"],
+    "duplicate_same_app_action_http_status": 409,
+    "lightweight_poll_endpoint": "/api/apps/operations",
+    "poll_seconds": 2,
+    "full_app_inventory_polled_repeatedly": false,
+    "elapsed_time_visible": true,
+    "fake_percentage_used": false,
+    "indeterminate_progress_labeled": true,
+    "moving_segment_animation": true,
+    "electrs_stages": [
+      "validating",
+      "configuring_bitcoin",
+      "preparing_image",
+      "configuring_runtime",
+      "starting_service"
+    ]
+  },
+  "validation": {
+    "go_test_all": "pass",
+    "ui_production_build": "pass",
+    "deployed_css_animation_present": true,
+    "manager_build_stamp": "bc6ff152a5a1d5c26decfca99e61c355293d3bb5 0.5.3-Beta",
+    "install_http_status": 200,
+    "install_duration_ms": 372668,
+    "active_operations_after_completion": 0
+  },
+  "electrs_runtime": {
+    "image": "lightningos/electrs:0.11.1",
+    "image_id": "sha256:8dd8bd11848deda1c874e7d4f7d9c02ec99e60d33b97a49bd7a58bab706a1545",
+    "image_attestation_present": true,
+    "failure_marker_present": false,
+    "container_id": "d92b4db0d2476fa3219aa2ff397a6d8015ea20787c09b5a8f498c0228027fb50",
+    "started_at": "2026-08-14T23:32:16.197917652Z",
+    "running": true,
+    "restart_count": 0,
+    "user": "1000:1000",
+    "read_only_root_filesystem": true,
+    "capabilities_dropped": "ALL",
+    "no_new_privileges": true,
+    "index_height_observed": 225527,
+    "tip_height_observed": 962495,
+    "indexing": true
+  },
+  "preservation": {
+    "lnd_pid_before_after": 424193,
+    "lnd_restart_count_before_after": 4,
+    "docker_pid_before_after": 1486,
+    "bitcoin_container_before_after": "22e92650aad5",
+    "bitcoin_started_at_before_after": "2026-08-14T22:55:26.676472988Z",
+    "bitcoin_restart_count_before_after": 0,
+    "electrs_container_preserved_across_ui_refinement_upgrade": true
+  },
+  "cleanup": {
+    "remote_operator_checkouts": 0,
+    "remote_upgrade_worktrees": 0,
+    "local_temporary_files_removed": 8
+  }
+}

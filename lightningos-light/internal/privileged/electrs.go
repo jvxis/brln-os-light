@@ -324,7 +324,7 @@ func (manager *ComposeAppManager) prepareElectrsImage(ctx context.Context, unit 
 		"--collect",
 		"--unit=" + unit,
 		"--property=Type=exec",
-		"--property=RuntimeMaxSec=20min",
+		"--property=RuntimeMaxSec=60min",
 		"/bin/sh",
 		"-c",
 		electrsImageBuildScript(attestationPath),

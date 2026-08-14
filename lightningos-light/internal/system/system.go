@@ -1285,7 +1285,7 @@ func PrepareAppImageWithBroker(ctx context.Context, appID string, variant string
 		// Source-built catalog images (notably Electrs) can legitimately take
 		// longer than a registry pull on low-power nodes. The broker's transient
 		// unit remains independently bounded and status polling carries no secret.
-		waitCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+		waitCtx, cancel := context.WithTimeout(ctx, 62*time.Minute)
 		defer cancel()
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()

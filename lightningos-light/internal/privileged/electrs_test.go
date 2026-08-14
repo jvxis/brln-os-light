@@ -177,7 +177,7 @@ func TestElectrsImagePreparationUsesFixedSourceBuildUnit(t *testing.T) {
 		t.Fatalf("unexpected build command sequence: %#v", runner.commands)
 	}
 	command := runner.commands[1]
-	if command.path != systemdRunPath || len(command.args) != 8 || command.args[0] != "--quiet" || command.args[2] != "--unit=lightningos-electrs-image-app" || command.args[4] != "--property=RuntimeMaxSec=20min" || command.args[5] != "/bin/sh" || command.args[6] != "-c" {
+	if command.path != systemdRunPath || len(command.args) != 8 || command.args[0] != "--quiet" || command.args[2] != "--unit=lightningos-electrs-image-app" || command.args[4] != "--property=RuntimeMaxSec=60min" || command.args[5] != "/bin/sh" || command.args[6] != "-c" {
 		t.Fatalf("unexpected fixed build command: %#v", command)
 	}
 	if !strings.Contains(command.args[7], appmanifest.ElectrsSourceSHA256) || !strings.Contains(command.args[7], appmanifest.ElectrsImage) {

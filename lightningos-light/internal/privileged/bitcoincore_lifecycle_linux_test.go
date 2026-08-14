@@ -4,6 +4,7 @@ package privileged
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -125,7 +126,13 @@ func TestBitcoinCoreLogsUseBrokerOwnedInspectionSnapshot(t *testing.T) {
 func TestBitcoinCoreStatusUsesCookieBackedFixedCLICommands(t *testing.T) {
 	manager, runner, _, _ := newTestBitcoinCoreLifecycleManager(t)
 	containerID := strings.Repeat("b", 64)
-	hash := strings.Repeat("0", 64)
+	hash := fmt.Sprintf("%064x", 1)
+	headers := make(map[string]string)
+	for index := 0; index <= bitcoinCoreCadenceBucketCount+1; index++ {
+		currentHash := fmt.Sprintf("%064x", index+1)
+		previousHash := fmt.Sprintf("%064x", index+2)
+		headers[currentHash] = fmt.Sprintf(`{"time":%d,"previousblockhash":"%s"}`, 1780000000-int64(index)*bitcoinCoreCadenceWindowSec, previousHash)
+	}
 	runner.runningServices = appmanifest.BitcoinCorePrimaryService + "\n"
 	runner.hook = func(path string, args []string) (string, error, bool) {
 		if hasArgsSuffix(args, "ps", "-q", appmanifest.BitcoinCorePrimaryService) {
@@ -143,8 +150,11 @@ func TestBitcoinCoreStatusUsesCookieBackedFixedCLICommands(t *testing.T) {
 			return fmt.Sprintf(`{"chain":"main","blocks":954700,"headers":954701,"verificationprogress":0.999,"initialblockdownload":true,"bestblockhash":"%s","pruned":false,"size_on_disk":123}`, hash), nil, true
 		case reflect.DeepEqual(args[len(prefix):], []string{"getnetworkinfo"}):
 			return `{"version":310100,"subversion":"/Satoshi:31.1.0/","connections":12}`, nil, true
-		case reflect.DeepEqual(args[len(prefix):], []string{"getblockheader", hash, "true"}):
-			return `{"time":1780000000}`, nil, true
+		case len(args[len(prefix):]) == 3 && args[len(prefix)] == "getblockheader" && args[len(prefix)+2] == "true":
+			if header, ok := headers[args[len(prefix)+1]]; ok {
+				return header, nil, true
+			}
+			return "", errors.New("unknown test header"), true
 		default:
 			return "", nil, false
 		}
@@ -157,6 +167,16 @@ func TestBitcoinCoreStatusUsesCookieBackedFixedCLICommands(t *testing.T) {
 	if state.Chain != "main" || state.Blocks != 954700 || state.Headers != 954701 || state.VerificationProgress != 0.999 ||
 		!state.NetworkOK || state.Version != 310100 || state.Connections != 12 || state.BestBlockTime != 1780000000 {
 		t.Fatalf("unexpected bitcoin status: %+v", state)
+	}
+	if state.BlockCadenceWindowSec != bitcoinCoreCadenceWindowSec || len(state.BlockCadence) != bitcoinCoreCadenceBucketCount {
+		t.Fatalf("unexpected bitcoin cadence: %+v", state.BlockCadence)
+	}
+	total := 0
+	for _, bucket := range state.BlockCadence {
+		total += bucket.Count
+	}
+	if total != bitcoinCoreCadenceBucketCount {
+		t.Fatalf("unexpected bitcoin cadence total: %d", total)
 	}
 	for _, command := range runner.commands {
 		joined := strings.Join(command.args, " ")

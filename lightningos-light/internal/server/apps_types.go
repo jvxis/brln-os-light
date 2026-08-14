@@ -7,6 +7,7 @@ const (
 	appsDataRoot = "/var/lib/lightningos/apps-data"
 
 	appSecurityNoticeElevatedLNDAccess    = "elevated_lnd_access"
+	appSecurityNoticeLimitedLNDAccess     = "limited_lnd_access"
 	appSecurityNoticeLNDDataDirectoryRead = "lnd_data_directory_read"
 )
 

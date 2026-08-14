@@ -112,6 +112,7 @@ const elementsDefaultDataDir = '/data/elements'
 const peerswapDefaultRemoteUrl = 'http://elements.br-ln.com:8086'
 const hiddenStoreAppIds = new Set(['depixbuy'])
 const elevatedLndAccessNotice = 'elevated_lnd_access'
+const limitedLndAccessNotice = 'limited_lnd_access'
 const lndDataDirectoryReadNotice = 'lnd_data_directory_read'
 
 const validatedBarkWalletURL = (rawURL: string) => {
@@ -421,7 +422,7 @@ export default function AppStore() {
     }
     if (action === 'install' && !options?.skipSecurityConfirmation) {
       const app = apps.find((candidate) => candidate.id === id)
-      if (app?.security_notices?.includes(elevatedLndAccessNotice)) {
+      if (app?.security_notices?.some((notice) => notice === elevatedLndAccessNotice || notice === limitedLndAccessNotice)) {
         setPendingElevatedInstall({ app, payload })
         setElevatedInstallAcknowledged(false)
         return
@@ -703,6 +704,8 @@ export default function AppStore() {
           const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
           const canCopyAdminPassword = app.id === 'lndg' || app.id === 'fedimint-gateway' || app.id === 'bark-wallet'
           const hasElevatedLndAccess = app.security_notices?.includes(elevatedLndAccessNotice) ?? false
+          const hasLimitedLndAccess = app.security_notices?.includes(limitedLndAccessNotice) ?? false
+          const hasDirectLndAccess = hasElevatedLndAccess || hasLimitedLndAccess
           const readsLndDataDirectory = app.security_notices?.includes(lndDataDirectoryReadNotice) ?? false
           return (
             <div key={app.id} className="section-card space-y-4">
@@ -734,6 +737,11 @@ export default function AppStore() {
                           {t('appStore.elevatedLndAccessBadge')}
                         </span>
                       )}
+                      {hasLimitedLndAccess && (
+                        <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-cyan-100">
+                          {t('appStore.limitedLndAccessBadge')}
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm text-fog/60">{app.description}</p>
                   </div>
@@ -743,16 +751,20 @@ export default function AppStore() {
                 </span>
               </div>
 
-              {hasElevatedLndAccess && (
-                <div className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm">
+              {hasDirectLndAccess && (
+                <div className={`rounded-lg px-4 py-3 text-sm ${hasElevatedLndAccess ? 'border border-amber-400/25 bg-amber-500/10' : 'border border-cyan-400/25 bg-cyan-500/10'}`}>
                   <div className="flex items-start gap-3">
-                    <svg viewBox="0 0 24 24" className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" className={`mt-0.5 h-5 w-5 shrink-0 ${hasElevatedLndAccess ? 'text-amber-300' : 'text-cyan-300'}`} fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
                       <path d="M12 3 4.5 6v5.2c0 4.6 3 8.2 7.5 9.8 4.5-1.6 7.5-5.2 7.5-9.8V6L12 3Z" />
                       <path d="M12 8v5M12 16.5v.1" />
                     </svg>
                     <div className="space-y-1">
-                      <p className="font-semibold text-amber-100">{t('appStore.elevatedLndAccessTitle')}</p>
-                      <p className="text-xs leading-relaxed text-amber-100/70">{t('appStore.elevatedLndAccessCardBody')}</p>
+                      <p className={`font-semibold ${hasElevatedLndAccess ? 'text-amber-100' : 'text-cyan-100'}`}>
+                        {t(hasElevatedLndAccess ? 'appStore.elevatedLndAccessTitle' : 'appStore.limitedLndAccessTitle')}
+                      </p>
+                      <p className={`text-xs leading-relaxed ${hasElevatedLndAccess ? 'text-amber-100/70' : 'text-cyan-100/70'}`}>
+                        {t(hasElevatedLndAccess ? 'appStore.elevatedLndAccessCardBody' : 'appStore.limitedLndAccessCardBody')}
+                      </p>
                       {readsLndDataDirectory && (
                         <p className="text-xs leading-relaxed text-amber-100/80">{t('appStore.lndDataDirectoryReadBody')}</p>
                       )}
@@ -947,15 +959,17 @@ export default function AppStore() {
                 </svg>
               </div>
               <div className="space-y-1">
-                <p className="text-xs uppercase tracking-[0.16em] text-amber-300">{t('appStore.elevatedLndAccessBadge')}</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-amber-300">
+                  {t(pendingElevatedInstall.app.security_notices?.includes(limitedLndAccessNotice) ? 'appStore.limitedLndAccessBadge' : 'appStore.elevatedLndAccessBadge')}
+                </p>
                 <h3 id="elevated-lnd-install-title" className="text-lg font-semibold">
-                  {t('appStore.elevatedLndAccessInstallTitle', { app: pendingElevatedInstall.app.name })}
+                  {t(pendingElevatedInstall.app.security_notices?.includes(limitedLndAccessNotice) ? 'appStore.limitedLndAccessInstallTitle' : 'appStore.elevatedLndAccessInstallTitle', { app: pendingElevatedInstall.app.name })}
                 </h3>
               </div>
             </div>
 
             <div className="mt-5 space-y-3 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm leading-relaxed text-fog/80">
-              <p>{t('appStore.elevatedLndAccessInstallBody')}</p>
+              <p>{t(pendingElevatedInstall.app.security_notices?.includes(limitedLndAccessNotice) ? 'appStore.limitedLndAccessInstallBody' : 'appStore.elevatedLndAccessInstallBody')}</p>
               {pendingElevatedInstall.app.security_notices?.includes(lndDataDirectoryReadNotice) && (
                 <p className="text-amber-100/85">{t('appStore.lndDataDirectoryReadInstallBody')}</p>
               )}
@@ -969,7 +983,7 @@ export default function AppStore() {
                 checked={elevatedInstallAcknowledged}
                 onChange={(event) => setElevatedInstallAcknowledged(event.target.checked)}
               />
-              <span>{t('appStore.elevatedLndAccessAcknowledge')}</span>
+              <span>{t(pendingElevatedInstall.app.security_notices?.includes(limitedLndAccessNotice) ? 'appStore.limitedLndAccessAcknowledge' : 'appStore.elevatedLndAccessAcknowledge')}</span>
             </label>
 
             <div className="mt-6 flex flex-wrap justify-end gap-3">

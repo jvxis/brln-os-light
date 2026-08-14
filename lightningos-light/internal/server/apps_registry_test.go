@@ -90,7 +90,6 @@ func TestConfiguredAppSecurityNotices(t *testing.T) {
 	}
 
 	wantElevated := map[string]bool{
-		btcpayAppID:          true,
 		"lndg":               true,
 		"lnbits":             true,
 		loopAppID:            true,
@@ -106,6 +105,9 @@ func TestConfiguredAppSecurityNotices(t *testing.T) {
 		}
 		if notices[appSecurityNoticeElevatedLNDAccess] != wantElevated[def.ID] {
 			t.Fatalf("unexpected elevated LND notice for %s: %v", def.ID, def.SecurityNotices)
+		}
+		if notices[appSecurityNoticeLimitedLNDAccess] != (def.ID == btcpayAppID) {
+			t.Fatalf("unexpected limited LND notice for %s: %v", def.ID, def.SecurityNotices)
 		}
 		if notices[appSecurityNoticeLNDDataDirectoryRead] != (def.ID == "lndg") {
 			t.Fatalf("unexpected LND data directory notice for %s: %v", def.ID, def.SecurityNotices)

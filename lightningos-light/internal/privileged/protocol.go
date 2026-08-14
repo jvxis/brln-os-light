@@ -378,21 +378,29 @@ type BitcoinCoreElectrsCredentialsState struct {
 }
 
 type BitcoinCoreStatusState struct {
-	Chain                string  `json:"chain"`
-	Blocks               int64   `json:"blocks"`
-	Headers              int64   `json:"headers"`
-	BestBlockTime        int64   `json:"best_block_time,omitempty"`
-	VerificationProgress float64 `json:"verification_progress"`
-	InitialBlockDownload bool    `json:"initial_block_download"`
-	BestBlockHash        string  `json:"best_block_hash"`
-	Pruned               bool    `json:"pruned"`
-	PruneHeight          int64   `json:"prune_height,omitempty"`
-	PruneTargetSize      int64   `json:"prune_target_size,omitempty"`
-	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
-	NetworkOK            bool    `json:"network_ok"`
-	Version              int     `json:"version,omitempty"`
-	Subversion           string  `json:"subversion,omitempty"`
-	Connections          int     `json:"connections,omitempty"`
+	Chain                 string                     `json:"chain"`
+	Blocks                int64                      `json:"blocks"`
+	Headers               int64                      `json:"headers"`
+	BestBlockTime         int64                      `json:"best_block_time,omitempty"`
+	BlockCadenceWindowSec int64                      `json:"block_cadence_window_sec,omitempty"`
+	BlockCadence          []BitcoinCoreCadenceBucket `json:"block_cadence,omitempty"`
+	VerificationProgress  float64                    `json:"verification_progress"`
+	InitialBlockDownload  bool                       `json:"initial_block_download"`
+	BestBlockHash         string                     `json:"best_block_hash"`
+	Pruned                bool                       `json:"pruned"`
+	PruneHeight           int64                      `json:"prune_height,omitempty"`
+	PruneTargetSize       int64                      `json:"prune_target_size,omitempty"`
+	SizeOnDisk            int64                      `json:"size_on_disk,omitempty"`
+	NetworkOK             bool                       `json:"network_ok"`
+	Version               int                        `json:"version,omitempty"`
+	Subversion            string                     `json:"subversion,omitempty"`
+	Connections           int                        `json:"connections,omitempty"`
+}
+
+type BitcoinCoreCadenceBucket struct {
+	StartTime int64 `json:"start_time"`
+	EndTime   int64 `json:"end_time"`
+	Count     int   `json:"count"`
 }
 
 type BitcoinConsumerNetworkState struct {

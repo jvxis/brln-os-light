@@ -12,7 +12,12 @@ import (
 	"lightningos-light/internal/appmanifest"
 )
 
-const maxBitcoinCoreStatusBytes = 1024 * 1024
+const (
+	maxBitcoinCoreStatusBytes       = 1024 * 1024
+	bitcoinCoreCadenceWindowSec     = int64(600)
+	bitcoinCoreCadenceBucketCount   = 12
+	bitcoinCoreCadenceMaxScanBlocks = 144
+)
 
 var bitcoinCoreBlockHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -36,7 +41,8 @@ type bitcoinCoreNetworkStatus struct {
 }
 
 type bitcoinCoreHeaderStatus struct {
-	Time int64 `json:"time"`
+	Time              int64  `json:"time"`
+	PreviousBlockHash string `json:"previousblockhash"`
 }
 
 // BitcoinCoreStatus obtains bounded, read-only telemetry through bitcoin-cli
@@ -117,12 +123,60 @@ func (manager *ComposeAppManager) BitcoinCoreStatus(ctx context.Context) (Bitcoi
 		var header bitcoinCoreHeaderStatus
 		if headerErr == nil && decodeBitcoinCoreCLIStatus(headerRaw, &header) == nil && header.Time > 0 {
 			state.BestBlockTime = header.Time
+			if cadence, cadenceErr := manager.bitcoinCoreCadence(ctx, containerID, header); cadenceErr == nil {
+				state.BlockCadenceWindowSec = bitcoinCoreCadenceWindowSec
+				state.BlockCadence = cadence
+			}
 		}
 	}
 	if err := validateBitcoinCoreStatusState(state); err != nil {
 		return BitcoinCoreStatusState{}, errors.New("bitcoin core RPC response is invalid")
 	}
 	return state, nil
+}
+
+func (manager *ComposeAppManager) bitcoinCoreCadence(ctx context.Context, containerID string, best bitcoinCoreHeaderStatus) ([]BitcoinCoreCadenceBucket, error) {
+	if best.Time <= 0 {
+		return nil, errors.New("bitcoin core best block time is unavailable")
+	}
+	startTime := best.Time - (bitcoinCoreCadenceWindowSec * bitcoinCoreCadenceBucketCount)
+	buckets := make([]BitcoinCoreCadenceBucket, bitcoinCoreCadenceBucketCount)
+	for index := range buckets {
+		start := startTime + int64(index)*bitcoinCoreCadenceWindowSec
+		buckets[index] = BitcoinCoreCadenceBucket{StartTime: start, EndTime: start + bitcoinCoreCadenceWindowSec}
+	}
+
+	current := best
+	for steps := 0; steps < bitcoinCoreCadenceMaxScanBlocks; steps++ {
+		if current.Time < startTime {
+			return buckets, nil
+		}
+		index := int((current.Time - startTime) / bitcoinCoreCadenceWindowSec)
+		if index >= 0 && index < len(buckets) {
+			buckets[index].Count++
+		}
+
+		nextHash := strings.TrimSpace(current.PreviousBlockHash)
+		if nextHash == "" {
+			return buckets, nil
+		}
+		if !bitcoinCoreBlockHashPattern.MatchString(nextHash) {
+			return nil, errors.New("bitcoin core previous block hash is invalid")
+		}
+		raw, err := manager.runBitcoinCoreCLI(ctx, containerID, "getblockheader", nextHash, "true")
+		if err != nil {
+			return nil, err
+		}
+		var next bitcoinCoreHeaderStatus
+		if decodeBitcoinCoreCLIStatus(raw, &next) != nil || next.Time <= 0 {
+			return nil, errors.New("bitcoin core block header is invalid")
+		}
+		current = next
+	}
+	if current.Time < startTime {
+		return buckets, nil
+	}
+	return nil, errors.New("bitcoin core cadence scan limit reached")
 }
 
 func (manager *ComposeAppManager) runBitcoinCoreCLI(ctx context.Context, containerID string, args ...string) (string, error) {
@@ -159,6 +213,9 @@ func validateBitcoinCoreStatusState(state BitcoinCoreStatusState) error {
 		state.BestBlockTime < 0 || state.PruneHeight < 0 || state.PruneTargetSize < 0 || state.SizeOnDisk < 0 {
 		return errors.New("invalid bitcoin core status")
 	}
+	if err := validateBitcoinCoreCadence(state); err != nil {
+		return err
+	}
 	if !state.NetworkOK {
 		if state.Version != 0 || state.Subversion != "" || state.Connections != 0 {
 			return errors.New("invalid bitcoin core network status")
@@ -171,6 +228,27 @@ func validateBitcoinCoreStatusState(state BitcoinCoreStatusState) error {
 	for _, char := range []byte(state.Subversion) {
 		if char < 0x20 || char > 0x7e {
 			return errors.New("invalid bitcoin core network status")
+		}
+	}
+	return nil
+}
+
+func validateBitcoinCoreCadence(state BitcoinCoreStatusState) error {
+	if len(state.BlockCadence) == 0 {
+		if state.BlockCadenceWindowSec != 0 {
+			return errors.New("invalid bitcoin core cadence")
+		}
+		return nil
+	}
+	if state.BestBlockTime <= 0 || state.BlockCadenceWindowSec != bitcoinCoreCadenceWindowSec || len(state.BlockCadence) != bitcoinCoreCadenceBucketCount {
+		return errors.New("invalid bitcoin core cadence")
+	}
+	for index, bucket := range state.BlockCadence {
+		if bucket.StartTime <= 0 || bucket.EndTime-bucket.StartTime != bitcoinCoreCadenceWindowSec || bucket.Count < 0 || bucket.Count > bitcoinCoreCadenceMaxScanBlocks {
+			return errors.New("invalid bitcoin core cadence")
+		}
+		if index > 0 && bucket.StartTime != state.BlockCadence[index-1].EndTime {
+			return errors.New("invalid bitcoin core cadence")
 		}
 	}
 	return nil

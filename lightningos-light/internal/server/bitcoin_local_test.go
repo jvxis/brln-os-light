@@ -174,13 +174,16 @@ func TestApplyBitcoinCLIChainInfoToLocalStatusKeepsBasicFieldsWithoutNetwork(t *
 }
 
 func TestParseBitcoinCoreBrokerStatusPreservesUnknownZeroValues(t *testing.T) {
-	raw := `{"chain":"main","blocks":954700,"headers":954701,"best_block_time":1780000000,"verification_progress":0.999,"initial_block_download":true,"best_block_hash":"0000000000000000000000000000000000000000000000000000000000000000","pruned":false,"network_ok":true,"version":310100,"subversion":"/Satoshi:31.1.0/","connections":12}`
+	raw := `{"chain":"main","blocks":954700,"headers":954701,"best_block_time":1780000000,"block_cadence_window_sec":600,"block_cadence":[{"start_time":1779992800,"end_time":1779993400,"count":2}],"verification_progress":0.999,"initial_block_download":true,"best_block_hash":"0000000000000000000000000000000000000000000000000000000000000000","pruned":false,"network_ok":true,"version":310100,"subversion":"/Satoshi:31.1.0/","connections":12}`
 	status, err := parseBitcoinCoreBrokerStatus(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !status.RPCOk || status.Chain != "main" || status.Blocks != 954700 || status.Headers != 954701 || status.VerificationProgress != 0.999 || status.Pruned {
 		t.Fatalf("unexpected broker status: %+v", status)
+	}
+	if status.BlockCadenceWindowSec != 600 || len(status.BlockCadence) != 1 || status.BlockCadence[0].Count != 2 {
+		t.Fatalf("broker cadence was not preserved: %+v", status)
 	}
 	for _, invalid := range []string{
 		`{}`,

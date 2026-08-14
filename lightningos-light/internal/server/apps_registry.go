@@ -52,6 +52,7 @@ func validateAppRegistry(apps []appHandler) error {
 	ports := map[int]bool{}
 	knownSecurityNotices := map[string]bool{
 		appSecurityNoticeElevatedLNDAccess:    true,
+		appSecurityNoticeLimitedLNDAccess:     true,
 		appSecurityNoticeLNDDataDirectoryRead: true,
 	}
 	for _, app := range apps {

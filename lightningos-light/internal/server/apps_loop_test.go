@@ -1,19 +1,73 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"lightningos-light/internal/lndclient"
+	"lightningos-light/internal/system"
 )
+
+type loopStatusTestClient struct {
+	*cpuMinerPrivilegedClient
+	installed bool
+	status    string
+	err       error
+}
+
+func (client *loopStatusTestClient) LoopStatus(context.Context) (bool, string, bool, bool, error) {
+	return client.installed, client.status, false, false, client.err
+}
+func (client *loopStatusTestClient) EnsureLoop(context.Context, []byte, []byte, bool) (string, error) {
+	return "ready", nil
+}
+func (client *loopStatusTestClient) LoopLifecycle(context.Context, string, bool) (string, error) {
+	return client.status, nil
+}
+func (client *loopStatusTestClient) RemoveLoop(context.Context, bool) error { return nil }
+func (client *loopStatusTestClient) EnsureLoopPermissions(context.Context, bool) error {
+	return nil
+}
+func (client *loopStatusTestClient) EnsureLoopClientMaterial(context.Context, bool) error {
+	return nil
+}
 
 func TestLoopDefinitionDisclosesElevatedLNDAccess(t *testing.T) {
 	def := loopDefinition()
 	if len(def.SecurityNotices) != 1 || def.SecurityNotices[0] != appSecurityNoticeElevatedLNDAccess {
 		t.Fatalf("Lightning Loop must disclose elevated LND access: %v", def.SecurityNotices)
+	}
+}
+
+func TestLoopStatusUsesBrokerInstallationState(t *testing.T) {
+	client := &loopStatusTestClient{
+		cpuMinerPrivilegedClient: &cpuMinerPrivilegedClient{mode: "enforce"},
+		installed:                true,
+		status:                   "stopped",
+	}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/apps/loop/status", nil)
+	(&Server{}).handleLoopStatus(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response loopStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Installed || response.Running {
+		t.Fatalf("unexpected Loop status: %#v", response)
 	}
 }
 

@@ -11,7 +11,18 @@ Tracking issues:
 
 - privilege-boundary hardening: [#32](https://github.com/jvxis/brln-os-light/issues/32);
 - installer and upgrade supply-chain hardening:
-  [#34](https://github.com/jvxis/brln-os-light/issues/34).
+  [#34](https://github.com/jvxis/brln-os-light/issues/34);
+- optional web-terminal privilege boundary:
+  [#35](https://github.com/jvxis/brln-os-light/issues/35);
+- Telegram credential-safe error boundary:
+  [#37](https://github.com/jvxis/brln-os-light/issues/37).
+
+Accepted follow-ups for `0.5.4`, intentionally outside PR #33:
+
+- effective host firewall policy and operator-visible exposure modes:
+  [#36](https://github.com/jvxis/brln-os-light/issues/36);
+- explicit uninstall confirmation and Bitcoin dependency protection:
+  [#39](https://github.com/jvxis/brln-os-light/issues/39).
 
 Target release: `0.5.3`.
 
@@ -36,6 +47,18 @@ start time, LND PID, Docker daemon invocation, installed container set, and
 mainnet/full-node sync while moving the Manager to the enforced broker,
 dedicated LND credential, zero wildcard sudoers, zero Docker access, and the
 hardened systemd policy. Bitcoin, LND, Docker, and the host were not restarted.
+
+The 2026-08-14 follow-up at commit `45cc948e` closed the remaining issue #35
+terminal exposure and issue #37 Telegram error-boundary findings. The terminal
+is now disabled and read-only by default, loads only a dedicated secret-minimal
+runtime environment, runs as a password-locked `losop` account without
+privileged supplementary groups, and no longer has a Linux-password helper.
+Telegram requests return fixed transport/status errors without including the
+credential-bearing URL or upstream response body. The complete local gate,
+CodeQL, controlled LOS TESTE2 upgrade, dependency preservation, authenticated
+Bitcoin/LND status, and cleanup evidence is recorded in
+`docs/baselines/privilege-hardening-issues-35-37-los-test2-2026-08-14.json`.
+Issues #36 and #39 remain open by product decision and are planned for `0.5.4`.
 
 Final Ubuntu 24 evidence:
 

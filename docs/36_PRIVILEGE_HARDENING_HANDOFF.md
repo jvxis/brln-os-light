@@ -5,7 +5,7 @@ This document is the entry point for continuing pull request
 an operational index, not a replacement for the accepted implementation plan
 in `docs/32_PRIVILEGE_HARDENING_PLAN.md`.
 
-Last reconciled: 2026-08-13, final Ubuntu 24 and LOS TESTE2 acceptance.
+Last reconciled: 2026-08-14, issue reconciliation and LOS TESTE2 follow-up.
 
 ## Authoritative objective
 
@@ -31,9 +31,9 @@ The scope includes:
 
 ## Repository checkpoint
 
-Current implementation checkpoint: `9205500f`, subject
-`0.5.3-Beta Fix Linux Bitcoin owner gate`; the documentation/evidence commit
-carrying this handoff follows it. Phases 0-5, the mandatory Ubuntu 24.04
+Current implementation checkpoint: `45cc948e`, subject
+`0.5.3-Beta Harden web terminal and Telegram errors`; the documentation/evidence
+commit carrying this handoff follows it. Phases 0-5, the mandatory Ubuntu 24.04
 clean/existing matrices, the transactional checkout-upgrade gate, and the
 controlled LOS TESTE2 rollout are complete. The rollout correctly treated LOS
 TESTE2 as a managed `install.sh` node with App Store Bitcoin Docker. Its final
@@ -45,8 +45,24 @@ uses local Bitcoin and is synchronized to chain and graph. Docker and
 PostgreSQL were not restarted. PR #33 is ready for final CI/review
 reconciliation; Ubuntu 26 remains a non-blocking follow-up.
 
+The 2026-08-14 issue reconciliation accepted #35 and #37 into PR #33 and
+validated them on LOS TESTE2. Only the Manager restarted. LND, Docker, the
+official-source Bitcoin container/process/start time, and the network link-state
+hash were preserved. Authenticated APIs reported Bitcoin mainnet fully
+synchronized with healthy RPC and LND unlocked/synchronized. The optional web
+terminal is disabled/inactive, read-only by default, isolated from Manager
+secrets, password-locked, and free of privileged supplementary groups; the
+legacy password helper is absent. Telegram sentinel tests prove that neither
+credential-bearing request URLs nor upstream bodies cross errors, logs, or the
+manual backup-test API boundary. CodeQL passed for Go and JavaScript/TypeScript.
+Evidence:
+`docs/baselines/privilege-hardening-issues-35-37-los-test2-2026-08-14.json`.
+Issues #36 (effective firewall policy) and #39 (uninstall confirmations) are
+valid but remain open for the planned `0.5.4` scope. PR #33 must not be merged
+until the owner explicitly authorizes it.
+
 - Branch: `agent/0.5.3-privilege-hardening`.
-- Remote Draft PR: `#33`, targeting `main`.
+- Remote PR: `#33`, targeting `main`, open and unmerged.
 - Published checkpoint entering the Public Pool slice: `23f2e92`.
 - The accepted PeerSwap implementation checkpoint is `a3cfb2b`, subject
   `0.5.3-Beta: harden PeerSwap runtime`.

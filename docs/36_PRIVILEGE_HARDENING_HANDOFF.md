@@ -31,15 +31,19 @@ The scope includes:
 
 ## Repository checkpoint
 
-Final checkpoint: `f02b3320`, subject
-`0.5.3-Beta: gate broker socket readiness`. Phases 0-5, the mandatory Ubuntu
-24.04 clean/existing matrices, the transactional checkout-upgrade gate, and the
+Current implementation checkpoint: `9205500f`, subject
+`0.5.3-Beta Fix Linux Bitcoin owner gate`; the documentation/evidence commit
+carrying this handoff follows it. Phases 0-5, the mandatory Ubuntu 24.04
+clean/existing matrices, the transactional checkout-upgrade gate, and the
 controlled LOS TESTE2 rollout are complete. The rollout correctly treated LOS
-TESTE2 as a managed `install.sh` node with App Store Bitcoin Docker, preserved
-Bitcoin/LND/Docker and all installed containers, and passed the enforced
-broker, dedicated LND credential, systemd confinement, and rollback gates.
-PR #33 is ready for final CI/review reconciliation; Ubuntu 26 remains a
-non-blocking follow-up.
+TESTE2 as a managed `install.sh` node with App Store Bitcoin Docker. Its final
+confirmed source cutover replaced the retained legacy `bitcoin/bitcoin:latest`
+container with `lightningos/bitcoin-core:31.1`, built from the verified official
+release, while preserving the external blockchain volume. Bitcoin is mainnet,
+fully synchronized, unpruned, and authenticated with managed rpcauth; LND now
+uses local Bitcoin and is synchronized to chain and graph. Docker and
+PostgreSQL were not restarted. PR #33 is ready for final CI/review
+reconciliation; Ubuntu 26 remains a non-blocking follow-up.
 
 - Branch: `agent/0.5.3-privilege-hardening`.
 - Remote Draft PR: `#33`, targeting `main`.
@@ -76,6 +80,14 @@ non-blocking follow-up.
   this branch merely because it advanced; first inspect whether a concrete
   dependency or conflict requires it.
 - Keep PR #33 in draft until the full plan, not only Phase 2, passes.
+
+The final Bitcoin source evidence is
+`docs/baselines/privilege-hardening-final-bitcoin-source-cutover-2026-08-13.json`.
+The complete RPC-consumer inventory is
+`docs/baselines/privilege-hardening-bitcoin-rpc-consumer-audit-2026-08-13.json`.
+On continuation, do not repeat the Bitcoin restart/source migration. Verify
+CI/review state, address only actionable findings, and do not merge PR #33
+without explicit owner authorization.
 
 At the beginning of a continuation session, verify these values rather than
 assuming they remain current:
@@ -799,3 +811,32 @@ authenticated API status is installed/running, RPC is healthy, mainnet is fully
 synchronized and unpruned, and LND/Docker/PostgreSQL were not restarted. The
 temporary trusted checkout and verification scripts were removed. Evidence:
 `docs/baselines/privilege-hardening-final-regression-rollback-2026-08-13.json`.
+
+## Final Bitcoin source and RPC-consumer closure (2026-08-13)
+
+The upgrade-only defect was a retained legacy App Store container. A plain
+Compose restart did not adopt the broker-attested image, and that legacy image
+left the enrolled marker and `bitcoin.conf` owned by the Bitcoin UID. The
+storage/credential broker correctly failed closed. The accepted implementation
+repairs the enrolled marker through the closed storage operation, promotes the
+legacy config to `root:bitcoin:0640`, and treats that boundary transition as a
+confirmed restart. Bitcoin restart now means a forced recreation of only the
+`bitcoind` service, so the verified official image and current storage guard
+actually take effect.
+
+A clean clone of `brln-os-basica` passed `install.sh` on Ubuntu 24.04. LND was
+correctly left stopped because neither a local nor remote RPC backend had been
+selected; manager/broker were active and the manager could not read the Docker
+socket. The Linux-only storage identity, legacy config ownership, and lifecycle
+tests passed. LOS TESTE2 then passed trusted-checkout upgrade and confirmed
+source migration: the external blocks/chainstate remained present, the new
+Bitcoin container reported mainnet/full/synchronized, LND became local and
+synced, and Docker/PostgreSQL activation identities remained unchanged.
+
+All local RPC consumers now have an explicit inventory. Running dependent apps
+are intentionally not restarted by an LND Bitcoin-source toggle. They retain
+their validated private snapshots and working preserved rpcauth; an explicit
+app start re-resolves the current source where that app owns Bitcoin wiring.
+External Bitcoin, external Elements, PeerSwap external Elements, and distinct
+Elements volumes remain supported. Do not change this into an automatic
+cascading restart policy without a separate product decision.

@@ -1604,6 +1604,37 @@ external volume. The Bitcoin container identity/start time/restart count, LND
 PID, and Docker/PostgreSQL activation identities were unchanged. Evidence is in
 `docs/baselines/privilege-hardening-final-regression-rollback-2026-08-13.json`.
 
+The final managed-node Bitcoin source cutover then closed the upgrade-only RPC
+credential gap. A clean Ubuntu 24.04 clone passed `install.sh`: its LND template
+contained no implicit RPC secret, LND remained correctly deferred until the
+wizard selects a backend, the broker socket was active, and the manager had no
+Docker socket access. On the preserved managed node, the gate detected that a
+plain Compose restart had retained the legacy `bitcoin/bitcoin:latest`
+container. The lifecycle now uses a single-service forced recreation for a
+Bitcoin restart, so the confirmed migration actually adopts the locally built,
+multisignature-verified official Bitcoin Core 31.1 image. The storage broker
+repairs the enrolled marker before credential access, promotes a legacy
+Bitcoin-owned config to `root:bitcoin:0640`, preserves existing rpcauth entries,
+and requires the confirmation/restart path for that ownership/image cutover.
+The external `blocks` and `chainstate` remained intact; the replacement node
+reported mainnet, equal blocks/headers, progress 1, IBD false, and pruned false.
+LND then switched from remote to local and synchronized to both chain and graph;
+Docker and PostgreSQL activation identities did not change. Evidence is in
+`docs/baselines/privilege-hardening-final-bitcoin-source-cutover-2026-08-13.json`.
+
+Every Bitcoin RPC consumer was also re-audited. Fresh App Store installs use
+broker-generated rpcauth and write the protected explicit LND credential only
+when local Bitcoin is selected; recognized native/systemd and remote layouts
+remain separate. Native status, BIP110, close classification, provenance, and
+full-index gates use the central resolver or the cookie-backed status broker.
+BTCPay, Electrs, Mempool, Fedimint, Public Pool, Elements, and PeerSwap resolve
+through their documented local/remote contracts. A source switch deliberately
+does not cascade restarts through already-running apps: their private working
+snapshot remains valid because legacy rpcauth entries are preserved, while an
+explicit app start re-resolves current wiring where the app owns that choice.
+The exact inventory and invariants are recorded in
+`docs/baselines/privilege-hardening-bitcoin-rpc-consumer-audit-2026-08-13.json`.
+
 Exit criterion: compromising one app does not automatically grant another
 app's permissions, host administration, or unrestricted LND administration.
 

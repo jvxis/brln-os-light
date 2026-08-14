@@ -1,0 +1,96 @@
+{
+  "schema": "lightningos.privilege-hardening.bitcoin-rpc-consumer-audit.v1",
+  "captured_at": "2026-08-13",
+  "release": "0.5.3-Beta",
+  "network": "mainnet",
+  "result": "passed",
+  "fresh_install_contract": {
+    "installer": "install.sh",
+    "lnd_template_contains_rpc_endpoint_or_password": false,
+    "lnd_start_without_rpc_configuration": "deferred",
+    "app_store_bitcoin_install": [
+      "enroll storage through the privileged broker",
+      "generate a root-only managed RPC password and put only rpcauth in bitcoin.conf",
+      "start the broker-attested Bitcoin Core image",
+      "write the explicit local RPC endpoint and managed credential to the protected lnd.conf only when local Bitcoin is selected"
+    ],
+    "exact_upgrade_defect_reproduces_on_fresh_install": false
+  },
+  "existing_install_contract": {
+    "app_store_bitcoin": "preserve legacy rpcauth entries, add the managed credential once, promote bitcoin.conf and the storage marker to the root boundary, and recreate a legacy container on the broker-attested image only after confirmation",
+    "native_systemd_bitcoin": "resolve a recognized local bitcoin.conf or the protected LND configuration without installing, rewriting, restarting, or removing the external Bitcoin service",
+    "remote_bitcoin": "keep its endpoint and credential contract separate from local App Store and native Bitcoin"
+  },
+  "consumers": [
+    {
+      "name": "Bitcoin Local UI and status",
+      "files": ["internal/server/bitcoin_local.go", "internal/privileged/bitcoincore_status.go"],
+      "resolution": "broker cookie-backed fixed bitcoin-cli telemetry; no recovered RPC password is required"
+    },
+    {
+      "name": "LND Bitcoin source",
+      "files": ["internal/server/handlers.go"],
+      "resolution": "central local resolver or separate remote resolver; source change updates protected lnd.conf and restarts LND only after the selected backend is ready"
+    },
+    {
+      "name": "BIP110 and native Bitcoin-aware services",
+      "files": ["internal/server/bip110_service.go", "internal/server/closed_channel_time.go", "internal/server/graph_close_classifier_bitcoin.go"],
+      "resolution": "central local resolver with the documented active-LND or remote fallback where applicable"
+    },
+    {
+      "name": "Full-index and provenance gates",
+      "files": ["internal/server/apps_full_index.go", "internal/server/provenance_bitcoind.go"],
+      "resolution": "central local resolver plus live synchronization, pruning, and txindex checks"
+    },
+    {
+      "name": "BTCPay and NBXplorer",
+      "files": ["internal/server/apps_btcpay.go"],
+      "resolution": "current local or remote source is re-resolved and probed on install and every explicit start"
+    },
+    {
+      "name": "Electrs",
+      "files": ["internal/server/apps_electrs.go"],
+      "resolution": "dedicated broker-owned electrs rpcauth credential; requires synchronized, unpruned local Bitcoin with synchronized txindex"
+    },
+    {
+      "name": "Mempool",
+      "files": ["internal/server/apps_mempool.go"],
+      "resolution": "central local resolver on install and explicit start; full-index gate rejects pruned or unsynchronized Bitcoin"
+    },
+    {
+      "name": "Fedimint Guardian and Gateway",
+      "files": ["internal/server/apps_fedimint.go"],
+      "resolution": "active remote LND configuration or central local resolver on install and explicit start"
+    },
+    {
+      "name": "Public Pool",
+      "files": ["internal/server/apps_publicpool.go"],
+      "resolution": "central local resolver or distinct remote configuration on install and explicit start"
+    },
+    {
+      "name": "Elements mainchain",
+      "files": ["internal/server/apps_elements.go"],
+      "resolution": "central local resolver or separate remote Bitcoin mainchain configuration; Elements data volume selection remains independent"
+    },
+    {
+      "name": "PeerSwap",
+      "files": ["internal/server/apps_peerswap.go", "internal/server/apps_peerswap_elements_source.go"],
+      "resolution": "central local Bitcoin data for PSWeb when available; local or external Elements RPC selection remains independent"
+    }
+  ],
+  "source_switch_policy": {
+    "automatically_restart_dependent_apps": false,
+    "reason": "avoid cascading Bitcoin-dependent restarts and preserve intentionally remote app configurations",
+    "running_app_behavior": "keep the already validated private runtime snapshot and its working credential",
+    "next_explicit_start": "re-resolve the selected source for apps whose apply/start path owns Bitcoin wiring",
+    "legacy_local_credential_continuity": "preserved rpcauth entries keep existing running clients valid while new starts use managed credentials"
+  },
+  "security_invariants": [
+    "bitcoin.conf stores rpcauth hashes rather than plaintext RPC passwords",
+    "managed Bitcoin RPC credentials are root-owned mode 0600",
+    "the Bitcoin data marker and bitcoin.conf are root-owned and group-readable only by the Bitcoin runtime group",
+    "RPC passwords do not enter broker command arguments, logs, API responses, or this evidence",
+    "local full-index apps fail closed on pruned, unsynchronized, or missing txindex state",
+    "all production endpoints and runtime manifests remain mainnet-only"
+  ]
+}

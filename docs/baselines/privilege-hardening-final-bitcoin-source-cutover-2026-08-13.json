@@ -1,0 +1,50 @@
+{
+  "schema": "lightningos.privilege-hardening.final-bitcoin-source-cutover.v1",
+  "captured_at": "2026-08-13",
+  "release": "0.5.3-Beta",
+  "commit": "9205500fee2eb6e42defbc4c905cfae385ed9622",
+  "result": "passed",
+  "fresh_ubuntu_24_gate": {
+    "source_vm": "clean clone of brln-os-basica",
+    "os": "Ubuntu 24.04",
+    "install_sh": "passed",
+    "manager": "active",
+    "privileged_broker_socket": "active",
+    "lnd_without_bitcoin_rpc": "correctly deferred",
+    "manager_docker_socket_access": "denied",
+    "linux_root_owner_and_lifecycle_tests": "passed"
+  },
+  "managed_node_before": {
+    "bitcoin_source": "remote",
+    "bitcoin_container_image": "bitcoin/bitcoin:latest",
+    "bitcoin_data_layout": "App Store volume on existing external storage",
+    "bitcoin_sync": "mainnet full node synchronized",
+    "lnd": "active on remote Bitcoin"
+  },
+  "migration": {
+    "storage_identity": "existing identity preserved and synchronized in place",
+    "rpc_auth": "legacy same-user rpcauth preserved and managed root-only credential activated",
+    "config_owner": "legacy Bitcoin UID promoted to root with Bitcoin group read access",
+    "container_action": "single-service forced recreation through the broker-attested Compose manifest",
+    "target_image": "lightningos/bitcoin-core:31.1 built from the verified official Bitcoin Core release",
+    "data_reset_or_reindex": false
+  },
+  "managed_node_after": {
+    "bitcoin_source": "local",
+    "bitcoin_image": "lightningos/bitcoin-core:31.1",
+    "bitcoin_network": "main",
+    "blocks_equal_headers": true,
+    "initial_block_download": false,
+    "verification_progress": 1,
+    "pruned": false,
+    "external_blocks_and_chainstate_preserved": true,
+    "storage_marker": "root:bitcoin 0640",
+    "bitcoin_conf": "root:bitcoin 0640",
+    "lnd_rpc_credential_matches_managed_state": true,
+    "lnd_synced_to_chain": true,
+    "lnd_synced_to_graph": true,
+    "docker_service_restarted": false,
+    "postgresql_service_restarted": false
+  },
+  "temporary_artifacts_on_test_nodes": "cleaned"
+}

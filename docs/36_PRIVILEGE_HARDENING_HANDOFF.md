@@ -588,6 +588,14 @@ Gateway is installed/started against App Store-managed local Bitcoin. The UI
 warns about the temporary Bitcoin/LND dependency interruption. External,
 systemd, and remote Bitcoin are never edited or restarted by this flow.
 
+Live closure on LOS TESTE2 is recorded at commit `11cd03f8`. An idempotent
+Gateway start/stop left the Bitcoin start time/restart count and LND PID
+unchanged, and the Gateway webserver reached readiness without a wallet-RPC
+error. The Bitcoin Local endpoint budget was aligned with the broker's
+45-second maximum after the real 12-bucket cadence scan exposed a false
+offline cache caused by the former 10-second deadline. Evidence:
+`docs/baselines/privilege-hardening-fedimint-gateway-wallet-rpc-2026-08-14.json`.
+
 The Lightning Labs Loop systemd slice is accepted separately from BRLN Loop
 Out. `apps_loop.go` now has zero direct privileged call sites; a closed broker
 catalog owns the pinned `v0.33.3-beta` release/checksums, fixed service account,

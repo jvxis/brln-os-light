@@ -1699,6 +1699,17 @@ once if needed. The flow verifies `listwallets`, is idempotent, and rolls the
 configuration back if the restart fails. Existing/systemd and remote Bitcoin
 are never changed or restarted by this migration.
 
+The live managed-node gate passed on LOS TESTE2 at commit `11cd03f8`. The
+Gateway started with its already-migrated local Bitcoin, exposed its webserver,
+and stopped again without changing the Bitcoin container start time or restart
+count and without changing the LND PID. The same gate found that the original
+10-second Manager budget could cancel the broker's valid 12-bucket cadence
+scan, caching a false offline result. The caller budget now matches the
+broker's 45-second bound; the authenticated API returned mainnet, equal
+blocks/headers, progress 1, working RPC, and all 12 cadence buckets. No optional
+container or temporary checkout remained. Evidence is in
+`docs/baselines/privilege-hardening-fedimint-gateway-wallet-rpc-2026-08-14.json`.
+
 The direct published-release upgrade gate is now closed for the official
 `0.5.2-Beta` baseline on Ubuntu 24.04. The legacy Manager accepted the upgrade
 through the authenticated UI/API, installed the 0.5.3 Manager/UI, and the new

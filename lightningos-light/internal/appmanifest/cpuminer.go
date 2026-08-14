@@ -13,6 +13,12 @@ const (
 	CPUMinerProject     = "cpuminer"
 	CPUMinerComposeFile = "docker-compose.yaml"
 	CPUMinerEnvFile     = ".env"
+
+	CPUMinerBaselineImage = "jvx1971/cpu-lottery-miner:v1@sha256:eccb0802a59e0b4292f71e3877b4733db53603ec6619f8ce8c57fc29e661327f"
+	CPUMinerFastImage     = "cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b"
+
+	cpuminerLegacyBaselineImage = "jvx1971/cpu-lottery-miner:v1"
+	cpuminerLegacyFastImage     = "cniweb/cpuminer-opt:latest"
 )
 
 type AppImageVariant string
@@ -22,16 +28,14 @@ type CPUMinerImageVariant = AppImageVariant
 const (
 	CPUMinerImageBaseline   CPUMinerImageVariant = "baseline"
 	CPUMinerImageFastPinned CPUMinerImageVariant = "fast_pinned"
-	CPUMinerImageFastLatest CPUMinerImageVariant = "fast_latest"
 )
 
 var (
 	cpuminerWorkerPattern  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 	cpuminerAddressPattern = regexp.MustCompile(`^[A-Za-z0-9]{14,100}$`)
 	cpuminerImages         = map[CPUMinerImageVariant]string{
-		CPUMinerImageBaseline:   "jvx1971/cpu-lottery-miner:v1",
-		CPUMinerImageFastPinned: "cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b",
-		CPUMinerImageFastLatest: "cniweb/cpuminer-opt:latest",
+		CPUMinerImageBaseline:   CPUMinerBaselineImage,
+		CPUMinerImageFastPinned: CPUMinerFastImage,
 	}
 )
 
@@ -52,6 +56,20 @@ func CPUMinerVariantForImage(image string) (CPUMinerImageVariant, error) {
 	return "", errors.New("cpuminer image is not allowed")
 }
 
+// NormalizeCPUMinerImage maps image references written by 0.5.2 to their
+// immutable 0.5.3 catalog entries. Mutable references are accepted only as
+// migration input and are never returned to the privileged execution path.
+func NormalizeCPUMinerImage(image string) (string, bool) {
+	switch image {
+	case CPUMinerBaselineImage, cpuminerLegacyBaselineImage:
+		return CPUMinerBaselineImage, true
+	case CPUMinerFastImage, cpuminerLegacyFastImage:
+		return CPUMinerFastImage, true
+	default:
+		return "", false
+	}
+}
+
 // CPUMinerCompose is the only Compose document the privileged broker accepts
 // for the first App Store migration slice. Keeping it in a dependency shared
 // by the manager and broker prevents their definitions from drifting.
@@ -61,6 +79,14 @@ func CPUMinerCompose() string {
     image: ${CPUMINER_IMAGE}
     restart: unless-stopped
     stop_grace_period: 2s
+    user: "65534:65534"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -88,7 +114,15 @@ func CPUMinerCompose() string {
 // before the broker copies the environment into its root-owned execution
 // snapshot. The caller cannot inject a Compose field or select a new image.
 func ValidateCPUMinerEnv(raw []byte) error {
-	_, err := parseCPUMinerEnv(raw)
+	_, err := parseCPUMinerEnv(raw, false)
+	return err
+}
+
+// ValidateLegacyCPUMinerEnv is restricted to recognizing exact 0.5.2
+// declarations for safe status and stop operations. It must not be used to
+// authorize a start; the manager migrates the image reference first.
+func ValidateLegacyCPUMinerEnv(raw []byte) error {
+	_, err := parseCPUMinerEnv(raw, true)
 	return err
 }
 
@@ -96,14 +130,14 @@ func ValidateCPUMinerEnv(raw []byte) error {
 // CPU Miner environment. Privileged callers can use it without accepting an
 // image name directly from their request protocol.
 func CPUMinerImage(raw []byte) (string, error) {
-	values, err := parseCPUMinerEnv(raw)
+	values, err := parseCPUMinerEnv(raw, false)
 	if err != nil {
 		return "", err
 	}
 	return values["CPUMINER_IMAGE"], nil
 }
 
-func parseCPUMinerEnv(raw []byte) (map[string]string, error) {
+func parseCPUMinerEnv(raw []byte, allowLegacyImage bool) (map[string]string, error) {
 	if len(raw) == 0 || len(raw) > 16*1024 {
 		return nil, errors.New("invalid cpuminer environment size")
 	}
@@ -136,7 +170,10 @@ func parseCPUMinerEnv(raw []byte) (map[string]string, error) {
 		}
 	}
 	if _, err := CPUMinerVariantForImage(values["CPUMINER_IMAGE"]); err != nil {
-		return nil, errors.New("cpuminer image is not allowed")
+		_, legacyAllowed := NormalizeCPUMinerImage(values["CPUMINER_IMAGE"])
+		if !allowLegacyImage || !legacyAllowed {
+			return nil, errors.New("cpuminer image is not allowed")
+		}
 	}
 	switch values["POOL_MODE"] {
 	case "local":

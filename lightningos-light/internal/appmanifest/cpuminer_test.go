@@ -3,7 +3,7 @@ package appmanifest
 import "testing"
 
 func TestValidateCPUMinerEnv(t *testing.T) {
-	valid := "CPUMINER_IMAGE=jvx1971/cpu-lottery-miner:v1\n" +
+	valid := "CPUMINER_IMAGE=" + CPUMinerBaselineImage + "\n" +
 		"POOL_MODE=brln\n" +
 		"STRATUM_HOST=btcpool.br-ln.com\n" +
 		"STRATUM_PORT=3332\n" +
@@ -16,7 +16,9 @@ func TestValidateCPUMinerEnv(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "valid BR-LN", raw: valid},
-		{name: "valid local", raw: "CPUMINER_IMAGE=cniweb/cpuminer-opt:latest\nPOOL_MODE=local\nSTRATUM_HOST=host.docker.internal\nSTRATUM_PORT=3333\nMINING_ADDRESS=1ExampleAddress00000000000000000000\nWORKER_NAME=worker_1\nTHREADS=2\n"},
+		{name: "valid local", raw: "CPUMINER_IMAGE=" + CPUMinerFastImage + "\nPOOL_MODE=local\nSTRATUM_HOST=host.docker.internal\nSTRATUM_PORT=3333\nMINING_ADDRESS=1ExampleAddress00000000000000000000\nWORKER_NAME=worker_1\nTHREADS=2\n"},
+		{name: "legacy mutable baseline rejected", raw: replaceEnvValue(valid, "CPUMINER_IMAGE", cpuminerLegacyBaselineImage), wantErr: true},
+		{name: "legacy mutable fast rejected", raw: replaceEnvValue(valid, "CPUMINER_IMAGE", cpuminerLegacyFastImage), wantErr: true},
 		{name: "unknown key", raw: valid + "COMPOSE_FILE=/tmp/evil.yaml\n", wantErr: true},
 		{name: "duplicate key", raw: valid + "THREADS=2\n", wantErr: true},
 		{name: "image injection", raw: replaceEnvValue(valid, "CPUMINER_IMAGE", "evil/image:latest"), wantErr: true},
@@ -36,9 +38,9 @@ func TestValidateCPUMinerEnv(t *testing.T) {
 }
 
 func TestCPUMinerImageRequiresValidatedEnvironment(t *testing.T) {
-	valid := "CPUMINER_IMAGE=jvx1971/cpu-lottery-miner:v1\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
+	valid := "CPUMINER_IMAGE=" + CPUMinerBaselineImage + "\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
 	image, err := CPUMinerImage([]byte(valid))
-	if err != nil || image != "jvx1971/cpu-lottery-miner:v1" {
+	if err != nil || image != CPUMinerBaselineImage {
 		t.Fatalf("CPUMinerImage() = %q/%v", image, err)
 	}
 	if _, err := CPUMinerImage([]byte(replaceEnvValue(valid, "CPUMINER_IMAGE", "evil/root:latest"))); err == nil {
@@ -51,9 +53,8 @@ func TestCPUMinerImageVariantsAreClosedMappings(t *testing.T) {
 		variant CPUMinerImageVariant
 		image   string
 	}{
-		{variant: CPUMinerImageBaseline, image: "jvx1971/cpu-lottery-miner:v1"},
-		{variant: CPUMinerImageFastPinned, image: "cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b"},
-		{variant: CPUMinerImageFastLatest, image: "cniweb/cpuminer-opt:latest"},
+		{variant: CPUMinerImageBaseline, image: CPUMinerBaselineImage},
+		{variant: CPUMinerImageFastPinned, image: CPUMinerFastImage},
 	}
 	for _, test := range tests {
 		image, err := CPUMinerImageForVariant(test.variant)
@@ -70,6 +71,27 @@ func TestCPUMinerImageVariantsAreClosedMappings(t *testing.T) {
 	}
 	if _, err := CPUMinerVariantForImage("evil/root:latest"); err == nil {
 		t.Fatal("expected unknown image to fail")
+	}
+}
+
+func TestLegacyCPUMinerImagesAreMigrationOnly(t *testing.T) {
+	base := "CPUMINER_IMAGE=" + cpuminerLegacyBaselineImage + "\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
+	if err := ValidateLegacyCPUMinerEnv([]byte(base)); err != nil {
+		t.Fatalf("legacy declaration was not recognized: %v", err)
+	}
+	if err := ValidateCPUMinerEnv([]byte(base)); err == nil {
+		t.Fatal("legacy mutable image reached current validation")
+	}
+	for legacy, want := range map[string]string{
+		cpuminerLegacyBaselineImage: CPUMinerBaselineImage,
+		cpuminerLegacyFastImage:     CPUMinerFastImage,
+	} {
+		if got, ok := NormalizeCPUMinerImage(legacy); !ok || got != want {
+			t.Fatalf("NormalizeCPUMinerImage(%q)=%q/%v, want %q/true", legacy, got, ok, want)
+		}
+	}
+	if _, ok := NormalizeCPUMinerImage("evil/root:latest"); ok {
+		t.Fatal("unexpected image normalized")
 	}
 }
 

@@ -387,7 +387,9 @@ func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, 
 		return probe, nil
 	}
 
-	args := []string{"run", "--rm", image, "cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2"}
+	args := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+		"--user", "65534:65534", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+		image, "cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2"}
 	_, err = manager.Runner.Run(ctx, dockerPath, args...)
 	probe.Runnable = err == nil
 	return probe, nil
@@ -463,7 +465,6 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 		appmanifest.CPUMinerID: {
 			appmanifest.CPUMinerImageBaseline:   "lightningos-cpuminer-image-baseline",
 			appmanifest.CPUMinerImageFastPinned: "lightningos-cpuminer-image-fast-pinned",
-			appmanifest.CPUMinerImageFastLatest: "lightningos-cpuminer-image-fast-latest",
 		},
 		appmanifest.RoboSatsID: {
 			appmanifest.RoboSatsImageClient: "lightningos-robosats-image-client",
@@ -1356,11 +1357,35 @@ func (manager *ComposeAppManager) hasLegacyCPUMinerDeclaration(manifest appmanif
 		return false
 	}
 	envRaw, err := readRegularFile(filepath.Join(appRoot, manifest.EnvFile), 16*1024)
-	return err == nil && appmanifest.ValidateCPUMinerEnv(envRaw) == nil
+	return err == nil && appmanifest.ValidateLegacyCPUMinerEnv(envRaw) == nil
 }
 
 func legacyCPUMinerCompose() string {
-	return strings.Replace(appmanifest.CPUMinerCompose(), "    stop_grace_period: 2s\n", "", 1)
+	return `services:
+  cpuminer:
+    image: ${CPUMINER_IMAGE}
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:4048:4048"
+    cpus: "${THREADS}"
+    cpu_shares: 128
+    command:
+      - "cpuminer"
+      - "--algo"
+      - "sha256d"
+      - "--url"
+      - "stratum+tcp://${STRATUM_HOST}:${STRATUM_PORT}"
+      - "--user"
+      - "${MINING_ADDRESS}.${WORKER_NAME}"
+      - "--pass"
+      - "x"
+      - "--threads"
+      - "${THREADS}"
+      - "--api-bind"
+      - "0.0.0.0:4048"
+`
 }
 
 func (manager *ComposeAppManager) validatedRoboSatsFiles() (roboSatsValidatedFiles, error) {

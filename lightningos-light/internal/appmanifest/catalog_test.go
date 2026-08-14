@@ -64,7 +64,7 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 		variant AppImageVariant
 		image   string
 	}{
-		{appID: CPUMinerID, variant: CPUMinerImageBaseline, image: "jvx1971/cpu-lottery-miner:v1"},
+		{appID: CPUMinerID, variant: CPUMinerImageBaseline, image: CPUMinerBaselineImage},
 		{appID: RoboSatsID, variant: RoboSatsImageClient, image: RoboSatsImage},
 		{appID: RoboSatsID, variant: RoboSatsImageTor, image: RoboSatsTorImage},
 		{appID: RoboSatsID, variant: RoboSatsImageProxy, image: RoboSatsProxyImage},

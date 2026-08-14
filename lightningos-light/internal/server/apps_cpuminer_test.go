@@ -221,7 +221,7 @@ func TestStartCpuMinerMigratesLegacyComposeAndPreservesEnv(t *testing.T) {
 		EnvPath:     filepath.Join(root, ".env"),
 	}
 	legacyCompose := "services:\n  cpuminer:\n    image: ${CPUMINER_IMAGE}\n"
-	legacyEnv := "CPUMINER_IMAGE=" + cpuMinerBaselineImage + "\nPOOL_MODE=brln\nMINING_ADDRESS=bc1qlegacy\nTHREADS=1\n"
+	legacyEnv := "CPUMINER_IMAGE=jvx1971/cpu-lottery-miner:v1\nPOOL_MODE=brln\nMINING_ADDRESS=bc1qlegacy\nTHREADS=1\n"
 	if err := os.WriteFile(paths.ComposePath, []byte(legacyCompose), 0640); err != nil {
 		t.Fatal(err)
 	}
@@ -247,8 +247,9 @@ func TestStartCpuMinerMigratesLegacyComposeAndPreservesEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(env) != legacyEnv {
-		t.Fatalf("legacy settings changed during start:\ngot:  %q\nwant: %q", env, legacyEnv)
+	wantEnv := strings.Replace(legacyEnv, "jvx1971/cpu-lottery-miner:v1", cpuMinerBaselineImage, 1)
+	if string(env) != wantEnv {
+		t.Fatalf("legacy migration changed settings other than the image:\ngot:  %q\nwant: %q", env, wantEnv)
 	}
 	if client.appCalls != 1 || client.appID != cpuMinerAppID || client.action != "start" || client.dryRun {
 		t.Fatalf("unexpected broker call: %#v", client)
@@ -360,6 +361,12 @@ func TestCpuMinerComposeContents(t *testing.T) {
 		"${MINING_ADDRESS}.${WORKER_NAME}",
 		`cpus: "${THREADS}"`,
 		"cpu_shares: 128",
+		`user: "65534:65534"`,
+		"read_only: true",
+		"cap_drop:",
+		"security_opt:",
+		"no-new-privileges:true",
+		"/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777",
 		"- \"cpuminer\"",
 		"--algo",
 		"sha256d",

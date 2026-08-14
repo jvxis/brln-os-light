@@ -221,7 +221,7 @@ func TestComposeAppPrepareImageSchedulesFixedTransientPull(t *testing.T) {
 	want := recordedCommand{path: systemdRunPath, args: []string{
 		"--quiet", "--collect", "--unit=lightningos-cpuminer-image-baseline",
 		"--property=Type=exec", "--property=RuntimeMaxSec=10min",
-		dockerPath, "pull", "jvx1971/cpu-lottery-miner:v1",
+		dockerPath, "pull", appmanifest.CPUMinerBaselineImage,
 	}}
 	if !reflect.DeepEqual(runner.commands[2], want) {
 		t.Fatalf("pull command=%#v want=%#v", runner.commands[2], want)
@@ -396,7 +396,7 @@ func TestComposeAppPrepareImageReturnsCachedOrInProgressState(t *testing.T) {
 				return "", nil, false
 			}}
 			manager := &ComposeAppManager{Runner: runner}
-			state, err := manager.PrepareImage(context.Background(), "cpuminer", appmanifest.CPUMinerImageFastLatest, false)
+			state, err := manager.PrepareImage(context.Background(), "cpuminer", appmanifest.CPUMinerImageFastPinned, false)
 			if err != nil || state.Status != test.want || len(runner.commands) != test.wantCalls {
 				t.Fatalf("state=%#v err=%v commands=%#v", state, err, runner.commands)
 			}
@@ -415,8 +415,9 @@ func TestComposeAppImageStatusAndProbeUseAllowlistedImage(t *testing.T) {
 	if err != nil || !probe.Runnable {
 		t.Fatalf("probe/error=%#v/%v", probe, err)
 	}
-	image := "cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b"
-	if len(runner.commands) != 3 || !reflect.DeepEqual(runner.commands[2], recordedCommand{path: dockerPath, args: []string{"run", "--rm", image, "cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2"}}) {
+	image := appmanifest.CPUMinerFastImage
+	wantProbe := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--user", "65534:65534", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", image, "cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2"}
+	if len(runner.commands) != 3 || !reflect.DeepEqual(runner.commands[2], recordedCommand{path: dockerPath, args: wantProbe}) {
 		t.Fatalf("unexpected image commands: %#v", runner.commands)
 	}
 }
@@ -550,7 +551,7 @@ func TestComposeAppLifecycleUsesValidatedSnapshotAndFixedCommand(t *testing.T) {
 	if len(runner.commands) != 3 {
 		t.Fatalf("commands = %#v", runner.commands)
 	}
-	if runner.commands[0].path != dockerPath || !reflect.DeepEqual(runner.commands[0].args, []string{"image", "inspect", "jvx1971/cpu-lottery-miner:v1"}) {
+	if runner.commands[0].path != dockerPath || !reflect.DeepEqual(runner.commands[0].args, []string{"image", "inspect", appmanifest.CPUMinerBaselineImage}) {
 		t.Fatalf("unexpected image probe: %#v", runner.commands[0])
 	}
 	if runner.commands[1].path != dockerPath || !reflect.DeepEqual(runner.commands[1].args, []string{"compose", "version"}) {
@@ -577,7 +578,7 @@ func TestComposeAppLifecycleStartRequiresLocalImage(t *testing.T) {
 	if err := manager.Lifecycle(context.Background(), "cpuminer", AppLifecycleStart, false); err == nil {
 		t.Fatal("expected missing local image to fail")
 	}
-	if len(runner.commands) != 1 || !reflect.DeepEqual(runner.commands[0].args, []string{"image", "inspect", "jvx1971/cpu-lottery-miner:v1"}) {
+	if len(runner.commands) != 1 || !reflect.DeepEqual(runner.commands[0].args, []string{"image", "inspect", appmanifest.CPUMinerBaselineImage}) {
 		t.Fatalf("missing image reached Compose: %#v", runner.commands)
 	}
 }
@@ -1663,7 +1664,7 @@ func writeTestCPUMinerApp(t *testing.T) (string, string) {
 	if err := os.MkdirAll(appRoot, 0750); err != nil {
 		t.Fatal(err)
 	}
-	validEnv := "CPUMINER_IMAGE=jvx1971/cpu-lottery-miner:v1\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
+	validEnv := "CPUMINER_IMAGE=" + appmanifest.CPUMinerBaselineImage + "\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
 	if err := os.WriteFile(filepath.Join(appRoot, appmanifest.CPUMinerComposeFile), []byte(appmanifest.CPUMinerCompose()), 0600); err != nil {
 		t.Fatal(err)
 	}

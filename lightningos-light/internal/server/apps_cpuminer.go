@@ -23,9 +23,6 @@ const (
 	// cpuMinerBaselineImage is our own image, built for a baseline x86-64 target
 	// (see docker/cpu-lottery-miner/Dockerfile). It runs on ANY amd64 CPU,
 	// including constrained VMs without AVX, and is the universal fallback.
-	// Published as a public image on Docker Hub so installs pull it automatically.
-	cpuMinerBaselineImage = "jvx1971/cpu-lottery-miner:v1"
-
 	// Pool targets the miner can point its stratum connection at.
 	cpuMinerPoolLocal = "local" // the Public Pool app running on this machine
 	cpuMinerPoolBRLN  = "brln"  // the BR-LN hosted pool (btcpool.br-ln.com)
@@ -78,9 +75,10 @@ func cpuMinerPoolPreset(mode string) cpuMinerPool {
 // an empty ENTRYPOINT with the binary as "cpuminer" in PATH, so
 // cpuMinerComposeContents passes "cpuminer" as the first command argument.
 var cpuMinerFastImages = []string{
-	"cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b",
-	"cniweb/cpuminer-opt:latest",
+	appmanifest.CPUMinerFastImage,
 }
+
+var cpuMinerBaselineImage = appmanifest.CPUMinerBaselineImage
 
 type cpuMinerPaths struct {
 	Root        string
@@ -204,6 +202,9 @@ func startCpuMinerAtPaths(ctx context.Context, paths cpuMinerPaths) error {
 	// This migrates 0.5.2 installs whose compose file is intentionally rejected
 	// by the hardened broker, while preserving pool, payout and thread settings
 	// stored in the existing .env file.
+	if err := migrateCpuMinerImageReference(paths); err != nil {
+		return err
+	}
 	if err := ensureCpuMinerCompose(paths); err != nil {
 		return err
 	}
@@ -372,6 +373,9 @@ func ensureCpuMinerCompose(paths cpuMinerPaths) error {
 // file, falling back to the baseline image.
 func cpuMinerResolveImage(paths cpuMinerPaths) string {
 	if v := strings.TrimSpace(readEnvValue(paths.EnvPath, "CPUMINER_IMAGE")); v != "" {
+		if normalized, ok := appmanifest.NormalizeCPUMinerImage(v); ok {
+			return normalized
+		}
 		return v
 	}
 	if data, err := os.ReadFile(paths.ComposePath); err == nil {
@@ -380,12 +384,36 @@ func cpuMinerResolveImage(paths cpuMinerPaths) string {
 			if strings.HasPrefix(trimmed, "image:") {
 				img := strings.TrimSpace(strings.TrimPrefix(trimmed, "image:"))
 				if img != "" && !strings.Contains(img, "${") {
+					if normalized, ok := appmanifest.NormalizeCPUMinerImage(img); ok {
+						return normalized
+					}
 					return img
 				}
 			}
 		}
 	}
 	return cpuMinerBaselineImage
+}
+
+func migrateCpuMinerImageReference(paths cpuMinerPaths) error {
+	legacyImage := strings.TrimSpace(readEnvValue(paths.EnvPath, "CPUMINER_IMAGE"))
+	image := cpuMinerResolveImage(paths)
+	if _, err := appmanifest.CPUMinerVariantForImage(image); err != nil {
+		return errors.New("CPU Lottery Miner image is not allowed")
+	}
+	if legacyImage == image {
+		return nil
+	}
+	content, err := os.ReadFile(paths.EnvPath)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", paths.EnvPath, err)
+	}
+	legacyLine := "CPUMINER_IMAGE=" + legacyImage
+	if legacyImage == "" || !strings.Contains(string(content), legacyLine) {
+		return errors.New("CPU Lottery Miner image declaration is missing")
+	}
+	migrated := strings.Replace(string(content), legacyLine, "CPUMINER_IMAGE="+image, 1)
+	return writeFile(paths.EnvPath, migrated, 0600)
 }
 
 // cpuMinerMaxThreads caps mining threads at the host core count minus one, so

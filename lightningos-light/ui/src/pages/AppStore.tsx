@@ -523,7 +523,17 @@ export default function AppStore() {
     setBarkRevealURL('')
   }
 
-  const handleBarkWalletOpen = async (url: string) => {
+  const handleBarkWalletOpen = (url: string) => {
+    const safeURL = validatedBarkWalletURL(url)
+    if (!safeURL) {
+      setMessage(t('appStore.barkWalletOpenFailed'))
+      return
+    }
+    setMessage('')
+    navigateBarkWalletWindow(openBarkWalletWindow(), safeURL)
+  }
+
+  const handleBarkWalletBackupOpen = async (url: string) => {
     const safeURL = validatedBarkWalletURL(url)
     if (!safeURL) {
       setMessage(t('appStore.barkWalletOpenFailed'))
@@ -797,13 +807,13 @@ export default function AppStore() {
                 ) : null}
                 {app.admin_password_path && (
                   <div className="flex flex-wrap items-center gap-2">
-                    <span>{t('appStore.adminPasswordSavedAt', { path: app.admin_password_path })}</span>
+                    <span>{t(app.id === 'bark-wallet' ? 'appStore.barkWalletAccessPasswordSavedAt' : 'appStore.adminPasswordSavedAt', { path: app.admin_password_path })}</span>
                     {canCopyAdminPassword && (
                       <button
                         className="text-fog/50 hover:text-fog"
                         onClick={() => handleCopyAdminPassword(app.id)}
-                        title={t('appStore.copyAdminPassword')}
-                        aria-label={t('appStore.copyAdminPassword')}
+                        title={t(app.id === 'bark-wallet' ? 'appStore.copyBarkWalletAccessPassword' : 'appStore.copyAdminPassword')}
+                        aria-label={t(app.id === 'bark-wallet' ? 'appStore.copyBarkWalletAccessPassword' : 'appStore.copyAdminPassword')}
                         disabled={Boolean(copying[app.id])}
                       >
                         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -880,6 +890,7 @@ export default function AppStore() {
                     <p>{t('appStore.barkWalletExternalOperator')}</p>
                     <p>{t('appStore.barkWalletNoLocalLnd')}</p>
                     <p>{t('appStore.barkWalletDataPreserved')}</p>
+                    <p>{t('appStore.barkWalletAccessPasswordScope')}</p>
                     <p>{t('appStore.barkWalletSeedReauth')}</p>
                   </>
                 )}
@@ -903,7 +914,7 @@ export default function AppStore() {
                       </a>
                     )}
                     {!internalRoute && openUrl && app.id === 'bark-wallet' && (
-                      <button className="btn-primary" type="button" onClick={() => void handleBarkWalletOpen(openUrl)}>
+                      <button className="btn-primary" type="button" onClick={() => handleBarkWalletOpen(openUrl)}>
                         {t('common.open')}
                       </button>
                     )}
@@ -920,6 +931,11 @@ export default function AppStore() {
                         onClick={() => handleResetAdmin(app.id)}
                       >
                         {isResetting ? t('appStore.resetting') : t('appStore.resetAdminPassword')}
+                      </button>
+                    )}
+                    {app.id === 'bark-wallet' && openUrl && (
+                      <button className="btn-secondary" type="button" onClick={() => void handleBarkWalletBackupOpen(openUrl)}>
+                        {t('appStore.barkWalletAuthorizeBackup')}
                       </button>
                     )}
                     <button className="btn-secondary" disabled={isBusy} onClick={() => handleAction(app.id, 'stop')}>

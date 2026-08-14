@@ -51,7 +51,7 @@ func TestBarkWalletComposeIsClosedAndLeastPrivilege(t *testing.T) {
 	for _, required := range []string{
 		BarkWalletWebImage, BarkWalletAPIImage, BarkWalletDaemonImage, BarkWalletProxyImage,
 		`UI_AUTH: "true"`, "--expose-mnemonic", "read_only: true", "cap_drop:",
-		"no-new-privileges:true", `user: "65530:65530"`, `user: "65531:65531"`, `user: "65532:65532"`,
+		"no-new-privileges:true", `user: "65531:65530"`, `user: "65531:65531"`, `user: "65532:65532"`,
 		"entrypoint:\n      - /usr/local/bin/barkd",
 		"/var/lib/lightningos/apps-data/bark-wallet/auth:/run/lightningos-auth:ro",
 		"host.docker.internal:host-gateway", "/etc/caddy/manager-ca.crt:ro",
@@ -78,6 +78,23 @@ func TestBarkWalletComposeIsClosedAndLeastPrivilege(t *testing.T) {
 	}
 	if strings.Count(compose, `"4004:4004"`) != 1 {
 		t.Fatalf("unexpected published ports:\n%s", compose)
+	}
+}
+
+func TestBarkWalletAPIUsesReadOnlyDaemonIdentity(t *testing.T) {
+	if BarkWalletAPIUID != BarkWalletDaemonUID {
+		t.Fatalf("API UID %d cannot read barkd's private auth token owned by UID %d", BarkWalletAPIUID, BarkWalletDaemonUID)
+	}
+	if BarkWalletAPIGID == BarkWalletDaemonGID {
+		t.Fatal("API must retain a separate primary group from barkd")
+	}
+	compose, err := BarkWalletCompose(testBarkWalletComposePaths())
+	if err != nil {
+		t.Fatal(err)
+	}
+	walletMount := "/var/lib/lightningos/apps-data/bark-wallet/wallet:/wallet-data:ro"
+	if !strings.Contains(compose, walletMount) {
+		t.Fatalf("API wallet access is not read-only: missing %q", walletMount)
 	}
 }
 

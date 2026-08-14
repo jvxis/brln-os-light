@@ -17,9 +17,13 @@ const (
 	BarkWalletAPIInternalPort = 4001
 	BarkWalletDaemonPort      = 4000
 
-	BarkWalletWebUID    = 101
-	BarkWalletWebGID    = 101
-	BarkWalletAPIUID    = 65530
+	BarkWalletWebUID = 101
+	BarkWalletWebGID = 101
+	// bark-web-api is the authenticated, read-only mediator for barkd. Upstream
+	// requires it to read barkd's mode-0600 auth token, log and database through
+	// the read-only wallet mount, so it shares barkd's UID while retaining a
+	// separate primary group and no writable wallet mount.
+	BarkWalletAPIUID    = 65531
 	BarkWalletAPIGID    = 65530
 	BarkWalletDaemonUID = 65531
 	BarkWalletDaemonGID = 65531

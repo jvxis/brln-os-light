@@ -4763,6 +4763,14 @@ export default function LightningOps() {
     setPeerStatus(t('lightningOps.connectingPeer'))
     try {
       const result: any = await connectPeer({ address: peerAddress, perm: !peerTemporary })
+      // connected=false is not a failure: the request stands and LND keeps
+      // retrying. It just has not landed, which is what used to be reported as
+      // success and left the peer missing from the list with no explanation.
+      if (result?.connected === false) {
+        setPeerStatus(result?.warning || t('lightningOps.peerConnectPending'))
+        load()
+        return
+      }
       setPeerStatus(
         result?.already_connected
           ? t('lightningOps.peerAlreadyConnected')

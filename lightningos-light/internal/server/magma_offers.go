@@ -35,6 +35,9 @@ type MagmaOffersView struct {
 	// ModeWarning fires when offers are live but the app is not set up to answer
 	// the orders they generate.
 	ModeWarning string `json:"mode_warning,omitempty"`
+	// OfferStates says which disabled offers are down because we took them down,
+	// which the Amboss API cannot tell apart from a manual one.
+	OfferStates map[string]MagmaOfferState `json:"offer_states,omitempty"`
 }
 
 func (s *MagmaService) requireInstalled(ctx context.Context) error {
@@ -211,6 +214,27 @@ func (s *MagmaService) ListOffers(ctx context.Context) (MagmaOffersView, error) 
 	if len(conflicts) > 0 {
 		view.Conflicts = conflicts
 	}
+
+	if states := s.loadOfferStates(ctx); len(states) > 0 {
+		// An offer still down while the balance looks healthy is waiting on the
+		// share other offers have already claimed; saying so beats an operator
+		// wondering why a funded node keeps an offer suspended.
+		if capacity, err := s.Capacity(ctx); err == nil {
+			budget := capacity.AvailableSat - policy.MinOnchainReserve
+			for id, state := range states {
+				if state.AutoDisabledAt == nil {
+					continue
+				}
+				for _, offer := range offers {
+					if offer.ID == id && magmaOfferRemaining(offer) <= budget {
+						state.HeldForOthers = true
+						states[id] = state
+					}
+				}
+			}
+		}
+		view.OfferStates = states
+	}
 	return view, nil
 }
 
@@ -237,7 +261,24 @@ func (s *MagmaService) SaveOffer(ctx context.Context, offer MagmaOffer) (MagmaOf
 	return s.ListOffers(ctx)
 }
 
-func (s *MagmaService) ToggleOffer(ctx context.Context, offerID string) (MagmaOffersView, error) {
+// errMagmaOfferConflicts is returned when enabling an offer the policy would
+// refuse orders from. It carries the reasons so the caller can show them.
+type errMagmaOfferConflicts struct {
+	Conflicts []MagmaOfferConflict
+}
+
+func (e *errMagmaOfferConflicts) Error() string {
+	return "offer conflicts with the current policy"
+}
+
+// ToggleOffer flips an offer between enabled and disabled.
+//
+// Enabling is the direction that can hurt: an offer whose terms the policy would
+// refuse still gets published on Amboss, and every order it attracts is rejected
+// or left to expire, which the account carries as seller failures. So enabling a
+// conflicting offer needs confirm=true; disabling never asks, because taking a
+// bad offer down is always safe.
+func (s *MagmaService) ToggleOffer(ctx context.Context, offerID string, confirm bool) (MagmaOffersView, error) {
 	if err := s.requireInstalled(ctx); err != nil {
 		return MagmaOffersView{}, err
 	}
@@ -245,9 +286,41 @@ func (s *MagmaService) ToggleOffer(ctx context.Context, offerID string) (MagmaOf
 	if err != nil {
 		return MagmaOffersView{}, err
 	}
+	if !confirm {
+		if conflicts, err := s.offerEnableConflicts(ctx, token, offerID); err == nil && len(conflicts) > 0 {
+			return MagmaOffersView{}, &errMagmaOfferConflicts{Conflicts: conflicts}
+		}
+	}
 	if err := s.amboss.ToggleOffer(ctx, token, offerID); err != nil {
 		return MagmaOffersView{}, err
 	}
+	// The operator decided this offer's state by hand, so the balance automation
+	// must not undo it. Clearing the mark covers both directions: a manual enable
+	// escapes the automation, and a manual disable is not "ours" to restore.
+	s.clearOfferAutoDisable(ctx, offerID)
 	s.signal()
 	return s.ListOffers(ctx)
+}
+
+// offerEnableConflicts returns the policy conflicts of an offer that is about to
+// be enabled. An offer already enabled is on its way down, so it reports none.
+func (s *MagmaService) offerEnableConflicts(ctx context.Context, token, offerID string) ([]MagmaOfferConflict, error) {
+	offers, err := s.amboss.Offers(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := s.loadPolicy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, offer := range offers {
+		if offer.ID != offerID {
+			continue
+		}
+		if offer.Status == "ENABLED" {
+			return nil, nil
+		}
+		return magmaOfferConflicts(offer, policy), nil
+	}
+	return nil, nil
 }

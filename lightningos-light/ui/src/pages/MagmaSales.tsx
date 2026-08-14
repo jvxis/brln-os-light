@@ -22,6 +22,7 @@ import type {
   MagmaOpenPreview,
   MagmaOffer,
   MagmaOfferCondition,
+  MagmaOfferConflict,
   MagmaOffersView,
   MagmaOrder,
   MagmaOrderEvent,
@@ -154,13 +155,32 @@ export default function MagmaSales() {
       .catch((err) => setOffersError(err instanceof Error ? err.message : String(err)))
   }
 
-  const handleToggleOffer = (offerID: string) => {
+  // Enabling an offer the policy would refuse is not blocked, but it is not done
+  // silently either: the orders it attracts get rejected or expire, and the
+  // account carries that as seller failures.
+  const [offerConflictPrompt, setOfferConflictPrompt] = useState<
+    { offerID: string; conflicts: MagmaOfferConflict[] } | null
+  >(null)
+
+  const handleToggleOffer = (offerID: string, confirm = false) => {
     if (!offerID) return
     setBusy(true)
     setOffersError('')
-    toggleMagmaOffer(offerID)
-      .then((view) => setOffers(view))
-      .catch((err) => setOffersError(err instanceof Error ? err.message : String(err)))
+    toggleMagmaOffer(offerID, confirm)
+      .then((view) => {
+        setOffers(view)
+        setOfferConflictPrompt(null)
+      })
+      .catch((err) => {
+        if (err instanceof APIError && err.code === 'magma_offer_conflicts') {
+          setOfferConflictPrompt({
+            offerID,
+            conflicts: Array.isArray(err.details?.conflicts) ? err.details.conflicts : []
+          })
+          return
+        }
+        setOffersError(err instanceof Error ? err.message : String(err))
+      })
       .finally(() => setBusy(false))
   }
 
@@ -560,6 +580,7 @@ export default function MagmaSales() {
             <div className="max-h-[30rem] space-y-2 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]">
               {sortedOffers.map((offer) => {
                 const conflicts = offers?.conflicts?.[offer.id ?? ''] ?? []
+                const offerState = offers?.offer_states?.[offer.id ?? '']
                 const enabled = offer.status === 'ENABLED'
                 return (
                   <div
@@ -576,6 +597,19 @@ export default function MagmaSales() {
                       >
                         {enabled ? t('magma.offerEnabled') : t('magma.offerDisabled')}
                       </span>
+                      {!enabled && offerState?.auto_disabled_at && (
+                        <span
+                          className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-200"
+                          title={t('magma.offerAutoDisabledHint', {
+                            required: formatSats(offerState.required_sat ?? 0, locale),
+                            available: formatSats(offerState.available_sat ?? 0, locale)
+                          })}
+                        >
+                          {offerState.held_for_others
+                            ? t('magma.offerHeldForOthers')
+                            : t('magma.offerAutoDisabled')}
+                        </span>
+                      )}
                       <div className="flex flex-wrap gap-2">
                         <button
                           className="btn-secondary text-xs px-2 py-1"
@@ -853,6 +887,43 @@ export default function MagmaSales() {
           onCancel={() => setPendingMode(null)}
           onConfirm={() => commitMode(pendingMode)}
         />
+      )}
+
+      {offerConflictPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+            <h3 className="text-lg font-semibold text-fog">{t('magma.offerConflictTitle')}</h3>
+            <p className="mt-1 text-sm text-fog/70">{t('magma.offerConflictBody')}</p>
+
+            <ul className="mt-4 list-disc space-y-1 rounded-lg border border-amber-300/30 bg-amber-500/10 px-4 py-3 pl-8 text-sm text-amber-100">
+              {offerConflictPrompt.conflicts.map((conflict) => (
+                <li key={conflict.message}>
+                  {conflict.blocking ? '⛔ ' : '⚠️ '}
+                  {conflict.message}
+                </li>
+              ))}
+            </ul>
+
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              {/* Cancel is the default: enabling anyway is the choice that needs
+                  intent, not the one that happens by reflex. */}
+              <button
+                className="btn-primary"
+                autoFocus
+                onClick={() => setOfferConflictPrompt(null)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                className="btn-secondary"
+                disabled={busy}
+                onClick={() => handleToggleOffer(offerConflictPrompt.offerID, true)}
+              >
+                {t('magma.offerConflictConfirm')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {policyOpen && overview?.policy && (

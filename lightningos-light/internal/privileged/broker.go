@@ -16,6 +16,7 @@ const (
 	systemdRunPath                 = "/usr/bin/systemd-run"
 	privilegedLongOperationTimeout = 2 * time.Minute
 	privilegedBitcoinStatusTimeout = 45 * time.Second
+	privilegedImageProbeTimeout    = 30 * time.Second
 )
 
 type CommandRunner interface {
@@ -287,6 +288,10 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 	case OperationTerminalControl:
 		if configured < 15*time.Second {
 			return 15 * time.Second
+		}
+	case OperationAppImageProbe:
+		if configured < privilegedImageProbeTimeout {
+			return privilegedImageProbeTimeout
 		}
 	case OperationSystemIntegrationsApply, OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove:
 		if configured < privilegedLongOperationTimeout {

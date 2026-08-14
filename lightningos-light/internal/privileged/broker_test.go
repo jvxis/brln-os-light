@@ -250,6 +250,18 @@ type recordingApps struct {
 	lifecycleDeadline       time.Time
 }
 
+func TestOperationTimeoutAllowsColdImageProbe(t *testing.T) {
+	if got := operationTimeout(10*time.Second, OperationAppImageProbe, false); got != privilegedImageProbeTimeout {
+		t.Fatalf("image probe timeout=%v want=%v", got, privilegedImageProbeTimeout)
+	}
+	if got := operationTimeout(10*time.Second, OperationAppImageProbe, true); got != 10*time.Second {
+		t.Fatalf("dry-run image probe timeout=%v want=10s", got)
+	}
+	if got := operationTimeout(time.Minute, OperationAppImageProbe, false); got != time.Minute {
+		t.Fatalf("configured longer image probe timeout=%v want=1m", got)
+	}
+}
+
 func (apps *recordingApps) EnsureBitcoinConsumerNetwork(ctx context.Context, dryRun bool) (BitcoinConsumerNetworkState, error) {
 	apps.consumerNetworkCalls++
 	apps.dryRun = dryRun

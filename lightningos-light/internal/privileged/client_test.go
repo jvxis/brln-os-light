@@ -407,6 +407,10 @@ func TestClientAppImageOperationsBuildTypedRequests(t *testing.T) {
 	if err != nil || !runnable || transport.request.Operation != OperationAppImageProbe {
 		t.Fatalf("runnable/error/request=%v/%v/%#v", runnable, err, transport.request)
 	}
+	remaining := time.Until(transport.deadline)
+	if remaining < privilegedImageProbeTimeout-time.Second || remaining > privilegedImageProbeTimeout {
+		t.Fatalf("image probe client deadline has %v remaining, want %v", remaining, privilegedImageProbeTimeout)
+	}
 }
 
 func TestClientAppImageRejectsInvalidState(t *testing.T) {

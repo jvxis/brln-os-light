@@ -149,6 +149,25 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
+	if appID == fedimintGatewayAppID {
+		var req fedimintGatewayStartOptions
+		if r.ContentLength != 0 {
+			if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+		}
+		if err := s.installFedimintGatewayWithOptions(r.Context(), req); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errFedimintGatewayBitcoinRestartConfirmationRequired) {
+				status = http.StatusConflict
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
 	if err := app.Install(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -210,6 +229,25 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		if err := s.startElectrsWithOptions(r.Context(), req); err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, errElectrsBitcoinRestartConfirmationRequired) {
+				status = http.StatusConflict
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	if appID == fedimintGatewayAppID {
+		var req fedimintGatewayStartOptions
+		if r.ContentLength != 0 {
+			if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+		}
+		if err := s.startFedimintGatewayWithOptions(r.Context(), req); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errFedimintGatewayBitcoinRestartConfirmationRequired) {
 				status = http.StatusConflict
 			}
 			writeError(w, status, err.Error())

@@ -448,7 +448,7 @@ func defaultBitcoinCoreConfig() (string, error) {
 	lines := []string{
 		"server=1",
 		"printtoconsole=1",
-		"disablewallet=0",
+		"disablewallet=1",
 		"txindex=1",
 		"natpmp=0",
 		"upnp=0",
@@ -532,7 +532,6 @@ func ensureBitcoinCoreConsumerRPCValues(raw string) (string, bool) {
 	}{
 		{key: "natpmp", value: "0"},
 		{key: "upnp", value: "0"},
-		{key: "disablewallet", value: "0"},
 	} {
 		found := false
 		for index := 0; index < sectionIndex; index++ {
@@ -553,6 +552,38 @@ func ensureBitcoinCoreConsumerRPCValues(raw string) (string, bool) {
 			sectionIndex++
 			changed = true
 		}
+	}
+	if !changed {
+		return normalized, false
+	}
+	return ensureTrailingNewline(strings.Join(lines, "\n")), true
+}
+
+// enableBitcoinCoreWalletRPCForGateway changes only an explicit hardening
+// setting. A missing disablewallet option already means wallet RPC is enabled,
+// so legacy installations that used the Bitcoin Core default do not need a
+// rewrite or restart.
+func enableBitcoinCoreWalletRPCForGateway(raw string) (string, bool) {
+	normalized := sanitizeBitcoinCoreConfig(raw)
+	lines := strings.Split(strings.TrimRight(normalized, "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return normalized, false
+	}
+	sectionIndex := len(lines)
+	for index, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			sectionIndex = index
+			break
+		}
+	}
+	changed := false
+	for index := 0; index < sectionIndex; index++ {
+		key, value, ok := bitcoinCoreConfigKeyValue(lines[index])
+		if !ok || !strings.EqualFold(key, "disablewallet") || value == "0" {
+			continue
+		}
+		lines[index] = "disablewallet=0"
+		changed = true
 	}
 	if !changed {
 		return normalized, false

@@ -26,6 +26,11 @@ const (
 )
 
 var errFedimintLogServiceNotInstalled = errors.New("Fedimint app is not installed")
+var errFedimintGatewayBitcoinRestartConfirmationRequired = errors.New("confirm the one-time Bitcoin Core restart required to enable wallet RPC for Fedimint Gateway")
+
+type fedimintGatewayStartOptions struct {
+	ConfirmBitcoinRestart bool `json:"confirm_bitcoin_restart"`
+}
 
 type fedimintGuardianPaths struct {
 	Root        string
@@ -111,10 +116,10 @@ func (a fedimintGuardianApp) Start(ctx context.Context) error {
 	return a.server.applyFedimintGuardian(ctx)
 }
 func (a fedimintGatewayApp) Install(ctx context.Context) error {
-	return a.server.applyFedimintGateway(ctx)
+	return a.server.applyFedimintGateway(ctx, false)
 }
 func (a fedimintGatewayApp) Start(ctx context.Context) error {
-	return a.server.applyFedimintGateway(ctx)
+	return a.server.applyFedimintGateway(ctx, false)
 }
 
 func (a fedimintGuardianApp) Stop(ctx context.Context) error {
@@ -205,8 +210,19 @@ func (s *Server) applyFedimintGuardian(ctx context.Context) error {
 	return startFedimintWithBroker(ctx, appmanifest.FedimintGuardianID, s.logger)
 }
 
-func (s *Server) applyFedimintGateway(ctx context.Context) error {
+func (s *Server) installFedimintGatewayWithOptions(ctx context.Context, opts fedimintGatewayStartOptions) error {
+	return s.applyFedimintGateway(ctx, opts.ConfirmBitcoinRestart)
+}
+
+func (s *Server) startFedimintGatewayWithOptions(ctx context.Context, opts fedimintGatewayStartOptions) error {
+	return s.applyFedimintGateway(ctx, opts.ConfirmBitcoinRestart)
+}
+
+func (s *Server) applyFedimintGateway(ctx context.Context, confirmBitcoinRestart bool) error {
 	if err := ensureDockerForCatalogAppEnforce(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureFedimintGatewayBitcoinWalletRPC(ctx, confirmBitcoinRestart); err != nil {
 		return err
 	}
 	paths := fedimintGatewayAppPaths()
@@ -238,6 +254,58 @@ func (s *Server) applyFedimintGateway(ctx context.Context) error {
 	}
 	if err := startFedimintWithBroker(ctx, appmanifest.FedimintGatewayID, s.logger); err != nil {
 		return fedimintGatewayStartupError(err)
+	}
+	return nil
+}
+
+func (s *Server) ensureFedimintGatewayBitcoinWalletRPC(ctx context.Context, confirmBitcoinRestart bool) error {
+	if readBitcoinSource() == "remote" {
+		return nil
+	}
+	paths := bitcoinCoreAppPaths()
+	if !fileExists(paths.ComposePath) {
+		// Existing/systemd Bitcoin belongs to the operator. Gateway startup will
+		// report the upstream wallet-RPC requirement without modifying the node.
+		return nil
+	}
+	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
+	if err != nil {
+		return err
+	}
+	updated, changed := enableBitcoinCoreWalletRPCForGateway(raw)
+	if changed {
+		status, err := inspectBitcoinCoreStatus(ctx)
+		if err != nil {
+			return err
+		}
+		if status != "running" {
+			return errors.New("Bitcoin Core must be running before Fedimint Gateway can enable wallet RPC")
+		}
+		if !confirmBitcoinRestart {
+			return errFedimintGatewayBitcoinRestartConfirmationRequired
+		}
+		if err := writeBitcoinCoreConfig(ctx, paths, updated); err != nil {
+			return fmt.Errorf("failed to enable Bitcoin Core wallet RPC for Fedimint Gateway: %w", err)
+		}
+		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
+			if rollbackErr := writeBitcoinCoreConfig(ctx, paths, raw); rollbackErr != nil {
+				return fmt.Errorf("failed to restart Bitcoin Core after enabling Fedimint Gateway wallet RPC: %w (configuration rollback also failed: %v)", err, rollbackErr)
+			}
+			return fmt.Errorf("failed to restart Bitcoin Core after enabling Fedimint Gateway wallet RPC: %w", err)
+		}
+		s.invalidateBitcoinStatusCaches()
+	}
+	cfg, err := readBitcoinLocalRPCConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("Bitcoin Core RPC credentials unavailable after Fedimint Gateway migration: %w", err)
+	}
+	if changed {
+		if err := waitForBitcoinRPC(ctx, cfg, 2*time.Minute); err != nil {
+			return err
+		}
+	}
+	if _, err := fetchBitcoinRPC(ctx, cfg.Host, cfg.User, cfg.Pass, "listwallets"); err != nil {
+		return fmt.Errorf("Bitcoin Core wallet RPC is unavailable after the Fedimint Gateway migration: %w", err)
 	}
 	return nil
 }

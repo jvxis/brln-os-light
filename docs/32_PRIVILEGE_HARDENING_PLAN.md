@@ -1690,6 +1690,15 @@ explicit app start re-resolves current wiring where the app owns that choice.
 The exact inventory and invariants are recorded in
 `docs/baselines/privilege-hardening-bitcoin-rpc-consumer-audit-2026-08-13.json`.
 
+The final Fedimint Gateway regression gate clarified the wallet-RPC boundary.
+Fresh App Store Bitcoin keeps `disablewallet=1`; generic consumer wiring and
+every non-Gateway app preserve it. Only an install/start of Fedimint Gateway
+against App Store-managed local Bitcoin may change the option to
+`disablewallet=0`, after an explicit UI confirmation that Bitcoin will restart
+once if needed. The flow verifies `listwallets`, is idempotent, and rolls the
+configuration back if the restart fails. Existing/systemd and remote Bitcoin
+are never changed or restarted by this migration.
+
 The direct published-release upgrade gate is now closed for the official
 `0.5.2-Beta` baseline on Ubuntu 24.04. The legacy Manager accepted the upgrade
 through the authenticated UI/API, installed the 0.5.3 Manager/UI, and the new

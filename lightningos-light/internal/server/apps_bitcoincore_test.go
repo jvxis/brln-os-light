@@ -25,7 +25,7 @@ func TestDefaultBitcoinCoreConfigAllowsDedicatedConsumerNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"disablewallet=0",
+		"disablewallet=1",
 		"rpcbind=0.0.0.0:8332",
 		"rpcallowip=127.0.0.1",
 		"rpcallowip=" + appmanifest.BitcoinCoreRPCSubnet,
@@ -56,8 +56,8 @@ func TestEnsureBitcoinCoreConsumerRPCValuesMigratesOnce(t *testing.T) {
 	if !strings.Contains(updated, "rpcpassword=preserve-me\n") {
 		t.Fatal("migration did not preserve the existing RPC password")
 	}
-	if !strings.Contains(updated, "disablewallet=0\n") || strings.Contains(updated, "disablewallet=1\n") {
-		t.Fatalf("wallet RPC baseline was not migrated: %q", updated)
+	if !strings.Contains(updated, "disablewallet=1\n") {
+		t.Fatalf("generic RPC baseline changed the wallet hardening policy: %q", updated)
 	}
 	if count := strings.Count(updated, "rpcallowip="+appmanifest.BitcoinCoreRPCSubnet+"\n"); count != 1 {
 		t.Fatalf("expected one dedicated subnet entry, got %d", count)
@@ -74,6 +74,19 @@ func TestEnsureBitcoinCoreConsumerRPCValuesMigratesOnce(t *testing.T) {
 	again, changed := ensureBitcoinCoreConsumerRPCValues(updated)
 	if changed || again != updated {
 		t.Fatal("consumer RPC baseline migration is not idempotent")
+	}
+}
+
+func TestEnableBitcoinCoreWalletRPCForGatewayIsConditional(t *testing.T) {
+	updated, changed := enableBitcoinCoreWalletRPCForGateway("server=1\ndisablewallet=1\n[regtest]\ndisablewallet=1\n")
+	if !changed || !strings.Contains(updated, "server=1\ndisablewallet=0\n[regtest]\ndisablewallet=1\n") {
+		t.Fatalf("managed mainnet wallet RPC was not enabled safely: %q", updated)
+	}
+	for _, alreadyEnabled := range []string{"server=1\n", "server=1\ndisablewallet=0\n"} {
+		again, changed := enableBitcoinCoreWalletRPCForGateway(alreadyEnabled)
+		if changed || again != alreadyEnabled {
+			t.Fatalf("wallet-ready config caused an unnecessary restart: %q", again)
+		}
 	}
 }
 

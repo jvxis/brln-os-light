@@ -163,6 +163,7 @@ export default function AppStore() {
   const [peerswapRemoteTested, setPeerswapRemoteTested] = useState(false)
   const [barkWalletInstallOpen, setBarkWalletInstallOpen] = useState(false)
   const [pendingElectrsAction, setPendingElectrsAction] = useState<'install' | 'start' | null>(null)
+  const [pendingFedimintGatewayAction, setPendingFedimintGatewayAction] = useState<'install' | 'start' | null>(null)
   const [barkRevealReauthOpen, setBarkRevealReauthOpen] = useState(false)
   const [barkRevealPassword, setBarkRevealPassword] = useState('')
   const [barkRevealBusy, setBarkRevealBusy] = useState(false)
@@ -420,6 +421,13 @@ export default function AppStore() {
       setPendingElectrsAction(action)
       return
     }
+    if (
+      id === 'fedimint-gateway' && (action === 'install' || action === 'start') &&
+      bitcoinMode === 'local_app' && !payload?.confirm_bitcoin_restart
+    ) {
+      setPendingFedimintGatewayAction(action)
+      return
+    }
     if (action === 'install' && !options?.skipSecurityConfirmation) {
       const app = apps.find((candidate) => candidate.id === id)
       if (app?.security_notices?.some((notice) => notice === elevatedLndAccessNotice || notice === limitedLndAccessNotice)) {
@@ -460,6 +468,14 @@ export default function AppStore() {
     setPendingElectrsAction(null)
     if (action) {
       await handleAction('electrs', action, { confirm_bitcoin_restart: true })
+    }
+  }
+
+  const handleFedimintGatewayBitcoinRestartConfirm = async () => {
+    const action = pendingFedimintGatewayAction
+    setPendingFedimintGatewayAction(null)
+    if (action) {
+      await handleAction('fedimint-gateway', action, { confirm_bitcoin_restart: true })
     }
   }
 
@@ -1050,6 +1066,25 @@ export default function AppStore() {
               <button className="btn-primary" type="button" onClick={handleElectrsBitcoinRestartConfirm}>
                 {t('appStore.electrsBitcoinRestartConfirm')}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingFedimintGatewayAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true" aria-labelledby="fedimint-gateway-bitcoin-restart-title">
+          <div className="w-full max-w-lg rounded-lg border border-amber-400/25 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <h3 id="fedimint-gateway-bitcoin-restart-title" className="text-lg font-semibold">{t('appStore.fedimintGatewayBitcoinRestartTitle')}</h3>
+              <p className="text-sm text-fog/70">{t('appStore.fedimintGatewayBitcoinRestartBody')}</p>
+            </div>
+            <div className="mt-5 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm leading-relaxed text-fog/80">
+              <p>{t('appStore.fedimintGatewayBitcoinRestartImpact')}</p>
+              <p className="mt-2 text-amber-100/85">{t('appStore.fedimintGatewayBitcoinRestartLimit')}</p>
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-secondary" type="button" onClick={() => setPendingFedimintGatewayAction(null)}>{t('common.cancel')}</button>
+              <button className="btn-primary" type="button" onClick={handleFedimintGatewayBitcoinRestartConfirm}>{t('appStore.fedimintGatewayBitcoinRestartConfirm')}</button>
             </div>
           </div>
         </div>

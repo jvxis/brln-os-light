@@ -580,6 +580,14 @@ with Loop idle and Magma in monitor mode, and preserved LND/Bitcoin timestamps. 
 legacy manager Docker-group membership remains an explicit shared-cutover item.
 Mempool and Fedimint remain lower priority.
 
+Fedimint Gateway has one exceptional Bitcoin dependency: unlike Guardian and
+the other current consumers, it requires wallet RPC (`createwallet`). The
+accepted policy is to keep fresh App Store Bitcoin at `disablewallet=1` and
+offer a confirmed, one-time, idempotent switch to `disablewallet=0` only when
+Gateway is installed/started against App Store-managed local Bitcoin. The UI
+warns about the temporary Bitcoin/LND dependency interruption. External,
+systemd, and remote Bitcoin are never edited or restarted by this flow.
+
 The Lightning Labs Loop systemd slice is accepted separately from BRLN Loop
 Out. `apps_loop.go` now has zero direct privileged call sites; a closed broker
 catalog owns the pinned `v0.33.3-beta` release/checksums, fixed service account,

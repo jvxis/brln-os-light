@@ -77,6 +77,24 @@ This avoids depending on the public `mempool.space` API for `fedimintd` and `gat
 
 The Gateway also mounts `/data/lnd` and talks to local LND for Lightning payments.
 
+### Wallet RPC required only by the Gateway
+
+The Guardian does not use Bitcoin Core wallet methods. App Store-managed
+Bitcoin Core therefore keeps the hardened `disablewallet=1` baseline for the
+Guardian and for every other app that does not require wallet RPC.
+
+Fedimint Lightning Gateway needs methods such as `createwallet`. When the
+Gateway is installed or started with App Store-managed local Bitcoin Core, the
+UI warns that, if `disablewallet=1` is still active, LightningOS will change
+only that option to `disablewallet=0` and restart Bitcoin once. LND and
+dependent apps may be temporarily unavailable, but their data is preserved
+and they reconnect when Bitcoin is ready. The migration is idempotent: later
+Gateway starts do not repeat the restart.
+
+No other app activates this migration. External or systemd Bitcoin is never
+reconfigured or restarted by LightningOS; its operator must make wallet RPC
+available before starting the Gateway.
+
 ### External or non-App-Store Bitcoin
 
 When the Bitcoin backend is the App Store **Bitcoin Core** app, LightningOS updates `bitcoin.conf` automatically so RPC is allowed from the Docker networks used by the apps.

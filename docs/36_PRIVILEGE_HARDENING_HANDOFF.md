@@ -1008,3 +1008,29 @@ first stage means rollback restores the functional 0.5.3 Manager/UI that was
 present immediately before privilege cutover, rather than byte-for-byte 0.5.2
 application files. Full evidence and the loopback-fixture constraints are in
 `docs/baselines/privilege-hardening-direct-ui-upgrade-0.5.2-2026-08-14.json`.
+
+## BTCPay LND compatibility regression closure (2026-08-14)
+
+Implementation commit `03900316226401abb00312e70ce0b45add0d51fa` fixes the
+real BTCPay node-page regression found during manual LOS TESTE2 validation.
+BTCPay 2.4.2 is the required fixed upstream release, but its Lightning parser
+rejects a `macaroonfilepath` whose filename does not end in `.macaroon`. The
+interim hardening workaround mounted the correct dedicated restricted
+credential as `btcpay.auth`, so BTCPay logged `Invalid setting BTC.lightning`
+and disabled Lightning despite the container being healthy.
+
+The execution snapshot now exposes only `/etc/lnd/btcpay.macaroon`, root-owned
+`0600` and read-only in the container. The broker accepts `btcpay.auth` only as
+a legacy migration input, atomically writes the required name, removes the old
+regular file, and revalidates the exact directory entries. The dedicated
+credential must still be private and byte-distinct from `admin.macaroon`; the
+admin credential is neither referenced nor mounted.
+
+The authenticated App Store repair recreated only `btcpay-server`. NBXplorer,
+PostgreSQL, Bitcoin Core, and LND retained their activation/process identities
+and restart counts. The fixed official BTCPay 2.4.2 and NBXplorer 2.6.10 images
+remained in use, BTCPay health returned synchronized, NBXplorer remained
+`Ready`, and an LND REST `getinfo` through the exact snapshot confirmed both
+chain and graph synchronization. Temporary operator checkouts and upgrade
+worktrees were removed. Evidence:
+`docs/baselines/privilege-hardening-btcpay-lnd-compatibility-2026-08-14.json`.

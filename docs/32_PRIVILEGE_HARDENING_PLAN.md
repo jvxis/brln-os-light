@@ -642,14 +642,17 @@ injection are rejected before persistence.
 In enforce mode the broker persists the validated execution snapshot under
 `/var/lib/lightningos-privileged/apps/btcpay`, with root-owned `0700`
 directories and `0600` files. The dedicated credential is exposed to the
-container only as `/etc/lnd/btcpay.auth`; neither a `.macaroon` filename nor
-`admin.macaroon` appears in the execution manifest. This does not create a new
-credential or expand its permissions: the manager still bakes the existing
-BTCPay-specific set (`address` read/write, `info` read, `invoices` read/write,
-and `onchain` read), without `offchain:write` or `onchain:write`. The Ubuntu
-root gate passed the complete Go test/vet/build suite and all positive and
-negative snapshot cases without starting a container or touching Bitcoin/LND.
-Evidence is stored in
+container only as `/etc/lnd/btcpay.macaroon`, the filename contract required by
+the fixed BTCPay 2.4.2 parser; `admin.macaroon` never appears in the execution
+manifest. A legacy root-owned `btcpay.auth` snapshot is accepted only during
+the bounded migration, atomically rewritten as `btcpay.macaroon`, and removed
+after validation. The exact snapshot-entry allowlist and admin-byte equality
+gate remain in force. This does not create a new credential or expand its
+permissions: the manager still bakes the existing BTCPay-specific set
+(`address` read/write, `info` read, `invoices` read/write, and `onchain` read),
+without `offchain:write` or `onchain:write`. The Ubuntu root gate passed the
+complete Go test/vet/build suite and all positive and negative snapshot cases
+without starting a container or touching Bitcoin/LND. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-btcpay-secret-snapshot-2026-08-11.json`.
 
 BTCPay's Compose execution has now completed that cutover. The shared manifest
@@ -717,6 +720,23 @@ BTCPay-stopped state with the corrected binaries in `shadow`. The audit stayed
 root-owned `0600`, used only the declared metadata fields, and contained no
 credential terms. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-btcpay-functional-lifecycle-2026-08-11.json`.
+
+A later user-facing Lightning test on LOS TESTE2 found a compatibility
+regression hidden by the earlier lifecycle gate: BTCPay 2.4.2 reported
+`Invalid setting BTC.lightning` because its parser requires
+`macaroonfilepath` to identify a `.macaroon` file, while the interim hardening
+snapshot exposed the same restricted credential as `btcpay.auth`. Commit
+`03900316226401abb00312e70ce0b45add0d51fa` restored the required filename
+without weakening the credential boundary and added a permanent legacy
+snapshot migration test. The authenticated App Store start recreated only
+`btcpay-server`; NBXplorer and PostgreSQL retained their activation times,
+Bitcoin Core and LND retained their process identities, and all restart counts
+were unchanged. The final official images were BTCPay 2.4.2 and NBXplorer
+2.6.10, NBXplorer was `Ready`, BTCPay health returned `synchronized=true`, and
+an LND REST `getinfo` through the exact read-only snapshot returned both
+`synced_to_chain=true` and `synced_to_graph=true`. No invalid Lightning setting
+remained. Evidence is stored in
+`docs/baselines/privilege-hardening-btcpay-lnd-compatibility-2026-08-14.json`.
 
 The subsequent App Store order was driven by observed use: LNDg first,
 LNbits second, then the native BRLN Loop and Magma paths. Fedimint, Electrs,

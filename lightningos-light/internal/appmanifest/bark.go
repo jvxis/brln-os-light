@@ -47,6 +47,7 @@ const (
 
 type BarkWalletComposePaths struct {
 	WalletDir            string
+	AuthDir              string
 	AdminPasswordPath    string
 	SessionSecretPath    string
 	CaddyfilePath        string
@@ -122,7 +123,7 @@ https://:%d {
 }
 
 func BarkWalletCompose(paths BarkWalletComposePaths) (string, error) {
-	if paths.WalletDir == "" || paths.AdminPasswordPath == "" || paths.SessionSecretPath == "" ||
+	if paths.WalletDir == "" || paths.AuthDir == "" || paths.AdminPasswordPath == "" || paths.SessionSecretPath == "" ||
 		paths.CaddyfilePath == "" || paths.TLSCertificate == "" || paths.TLSPrivateKey == "" || paths.ManagerCACertificate == "" {
 		return "", errors.New("Bark Wallet compose path is invalid")
 	}
@@ -171,8 +172,7 @@ func BarkWalletCompose(paths BarkWalletComposePaths) (string, error) {
       - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
     volumes:
       - %s:/wallet-data:ro
-      - %s:/run/lightningos-auth/ui_password:ro
-      - %s:/run/lightningos-auth/ui_session_secret:ro
+      - %s:/run/lightningos-auth:ro
     depends_on:
       - barkd
 
@@ -247,7 +247,7 @@ networks:
 		BarkWalletWebUID, BarkWalletWebGID, BarkWalletWebUID, BarkWalletWebGID,
 		BarkWalletAPIImage, BarkWalletStopTimeout, BarkWalletAPIUID, BarkWalletAPIGID,
 		BarkWalletAPIInternalPort, paths.WalletDir, BarkWalletDaemonPort, paths.WalletDir,
-		paths.AdminPasswordPath, paths.SessionSecretPath, BarkWalletDaemonImage,
+		paths.AuthDir, BarkWalletDaemonImage,
 		BarkWalletStopTimeout, BarkWalletDaemonUID, BarkWalletDaemonGID, BarkWalletDaemonPort,
 		paths.WalletDir, BarkWalletProxyImage, BarkWalletStopTimeout, BarkWalletProxyUID,
 		BarkWalletProxyGID, BarkWalletPort, BarkWalletPort, BarkWalletProxyUID,

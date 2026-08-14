@@ -8,6 +8,7 @@ import (
 func testBarkWalletComposePaths() BarkWalletComposePaths {
 	return BarkWalletComposePaths{
 		WalletDir:            "/var/lib/lightningos/apps-data/bark-wallet/wallet",
+		AuthDir:              "/var/lib/lightningos/apps-data/bark-wallet/auth",
 		AdminPasswordPath:    "/var/lib/lightningos/apps-data/bark-wallet/auth/ui_password",
 		SessionSecretPath:    "/var/lib/lightningos/apps-data/bark-wallet/auth/ui_session_secret",
 		CaddyfilePath:        "/var/lib/lightningos-privileged/apps/bark-wallet/Caddyfile",
@@ -52,7 +53,7 @@ func TestBarkWalletComposeIsClosedAndLeastPrivilege(t *testing.T) {
 		`UI_AUTH: "true"`, "--expose-mnemonic", "read_only: true", "cap_drop:",
 		"no-new-privileges:true", `user: "65530:65530"`, `user: "65531:65531"`, `user: "65532:65532"`,
 		"entrypoint:\n      - /usr/local/bin/barkd",
-		"/run/lightningos-auth/ui_password:ro", "/run/lightningos-auth/ui_session_secret:ro",
+		"/var/lib/lightningos/apps-data/bark-wallet/auth:/run/lightningos-auth:ro",
 		"host.docker.internal:host-gateway", "/etc/caddy/manager-ca.crt:ro",
 	} {
 		if !strings.Contains(compose, required) {
@@ -65,6 +66,14 @@ func TestBarkWalletComposeIsClosedAndLeastPrivilege(t *testing.T) {
 	for _, forbidden := range []string{"privileged: true", "/var/run/docker.sock", `user: "0:0"`, ":latest"} {
 		if strings.Contains(compose, forbidden) {
 			t.Fatalf("compose contains forbidden capability %q", forbidden)
+		}
+	}
+	for _, forbidden := range []string{
+		"/run/lightningos-auth/ui_password:ro",
+		"/run/lightningos-auth/ui_session_secret:ro",
+	} {
+		if strings.Contains(compose, forbidden) {
+			t.Fatalf("compose retains inode-stale Bark secret mount %q", forbidden)
 		}
 	}
 	if strings.Count(compose, `"4004:4004"`) != 1 {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -15,6 +16,8 @@ type barkWalletTestClient struct {
 	status         string
 	ensureCalls    int
 	lifecycleCalls int
+	resetCalls     int
+	resetFailures  int
 }
 
 func (client *barkWalletTestClient) BarkWalletStatus(context.Context) (bool, string, bool, bool, error) {
@@ -35,7 +38,14 @@ func (client *barkWalletTestClient) EnsureBarkWalletFirewall(context.Context, bo
 func (client *barkWalletTestClient) ReadBarkWalletPassword(context.Context) (string, error) {
 	return "", nil
 }
-func (client *barkWalletTestClient) ResetBarkWalletPassword(context.Context, bool) error { return nil }
+func (client *barkWalletTestClient) ResetBarkWalletPassword(context.Context, bool) error {
+	client.resetCalls++
+	if client.resetFailures > 0 {
+		client.resetFailures--
+		return errors.New("legacy snapshot mismatch")
+	}
+	return nil
+}
 
 func TestBarkWalletDefinitionUsesClosedCatalogPort(t *testing.T) {
 	definition := barkWalletDefinition()
@@ -72,5 +82,41 @@ func TestStopBarkWalletIsIdempotentWithoutMigratingStoppedInstall(t *testing.T) 
 	}
 	if client.ensureCalls != 0 || client.lifecycleCalls != 0 {
 		t.Fatalf("stopped Bark Wallet was mutated: %#v", client)
+	}
+}
+
+func TestResetBarkWalletPasswordReconcilesRunningLegacyAuthMount(t *testing.T) {
+	client := &barkWalletTestClient{
+		cpuMinerPrivilegedClient: &cpuMinerPrivilegedClient{mode: "enforce"},
+		installed:                true,
+		status:                   "running",
+		resetFailures:            1,
+	}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := (&Server{}).resetBarkWalletAdminPassword(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.resetCalls != 2 || client.ensureCalls != 1 || client.lifecycleCalls != 1 {
+		t.Fatalf("running Bark auth migration calls were incomplete: %#v", client)
+	}
+}
+
+func TestResetBarkWalletPasswordDoesNotStartStoppedLegacyInstall(t *testing.T) {
+	client := &barkWalletTestClient{
+		cpuMinerPrivilegedClient: &cpuMinerPrivilegedClient{mode: "enforce"},
+		installed:                true,
+		status:                   "stopped",
+		resetFailures:            1,
+	}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := (&Server{}).resetBarkWalletAdminPassword(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.resetCalls != 2 || client.ensureCalls != 1 || client.lifecycleCalls != 0 {
+		t.Fatalf("stopped Bark auth migration changed lifecycle: %#v", client)
 	}
 }

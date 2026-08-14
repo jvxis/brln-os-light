@@ -89,7 +89,7 @@ func fixedBarkManagerCACertificatePath(path string) bool {
 
 func (manager *NativeBarkWalletManager) composePaths() appmanifest.BarkWalletComposePaths {
 	return appmanifest.BarkWalletComposePaths{
-		WalletDir: manager.Paths.WalletDir, AdminPasswordPath: manager.Paths.AdminPasswordPath,
+		WalletDir: manager.Paths.WalletDir, AuthDir: manager.Paths.AuthDir, AdminPasswordPath: manager.Paths.AdminPasswordPath,
 		SessionSecretPath: manager.Paths.SessionSecretPath, CaddyfilePath: manager.Paths.CaddyfilePath,
 		TLSCertificate: manager.Paths.TLSCertificate, TLSPrivateKey: manager.Paths.TLSPrivateKey,
 		ManagerCACertificate: manager.Paths.ManagerCACertificate,

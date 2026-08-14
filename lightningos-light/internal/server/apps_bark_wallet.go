@@ -151,11 +151,28 @@ func (s *Server) resetBarkWalletAdminPassword(ctx context.Context) error {
 		return nil
 	}
 	// A legacy install has no broker snapshot yet. Promote its fixed assets and
-	// retry once; existing wallet/auth contents remain unchanged by Ensure.
+	// retry once; existing wallet/auth contents remain unchanged by Ensure. A
+	// running install also needs one Compose reconciliation so the API adopts
+	// the directory-mounted auth snapshot. Compose recreates only the changed
+	// API service; barkd and wallet state remain untouched.
+	handled, state, err := system.BarkWalletStatusWithBroker(ctx)
+	if !handled {
+		return errors.New("Bark Wallet status requires privileged broker enforce mode")
+	}
+	if err != nil {
+		return fmt.Errorf("Bark Wallet status failed: %w", err)
+	}
 	if handled, err := system.EnsureBarkWalletWithBroker(ctx); !handled {
 		return errors.New("Bark Wallet preparation requires privileged broker enforce mode")
 	} else if err != nil {
 		return fmt.Errorf("Bark Wallet preparation failed: %w", err)
+	}
+	if state.Status == "running" {
+		if handled, err := system.BarkWalletLifecycleWithBroker(ctx, "start"); !handled {
+			return errors.New("Bark Wallet lifecycle requires privileged broker enforce mode")
+		} else if err != nil {
+			return fmt.Errorf("Bark Wallet authentication migration failed: %w", err)
+		}
 	}
 	if handled, err := system.ResetBarkWalletPasswordWithBroker(ctx); !handled {
 		return errors.New("Bark Wallet password reset requires privileged broker enforce mode")

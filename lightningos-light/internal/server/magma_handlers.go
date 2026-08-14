@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -332,7 +333,27 @@ func (s *Server) handleMagmaOfferToggle(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "offer id required")
 		return
 	}
-	view, err := svc.ToggleOffer(r.Context(), offerID)
+	var req struct {
+		Confirm bool `json:"confirm"`
+	}
+	// The body is optional: an empty one means "no confirmation given".
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	view, err := svc.ToggleOffer(r.Context(), offerID, req.Confirm)
+	var conflictErr *errMagmaOfferConflicts
+	if errors.As(err, &conflictErr) {
+		// 428: the request is valid, it just needs the operator to acknowledge
+		// what enabling this offer means before it is carried out.
+		writeJSON(w, http.StatusPreconditionRequired, map[string]any{
+			"error":                 "this offer conflicts with the current policy",
+			"code":                  "magma_offer_conflicts",
+			"conflicts":             conflictErr.Conflicts,
+			"requires_confirmation": true,
+		})
+		return
+	}
 	if err != nil {
 		writeError(w, magmaActionStatus(err), err.Error())
 		return

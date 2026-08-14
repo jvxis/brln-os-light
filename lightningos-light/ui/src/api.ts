@@ -9,12 +9,16 @@ const lndStatusClientCacheMs = 1500
 export class APIError extends Error {
   status: number
   code: string
+  // The parsed error body, for the few endpoints that answer with structured
+  // detail the caller has to show - a list of policy conflicts, for instance.
+  details?: any
 
-  constructor(message: string, status: number, code = '') {
+  constructor(message: string, status: number, code = '', details?: any) {
     super(message)
     this.name = 'APIError'
     this.status = status
     this.code = code
+    this.details = details
   }
 }
 
@@ -75,9 +79,11 @@ async function request(path: string, options?: RequestInit) {
     const text = await res.text()
     let errorMsg = text || 'Request failed'
     let errorCode = ''
+    let errorDetails: any
     if (text) {
       try {
         const payload = JSON.parse(text)
+        errorDetails = payload
         if (payload && typeof payload.message === 'string') {
           errorMsg = payload.message
         } else if (payload && typeof payload.error === 'string') {
@@ -94,7 +100,7 @@ async function request(path: string, options?: RequestInit) {
       setCSRFToken('')
       window.dispatchEvent(new CustomEvent('auth:required'))
     }
-    throw new APIError(errorMsg, res.status, errorCode)
+    throw new APIError(errorMsg, res.status, errorCode, errorDetails)
   }
   if (res.status === 204) return null
   return res.json()
@@ -1581,16 +1587,27 @@ export type MagmaOffersView = {
   condition_options: string[]
   operator_options: string[]
   mode_warning?: string
+  offer_states?: Record<string, MagmaOfferState>
 }
 
 export const getMagmaOffers = (): Promise<MagmaOffersView> =>
   request('/api/apps/magma-sales/offers')
 export const saveMagmaOffer = (offer: MagmaOffer): Promise<MagmaOffersView> =>
   request('/api/apps/magma-sales/offers', { method: 'POST', body: JSON.stringify(offer) })
-export const toggleMagmaOffer = (id: string): Promise<MagmaOffersView> =>
+export type MagmaOfferState = {
+  offer_id: string
+  auto_disabled_at?: string
+  available_sat?: number
+  required_sat?: number
+  held_for_others?: boolean
+}
+
+// confirm acknowledges that the offer conflicts with the policy. Without it the
+// backend answers 428 with the list of conflicts instead of enabling anything.
+export const toggleMagmaOffer = (id: string, confirm = false): Promise<MagmaOffersView> =>
   request(`/api/apps/magma-sales/offers/${encodeURIComponent(id)}/toggle`, {
     method: 'POST',
-    body: JSON.stringify({})
+    body: JSON.stringify({ confirm })
   })
 
 export type MagmaChannelCommitment = {

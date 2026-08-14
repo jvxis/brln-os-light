@@ -242,6 +242,14 @@ alter table magma_orders
   add column if not exists onchain_fee_sat bigint,
   add column if not exists buyer_alias text;
 
+create table if not exists magma_offer_state (
+  offer_id text primary key,
+  auto_disabled_at timestamptz,
+  available_sat bigint not null default 0,
+  required_sat bigint not null default 0,
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists magma_orders_revenue_settled_idx
   on magma_orders (revenue_settled_at) where revenue_settled_at is not null;
 
@@ -591,6 +599,9 @@ func (s *MagmaService) syncLocked(ctx context.Context) error {
 	// Auto mode runs last, after reconciliation has settled anything in flight, so
 	// the policy never decides against a half-finished picture.
 	if settings.Mode == magmaModeAuto {
+		// Before deciding on orders, make sure what is advertised is still backed
+		// by the wallet: an offer we cannot fund only collects seller failures.
+		s.syncOfferBalanceGuard(ctx, token)
 		s.runAutoMode(ctx, token)
 	} else {
 		// The modes that cannot answer on their own still have a deadline; the

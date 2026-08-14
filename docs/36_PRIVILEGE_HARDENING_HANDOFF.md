@@ -925,3 +925,33 @@ app start re-resolves the current source where that app owns Bitcoin wiring.
 External Bitcoin, external Elements, PeerSwap external Elements, and distinct
 Elements volumes remain supported. Do not change this into an automatic
 cascading restart policy without a separate product decision.
+
+## Official 0.5.2 direct UI upgrade closure (2026-08-14)
+
+Implementation commit `ada87da15b192ad9fe4cc56bf2bb83c6413782ff`
+adds the missing bridge for nodes that start the upgrade from the old 0.5.2
+Manager UI. That updater cannot be changed retroactively and only installs the
+new Manager/UI, so the new Manager detects the exact 0.5.3/legacy-boundary
+state and launches the current authenticated upgrade helper through the one
+remaining digest- and metadata-validated legacy transition. Eligibility is
+strict: exact version, canonical Manager identity, reviewed root sudoers,
+absent broker/rollback state, fixed tools and exact release tag/full commit.
+
+A full clone of `brln-os-basica` installed official tag `0.5.2-Beta` at commit
+`55c929d10f6eb247202e8a3d040ebe812e6efba9`. The real authenticated API flow
+reported 0.5.2 current/0.5.3 latest and returned HTTP 200 when starting the
+upgrade. Both the legacy unit and automatic transition completed. Final checks
+passed for Manager health, broker self-test, enforce mode, sudo rejection,
+Docker-group removal, sudoers removal, schema-v6 rollback and staging cleanup.
+PostgreSQL was not restarted and Docker remained inactive. LND's failed retry
+loop began at boot before the upgrade because this disposable baseline had no
+Bitcoin RPC backend.
+
+The schema-v6 rollback restored exact captured Manager/config/access state and
+HTTP health, after which an explicit authenticated root-helper reapplication
+passed. Do not make that reapplication automatic after rollback: retained
+rollback state intentionally preserves the operator's decision. The legacy
+first stage means rollback restores the functional 0.5.3 Manager/UI that was
+present immediately before privilege cutover, rather than byte-for-byte 0.5.2
+application files. Full evidence and the loopback-fixture constraints are in
+`docs/baselines/privilege-hardening-direct-ui-upgrade-0.5.2-2026-08-14.json`.

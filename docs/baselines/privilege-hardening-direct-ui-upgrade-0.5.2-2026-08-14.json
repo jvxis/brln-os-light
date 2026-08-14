@@ -1,0 +1,114 @@
+{
+  "date_utc": "2026-08-14",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "implementation_commit": "ada87da15b192ad9fe4cc56bf2bb83c6413782ff",
+  "scope": "direct Manager UI/API upgrade from the official 0.5.2-Beta release to the complete 0.5.3 privilege boundary on disposable Ubuntu 24.04",
+  "target": {
+    "vm_base": "brln-os-basica full clone",
+    "os": "Ubuntu 24.04",
+    "architecture": "amd64",
+    "network": "VirtualBox NAT with localhost-only SSH forwarding; no LAN scan or adapter restart",
+    "source_tag": "0.5.2-Beta",
+    "source_commit": "55c929d10f6eb247202e8a3d040ebe812e6efba9",
+    "source_version": "0.5.2-Beta",
+    "target_version": "0.5.3-Beta"
+  },
+  "official_0_5_2_baseline": {
+    "manager_active": true,
+    "postgresql_active": true,
+    "docker_active": false,
+    "lnd_backend_configured": false,
+    "broker_present": false,
+    "legacy_sudoers": "root:root:0440",
+    "manager_groups": [
+      "lightningos",
+      "systemd-journal",
+      "lnd",
+      "docker"
+    ],
+    "config_sha256": "ee747d9992d98f97daff79a1db6611f923eac8cfa72a26792abc0767cb72f0b9"
+  },
+  "baseline_preparation_exceptions": {
+    "release_defect": "the published 0.5.2 installer created three APT repository keyrings as 0600, preventing the _apt user from reading them",
+    "temporary_correction": "only the PostgreSQL, Tor and i2pd public keyrings were changed to 0644 so the official installer could complete",
+    "fixed_on_pr33": true,
+    "product_source_modified": false
+  },
+  "release_fixture": {
+    "reason": "0.5.3-Beta is not yet a public immutable release",
+    "source_parent_commit": "ada87da15b192ad9fe4cc56bf2bb83c6413782ff",
+    "fixture_commit": "3ec4d0c78e49ffcb27fe97ead044a51ef90925ab",
+    "only_source_difference": "release API and Git transport redirected to an HTTPS loopback fixture and a VM-local bare repository",
+    "public_tag_or_release_created": false,
+    "credentials_or_private_node_data_used": false
+  },
+  "ui_api_upgrade": {
+    "auth_setup_http": 200,
+    "status_http": 200,
+    "reported_current_version": "0.5.2-beta",
+    "reported_latest_version": "0.5.3-beta",
+    "update_available": true,
+    "start_http": 200,
+    "legacy_upgrade_unit_completed": true,
+    "automatic_privilege_transition_started": true,
+    "release_tag_version_commit_binding": "passed",
+    "staged_helper_sha256_validation": "passed"
+  },
+  "accepted_forward_cutover": {
+    "manager_active": true,
+    "health_http": 200,
+    "privileged_mode": "enforce",
+    "broker_socket_active": true,
+    "broker_self_test": "passed",
+    "manager_effective_sudo": false,
+    "manager_docker_group": false,
+    "legacy_sudoers_absent": true,
+    "rollback_schema": 6,
+    "rollback_state": "root:root:0700",
+    "build_stamp_exact_fixture_commit_and_version": true,
+    "upgrade_staging_files_after_completion": 0,
+    "temporary_transition_helper_after_completion": "absent",
+    "postgresql_activation_timestamp": "preserved",
+    "docker_state": "remained inactive"
+  },
+  "rollback": {
+    "command": "/usr/local/sbin/lightningos-rollback-privilege-cutover",
+    "result": "passed",
+    "manager_hash_equal_to_captured_pre_cutover_binary": true,
+    "configuration_hash_equal_to_official_0_5_2_baseline": true,
+    "legacy_sudoers_restored": true,
+    "docker_group_restored": true,
+    "broker_and_socket_removed": true,
+    "manager_health_http": 200,
+    "postgresql_activation_timestamp_preserved": true,
+    "scope_note": "the legacy 0.5.2 updater installs the new Manager and UI before the 0.5.3 transition can capture schema-v6 state, so rollback restores that functional pre-cutover Manager/UI plus the legacy access boundary rather than the original 0.5.2 application bytes"
+  },
+  "reapplication": {
+    "automatic_after_deliberate_rollback": false,
+    "reason": "the retained root-only rollback state blocks a silent automatic reversal of the operator's rollback decision",
+    "authenticated_root_helper_reapplication": "passed",
+    "final_privileged_mode": "enforce",
+    "final_health_http": 200
+  },
+  "observed_lnd_behavior": {
+    "state": "automatic retry because no Bitcoin RPC backend exists on the disposable baseline",
+    "first_failure_preceded_upgrade": true,
+    "caused_by_upgrade": false,
+    "wallet_channel_or_chain_data_present": false
+  },
+  "validation": {
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "ui_production_build": "passed",
+    "linux_amd64_manager_build": "passed",
+    "linux_amd64_broker_build": "passed",
+    "pull_request": 33,
+    "merge_performed": false
+  },
+  "cleanup": {
+    "disposable_vm_removed_after_capture": true,
+    "temporary_vm_key_and_console_captures": "moved to the Windows Recycle Bin after the VM and virtual disks were deleted",
+    "repository_worktree_temporary_files": 0
+  },
+  "secrets_or_private_node_identifiers_recorded": false
+}

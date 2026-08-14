@@ -1674,6 +1674,29 @@ explicit app start re-resolves current wiring where the app owns that choice.
 The exact inventory and invariants are recorded in
 `docs/baselines/privilege-hardening-bitcoin-rpc-consumer-audit-2026-08-13.json`.
 
+The direct published-release upgrade gate is now closed for the official
+`0.5.2-Beta` baseline on Ubuntu 24.04. The legacy Manager accepted the upgrade
+through the authenticated UI/API, installed the 0.5.3 Manager/UI, and the new
+Manager then used the single retained, digest-bound legacy launch to execute
+the complete authenticated privilege transition. The accepted result ran in
+`enforce`, passed the broker self-test and HTTPS health check, removed wildcard
+sudo and Docker membership, retained root-only schema-v6 rollback state, and
+left PostgreSQL and Docker activation state unchanged. Because no public
+immutable 0.5.3 release exists yet, the disposable VM used a TLS loopback
+release fixture derived from implementation commit
+`ada87da15b192ad9fe4cc56bf2bb83c6413782ff`; only release/Git transport was
+redirected, and no public tag or release was created.
+
+The supported rollback also passed. It restored the exact captured Manager,
+configuration, legacy sudoers/group boundary, removed the broker transport,
+and kept Manager/PostgreSQL healthy. The old updater necessarily replaces the
+Manager/UI before 0.5.3 code can capture schema-v6 state, so this path restores
+the functional pre-cutover 0.5.3 Manager/UI and legacy privilege boundary, not
+the original 0.5.2 application bytes. A deliberate rollback is not silently
+reversed: retained root-only rollback state suppresses the automatic bridge;
+an authenticated root-helper reapplication passed separately. Evidence is in
+`docs/baselines/privilege-hardening-direct-ui-upgrade-0.5.2-2026-08-14.json`.
+
 Exit criterion: compromising one app does not automatically grant another
 app's permissions, host administration, or unrestricted LND administration.
 

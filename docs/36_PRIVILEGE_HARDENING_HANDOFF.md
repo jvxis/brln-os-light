@@ -677,6 +677,22 @@ the disposable Ubuntu 26.04 VM. Evidence:
 and
 `docs/baselines/privilege-hardening-phase2-bark-wallet-reauth-2026-08-13.json`.
 
+The later manual password-reset regression is closed by implementation commit
+`de6997025486d9ad98d050fd8489af7b7f419363`. Individual file bind mounts kept
+the previous inode visible after the broker atomically replaced
+`ui_password`, so the App Store returned the new password while a running API
+could still verify against the old one. The API now receives the same two
+root-owned auth files through one read-only auth-directory mount. Legacy
+running snapshots reconcile only the changed API service; barkd and wallet
+state are not restarted.
+
+LOS TESTE2 passed two consecutive resets and real logins. The second password
+was different, the prior session became unauthenticated, and the new password
+authenticated immediately. Only the API container identity changed during
+migration; barkd, web, proxy, wallet inventory, Bitcoin, and LND were
+preserved. Temporary checkout/worktree counts returned to zero. Evidence:
+`docs/baselines/privilege-hardening-bark-password-reset-2026-08-14.json`.
+
 The Mempool slice is accepted. Official v3.3.1 frontend/backend and MariaDB
 10.11.18 images are digest-pinned; the broker owns the closed declaration,
 private snapshot, image preparation/probes, lifecycle, status, volume-removing

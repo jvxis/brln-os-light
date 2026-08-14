@@ -1149,6 +1149,25 @@ stopped choice was restored. Bitcoin, LND, manager, firewall, and network
 state did not change. Evidence is in
 `docs/baselines/privilege-hardening-phase2-bark-wallet-boundary-2026-08-12.json`.
 
+A later manual login/reset test exposed an inode-visibility regression in the
+otherwise atomic password rotation. The API mounted `ui_password` as an
+individual bind-mounted file; replacing that file atomically on the host could
+leave the running container reading the previous inode while the App Store
+returned the new password. Commit
+`de6997025486d9ad98d050fd8489af7b7f419363` mounts the already-bounded auth
+directory read-only instead. It exposes the same password and session-secret
+files to the same API identity, while making atomic replacements immediately
+visible. A running legacy snapshot is reconciled through Compose; only the API
+service is recreated, while barkd and wallet state remain untouched.
+
+LOS TESTE2 passed two consecutive authenticated resets. Each newly returned
+password created a valid Bark session, the second reset invalidated the first
+session, and the host/container password hashes matched after the atomic
+replacement. The API alone changed container identity; barkd, web, proxy,
+wallet inventory, Bitcoin, and LND identities/restart counts were preserved.
+Evidence is in
+`docs/baselines/privilege-hardening-bark-password-reset-2026-08-14.json`.
+
 The Mempool slice is accepted. Its official v3.3.1 frontend/backend images and
 the official MariaDB 10.11.18 LTS image are pinned by multi-architecture
 manifest digest. The manager has no direct Docker, Compose, UFW, filesystem

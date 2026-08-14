@@ -126,6 +126,9 @@ func (s *Server) stopBarkWallet(ctx context.Context) error {
 	if !state.Installed {
 		return errors.New("Bark Wallet is not installed")
 	}
+	if state.Status != "running" {
+		return nil
+	}
 	// A legacy installation may be running before its first 0.5.3 start. Enroll
 	// its declaration and permissions without recreating containers so stop
 	// remains available immediately after an in-place upgrade.

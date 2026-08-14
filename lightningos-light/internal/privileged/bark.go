@@ -24,6 +24,7 @@ import (
 const (
 	maxBarkWalletSecretBytes        = 4096
 	defaultManagerCACertificatePath = "/etc/lightningos/tls/local-ca.crt"
+	legacyManagerCACertificatePath  = "/etc/lightningos/tls/los-local-ca.crt"
 )
 
 type BarkWalletPaths struct {
@@ -65,11 +66,21 @@ func NewNativeBarkWalletManager(runner CommandRunner) *NativeBarkWalletManager {
 		TLSDir:               tlsDir,
 		TLSCertificate:       filepath.Join(tlsDir, "server.crt"),
 		TLSPrivateKey:        filepath.Join(tlsDir, "server.key"),
-		ManagerCACertificate: defaultManagerCACertificatePath,
+		ManagerCACertificate: selectBarkManagerCACertificatePath(defaultManagerCACertificatePath, legacyManagerCACertificatePath),
 		LegacyComposePath:    filepath.Join(legacyRoot, appmanifest.BarkWalletComposeFile),
 		LegacyTLSCert:        filepath.Join(legacyRoot, appmanifest.BarkWalletTLSDir, "server.crt"),
 		LegacyTLSKey:         filepath.Join(legacyRoot, appmanifest.BarkWalletTLSDir, "server.key"),
 	}}
+}
+
+func selectBarkManagerCACertificatePath(primary, compatibility string) string {
+	if safeNonEmptyRegularFile(primary) {
+		return primary
+	}
+	if safeNonEmptyRegularFile(compatibility) {
+		return compatibility
+	}
+	return primary
 }
 
 func (manager *NativeBarkWalletManager) composePaths() appmanifest.BarkWalletComposePaths {

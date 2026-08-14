@@ -49,6 +49,28 @@ func testBarkWalletManager(t *testing.T, runner CommandRunner) *NativeBarkWallet
 	}}
 }
 
+func TestSelectBarkManagerCACertificatePathSupportsCompatibilityName(t *testing.T) {
+	root := t.TempDir()
+	primary := filepath.Join(root, "local-ca.crt")
+	compatibility := filepath.Join(root, "los-local-ca.crt")
+
+	if got := selectBarkManagerCACertificatePath(primary, compatibility); got != primary {
+		t.Fatalf("missing candidates selected %q, want primary %q", got, primary)
+	}
+	if err := os.WriteFile(compatibility, []byte("compatibility CA"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := selectBarkManagerCACertificatePath(primary, compatibility); got != compatibility {
+		t.Fatalf("compatibility candidate selected %q, want %q", got, compatibility)
+	}
+	if err := os.WriteFile(primary, []byte("primary CA"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := selectBarkManagerCACertificatePath(primary, compatibility); got != primary {
+		t.Fatalf("primary candidate selected %q, want %q", got, primary)
+	}
+}
+
 func generateTestBarkManagerCA() ([]byte, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

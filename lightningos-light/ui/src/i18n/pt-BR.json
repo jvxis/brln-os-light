@@ -4144,6 +4144,7 @@
     "peerAddressPlaceholder": "pubkey@host:port",
     "peerAddressRequired": "Endereço do peer obrigatório.",
     "peerConnectFailed": "Falha ao conectar peer.",
+    "peerConnectPending": "Pedido registrado e o LND segue tentando, mas o peer ainda nao conectou. Verifique host, porta e, para endereco .onion, o Tor.",
     "peerConnected": "Peer conectado.",
     "peerAlreadyConnected": "O peer já está conectado.",
     "peerDisconnected": "Peer desconectado.",

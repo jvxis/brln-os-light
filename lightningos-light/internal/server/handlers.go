@@ -25,19 +25,23 @@ import (
 )
 
 const (
-	secretsPath                    = "/etc/lightningos/secrets.env"
-	lndConfPath                    = "/data/lnd/lnd.conf"
-	lndPasswordPath                = "/data/lnd/password.txt"
-	lndWalletDBPath                = "/data/lnd/data/chain/bitcoin/mainnet/wallet.db"
-	lndChannelDBPath               = "/data/lnd/data/graph/mainnet/channel.db"
-	lndAdminMacaroonPath           = "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"
-	lndFixPermsScript              = "/usr/local/sbin/lightningos-fix-lnd-perms"
-	mempoolBaseURL                 = "https://mempool.space/api/v1/lightning"
-	boostPeersDefaultLimit         = 3
-	boostPeersMaxLimit             = 10
-	boostPeersPersistentLimit      = 1
-	lndRPCTimeout                  = 15 * time.Second
-	lndConnectTimeout              = 30 * time.Second
+	secretsPath               = "/etc/lightningos/secrets.env"
+	lndConfPath               = "/data/lnd/lnd.conf"
+	lndPasswordPath           = "/data/lnd/password.txt"
+	lndWalletDBPath           = "/data/lnd/data/chain/bitcoin/mainnet/wallet.db"
+	lndChannelDBPath          = "/data/lnd/data/graph/mainnet/channel.db"
+	lndAdminMacaroonPath      = "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"
+	lndFixPermsScript         = "/usr/local/sbin/lightningos-fix-lnd-perms"
+	mempoolBaseURL            = "https://mempool.space/api/v1/lightning"
+	boostPeersDefaultLimit    = 3
+	boostPeersMaxLimit        = 10
+	boostPeersPersistentLimit = 1
+	lndRPCTimeout             = 15 * time.Second
+	lndConnectTimeout         = 30 * time.Second
+	// How long to wait for a permanent connection request to actually land
+	// before telling the operator it has not, and how often to look.
+	lndPeerConnectConfirmWindow    = 12 * time.Second
+	lndPeerConnectPollInterval     = 750 * time.Millisecond
 	lndOpenChannelTimeout          = 60 * time.Second
 	lndBatchOpenChannelTimeout     = 90 * time.Second
 	lndWalletPaymentPreviewTimeout = 120 * time.Second
@@ -2247,10 +2251,52 @@ func (s *Server) handleLNConnectPeer(w http.ResponseWriter, r *http.Request) {
 		alreadyConnected = true
 	}
 
-	writeJSON(w, http.StatusOK, map[string]bool{
+	// A permanent request answers before anything is dialled: LND registers the
+	// persistent connection, starts `go connMgr.Connect(...)` and returns nil.
+	// Reporting that as "connected" told the operator the peer was there while
+	// an unreachable host, a wrong port or a .onion without Tor kept it away.
+	// The non-permanent path does dial, so its result is already the truth.
+	connected := alreadyConnected || !perm
+	if !connected {
+		connected = s.waitForPeerConnection(ctx, pubkey)
+	}
+
+	response := map[string]any{
 		"ok":                true,
 		"already_connected": alreadyConnected,
-	})
+		"connected":         connected,
+	}
+	if !connected {
+		// Not an error: the request stands and LND keeps retrying on its own.
+		// It just has not happened yet, and saying so is the whole point.
+		response["warning"] = "LND accepted the request and will keep retrying, but the peer has not connected yet. Check that the host and port are reachable, and that a .onion address has Tor available."
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// waitForPeerConnection polls until the peer shows up among the connected ones.
+// Polling is what there is: LND offers no "tell me when this connection lands",
+// and the alternative is to keep guessing.
+func (s *Server) waitForPeerConnection(ctx context.Context, pubkey string) bool {
+	deadline := time.Now().Add(lndPeerConnectConfirmWindow)
+	for {
+		peers, err := s.lnd.ListPeers(ctx)
+		if err == nil {
+			for _, peer := range peers {
+				if strings.EqualFold(strings.TrimSpace(peer.PubKey), pubkey) {
+					return true
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(lndPeerConnectPollInterval):
+		}
+	}
 }
 
 func (s *Server) handleLNDisconnectPeer(w http.ResponseWriter, r *http.Request) {
@@ -4486,12 +4532,12 @@ func (s *Server) resolveWalletPaymentInput(ctx context.Context, rawPaymentReques
 
 func (s *Server) handleWalletPayPreview(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PaymentRequest  string   `json:"payment_request"`
-		ChannelPoint    string   `json:"channel_point"`
-		ChannelPoints   []string `json:"channel_points"`
-		AmountSat       int64    `json:"amount_sat"`
-		Comment         string   `json:"comment"`
-		MaxFeeSat       int64    `json:"max_fee_sat"`
+		PaymentRequest string   `json:"payment_request"`
+		ChannelPoint   string   `json:"channel_point"`
+		ChannelPoints  []string `json:"channel_points"`
+		AmountSat      int64    `json:"amount_sat"`
+		Comment        string   `json:"comment"`
+		MaxFeeSat      int64    `json:"max_fee_sat"`
 		// Accepted and ignored. Previewing a route no longer asks for the password,
 		// but readJSON rejects unknown fields, so dropping this would turn a stale
 		// frontend still sending it into an "invalid json" error.
@@ -4613,9 +4659,9 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PaymentRequest string   `json:"payment_request"`
-		ChannelPoint   string   `json:"channel_point"`
-		ChannelPoints  []string `json:"channel_points"`
+		PaymentRequest  string   `json:"payment_request"`
+		ChannelPoint    string   `json:"channel_point"`
+		ChannelPoints   []string `json:"channel_points"`
 		RouteToken      string   `json:"route_token"`
 		AmountSat       int64    `json:"amount_sat"`
 		Comment         string   `json:"comment"`

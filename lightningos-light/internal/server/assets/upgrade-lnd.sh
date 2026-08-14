@@ -248,7 +248,12 @@ for signer in "${LND_SIGNERS[@]}"; do
   signature="manifest-${username}-v${VERSION}.sig"
   signature_path="$tmp_dir/$signature"
 
-  if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "${RELEASE_URL}/${signature}" -o "$signature_path"; then
+  # Each release is signed by a subset of the pinned maintainers. A missing
+  # optional signature is expected and must not look like a failed upgrade in
+  # the UI log. Authentication still fails closed below unless the threshold
+  # of valid pinned signatures is reached.
+  if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
+    "${RELEASE_URL}/${signature}" -o "$signature_path" 2>/dev/null; then
     rm -f "$signature_path"
     continue
   fi

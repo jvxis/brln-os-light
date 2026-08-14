@@ -40,3 +40,19 @@ func TestLNDUpgradeAuthenticatesReleaseBeforeExtraction(t *testing.T) {
 		t.Fatalf("new LND installation can occur before authenticated extraction")
 	}
 }
+
+func TestLNDUpgradeHidesOnlyMissingOptionalSignatureNoise(t *testing.T) {
+	script := embeddedUpgradeScript
+	optionalSignatureProbe := `"${RELEASE_URL}/${signature}" -o "$signature_path" 2>/dev/null`
+	if !strings.Contains(script, optionalSignatureProbe) {
+		t.Fatalf("optional LND signature probe must hide expected missing-asset curl noise")
+	}
+	for _, requiredDownload := range []string{
+		`curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$URL" -o "$tmp_dir/$ARCHIVE"`,
+		`curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "${RELEASE_URL}/${MANIFEST}" -o "$tmp_dir/$MANIFEST"`,
+	} {
+		if strings.Contains(script, requiredDownload+" 2>/dev/null") {
+			t.Fatalf("required authenticated LND download unexpectedly hides curl errors: %q", requiredDownload)
+		}
+	}
+}

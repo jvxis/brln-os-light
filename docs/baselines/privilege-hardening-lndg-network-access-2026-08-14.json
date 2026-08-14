@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-14T21:33:00Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "implementation_commit": "107fbd0220d918e0f478a2e6850c4ca004aae9f6",
+  "scope": "LNDg real-network browser access regression and state-preserving lifecycle gate",
+  "regression": {
+    "node": "LOS TESTE2",
+    "symptom": "Django Bad Request when opening the LNDg URL from the LAN",
+    "initial_node_url_http": 400,
+    "initial_log_error": "django.core.exceptions.DisallowedHost",
+    "root_cause": "the closed LNDg allowlist omitted the node address because host discovery was unavailable inside the confined Manager",
+    "previous_gate_gap": "localhost HTTP response was accepted without validating the user-facing node URL"
+  },
+  "accepted_boundary": {
+    "access_host_source": "IPv4 literal from authenticated Manager install/start request",
+    "previous_valid_ipv4_hosts_preserved": true,
+    "wildcard_allowed": false,
+    "network_scan_performed": false,
+    "network_adapter_changed": false,
+    "manager_address_families_expanded": false,
+    "external_network_command_required": false
+  },
+  "functional_gate": {
+    "manager_build_stamp": "107fbd0220d918e0f478a2e6850c4ca004aae9f6 0.5.3-Beta",
+    "lndg_allowlist_contains_node_ipv4": true,
+    "node_url_redirect_http": 302,
+    "node_url_login_http": 200,
+    "separate_lan_client_http": 200,
+    "final_page": "Django site admin login",
+    "disallowed_host_after_repair": 0,
+    "stop_passed": true,
+    "start_passed": true,
+    "final_lndg_status": "running",
+    "final_lndg_restart_count": 0,
+    "final_postgres_status": "running",
+    "final_postgres_restart_count": 0,
+    "postgres_file_count_before": 1411,
+    "postgres_file_count_after": 1411
+  },
+  "dependency_preservation": {
+    "lnd_pid_before": 169808,
+    "lnd_pid_after": 169808,
+    "lnd_restart_count_before": 3,
+    "lnd_restart_count_after": 3,
+    "bitcoin_started_at_before": "2026-08-14T20:13:51.188437451Z",
+    "bitcoin_started_at_after": "2026-08-14T20:13:51.188437451Z",
+    "bitcoin_restart_count_before": 0,
+    "bitcoin_restart_count_after": 0
+  },
+  "validation": {
+    "go_test_all": "passed",
+    "manager_build": "passed",
+    "broker_build": "passed",
+    "git_diff_check": "passed"
+  },
+  "cleanup": {
+    "temporary_operator_checkouts_remaining": 0,
+    "temporary_upgrade_worktrees_remaining": 0,
+    "local_worktree_clean_before_documentation": true
+  }
+}

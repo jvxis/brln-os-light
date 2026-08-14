@@ -811,6 +811,26 @@ tested Bookworm image were removed, and no network scan or adapter operation
 occurred. Evidence is stored in
 `docs/baselines/privilege-hardening-phase2-lndg-functional-lifecycle-2026-08-12.json`.
 
+The original LNDg HTTP gate was incomplete: it exercised localhost and accepted
+the presence of an HTTP response, so it did not prove that the URL shown to a
+LAN user worked. The later LOS TESTE2 regression reproduced Django
+`DisallowedHost` at `192.168.68.92:8889`. Hardening had replaced the wildcard
+with a closed allowlist, but host discovery depended on network commands (and a
+native netlink fallback) unavailable inside the confined Manager. Install and
+start now add the IPv4 address of the authenticated Manager request and merge
+previously enrolled valid IPv4 addresses; wildcards and invalid values remain
+rejected. This needs neither network discovery nor a wider Manager sandbox.
+
+The corrected real-access gate at commit `107fbd02` returned 302 from the node
+URL and 200 for the Django login page, then passed stop/start and returned 200
+again from a separate LAN client. LNDg and its dedicated PostgreSQL container
+ended running with zero restarts, the PostgreSQL tree retained 1,411 files,
+and no `DisallowedHost` appeared after repair. LND kept PID `169808` and restart
+count 3; Bitcoin retained start time `2026-08-14T20:13:51.188437451Z` and
+restart count 0. Temporary checkouts and upgrade worktrees were removed.
+Evidence is stored in
+`docs/baselines/privilege-hardening-lndg-network-access-2026-08-14.json`.
+
 LNbits is the next high-adoption application to enter the boundary. The
 mutable `lnbits/lnbits:latest` selector has been replaced by the official
 stable `v1.5.6` image and its Docker Hub multi-architecture manifest digest.

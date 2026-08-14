@@ -795,6 +795,23 @@ three negative cases failed closed, and system package/repository/service state
 was preserved. Evidence:
 `docs/baselines/privilege-hardening-phase3-installer-repository-auth-2026-08-13.json`.
 
+## LNDg real-network regression closure (2026-08-14)
+
+Do not reuse “container running” or a localhost HTTP response as the LNDg
+browser acceptance gate. The prior gate missed a real Django `DisallowedHost`
+regression because the hardened allowlist lacked the address used by LAN
+clients. Commit `107fbd0220d918e0f478a2e6850c4ca004aae9f6` derives that IPv4
+address from the authenticated Manager install/start request, merges valid
+previously enrolled IPv4 addresses, and retains the no-wildcard boundary. It
+does not add `AF_NETLINK`, execute network discovery, or alter an adapter.
+
+LOS TESTE2 passed the corrected gate through its actual node URL: redirect 302,
+Django login page 200, stop/start successful, and a separate LAN request 200.
+LND and Bitcoin activation identities were unchanged, the dedicated LNDg
+PostgreSQL tree was preserved, both LNDg containers ended running, and all
+temporary trusted checkouts/worktrees were removed. Evidence:
+`docs/baselines/privilege-hardening-lndg-network-access-2026-08-14.json`.
+
 ## Test-node and network constraints
 
 Access records are outside Git:

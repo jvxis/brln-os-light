@@ -72,6 +72,22 @@ verifies the requested systemd state, and fails closed to a disabled runtime
 state on transition failure. Moving terminal installation to a native App Store
 entry remains intentionally scheduled for 0.5.4.
 
+The 2026-08-14 final catalog-runtime reconciliation at implementation commit
+`fe3f9dd7` closes the gap between CPU Miner's original typed broker boundary
+and container-level confinement. New starts use only digest-selected images,
+explicit UID/GID 65534, a read-only root filesystem, dropped capabilities,
+`no-new-privileges`, and a bounded tmpfs. Exact 0.5.2 image tags remain valid
+only as migration input and are rewritten to their corresponding digests
+before privileged execution. Permanent tests now enumerate all 20 registered
+apps and every service in the 13 Compose manifests. A service must either meet
+its declared confinement controls or carry a narrow compatibility exception;
+this deliberately preserves tested requirements such as Tapd host networking,
+Bitcoin's external-volume ownership bootstrap, and the established upstream
+BTCPay, RoboSats, and LNDg startup contracts. LOS TESTE2 passed the trusted
+upgrade, confined baseline/fast image probes, API stop/start, effective Docker
+runtime inspection, and dependency-preservation gate. Evidence:
+`docs/baselines/privilege-hardening-phase2-catalog-runtime-closure-2026-08-14.json`.
+
 Final Ubuntu 24 evidence:
 
 - `docs/baselines/privilege-hardening-final-ubuntu24-fresh-2026-08-13.json`;

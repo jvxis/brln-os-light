@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   APIError,
   cancelLoopOutBRLNJob,
+  updateLoopOutBRLNMaxFee,
   connectLoopOutBRLNStrike,
   createLoopOutBRLNJob,
   disconnectLoopOutBRLNStrike,
@@ -287,6 +288,20 @@ export default function LoopOutBRLN() {
       } else {
         setMessage(err?.message || t('loopOutBrln.startFailed'))
       }
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const saveMaxFee = async (jobID: number, maxFeePPM: number) => {
+    setBusy('max-fee')
+    setMessage('')
+    try {
+      await updateLoopOutBRLNMaxFee(jobID, maxFeePPM)
+      await load(true)
+      setMessage(t('loopOutBrln.maxFeeUpdated', { ppm: maxFeePPM.toLocaleString() }))
+    } catch (err: any) {
+      setMessage(err?.message || t('loopOutBrln.maxFeeUpdateFailed'))
     } finally {
       setBusy('')
     }
@@ -585,7 +600,7 @@ export default function LoopOutBRLN() {
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full rounded-full bg-brass" style={{ width: `${Math.min(100, job.sent_sat * 100 / Math.max(1, job.total_sat))}%` }} /></div>
             </button>)}
           </div>
-          <JobDetail detail={detail} busy={busy} sats={sats} dateTime={dateTime} progress={progress} effectivePPM={effectivePPM} strikeConfigured={strikeStatus.configured} strikeAPIKey={strikeAPIKey} t={t} onStrikeAPIKey={setStrikeAPIKey} onConnectStrike={connectStrike} onAction={jobAction} onStrikeReturn={requestStrikeReturn} />
+          <JobDetail detail={detail} busy={busy} sats={sats} dateTime={dateTime} progress={progress} effectivePPM={effectivePPM} strikeConfigured={strikeStatus.configured} strikeAPIKey={strikeAPIKey} t={t} onStrikeAPIKey={setStrikeAPIKey} onConnectStrike={connectStrike} onAction={jobAction} onStrikeReturn={requestStrikeReturn} onSaveMaxFee={saveMaxFee} />
         </div>
       )}
 
@@ -715,7 +730,82 @@ function PlanCheck({ ready, label, detail }: { ready: boolean; label: string; de
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-2xl border border-white/10 bg-black/15 p-3"><p className="text-[10px] uppercase tracking-wide text-fog/40">{label}</p><p className="mt-1 break-all text-sm font-semibold">{value}</p></div> }
 
-function JobDetail({ detail, busy, sats, dateTime, progress, effectivePPM, strikeConfigured, strikeAPIKey, t, onStrikeAPIKey, onConnectStrike, onAction, onStrikeReturn }: { detail: LoopOutBRLNJobDetail | null; busy: string; sats: (n?: number) => string; dateTime: (v?: string) => string; progress: number; effectivePPM: number; strikeConfigured: boolean; strikeAPIKey: string; t: any; onStrikeAPIKey: (value: string) => void; onConnectStrike: (password?: string) => Promise<void>; onAction: (action: 'pause' | 'resume' | 'cancel', id: number) => Promise<void>; onStrikeReturn: (id: number) => Promise<void> }) {
+// Only the fee ceiling is editable while a loop runs. Size and tranche would
+// have to be reconciled against what already moved; cancelling and starting
+// again is a clean state and one click away.
+function MaxFeeEditor({ job, busy, t, onSave }: {
+  job: LoopOutBRLNJob
+  busy: string
+  t: any
+  onSave: (id: number, ppm: number) => Promise<void>
+}) {
+  const [value, setValue] = useState(String(job.max_fee_ppm ?? ''))
+  const [editing, setEditing] = useState(false)
+
+  // Follow the job while not editing, so a change made elsewhere is reflected
+  // instead of the field holding a stale number.
+  useEffect(() => {
+    if (!editing) setValue(String(job.max_fee_ppm ?? ''))
+  }, [job.max_fee_ppm, editing])
+
+  const parsed = Number(value)
+  const valid = Number.isFinite(parsed) && parsed >= 1 && parsed <= 1_000_000
+  const editable = ['running', 'waiting_liquidity', 'paused', 'pause_requested'].includes(job.status)
+  if (!editable) return null
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-wide text-fog/45">{t('loopOutBrln.feeBudget')}</p>
+          <p className="mt-1 text-xs text-fog/55">{t('loopOutBrln.maxFeeEditHint')}</p>
+        </div>
+        {editing ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              className="input-field w-32"
+              type="number"
+              min={1}
+              max={1000000}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+            <span className="text-xs text-fog/45">PPM</span>
+            <button
+              className="btn-primary"
+              disabled={!valid || Boolean(busy)}
+              onClick={async () => {
+                await onSave(job.id, parsed)
+                setEditing(false)
+              }}
+            >
+              {t('common.save')}
+            </button>
+            <button
+              className="btn-secondary"
+              disabled={Boolean(busy)}
+              onClick={() => {
+                setValue(String(job.max_fee_ppm ?? ''))
+                setEditing(false)
+              }}
+            >
+              {t('common.cancel')}
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <strong className="text-fog">{(job.max_fee_ppm ?? 0).toLocaleString()} PPM</strong>
+            <button className="btn-secondary" disabled={Boolean(busy)} onClick={() => setEditing(true)}>
+              {t('common.edit')}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function JobDetail({ detail, busy, sats, dateTime, progress, effectivePPM, strikeConfigured, strikeAPIKey, t, onStrikeAPIKey, onConnectStrike, onAction, onStrikeReturn, onSaveMaxFee }: { detail: LoopOutBRLNJobDetail | null; busy: string; sats: (n?: number) => string; dateTime: (v?: string) => string; progress: number; effectivePPM: number; strikeConfigured: boolean; strikeAPIKey: string; t: any; onStrikeAPIKey: (value: string) => void; onConnectStrike: (password?: string) => Promise<void>; onAction: (action: 'pause' | 'resume' | 'cancel', id: number) => Promise<void>; onStrikeReturn: (id: number) => Promise<void>; onSaveMaxFee: (id: number, ppm: number) => Promise<void> }) {
   if (!detail) return <div className="section-card text-center text-sm text-fog/55">{busy === 'detail' ? t('common.loading') : t('loopOutBrln.selectHistory')}</div>
   const { job, payments, events, strike_return: strikeReturn } = detail
   const strikeDestination = isStrikeAddress(job.lightning_address)
@@ -724,6 +814,7 @@ function JobDetail({ detail, busy, sats, dateTime, progress, effectivePPM, strik
     <div className="section-card space-y-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h2 className="text-2xl font-semibold">{job.lightning_address}</h2><StatusBadge status={job.status} t={t} /></div><p className="mt-1 text-xs text-fog/45">#{job.id} · {dateTime(job.created_at)}</p></div><div className="flex gap-2">{activeStatuses.has(job.status) && !['pause_requested', 'cancel_requested'].includes(job.status) && <button className="btn-secondary" disabled={Boolean(busy)} onClick={() => void onAction('pause', job.id)}>{t('common.pause')}</button>}{job.status === 'paused' && <button className="btn-primary" disabled={Boolean(busy)} onClick={() => void onAction('resume', job.id)}>{t('common.resume')}</button>}{!terminalStatuses.has(job.status) && job.status !== 'cancel_requested' && <button className="btn-secondary text-rose-200" disabled={Boolean(busy)} onClick={() => void onAction('cancel', job.id)}>{t('common.cancel')}</button>}</div></div>
       <div><div className="mb-2 flex justify-between text-xs text-fog/55"><span>{sats(job.sent_sat)} / {sats(job.total_sat)}</span><span>{progress.toFixed(1)}%</span></div><div className="h-2 overflow-hidden rounded-full bg-white/5"><div className="h-full rounded-full bg-gradient-to-r from-brass to-amber-300" style={{ width: `${progress}%` }} /></div></div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label={t('loopOutBrln.sent')} value={sats(job.sent_sat)} /><Metric label={t('loopOutBrln.remaining')} value={sats(Math.max(0, job.total_sat - job.sent_sat))} /><Metric label={t('loopOutBrln.fees')} value={sats(job.fee_sat)} /><Metric label={t('loopOutBrln.effectivePPM')} value={effectivePPM.toLocaleString()} /></div>
+      <MaxFeeEditor job={job} busy={busy} t={t} onSave={onSaveMaxFee} />
       {job.last_error && <p className="rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/80">{job.last_error}</p>}
     </div>
     {strikeDestination && <div className="section-card">

@@ -1424,6 +1424,13 @@ export const pauseLoopOutBRLNJob = (id: number): Promise<LoopOutBRLNJob> =>
   request(`/api/apps/loopout-brln/jobs/${id}/pause`, { method: 'POST', body: JSON.stringify({}) })
 export const resumeLoopOutBRLNJob = (id: number, confirmPassword?: string): Promise<LoopOutBRLNJob> =>
   request(`/api/apps/loopout-brln/jobs/${id}/resume`, { method: 'POST', body: JSON.stringify({ confirm_password: confirmPassword || '' }) })
+// The one setting a running loop accepts. It lands on the next payment: one
+// already in flight keeps the ceiling it started under.
+export const updateLoopOutBRLNMaxFee = (id: number, maxFeePPM: number): Promise<LoopOutBRLNJob> =>
+  request(`/api/apps/loopout-brln/jobs/${id}/max-fee`, {
+    method: 'POST',
+    body: JSON.stringify({ max_fee_ppm: maxFeePPM })
+  })
 export const cancelLoopOutBRLNJob = (id: number): Promise<LoopOutBRLNJob> =>
   request(`/api/apps/loopout-brln/jobs/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) })
 export const requestLoopOutBRLNStrikeReturn = (id: number, confirmPassword?: string): Promise<LoopOutBRLNStrikeReturn> =>

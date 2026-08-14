@@ -307,6 +307,35 @@ func (s *Server) handleLoopOutBRLNCancelJob(w http.ResponseWriter, r *http.Reque
 	s.handleLoopOutBRLNJobAction(w, r, "cancel")
 }
 
+// handleLoopOutBRLNUpdateMaxFee is the one parameter a running loop can change.
+// The rest of the setup is fixed once the loop starts: cancelling and creating a
+// new one is a clean state, while rewriting size or tranche mid-flight has to
+// reconcile against what already moved.
+func (s *Server) handleLoopOutBRLNUpdateMaxFee(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireLoopOutBRLNService(w)
+	if svc == nil {
+		return
+	}
+	id, err := parseLoopOutBRLNJobID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req struct {
+		MaxFeePPM int64 `json:"max_fee_ppm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	job, err := svc.UpdateJobMaxFee(r.Context(), id, req.MaxFeePPM)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
 func (s *Server) handleLoopOutBRLNStrikeReturn(w http.ResponseWriter, r *http.Request) {
 	svc := s.requireLoopOutBRLNService(w)
 	if svc == nil {

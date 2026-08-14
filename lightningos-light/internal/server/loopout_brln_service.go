@@ -824,6 +824,50 @@ func (s *LoopOutBRLNService) ResumeJob(ctx context.Context, id int64) (LoopOutBR
 	return s.GetJob(ctx, id)
 }
 
+// loopOutBRLNEditableStatuses are the states where a running loop can still be
+// steered. Everything else has either finished or is winding down, and changing
+// a limit there would only pretend to do something.
+var loopOutBRLNEditableStatuses = map[string]bool{
+	loopOutBRLNStatusRunning:          true,
+	loopOutBRLNStatusWaitingLiquidity: true,
+	loopOutBRLNStatusPaused:           true,
+	loopOutBRLNStatusPauseRequested:   true,
+}
+
+// UpdateJobMaxFee changes the fee ceiling of a loop that is still going.
+//
+// It takes effect from the next attempt on, and that needs no extra machinery:
+// the worker reloads the job from the database on every tick and derives the fee
+// limit per attempt. A payment already resolving, sending or reconciling keeps
+// the ceiling it started under, and finished payments are untouched.
+func (s *LoopOutBRLNService) UpdateJobMaxFee(ctx context.Context, id int64, maxFeePPM int64) (LoopOutBRLNJob, error) {
+	if maxFeePPM < 1 || maxFeePPM > 1_000_000 {
+		return LoopOutBRLNJob{}, errors.New("max_fee_ppm must be between 1 and 1000000")
+	}
+	job, err := s.GetJob(ctx, id)
+	if err != nil {
+		return LoopOutBRLNJob{}, err
+	}
+	if !loopOutBRLNEditableStatuses[job.Status] {
+		return LoopOutBRLNJob{}, fmt.Errorf("a loop with status %s cannot be edited", job.Status)
+	}
+	if job.MaxFeePPM == maxFeePPM {
+		return job, nil
+	}
+	previous := job.MaxFeePPM
+	if _, err := s.db.Exec(ctx,
+		`update loopout_brln_jobs set max_fee_ppm=$2,updated_at=now() where id=$1`, id, maxFeePPM); err != nil {
+		return LoopOutBRLNJob{}, err
+	}
+	s.appendEvent(ctx, id, "max_fee_updated", "info", fmt.Sprintf(
+		"Fee ceiling changed from %d to %d ppm; applies from the next payment on",
+		previous, maxFeePPM), map[string]any{
+		"previous_max_fee_ppm": previous,
+		"max_fee_ppm":          maxFeePPM,
+	})
+	return s.GetJob(ctx, id)
+}
+
 func (s *LoopOutBRLNService) CancelJob(ctx context.Context, id int64) (LoopOutBRLNJob, error) {
 	job, err := s.GetJob(ctx, id)
 	if err != nil {

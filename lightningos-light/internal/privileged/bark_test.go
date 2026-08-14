@@ -71,6 +71,17 @@ func TestSelectBarkManagerCACertificatePathSupportsCompatibilityName(t *testing.
 	}
 }
 
+func TestFixedBarkManagerCACertificatePathIsClosed(t *testing.T) {
+	for _, path := range []string{defaultManagerCACertificatePath, legacyManagerCACertificatePath} {
+		if !fixedBarkManagerCACertificatePath(path) {
+			t.Fatalf("fixed CA path %q was rejected", path)
+		}
+	}
+	if fixedBarkManagerCACertificatePath("/tmp/attacker-ca.crt") {
+		t.Fatal("untrusted CA path was accepted")
+	}
+}
+
 func generateTestBarkManagerCA() ([]byte, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

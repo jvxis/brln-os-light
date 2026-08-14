@@ -83,6 +83,10 @@ func selectBarkManagerCACertificatePath(primary, compatibility string) string {
 	return primary
 }
 
+func fixedBarkManagerCACertificatePath(path string) bool {
+	return path == defaultManagerCACertificatePath || path == legacyManagerCACertificatePath
+}
+
 func (manager *NativeBarkWalletManager) composePaths() appmanifest.BarkWalletComposePaths {
 	return appmanifest.BarkWalletComposePaths{
 		WalletDir: manager.Paths.WalletDir, AdminPasswordPath: manager.Paths.AdminPasswordPath,
@@ -419,7 +423,7 @@ func (manager *NativeBarkWalletManager) validateManagerCA() error {
 		return errors.New("manager CA certificate is unavailable")
 	}
 	if manager.requireFixed {
-		if manager.Paths.ManagerCACertificate != defaultManagerCACertificatePath ||
+		if !fixedBarkManagerCACertificatePath(manager.Paths.ManagerCACertificate) ||
 			validateRootOwnedRegularFile(manager.Paths.ManagerCACertificate, 0o644) != nil {
 			return errors.New("manager CA certificate metadata is unsafe")
 		}

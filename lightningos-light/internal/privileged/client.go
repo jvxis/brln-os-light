@@ -835,6 +835,29 @@ func (client *Client) RotateTerminalCredential(ctx context.Context, operatorUser
 	return state.OperatorUser, nil
 }
 
+func (client *Client) SetTerminalEnabled(ctx context.Context, enabled bool, dryRun bool) (bool, error) {
+	action := TerminalControlDisable
+	if enabled {
+		action = TerminalControlEnable
+	}
+	response, err := client.call(ctx, OperationTerminalControl, TerminalControlParams{Action: action}, dryRun)
+	if err != nil {
+		return false, err
+	}
+	var state TerminalControlState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return false, errors.New("invalid broker terminal control response")
+	}
+	expectedStatus := "applied"
+	if dryRun {
+		expectedStatus = "validated"
+	}
+	if state.Status != expectedStatus || state.Enabled != enabled {
+		return false, errors.New("invalid broker terminal control state")
+	}
+	return state.Enabled, nil
+}
+
 func decodeSystemIntegrationsState(response Response, dryRun bool) (SystemIntegrationsState, error) {
 	var state SystemIntegrationsState
 	if err := decodeStrict(response.Result, &state); err != nil {

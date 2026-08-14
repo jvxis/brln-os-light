@@ -213,6 +213,19 @@ func TestClientTerminalCredentialUsesTypedPayload(t *testing.T) {
 	}
 }
 
+func TestClientTerminalControlUsesTypedPayload(t *testing.T) {
+	transport := &fakeTransport{result: TerminalControlState{Status: "applied", Enabled: true}}
+	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
+	enabled, err := client.SetTerminalEnabled(context.Background(), true, false)
+	if err != nil || !enabled || transport.request.Operation != OperationTerminalControl || transport.request.DryRun {
+		t.Fatalf("enabled/error/request=%v/%v/%#v", enabled, err, transport.request)
+	}
+	var params TerminalControlParams
+	if err := json.Unmarshal(transport.request.Params, &params); err != nil || params.Action != TerminalControlEnable {
+		t.Fatalf("unexpected params/error: %#v/%v", params, err)
+	}
+}
+
 func TestClientAppLifecycleBuildsTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: map[string]bool{"validated": true}}
 	client := NewClientWithTransport(ModeShadow, time.Second, transport, nil)

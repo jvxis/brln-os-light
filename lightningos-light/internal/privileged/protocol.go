@@ -30,6 +30,7 @@ const (
 	OperationSystemIntegrationsApply         Operation = "system.integrations.apply"
 	OperationSystemIntegrationsFinalize      Operation = "system.integrations.finalize"
 	OperationTerminalCredentialRotate        Operation = "terminal.credential.rotate"
+	OperationTerminalControl                 Operation = "terminal.control"
 	OperationManagerFirewallStatus           Operation = "manager.firewall.status"
 	OperationLNDUpgradeStart                 Operation = "upgrade.lnd.start"
 	OperationTorMetadataRefresh              Operation = "packages.tor.refresh"
@@ -171,6 +172,22 @@ type TerminalCredentialRotateParams struct {
 type TerminalCredentialState struct {
 	Status       string `json:"status"`
 	OperatorUser string `json:"operator_user"`
+}
+
+type TerminalControlAction string
+
+const (
+	TerminalControlEnable  TerminalControlAction = "enable"
+	TerminalControlDisable TerminalControlAction = "disable"
+)
+
+type TerminalControlParams struct {
+	Action TerminalControlAction `json:"action"`
+}
+
+type TerminalControlState struct {
+	Status  string `json:"status"`
+	Enabled bool   `json:"enabled"`
 }
 
 type ManagerFirewallState struct {
@@ -690,6 +707,14 @@ func ValidateRequest(request Request) error {
 		}
 		if !terminalCredentialPasswordPattern.MatchString(params.Password) {
 			return errors.New("terminal credential password is invalid")
+		}
+	case OperationTerminalControl:
+		var params TerminalControlParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid terminal.control params: %w", err)
+		}
+		if params.Action != TerminalControlEnable && params.Action != TerminalControlDisable {
+			return errors.New("terminal control action is not allowed")
 		}
 	case OperationManagerFirewallStatus:
 		if request.DryRun {

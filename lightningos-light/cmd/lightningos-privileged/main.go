@@ -47,13 +47,15 @@ func main() {
 
 	runner := &privileged.ExecCommandRunner{}
 	configFiles := privileged.NewAtomicConfigFiles(privileged.DefaultManagerConfigPath)
+	terminalManager := privileged.NewNativeTerminalCredentialManager(runner)
 	broker := &privileged.Broker{
 		Runner:               runner,
 		Locker:               locker,
 		Audit:                audit,
 		Files:                configFiles,
 		SystemIntegrations:   privileged.NewNativeSystemIntegrationsManager(runner),
-		TerminalCredential:   privileged.NewNativeTerminalCredentialManager(runner),
+		TerminalCredential:   terminalManager,
+		TerminalControl:      terminalManager,
 		ManagerFirewall:      privileged.NewManagerFirewallManager(runner),
 		LNDUpgrade:           privileged.NewNativeLNDUpgradeManager(runner),
 		TorUpgrade:           privileged.NewNativeTorUpgradeManager(runner),

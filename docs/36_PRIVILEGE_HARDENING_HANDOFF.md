@@ -639,6 +639,18 @@ and service-activation preservation gate; real rotation/login remains for the
 final disposable fresh-install matrix. Evidence:
 `docs/baselines/privilege-hardening-phase3-terminal-credential-2026-08-13.json`.
 
+The 0.5.3 terminal usability follow-up keeps the secure default while allowing
+an administrator to enable and disable the read-only terminal from the UI.
+Both transitions require fresh reauthentication and use the closed
+`terminal.control` broker operation. The broker validates the fixed service
+identity and root-owned assets, reuses only the dedicated GoTTY credential,
+forces `TERMINAL_ALLOW_WRITE=0`, verifies systemd reached the requested state,
+and fails closed to a disabled runtime on transition failure. It never exposes a
+generic service name, path, command or writable flag. For 0.5.4, move terminal
+provisioning out of `install.sh`/`install_existing.sh` and into an optional
+native App Store entry; do not containerize a host shell or grant a container
+host-level access.
+
 The dormant manager-side `RunCommandWithSudo` and `WriteFileWithSudo`
 implementations are also deleted. An AST regression guard covers both names
 and `runSystemd` under the manager packages. The corresponding

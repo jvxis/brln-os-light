@@ -93,6 +93,10 @@ type terminalCredentialPrivilegedClient interface {
 	RotateTerminalCredential(ctx context.Context, operatorUser string, password string, dryRun bool) (appliedOperator string, err error)
 }
 
+type terminalControlPrivilegedClient interface {
+	SetTerminalEnabled(ctx context.Context, enabled bool, dryRun bool) (appliedEnabled bool, err error)
+}
+
 func SystemIntegrationsReadyWithBroker(ctx context.Context) (bool, bool, error) {
 	privilegedState.RLock()
 	client := privilegedState.client
@@ -136,6 +140,40 @@ func RotateTerminalCredentialWithBroker(ctx context.Context, operatorUser string
 		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		_, _ = credentialClient.RotateTerminalCredential(shadowCtx, operatorUser, password, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func SetTerminalEnabledWithBroker(ctx context.Context, enabled bool) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	controlClient, ok := client.(terminalControlPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("terminal control broker capability is unavailable")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		appliedEnabled, err := controlClient.SetTerminalEnabled(ctx, enabled, false)
+		if err != nil {
+			return true, err
+		}
+		if appliedEnabled != enabled {
+			return true, errors.New("terminal control broker returned a mismatched state")
+		}
+		return true, nil
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = controlClient.SetTerminalEnabled(shadowCtx, enabled, true)
 		return false, nil
 	default:
 		return false, nil

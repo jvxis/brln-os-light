@@ -1,11 +1,16 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestTerminalStatusDoesNotExposeCredentials(t *testing.T) {
@@ -35,6 +40,38 @@ func TestTerminalStatusDoesNotExposeCredentials(t *testing.T) {
 	}
 	if got := body["operator_user"]; got != "losop" {
 		t.Fatalf("operator_user = %#v, want losop", got)
+	}
+}
+
+func TestTerminalControlRequiresExplicitStateAndFreshReauth(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	auth := &AuthService{enabled: true, now: func() time.Time { return now }, sessions: make(map[string]*authSession)}
+	auth.sessions["session-id"] = &authSession{
+		ID:           "session-id",
+		CSRFToken:    "csrf-token",
+		ExpiresAt:    now.Add(time.Hour),
+		ReauthScopes: make(map[string]time.Time),
+	}
+	server := &Server{auth: auth}
+	snapshot := authSessionSnapshot{ID: "session-id", CSRFToken: "csrf-token", ExpiresAt: now.Add(time.Hour)}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/terminal/control", bytes.NewBufferString(`{"enabled":true}`))
+	request = request.WithContext(context.WithValue(request.Context(), authSessionContextKey, snapshot))
+	recorder := httptest.NewRecorder()
+	server.handleTerminalControl(recorder, request)
+	if recorder.Code != http.StatusPreconditionRequired || !strings.Contains(recorder.Body.String(), "terminal_control_reauth_required") {
+		t.Fatalf("expected terminal control reauth challenge, got status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	auth.sessions["session-id"].ReauthScopes[authScopeTerminalControl] = now.Add(time.Minute)
+	for _, body := range []string{`{}`, `{"enabled":true,"command":"/bin/sh"}`, `{"enabled":true}{"enabled":false}`} {
+		request = httptest.NewRequest(http.MethodPost, "/api/terminal/control", bytes.NewBufferString(body))
+		request = request.WithContext(context.WithValue(request.Context(), authSessionContextKey, snapshot))
+		recorder = httptest.NewRecorder()
+		server.handleTerminalControl(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("unsafe terminal control body accepted: body=%q status=%d response=%q", body, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 

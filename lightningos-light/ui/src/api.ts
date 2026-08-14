@@ -749,6 +749,9 @@ export const testTelegramBackup = () =>
 
 export const getTerminalStatus = () => request('/api/terminal/status')
 
+export const setTerminalEnabled = (payload: { enabled: boolean; confirm_password?: string }) =>
+  request('/api/terminal/control', { method: 'POST', body: JSON.stringify(payload) })
+
 export const rotateTerminalCredential = (payload: { confirm_password?: string } = {}) =>
   request('/api/terminal/credential/rotate', { method: 'POST', body: JSON.stringify(payload) })
 

@@ -3,6 +3,8 @@ package privileged
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,6 +13,69 @@ type terminalCredentialRunner struct {
 	commands []recordedCommand
 	user     string
 	err      error
+}
+
+func TestTerminalControlManagerUsesExistingCredentialAndTypedState(t *testing.T) {
+	const password = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+	runtimePath := filepath.Join(t.TempDir(), "terminal.env")
+	if err := os.WriteFile(runtimePath, []byte(terminalRuntimeEnvContent("0", "losop", password)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	manager := &NativeTerminalCredentialManager{
+		Runner:         &terminalCredentialRunner{user: "losop"},
+		RuntimeEnvPath: runtimePath,
+		ApplyControl: func(_ context.Context, path string, operatorUser string, appliedPassword string, enabled bool) error {
+			called = true
+			if path != runtimePath || operatorUser != "losop" || appliedPassword != password || !enabled {
+				t.Fatalf("unexpected control input: path=%q user=%q password_len=%d enabled=%v", path, operatorUser, len(appliedPassword), enabled)
+			}
+			return nil
+		},
+	}
+	state, err := manager.SetEnabled(context.Background(), TerminalControlParams{Action: TerminalControlEnable}, false)
+	if err != nil || !called || state.Status != "applied" || !state.Enabled {
+		t.Fatalf("state/called/error=%+v/%v/%v", state, called, err)
+	}
+	called = false
+	state, err = manager.SetEnabled(context.Background(), TerminalControlParams{Action: TerminalControlDisable}, true)
+	if err != nil || called || state.Status != "validated" || state.Enabled {
+		t.Fatalf("dry-run state/called/error=%+v/%v/%v", state, called, err)
+	}
+}
+
+func TestTerminalControlManagerFailsClosedBeforeMutation(t *testing.T) {
+	const password = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+	for _, test := range []struct {
+		name    string
+		user    string
+		content string
+		action  TerminalControlAction
+	}{
+		{name: "root service", user: "root", content: terminalRuntimeEnvContent("0", "root", password), action: TerminalControlEnable},
+		{name: "credential mismatch", user: "other", content: terminalRuntimeEnvContent("0", "losop", password), action: TerminalControlEnable},
+		{name: "invalid credential", user: "losop", content: "TERMINAL_CREDENTIAL=losop:short\n", action: TerminalControlEnable},
+		{name: "invalid action", user: "losop", content: terminalRuntimeEnvContent("0", "losop", password), action: "restart"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtimePath := filepath.Join(t.TempDir(), "terminal.env")
+			if err := os.WriteFile(runtimePath, []byte(test.content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			manager := &NativeTerminalCredentialManager{
+				Runner:         &terminalCredentialRunner{user: test.user},
+				RuntimeEnvPath: runtimePath,
+				ApplyControl: func(context.Context, string, string, string, bool) error {
+					called = true
+					return nil
+				},
+			}
+			if _, err := manager.SetEnabled(context.Background(), TerminalControlParams{Action: test.action}, false); err == nil || called {
+				t.Fatalf("unsafe control was not rejected: err=%v called=%v", err, called)
+			}
+		})
+	}
 }
 
 func (runner *terminalCredentialRunner) Run(_ context.Context, path string, args ...string) (string, error) {
@@ -109,9 +174,45 @@ type recordingTerminalCredentialManager struct {
 	err    error
 }
 
+type recordingTerminalControlManager struct {
+	params TerminalControlParams
+	dryRun bool
+	state  TerminalControlState
+}
+
+func (manager *recordingTerminalControlManager) SetEnabled(_ context.Context, params TerminalControlParams, dryRun bool) (TerminalControlState, error) {
+	manager.params, manager.dryRun = params, dryRun
+	return manager.state, nil
+}
+
 func (manager *recordingTerminalCredentialManager) Rotate(_ context.Context, params TerminalCredentialRotateParams, dryRun bool) (TerminalCredentialState, error) {
 	manager.params, manager.dryRun = params, dryRun
 	return manager.state, manager.err
+}
+
+func TestTerminalControlProtocolAndBrokerAreTypedAndLocked(t *testing.T) {
+	request := requestWithParams(t, OperationTerminalControl, TerminalControlParams{Action: TerminalControlEnable}, false)
+	if err := ValidateRequest(request); err != nil {
+		t.Fatalf("valid terminal control request rejected: %v", err)
+	}
+	manager := &recordingTerminalControlManager{state: TerminalControlState{Status: "applied", Enabled: true}}
+	locker := &recordingLocker{}
+	broker := &Broker{Runner: &recordingRunner{}, Audit: &recordingAudit{}, Locker: locker, TerminalControl: manager, Caller: "test"}
+	response := broker.Handle(context.Background(), request)
+	if !response.OK || manager.params.Action != TerminalControlEnable || manager.dryRun || locker.locks != 1 || locker.unlocks != 1 {
+		t.Fatalf("unexpected broker dispatch: response=%+v manager=%+v locker=%+v", response, manager, locker)
+	}
+	for _, raw := range []string{
+		`{"action":"restart"}`,
+		`{"action":"enable","command":"/bin/sh"}`,
+		`{"action":"enable","path":"/etc/shadow"}`,
+	} {
+		invalid := request
+		invalid.Params = []byte(raw)
+		if err := ValidateRequest(invalid); err == nil {
+			t.Fatalf("unsafe terminal control accepted: %s", raw)
+		}
+	}
 }
 
 func TestTerminalCredentialProtocolAndBrokerAreTypedLockedAndSecretFreeInAudit(t *testing.T) {

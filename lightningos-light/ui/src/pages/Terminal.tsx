@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { APIError, getTerminalStatus, rotateTerminalCredential } from '../api'
+import { APIError, getTerminalStatus, rotateTerminalCredential, setTerminalEnabled } from '../api'
 
 type TerminalStatus = {
   enabled: boolean
@@ -16,12 +16,14 @@ type RotatedCredential = {
   restart_pending: boolean
 }
 
+type ReauthAction = 'rotate' | 'enable' | 'disable'
+
 export default function Terminal() {
   const { t } = useTranslation()
   const [status, setStatus] = useState<TerminalStatus | null>(null)
   const [statusMessage, setStatusMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [reauthOpen, setReauthOpen] = useState(false)
+  const [reauthAction, setReauthAction] = useState<ReauthAction | null>(null)
   const [adminPassword, setAdminPassword] = useState('')
   const [rotated, setRotated] = useState<RotatedCredential | null>(null)
 
@@ -55,14 +57,33 @@ export default function Terminal() {
     try {
       const result = await rotateTerminalCredential({ confirm_password: confirmPassword }) as RotatedCredential
       setRotated(result)
-      setReauthOpen(false)
+      setReauthAction(null)
       setAdminPassword('')
       setStatus((current) => current ? { ...current, credential_configured: true } : current)
     } catch (err: any) {
       if (err instanceof APIError && err.code === 'terminal_credential_reauth_required') {
-        setReauthOpen(true)
+        setReauthAction('rotate')
       } else {
         setStatusMessage(err?.message || t('terminal.rotateFailed'))
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const control = async (enabled: boolean, confirmPassword?: string) => {
+    setBusy(true)
+    setStatusMessage('')
+    try {
+      const result = await setTerminalEnabled({ enabled, confirm_password: confirmPassword }) as { enabled: boolean }
+      setStatus((current) => current ? { ...current, enabled: result.enabled, allow_write: false } : current)
+      setReauthAction(null)
+      setAdminPassword('')
+    } catch (err: any) {
+      if (err instanceof APIError && err.code === 'terminal_control_reauth_required') {
+        setReauthAction(enabled ? 'enable' : 'disable')
+      } else {
+        setStatusMessage(err?.message || t('terminal.controlFailed'))
       }
     } finally {
       setBusy(false)
@@ -72,8 +93,35 @@ export default function Terminal() {
   const submitReauth = async (event: FormEvent) => {
     event.preventDefault()
     if (!adminPassword.trim()) return
-    await rotate(adminPassword)
+    if (reauthAction === 'rotate') {
+      await rotate(adminPassword)
+    } else if (reauthAction === 'enable') {
+      await control(true, adminPassword)
+    } else if (reauthAction === 'disable') {
+      await control(false, adminPassword)
+    }
   }
+
+  const closeReauth = () => {
+    setReauthAction(null)
+    setAdminPassword('')
+  }
+
+  const reauthTitle = reauthAction === 'enable'
+    ? t('terminal.enableReauthTitle')
+    : reauthAction === 'disable'
+      ? t('terminal.disableReauthTitle')
+      : t('terminal.reauthTitle')
+  const reauthBody = reauthAction === 'enable'
+    ? t('terminal.enableReauthBody')
+    : reauthAction === 'disable'
+      ? t('terminal.disableReauthBody')
+      : t('terminal.reauthBody')
+  const reauthConfirm = reauthAction === 'enable'
+    ? t('terminal.enable')
+    : reauthAction === 'disable'
+      ? t('terminal.disable')
+      : t('terminal.rotateCredential')
 
   return (
     <div className="space-y-6">
@@ -88,6 +136,9 @@ export default function Terminal() {
                 <div className="flex items-center gap-2">
                   <span className="text-fog/50">{t('common.status')}</span>
                   <span>{status.enabled ? t('common.enabled') : t('common.disabled')}</span>
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${status.allow_write ? 'border-rose-400/25 bg-rose-400/10 text-rose-100' : 'border-cyan-400/25 bg-cyan-400/10 text-cyan-100'}`}>
+                    {status.allow_write ? t('terminal.writeEnabledWarning') : t('terminal.readOnly')}
+                  </span>
                 </div>
                 {!status.enabled && <p className="text-brass">{t('terminal.disabledMessage')}</p>}
                 <div className="flex flex-wrap items-center gap-2">
@@ -103,27 +154,39 @@ export default function Terminal() {
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            <button className="btn-secondary" type="button" disabled={busy} onClick={() => void rotate()}>
-              {busy ? t('terminal.rotating') : t('terminal.rotateCredential')}
+            <button
+              className="btn-secondary"
+              type="button"
+              disabled={busy || !status || (!status.enabled && !status.credential_configured)}
+              onClick={() => status && void control(!status.enabled)}
+            >
+              {busy ? t('terminal.updating') : status?.enabled ? t('terminal.disable') : t('terminal.enable')}
             </button>
-            <a className="btn-secondary" href="/terminal/" target="_blank" rel="noreferrer">{t('terminal.openNewTab')}</a>
+            <button className="btn-secondary" type="button" disabled={busy} onClick={() => void rotate()}>
+              {t('terminal.rotateCredential')}
+            </button>
+            {status?.enabled
+              ? <a className="btn-secondary" href="/terminal/" target="_blank" rel="noreferrer">{t('terminal.openNewTab')}</a>
+              : <button className="btn-secondary" type="button" disabled>{t('terminal.openNewTab')}</button>}
           </div>
         </div>
       </div>
 
       <div className="overflow-hidden rounded-3xl border border-white/10 bg-ink/70 shadow-panel">
-        <iframe title={t('terminal.title')} src="/terminal/" className="h-[70vh] w-full bg-black" />
+        {status?.enabled
+          ? <iframe title={t('terminal.title')} src="/terminal/" className="h-[70vh] w-full bg-black" />
+          : <div className="flex h-[40vh] items-center justify-center p-8 text-center text-sm text-fog/55">{t('terminal.disabledPlaceholder')}</div>}
       </div>
 
-      {reauthOpen && (
+      {reauthAction && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/85 p-4 backdrop-blur-sm">
           <form className="section-card w-full max-w-md" onSubmit={submitReauth}>
-            <h3 className="text-xl font-semibold">{t('terminal.reauthTitle')}</h3>
-            <p className="mt-2 text-sm leading-6 text-fog/65">{t('terminal.reauthBody')}</p>
+            <h3 className="text-xl font-semibold">{reauthTitle}</h3>
+            <p className="mt-2 text-sm leading-6 text-fog/65">{reauthBody}</p>
             <input className="input-field mt-5" type="password" autoFocus required autoComplete="current-password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} />
             <div className="mt-5 flex justify-end gap-2">
-              <button className="btn-secondary" type="button" onClick={() => { setReauthOpen(false); setAdminPassword('') }}>{t('common.cancel')}</button>
-              <button className="btn-primary" disabled={busy} type="submit">{t('terminal.rotateCredential')}</button>
+              <button className="btn-secondary" type="button" onClick={closeReauth}>{t('common.cancel')}</button>
+              <button className="btn-primary" disabled={busy} type="submit">{reauthConfirm}</button>
             </div>
           </form>
         </div>

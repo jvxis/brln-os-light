@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -15,9 +16,9 @@ import (
 )
 
 var (
-	terminalCredentialRotationMu sync.Mutex
-	terminalOperatorUserPattern  = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
-	terminalRuntimeEnvPath       = "/etc/lightningos/terminal.env"
+	terminalMutationMu          sync.Mutex
+	terminalOperatorUserPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+	terminalRuntimeEnvPath      = "/etc/lightningos/terminal.env"
 )
 
 type terminalStatus struct {
@@ -36,6 +37,15 @@ type terminalCredentialRotateResponse struct {
 	OperatorUser   string `json:"operator_user"`
 	Password       string `json:"password"`
 	RestartPending bool   `json:"restart_pending"`
+}
+
+type terminalControlRequest struct {
+	Enabled         *bool  `json:"enabled"`
+	ConfirmPassword string `json:"confirm_password"`
+}
+
+type terminalControlResponse struct {
+	Enabled bool `json:"enabled"`
 }
 
 func (s *Server) handleTerminalStatus(w http.ResponseWriter, r *http.Request) {
@@ -72,8 +82,8 @@ func (s *Server) handleTerminalCredentialRotate(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	terminalCredentialRotationMu.Lock()
-	defer terminalCredentialRotationMu.Unlock()
+	terminalMutationMu.Lock()
+	defer terminalMutationMu.Unlock()
 
 	operatorUser := terminalOperatorUser()
 	if !terminalOperatorUserPattern.MatchString(operatorUser) {
@@ -127,6 +137,44 @@ func (s *Server) handleTerminalCredentialRotate(w http.ResponseWriter, r *http.R
 		Password:       password,
 		RestartPending: restartPending,
 	})
+}
+
+func (s *Server) handleTerminalControl(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil || !s.auth.Enabled() {
+		writeErrorCode(w, http.StatusForbidden, "terminal_control_login_required", "enable LightningOS login protection before changing terminal state")
+		return
+	}
+
+	var req terminalControlRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "terminal_control_invalid_request", "invalid request body")
+		return
+	}
+	if req.Enabled == nil || decoder.Decode(&struct{}{}) != io.EOF {
+		writeErrorCode(w, http.StatusBadRequest, "terminal_control_invalid_request", "invalid request body")
+		return
+	}
+	if !s.requireSensitiveReauth(w, r, authScopeTerminalControl, req.ConfirmPassword,
+		"terminal_control_reauth_required", "confirm your LightningOS password to change terminal state") {
+		return
+	}
+
+	terminalMutationMu.Lock()
+	defer terminalMutationMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if handled, err := system.SetTerminalEnabledWithBroker(ctx, *req.Enabled); !handled || err != nil {
+		if s.logger != nil {
+			s.logger.Printf("terminal control failed: %v", err)
+		}
+		writeErrorCode(w, http.StatusInternalServerError, "terminal_control_apply_failed", "failed to change terminal state")
+		return
+	}
+
+	s.recordAuditEvent(r, "terminal.control", terminalOperatorUser(), map[string]any{"enabled": *req.Enabled})
+	writeJSON(w, http.StatusOK, terminalControlResponse{Enabled: *req.Enabled})
 }
 
 func terminalCredentialConfigured(raw string) bool {

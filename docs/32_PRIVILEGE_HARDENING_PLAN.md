@@ -23,6 +23,12 @@ Accepted follow-ups for `0.5.4`, intentionally outside PR #33:
   [#36](https://github.com/jvxis/brln-os-light/issues/36);
 - explicit uninstall confirmation and Bitcoin dependency protection:
   [#39](https://github.com/jvxis/brln-os-light/issues/39).
+- move the optional terminal provisioning from `install.sh` and
+  `install_existing.sh` into a native App Store entry. It must remain a
+  constrained host service rather than a Docker container with host access;
+  install/uninstall, assets and service lifecycle will use typed broker
+  operations. The 0.5.3 release keeps provisioning compatibility while
+  disabled by default.
 
 Target release: `0.5.3`.
 
@@ -59,6 +65,12 @@ CodeQL, controlled LOS TESTE2 upgrade, dependency preservation, authenticated
 Bitcoin/LND status, and cleanup evidence is recorded in
 `docs/baselines/privilege-hardening-issues-35-37-los-test2-2026-08-14.json`.
 Issues #36 and #39 remain open by product decision and are planned for `0.5.4`.
+The 0.5.3 follow-up also adds fresh-reauthenticated UI enable/disable through
+the typed `terminal.control` broker operation. The broker preserves the
+dedicated credential, forces read-only mode, validates fixed root-owned assets,
+verifies the requested systemd state, and fails closed to a disabled runtime
+state on transition failure. Moving terminal installation to a native App Store
+entry remains intentionally scheduled for 0.5.4.
 
 Final Ubuntu 24 evidence:
 

@@ -159,6 +159,7 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/boleto/quote", s.handleBoletoQuote)
 	r.Get("/api/boleto/status/{paymentHash}", s.handleBoletoStatus)
 	r.Get("/api/terminal/status", s.handleTerminalStatus)
+	r.Post("/api/terminal/control", s.handleTerminalControl)
 	r.Post("/api/terminal/credential/rotate", s.handleTerminalCredentialRotate)
 	r.Get("/api/shortcuts", s.handleShortcutsGet)
 	r.Post("/api/shortcuts", s.handleShortcutsPost)

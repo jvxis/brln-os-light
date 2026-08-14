@@ -722,6 +722,13 @@ GET /api/terminal/status
 - Returns whether the web terminal is enabled, whether a credential is configured, the write mode, port and operator username.
 - It never returns the GoTTY Basic credential or the Linux operator password.
 
+POST /api/terminal/control
+- Body: `{"enabled":true,"confirm_password":"..."}`.
+- Requires login protection and fresh reauthentication with scope `terminal_control` for both enable and disable.
+- Uses the typed privileged-broker operation `terminal.control`; the Manager never edits the runtime environment or invokes `systemctl` directly.
+- Enabling validates the fixed root-owned service, launcher and GoTTY binary, preserves the existing dedicated credential, forces `TERMINAL_ALLOW_WRITE=0`, and verifies the service is active and enabled. Disabling stops and disables the service. A failed transition fails closed by forcing the runtime setting off and best-effort stopping/disabling the service.
+- Response: `{"enabled":true}`.
+
 POST /api/terminal/credential/rotate
 - Requires login protection and a recent reauthentication with scope `terminal_credential`.
 - Generates only a new GoTTY credential, updates the dedicated root-owned terminal environment, restarts `lightningos-terminal.service` when enabled, and returns the password once with `Cache-Control: no-store`.

@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"lightningos-light/internal/appmanifest"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestBitcoinCoreGeneratedRPCAuthFunctionalGate(t *testing.T) {
@@ -360,7 +362,13 @@ func TestBitcoinCorePrimaryCredentialMigrationPromotesLegacyConfigOwner(t *testi
 	if err != nil || state.Status != "restart_required" || state.ConfigChanged || state.User != appmanifest.BitcoinCoreRPCUser || state.Password != credentials.Password {
 		t.Fatalf("owner migration state/error=%#v/%v", state, err)
 	}
-	if err := validateRootOwnedGroupReadableRegularFile(configPath, 101, 0o640); err != nil {
+	file, err := os.Open(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	var stat unix.Stat_t
+	if err := validateBitcoinCoreConfigStat(int(file.Fd()), &stat); err != nil {
 		t.Fatalf("legacy config owner was not promoted: %v", err)
 	}
 	raw, err := os.ReadFile(configPath)

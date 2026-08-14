@@ -6,6 +6,7 @@ CONFIG_PATH="/etc/lightningos/config.yaml"
 SERVICE_PATH="/etc/systemd/system/lightningos-manager.service"
 DROPIN_PATH="/etc/systemd/system/lightningos-manager.service.d/30-privilege-hardening.conf"
 MANAGER_BIN="/opt/lightningos/manager/lightningos-manager"
+BUILD_STAMP="/opt/lightningos/manager/.build_stamp"
 BROKER_BIN="/usr/local/libexec/lightningos-privileged"
 TMPFILES_PATH="/etc/tmpfiles.d/lightningos-privileged.conf"
 SOCKET_UNIT="/etc/systemd/system/lightningos-privileged.socket"
@@ -20,7 +21,7 @@ if [[ "${EUID}" -ne 0 ]]; then
   echo "Run this rollback as root." >&2
   exit 1
 fi
-if [[ ! -d "$STATE_ROOT" || -L "$STATE_ROOT" || ! -f "$STATE_ROOT/prepared" || -L "$STATE_ROOT/prepared" || ! -f "$STATE_ROOT/schema-v5" || -L "$STATE_ROOT/schema-v5" ]]; then
+if [[ ! -d "$STATE_ROOT" || -L "$STATE_ROOT" || ! -f "$STATE_ROOT/prepared" || -L "$STATE_ROOT/prepared" || ! -f "$STATE_ROOT/schema-v6" || -L "$STATE_ROOT/schema-v6" ]]; then
   echo "No trusted LightningOS privilege-cutover rollback state is available." >&2
   exit 1
 fi
@@ -106,6 +107,7 @@ restore_lnd_manager_credential_boundary
 restore_or_remove "lightningos-manager.service" "$SERVICE_PATH"
 restore_or_remove "30-privilege-hardening.conf" "$DROPIN_PATH"
 restore_or_remove "lightningos-manager" "$MANAGER_BIN"
+restore_or_remove "manager-build-stamp" "$BUILD_STAMP"
 restore_or_remove "lightningos-privileged" "$BROKER_BIN"
 restore_or_remove "lightningos-privileged.conf" "$TMPFILES_PATH"
 restore_or_remove "lightningos-privileged.socket" "$SOCKET_UNIT"

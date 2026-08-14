@@ -259,6 +259,7 @@ NPM_BIN="$(resolve_bin npm /usr/bin/npm /usr/local/bin/npm /bin/npm)" || die "Re
 SYSTEMCTL_BIN="$(resolve_bin systemctl /usr/bin/systemctl /bin/systemctl)" || die "Required command missing: systemctl"
 INSTALL_BIN="$(resolve_bin install /usr/bin/install /bin/install)" || die "Required command missing: install"
 CP_BIN="$(resolve_bin cp /usr/bin/cp /bin/cp)" || die "Required command missing: cp"
+MV_BIN="$(resolve_bin mv /usr/bin/mv /bin/mv)" || die "Required command missing: mv"
 FLOCK_BIN="$(resolve_bin flock /usr/bin/flock /bin/flock)" || die "Required command missing: flock"
 DATE_BIN="$(resolve_bin date /usr/bin/date /bin/date)" || die "Required command missing: date"
 STAT_BIN="$(resolve_bin stat /usr/bin/stat /bin/stat)" || die "Required command missing: stat"
@@ -558,6 +559,11 @@ prepare_privilege_cutover() {
       : > "$state_root/schema-v5"
     fi
     validate_root_regular_file "$state_root/schema-v5" || return 1
+    if [[ ! -f "$state_root/schema-v6" ]]; then
+      capture_optional_file "/opt/lightningos/manager/.build_stamp" "$state_root" "manager-build-stamp" || return 1
+      : > "$state_root/schema-v6"
+    fi
+    validate_root_regular_file "$state_root/schema-v6" || return 1
     "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
     return 0
   fi
@@ -571,6 +577,7 @@ prepare_privilege_cutover() {
   capture_optional_file "$sudoers_path" "$state_root" "sudoers"
   capture_optional_file "$auth_sudoers_path" "$state_root" "auth-enable-sudoers"
   capture_optional_file "/opt/lightningos/manager/lightningos-manager" "$state_root" "lightningos-manager"
+  capture_optional_file "/opt/lightningos/manager/.build_stamp" "$state_root" "manager-build-stamp"
   capture_optional_file "$PRIVILEGED_BROKER" "$state_root" "lightningos-privileged"
   capture_optional_file "$PRIVILEGED_TMPFILES_CONFIG" "$state_root" "lightningos-privileged.conf"
   capture_optional_file "/etc/systemd/system/lightningos-privileged.socket" "$state_root" "lightningos-privileged.socket"
@@ -594,9 +601,27 @@ prepare_privilege_cutover() {
   : > "$state_root/schema-v3"
   : > "$state_root/schema-v4"
   : > "$state_root/schema-v5"
+  : > "$state_root/schema-v6"
   : > "$state_root/prepared"
   "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
   print_ok "Root-only privilege rollback bundle prepared"
+}
+
+write_manager_build_stamp() {
+  local stamp_path="/opt/lightningos/manager/.build_stamp"
+  local stamp_tmp=""
+  [[ -d /opt/lightningos/manager && ! -L /opt/lightningos/manager ]] || return 1
+  if [[ -e "$stamp_path" || -L "$stamp_path" ]]; then
+    validate_root_regular_file "$stamp_path" || return 1
+  fi
+  stamp_tmp="$(mktemp /opt/lightningos/manager/.build_stamp.XXXXXX)" || return 1
+  if ! printf '%s %s\n' "$EXPECTED_COMMIT" "$VERSION" >"$stamp_tmp" \
+    || ! chown root:root "$stamp_tmp" \
+    || ! chmod 0644 "$stamp_tmp" \
+    || ! "$MV_BIN" -f -- "$stamp_tmp" "$stamp_path"; then
+    "$RM_BIN" -f -- "$stamp_tmp"
+    return 1
+  fi
 }
 
 stage_privilege_cutover() {
@@ -1096,6 +1121,12 @@ else
   print_warn "Manager failed after privilege cutover; restoring the previous boundary"
   /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "lightningos-manager failed to start after cutover"
+fi
+
+if ! write_manager_build_stamp; then
+  print_warn "Manager build provenance could not be recorded; restoring the previous boundary"
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+  die "lightningos-manager build provenance could not be recorded"
 fi
 
 cutover_prepared=0

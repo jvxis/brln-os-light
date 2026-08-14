@@ -1419,6 +1419,40 @@ func TestComposeAppInspectRejectsUnexpectedLegacyCPUMinerLayout(t *testing.T) {
 	}
 }
 
+func TestComposeAppLifecycleStopsLegacyCPUMinerIdempotently(t *testing.T) {
+	appsRoot := t.TempDir()
+	appRoot := filepath.Join(appsRoot, appmanifest.CPUMinerID)
+	if err := os.Mkdir(appRoot, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, appmanifest.CPUMinerComposeFile), []byte(legacyCPUMinerCompose()), 0640); err != nil {
+		t.Fatal(err)
+	}
+	validEnv := "CPUMINER_IMAGE=jvx1971/cpu-lottery-miner:v1\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
+	if err := os.WriteFile(filepath.Join(appRoot, appmanifest.CPUMinerEnvFile), []byte(validEnv), 0600); err != nil {
+		t.Fatal(err)
+	}
+	statusArgs := []string{
+		"ps",
+		"--filter", "label=com.docker.compose.project=" + appmanifest.CPUMinerProject,
+		"--filter", "label=com.docker.compose.service=" + appmanifest.CPUMinerID,
+		"--format", "{{.ID}}",
+	}
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && reflect.DeepEqual(args, statusArgs) {
+			return "", nil, true
+		}
+		return "", nil, false
+	}}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
+	if err := manager.Lifecycle(context.Background(), appmanifest.CPUMinerID, AppLifecycleStop, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 1 || !reflect.DeepEqual(runner.commands[0].args, statusArgs) {
+		t.Fatalf("unexpected idempotent legacy stop: %#v", runner.commands)
+	}
+}
+
 func TestComposeAppInspectDegradesStatsFailureToZero(t *testing.T) {
 	appsRoot, _ := writeTestCPUMinerApp(t)
 	runner := &composeRecordingRunner{

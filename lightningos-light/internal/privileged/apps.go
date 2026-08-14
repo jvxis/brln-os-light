@@ -554,6 +554,21 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	if action == AppLifecycleRestart && manifest.ID != appmanifest.BitcoinCoreID {
 		return errors.New("app lifecycle action is not allowed")
 	}
+	if action == AppLifecycleStop {
+		legacy := false
+		switch manifest.ID {
+		case appmanifest.CPUMinerID:
+			legacy = manager.hasLegacyCPUMinerDeclaration(manifest)
+		case appmanifest.FedimintGuardianID, appmanifest.FedimintGatewayID:
+			legacy = manager.hasLegacyFedimintDeclaration(manifest.ID, manifest.ComposeFile)
+		}
+		if legacy {
+			if dryRun {
+				return nil
+			}
+			return manager.stopLegacyCatalogRuntime(ctx, manifest)
+		}
+	}
 
 	var snapshot composeAppSnapshot
 	var cleanup func()
@@ -1231,7 +1246,7 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 // inspectLegacyCatalogRuntime never reads or executes a legacy Compose file.
 // It derives both labels from the closed app catalog and uses Docker only for
 // read-only telemetry while lifecycle operations remain on validated snapshots.
-func (manager *ComposeAppManager) inspectLegacyCatalogRuntime(ctx context.Context, manifest appmanifest.ComposeManifest, includeCPU bool) (AppInspection, error) {
+func (manager *ComposeAppManager) legacyCatalogRunningContainerID(ctx context.Context, manifest appmanifest.ComposeManifest) (string, error) {
 	output, err := manager.Runner.Run(ctx, dockerPath,
 		"ps",
 		"--filter", "label=com.docker.compose.project="+manifest.Project,
@@ -1239,9 +1254,8 @@ func (manager *ComposeAppManager) inspectLegacyCatalogRuntime(ctx context.Contex
 		"--format", "{{.ID}}",
 	)
 	if err != nil {
-		return AppInspection{}, errors.New("legacy app status command failed")
+		return "", errors.New("legacy app status command failed")
 	}
-	inspection := AppInspection{Status: "stopped"}
 	containerID := ""
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -1250,19 +1264,41 @@ func (manager *ComposeAppManager) inspectLegacyCatalogRuntime(ctx context.Contex
 		}
 		parsed := parseDockerContainerID(line)
 		if parsed == "" || containerID != "" {
-			return AppInspection{}, errors.New("legacy app status returned invalid container IDs")
+			return "", errors.New("legacy app status returned invalid container IDs")
 		}
 		containerID = parsed
+	}
+	return containerID, nil
+}
+
+func (manager *ComposeAppManager) inspectLegacyCatalogRuntime(ctx context.Context, manifest appmanifest.ComposeManifest, includeCPU bool) (AppInspection, error) {
+	containerID, err := manager.legacyCatalogRunningContainerID(ctx, manifest)
+	if err != nil {
+		return AppInspection{}, err
+	}
+	inspection := AppInspection{Status: "stopped"}
+	if containerID != "" {
 		inspection.Status = "running"
 	}
 	if !includeCPU || containerID == "" {
 		return inspection, nil
 	}
-	output, err = manager.Runner.Run(ctx, dockerPath, "stats", "--no-stream", "--format", "{{.CPUPerc}}", containerID)
+	output, err := manager.Runner.Run(ctx, dockerPath, "stats", "--no-stream", "--format", "{{.CPUPerc}}", containerID)
 	if err == nil {
 		inspection.CPUPercentRaw = parseDockerCPUPercent(output)
 	}
 	return inspection, nil
+}
+
+func (manager *ComposeAppManager) stopLegacyCatalogRuntime(ctx context.Context, manifest appmanifest.ComposeManifest) error {
+	containerID, err := manager.legacyCatalogRunningContainerID(ctx, manifest)
+	if err != nil || containerID == "" {
+		return err
+	}
+	if _, err := manager.Runner.Run(ctx, dockerPath, "stop", "--time", strconv.Itoa(manifest.StopTimeoutSeconds), containerID); err != nil {
+		return errors.New("legacy app stop command failed")
+	}
+	return nil
 }
 
 func (manager *ComposeAppManager) validatedCPUMinerFiles() ([]byte, []byte, error) {

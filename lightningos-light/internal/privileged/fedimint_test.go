@@ -187,6 +187,61 @@ func TestFedimintInspectRejectsUnexpectedLegacyAssets(t *testing.T) {
 	}
 }
 
+func TestFedimintLifecycleStopsLegacyContainerWithoutExecutingCompose(t *testing.T) {
+	appsRoot := t.TempDir()
+	appRoot := filepath.Join(appsRoot, appmanifest.FedimintGuardianID)
+	if err := os.Mkdir(appRoot, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, appmanifest.FedimintGuardianComposeFile), []byte("legacy declaration\n"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	containerID := strings.Repeat("d", 64)
+	statusArgs := []string{
+		"ps",
+		"--filter", "label=com.docker.compose.project=" + appmanifest.FedimintGuardianProject,
+		"--filter", "label=com.docker.compose.service=" + appmanifest.FedimintGuardianPrimaryService,
+		"--format", "{{.ID}}",
+	}
+	stopArgs := []string{"stop", "--time", "60", containerID}
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && reflect.DeepEqual(args, statusArgs) {
+			return containerID + "\n", nil, true
+		}
+		if path == dockerPath && reflect.DeepEqual(args, stopArgs) {
+			return containerID + "\n", nil, true
+		}
+		return "", nil, false
+	}}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
+	if err := manager.Lifecycle(context.Background(), appmanifest.FedimintGuardianID, AppLifecycleStop, false); err != nil {
+		t.Fatal(err)
+	}
+	want := []recordedCommand{{path: dockerPath, args: statusArgs}, {path: dockerPath, args: stopArgs}}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("legacy stop commands=%#v want=%#v", runner.commands, want)
+	}
+}
+
+func TestFedimintLegacyLifecycleDryRunDoesNotReachDocker(t *testing.T) {
+	appsRoot := t.TempDir()
+	appRoot := filepath.Join(appsRoot, appmanifest.FedimintGatewayID)
+	if err := os.Mkdir(appRoot, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, appmanifest.FedimintGatewayComposeFile), []byte("legacy declaration\n"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
+	if err := manager.Lifecycle(context.Background(), appmanifest.FedimintGatewayID, AppLifecycleStop, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("legacy dry run executed commands: %#v", runner.commands)
+	}
+}
+
 func TestFedimintLogsUseFixedBrokerComposeCommand(t *testing.T) {
 	fixture := writeTestFedimintGateway(t)
 	fixture.runner.hook = func(path string, args []string) (string, error, bool) {

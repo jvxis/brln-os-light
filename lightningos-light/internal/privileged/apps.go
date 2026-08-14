@@ -1097,6 +1097,9 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 	case appmanifest.CPUMinerID:
 		composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
 		if err != nil {
+			if manager.hasLegacyCPUMinerDeclaration(manifest) {
+				return manager.inspectLegacyCatalogRuntime(ctx, manifest, true)
+			}
 			return inspection, err
 		}
 		snapshot, cleanup, err = manager.createSnapshot(manifest, composeRaw, envRaw)
@@ -1165,6 +1168,9 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 	case appmanifest.FedimintGuardianID, appmanifest.FedimintGatewayID:
 		files, err := manager.validatedFedimintFiles(appID)
 		if err != nil {
+			if manager.hasLegacyFedimintDeclaration(appID, manifest.ComposeFile) {
+				return manager.inspectLegacyCatalogRuntime(ctx, manifest, false)
+			}
 			return inspection, err
 		}
 		snapshot, cleanup, err = manager.createFedimintSnapshot(appID, files)
@@ -1222,6 +1228,43 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 	return inspection, nil
 }
 
+// inspectLegacyCatalogRuntime never reads or executes a legacy Compose file.
+// It derives both labels from the closed app catalog and uses Docker only for
+// read-only telemetry while lifecycle operations remain on validated snapshots.
+func (manager *ComposeAppManager) inspectLegacyCatalogRuntime(ctx context.Context, manifest appmanifest.ComposeManifest, includeCPU bool) (AppInspection, error) {
+	output, err := manager.Runner.Run(ctx, dockerPath,
+		"ps",
+		"--filter", "label=com.docker.compose.project="+manifest.Project,
+		"--filter", "label=com.docker.compose.service="+manifest.PrimaryService,
+		"--format", "{{.ID}}",
+	)
+	if err != nil {
+		return AppInspection{}, errors.New("legacy app status command failed")
+	}
+	inspection := AppInspection{Status: "stopped"}
+	containerID := ""
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parsed := parseDockerContainerID(line)
+		if parsed == "" || containerID != "" {
+			return AppInspection{}, errors.New("legacy app status returned invalid container IDs")
+		}
+		containerID = parsed
+		inspection.Status = "running"
+	}
+	if !includeCPU || containerID == "" {
+		return inspection, nil
+	}
+	output, err = manager.Runner.Run(ctx, dockerPath, "stats", "--no-stream", "--format", "{{.CPUPerc}}", containerID)
+	if err == nil {
+		inspection.CPUPercentRaw = parseDockerCPUPercent(output)
+	}
+	return inspection, nil
+}
+
 func (manager *ComposeAppManager) validatedCPUMinerFiles() ([]byte, []byte, error) {
 	appsRoot := manager.AppsRoot
 	if appsRoot == "" {
@@ -1243,6 +1286,45 @@ func (manager *ComposeAppManager) validatedCPUMinerFiles() ([]byte, []byte, erro
 		return nil, nil, errors.New("app environment does not match the catalog")
 	}
 	return composeRaw, envRaw, nil
+}
+
+// Legacy 0.5.2 CPU miner installs contain exactly the manager-owned Compose
+// and environment declarations. Their contents are not trusted for status;
+// this check only gates the catalog-fixed, read-only Docker query above.
+func (manager *ComposeAppManager) hasLegacyCPUMinerDeclaration(manifest appmanifest.ComposeManifest) bool {
+	appsRoot := manager.AppsRoot
+	if appsRoot == "" {
+		appsRoot = defaultAppsRoot
+	}
+	appRoot := filepath.Join(appsRoot, manifest.ID)
+	allowed := map[string]bool{manifest.ComposeFile: true, manifest.EnvFile: true}
+	if validateRegularDirectory(appRoot) != nil || validateSnapshotDirectoryEntries(appRoot, allowed) != nil {
+		return false
+	}
+	checks := []struct {
+		name string
+		max  int64
+		mode os.FileMode
+	}{
+		{name: manifest.ComposeFile, max: 64 * 1024, mode: 0640},
+		{name: manifest.EnvFile, max: 16 * 1024, mode: 0600},
+	}
+	for _, check := range checks {
+		info, err := os.Lstat(filepath.Join(appRoot, check.name))
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > check.max || !legacyManagerFileModeReady(info, check.mode) {
+			return false
+		}
+	}
+	composeRaw, err := readRegularFile(filepath.Join(appRoot, manifest.ComposeFile), 64*1024)
+	if err != nil || !bytes.Equal(composeRaw, []byte(legacyCPUMinerCompose())) {
+		return false
+	}
+	envRaw, err := readRegularFile(filepath.Join(appRoot, manifest.EnvFile), 16*1024)
+	return err == nil && appmanifest.ValidateCPUMinerEnv(envRaw) == nil
+}
+
+func legacyCPUMinerCompose() string {
+	return strings.Replace(appmanifest.CPUMinerCompose(), "    stop_grace_period: 2s\n", "", 1)
 }
 
 func (manager *ComposeAppManager) validatedRoboSatsFiles() (roboSatsValidatedFiles, error) {

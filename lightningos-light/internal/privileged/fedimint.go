@@ -24,6 +24,26 @@ type fedimintValidatedFiles struct {
 	gateway     *appmanifest.FedimintGatewayRuntime
 }
 
+// Legacy 0.5.2 Fedimint installs have only a manager-owned Compose file. For
+// read-only status, query Docker with catalog-fixed labels instead of trusting
+// or executing that legacy declaration. Start/stop/remove still use the typed
+// migration and lifecycle paths.
+func (manager *ComposeAppManager) hasLegacyFedimintDeclaration(appID, composeName string) bool {
+	appsRoot := manager.AppsRoot
+	if appsRoot == "" {
+		appsRoot = defaultAppsRoot
+	}
+	appRoot := filepath.Join(appsRoot, appID)
+	if validateRegularDirectory(appRoot) != nil || validateSnapshotDirectoryEntries(appRoot, map[string]bool{composeName: true}) != nil {
+		return false
+	}
+	info, err := os.Lstat(filepath.Join(appRoot, composeName))
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > 64*1024 {
+		return false
+	}
+	return legacyFedimintComposeModeReady(info)
+}
+
 func (manager *ComposeAppManager) validatedFedimintFiles(appID string) (fedimintValidatedFiles, error) {
 	var files fedimintValidatedFiles
 	appsRoot := manager.AppsRoot

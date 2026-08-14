@@ -1340,6 +1340,85 @@ func TestComposeAppInspectRunningReturnsDockerCPU(t *testing.T) {
 	}
 }
 
+func TestComposeAppInspectRecognizesLegacyCPUMinerWithoutExecutingCompose(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		dockerOut  string
+		cpuOut     string
+		wantStatus string
+		wantCPU    float64
+		wantCalls  int
+	}{
+		{name: "stopped", wantStatus: "stopped", wantCalls: 1},
+		{name: "running", dockerOut: strings.Repeat("c", 64) + "\n", cpuOut: "87.25%\n", wantStatus: "running", wantCPU: 87.25, wantCalls: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			appsRoot := t.TempDir()
+			appRoot := filepath.Join(appsRoot, appmanifest.CPUMinerID)
+			if err := os.Mkdir(appRoot, 0750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(appRoot, appmanifest.CPUMinerComposeFile), []byte(legacyCPUMinerCompose()), 0640); err != nil {
+				t.Fatal(err)
+			}
+			validEnv := "CPUMINER_IMAGE=jvx1971/cpu-lottery-miner:v1\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
+			if err := os.WriteFile(filepath.Join(appRoot, appmanifest.CPUMinerEnvFile), []byte(validEnv), 0600); err != nil {
+				t.Fatal(err)
+			}
+			containerID := strings.TrimSpace(test.dockerOut)
+			wantStatusArgs := []string{
+				"ps",
+				"--filter", "label=com.docker.compose.project=" + appmanifest.CPUMinerProject,
+				"--filter", "label=com.docker.compose.service=" + appmanifest.CPUMinerID,
+				"--format", "{{.ID}}",
+			}
+			runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+				if path == dockerPath && reflect.DeepEqual(args, wantStatusArgs) {
+					return test.dockerOut, nil, true
+				}
+				if containerID != "" && path == dockerPath && reflect.DeepEqual(args, []string{"stats", "--no-stream", "--format", "{{.CPUPerc}}", containerID}) {
+					return test.cpuOut, nil, true
+				}
+				return "", nil, false
+			}}
+			manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
+			inspection, err := manager.Inspect(context.Background(), appmanifest.CPUMinerID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if inspection.Status != test.wantStatus || inspection.CPUPercentRaw != test.wantCPU || len(runner.commands) != test.wantCalls {
+				t.Fatalf("inspection=%#v commands=%#v", inspection, runner.commands)
+			}
+		})
+	}
+}
+
+func TestComposeAppInspectRejectsUnexpectedLegacyCPUMinerLayout(t *testing.T) {
+	appsRoot := t.TempDir()
+	appRoot := filepath.Join(appsRoot, appmanifest.CPUMinerID)
+	if err := os.Mkdir(appRoot, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, appmanifest.CPUMinerComposeFile), []byte(legacyCPUMinerCompose()), 0640); err != nil {
+		t.Fatal(err)
+	}
+	validEnv := "CPUMINER_IMAGE=jvx1971/cpu-lottery-miner:v1\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
+	if err := os.WriteFile(filepath.Join(appRoot, appmanifest.CPUMinerEnvFile), []byte(validEnv), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, "unexpected.conf"), []byte("unsafe\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
+	if _, err := manager.Inspect(context.Background(), appmanifest.CPUMinerID); err == nil {
+		t.Fatal("unexpected legacy CPU miner declaration was accepted")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("rejected legacy declaration reached Docker: %#v", runner.commands)
+	}
+}
+
 func TestComposeAppInspectDegradesStatsFailureToZero(t *testing.T) {
 	appsRoot, _ := writeTestCPUMinerApp(t)
 	runner := &composeRecordingRunner{

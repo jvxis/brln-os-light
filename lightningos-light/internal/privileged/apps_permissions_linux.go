@@ -388,6 +388,18 @@ func validateSecretFileMode(path string) error {
 	return nil
 }
 
+func legacyFedimintComposeModeReady(info os.FileInfo) bool {
+	if info == nil {
+		return false
+	}
+	mode := info.Mode().Perm()
+	return mode == 0600 || mode == 0640
+}
+
+func legacyManagerFileModeReady(info os.FileInfo, expected os.FileMode) bool {
+	return info != nil && info.Mode().Perm() == expected
+}
+
 func securePrivilegedPathOwner(path string) error {
 	if os.Geteuid() != 0 {
 		return nil

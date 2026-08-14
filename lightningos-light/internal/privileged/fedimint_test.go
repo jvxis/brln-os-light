@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -111,6 +112,78 @@ func TestFedimintGatewayRejectsAdminMacaroonAndTamperedDeclaration(t *testing.T)
 	}
 	if _, err := fixture.manager.validatedFedimintFiles(appmanifest.FedimintGatewayID); err == nil {
 		t.Fatal("expected tampered Gateway declaration to be rejected")
+	}
+}
+
+func TestFedimintInspectRecognizesLegacyRuntimeWithoutExecutingCompose(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		appID      string
+		compose    string
+		project    string
+		service    string
+		dockerOut  string
+		wantStatus string
+	}{
+		{name: "running guardian", appID: appmanifest.FedimintGuardianID, compose: appmanifest.FedimintGuardianComposeFile, project: appmanifest.FedimintGuardianProject, service: appmanifest.FedimintGuardianPrimaryService, dockerOut: strings.Repeat("a", 64) + "\n", wantStatus: "running"},
+		{name: "stopped gateway", appID: appmanifest.FedimintGatewayID, compose: appmanifest.FedimintGatewayComposeFile, project: appmanifest.FedimintGatewayProject, service: appmanifest.FedimintGatewayPrimaryService, wantStatus: "stopped"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			appsRoot := t.TempDir()
+			appRoot := filepath.Join(appsRoot, test.appID)
+			if err := os.Mkdir(appRoot, 0750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(appRoot, test.compose), []byte("legacy declaration\n"), 0640); err != nil {
+				t.Fatal(err)
+			}
+			runner := &composeRecordingRunner{}
+			wantArgs := []string{
+				"ps",
+				"--filter", "label=com.docker.compose.project=" + test.project,
+				"--filter", "label=com.docker.compose.service=" + test.service,
+				"--format", "{{.ID}}",
+			}
+			runner.hook = func(path string, args []string) (string, error, bool) {
+				if path == dockerPath && reflect.DeepEqual(args, wantArgs) {
+					return test.dockerOut, nil, true
+				}
+				return "", nil, false
+			}
+			manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
+			inspection, err := manager.Inspect(context.Background(), test.appID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if inspection.Status != test.wantStatus {
+				t.Fatalf("status=%q want=%q", inspection.Status, test.wantStatus)
+			}
+			if len(runner.commands) != 1 || !reflect.DeepEqual(runner.commands[0].args, wantArgs) {
+				t.Fatalf("unexpected legacy status command: %#v", runner.commands)
+			}
+		})
+	}
+}
+
+func TestFedimintInspectRejectsUnexpectedLegacyAssets(t *testing.T) {
+	appsRoot := t.TempDir()
+	appRoot := filepath.Join(appsRoot, appmanifest.FedimintGuardianID)
+	if err := os.Mkdir(appRoot, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, appmanifest.FedimintGuardianComposeFile), []byte("legacy declaration\n"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, "unexpected.env"), []byte("unsafe\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &composeRecordingRunner{}
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
+	if _, err := manager.Inspect(context.Background(), appmanifest.FedimintGuardianID); err == nil {
+		t.Fatal("unexpected legacy assets were accepted")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("rejected legacy declaration reached Docker: %#v", runner.commands)
 	}
 }
 

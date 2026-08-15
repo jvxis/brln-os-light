@@ -132,6 +132,24 @@ func (client *Client) ManagerFirewallStatus(ctx context.Context) (string, error)
 	return string(raw), nil
 }
 
+func (client *Client) ConfigureManagerFirewall(ctx context.Context, mode string, lanCIDR string, acknowledgeUnprotected bool, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationManagerFirewallConfigure, ManagerFirewallConfigureParams{
+		Mode: mode, LANCIDR: lanCIDR, AcknowledgeUnprotected: acknowledgeUnprotected,
+	}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	var state ManagerFirewallState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return "", errors.New("invalid broker manager firewall configuration response")
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return "", errors.New("invalid broker manager firewall configuration response")
+	}
+	return string(raw), nil
+}
+
 func (client *Client) StartLNDUpgrade(ctx context.Context, version string, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
 	response, err := client.call(ctx, OperationLNDUpgradeStart, LNDUpgradeStartParams{
 		Version: version, HelperContent: helperContent, VerifyOnly: verifyOnly,

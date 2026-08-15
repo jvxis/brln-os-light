@@ -816,3 +816,52 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyManagerMigrationIsFailClosedAndPreservesNodeServices(t *testing.T) {
+	path := filepath.Join("..", "..", "scripts", "migrate-legacy-manager.sh")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read legacy Manager migration: %v", err)
+	}
+	content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	for _, expected := range []string{
+		`MODE="check"`,
+		`--apply`,
+		`--finalize`,
+		`--rollback`,
+		`/var/lib/lightningos/rollback/0.5.4-legacy-manager-normalization`,
+		`validate_legacy_sudoers "$SUDOERS_PATH" "$user"`,
+		`visudo -cf "$path"`,
+		`root_regular_file "$fragment"`,
+		`[[ "$version" == 0.5.2-beta* || "$version" == 0.5.3-beta* ]]`,
+		`protected_snapshot "$STATE_ROOT/protected-services.before"`,
+		`verify_protected_snapshot "$STATE_ROOT/protected-services.before"`,
+		`User=$CANONICAL_USER`,
+		`Group=$CANONICAL_GROUP`,
+		`systemctl restart "$SERVICE"`,
+		`wait_cutover`,
+		`NoNewPrivileges`,
+		`lightningos-privileged.socket`,
+		`[[ ! -e "$SUDOERS_PATH" ]]`,
+		`use the privilege-cutover rollback command`,
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("legacy Manager migration is missing %q", expected)
+		}
+	}
+
+	for _, forbidden := range []string{
+		`systemctl stop lnd`,
+		`systemctl stop bitcoind`,
+		`systemctl restart bitcoind`,
+		`systemctl restart bitcoin`,
+		`systemctl kill lnd`,
+		`systemctl kill bitcoind`,
+		`rm -rf`,
+		`chown -R "$CANONICAL_USER:$CANONICAL_GROUP" /data`,
+	} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("legacy Manager migration must not modify protected node services or data: found %q", forbidden)
+		}
+	}
+}

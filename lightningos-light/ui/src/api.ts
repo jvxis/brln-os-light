@@ -117,6 +117,23 @@ const buildQuery = (params?: Record<string, string | number | boolean | undefine
 
 export const getHealth = () => request('/api/health')
 export const getSystemCheck = () => request('/api/system-check')
+export type ManagerExposureStatus = {
+  installed: boolean
+  active: boolean
+  configured_cidr: string
+  config_valid: boolean
+  lan_rule_present: boolean
+  tailscale_rule: boolean
+  broad_rule_present: boolean
+  manager_access_bound: boolean
+  status_available: boolean
+  access_mode: string
+  protection_state: string
+  acknowledged_unprotected: boolean
+}
+export const getManagerExposure = () => request('/api/security/manager-exposure') as Promise<ManagerExposureStatus>
+export const updateManagerExposure = (payload: { mode: 'lan' | 'vpn' | 'unprotected'; lan_cidr?: string; acknowledge_unprotected?: boolean }) =>
+  request('/api/security/manager-exposure', { method: 'POST', body: JSON.stringify(payload) }) as Promise<ManagerExposureStatus>
 export const getTLSAccessInfo = () => request('/api/tls/info') as Promise<TLSAccessInfo>
 export const getAuthState = async () => {
   const data = await request('/api/auth/state') as AuthState
@@ -1724,7 +1741,8 @@ export const updateMagmaSettings = (payload: {
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string; confirm_bitcoin_restart?: boolean }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
-export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`, { method: 'POST' })
+export const uninstallApp = (id: string) =>
+  request(`/api/apps/${id}/uninstall`, { method: 'POST', body: JSON.stringify({ confirm: true, app_id: id }) })
 export const startApp = (id: string, payload?: { confirm_bitcoin_restart?: boolean }) =>
   request(`/api/apps/${id}/start`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const stopApp = (id: string) => request(`/api/apps/${id}/stop`, { method: 'POST' })

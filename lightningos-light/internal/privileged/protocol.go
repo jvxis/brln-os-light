@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"regexp"
 	"strings"
 
@@ -32,6 +33,7 @@ const (
 	OperationTerminalCredentialRotate        Operation = "terminal.credential.rotate"
 	OperationTerminalControl                 Operation = "terminal.control"
 	OperationManagerFirewallStatus           Operation = "manager.firewall.status"
+	OperationManagerFirewallConfigure        Operation = "manager.firewall.configure"
 	OperationLNDUpgradeStart                 Operation = "upgrade.lnd.start"
 	OperationTorMetadataRefresh              Operation = "packages.tor.refresh"
 	OperationTorUpgradeStart                 Operation = "upgrade.tor.start"
@@ -201,6 +203,15 @@ type ManagerFirewallState struct {
 	BroadRulePresent   bool   `json:"broad_rule_present"`
 	ManagerAccessBound bool   `json:"manager_access_bound"`
 	StatusAvailable    bool   `json:"status_available"`
+	AccessMode         string `json:"access_mode"`
+	ProtectionState    string `json:"protection_state"`
+	Acknowledged       bool   `json:"acknowledged_unprotected"`
+}
+
+type ManagerFirewallConfigureParams struct {
+	Mode                   string `json:"mode"`
+	LANCIDR                string `json:"lan_cidr,omitempty"`
+	AcknowledgeUnprotected bool   `json:"acknowledge_unprotected,omitempty"`
 }
 
 type AppStorageState struct {
@@ -742,6 +753,31 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid manager.firewall.status params: %w", err)
+		}
+	case OperationManagerFirewallConfigure:
+		var params ManagerFirewallConfigureParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid manager.firewall.configure params: %w", err)
+		}
+		switch params.Mode {
+		case "lan":
+			ip, _, err := net.ParseCIDR(params.LANCIDR)
+			if err != nil || ip.To4() == nil {
+				return errors.New("manager LAN CIDR is invalid")
+			}
+			if params.AcknowledgeUnprotected {
+				return errors.New("unprotected acknowledgement is not valid for LAN mode")
+			}
+		case "vpn":
+			if params.LANCIDR != "" || params.AcknowledgeUnprotected {
+				return errors.New("VPN-only mode does not accept LAN or acknowledgement fields")
+			}
+		case "unprotected":
+			if params.LANCIDR != "" || !params.AcknowledgeUnprotected {
+				return errors.New("unprotected mode requires explicit acknowledgement")
+			}
+		default:
+			return errors.New("manager access mode is invalid")
 		}
 	case OperationLNDUpgradeStart:
 		var params LNDUpgradeStartParams

@@ -31,6 +31,8 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/tls/windows", s.handleTLSWindowsInstallerDownload)
 	r.Get("/api/health", s.handleHealth)
 	r.Get("/api/system-check", s.handleSystemCheck)
+	r.Get("/api/security/manager-exposure", s.handleManagerExposureGet)
+	r.Post("/api/security/manager-exposure", s.handleManagerExposurePost)
 	r.Get("/api/amboss/health", s.handleAmbossHealthGet)
 	r.Post("/api/amboss/health", s.handleAmbossHealthPost)
 	r.Get("/api/system", s.handleSystem)

@@ -3,8 +3,10 @@
 ## Access
 - UI and API bind to the server host and are intended exclusively for a trusted LAN or private VPN such as Tailscale.
 - LightningOS is not designed or supported for direct public Internet/WAN exposure. Port 8443 and App Store ports must never be publicly forwarded.
-- The installers add a LAN-restricted port 8443 rule only when UFW is already installed and active. They do not activate UFW automatically because that could lock out SSH or unrelated services on existing nodes.
-- Operators must verify UFW or provide an equivalent host, router, hypervisor, cloud, or VPN firewall before using the node.
+- The installers add and verify a LAN-restricted port 8443 rule only when UFW is already installed and active. They do not activate UFW automatically because that could lock out SSH or unrelated services on existing nodes.
+- UFW absent, inactive, a missing trusted network, a broad 8443 rule, or a failed post-apply verification are explicit non-protected states and cannot create the system-integration success marker.
+- The System Pulse UI lets an authenticated operator select verified LAN-only or Tailscale-only access. Continuing with an upstream/alternative firewall requires an explicit unprotected acknowledgement; it is still displayed as unprotected.
+- The exposure workflow never changes SSH rules and never restarts Bitcoin or LND.
 
 ## Secrets
 - /etc/lightningos/secrets.env is owned by root:lightningos with mode 660.

@@ -150,14 +150,51 @@ type fakePrivilegedServiceClient struct {
 
 type fakeManagerFirewallClient struct {
 	*fakePrivilegedServiceClient
-	raw   string
-	err   error
-	calls int
+	raw             string
+	err             error
+	calls           int
+	configureCalls  int
+	configureMode   string
+	configureCIDR   string
+	configureAck    bool
+	configureDryRun bool
+}
+
+func (client *fakeManagerFirewallClient) ConfigureManagerFirewall(_ context.Context, mode string, lanCIDR string, acknowledgeUnprotected bool, dryRun bool) (string, error) {
+	client.configureCalls++
+	client.configureMode = mode
+	client.configureCIDR = lanCIDR
+	client.configureAck = acknowledgeUnprotected
+	client.configureDryRun = dryRun
+	return client.raw, client.err
 }
 
 func (client *fakeManagerFirewallClient) ManagerFirewallStatus(context.Context) (string, error) {
 	client.calls++
 	return client.raw, client.err
+}
+
+func TestConfigureManagerFirewallWithBrokerUsesEnforceAndShadow(t *testing.T) {
+	for _, mode := range []string{"enforce", "shadow"} {
+		t.Run(mode, func(t *testing.T) {
+			client := &fakeManagerFirewallClient{
+				fakePrivilegedServiceClient: &fakePrivilegedServiceClient{mode: mode},
+				raw:                         `{"access_mode":"lan"}`,
+			}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			raw, handled, err := ConfigureManagerFirewallWithBroker(context.Background(), "lan", "192.168.68.0/24", false)
+			if err != nil || client.configureCalls != 1 || client.configureMode != "lan" || client.configureCIDR != "192.168.68.0/24" || client.configureAck {
+				t.Fatalf("raw/handled/error/client=%q/%v/%v/%#v", raw, handled, err, client)
+			}
+			if mode == "enforce" && (!handled || raw != client.raw || client.configureDryRun) {
+				t.Fatalf("enforce did not apply: raw/handled/client=%q/%v/%#v", raw, handled, client)
+			}
+			if mode == "shadow" && (handled || raw != "" || !client.configureDryRun) {
+				t.Fatalf("shadow did not validate only: raw/handled/client=%q/%v/%#v", raw, handled, client)
+			}
+		})
+	}
 }
 
 func TestReadManagerFirewallStatusWithBrokerUsesEnforceAndShadow(t *testing.T) {

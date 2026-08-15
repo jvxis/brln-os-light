@@ -19,11 +19,25 @@ func TestAppUpgradeRefreshesSecuritySensitiveSystemIntegrations(t *testing.T) {
 		"\"$INSTALL_BIN\" -m 0755 \"$src\" /usr/local/sbin/lightningos-manager-firewall",
 		"/usr/local/sbin/lightningos-manager-firewall",
 		"/usr/local/sbin/lightningos-setup-manager-tls-mdns",
+		"normalize_legacy_manager_identity",
+		"finalize_legacy_manager_identity",
+		"$project_dir/scripts/migrate-legacy-manager.sh",
+		"Normalizing legacy Manager identity without restarting Bitcoin or LND",
+		"--finalize",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(embeddedAppUpgradeScript, fragment) {
 			t.Fatalf("embedded app upgrade script is missing %q", fragment)
 		}
+	}
+	normalizeAt := strings.Index(embeddedAppUpgradeScript, "normalize_legacy_manager_identity\n")
+	buildAt := strings.Index(embeddedAppUpgradeScript, "print_step \"Building manager binary\"")
+	restartAt := strings.Index(embeddedAppUpgradeScript, "print_step \"Restarting lightningos-manager\"")
+	finalizeAt := strings.LastIndex(embeddedAppUpgradeScript, "finalize_legacy_manager_identity\n")
+	completeAt := strings.LastIndex(embeddedAppUpgradeScript, "cutover_prepared=0")
+	if normalizeAt < 0 || buildAt < 0 || restartAt < 0 || finalizeAt < 0 || completeAt < 0 ||
+		!(normalizeAt < buildAt && restartAt < finalizeAt && finalizeAt < completeAt) {
+		t.Fatal("legacy Manager migration must wrap the authenticated build and privilege cutover")
 	}
 }
 
@@ -45,7 +59,7 @@ func TestEmbeddedSystemIntegrationAssetsAreSafe(t *testing.T) {
 		"so stdout contains only the selected CIDR",
 		"Restart=always",
 		"setup-manager-tls-mdns.sh",
-		"/var/lib/lightningos-privileged/system-integrations-20260813-v6",
+		"/var/lib/lightningos-privileged/system-integrations-20260815-v7",
 	} {
 		combined := embeddedTerminalHelper + embeddedManagerFirewallHelper + embeddedManagerTLSMDNSHelper + embeddedAppUpgradeScript + systemIntegrationsMarkerPath
 		if !strings.Contains(combined, fragment) {

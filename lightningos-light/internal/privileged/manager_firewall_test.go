@@ -100,13 +100,37 @@ func TestManagerFirewallProtocolAndBrokerAreReadOnly(t *testing.T) {
 	}
 }
 
+func TestManagerFirewallConfigureIsBrokerLocked(t *testing.T) {
+	params, err := MarshalParams(ManagerFirewallConfigureParams{Mode: "lan", LANCIDR: "192.168.68.0/24"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Version: ProtocolVersion, RequestID: "manager_firewall_configure", Operation: OperationManagerFirewallConfigure, Params: params}
+	if err := ValidateRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	manager := &recordingManagerFirewall{state: ManagerFirewallState{AccessMode: "lan", ManagerAccessBound: true}}
+	locker := &recordingLocker{}
+	broker := &Broker{Runner: &recordingRunner{}, Audit: &recordingAudit{}, Locker: locker, ManagerFirewall: manager, Caller: "test"}
+	response := broker.Handle(context.Background(), request)
+	if !response.OK || manager.configureCalls != 1 || locker.locks != 1 {
+		t.Fatalf("response=%#v calls=%d locks=%d", response, manager.configureCalls, locker.locks)
+	}
+}
+
 type recordingManagerFirewall struct {
-	calls int
-	state ManagerFirewallState
-	err   error
+	calls          int
+	configureCalls int
+	state          ManagerFirewallState
+	err            error
 }
 
 func (manager *recordingManagerFirewall) Status(context.Context) (ManagerFirewallState, error) {
 	manager.calls++
+	return manager.state, manager.err
+}
+
+func (manager *recordingManagerFirewall) Configure(context.Context, ManagerFirewallConfigureParams, bool) (ManagerFirewallState, error) {
+	manager.configureCalls++
 	return manager.state, manager.err
 }

@@ -230,6 +230,20 @@ GET /api/system-check
 - Returns grouped read-only diagnostics for the app, LND, Bitcoin, Postgres, Tor, host system, and security.
 - The `security` group reports whether UFW is installed/active and whether manager port `8443` is restricted to the saved LAN CIDR. This endpoint never enables or changes firewall rules.
 
+GET /api/security/manager-exposure
+- Returns the effective Manager exposure state, including the selected access mode, UFW availability/activity, verified LAN or Tailscale rules, broad rules, and explicit unprotected acknowledgement.
+
+POST /api/security/manager-exposure
+Body:
+```json
+{"mode":"lan","lan_cidr":"192.168.1.0/24"}
+```
+- Supported modes are `lan`, `vpn`, and `unprotected`.
+- `lan` requires an active UFW, a valid IPv4 CIDR, and the current client must be inside that CIDR (loopback is allowed for local recovery).
+- `vpn` requires an active UFW and `tailscale0`; a non-loopback request must already arrive from a Tailscale address.
+- `unprotected` requires `{"acknowledge_unprotected":true}` and records that LightningOS cannot verify protection for port 8443.
+- This endpoint never installs or enables UFW, changes SSH rules, switches the Manager bind address, or restarts Bitcoin/LND.
+
 POST /api/actions/restart
 Body:
 {
@@ -595,6 +609,8 @@ POST /api/apps/{id}/start
   `confirm_bitcoin_restart` body and restart policy as installation.
 POST /api/apps/{id}/stop
 POST /api/apps/{id}/uninstall
+- Requires JSON body `{"confirm":true,"app_id":"{id}"}`. Missing or mismatched confirmation is rejected before any lifecycle operation begins.
+- Uninstalling `bitcoincore` is rejected while LND uses the local source. When the source is remote, LightningOS verifies that the configured remote RPC is reachable and synchronized; uninstall never switches the source or restarts LND automatically.
 - Uninstalling `bark-wallet` removes its containers and app definition but intentionally preserves `/var/lib/lightningos/apps-data/bark-wallet` so wallet/off-chain state is not destroyed by the generic App Store action.
 - `loop` is optional. Stop and uninstall are rejected while any Loop swap is pending. Uninstall preserves `/var/lib/lightningos/apps-data/loop` for recovery and history.
 - `loopout-brln` is a native internal app. Stop or uninstall pauses its active job after the current attempt and preserves PostgreSQL history.

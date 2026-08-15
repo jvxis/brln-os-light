@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { getManagerExposure, updateManagerExposure, type ManagerExposureStatus } from '../../api'
 import { getLocale } from '../../i18n'
 import StatusBadge from './StatusBadge'
 import { formatTimestamp, toneFromHealthStatus } from './formatters'
@@ -95,6 +96,12 @@ export default function SystemPulseModal({
 }: SystemPulseModalProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
+  const [exposure, setExposure] = useState<ManagerExposureStatus | null>(null)
+  const [exposureMode, setExposureMode] = useState<'lan' | 'vpn' | 'unprotected'>('lan')
+  const [lanCIDR, setLanCIDR] = useState('')
+  const [acknowledgeUnprotected, setAcknowledgeUnprotected] = useState(false)
+  const [exposureBusy, setExposureBusy] = useState(false)
+  const [exposureError, setExposureError] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -106,6 +113,45 @@ export default function SystemPulseModal({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [open, onClose])
+
+  useEffect(() => {
+    if (!open) return
+    let mounted = true
+    getManagerExposure()
+      .then((status) => {
+        if (!mounted) return
+        setExposure(status)
+        if (status.access_mode === 'lan' || status.access_mode === 'vpn' || status.access_mode === 'unprotected') {
+          setExposureMode(status.access_mode)
+        }
+        setLanCIDR(status.configured_cidr && status.configured_cidr !== 'none' ? status.configured_cidr : '')
+        setAcknowledgeUnprotected(false)
+        setExposureError('')
+      })
+      .catch((error) => {
+        if (mounted) setExposureError(error instanceof Error ? error.message : t('managerExposure.loadFailed'))
+      })
+    return () => { mounted = false }
+  }, [open, t])
+
+  const applyExposure = async () => {
+    setExposureBusy(true)
+    setExposureError('')
+    try {
+      const status = await updateManagerExposure({
+        mode: exposureMode,
+        ...(exposureMode === 'lan' ? { lan_cidr: lanCIDR.trim() } : {}),
+        ...(exposureMode === 'unprotected' ? { acknowledge_unprotected: acknowledgeUnprotected } : {}),
+      })
+      setExposure(status)
+      setAcknowledgeUnprotected(false)
+      onRefresh()
+    } catch (error) {
+      setExposureError(error instanceof Error ? error.message : t('managerExposure.applyFailed'))
+    } finally {
+      setExposureBusy(false)
+    }
+  }
 
   if (!open) return null
 
@@ -164,6 +210,58 @@ export default function SystemPulseModal({
               {error}
             </div>
           )}
+
+          <section className="mb-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold">{t('managerExposure.title')}</h3>
+                <p className="mt-1 text-sm text-fog/55">{t('managerExposure.body')}</p>
+              </div>
+              <StatusBadge
+                label={t(`managerExposure.states.${exposure?.protection_state || 'protection_unverified'}`)}
+                tone={exposure?.manager_access_bound ? 'ok' : exposure?.protection_state === 'acknowledged_unprotected' ? 'danger' : 'warn'}
+              />
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+              <label className="block">
+                <span className="mb-2 block text-xs text-fog/60">{t('managerExposure.mode')}</span>
+                <select className="input-field" value={exposureMode} onChange={(event) => {
+                  setExposureMode(event.target.value as 'lan' | 'vpn' | 'unprotected')
+                  setAcknowledgeUnprotected(false)
+                }}>
+                  <option value="lan">{t('managerExposure.modes.lan')}</option>
+                  <option value="vpn">{t('managerExposure.modes.vpn')}</option>
+                  <option value="unprotected">{t('managerExposure.modes.unprotected')}</option>
+                </select>
+              </label>
+              {exposureMode === 'lan' ? (
+                <label className="block">
+                  <span className="mb-2 block text-xs text-fog/60">{t('managerExposure.lanCIDR')}</span>
+                  <input className="input-field" value={lanCIDR} onChange={(event) => setLanCIDR(event.target.value)} placeholder="192.168.1.0/24" />
+                </label>
+              ) : (
+                <p className={`text-xs ${exposureMode === 'unprotected' ? 'text-rose-200' : 'text-amber-100'}`}>
+                  {t(exposureMode === 'vpn' ? 'managerExposure.vpnHint' : 'managerExposure.unprotectedHint')}
+                </p>
+              )}
+              <button
+                type="button"
+                className={`btn-secondary ${exposureBusy ? 'pointer-events-none opacity-60' : ''}`}
+                onClick={() => void applyExposure()}
+                disabled={exposureBusy || (exposureMode === 'lan' && !lanCIDR.trim()) || (exposureMode === 'unprotected' && !acknowledgeUnprotected)}
+              >
+                {exposureBusy ? t('managerExposure.applying') : t('managerExposure.apply')}
+              </button>
+            </div>
+            {exposureMode === 'unprotected' ? (
+              <label className="mt-3 flex items-start gap-2 text-xs text-rose-100">
+                <input type="checkbox" checked={acknowledgeUnprotected} onChange={(event) => setAcknowledgeUnprotected(event.target.checked)} />
+                <span>{t('managerExposure.acknowledge')}</span>
+              </label>
+            ) : null}
+            <p className="mt-3 text-xs text-fog/45">{t('managerExposure.noAutomaticUFW')}</p>
+            {exposureError ? <p className="mt-3 text-sm text-rose-200">{exposureError}</p> : null}
+          </section>
 
           {loading && groups.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-5 text-sm text-fog/65">

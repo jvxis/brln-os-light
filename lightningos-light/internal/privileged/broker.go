@@ -38,6 +38,7 @@ type ConfigFileManager interface {
 
 type ManagerFirewallManager interface {
 	Status(ctx context.Context) (ManagerFirewallState, error)
+	Configure(ctx context.Context, params ManagerFirewallConfigureParams, dryRun bool) (ManagerFirewallState, error)
 }
 
 type LNDUpgradeManager interface {
@@ -469,6 +470,19 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 		state, err := broker.ManagerFirewall.Status(ctx)
 		if err != nil {
 			return nil, "firewall_status_failed", errors.New("manager firewall status failed")
+		}
+		return state, "", nil
+	case OperationManagerFirewallConfigure:
+		if broker.ManagerFirewall == nil {
+			return nil, "broker_unavailable", errors.New("manager firewall controller is unavailable")
+		}
+		var params ManagerFirewallConfigureParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid manager.firewall.configure params")
+		}
+		state, err := broker.ManagerFirewall.Configure(ctx, params, request.DryRun)
+		if err != nil {
+			return nil, "firewall_configure_failed", errors.New("manager firewall configuration failed")
 		}
 		return state, "", nil
 	case OperationLNDUpgradeStart:
@@ -1262,6 +1276,8 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
+	case OperationManagerFirewallConfigure:
+		return true
 	case OperationAppLNDHostAccessEnsure:
 		return true
 	case OperationTerminalControl:
@@ -1277,6 +1293,8 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
+	case OperationManagerFirewallConfigure:
+		return true
 	case OperationAppLNDHostAccessEnsure:
 		return true
 	case OperationTerminalControl:

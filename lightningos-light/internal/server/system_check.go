@@ -96,7 +96,7 @@ func (s *Server) systemCheck(ctx context.Context) systemCheckResponse {
 }
 
 func (s *Server) systemCheckSecurity(ctx context.Context) systemCheckGroup {
-	status := inspectManagerFirewall(ctx)
+	status := s.managerExposureStatus(ctx)
 	firewallTone := systemCheckMuted
 	firewallDetail := "UFW is not installed; external firewall protection cannot be detected"
 	if status.Installed && !status.StatusAvailable {
@@ -110,11 +110,27 @@ func (s *Server) systemCheckSecurity(ctx context.Context) systemCheckGroup {
 
 	accessTone := systemCheckMuted
 	accessDetail := "Manager access is not enforced by UFW; verify any upstream firewall"
-	if !status.ConfigValid {
+	if status.ProtectionState == "localhost_only" {
+		accessTone = systemCheckOK
+		accessDetail = "Manager is bound to localhost only"
+	} else if status.ProtectionState == "acknowledged_unprotected" {
+		accessTone = systemCheckDanger
+		accessDetail = "Unprotected network exposure was explicitly acknowledged"
+	} else if status.ProtectionState == "protected_vpn_only" {
+		accessTone = systemCheckOK
+		accessDetail = "Port 8443 is restricted to Tailscale"
+	} else if status.ProtectionState == "protected_lan_and_vpn" {
+		accessTone = systemCheckOK
+		accessDetail = "Port 8443 is restricted to the saved LAN and Tailscale"
+	} else if status.ProtectionState == "protected_lan_only" {
+		accessTone = systemCheckOK
+		accessDetail = "Port 8443 is restricted to " + status.ConfiguredCIDR
+	} else if !status.ConfigValid {
 		accessTone = systemCheckWarn
-		accessDetail = "Saved LAN network is missing or invalid"
+		accessDetail = "An explicit Manager access mode has not been verified"
 	} else if !status.Active {
-		accessDetail = "Saved LAN network: " + status.ConfiguredCIDR + "; UFW is inactive and upstream firewalls cannot be detected"
+		accessTone = systemCheckDanger
+		accessDetail = "UFW is inactive; port 8443 exposure is not protected by LightningOS"
 	} else if status.BroadRulePresent {
 		accessTone = systemCheckDanger
 		accessDetail = "Port 8443 has a broad allow rule"
@@ -140,10 +156,10 @@ func (s *Server) systemCheckSecurity(ctx context.Context) systemCheckGroup {
 		},
 		{
 			ID:     "manager_access",
-			Label:  "Manager LAN access",
+			Label:  "Manager network exposure",
 			Status: accessTone,
 			Detail: accessDetail,
-			Value:  status.ConfiguredCIDR,
+			Value:  status.ProtectionState,
 		},
 	})
 }

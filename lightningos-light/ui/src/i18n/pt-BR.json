@@ -1380,6 +1380,10 @@
     "subtitle": "Instale serviços opcionais sob demanda. Docker é instalado automaticamente quando necessário.",
     "title": "Loja de Apps",
     "uninstall": "Desinstalar",
+    "uninstallConfirmTitle": "Desinstalar {{app}}?",
+    "uninstallConfirmBody": "Esta ação remove a execução do aplicativo. Confira o nome antes de continuar; a preservação dos dados depende de cada app.",
+    "uninstallConfirmAction": "Desinstalar {{app}}",
+    "uninstallBitcoinCoreGuard": "O LightningOS só permitirá esta ação quando o LND já estiver usando um Bitcoin remoto sincronizado e acessível. A fonte não será alterada e o LND não será reiniciado automaticamente.",
     "unavailable": {
       "requiresBitcoinRpc": "Não foi possível verificar o status do Bitcoin Core. Inicie o Bitcoin Core e tente novamente.",
       "requiresBitcoinStore": "Instale o Bitcoin Core pela Loja de Apps antes de instalar este app.",
@@ -2112,6 +2116,36 @@
       "active_window": "Regras temporárias ativas",
       "scheduled_window_complete": "Janela programada concluída"
     }
+  },
+  "managerExposure": {
+    "title": "Exposição de rede do Manager",
+    "body": "Escolha e valide como a porta 8443 pode ser acessada. O LightningOS nunca ativa o UFW automaticamente em um node existente.",
+    "mode": "Modo de acesso",
+    "lanCIDR": "CIDR permitido da LAN",
+    "modes": {
+      "lan": "Somente LAN protegida",
+      "vpn": "Somente Tailscale protegida",
+      "unprotected": "Sem proteção, com ciência explícita"
+    },
+    "states": {
+      "protected_lan_only": "Somente LAN protegida",
+      "protected_vpn_only": "Somente VPN protegida",
+      "protected_lan_and_vpn": "LAN e VPN protegidas",
+      "localhost_only": "Somente localhost",
+      "acknowledged_unprotected": "Sem proteção (ciente)",
+      "firewall_unavailable": "Firewall indisponível",
+      "firewall_inactive": "Firewall inativo",
+      "broad_exposure": "Exposição ampla detectada",
+      "protection_unverified": "Proteção não verificada"
+    },
+    "vpnHint": "Aplique somente enquanto estiver conectado pelo Tailscale; a interface tailscale0 e o UFW ativo são obrigatórios.",
+    "unprotectedHint": "Mantém a porta 8443 fora da proteção do LightningOS. Use somente com proteção externa verificada.",
+    "acknowledge": "Entendo que o LightningOS não consegue verificar a proteção da porta 8443.",
+    "noAutomaticUFW": "Para evitar bloqueio remoto, esta ação não instala nem ativa o UFW e não altera regras de SSH.",
+    "apply": "Aplicar e verificar",
+    "applying": "Aplicando...",
+    "loadFailed": "Não foi possível consultar a exposição do Manager.",
+    "applyFailed": "Não foi possível aplicar o modo de exposição do Manager."
   },
   "systemCheck": {
     "checkedAt": "Checado em {{value}}",

@@ -1380,6 +1380,10 @@
     "subtitle": "Install optional services on demand. Docker is installed automatically when required.",
     "title": "App Store",
     "uninstall": "Uninstall",
+    "uninstallConfirmTitle": "Uninstall {{app}}?",
+    "uninstallConfirmBody": "This removes the application runtime. Review the app name before continuing; preserved data depends on the app.",
+    "uninstallConfirmAction": "Uninstall {{app}}",
+    "uninstallBitcoinCoreGuard": "LightningOS will allow this only when LND already uses a synchronized and reachable remote Bitcoin backend. It will not switch the source or restart LND automatically.",
     "unavailable": {
       "requiresBitcoinRpc": "Bitcoin Core status could not be verified. Start Bitcoin Core and try again.",
       "requiresBitcoinStore": "Install Bitcoin Core from the App Store before installing this app.",
@@ -2112,6 +2116,36 @@
       "active_window": "Temporary rules active",
       "scheduled_window_complete": "Scheduled window complete"
     }
+  },
+  "managerExposure": {
+    "title": "Manager network exposure",
+    "body": "Choose and verify how port 8443 can be reached. LightningOS never enables UFW automatically on an existing node.",
+    "mode": "Access mode",
+    "lanCIDR": "Allowed LAN CIDR",
+    "modes": {
+      "lan": "Protected LAN only",
+      "vpn": "Protected Tailscale only",
+      "unprotected": "Acknowledged without protection"
+    },
+    "states": {
+      "protected_lan_only": "Protected LAN only",
+      "protected_vpn_only": "Protected VPN only",
+      "protected_lan_and_vpn": "Protected LAN and VPN",
+      "localhost_only": "Localhost only",
+      "acknowledged_unprotected": "Unprotected (acknowledged)",
+      "firewall_unavailable": "Firewall unavailable",
+      "firewall_inactive": "Firewall inactive",
+      "broad_exposure": "Broad exposure detected",
+      "protection_unverified": "Protection not verified"
+    },
+    "vpnHint": "Apply this only while connected through Tailscale; the tailscale0 interface and an active UFW are required.",
+    "unprotectedHint": "This keeps port 8443 outside LightningOS firewall enforcement. Use only with verified upstream protection.",
+    "acknowledge": "I understand that LightningOS cannot verify firewall protection for port 8443.",
+    "noAutomaticUFW": "For lockout safety, this action does not install or enable UFW and does not change SSH rules.",
+    "apply": "Apply and verify",
+    "applying": "Applying...",
+    "loadFailed": "Manager exposure status could not be loaded.",
+    "applyFailed": "Manager exposure mode could not be applied."
   },
   "systemCheck": {
     "checkedAt": "Checked at {{value}}",

@@ -1,9 +1,12 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
+	"sync"
+	"time"
 
 	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
@@ -11,54 +14,178 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+const (
+	appInfoWorkerLimit = 4
+	appListCacheTTL    = 10 * time.Second
+)
+
+type cachedAppList struct {
+	at   time.Time
+	apps []appInfo
+}
+
 func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
-	apps, err := s.appRegistry()
+	resp, err := s.appListSnapshot(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	resp := make([]appInfo, 0, len(apps))
-	var electrsAvailability *fullIndexAppAvailability
-	var mempoolAvailability *fullIndexAppAvailability
-	for _, app := range apps {
-		if isAppHiddenFromStore(app.Definition().ID) {
-			continue
-		}
-		info, infoErr := app.Info(r.Context())
-		if infoErr != nil {
-			if info.ID == "" {
-				info = newAppInfo(app.Definition())
-			}
-			if info.Installed {
-				info.Status = "unknown"
-			}
-		}
-		if operation, active := s.currentAppOperation(info.ID); active {
+	for index := range resp {
+		if operation, active := s.currentAppOperation(resp[index].ID); active {
 			operationCopy := operation
-			info.Operation = &operationCopy
+			resp[index].Operation = &operationCopy
 		}
-		if info.ID == electrsAppID || info.ID == mempoolAppID {
-			if info.ID == electrsAppID {
-				if electrsAvailability == nil {
-					availability := s.electrsAppAvailability(r.Context())
-					electrsAvailability = &availability
-				}
-				info.Available = electrsAvailability.Available
-				info.UnavailableReason = electrsAvailability.Reason
-				info.UnavailableMessage = electrsAvailability.Message
-			} else {
-				if mempoolAvailability == nil {
-					availability := s.fullIndexAppAvailability(r.Context())
-					mempoolAvailability = &availability
-				}
-				info.Available = mempoolAvailability.Available
-				info.UnavailableReason = mempoolAvailability.Reason
-				info.UnavailableMessage = mempoolAvailability.Message
-			}
-		}
-		resp = append(resp, info)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) appListSnapshot(ctx context.Context) ([]appInfo, error) {
+	if cached, ok := s.cachedAppList(); ok {
+		return cached, nil
+	}
+	result := s.appListGroup.DoChan("catalog", func() (any, error) {
+		if cached, ok := s.cachedAppList(); ok {
+			return cached, nil
+		}
+		refreshParent := s.shutdownCtx
+		if refreshParent == nil {
+			refreshParent = context.Background()
+		}
+		refreshCtx, cancel := context.WithTimeout(refreshParent, 45*time.Second)
+		defer cancel()
+		apps, err := s.buildAppList(refreshCtx)
+		if err != nil {
+			return nil, err
+		}
+		s.appListMu.Lock()
+		s.appListCache = cachedAppList{at: time.Now(), apps: cloneAppInfos(apps)}
+		s.appListMu.Unlock()
+		return apps, nil
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case completed := <-result:
+		if completed.Err != nil {
+			return nil, completed.Err
+		}
+		apps, ok := completed.Val.([]appInfo)
+		if !ok {
+			return nil, errors.New("invalid app catalog snapshot")
+		}
+		return cloneAppInfos(apps), nil
+	}
+}
+
+func (s *Server) cachedAppList() ([]appInfo, bool) {
+	s.appListMu.Lock()
+	defer s.appListMu.Unlock()
+	if s.appListCache.at.IsZero() || time.Since(s.appListCache.at) >= appListCacheTTL {
+		return nil, false
+	}
+	return cloneAppInfos(s.appListCache.apps), true
+}
+
+func (s *Server) invalidateAppListCache() {
+	if s == nil {
+		return
+	}
+	s.appListMu.Lock()
+	s.appListCache = cachedAppList{}
+	s.appListMu.Unlock()
+}
+
+func cloneAppInfos(apps []appInfo) []appInfo {
+	cloned := append([]appInfo(nil), apps...)
+	for index := range cloned {
+		cloned[index].SecurityNotices = append([]string(nil), cloned[index].SecurityNotices...)
+		if cloned[index].Operation != nil {
+			operation := *cloned[index].Operation
+			cloned[index].Operation = &operation
+		}
+	}
+	return cloned
+}
+
+func (s *Server) buildAppList(ctx context.Context) ([]appInfo, error) {
+	apps, err := s.appRegistry()
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]appHandler, 0, len(apps))
+	for _, app := range apps {
+		if !isAppHiddenFromStore(app.Definition().ID) {
+			visible = append(visible, app)
+		}
+	}
+	resp := collectAppInfos(ctx, visible, appInfoWorkerLimit)
+	var electrsAvailability *fullIndexAppAvailability
+	var mempoolAvailability *fullIndexAppAvailability
+	for index := range resp {
+		if resp[index].ID == electrsAppID || resp[index].ID == mempoolAppID {
+			if resp[index].ID == electrsAppID {
+				if electrsAvailability == nil {
+					availability := s.electrsAppAvailability(ctx)
+					electrsAvailability = &availability
+				}
+				resp[index].Available = electrsAvailability.Available
+				resp[index].UnavailableReason = electrsAvailability.Reason
+				resp[index].UnavailableMessage = electrsAvailability.Message
+			} else {
+				if mempoolAvailability == nil {
+					availability := s.fullIndexAppAvailability(ctx)
+					mempoolAvailability = &availability
+				}
+				resp[index].Available = mempoolAvailability.Available
+				resp[index].UnavailableReason = mempoolAvailability.Reason
+				resp[index].UnavailableMessage = mempoolAvailability.Message
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func collectAppInfos(ctx context.Context, apps []appHandler, workerLimit int) []appInfo {
+	resp := make([]appInfo, len(apps))
+	if len(apps) == 0 {
+		return resp
+	}
+	if workerLimit < 1 {
+		workerLimit = 1
+	}
+	if workerLimit > len(apps) {
+		workerLimit = len(apps)
+	}
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	workers.Add(workerLimit)
+	for worker := 0; worker < workerLimit; worker++ {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				app := apps[index]
+				info, infoErr := app.Info(ctx)
+				if infoErr != nil {
+					if info.ID == "" {
+						info = newAppInfo(app.Definition())
+					}
+					if info.Installed {
+						info.Status = "unknown"
+					}
+				}
+				resp[index] = info
+			}
+		}()
+	}
+	for index := range apps {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+	return resp
 }
 
 func (s *Server) handleAppOperations(w http.ResponseWriter, r *http.Request) {

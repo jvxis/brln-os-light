@@ -160,6 +160,9 @@ type Server struct {
 	appOperationsMu             sync.Mutex
 	appOperations               map[string]appOperationState
 	appOperationSequence        uint64
+	appListMu                   sync.Mutex
+	appListGroup                singleflight.Group
+	appListCache                cachedAppList
 	lndGraphProgressMu          sync.Mutex
 	lndGraphProgressCache       lndGraphProgressCache
 	lndGraphProgressRefreshing  bool

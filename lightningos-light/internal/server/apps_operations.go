@@ -33,10 +33,13 @@ func (s *Server) finishAppOperation(appID string, token uint64) {
 		return
 	}
 	s.appOperationsMu.Lock()
-	defer s.appOperationsMu.Unlock()
 	operation, exists := s.appOperations[appID]
 	if exists && operation.token == token {
 		delete(s.appOperations, appID)
+	}
+	s.appOperationsMu.Unlock()
+	if exists && operation.token == token {
+		s.invalidateAppListCache()
 	}
 }
 

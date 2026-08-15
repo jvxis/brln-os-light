@@ -1109,97 +1109,77 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 		return inspection, errors.New("app manifest is not allowed")
 	}
 
-	var snapshot composeAppSnapshot
-	var cleanup func()
 	switch manifest.ID {
 	case appmanifest.CPUMinerID:
-		composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
+		_, _, err := manager.validatedCPUMinerFiles()
 		if err != nil {
 			if manager.hasLegacyCPUMinerDeclaration(manifest) {
-				return manager.inspectLegacyCatalogRuntime(ctx, manifest, true)
+				return manager.inspectCatalogRuntime(ctx, manifest, true)
 			}
 			return inspection, err
 		}
-		snapshot, cleanup, err = manager.createSnapshot(manifest, composeRaw, envRaw)
-		if err != nil {
-			return inspection, err
-		}
+		return manager.inspectCatalogRuntime(ctx, manifest, true)
 	case appmanifest.RoboSatsID:
-		files, err := manager.validatedRoboSatsFiles()
+		_, err := manager.validatedRoboSatsFiles()
 		if err != nil {
 			return inspection, err
 		}
-		snapshot, cleanup, err = manager.createRoboSatsSnapshot(manifest, files)
-		if err != nil {
-			return inspection, err
-		}
+		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.BitcoinCoreID:
-		snapshot, cleanup, err = manager.createBitcoinCoreInspectionSnapshot(ctx)
+		snapshot, cleanup, err := manager.createBitcoinCoreInspectionSnapshot(ctx)
 		if err != nil {
 			return inspection, err
 		}
+		defer cleanup()
+		return manager.inspectComposeSnapshot(ctx, manifest, snapshot, false)
 	case appmanifest.BTCPayID:
-		files, err := manager.validatedBTCPayFiles()
+		_, err := manager.validatedBTCPayFiles()
 		if err != nil {
 			return inspection, err
 		}
-		snapshot, cleanup, err = manager.createBTCPaySnapshot(files)
-		if err != nil {
-			return inspection, err
-		}
+		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.LNDgID:
-		files, err := manager.validatedLNDgFiles()
+		_, err := manager.validatedLNDgFiles()
 		if err != nil {
 			return inspection, err
 		}
-		snapshot, cleanup, err = manager.createLNDgSnapshot(files)
-		if err != nil {
-			return inspection, err
-		}
+		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.LNbitsID:
-		files, err := manager.validatedLNbitsFiles()
+		_, err := manager.validatedLNbitsFiles()
 		if err != nil {
 			return inspection, err
 		}
-		snapshot, cleanup, err = manager.createLNbitsSnapshot(files)
-		if err != nil {
-			return inspection, err
-		}
+		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.ElectrsID:
-		files, err := manager.validatedElectrsFiles()
+		_, err := manager.validatedElectrsFiles()
 		if err != nil {
 			return inspection, err
 		}
-		snapshot, cleanup, err = manager.createElectrsSnapshot(files)
-		if err != nil {
-			return inspection, err
-		}
+		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.MempoolID:
-		files, err := manager.validatedMempoolFiles()
+		_, err := manager.validatedMempoolFiles()
 		if err != nil {
 			return inspection, err
 		}
-		snapshot, cleanup, err = manager.createMempoolSnapshot(files)
-		if err != nil {
-			return inspection, err
-		}
+		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.FedimintGuardianID, appmanifest.FedimintGatewayID:
-		files, err := manager.validatedFedimintFiles(appID)
+		_, err := manager.validatedFedimintFiles(appID)
 		if err != nil {
 			if manager.hasLegacyFedimintDeclaration(appID, manifest.ComposeFile) {
-				return manager.inspectLegacyCatalogRuntime(ctx, manifest, false)
+				return manager.inspectCatalogRuntime(ctx, manifest, false)
 			}
 			return inspection, err
 		}
-		snapshot, cleanup, err = manager.createFedimintSnapshot(appID, files)
-		if err != nil {
-			return inspection, err
-		}
+		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	default:
 		return inspection, errors.New("app manifest is not allowed")
 	}
-	defer cleanup()
 
+	return inspection, errors.New("app manifest is not allowed")
+}
+
+func (manager *ComposeAppManager) inspectComposeSnapshot(ctx context.Context, manifest appmanifest.ComposeManifest, snapshot composeAppSnapshot, includeCPU bool) (AppInspection, error) {
+	var inspection AppInspection
 	commandPath, prefix, err := manager.resolveCompose(ctx)
 	if err != nil {
 		return inspection, err
@@ -1227,7 +1207,7 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 	if inspection.Status != "running" {
 		return inspection, nil
 	}
-	if manifest.ID != appmanifest.CPUMinerID {
+	if !includeCPU {
 		return inspection, nil
 	}
 
@@ -1246,10 +1226,10 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 	return inspection, nil
 }
 
-// inspectLegacyCatalogRuntime never reads or executes a legacy Compose file.
+// inspectCatalogRuntime never reads or executes a manager-owned Compose file.
 // It derives both labels from the closed app catalog and uses Docker only for
 // read-only telemetry while lifecycle operations remain on validated snapshots.
-func (manager *ComposeAppManager) legacyCatalogRunningContainerID(ctx context.Context, manifest appmanifest.ComposeManifest) (string, error) {
+func (manager *ComposeAppManager) catalogRunningContainerID(ctx context.Context, manifest appmanifest.ComposeManifest) (string, error) {
 	output, err := manager.Runner.Run(ctx, dockerPath,
 		"ps",
 		"--filter", "label=com.docker.compose.project="+manifest.Project,
@@ -1257,7 +1237,7 @@ func (manager *ComposeAppManager) legacyCatalogRunningContainerID(ctx context.Co
 		"--format", "{{.ID}}",
 	)
 	if err != nil {
-		return "", errors.New("legacy app status command failed")
+		return "", errors.New("app status command failed")
 	}
 	containerID := ""
 	for _, line := range strings.Split(output, "\n") {
@@ -1267,15 +1247,15 @@ func (manager *ComposeAppManager) legacyCatalogRunningContainerID(ctx context.Co
 		}
 		parsed := parseDockerContainerID(line)
 		if parsed == "" || containerID != "" {
-			return "", errors.New("legacy app status returned invalid container IDs")
+			return "", errors.New("app status returned invalid container IDs")
 		}
 		containerID = parsed
 	}
 	return containerID, nil
 }
 
-func (manager *ComposeAppManager) inspectLegacyCatalogRuntime(ctx context.Context, manifest appmanifest.ComposeManifest, includeCPU bool) (AppInspection, error) {
-	containerID, err := manager.legacyCatalogRunningContainerID(ctx, manifest)
+func (manager *ComposeAppManager) inspectCatalogRuntime(ctx context.Context, manifest appmanifest.ComposeManifest, includeCPU bool) (AppInspection, error) {
+	containerID, err := manager.catalogRunningContainerID(ctx, manifest)
 	if err != nil {
 		return AppInspection{}, err
 	}
@@ -1294,7 +1274,7 @@ func (manager *ComposeAppManager) inspectLegacyCatalogRuntime(ctx context.Contex
 }
 
 func (manager *ComposeAppManager) stopLegacyCatalogRuntime(ctx context.Context, manifest appmanifest.ComposeManifest) error {
-	containerID, err := manager.legacyCatalogRunningContainerID(ctx, manifest)
+	containerID, err := manager.catalogRunningContainerID(ctx, manifest)
 	if err != nil || containerID == "" {
 		return err
 	}

@@ -53,6 +53,9 @@ func (runner *composeRecordingRunner) Run(_ context.Context, path string, args .
 	if path == dockerPath && len(args) == 3 && args[0] == "image" && args[1] == "inspect" {
 		return "", runner.imageErr
 	}
+	if path == dockerPath && len(args) == 7 && args[0] == "ps" && args[1] == "--filter" && args[3] == "--filter" && reflect.DeepEqual(args[5:], []string{"--format", "{{.ID}}"}) {
+		return runner.containerID, nil
+	}
 	for index, arg := range args {
 		if arg == "-f" && index+1 < len(args) {
 			raw, _ := os.ReadFile(args[index+1])
@@ -637,17 +640,17 @@ func TestComposeAppRoboSatsLifecycleUsesBrokerOwnedProxySnapshot(t *testing.T) {
 
 func TestComposeAppRoboSatsInspectUsesPrimaryServiceWithoutDockerStats(t *testing.T) {
 	appsRoot := writeTestRoboSatsApp(t)
-	runner := &composeRecordingRunner{runningServices: "tor\nrobosats\nproxy\n"}
+	runner := &composeRecordingRunner{containerID: strings.Repeat("a", 64) + "\n"}
 	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, PrivilegedAppsRoot: t.TempDir()}
 	inspection, err := manager.Inspect(context.Background(), appmanifest.RoboSatsID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspection.Status != "running" || inspection.CPUPercentRaw != 0 || len(runner.commands) != 2 {
+	if inspection.Status != "running" || inspection.CPUPercentRaw != 0 || len(runner.commands) != 1 {
 		t.Fatalf("inspection=%#v commands=%#v", inspection, runner.commands)
 	}
-	if !hasArgsSuffix(runner.commands[1].args, "ps", "--services", "--filter", "status=running") {
-		t.Fatalf("unexpected status command: %#v", runner.commands[1])
+	if runner.commands[0].path != dockerPath || !strings.Contains(strings.Join(runner.commands[0].args, " "), "com.docker.compose.service=robosats") {
+		t.Fatalf("unexpected status command: %#v", runner.commands[0])
 	}
 }
 
@@ -1365,24 +1368,21 @@ func TestComposeAppRoboSatsRemoveRejectsTamperedManifestBeforeCommand(t *testing
 	}
 }
 
-func TestComposeAppInspectStoppedUsesValidatedSnapshot(t *testing.T) {
-	appsRoot, validEnv := writeTestCPUMinerApp(t)
+func TestComposeAppInspectStoppedUsesValidatedCatalogLabels(t *testing.T) {
+	appsRoot, _ := writeTestCPUMinerApp(t)
 	runner := &composeRecordingRunner{}
 	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, TempRoot: t.TempDir()}
 	inspection, err := manager.Inspect(context.Background(), "cpuminer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspection.Status != "stopped" || inspection.CPUPercentRaw != 0 || len(runner.commands) != 2 {
+	if inspection.Status != "stopped" || inspection.CPUPercentRaw != 0 || len(runner.commands) != 1 {
 		t.Fatalf("inspection=%#v commands=%#v", inspection, runner.commands)
 	}
-	if !hasArgsSuffix(runner.commands[1].args, "ps", "--services", "--filter", "status=running") {
-		t.Fatalf("unexpected status command: %#v", runner.commands[1])
+	if runner.commands[0].path != dockerPath || !strings.Contains(strings.Join(runner.commands[0].args, " "), "com.docker.compose.project=cpuminer") {
+		t.Fatalf("unexpected status command: %#v", runner.commands[0])
 	}
-	if runner.composeSnapshot != appmanifest.CPUMinerCompose() || runner.envSnapshot != validEnv {
-		t.Fatal("broker did not inspect the validated manifest snapshot")
-	}
-	for _, arg := range runner.commands[1].args {
+	for _, arg := range runner.commands[0].args {
 		if strings.Contains(arg, appsRoot) {
 			t.Fatalf("manager-writable path reached Docker command: %q", arg)
 		}
@@ -1402,12 +1402,12 @@ func TestComposeAppInspectRunningReturnsDockerCPU(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspection.Status != "running" || inspection.CPUPercentRaw != 125.75 || len(runner.commands) != 4 {
+	if inspection.Status != "running" || inspection.CPUPercentRaw != 125.75 || len(runner.commands) != 2 {
 		t.Fatalf("inspection=%#v commands=%#v", inspection, runner.commands)
 	}
 	wantStats := recordedCommand{path: dockerPath, args: []string{"stats", "--no-stream", "--format", "{{.CPUPerc}}", containerID}}
-	if !reflect.DeepEqual(runner.commands[3], wantStats) {
-		t.Fatalf("stats command=%#v want=%#v", runner.commands[3], wantStats)
+	if !reflect.DeepEqual(runner.commands[1], wantStats) {
+		t.Fatalf("stats command=%#v want=%#v", runner.commands[1], wantStats)
 	}
 }
 
@@ -1548,7 +1548,7 @@ func TestComposeAppInspectRejectsInvalidContainerIDBeforeStats(t *testing.T) {
 	if _, err := manager.Inspect(context.Background(), "cpuminer"); err == nil {
 		t.Fatal("expected invalid container ID to fail")
 	}
-	if len(runner.commands) != 3 {
+	if len(runner.commands) != 1 {
 		t.Fatalf("invalid ID reached stats command: %#v", runner.commands)
 	}
 }

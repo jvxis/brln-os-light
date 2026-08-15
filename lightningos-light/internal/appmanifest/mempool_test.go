@@ -44,6 +44,7 @@ func TestMempoolComposeIsClosedAndHardened(t *testing.T) {
 	for _, required := range []string{
 		MempoolFrontendImage, MempoolBackendImage, MempoolDatabaseImage,
 		`user: "1000:1000"`, `user: "999:999"`, "cap_drop:\n      - ALL", "no-new-privileges:true",
+		"/run/frontend:rw,exec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=0700",
 		"name: bitcoincore_default", "name: electrs_default", "name: mempool_dbdata", "name: mempool_cache",
 		`MARIADB_AUTO_UPGRADE: "1"`,
 	} {

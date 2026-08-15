@@ -209,7 +209,7 @@ func MempoolCompose(runtime MempoolRuntime) (string, error) {
       BACKEND_MAINNET_HTTP_PORT: "%d"
 %s
     tmpfs:
-      - /run/frontend:rw,exec,nosuid,nodev,size=256m,uid=%d,gid=%d,mode=0700
+      - /run/frontend:rw,exec,nosuid,nodev,size=512m,uid=%d,gid=%d,mode=0700
       - /var/run:rw,noexec,nosuid,nodev,size=4m,uid=%d,gid=%d,mode=0700
       - /var/cache/nginx:rw,noexec,nosuid,nodev,size=32m,uid=%d,gid=%d,mode=0700
       - /var/log/nginx:rw,noexec,nosuid,nodev,size=16m,uid=%d,gid=%d,mode=0700

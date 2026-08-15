@@ -1,8 +1,11 @@
 package server
 
 import (
+	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestFullIndexAvailabilityAcceptsNativeLocalBitcoinRPC(t *testing.T) {
@@ -38,6 +41,41 @@ func TestFullIndexAvailabilityRejectsUnsafeNativeBitcoinModes(t *testing.T) {
 				t.Fatalf("availability=%#v, want reason %q", availability, test.reason)
 			}
 		})
+	}
+}
+
+func TestFullIndexAvailabilityAllowsManagedFallbackAfterTransportTimeout(t *testing.T) {
+	rpc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"result":{}}`))
+	}))
+	defer rpc.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	availability, allowManagedFallback := fullIndexBitcoinConfigAvailabilityWithFallbackHint(ctx, bitcoinRPCConfig{
+		Host: rpc.URL,
+		User: "rpc-user",
+		Pass: "rpc-pass",
+	})
+	if availability.Available || availability.Reason != fullIndexUnavailableBitcoinRPC || !allowManagedFallback {
+		t.Fatalf("availability=%#v allowManagedFallback=%v", availability, allowManagedFallback)
+	}
+}
+
+func TestFullIndexAvailabilityKeepsRPCAuthenticationFailureClosed(t *testing.T) {
+	rpc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer rpc.Close()
+
+	availability, allowManagedFallback := fullIndexBitcoinConfigAvailabilityWithFallbackHint(t.Context(), bitcoinRPCConfig{
+		Host: rpc.URL,
+		User: "wrong-user",
+		Pass: "wrong-pass",
+	})
+	if availability.Available || availability.Reason != fullIndexUnavailableBitcoinRPC || allowManagedFallback {
+		t.Fatalf("availability=%#v allowManagedFallback=%v", availability, allowManagedFallback)
 	}
 }
 

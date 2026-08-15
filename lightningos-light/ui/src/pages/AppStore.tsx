@@ -1293,7 +1293,7 @@ export default function AppStore() {
                 disabled={catalogUseStorageMount && !catalogSelectedMount}
                 onClick={handleCatalogStorageConfirm}
               >
-                {catalogStorageDialog.action === 'install' ? t('appStore.install') : t('appStore.start')}
+                {catalogStorageDialog.action === 'install' ? t('appStore.install') : t('common.start')}
               </button>
             </div>
           </div>

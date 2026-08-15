@@ -149,6 +149,9 @@ func (manager *ComposeAppManager) createElectrsSnapshot(files electrsValidatedFi
 		appmanifest.ElectrsCookieFile:  true,
 		electrsImageAttestationFile:    true,
 		electrsImageFailureFile:        true,
+		catalogStorageDataDirFile:      true,
+		catalogStorageIDFile:           true,
+		catalogStorageMigrationFile:    true,
 	}); err != nil {
 		return snapshot, func() {}, errors.New("Electrs execution snapshot contains unexpected assets")
 	}
@@ -156,6 +159,11 @@ func (manager *ComposeAppManager) createElectrsSnapshot(files electrsValidatedFi
 		root:        snapshotRoot,
 		composePath: filepath.Join(snapshotRoot, appmanifest.ElectrsComposeFile),
 		envPath:     filepath.Join(snapshotRoot, appmanifest.ElectrsEnvFile),
+	}
+	if files.runtime.DataDir != "" {
+		if err := manager.validateCatalogStorageEnrollment(appmanifest.ElectrsID, files.runtime.DataDir); err != nil {
+			return composeAppSnapshot{}, func() {}, err
+		}
 	}
 	compose, err := appmanifest.ElectrsCompose(files.runtime)
 	if err != nil {
@@ -195,6 +203,9 @@ func (manager *ComposeAppManager) removeElectrsExecutionSnapshot(snapshotRoot st
 		appmanifest.ElectrsCookieFile:  true,
 		electrsImageAttestationFile:    true,
 		electrsImageFailureFile:        true,
+		catalogStorageDataDirFile:      true,
+		catalogStorageIDFile:           true,
+		catalogStorageMigrationFile:    true,
 	}); err != nil {
 		return errors.New("Electrs execution snapshot contains unexpected assets")
 	}

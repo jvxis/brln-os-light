@@ -70,12 +70,20 @@ func (manager *ComposeAppManager) createMempoolSnapshot(files mempoolValidatedFi
 	if err := validateSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
 		appmanifest.MempoolComposeFile: true,
 		appmanifest.MempoolEnvFile:     true,
+		catalogStorageDataDirFile:      true,
+		catalogStorageIDFile:           true,
+		catalogStorageMigrationFile:    true,
 	}); err != nil {
 		return snapshot, func() {}, errors.New("Mempool execution snapshot contains unexpected assets")
 	}
 	snapshot = composeAppSnapshot{
 		root: snapshotRoot, composePath: filepath.Join(snapshotRoot, appmanifest.MempoolComposeFile),
 		envPath: filepath.Join(snapshotRoot, appmanifest.MempoolEnvFile),
+	}
+	if files.runtime.DataDir != "" {
+		if err := manager.validateCatalogStorageEnrollment(appmanifest.MempoolID, files.runtime.DataDir); err != nil {
+			return composeAppSnapshot{}, func() {}, err
+		}
 	}
 	if err := writeAtomicRegularFile(snapshot.composePath, files.composeRaw, 0600); err != nil {
 		return composeAppSnapshot{}, func() {}, errors.New("failed to snapshot Mempool compose manifest")
@@ -98,6 +106,9 @@ func (manager *ComposeAppManager) removeMempoolExecutionSnapshot(snapshotRoot st
 	if err := validateSnapshotDirectoryEntries(expectedRoot, map[string]bool{
 		appmanifest.MempoolComposeFile: true,
 		appmanifest.MempoolEnvFile:     true,
+		catalogStorageDataDirFile:      true,
+		catalogStorageIDFile:           true,
+		catalogStorageMigrationFile:    true,
 	}); err != nil {
 		return errors.New("Mempool execution snapshot contains unexpected assets")
 	}

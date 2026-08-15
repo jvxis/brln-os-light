@@ -87,6 +87,17 @@ func TestElectrsComposeClosesPrivilegesAndBitcoinWiring(t *testing.T) {
 	}
 }
 
+func TestElectrsComposeUsesEnrolledDataDirectory(t *testing.T) {
+	runtime := ElectrsRuntime{BitcoinMode: ElectrsBitcoinModeApp, Network: "bitcoin", DataDir: "/mnt/chain/lightningos/electrs"}
+	compose, err := ElectrsCompose(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(compose, "/mnt/chain/lightningos/electrs/db:/data/db") || strings.Contains(compose, "name: "+ElectrsVolume) {
+		t.Fatalf("Electrs external storage is not a closed bind mount:\n%s", compose)
+	}
+}
+
 func TestElectrsNetworkContract(t *testing.T) {
 	tests := map[string]ElectrsNetwork{
 		"bitcoin": {ElectrsName: "bitcoin", BitcoinName: "main", RPCPort: 8332, P2PPort: 8333},

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
@@ -68,7 +69,7 @@ type findmntFilesystem struct {
 func (s *Server) handleAppStorageTargets(w http.ResponseWriter, r *http.Request) {
 	appID := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("app")))
 	if !appSupportsStorageTargets(appID) {
-		writeError(w, http.StatusBadRequest, "storage targets are only supported for Bitcoin Core and Elements")
+		writeError(w, http.StatusBadRequest, "storage targets are not supported for this app")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -84,7 +85,7 @@ func (s *Server) handleAppStorageTargets(w http.ResponseWriter, r *http.Request)
 
 func appStorageTargets(ctx context.Context, appID string) (appStorageTargetsResponse, error) {
 	if !appSupportsStorageTargets(appID) {
-		return appStorageTargetsResponse{}, errors.New("storage targets are only supported for Bitcoin Core and Elements")
+		return appStorageTargetsResponse{}, errors.New("storage targets are not supported for this app")
 	}
 	mounts, err := readStorageMounts(ctx)
 	if err != nil {
@@ -265,6 +266,10 @@ func storageMountEligibility(appID string, mount storageMount, suggestedPath str
 		if _, err := normalizeElementsDataDir(suggestedPath); err != nil {
 			return false, err.Error()
 		}
+	case electrsAppID, mempoolAppID:
+		if _, err := appmanifest.NormalizeCatalogDataDir(appID, suggestedPath); err != nil {
+			return false, err.Error()
+		}
 	default:
 		return false, "unsupported app"
 	}
@@ -301,7 +306,7 @@ func suggestedStorageDataDir(appID string, mount string) string {
 }
 
 func appSupportsStorageTargets(appID string) bool {
-	return appID == bitcoinCoreAppID || appID == elementsAppID
+	return appID == bitcoinCoreAppID || appID == elementsAppID || appID == electrsAppID || appID == mempoolAppID
 }
 
 func appStorageDirName(appID string) string {
@@ -321,6 +326,10 @@ func appDefaultDataDir(appID string) string {
 		return bitcoinCoreDefaultDataDir
 	case elementsAppID:
 		return elementsDefaultDataDir
+	case electrsAppID:
+		return appmanifest.ElectrsDefaultDataDir
+	case mempoolAppID:
+		return appmanifest.MempoolDefaultDataDir
 	default:
 		return ""
 	}
@@ -332,6 +341,10 @@ func appMinFreeKiB(appID string) int64 {
 		return bitcoinCoreMinFreeKiB
 	case elementsAppID:
 		return elementsMinFreeKiB
+	case electrsAppID:
+		return 100 * 1024 * 1024
+	case mempoolAppID:
+		return 20 * 1024 * 1024
 	default:
 		return 0
 	}

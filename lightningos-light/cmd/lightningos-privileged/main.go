@@ -63,6 +63,7 @@ func main() {
 		Apps:                 privileged.NewComposeAppManager(runner),
 		Packages:             privileged.NewCatalogPackageManager(runner),
 		AppStorage:           privileged.NewNativeAppStorageManager(),
+		CatalogStorage:       privileged.NewCatalogStorageManager(),
 		SMART:                privileged.NewNativeSMARTManager(runner),
 		LNDPermissions:       privileged.NewNativeLNDPermissionsManager(),
 		LNDManagerCredential: privileged.NewNativeLNDManagerCredentialManager(configFiles, runner),

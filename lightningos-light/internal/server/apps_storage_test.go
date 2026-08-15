@@ -10,6 +10,8 @@ func TestSuggestedStorageDataDir(t *testing.T) {
 	}{
 		{appID: bitcoinCoreAppID, mount: "/mnt/chain-ssd", want: "/mnt/chain-ssd/lightningos/bitcoin"},
 		{appID: elementsAppID, mount: "/mnt/liquid-ssd/", want: "/mnt/liquid-ssd/lightningos/elements"},
+		{appID: electrsAppID, mount: "/mnt/chain-ssd", want: "/mnt/chain-ssd/lightningos/electrs"},
+		{appID: mempoolAppID, mount: "/mnt/chain-ssd", want: "/mnt/chain-ssd/lightningos/mempool"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.appID, func(t *testing.T) {
@@ -29,6 +31,20 @@ func TestStorageMountEligibility(t *testing.T) {
 	}
 	if ok, reason := storageMountEligibility(bitcoinCoreAppID, eligibleMount, suggestedStorageDataDir(bitcoinCoreAppID, eligibleMount.Mount)); !ok {
 		t.Fatalf("expected eligible mount, got reason %q", reason)
+	}
+	electrsMount := eligibleMount
+	electrsMount.FreeBytes = 99 * 1024 * 1024 * 1024
+	if ok, _ := storageMountEligibility(electrsAppID, electrsMount, suggestedStorageDataDir(electrsAppID, electrsMount.Mount)); ok {
+		t.Fatal("expected Electrs volume below 100 GiB free to be rejected")
+	}
+	electrsMount.FreeBytes = 101 * 1024 * 1024 * 1024
+	if ok, reason := storageMountEligibility(electrsAppID, electrsMount, suggestedStorageDataDir(electrsAppID, electrsMount.Mount)); !ok {
+		t.Fatalf("expected Electrs volume above minimum to be eligible: %s", reason)
+	}
+	mempoolMount := eligibleMount
+	mempoolMount.FreeBytes = 19 * 1024 * 1024 * 1024
+	if ok, _ := storageMountEligibility(mempoolAppID, mempoolMount, suggestedStorageDataDir(mempoolAppID, mempoolMount.Mount)); ok {
+		t.Fatal("expected Mempool volume below 20 GiB free to be rejected")
 	}
 
 	rootMount := eligibleMount

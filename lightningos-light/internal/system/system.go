@@ -58,6 +58,10 @@ type bitcoinCoreStatusPrivilegedClient interface {
 	BitcoinCoreStatus(ctx context.Context) (statusJSON string, err error)
 }
 
+type catalogStoragePrivilegedClient interface {
+	EnsureCatalogStorage(ctx context.Context, appID string, dataDir string, finalize bool, dryRun bool) (status string, err error)
+}
+
 type bitcoinConsumerNetworkPrivilegedClient interface {
 	EnsureBitcoinConsumerNetwork(ctx context.Context, dryRun bool) (status string, err error)
 }
@@ -1065,6 +1069,40 @@ func EnsureBitcoinCoreStorageWithBroker(ctx context.Context, dataDir string) (bo
 		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		_, _ = client.EnsureBitcoinCoreStorage(shadowCtx, dataDir, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func EnsureCatalogStorageWithBroker(ctx context.Context, appID string, dataDir string, finalize bool) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	storageClient, ok := client.(catalogStoragePrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("catalog storage broker capability is unavailable")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		status, err := storageClient.EnsureCatalogStorage(ctx, appID, dataDir, finalize, false)
+		if err != nil {
+			return true, err
+		}
+		if status != "ready" {
+			return true, errors.New("catalog storage enrollment returned an invalid state")
+		}
+		return true, nil
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = storageClient.EnsureCatalogStorage(shadowCtx, appID, dataDir, finalize, true)
 		return false, nil
 	default:
 		return false, nil

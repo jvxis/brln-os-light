@@ -41,6 +41,7 @@ const (
 type ElectrsRuntime struct {
 	BitcoinMode string
 	Network     string
+	DataDir     string
 }
 
 type ElectrsNetwork struct {
@@ -76,15 +77,25 @@ func ValidateElectrsRuntime(runtime ElectrsRuntime) error {
 	if runtime.BitcoinMode != ElectrsBitcoinModeApp && runtime.BitcoinMode != ElectrsBitcoinModeNative {
 		return errors.New("electrs bitcoin mode is not allowed")
 	}
-	_, err := ElectrsNetworkForName(runtime.Network)
-	return err
+	if _, err := ElectrsNetworkForName(runtime.Network); err != nil {
+		return err
+	}
+	if runtime.DataDir != "" {
+		_, err := NormalizeCatalogDataDir(ElectrsID, runtime.DataDir)
+		return err
+	}
+	return nil
 }
 
 func ElectrsRuntimeEnv(runtime ElectrsRuntime) (string, error) {
 	if err := ValidateElectrsRuntime(runtime); err != nil {
 		return "", err
 	}
-	return "ELECTRS_BITCOIN_MODE=" + runtime.BitcoinMode + "\nELECTRS_NETWORK=" + runtime.Network + "\n", nil
+	raw := "ELECTRS_BITCOIN_MODE=" + runtime.BitcoinMode + "\nELECTRS_NETWORK=" + runtime.Network + "\n"
+	if runtime.DataDir != "" {
+		raw += "ELECTRS_DATA_DIR=" + runtime.DataDir + "\n"
+	}
+	return raw, nil
 }
 
 func ParseElectrsRuntimeEnv(raw []byte) (ElectrsRuntime, error) {
@@ -103,16 +114,16 @@ func ParseElectrsRuntimeEnv(raw []byte) (ElectrsRuntime, error) {
 			return runtime, errors.New("duplicate electrs environment entry")
 		}
 		switch key {
-		case "ELECTRS_BITCOIN_MODE", "ELECTRS_NETWORK":
+		case "ELECTRS_BITCOIN_MODE", "ELECTRS_NETWORK", "ELECTRS_DATA_DIR":
 			values[key] = value
 		default:
 			return runtime, errors.New("electrs environment entry is not allowed")
 		}
 	}
-	if len(values) != 2 {
+	if len(values) != 2 && len(values) != 3 {
 		return runtime, errors.New("electrs environment is incomplete")
 	}
-	runtime = ElectrsRuntime{BitcoinMode: values["ELECTRS_BITCOIN_MODE"], Network: values["ELECTRS_NETWORK"]}
+	runtime = ElectrsRuntime{BitcoinMode: values["ELECTRS_BITCOIN_MODE"], Network: values["ELECTRS_NETWORK"], DataDir: values["ELECTRS_DATA_DIR"]}
 	if err := ValidateElectrsRuntime(runtime); err != nil {
 		return ElectrsRuntime{}, err
 	}
@@ -131,6 +142,12 @@ func ElectrsCompose(runtime ElectrsRuntime) (string, error) {
 	bitcoinHost := "bitcoind"
 	if runtime.BitcoinMode == ElectrsBitcoinModeNative {
 		bitcoinHost = BitcoinConsumerHostGateway
+	}
+	dataMount := ElectrsVolume + ":/data/db"
+	volumeDeclaration := fmt.Sprintf("\nvolumes:\n  %s:\n    name: %s\n", ElectrsVolume, ElectrsVolume)
+	if runtime.DataDir != "" {
+		dataMount = runtime.DataDir + "/db:/data/db"
+		volumeDeclaration = ""
 	}
 	return fmt.Sprintf(`services:
   electrs:
@@ -156,7 +173,7 @@ func ElectrsCompose(runtime ElectrsRuntime) (string, error) {
       - "127.0.0.1:%d:%d"
       - "127.0.0.1:%d:%d"
     volumes:
-      - %s:/data/db
+      - %s
       - ./%s:/run/bitcoin.cookie:ro
     command:
       - --network=%s
@@ -175,17 +192,12 @@ networks:
   bitcoincore:
     external: true
     name: %s
-
-volumes:
-  %s:
-    name: %s
-`, ElectrsImage, ElectrsContainerUID, ElectrsContainerGID, ElectrsStopTimeout,
+%s`, ElectrsImage, ElectrsContainerUID, ElectrsContainerGID, ElectrsStopTimeout,
 		ElectrsContainerUID, ElectrsContainerGID,
 		ElectrsRPCPort, ElectrsRPCPort, ElectrsMonitorPort, ElectrsMonitorPort,
-		ElectrsVolume, ElectrsCookieFile, network.ElectrsName,
+		dataMount, ElectrsCookieFile, network.ElectrsName,
 		bitcoinHost, network.RPCPort, bitcoinHost, network.P2PPort,
-		ElectrsRPCPort, ElectrsMonitorPort, BitcoinConsumerNetwork,
-		ElectrsVolume, ElectrsVolume), nil
+		ElectrsRPCPort, ElectrsMonitorPort, BitcoinConsumerNetwork, volumeDeclaration), nil
 }
 
 func ElectrsDockerfile() string {

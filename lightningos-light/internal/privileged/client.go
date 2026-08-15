@@ -1054,6 +1054,18 @@ func (client *Client) EnsureBitcoinCoreStorage(ctx context.Context, dataDir stri
 	return result.Status, nil
 }
 
+func (client *Client) EnsureCatalogStorage(ctx context.Context, appID string, dataDir string, finalize bool, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationCatalogStorageEnsure, CatalogStorageParams{AppID: appID, DataDir: dataDir, Finalize: finalize}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	var state CatalogStorageState
+	if err := decodeStrict(response.Result, &state); err != nil || (state.Status != "ready" && state.Status != "validated") {
+		return "", errors.New("invalid broker catalog storage response")
+	}
+	return state.Status, nil
+}
+
 func (client *Client) EnsureBitcoinConsumerNetwork(ctx context.Context, dryRun bool) (string, error) {
 	response, err := client.call(ctx, OperationBitcoinConsumerNetworkEnsure, struct{}{}, dryRun)
 	if err != nil {

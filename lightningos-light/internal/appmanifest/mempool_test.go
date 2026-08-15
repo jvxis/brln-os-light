@@ -57,3 +57,23 @@ func TestMempoolComposeIsClosedAndHardened(t *testing.T) {
 		}
 	}
 }
+
+func TestMempoolComposeUsesEnrolledDataDirectory(t *testing.T) {
+	runtime := testMempoolRuntime()
+	runtime.DataDir = "/mnt/chain/lightningos/mempool"
+	compose, err := MempoolCompose(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mount := range []string{
+		"/mnt/chain/lightningos/mempool/db:/var/lib/mysql",
+		"/mnt/chain/lightningos/mempool/cache:/run/backend/cache",
+	} {
+		if !strings.Contains(compose, mount) {
+			t.Fatalf("Mempool compose missing external mount %q", mount)
+		}
+	}
+	if strings.Contains(compose, "name: "+MempoolDBVolume) || strings.Contains(compose, "name: "+MempoolCacheVolume) {
+		t.Fatal("Mempool external storage retained a Docker-root named volume")
+	}
+}

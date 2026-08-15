@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	systemctlPath                  = "/usr/bin/systemctl"
-	systemdRunPath                 = "/usr/bin/systemd-run"
-	privilegedLongOperationTimeout = 2 * time.Minute
-	privilegedBitcoinStatusTimeout = 45 * time.Second
-	privilegedImageProbeTimeout    = 30 * time.Second
+	systemctlPath                     = "/usr/bin/systemctl"
+	systemdRunPath                    = "/usr/bin/systemd-run"
+	privilegedLongOperationTimeout    = 2 * time.Minute
+	privilegedBitcoinStatusTimeout    = 45 * time.Second
+	privilegedImageProbeTimeout       = 30 * time.Second
+	privilegedStorageMigrationTimeout = 90 * time.Minute
 )
 
 type CommandRunner interface {
@@ -86,6 +87,10 @@ type PackageManager interface {
 
 type AppStorageManager interface {
 	Ensure(ctx context.Context, dryRun bool) (AppStorageState, error)
+}
+
+type CatalogStorageManager interface {
+	Ensure(ctx context.Context, appID string, dataDir string, finalize bool, dryRun bool) (CatalogStorageState, error)
 }
 
 type SMARTManager interface {
@@ -194,6 +199,7 @@ type Broker struct {
 	Apps                 AppManager
 	Packages             PackageManager
 	AppStorage           AppStorageManager
+	CatalogStorage       CatalogStorageManager
 	SMART                SMARTManager
 	LNDPermissions       LNDPermissionsManager
 	LNDManagerCredential LNDManagerCredentialManager
@@ -277,6 +283,10 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		return configured
 	}
 	switch operation {
+	case OperationCatalogStorageEnsure:
+		if configured < privilegedStorageMigrationTimeout {
+			return privilegedStorageMigrationTimeout
+		}
 	case OperationTorMetadataRefresh:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
@@ -560,6 +570,19 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 		state, err := broker.AppStorage.Ensure(ctx, request.DryRun)
 		if err != nil {
 			return nil, "app_storage_failed", errors.New("app storage preparation failed")
+		}
+		return state, "", nil
+	case OperationCatalogStorageEnsure:
+		if broker.CatalogStorage == nil {
+			return nil, "broker_unavailable", errors.New("catalog storage manager is unavailable")
+		}
+		var params CatalogStorageParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid catalog storage params")
+		}
+		state, err := broker.CatalogStorage.Ensure(ctx, params.AppID, params.DataDir, params.Finalize, request.DryRun)
+		if err != nil {
+			return nil, "catalog_storage_failed", errors.New("catalog storage enrollment failed")
 		}
 		return state, "", nil
 	case OperationSMARTRead:
@@ -1243,6 +1266,8 @@ func knownOperation(operation Operation) bool {
 		return true
 	case OperationTerminalControl:
 		return true
+	case OperationCatalogStorageEnsure:
+		return true
 	case OperationSelfTest, OperationServiceStatus, OperationServiceRestart, OperationHostPower, OperationFilesEnableLogin, OperationSystemIntegrationAssetInstall, OperationSystemIntegrationsStatus, OperationSystemIntegrationsApply, OperationSystemIntegrationsFinalize, OperationTerminalCredentialRotate, OperationManagerFirewallStatus, OperationLNDUpgradeStart, OperationTorMetadataRefresh, OperationTorUpgradeStart, OperationLightningOSUpgradeStart, OperationAppLifecycle, OperationAppSnapshot, OperationAppInspect, OperationAppLogs, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationDockerStatus, OperationPackageEnsure, OperationPackageStatus, OperationAppStorageEnsure, OperationSMARTRead, OperationLNDPermissionsRepair, OperationLNDManagerCredentialEnsure, OperationLNDManagerCredentialRollback, OperationAppImagePrepare, OperationAppImageStatus, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigRead, OperationBitcoinConfigWrite, OperationBitcoinCredentialsRead, OperationBitcoinCredentialsEnsure, OperationBitcoinElectrsCredentialsEnsure, OperationBitcoinStatus, OperationBitcoinConsumerNetworkEnsure, OperationLoopStatus, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsStatus, OperationElementsConfigRead, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapStatus, OperationPeerSwapSourceRead, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdStatus, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolStatus, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationPublicPoolFirewall, OperationBarkWalletStatus, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove, OperationBarkWalletFirewall, OperationBarkWalletPasswordRead, OperationBarkWalletPasswordReset:
 		return true
 	default:
@@ -1255,6 +1280,8 @@ func mutatingOperation(operation Operation) bool {
 	case OperationAppLNDHostAccessEnsure:
 		return true
 	case OperationTerminalControl:
+		return true
+	case OperationCatalogStorageEnsure:
 		return true
 	case OperationServiceRestart, OperationHostPower, OperationFilesEnableLogin, OperationSystemIntegrationAssetInstall, OperationSystemIntegrationsApply, OperationSystemIntegrationsFinalize, OperationTerminalCredentialRotate, OperationLNDUpgradeStart, OperationTorMetadataRefresh, OperationTorUpgradeStart, OperationLightningOSUpgradeStart, OperationAppLifecycle, OperationAppSnapshot, OperationAppRemove, OperationAppAdminReset, OperationDockerEnsure, OperationPackageEnsure, OperationAppStorageEnsure, OperationLNDPermissionsRepair, OperationLNDManagerCredentialEnsure, OperationLNDManagerCredentialRollback, OperationAppImagePrepare, OperationAppImageProbe, OperationAppFirewallEnsure, OperationBitcoinStorageEnsure, OperationBitcoinConfigEnsure, OperationBitcoinConfigWrite, OperationBitcoinElectrsCredentialsEnsure, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapSourceWrite, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove, OperationBarkWalletFirewall, OperationBarkWalletPasswordReset:
 		return true

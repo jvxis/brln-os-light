@@ -27,7 +27,8 @@ const (
 var errElectrsBitcoinRestartConfirmationRequired = errors.New("confirm the possible one-time Bitcoin Core restart before continuing")
 
 type electrsInstallOptions struct {
-	ConfirmBitcoinRestart bool `json:"confirm_bitcoin_restart"`
+	ConfirmBitcoinRestart bool   `json:"confirm_bitcoin_restart"`
+	StorageMount          string `json:"storage_mount"`
 }
 
 type electrsPaths struct {
@@ -91,11 +92,11 @@ func (a electrsApp) Info(ctx context.Context) (appInfo, error) {
 }
 
 func (a electrsApp) Install(ctx context.Context) error {
-	return a.server.applyElectrs(ctx, false)
+	return a.server.applyElectrs(ctx, false, "")
 }
 
 func (a electrsApp) Start(ctx context.Context) error {
-	return a.server.applyElectrs(ctx, false)
+	return a.server.applyElectrs(ctx, false, "")
 }
 
 func (a electrsApp) Stop(ctx context.Context) error {
@@ -137,26 +138,42 @@ func electrsAppPaths() electrsPaths {
 }
 
 func (s *Server) installElectrsWithOptions(ctx context.Context, opts electrsInstallOptions) error {
-	return s.applyElectrs(ctx, opts.ConfirmBitcoinRestart)
+	return s.applyElectrs(ctx, opts.ConfirmBitcoinRestart, opts.StorageMount)
 }
 
 func (s *Server) startElectrsWithOptions(ctx context.Context, opts electrsInstallOptions) error {
-	return s.applyElectrs(ctx, opts.ConfirmBitcoinRestart)
+	return s.applyElectrs(ctx, opts.ConfirmBitcoinRestart, opts.StorageMount)
 }
 
-func (s *Server) applyElectrs(ctx context.Context, confirmBitcoinRestart bool) error {
+func (s *Server) applyElectrs(ctx context.Context, confirmBitcoinRestart bool, storageMount string) error {
 	s.updateAppOperationStage(electrsAppID, "validating")
 	bitcoinPaths := bitcoinCoreAppPaths()
 	if fileExists(bitcoinPaths.ComposePath) && !confirmBitcoinRestart {
 		return errElectrsBitcoinRestartConfirmationRequired
 	}
-	if err := ensureDockerForCatalogAppEnforce(ctx); err != nil {
-		return err
-	}
-
 	paths := electrsAppPaths()
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
+	}
+	dataDir := appmanifest.ElectrsDefaultDataDir
+	if strings.TrimSpace(storageMount) != "" {
+		var err error
+		dataDir, err = resolveInstallDataDirFromStorageMount(ctx, electrsAppID, storageMount)
+		if err != nil {
+			return err
+		}
+	} else if raw, readErr := os.ReadFile(paths.EnvPath); readErr == nil {
+		if existing, parseErr := appmanifest.ParseElectrsRuntimeEnv(raw); parseErr == nil && existing.DataDir != "" {
+			dataDir = existing.DataDir
+		}
+	}
+	if handled, err := system.EnsureCatalogStorageWithBroker(ctx, electrsAppID, dataDir, false); !handled {
+		return errors.New("Electrs storage requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Electrs storage unavailable: %w", err)
+	}
+	if err := ensureDockerForCatalogAppEnforce(ctx); err != nil {
+		return err
 	}
 
 	s.updateAppOperationStage(electrsAppID, "configuring_bitcoin")
@@ -183,7 +200,7 @@ func (s *Server) applyElectrs(ctx context.Context, confirmBitcoinRestart bool) e
 	if err := os.Chmod(paths.CookiePath, 0600); err != nil {
 		return fmt.Errorf("failed to secure bitcoin cookie file: %w", err)
 	}
-	runtime := appmanifest.ElectrsRuntime{BitcoinMode: values.BitcoinMode, Network: values.Network}
+	runtime := appmanifest.ElectrsRuntime{BitcoinMode: values.BitcoinMode, Network: values.Network, DataDir: dataDir}
 	env, err := appmanifest.ElectrsRuntimeEnv(runtime)
 	if err != nil {
 		return err
@@ -194,7 +211,7 @@ func (s *Server) applyElectrs(ctx context.Context, confirmBitcoinRestart bool) e
 	if err := os.Chmod(paths.EnvPath, 0600); err != nil {
 		return fmt.Errorf("failed to secure Electrs environment: %w", err)
 	}
-	if _, err := ensureFileWithChange(paths.ComposePath, electrsComposeContents(paths, values)); err != nil {
+	if _, err := ensureFileWithChange(paths.ComposePath, electrsComposeContents(paths, values, dataDir)); err != nil {
 		return err
 	}
 	s.updateAppOperationStage(electrsAppID, "starting_service")
@@ -202,6 +219,9 @@ func (s *Server) applyElectrs(ctx context.Context, confirmBitcoinRestart bool) e
 		return errors.New("Electrs lifecycle requires privileged broker enforce mode")
 	} else if err != nil {
 		return fmt.Errorf("Electrs start failed: %w", err)
+	}
+	if _, err := system.EnsureCatalogStorageWithBroker(ctx, electrsAppID, dataDir, true); err != nil {
+		return fmt.Errorf("Electrs legacy storage cleanup failed: %w", err)
 	}
 	return nil
 }
@@ -381,10 +401,15 @@ func detectBitcoinCoreChain(raw string) (string, int) {
 // lives in a Docker named volume whose mount point is owned by the fixed
 // non-root UID in the broker-built image; no manager-selected path reaches
 // Docker.
-func electrsComposeContents(_ electrsPaths, values electrsRuntimeValues) string {
+func electrsComposeContents(_ electrsPaths, values electrsRuntimeValues, dataDirs ...string) string {
+	dataDir := ""
+	if len(dataDirs) > 0 {
+		dataDir = dataDirs[0]
+	}
 	compose, err := appmanifest.ElectrsCompose(appmanifest.ElectrsRuntime{
 		BitcoinMode: values.BitcoinMode,
 		Network:     values.Network,
+		DataDir:     dataDir,
 	})
 	if err != nil {
 		return ""

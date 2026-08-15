@@ -61,6 +61,11 @@ type PendingElevatedInstall = {
   payload?: InstallPayload
 }
 
+type CatalogStorageDialog = {
+  id: 'electrs' | 'mempool'
+  action: 'install' | 'start'
+}
+
 const iconMap: Record<string, string> = {
   lndg: lndgIcon,
   bitcoincore: bitcoincoreIcon,
@@ -109,6 +114,7 @@ const fedimintGatewayIrohPort = 8177
 const APP_STORE_INSTALL_FILTER_KEY = 'app_store_install_filter'
 const bitcoinCoreDefaultDataDir = '/data/bitcoin'
 const elementsDefaultDataDir = '/data/elements'
+const catalogDefaultDataDirs = { electrs: '/var/lib/lightningos/apps-data/electrs', mempool: '/var/lib/lightningos/apps-data/mempool' } as const
 const peerswapDefaultRemoteUrl = 'http://elements.br-ln.com:8086'
 const hiddenStoreAppIds = new Set(['depixbuy'])
 const elevatedLndAccessNotice = 'elevated_lnd_access'
@@ -164,7 +170,13 @@ export default function AppStore() {
   const [peerswapRemoteMessage, setPeerswapRemoteMessage] = useState('')
   const [peerswapRemoteTested, setPeerswapRemoteTested] = useState(false)
   const [barkWalletInstallOpen, setBarkWalletInstallOpen] = useState(false)
-  const [pendingElectrsAction, setPendingElectrsAction] = useState<'install' | 'start' | null>(null)
+  const [pendingElectrsAction, setPendingElectrsAction] = useState<{ action: 'install' | 'start', payload?: InstallPayload } | null>(null)
+  const [catalogStorageDialog, setCatalogStorageDialog] = useState<CatalogStorageDialog | null>(null)
+  const [catalogUseStorageMount, setCatalogUseStorageMount] = useState(true)
+  const [catalogStorageTargets, setCatalogStorageTargets] = useState<StorageTarget[]>([])
+  const [catalogSelectedMount, setCatalogSelectedMount] = useState('')
+  const [catalogStorageLoading, setCatalogStorageLoading] = useState(false)
+  const [catalogStorageError, setCatalogStorageError] = useState('')
   const [pendingFedimintGatewayAction, setPendingFedimintGatewayAction] = useState<'install' | 'start' | null>(null)
   const [barkRevealReauthOpen, setBarkRevealReauthOpen] = useState(false)
   const [barkRevealPassword, setBarkRevealPassword] = useState('')
@@ -357,6 +369,23 @@ export default function AppStore() {
       .finally(() => setElementsStorageLoading(false))
   }
 
+  const loadCatalogStorageTargets = (app: 'electrs' | 'mempool') => {
+    setCatalogStorageLoading(true)
+    setCatalogStorageError('')
+    getAppStorageTargets(app)
+      .then((data: { targets?: StorageTarget[] }) => {
+        const targets = data?.targets || []
+        setCatalogStorageTargets(targets)
+        setCatalogSelectedMount(targets.find((target) => target.eligible)?.mount || '')
+      })
+      .catch((err: unknown) => {
+        setCatalogStorageError(err instanceof Error ? err.message : t('appStore.storageLoadFailed'))
+        setCatalogStorageTargets([])
+        setCatalogSelectedMount('')
+      })
+      .finally(() => setCatalogStorageLoading(false))
+  }
+
   useEffect(() => {
     if (bitcoinCoreInstallOpen && bitcoinCoreUseStorageMount) {
       loadBitcoinCoreStorageTargets()
@@ -435,7 +464,7 @@ export default function AppStore() {
     id: string,
     action: AppAction,
     payload?: InstallPayload,
-    options?: { skipSecurityConfirmation?: boolean }
+    options?: { skipSecurityConfirmation?: boolean, storageSelected?: boolean }
   ) => {
     if (id === 'bark-wallet' && action === 'install' && !payload) {
       setBarkWalletInstallOpen(true)
@@ -453,6 +482,14 @@ export default function AppStore() {
       setElementsSelectedMount('')
       setElementsStorageError('')
       setElementsInstallOpen(true)
+      return
+    }
+    if ((id === 'electrs' || id === 'mempool') && (action === 'install' || action === 'start') && !options?.storageSelected) {
+      setCatalogStorageDialog({ id, action })
+      setCatalogUseStorageMount(true)
+      setCatalogSelectedMount('')
+      setCatalogStorageTargets([])
+      loadCatalogStorageTargets(id)
       return
     }
     if (id === 'peerswap' && action === 'install' && !payload) {
@@ -477,7 +514,7 @@ export default function AppStore() {
       id === 'electrs' && (action === 'install' || action === 'start') &&
       bitcoinMode === 'local_app' && !payload?.confirm_bitcoin_restart
     ) {
-      setPendingElectrsAction(action)
+      setPendingElectrsAction({ action, payload })
       return
     }
     if (
@@ -523,11 +560,19 @@ export default function AppStore() {
   }
 
   const handleElectrsBitcoinRestartConfirm = async () => {
-    const action = pendingElectrsAction
+    const pending = pendingElectrsAction
     setPendingElectrsAction(null)
-    if (action) {
-      await handleAction('electrs', action, { confirm_bitcoin_restart: true })
+    if (pending) {
+      await handleAction('electrs', pending.action, { ...pending.payload, confirm_bitcoin_restart: true }, { storageSelected: true })
     }
+  }
+
+  const handleCatalogStorageConfirm = async () => {
+    const dialog = catalogStorageDialog
+    if (!dialog) return
+    const payload = catalogUseStorageMount ? { storage_mount: catalogSelectedMount } : {}
+    setCatalogStorageDialog(null)
+    await handleAction(dialog.id, dialog.action, payload, { storageSelected: true })
   }
 
   const handleFedimintGatewayBitcoinRestartConfirm = async () => {
@@ -708,6 +753,8 @@ export default function AppStore() {
   const selectedBitcoinCoreStorageTarget = eligibleBitcoinCoreStorageTargets.find((target) => target.mount === bitcoinCoreSelectedMount)
   const eligibleElementsStorageTargets = elementsStorageTargets.filter((target) => target.eligible)
   const selectedElementsStorageTarget = eligibleElementsStorageTargets.find((target) => target.mount === elementsSelectedMount)
+  const eligibleCatalogStorageTargets = catalogStorageTargets.filter((target) => target.eligible)
+  const selectedCatalogStorageTarget = eligibleCatalogStorageTargets.find((target) => target.mount === catalogSelectedMount)
   const formatStorageGB = (value?: number) => {
     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-'
     return value >= 100 ? value.toFixed(0) : value.toFixed(1)
@@ -1179,6 +1226,75 @@ export default function AppStore() {
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               <button className="btn-secondary" type="button" onClick={() => setPendingFedimintGatewayAction(null)}>{t('common.cancel')}</button>
               <button className="btn-primary" type="button" onClick={handleFedimintGatewayBitcoinRestartConfirm}>{t('appStore.fedimintGatewayBitcoinRestartConfirm')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {catalogStorageDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">
+                {t('appStore.catalogStorageTitle', { app: catalogStorageDialog.id === 'electrs' ? 'Electrs' : 'Mempool' })}
+              </h3>
+              <p className="text-sm text-fog/60">{t('appStore.catalogStorageBody')}</p>
+            </div>
+            <div className="mt-5 space-y-4">
+              <label className="flex items-start gap-3 text-sm text-fog/80">
+                <input
+                  className="mt-1"
+                  type="checkbox"
+                  checked={catalogUseStorageMount}
+                  onChange={(event) => setCatalogUseStorageMount(event.target.checked)}
+                />
+                <span>{t('appStore.bitcoinCoreUseStorageMount')}</span>
+              </label>
+              {catalogUseStorageMount ? (
+                <div className="space-y-2">
+                  <label className="text-xs uppercase tracking-wide text-fog/50" htmlFor="catalog-storage-mount">
+                    {t('appStore.storageVolumeLabel')}
+                  </label>
+                  {catalogStorageLoading ? (
+                    <p className="text-sm text-fog/60">{t('appStore.storageLoadingVolumes')}</p>
+                  ) : eligibleCatalogStorageTargets.length > 0 ? (
+                    <select
+                      id="catalog-storage-mount"
+                      className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog"
+                      value={catalogSelectedMount}
+                      onChange={(event) => setCatalogSelectedMount(event.target.value)}
+                    >
+                      {eligibleCatalogStorageTargets.map((target) => (
+                        <option key={target.mount} value={target.mount}>{storageTargetLabel(target)}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-xs text-amber-300/80">{t('appStore.storageNoEligibleVolumes')}</p>
+                  )}
+                  {selectedCatalogStorageTarget && (
+                    <p className="break-all text-xs text-fog/60">
+                      {t('appStore.storageSelectedPath', { path: selectedCatalogStorageTarget.suggested_path })}
+                    </p>
+                  )}
+                  {catalogStorageError && <p className="text-xs text-amber-300/80">{catalogStorageError}</p>}
+                </div>
+              ) : (
+                <p className="break-all rounded-md border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-fog/70">
+                  {t('appStore.storageDefaultPath', { path: catalogDefaultDataDirs[catalogStorageDialog.id] })}
+                </p>
+              )}
+              <p className="text-xs text-amber-200/80">{t('appStore.catalogStorageSpaceGuard')}</p>
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-secondary" type="button" onClick={() => setCatalogStorageDialog(null)}>{t('common.cancel')}</button>
+              <button
+                className="btn-primary"
+                type="button"
+                disabled={catalogUseStorageMount && !catalogSelectedMount}
+                onClick={handleCatalogStorageConfirm}
+              >
+                {catalogStorageDialog.action === 'install' ? t('appStore.install') : t('appStore.start')}
+              </button>
             </div>
           </div>
         </div>

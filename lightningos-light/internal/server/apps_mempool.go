@@ -17,6 +17,10 @@ const (
 	mempoolFrontendHostPort = appmanifest.MempoolPort
 )
 
+type mempoolInstallOptions struct {
+	StorageMount string `json:"storage_mount"`
+}
+
 type mempoolPaths struct {
 	Root        string
 	ComposePath string
@@ -56,8 +60,16 @@ func (a mempoolApp) Info(ctx context.Context) (appInfo, error) {
 	return info, nil
 }
 
-func (a mempoolApp) Install(ctx context.Context) error { return a.server.applyMempool(ctx) }
-func (a mempoolApp) Start(ctx context.Context) error   { return a.server.applyMempool(ctx) }
+func (a mempoolApp) Install(ctx context.Context) error { return a.server.applyMempool(ctx, "") }
+func (a mempoolApp) Start(ctx context.Context) error   { return a.server.applyMempool(ctx, "") }
+
+func (s *Server) installMempoolWithOptions(ctx context.Context, opts mempoolInstallOptions) error {
+	return s.applyMempool(ctx, opts.StorageMount)
+}
+
+func (s *Server) startMempoolWithOptions(ctx context.Context, opts mempoolInstallOptions) error {
+	return s.applyMempool(ctx, opts.StorageMount)
+}
 
 func (a mempoolApp) Stop(ctx context.Context) error {
 	if !fileExists(mempoolAppPaths().ComposePath) {
@@ -94,7 +106,7 @@ func mempoolAppPaths() mempoolPaths {
 	}
 }
 
-func (s *Server) applyMempool(ctx context.Context) error {
+func (s *Server) applyMempool(ctx context.Context, storageMount string) error {
 	if err := ensureDockerForCatalogAppEnforce(ctx); err != nil {
 		return err
 	}
@@ -116,7 +128,24 @@ func (s *Server) applyMempool(ctx context.Context) error {
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
-	runtime, err := s.resolveMempoolRuntime(ctx, paths)
+	dataDir := appmanifest.MempoolDefaultDataDir
+	if strings.TrimSpace(storageMount) != "" {
+		var err error
+		dataDir, err = resolveInstallDataDirFromStorageMount(ctx, mempoolAppID, storageMount)
+		if err != nil {
+			return err
+		}
+	} else if raw, readErr := os.ReadFile(paths.EnvPath); readErr == nil {
+		if existing, parseErr := appmanifest.ParseMempoolRuntimeEnv(raw); parseErr == nil && existing.DataDir != "" {
+			dataDir = existing.DataDir
+		}
+	}
+	if handled, err := system.EnsureCatalogStorageWithBroker(ctx, mempoolAppID, dataDir, false); !handled {
+		return errors.New("Mempool storage requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Mempool storage unavailable: %w", err)
+	}
+	runtime, err := s.resolveMempoolRuntime(ctx, paths, dataDir)
 	if err != nil {
 		return err
 	}
@@ -156,6 +185,9 @@ func (s *Server) applyMempool(ctx context.Context) error {
 	} else if err != nil {
 		return fmt.Errorf("Mempool start failed: %w", err)
 	}
+	if _, err := system.EnsureCatalogStorageWithBroker(ctx, mempoolAppID, dataDir, true); err != nil {
+		return fmt.Errorf("Mempool legacy storage cleanup failed: %w", err)
+	}
 	if handled, _, err := system.EnsureAppFirewallWithBroker(ctx, mempoolAppID); !handled {
 		return errors.New("Mempool firewall requires privileged broker enforce mode")
 	} else if err != nil && s.logger != nil {
@@ -164,7 +196,7 @@ func (s *Server) applyMempool(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) resolveMempoolRuntime(ctx context.Context, paths mempoolPaths) (appmanifest.MempoolRuntime, error) {
+func (s *Server) resolveMempoolRuntime(ctx context.Context, paths mempoolPaths, dataDir string) (appmanifest.MempoolRuntime, error) {
 	localCfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		return appmanifest.MempoolRuntime{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
@@ -188,6 +220,7 @@ func (s *Server) resolveMempoolRuntime(ctx context.Context, paths mempoolPaths) 
 	}
 	runtime := appmanifest.MempoolRuntime{
 		BitcoinMode: mode, Network: "bitcoin", BitcoinRPCUser: localCfg.User, BitcoinRPCPass: localCfg.Pass,
+		DataDir: dataDir,
 	}
 	// Canonical 0.5.3 environments are preferred. The two legacy database
 	// keys are read only as a one-time migration so an existing MariaDB volume

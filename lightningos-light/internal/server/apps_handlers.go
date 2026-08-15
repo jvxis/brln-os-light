@@ -164,6 +164,21 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
+	if appID == mempoolAppID {
+		var req mempoolInstallOptions
+		if r.ContentLength != 0 {
+			if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+		}
+		if err := s.installMempoolWithOptions(r.Context(), req); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
 	if appID == fedimintGatewayAppID {
 		var req fedimintGatewayStartOptions
 		if r.ContentLength != 0 {
@@ -263,6 +278,21 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 				status = http.StatusConflict
 			}
 			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	if appID == mempoolAppID {
+		var req mempoolInstallOptions
+		if r.ContentLength != 0 {
+			if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+		}
+		if err := s.startMempoolWithOptions(r.Context(), req); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

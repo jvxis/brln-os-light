@@ -49,6 +49,7 @@ type MempoolRuntime struct {
 	BitcoinRPCPass string
 	DBPassword     string
 	DBRootPassword string
+	DataDir        string
 }
 
 func MempoolImageForVariant(variant AppImageVariant) (string, error) {
@@ -94,6 +95,11 @@ func ValidateMempoolRuntime(runtime MempoolRuntime) error {
 			}
 		}
 	}
+	if runtime.DataDir != "" {
+		if _, err := NormalizeCatalogDataDir(MempoolID, runtime.DataDir); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -101,15 +107,18 @@ func MempoolRuntimeEnv(runtime MempoolRuntime) (string, error) {
 	if err := ValidateMempoolRuntime(runtime); err != nil {
 		return "", err
 	}
-	return strings.Join([]string{
+	values := []string{
 		"MEMPOOL_BITCOIN_MODE=" + runtime.BitcoinMode,
 		"MEMPOOL_NETWORK=" + runtime.Network,
 		"MEMPOOL_BITCOIN_RPC_USER=" + runtime.BitcoinRPCUser,
 		"MEMPOOL_BITCOIN_RPC_PASS=" + runtime.BitcoinRPCPass,
 		"MEMPOOL_DB_PASSWORD=" + runtime.DBPassword,
 		"MEMPOOL_DB_ROOT_PASSWORD=" + runtime.DBRootPassword,
-		"",
-	}, "\n"), nil
+	}
+	if runtime.DataDir != "" {
+		values = append(values, "MEMPOOL_DATA_DIR="+runtime.DataDir)
+	}
+	return strings.Join(append(values, ""), "\n"), nil
 }
 
 func ParseMempoolRuntimeEnv(raw []byte) (MempoolRuntime, error) {
@@ -127,19 +136,20 @@ func ParseMempoolRuntimeEnv(raw []byte) (MempoolRuntime, error) {
 			return runtime, errors.New("duplicate mempool environment entry")
 		}
 		switch key {
-		case "MEMPOOL_BITCOIN_MODE", "MEMPOOL_NETWORK", "MEMPOOL_BITCOIN_RPC_USER", "MEMPOOL_BITCOIN_RPC_PASS", "MEMPOOL_DB_PASSWORD", "MEMPOOL_DB_ROOT_PASSWORD":
+		case "MEMPOOL_BITCOIN_MODE", "MEMPOOL_NETWORK", "MEMPOOL_BITCOIN_RPC_USER", "MEMPOOL_BITCOIN_RPC_PASS", "MEMPOOL_DB_PASSWORD", "MEMPOOL_DB_ROOT_PASSWORD", "MEMPOOL_DATA_DIR":
 			values[key] = value
 		default:
 			return runtime, errors.New("mempool environment entry is not allowed")
 		}
 	}
-	if len(values) != 6 {
+	if len(values) != 6 && len(values) != 7 {
 		return runtime, errors.New("mempool environment is incomplete")
 	}
 	runtime = MempoolRuntime{
 		BitcoinMode: values["MEMPOOL_BITCOIN_MODE"], Network: values["MEMPOOL_NETWORK"], BitcoinRPCUser: values["MEMPOOL_BITCOIN_RPC_USER"],
 		BitcoinRPCPass: values["MEMPOOL_BITCOIN_RPC_PASS"], DBPassword: values["MEMPOOL_DB_PASSWORD"],
 		DBRootPassword: values["MEMPOOL_DB_ROOT_PASSWORD"],
+		DataDir:        values["MEMPOOL_DATA_DIR"],
 	}
 	if err := ValidateMempoolRuntime(runtime); err != nil {
 		return MempoolRuntime{}, err
@@ -168,6 +178,14 @@ func MempoolCompose(runtime MempoolRuntime) (string, error) {
 	if runtime.Network == "regtest" {
 		mempoolNetwork = "regtest"
 		frontendFlags = "      MAINNET_ENABLED: \"false\"\n      REGTEST_ENABLED: \"true\"\n      ROOT_NETWORK: \"regtest\""
+	}
+	cacheMount := MempoolCacheVolume + ":/run/backend/cache"
+	dbMount := MempoolDBVolume + ":/var/lib/mysql"
+	volumeDeclaration := fmt.Sprintf("\nvolumes:\n  %s:\n    name: %s\n  %s:\n    name: %s\n", MempoolDBVolume, MempoolDBVolume, MempoolCacheVolume, MempoolCacheVolume)
+	if runtime.DataDir != "" {
+		cacheMount = runtime.DataDir + "/cache:/run/backend/cache"
+		dbMount = runtime.DataDir + "/db:/var/lib/mysql"
+		volumeDeclaration = ""
 	}
 	return fmt.Sprintf(`services:
   mempool-web:
@@ -255,7 +273,7 @@ func MempoolCompose(runtime MempoolRuntime) (string, error) {
       - bitcoincore
       - electrs
     volumes:
-      - %s:/run/backend/cache
+      - %s
 
   mempool-db:
     image: %s
@@ -283,7 +301,7 @@ func MempoolCompose(runtime MempoolRuntime) (string, error) {
       - /run/mysqld:rw,noexec,nosuid,nodev,size=16m,uid=%d,gid=%d,mode=0750
       - /tmp:rw,noexec,nosuid,nodev,size=32m,uid=%d,gid=%d,mode=0700
     volumes:
-      - %s:/var/lib/mysql
+      - %s
 
 networks:
   default:
@@ -294,13 +312,7 @@ networks:
   electrs:
     external: true
     name: electrs_default
-
-volumes:
-  %s:
-    name: %s
-  %s:
-    name: %s
-`, MempoolFrontendImage, MempoolContainerUID, MempoolContainerGID, MempoolStopTimeout,
+%s`, MempoolFrontendImage, MempoolContainerUID, MempoolContainerGID, MempoolStopTimeout,
 		MempoolFrontendPort, MempoolBackendPort, frontendFlags,
 		MempoolContainerUID, MempoolContainerGID, MempoolContainerUID, MempoolContainerGID,
 		MempoolContainerUID, MempoolContainerGID, MempoolContainerUID, MempoolContainerGID,
@@ -308,8 +320,7 @@ volumes:
 		MempoolBackendImage, MempoolContainerUID, MempoolContainerGID, MempoolStopTimeout,
 		mempoolNetwork, bitcoinHost, network.RPCPort,
 		MempoolContainerUID, MempoolContainerGID, MempoolContainerUID, MempoolContainerGID,
-		MempoolCacheVolume, MempoolDatabaseImage, MempoolDatabaseUID, MempoolDatabaseGID,
+		cacheMount, MempoolDatabaseImage, MempoolDatabaseUID, MempoolDatabaseGID,
 		MempoolStopTimeout, MempoolDatabaseUID, MempoolDatabaseGID, MempoolDatabaseUID, MempoolDatabaseGID,
-		MempoolDBVolume, BitcoinConsumerNetwork,
-		MempoolDBVolume, MempoolDBVolume, MempoolCacheVolume, MempoolCacheVolume), nil
+		dbMount, BitcoinConsumerNetwork, volumeDeclaration), nil
 }

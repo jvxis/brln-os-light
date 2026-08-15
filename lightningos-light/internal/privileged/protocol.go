@@ -47,6 +47,7 @@ const (
 	OperationPackageEnsure                   Operation = "packages.feature.ensure"
 	OperationPackageStatus                   Operation = "packages.feature.status"
 	OperationAppStorageEnsure                Operation = "storage.apps.ensure"
+	OperationCatalogStorageEnsure            Operation = "app.catalog.storage.ensure"
 	OperationSMARTRead                       Operation = "storage.smart.read"
 	OperationLNDPermissionsRepair            Operation = "storage.lnd.permissions.repair"
 	OperationLNDManagerCredentialEnsure      Operation = "lnd.manager-credential.ensure"
@@ -299,6 +300,16 @@ type AppLogsState struct {
 
 type AppSnapshotParams struct {
 	AppID string `json:"app_id"`
+}
+
+type CatalogStorageParams struct {
+	AppID    string `json:"app_id"`
+	DataDir  string `json:"data_dir"`
+	Finalize bool   `json:"finalize,omitempty"`
+}
+
+type CatalogStorageState struct {
+	Status string `json:"status"`
 }
 
 type AppRemoveParams struct {
@@ -873,6 +884,15 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid storage.apps.ensure params: %w", err)
+		}
+	case OperationCatalogStorageEnsure:
+		var params CatalogStorageParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.catalog.storage.ensure params: %w", err)
+		}
+		normalized, err := appmanifest.NormalizeCatalogDataDir(params.AppID, params.DataDir)
+		if err != nil || normalized != params.DataDir {
+			return errors.New("catalog storage target is not allowed")
 		}
 	case OperationSMARTRead:
 		if request.DryRun {

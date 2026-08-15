@@ -9,7 +9,7 @@ set -Eeuo pipefail
 SERVICE="lightningos-manager.service"
 CANONICAL_USER="lightningos"
 CANONICAL_GROUP="lightningos"
-STATE_ROOT="/var/lib/lightningos/rollback/0.5.5-legacy-manager-normalization"
+STATE_ROOT="/var/lib/lightningos/rollback/0.5.6-legacy-manager-normalization"
 DROPIN_DIR="/etc/systemd/system/lightningos-manager.service.d"
 DROPIN_PATH="${DROPIN_DIR}/10-legacy-manager-normalization.conf"
 SUDOERS_PATH="/etc/sudoers.d/lightningos"
@@ -57,6 +57,22 @@ root_regular_file() {
   local mode
   mode="$(stat -c '%a' "$path" 2>/dev/null)" || return 1
   (( (8#$mode & 8#022) == 0 ))
+}
+
+validate_tls_backups_tree() {
+  local root="/etc/lightningos/tls/backups" path mode
+  [[ ! -e "$root" && ! -L "$root" ]] && return 0
+  [[ -d "$root" && ! -L "$root" ]] || return 1
+  [[ "$(stat -c '%u' "$root" 2>/dev/null)" == "0" ]] || return 1
+  [[ "$(stat -c '%d' "$root" 2>/dev/null)" == "$(stat -c '%d' /etc/lightningos/tls 2>/dev/null)" ]] || return 1
+  mode="$(stat -c '%a' "$root" 2>/dev/null)" || return 1
+  (( (8#$mode & 8#022) == 0 )) || return 1
+  while IFS= read -r -d '' path; do
+    [[ ! -L "$path" && ( -f "$path" || -d "$path" ) ]] || return 1
+    [[ "$(stat -c '%u' "$path" 2>/dev/null)" == "0" ]] || return 1
+    mode="$(stat -c '%a' "$path" 2>/dev/null)" || return 1
+    (( (8#$mode & 8#022) == 0 )) || return 1
+  done < <(find "$root" -xdev -mindepth 1 -print0)
 }
 
 safe_unit_name() {
@@ -245,6 +261,7 @@ supported_layout() {
   [[ -n "$legacy_sudoers" ]] || return 1
   validate_legacy_auth_enable_sudoers "$AUTH_SUDOERS_PATH" "$user" || return 1
   validate_legacy_app_upgrade_sudoers "$APP_UPGRADE_SUDOERS_PATH" || return 1
+  validate_tls_backups_tree || return 1
   [[ -f "$CONFIG_PATH" && ! -L "$CONFIG_PATH" ]] || return 1
   [[ -f "$SECRETS_PATH" && ! -L "$SECRETS_PATH" ]] || return 1
 }
@@ -340,6 +357,11 @@ prepare_state() {
   done
   if [[ -d /etc/lightningos/tls && ! -L /etc/lightningos/tls ]]; then
     while IFS= read -r -d '' path; do
+      if [[ "$path" == /etc/lightningos/tls/backups ]]; then
+        validate_tls_backups_tree || die "unsafe TLS backup tree requires operator review"
+        capture_path_metadata "$path"
+        continue
+      fi
       [[ -f "$path" && ! -L "$path" && "$(stat -c %u "$path")" == 0 ]] \
         || die "unsafe TLS asset requires operator review: $path"
       capture_path_metadata "$path"
@@ -400,6 +422,12 @@ canonicalize_paths() {
     chown root:"$CANONICAL_GROUP" /etc/lightningos/tls
     chmod 0750 /etc/lightningos/tls
     while IFS= read -r -d '' path; do
+      if [[ "$path" == /etc/lightningos/tls/backups ]]; then
+        validate_tls_backups_tree || die "unsafe TLS backup tree requires operator review"
+        chown root:root "$path"
+        chmod 0700 "$path"
+        continue
+      fi
       [[ -f "$path" && ! -L "$path" && "$(stat -c %u "$path")" == 0 ]] \
         || die "unsafe TLS asset requires operator review: $path"
       chown root:"$CANONICAL_GROUP" "$path"

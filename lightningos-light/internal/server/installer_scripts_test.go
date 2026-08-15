@@ -829,10 +829,13 @@ func TestLegacyManagerMigrationIsFailClosedAndPreservesNodeServices(t *testing.T
 		`--apply`,
 		`--finalize`,
 		`--rollback`,
-		`/var/lib/lightningos/rollback/0.5.5-legacy-manager-normalization`,
+		`/var/lib/lightningos/rollback/0.5.6-legacy-manager-normalization`,
 		`legacy_sudoers="$(legacy_manager_sudoers_path "$user")"`,
 		`validate_legacy_auth_enable_sudoers "$AUTH_SUDOERS_PATH" "$user"`,
 		`validate_legacy_app_upgrade_sudoers "$APP_UPGRADE_SUDOERS_PATH"`,
+		`validate_tls_backups_tree || return 1`,
+		`[[ "$path" == /etc/lightningos/tls/backups ]]`,
+		`chmod 0700 "$path"`,
 		`/etc/sudoers.d/lightningos-${user}`,
 		`capture_optional "$legacy_sudoers" legacy-sudoers`,
 		`capture_optional "$APP_UPGRADE_SUDOERS_PATH" app-upgrade-sudoers`,
@@ -866,6 +869,7 @@ func TestLegacyManagerMigrationIsFailClosedAndPreservesNodeServices(t *testing.T
 		`systemctl kill bitcoind`,
 		`rm -rf`,
 		`chown -R "$CANONICAL_USER:$CANONICAL_GROUP" /data`,
+		`chown -R "$CANONICAL_USER:$CANONICAL_GROUP" /etc/lightningos/tls/backups`,
 	} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("legacy Manager migration must not modify protected node services or data: found %q", forbidden)

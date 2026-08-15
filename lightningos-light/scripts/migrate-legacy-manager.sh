@@ -9,11 +9,12 @@ set -Eeuo pipefail
 SERVICE="lightningos-manager.service"
 CANONICAL_USER="lightningos"
 CANONICAL_GROUP="lightningos"
-STATE_ROOT="/var/lib/lightningos/rollback/0.5.4-legacy-manager-normalization"
+STATE_ROOT="/var/lib/lightningos/rollback/0.5.5-legacy-manager-normalization"
 DROPIN_DIR="/etc/systemd/system/lightningos-manager.service.d"
 DROPIN_PATH="${DROPIN_DIR}/10-legacy-manager-normalization.conf"
 SUDOERS_PATH="/etc/sudoers.d/lightningos"
 AUTH_SUDOERS_PATH="/etc/sudoers.d/lightningos-auth-enable"
+APP_UPGRADE_SUDOERS_PATH="/etc/sudoers.d/lightningos-app-upgrade"
 VERSION_PATH="/opt/lightningos/ui/version.txt"
 CONFIG_PATH="/etc/lightningos/config.yaml"
 SECRETS_PATH="/etc/lightningos/secrets.env"
@@ -165,6 +166,60 @@ validate_legacy_sudoers() {
   ((saw_grant == 1))
 }
 
+legacy_manager_sudoers_path() {
+  local user="$1" candidate match="" count=0
+  for candidate in "$SUDOERS_PATH" "/etc/sudoers.d/lightningos-${user}"; do
+    [[ "$candidate" != "$match" ]] || continue
+    if [[ -e "$candidate" || -L "$candidate" ]]; then
+      validate_legacy_sudoers "$candidate" "$user" || return 1
+      match="$candidate"
+      count=$((count + 1))
+    fi
+  done
+  ((count == 1)) || return 1
+  printf '%s\n' "$match"
+}
+
+validate_legacy_auth_enable_sudoers() {
+  local path="$1" user="$2" line saw_grant=0
+  [[ ! -e "$path" && ! -L "$path" ]] && return 0
+  root_regular_file "$path" || return 1
+  [[ "$(stat -c '%a' "$path")" == "440" ]] || return 1
+  visudo -cf "$path" >/dev/null 2>&1 || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" != *$'\r'* ]] || return 1
+    [[ -n "$line" ]] || continue
+    [[ "$line" == "Defaults:${user} !requiretty" ]] && continue
+    if [[ "$line" =~ ^${user}[[:space:]]ALL=NOPASSWD:[[:space:]]/(usr/)?bin/tee[[:space:]]/etc/lightningos/config.yaml,[[:space:]]/(usr/)?bin/systemctl[[:space:]]restart[[:space:]]lightningos-manager,[[:space:]]/(usr/)?bin/systemd-run[[:space:]]\*$ ]]; then
+      ((saw_grant == 0)) || return 1
+      saw_grant=1
+      continue
+    fi
+    return 1
+  done < "$path"
+  ((saw_grant == 1))
+}
+
+validate_legacy_app_upgrade_sudoers() {
+  local path="$1" line saw_grant=0
+  [[ ! -e "$path" && ! -L "$path" ]] && return 0
+  root_regular_file "$path" || return 1
+  [[ "$(stat -c '%a' "$path")" == "440" ]] || return 1
+  visudo -cf "$path" >/dev/null 2>&1 || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" != *$'\r'* ]] || return 1
+    [[ -n "$line" ]] || continue
+    [[ "$line" == "Defaults:lightningos !requiretty" ]] && continue
+    if [[ "$line" == "lightningos ALL=(root) NOPASSWD: /usr/bin/systemd-run *, /usr/bin/systemctl is-active lightningos-app-upgrade, /usr/local/sbin/lightningos-upgrade-app" ]]; then
+      ((saw_grant == 0)) || return 1
+      saw_grant=1
+      continue
+    fi
+    return 1
+  done < "$path"
+  ((saw_grant == 1))
+}
+
 validate_manager_unit() {
   local fragment exec_start env_file
   fragment="$(systemctl show "$SERVICE" -p FragmentPath --value 2>/dev/null)"
@@ -177,16 +232,19 @@ validate_manager_unit() {
 }
 
 supported_layout() {
-  local user version uid
+  local user version uid legacy_sudoers
   user="$(service_user)"
   [[ -n "$user" && "$user" != root && "$user" != "$CANONICAL_USER" ]] || return 1
   [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || return 1
   uid="$(id -u "$user" 2>/dev/null)" || return 1
   ((uid >= 1000)) || return 1
   version="$(normalize_version "$(cat "$VERSION_PATH" 2>/dev/null)")"
-  [[ "$version" == 0.5.2-beta* || "$version" == 0.5.3-beta* ]] || return 1
+  [[ "$version" == 0.5.2-beta* || "$version" == 0.5.3-beta* || "$version" == 0.5.4-beta* ]] || return 1
   validate_manager_unit || return 1
-  validate_legacy_sudoers "$SUDOERS_PATH" "$user" || return 1
+  legacy_sudoers="$(legacy_manager_sudoers_path "$user")" || return 1
+  [[ -n "$legacy_sudoers" ]] || return 1
+  validate_legacy_auth_enable_sudoers "$AUTH_SUDOERS_PATH" "$user" || return 1
+  validate_legacy_app_upgrade_sudoers "$APP_UPGRADE_SUDOERS_PATH" || return 1
   [[ -f "$CONFIG_PATH" && ! -L "$CONFIG_PATH" ]] || return 1
   [[ -f "$SECRETS_PATH" && ! -L "$SECRETS_PATH" ]] || return 1
 }
@@ -253,11 +311,17 @@ restore_path_metadata() {
 }
 
 prepare_state() {
-  local legacy_user="$1" legacy_group="$2" path
+  local legacy_user="$1" legacy_group="$2" legacy_sudoers="$3" path
   if [[ -e "$STATE_ROOT" ]]; then
     [[ -d "$STATE_ROOT" && ! -L "$STATE_ROOT" ]] || die "unsafe rollback state"
     [[ "$(stat -c '%u:%g:%a' "$STATE_ROOT")" == "0:0:700" ]] || die "invalid rollback state ownership"
     [[ -f "$STATE_ROOT/prepared" ]] || die "incomplete rollback state requires operator review"
+    [[ -f "$STATE_ROOT/legacy-sudoers.path" && ! -L "$STATE_ROOT/legacy-sudoers.path" ]] \
+      || die "legacy sudoers rollback metadata is missing"
+    [[ "$(cat "$STATE_ROOT/legacy-sudoers.path")" == "$legacy_sudoers" ]] \
+      || die "legacy sudoers rollback metadata does not match this node"
+    [[ -f "$STATE_ROOT/legacy-sudoers" && ! -L "$STATE_ROOT/legacy-sudoers" ]] \
+      || die "legacy sudoers rollback policy is missing"
     return 0
   fi
   install -d -o root -g root -m 0700 "$STATE_ROOT"
@@ -266,8 +330,10 @@ prepare_state() {
   id -nG "$CANONICAL_USER" > "$STATE_ROOT/canonical-groups.before" 2>/dev/null || : > "$STATE_ROOT/canonical-user.absent"
   getent group "$CANONICAL_GROUP" >/dev/null 2>&1 || : > "$STATE_ROOT/canonical-group.absent"
   capture_optional "$DROPIN_PATH" manager-dropin
-  capture_optional "$SUDOERS_PATH" sudoers
+  printf '%s\n' "$legacy_sudoers" > "$STATE_ROOT/legacy-sudoers.path"
+  capture_optional "$legacy_sudoers" legacy-sudoers
   capture_optional "$AUTH_SUDOERS_PATH" auth-sudoers
+  capture_optional "$APP_UPGRADE_SUDOERS_PATH" app-upgrade-sudoers
   : > "$STATE_ROOT/path-metadata"
   for path in /etc/lightningos /etc/lightningos/tls "$CONFIG_PATH" "$SECRETS_PATH" /var/lib/lightningos /var/lib/lightningos/apps /var/lib/lightningos/apps-data /var/log/lightningos; do
     capture_path_metadata "$path"
@@ -297,7 +363,7 @@ prepare_state() {
 }
 
 write_transition_sudoers() {
-  local tmp
+  local legacy_sudoers="$1" tmp
   tmp="$(mktemp /etc/sudoers.d/.lightningos-transition.XXXXXX)"
   cat > "$tmp" <<'EOF'
 Defaults:lightningos !requiretty
@@ -308,7 +374,19 @@ EOF
   chown root:root "$tmp"
   chmod 0440 "$tmp"
   visudo -cf "$tmp" >/dev/null || { rm -f -- "$tmp"; return 1; }
-  mv -f -- "$tmp" "$SUDOERS_PATH"
+  if [[ "$legacy_sudoers" != "$SUDOERS_PATH" ]]; then
+    rm -f -- "$legacy_sudoers" || { rm -f -- "$tmp"; return 1; }
+  fi
+  if ! mv -f -- "$tmp" "$SUDOERS_PATH"; then
+    [[ "$legacy_sudoers" == "$SUDOERS_PATH" ]] || restore_optional "$legacy_sudoers" legacy-sudoers
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if ! visudo -c >/dev/null 2>&1; then
+    rm -f -- "$SUDOERS_PATH"
+    restore_optional "$legacy_sudoers" legacy-sudoers
+    return 1
+  fi
 }
 
 canonicalize_paths() {
@@ -426,13 +504,17 @@ wait_manager() {
 }
 
 wait_cutover() {
-  local attempt
+  local attempt legacy_sudoers
+  legacy_sudoers="$(cat "$STATE_ROOT/legacy-sudoers.path" 2>/dev/null || true)"
   for attempt in {1..180}; do
     if systemctl is-active --quiet lightningos-privileged.socket 2>/dev/null \
       && [[ "$(systemctl show "$SERVICE" -p User --value)" == "$CANONICAL_USER" ]] \
       && [[ "$(systemctl show "$SERVICE" -p NoNewPrivileges --value)" == yes ]] \
       && [[ "$(systemctl show "$SERVICE" -p SupplementaryGroups --value)" != *docker* ]] \
-      && [[ ! -e "$SUDOERS_PATH" ]]; then
+      && [[ ! -e "$SUDOERS_PATH" ]] \
+      && [[ -z "$legacy_sudoers" || ! -e "$legacy_sudoers" ]] \
+      && [[ ! -e "$AUTH_SUDOERS_PATH" ]] \
+      && [[ ! -e "$APP_UPGRADE_SUDOERS_PATH" ]]; then
       return 0
     fi
     sleep 5
@@ -443,17 +525,19 @@ wait_cutover() {
 apply_migration() {
   require_root
   supported_layout || die "this node is not a recognized legacy Manager layout"
-  local legacy_user legacy_group
+  local legacy_user legacy_group legacy_sudoers
   legacy_user="$(service_user)"
   legacy_group="$(service_group)"
-  prepare_state "$legacy_user" "$legacy_group"
+  legacy_sudoers="$(legacy_manager_sudoers_path "$legacy_user")" \
+    || die "could not resolve the validated legacy Manager sudoers policy"
+  prepare_state "$legacy_user" "$legacy_group" "$legacy_sudoers"
   ensure_canonical_identity
   canonicalize_paths
-  write_transition_sudoers || die "could not create the validated transition sudoers"
+  write_transition_sudoers "$legacy_sudoers" || die "could not create the validated transition sudoers"
   # The legacy auth helper grant is bound to the original operator account.
   # It is optional during cutover and the broker replaces it, so remove it
   # after capturing rollback state instead of widening it to another user.
-  rm -f -- "$AUTH_SUDOERS_PATH"
+  rm -f -- "$AUTH_SUDOERS_PATH" "$APP_UPGRADE_SUDOERS_PATH"
   write_manager_dropin
   systemctl daemon-reload
   systemctl restart "$SERVICE"
@@ -482,14 +566,21 @@ rollback_migration() {
   require_root
   [[ -d "$STATE_ROOT" && ! -L "$STATE_ROOT" && -f "$STATE_ROOT/prepared" ]] || die "no valid normalization rollback state found"
   [[ ! -f "$STATE_ROOT/completed" ]] || die "normalization is already part of an accepted privilege cutover; use the privilege-cutover rollback command"
-  local legacy_user legacy_group
+  local legacy_user legacy_group legacy_sudoers
   legacy_user="$(cat "$STATE_ROOT/legacy-user")"
   legacy_group="$(cat "$STATE_ROOT/legacy-group")"
   [[ "$legacy_user" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "unsafe legacy user in rollback state"
   [[ "$legacy_group" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "unsafe legacy group in rollback state"
+  legacy_sudoers="$(cat "$STATE_ROOT/legacy-sudoers.path")"
+  case "$legacy_sudoers" in
+    "$SUDOERS_PATH"|"/etc/sudoers.d/lightningos-${legacy_user}") ;;
+    *) die "unsafe legacy sudoers path in rollback state" ;;
+  esac
   restore_optional "$DROPIN_PATH" manager-dropin
-  restore_optional "$SUDOERS_PATH" sudoers
+  [[ "$legacy_sudoers" == "$SUDOERS_PATH" ]] || rm -f -- "$SUDOERS_PATH"
+  restore_optional "$legacy_sudoers" legacy-sudoers
   restore_optional "$AUTH_SUDOERS_PATH" auth-sudoers
+  restore_optional "$APP_UPGRADE_SUDOERS_PATH" app-upgrade-sudoers
   if [[ -d /var/log/lightningos && ! -L /var/log/lightningos ]]; then
     chown -R "$legacy_user:$legacy_group" /var/log/lightningos
   fi

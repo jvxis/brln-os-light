@@ -195,10 +195,17 @@ func (manager *CatalogStorage) validateMigrationRecord(appID, dataDir string) er
 		if expected[child] != entry.Source || entry.Target != filepath.Join(dataDir, child) {
 			return errors.New("catalog storage migration state is invalid")
 		}
-		targetSummary, exists, err := catalogDirectorySummary(entry.Target)
-		if err != nil || !exists || targetSummary != entry.Summary {
-			return errors.New("catalog storage migration target changed")
+		if err := validateCatalogMigrationTarget(entry.Target); err != nil {
+			return errors.New("catalog storage migration target is unavailable")
 		}
+	}
+	return nil
+}
+
+func validateCatalogMigrationTarget(target string) error {
+	targetSummary, exists, err := catalogDirectorySummary(target)
+	if err != nil || !exists || targetSummary.Files == 0 {
+		return errors.New("catalog storage migration target is unavailable")
 	}
 	return nil
 }
@@ -211,6 +218,12 @@ func (manager *CatalogStorage) finalizeLegacyMigration(ctx context.Context, appI
 	if err := manager.validateMigrationRecord(appID, dataDir); err != nil {
 		return err
 	}
+	// The root-only record is written only after the initial source and target
+	// summaries match exactly. Once the app starts from the bind mount, RocksDB
+	// or MariaDB may immediately compact, rename, or create files in the target.
+	// Requiring the old target summary here would make every healthy migration
+	// fail after start. The immutable source must still match the recorded
+	// summary exactly before any legacy contents are removed.
 	record, _ := manager.readMigrationRecord(appID)
 	for _, entry := range record.Entries {
 		if err := ctx.Err(); err != nil {

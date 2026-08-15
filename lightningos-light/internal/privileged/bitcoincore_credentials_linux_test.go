@@ -377,13 +377,14 @@ func TestBitcoinCorePrimaryCredentialMigrationPromotesLegacyConfigOwner(t *testi
 	}
 }
 
-func TestBitcoinCoreElectrsCredentialMigrationPreservesLegacyAuth(t *testing.T) {
+func TestBitcoinCoreElectrsCredentialMigrationReplacesLegacyElectrsAuth(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to validate Bitcoin storage ownership")
 	}
 	_, _, privilegedRoot, dataDir := newTestBitcoinCoreLifecycleManager(t)
 	configPath := filepath.Join(dataDir, bitcoinCoreConfigFile)
-	const legacy = "server=1\nrpcauth=legacy:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n[main]\nrpcport=8332\n"
+	const legacyElectrs = "electrs:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const legacy = "server=1\nrpcauth=unrelated:cccccccccccccccccccccccccccccccc$dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\nrpcauth=" + legacyElectrs + "\n[main]\nrpcport=8332\n"
 	if err := os.WriteFile(configPath, []byte(legacy), 0o640); err != nil {
 		t.Fatal(err)
 	}
@@ -414,8 +415,8 @@ func TestBitcoinCoreElectrsCredentialMigrationPreservesLegacyAuth(t *testing.T) 
 		t.Fatalf("Electrs credential state is not root-only: %v", err)
 	}
 	raw, err := os.ReadFile(configPath)
-	if err != nil || !strings.Contains(string(raw), "rpcauth=legacy:") || !strings.Contains(string(raw), "rpcauth="+appmanifest.ElectrsBitcoinRPCUser+":") {
-		t.Fatalf("migration did not preserve legacy auth: %v\n%s", err, raw)
+	if err != nil || !strings.Contains(string(raw), "rpcauth=unrelated:") || strings.Contains(string(raw), legacyElectrs) || !strings.Contains(string(raw), "rpcauth="+appmanifest.ElectrsBitcoinRPCUser+":") {
+		t.Fatalf("migration did not replace only the legacy Electrs auth: %v\n%s", err, raw)
 	}
 
 	again, err := manager.EnsureElectrsCredentials(context.Background(), dataDir, false)

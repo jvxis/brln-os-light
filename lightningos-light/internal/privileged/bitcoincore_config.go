@@ -137,7 +137,60 @@ func validateBitcoinCoreCredentialsForUser(credentials bitcoinCoreStoredCredenti
 }
 
 func bitcoinCoreConfigWithElectrsRPCAuth(content string, rpcAuth string) (string, bool, error) {
-	return bitcoinCoreConfigWithManagedRPCAuth(content, rpcAuth, appmanifest.ElectrsBitcoinRPCUser, false)
+	if err := validateBitcoinCoreConfigContent(content); err != nil {
+		return "", false, err
+	}
+	credentials := bitcoinCoreStoredCredentials{User: appmanifest.ElectrsBitcoinRPCUser, RPCAuth: rpcAuth}
+	if !strings.HasPrefix(credentials.RPCAuth, credentials.User+":") {
+		return "", false, errors.New("bitcoin RPC credential user is invalid")
+	}
+
+	// The pre-hardening store already created a dedicated `electrs` rpcauth,
+	// but did not retain enough state for the broker to recover its password.
+	// Replace only hashes for that dedicated user and preserve every unrelated
+	// credential. This activates the managed credential with one Bitcoin
+	// restart without leaving the legacy Electrs password valid.
+	want := "rpcauth=" + rpcAuth
+	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	filtered := make([]string, 0, len(lines)+1)
+	found := false
+	changed := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "rpcauth") {
+			value := strings.TrimSpace(parts[1])
+			if strings.HasPrefix(value, appmanifest.ElectrsBitcoinRPCUser+":") {
+				if value == rpcAuth && !found {
+					filtered = append(filtered, line)
+					found = true
+				} else {
+					changed = true
+				}
+				continue
+			}
+		}
+		filtered = append(filtered, line)
+	}
+	if !found {
+		insertAt := len(filtered)
+		for index, line := range filtered {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+				insertAt = index
+				break
+			}
+		}
+		filtered = append(filtered, "")
+		copy(filtered[insertAt+1:], filtered[insertAt:])
+		filtered[insertAt] = want
+		changed = true
+	}
+	updated := strings.Join(filtered, "\n") + "\n"
+	if err := validateBitcoinCoreConfigContent(updated); err != nil {
+		return "", false, err
+	}
+	return updated, changed, nil
 }
 
 func bitcoinCoreConfigWithManagedRPCAuth(content string, rpcAuth string, expectedUser string, preserveLegacySameUser bool) (string, bool, error) {

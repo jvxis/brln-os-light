@@ -62,30 +62,28 @@ func TestGenerateBitcoinCoreCredentialsProducesValidRPCAuth(t *testing.T) {
 	}
 }
 
-func TestBitcoinCoreConfigWithElectrsRPCAuthPreservesLegacyCredentialAndIsIdempotent(t *testing.T) {
+func TestBitcoinCoreConfigWithElectrsRPCAuthReplacesLegacyCredentialAndIsIdempotent(t *testing.T) {
 	const auth = "electrs:0123456789abcdef0123456789abcdef$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	legacy := "server=1\nrpcauth=legacy:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n[main]\nrpcport=8332\n"
+	const oldElectrs = "electrs:ffffffffffffffffffffffffffffffff$eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	legacy := "server=1\nrpcauth=legacy:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nrpcauth=" + oldElectrs + "\n[main]\nrpcport=8332\n"
 	configured, changed, err := bitcoinCoreConfigWithElectrsRPCAuth(legacy, auth)
 	if err != nil || !changed {
 		t.Fatalf("configured/changed/error=%q/%v/%v", configured, changed, err)
 	}
-	if !strings.Contains(configured, "rpcauth=legacy:") || !strings.Contains(configured, "rpcauth="+auth+"\n[main]") {
-		t.Fatalf("legacy credential was changed or Electrs credential misplaced:\n%s", configured)
+	if !strings.Contains(configured, "rpcauth=legacy:") || strings.Contains(configured, oldElectrs) || !strings.Contains(configured, "rpcauth="+auth+"\n[main]") {
+		t.Fatalf("unrelated credential changed or Electrs credential was not replaced:\n%s", configured)
 	}
 	again, changed, err := bitcoinCoreConfigWithElectrsRPCAuth(configured, auth)
 	if err != nil || changed || again != configured {
 		t.Fatalf("Electrs credential merge is not idempotent: changed=%v err=%v", changed, err)
 	}
-	other := strings.Replace(configured, auth, "electrs:ffffffffffffffffffffffffffffffff$eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", 1)
-	if _, _, err := bitcoinCoreConfigWithElectrsRPCAuth(other, auth); err == nil {
-		t.Fatal("unmanaged Electrs credential was overwritten")
-	}
 	for _, variant := range []string{
 		"server=1\nRPCAUTH = electrs:ffffffffffffffffffffffffffffffff$eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n",
 		"server=1\n  rpcauth=electrs:ffffffffffffffffffffffffffffffff$eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n",
 	} {
-		if _, _, err := bitcoinCoreConfigWithElectrsRPCAuth(variant, auth); err == nil {
-			t.Fatalf("unmanaged Electrs credential variant was accepted: %q", variant)
+		updated, changed, err := bitcoinCoreConfigWithElectrsRPCAuth(variant, auth)
+		if err != nil || !changed || strings.Contains(updated, oldElectrs) || !strings.Contains(updated, "rpcauth="+auth) {
+			t.Fatalf("legacy Electrs credential variant was not replaced: changed=%v err=%v content=%q", changed, err, updated)
 		}
 	}
 }

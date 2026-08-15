@@ -24,10 +24,16 @@ func TestInstallerEntryPointsDefaultToLatestPublishedRelease(t *testing.T) {
 		`BRLN_INSTALLER="$installer"`,
 		`LIGHTNINGOS_RELEASE_BOOTSTRAPPED=1`,
 		`bash "$bootstrap" "$@"`,
+		`Latest-release bootstrap requires the official Git checkout and lo_bootstrap.sh.`,
+		`Latest-release bootstrap requires the official jvxis/brln-os-light Git origin.`,
+		`explicitly set LIGHTNINGOS_INSTALL_SOURCE=checkout`,
 	} {
 		if !strings.Contains(helper, expected) {
 			t.Fatalf("release bootstrap is missing latest-release policy %q", expected)
 		}
+	}
+	if strings.Contains(helper, "installing the current local LightningOS source") {
+		t.Fatal("latest-release bootstrap still silently falls back to the local checkout")
 	}
 
 	for _, installer := range []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"} {

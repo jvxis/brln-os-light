@@ -457,7 +457,7 @@ func TestManagerAndBrokerSystemdBoundary(t *testing.T) {
 		"ProtectKernelModules=true",
 		"ProtectControlGroups=true",
 		"CapabilityBoundingSet=",
-		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
 		"SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap",
 	} {
 		if !strings.Contains(manager, expected) {
@@ -714,6 +714,7 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 		`saw_lnd_upgrade == saw_app_upgrade`,
 		`"$RM_BIN" -f -- "$sudoers_path" "$auth_sudoers_path"`,
 		`NoNewPrivileges=true`,
+		`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`,
 		`lightningos-manager broker-self-test`,
 		`[[ -S /run/lightningos-privileged/broker.sock ]]`,
 		`for _ in $(seq 1 20)`,

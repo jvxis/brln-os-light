@@ -85,6 +85,25 @@ bitcoind.rpcpass=local-pass
 	}
 }
 
+func TestParseBitcoindRPCConfigFromLNDConfAcceptsGlobalExistingNodeOptions(t *testing.T) {
+	raw := `bitcoin.active=1
+bitcoin.mainnet=1
+bitcoind.rpchost=remote.example:8332
+bitcoind.rpcuser=existing-user
+bitcoind.rpcpass=existing-pass
+bitcoind.zmqpubrawblock=tcp://remote.example:28332
+bitcoind.zmqpubrawtx=tcp://remote.example:28333
+`
+
+	cfg, ok := parseBitcoindRPCConfigFromLNDConf(raw)
+	if !ok {
+		t.Fatalf("expected global existing-node config")
+	}
+	if cfg.Host != "remote.example:8332" || cfg.User != "existing-user" || cfg.Pass != "existing-pass" {
+		t.Fatalf("unexpected global config: %+v", cfg)
+	}
+}
+
 func TestLocalBitcoinConfigCandidatesIncludesAdminBitcoinConf(t *testing.T) {
 	paths := bitcoinCorePaths{ConfigPath: "/data/bitcoin/bitcoin.conf"}
 	candidates := localBitcoinConfigCandidates(paths)

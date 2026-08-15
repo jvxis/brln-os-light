@@ -132,7 +132,7 @@ func defaultElementsMainchainHost(source string, cfg *config.Config) string {
 	if cfg == nil {
 		return ""
 	}
-	host, _ := parseMainchainRPC(cfg.BitcoinRemote.RPCHost)
+	host, _ := parseMainchainRPC(resolveBitcoinRemoteRPCConfig(cfg).Host)
 	return host
 }
 
@@ -143,7 +143,7 @@ func defaultElementsMainchainPort(source string, cfg *config.Config) int {
 	if cfg == nil {
 		return 0
 	}
-	_, port := parseMainchainRPC(cfg.BitcoinRemote.RPCHost)
+	_, port := parseMainchainRPC(resolveBitcoinRemoteRPCConfig(cfg).Host)
 	return port
 }
 

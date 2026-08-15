@@ -92,3 +92,12 @@ func TestParseBitcoinSourceFromLNDConf(t *testing.T) {
 		}
 	})
 }
+
+func TestParseBitcoinSourceFromGlobalExistingNodeOptions(t *testing.T) {
+	if got := parseBitcoinSourceFromLNDConf("bitcoin.active=1\nbitcoind.rpchost=remote.example:8332\n"); got != "remote" {
+		t.Fatalf("global remote source = %q, want remote", got)
+	}
+	if got := parseBitcoinSourceFromLNDConf("bitcoin.active=1\nbitcoind.rpchost=127.0.0.1:8332\n"); got != "local" {
+		t.Fatalf("global local source = %q, want local", got)
+	}
+}

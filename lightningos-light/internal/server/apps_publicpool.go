@@ -118,12 +118,12 @@ func (s *Server) uninstallPublicPool(ctx context.Context) error {
 
 func (s *Server) resolvePublicPoolRuntime(ctx context.Context) (appmanifest.PublicPoolRuntime, error) {
 	if readBitcoinSource() == "remote" {
-		host, port := parseMainchainRPC(s.cfg.BitcoinRemote.RPCHost)
-		user, pass := readBitcoinSecrets()
-		if user == "" || pass == "" {
+		remoteCfg := resolveBitcoinRemoteRPCConfig(s.cfg)
+		host, port := parseMainchainRPC(remoteCfg.Host)
+		if remoteCfg.User == "" || remoteCfg.Pass == "" {
 			return appmanifest.PublicPoolRuntime{}, errors.New("bitcoin remote RPC credentials missing")
 		}
-		runtime := appmanifest.PublicPoolRuntime{BitcoinMode: appmanifest.PublicPoolBitcoinRemote, BitcoinRPCURL: toHTTPRPCURL(host), BitcoinRPCPort: port, BitcoinRPCUser: user, BitcoinRPCPass: pass, BitcoinZMQHost: publicPoolExternalZMQHost(s.cfg.BitcoinRemote.ZMQRawBlock)}
+		runtime := appmanifest.PublicPoolRuntime{BitcoinMode: appmanifest.PublicPoolBitcoinRemote, BitcoinRPCURL: toHTTPRPCURL(host), BitcoinRPCPort: port, BitcoinRPCUser: remoteCfg.User, BitcoinRPCPass: remoteCfg.Pass, BitcoinZMQHost: publicPoolExternalZMQHost(remoteCfg.ZMQBlock)}
 		return runtime, appmanifest.ValidatePublicPoolRuntime(runtime)
 	}
 	local, err := readBitcoinLocalRPCConfig(ctx)

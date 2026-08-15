@@ -629,17 +629,17 @@ func resolveElementsRemoteMainchainConfig(cfg *config.Config) (elementsMainchain
 	if cfg == nil {
 		return elementsMainchainConfig{}, errors.New("config unavailable")
 	}
-	host, port := parseMainchainRPC(cfg.BitcoinRemote.RPCHost)
-	mainUser, mainPass := readBitcoinSecrets()
-	if mainUser == "" || mainPass == "" {
+	remoteCfg := resolveBitcoinRemoteRPCConfig(cfg)
+	host, port := parseMainchainRPC(remoteCfg.Host)
+	if remoteCfg.User == "" || remoteCfg.Pass == "" {
 		return elementsMainchainConfig{}, errors.New("bitcoin remote RPC credentials missing")
 	}
 	return elementsMainchainConfig{
 		Source: "remote",
 		Host:   host,
 		Port:   port,
-		User:   mainUser,
-		Pass:   mainPass,
+		User:   remoteCfg.User,
+		Pass:   remoteCfg.Pass,
 	}, nil
 }
 

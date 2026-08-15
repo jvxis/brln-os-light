@@ -318,12 +318,12 @@ func (s *Server) resolveBtcpayRemoteWiring(ctx context.Context) (btcpayBitcoinWi
 	if s.cfg == nil {
 		return btcpayBitcoinWiring{}, errors.New("config unavailable")
 	}
-	user, pass := readBitcoinSecrets()
-	networkInfo, err := fetchBitcoinNetworkInfo(ctx, s.cfg.BitcoinRemote.RPCHost, user, pass)
+	remoteCfg := resolveBitcoinRemoteRPCConfig(s.cfg)
+	networkInfo, err := fetchBitcoinNetworkInfo(ctx, remoteCfg.Host, remoteCfg.User, remoteCfg.Pass)
 	if err != nil {
 		return btcpayBitcoinWiring{}, fmt.Errorf("failed to discover the remote Bitcoin P2P endpoint: %w", err)
 	}
-	return buildBtcpayRemoteWiring(s.cfg.BitcoinRemote.RPCHost, user, pass, networkInfo.LocalAddresses)
+	return buildBtcpayRemoteWiring(remoteCfg.Host, remoteCfg.User, remoteCfg.Pass, networkInfo.LocalAddresses)
 }
 
 func buildBtcpayRemoteWiring(rpcHost, user, pass string, localAddresses []bitcoinNetworkLocalAddress) (btcpayBitcoinWiring, error) {

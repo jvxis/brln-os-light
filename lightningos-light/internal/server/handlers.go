@@ -499,17 +499,10 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "source must be local or remote")
 		return
 	}
-	remoteUser, remotePass := readBitcoinSecrets()
-	if source == "remote" && (remoteUser == "" || remotePass == "") {
+	remoteCfg := resolveBitcoinRemoteRPCConfig(s.cfg)
+	if source == "remote" && (remoteCfg.User == "" || remoteCfg.Pass == "") {
 		writeError(w, http.StatusBadRequest, "remote RPC credentials missing")
 		return
-	}
-	remoteCfg := bitcoinRPCConfig{
-		Host:     s.cfg.BitcoinRemote.RPCHost,
-		User:     remoteUser,
-		Pass:     remotePass,
-		ZMQBlock: s.cfg.BitcoinRemote.ZMQRawBlock,
-		ZMQTx:    s.cfg.BitcoinRemote.ZMQRawTx,
 	}
 
 	var localCfg bitcoinRPCConfig
@@ -705,26 +698,16 @@ func isBitcoinRPCAuthenticationError(err error) bool {
 }
 
 func (s *Server) bitcoinStatus(ctx context.Context) (bitcoinStatus, error) {
-	rpcUser := os.Getenv("BITCOIN_RPC_USER")
-	rpcPass := os.Getenv("BITCOIN_RPC_PASS")
-	if rpcUser == "" || rpcPass == "" {
-		fileUser, filePass := readBitcoinSecrets()
-		if rpcUser == "" {
-			rpcUser = fileUser
-		}
-		if rpcPass == "" {
-			rpcPass = filePass
-		}
-	}
+	remoteCfg := resolveBitcoinRemoteRPCConfig(s.cfg)
 	status := bitcoinStatus{
 		Mode:        "remote",
-		RPCHost:     s.cfg.BitcoinRemote.RPCHost,
-		ZMQRawBlock: s.cfg.BitcoinRemote.ZMQRawBlock,
-		ZMQRawTx:    s.cfg.BitcoinRemote.ZMQRawTx,
+		RPCHost:     remoteCfg.Host,
+		ZMQRawBlock: remoteCfg.ZMQBlock,
+		ZMQRawTx:    remoteCfg.ZMQTx,
 	}
 
-	if rpcUser != "" && rpcPass != "" {
-		info, err := fetchBitcoinInfo(ctx, s.cfg.BitcoinRemote.RPCHost, rpcUser, rpcPass)
+	if remoteCfg.User != "" && remoteCfg.Pass != "" {
+		info, err := fetchBitcoinInfo(ctx, remoteCfg.Host, remoteCfg.User, remoteCfg.Pass)
 		if err == nil {
 			status.RPCOk = true
 			status.Chain = info.Chain
@@ -733,7 +716,7 @@ func (s *Server) bitcoinStatus(ctx context.Context) (bitcoinStatus, error) {
 			status.VerificationProgress = info.VerificationProgress
 			status.InitialBlockDownload = info.InitialBlockDownload
 			status.BestBlockHash = info.BestBlockHash
-			if netInfo, netErr := fetchBitcoinNetworkInfo(ctx, s.cfg.BitcoinRemote.RPCHost, rpcUser, rpcPass); netErr == nil {
+			if netInfo, netErr := fetchBitcoinNetworkInfo(ctx, remoteCfg.Host, remoteCfg.User, remoteCfg.Pass); netErr == nil {
 				status.Version = netInfo.Version
 				status.Subversion = netInfo.Subversion
 			}
@@ -742,8 +725,8 @@ func (s *Server) bitcoinStatus(ctx context.Context) (bitcoinStatus, error) {
 		}
 	}
 
-	status.ZMQRawBlockOk = testTCP(s.cfg.BitcoinRemote.ZMQRawBlock)
-	status.ZMQRawTxOk = testTCP(s.cfg.BitcoinRemote.ZMQRawTx)
+	status.ZMQRawBlockOk = testTCP(remoteCfg.ZMQBlock)
+	status.ZMQRawTxOk = testTCP(remoteCfg.ZMQTx)
 
 	return status, nil
 }
@@ -898,7 +881,10 @@ func readBitcoindRPCConfigFromLNDConf() (bitcoinRPCConfig, bool) {
 
 func parseBitcoindRPCConfigFromLNDConf(raw string) (bitcoinRPCConfig, bool) {
 	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
-	inBitcoind := false
+	// go-flags accepts dotted LND options before the first INI section. This is
+	// common on nodes that predate LightningOS, so treat the global preamble as
+	// part of the effective Bitcoind configuration as well as [Bitcoind].
+	inBitcoind := true
 	cfg := bitcoinRPCConfig{
 		Host:     "127.0.0.1:8332",
 		ZMQBlock: "tcp://127.0.0.1:28332",
@@ -1199,7 +1185,8 @@ func (s *Server) handleWizardBitcoinRemote(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	info, err := fetchBitcoinInfo(ctx, s.cfg.BitcoinRemote.RPCHost, user, pass)
+	remoteCfg := resolveBitcoinRemoteRPCConfig(s.cfg)
+	info, err := fetchBitcoinInfo(ctx, remoteCfg.Host, user, pass)
 	if err != nil {
 		msg := "bitcoin rpc check failed"
 		msg = fmt.Sprintf("bitcoin rpc check failed: %v", err)
@@ -1218,9 +1205,9 @@ func (s *Server) handleWizardBitcoinRemote(w http.ResponseWriter, r *http.Reques
 		ctx,
 		user,
 		pass,
-		s.cfg.BitcoinRemote.RPCHost,
-		s.cfg.BitcoinRemote.ZMQRawBlock,
-		s.cfg.BitcoinRemote.ZMQRawTx,
+		remoteCfg.Host,
+		remoteCfg.ZMQBlock,
+		remoteCfg.ZMQTx,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update lnd.conf")
 		return
@@ -5449,7 +5436,9 @@ func parseBitcoinSourceFromLNDConf(raw string) string {
 		return ""
 	}
 	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
-	inBitcoind := false
+	// Existing LND installations often keep dotted bitcoind.* options in the
+	// global INI preamble instead of a [Bitcoind] section.
+	inBitcoind := true
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {

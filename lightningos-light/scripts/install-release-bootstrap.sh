@@ -33,8 +33,9 @@ lightningos_bootstrap_latest_release() {
   git_user="${SUDO_USER:-}"
 
   if [[ ! -d "$project_root/.git" || ! -f "$bootstrap" ]]; then
-    echo "[WARN] Git checkout/bootstrap not available; installing the current local LightningOS source." >&2
-    return 0
+    echo "[ERROR] Latest-release bootstrap requires the official Git checkout and lo_bootstrap.sh." >&2
+    echo "[ERROR] Use lo_bootstrap.sh for a normal install, or explicitly set LIGHTNINGOS_INSTALL_SOURCE=checkout for an offline/development checkout." >&2
+    return 1
   fi
 
   project_uid="$(stat -c '%u' "$project_root" 2>/dev/null || true)"
@@ -50,8 +51,9 @@ lightningos_bootstrap_latest_release() {
   case "$normalized_origin" in
     https://github.com/jvxis/brln-os-light|git@github.com:jvxis/brln-os-light|ssh://git@github.com/jvxis/brln-os-light) ;;
     *)
-      echo "[WARN] Non-canonical or missing Git origin; installing the current local LightningOS source." >&2
-      return 0
+      echo "[ERROR] Latest-release bootstrap requires the official jvxis/brln-os-light Git origin." >&2
+      echo "[ERROR] Fix the origin, use lo_bootstrap.sh, or explicitly set LIGHTNINGOS_INSTALL_SOURCE=checkout for an offline/development checkout." >&2
+      return 1
       ;;
   esac
 

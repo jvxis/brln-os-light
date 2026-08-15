@@ -156,6 +156,24 @@ self-signed certificates automatically and keeps a timestamped backup. A
 custom certificate is never replaced; `.local` discovery is only announced
 when the active certificate actually covers that hostname.
 
+### Upgrading existing LightningOS installations to 0.5.8
+
+> [!IMPORTANT]
+> The official `0.5.2-Beta -> 0.5.8-Beta` path starts from **App Upgrade in the
+> LightningOS UI** and completes in two server-side stages. The legacy updater
+> first installs the exact 0.5.8 Manager/UI; the new Manager then authenticates
+> the release tag and full commit, installs the restricted privileged broker,
+> and removes the reviewed legacy privilege grant. Keep the host powered and do
+> not start a second upgrade while this transition is running. Closing the
+> browser does not stop the server-side operation. Bitcoin Core and LND are not
+> restarted by this privilege transition.
+
+Nodes already on `0.5.7-Beta` use the normal single in-app upgrade flow to
+`0.5.8-Beta`. Do not rerun `install.sh` or `install_existing.sh` merely to
+upgrade either of these supported versions. The `0.5.6-Beta` release has a
+release-specific updater bootstrap defect and requires an operator-assisted
+bootstrap instead of repeated UI attempts.
+
 ## First secure access
 - Login protection is enabled by default on new installs.
 - At the end of `install.sh`, `install_existing.sh`, and `install_existing_pi.sh`, the installer prints the UI URL and an admin setup token in the console when no admin password is configured yet.

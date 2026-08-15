@@ -1,0 +1,108 @@
+{
+  "date_utc": "2026-08-15",
+  "branch": "agent/0.5.8-legacy-upgrade-bridge",
+  "implementation_commit": "7d0f5d22cbc32a29351671eb4b4ecbaeda67b6e8",
+  "scope": "direct authenticated Manager UI/API upgrade from the official 0.5.2-Beta release to 0.5.8-Beta, including the automatic legacy privilege transition, on a disposable Ubuntu 24.04 VM",
+  "target": {
+    "vm_base": "brln-os-basica full clone",
+    "os": "Ubuntu 24.04.3 LTS",
+    "architecture": "amd64",
+    "network": "VirtualBox NAT with localhost-only SSH forwarding; no LAN scan, bridge change, DHCP renewal, or host adapter restart",
+    "source_tag": "0.5.2-Beta",
+    "source_commit": "55c929d10f6eb247202e8a3d040ebe812e6efba9",
+    "source_version": "0.5.2-Beta",
+    "target_version": "0.5.8-Beta"
+  },
+  "official_0_5_2_baseline": {
+    "manager_active": true,
+    "manager_restart_count": 0,
+    "postgresql_active": true,
+    "lnd_active": false,
+    "bitcoin_active": false,
+    "broker_present": false,
+    "legacy_sudoers": "root:root:0440",
+    "manager_groups": [
+      "lightningos",
+      "systemd-journal",
+      "lnd",
+      "docker"
+    ],
+    "lnd_config_sha256": "8ff95a1f7c60b855b1f38f5ee80e84136b7d08c5ab85b586544c1e240d8a52a2",
+    "lnd_binary_sha256": "6e81455653754b1463d1798889251aee177490962eb8ac309b6685cb88cc1281"
+  },
+  "release_fixture": {
+    "reason": "0.5.8-Beta was not yet a public immutable release",
+    "product_commit": "7d0f5d22cbc32a29351671eb4b4ecbaeda67b6e8",
+    "fixture_commit": "8825ec8e7e848049ae455235551c71f5f6e11e22",
+    "only_source_differences": "release API and Git transport redirected to guest loopback, with the broker helper digest synchronized to the fixture helper",
+    "public_tag_release_or_merge_created": false,
+    "credentials_or_private_node_data_used": false
+  },
+  "authenticated_ui_api_upgrade": {
+    "reported_current_version": "0.5.2-beta",
+    "reported_latest_version": "0.5.8-beta",
+    "update_available": true,
+    "start_accepted": true,
+    "legacy_upgrade_unit_completed": true,
+    "automatic_privilege_transition_completed": true,
+    "release_tag_version_commit_binding": "passed",
+    "staged_helper_sha256_validation": "passed",
+    "final_build_stamp_exact_fixture_commit_and_version": true
+  },
+  "accepted_forward_cutover": {
+    "version": "0.5.8-Beta",
+    "manager_active": true,
+    "manager_restart_count": 0,
+    "manager_user_group": "lightningos:lightningos",
+    "manager_groups": [
+      "lightningos",
+      "systemd-journal",
+      "lnd"
+    ],
+    "manager_no_new_privileges": true,
+    "manager_restricted_address_families": [
+      "AF_INET",
+      "AF_INET6",
+      "AF_NETLINK",
+      "AF_UNIX"
+    ],
+    "broker_socket_active": true,
+    "broker_self_test": "passed",
+    "manager_effective_sudo": false,
+    "manager_docker_group": false,
+    "legacy_sudoers_absent": true,
+    "rollback_schema": 6,
+    "rollback_state": "root:root:0700",
+    "upgrade_staging_files_after_completion": 0,
+    "temporary_transition_helper_after_completion": "absent",
+    "postgresql_activation_timestamp": "preserved"
+  },
+  "service_preservation": {
+    "lnd_state_before_and_after": "inactive because the clean base had no Bitcoin backend, TLS certificate, or wallet",
+    "lnd_restart_count_before_and_after": 0,
+    "lnd_config_hash_preserved": true,
+    "lnd_binary_hash_preserved": true,
+    "bitcoin_state_before_and_after": "inactive and not configured",
+    "bitcoin_or_lnd_restart_caused_by_transition": false
+  },
+  "installer_latest_release_contract": {
+    "install_sh_defaults_to_latest_published_release": true,
+    "install_existing_sh_defaults_to_latest_published_release": true,
+    "install_existing_pi_sh_defaults_to_latest_published_release": true,
+    "historical_checkout_exception": "requires the explicit LIGHTNINGOS_INSTALL_SOURCE=checkout test/operator mode",
+    "regression_test_added": "TestInstallerEntryPointsDefaultToLatestPublishedRelease"
+  },
+  "validation": {
+    "go_test_all": "passed",
+    "ui_production_build": "passed",
+    "git_diff_check": "passed",
+    "go_vet_all": "blocked only by the pre-existing unreachable-code finding at internal/privileged/apps.go:1178",
+    "merge_performed": false
+  },
+  "cleanup": {
+    "disposable_vm_removed_after_capture": true,
+    "temporary_release_fixture_removed": true,
+    "temporary_repository_files": 0
+  },
+  "secrets_rpc_credentials_macaroons_or_private_node_identifiers_recorded": false
+}

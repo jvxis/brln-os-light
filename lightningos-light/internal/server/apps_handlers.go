@@ -123,19 +123,19 @@ func (s *Server) buildAppList(ctx context.Context) ([]appInfo, error) {
 	var mempoolAvailability *fullIndexAppAvailability
 	for index := range resp {
 		if resp[index].ID == electrsAppID || resp[index].ID == mempoolAppID {
+			if mempoolAvailability == nil {
+				availability := s.fullIndexAppAvailability(ctx)
+				mempoolAvailability = &availability
+			}
 			if resp[index].ID == electrsAppID {
 				if electrsAvailability == nil {
-					availability := s.electrsAppAvailability(ctx)
+					availability := s.electrsAppAvailabilityFromBase(ctx, *mempoolAvailability)
 					electrsAvailability = &availability
 				}
 				resp[index].Available = electrsAvailability.Available
 				resp[index].UnavailableReason = electrsAvailability.Reason
 				resp[index].UnavailableMessage = electrsAvailability.Message
 			} else {
-				if mempoolAvailability == nil {
-					availability := s.fullIndexAppAvailability(ctx)
-					mempoolAvailability = &availability
-				}
 				resp[index].Available = mempoolAvailability.Available
 				resp[index].UnavailableReason = mempoolAvailability.Reason
 				resp[index].UnavailableMessage = mempoolAvailability.Message

@@ -51,6 +51,10 @@ func (s *Server) fullIndexAppAvailability(ctx context.Context) fullIndexAppAvail
 
 func (s *Server) electrsAppAvailability(ctx context.Context) fullIndexAppAvailability {
 	availability := s.fullIndexAppAvailability(ctx)
+	return s.electrsAppAvailabilityFromBase(ctx, availability)
+}
+
+func (s *Server) electrsAppAvailabilityFromBase(ctx context.Context, availability fullIndexAppAvailability) fullIndexAppAvailability {
 	if availability.Available || availability.Reason != fullIndexUnavailableBitcoinRPC || !fileExists(bitcoinCoreAppPaths().ComposePath) {
 		return availability
 	}

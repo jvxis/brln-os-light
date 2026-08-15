@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -146,11 +147,15 @@ func readStorageMounts(ctx context.Context) ([]storageMount, error) {
 		return nil, err
 	}
 	mounts := []storageMount{}
+	hostOptions := readHostMountOptions("/proc/1/mountinfo")
 	indexByMount := map[string]int{}
 	var walk func([]findmntFilesystem)
 	walk = func(items []findmntFilesystem) {
 		for _, item := range items {
 			candidate := storageMountFromFindmnt(item)
+			if options, ok := hostOptions[candidate.Mount]; ok {
+				candidate.Options = options
+			}
 			if candidate.Mount != "" {
 				if idx, ok := indexByMount[candidate.Mount]; ok {
 					if preferStorageMount(candidate, mounts[idx]) {
@@ -168,6 +173,31 @@ func readStorageMounts(ctx context.Context) ([]storageMount, error) {
 	}
 	walk(parsed.Filesystems)
 	return mounts, nil
+}
+
+func readHostMountOptions(filename string) map[string]string {
+	options := map[string]string{}
+	raw, err := os.ReadFile(filename)
+	if err != nil {
+		return options
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue
+		}
+		mount := decodeMountInfoPath(fields[4])
+		if !strings.HasPrefix(mount, "/") {
+			continue
+		}
+		options[path.Clean(mount)] = fields[5]
+	}
+	return options
+}
+
+func decodeMountInfoPath(value string) string {
+	replacer := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+	return replacer.Replace(value)
 }
 
 func storageMountFromFindmnt(item findmntFilesystem) storageMount {

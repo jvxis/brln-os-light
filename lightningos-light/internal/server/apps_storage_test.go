@@ -1,6 +1,10 @@
 package server
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestSuggestedStorageDataDir(t *testing.T) {
 	tests := []struct {
@@ -79,5 +83,18 @@ func TestPreferStorageMountUsesRealFilesystemOverAutomount(t *testing.T) {
 	}
 	if preferStorageMount(automount, raidMount) {
 		t.Fatal("expected autofs automount not to replace xfs raid mount")
+	}
+}
+
+func TestReadHostMountOptionsUsesPIDOneNamespace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mountinfo")
+	raw := "148 31 8:17 / /blockchain rw,relatime shared:644 - ext4 /dev/sdb1 rw\n" +
+		"149 31 8:18 / /media/My\\040Disk ro,nosuid - ext4 /dev/sdc1 ro\n"
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	options := readHostMountOptions(path)
+	if options["/blockchain"] != "rw,relatime" || options["/media/My Disk"] != "ro,nosuid" {
+		t.Fatalf("unexpected host mount options: %#v", options)
 	}
 }

@@ -1929,6 +1929,18 @@ preserved integration node receives only a phase that has already passed that
 VM gate. No credential, IP address, token, macaroon, password, or private node
 identifier is stored in this plan, Git history, PR comments, or test output.
 
+The cross-catalog App Store status regression is closed at `41e85914`. A
+cancelled inspection can no longer leave an internal atomic-write residue that
+forces an installed app to `unknown`; declarations remain strict, while
+read-only status uses catalog-fixed Docker labels. Catalog collection is
+bounded to four workers, overlapping UI polls share one refresh, the base
+result has a ten-second cache invalidated after lifecycle completion, and
+Electrs/Mempool share one full-node availability probe. LOS TESTE2 returned 19
+concrete installed-app states with zero unknown badges; the cold request fell
+from 24--33 seconds to 1.788 seconds and cached reads to 1--2 ms. Bitcoin, LND,
+Electrs, and the stopped/running choices of other apps were preserved. Evidence:
+`docs/baselines/privilege-hardening-app-store-status-los-test2-2026-08-15.json`.
+
 ## Completion criteria
 
 This issue is complete only when:

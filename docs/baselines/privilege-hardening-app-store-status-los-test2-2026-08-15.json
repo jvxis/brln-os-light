@@ -1,0 +1,62 @@
+{
+  "schema": "lightningos-privilege-hardening-app-store-status-v1",
+  "observed_at": "2026-08-15T14:21:04Z",
+  "node": "LOS TESTE2",
+  "deployed_commit": "41e859142f8a513154c2dfb1be8fc2c98d2c2fbd",
+  "implementation_commits": {
+    "interrupted_snapshot_recovery": "3266eebe9d16ecc040031b155f21a8d6b5b025c1",
+    "read_only_catalog_status": "d62070bc58c837f88278558e07f39e27d12d7af2",
+    "bounded_cached_polling": "d37860ff85832fc66e264b8a79315a8634239d5f",
+    "shared_full_node_availability": "41e859142f8a513154c2dfb1be8fc2c98d2c2fbd"
+  },
+  "finding": {
+    "symptom": "Installed stopped applications intermittently displayed unknown, including Fedimint Lightning Gateway.",
+    "cause": "A cancelled broker status request left a root-owned atomic-write temporary file in a persistent execution snapshot. Strict snapshot validation then failed before Docker status inspection. The catalog also performed all app inspections and the Electrs/Mempool full-node checks serially, so repeated UI polling amplified host load.",
+    "scope": "Shared App Store status path; no app-specific manifest, network mode, lifecycle, or credential policy was relaxed."
+  },
+  "correction": {
+    "stale_private_temporary_files_are_safely_recovered": true,
+    "manager_owned_declarations_remain_strict": true,
+    "status_reads_use_fixed_catalog_project_and_service_labels": true,
+    "maximum_parallel_app_inspections": 4,
+    "catalog_cache_ttl_seconds": 10,
+    "cache_invalidated_after_lifecycle_operation": true,
+    "electrs_and_mempool_share_full_node_availability_probe": true
+  },
+  "live_gate": {
+    "installed_apps": 19,
+    "unknown_installed_apps": 0,
+    "fedimint_gateway_status": "stopped",
+    "cold_catalog_before_ms_range": [24133, 33761],
+    "cold_catalog_after_ms": 1788,
+    "cached_catalog_after_ms": [1, 2],
+    "atomic_snapshot_temporary_files_after": 0,
+    "bitcoin": {
+      "state": "running",
+      "restart_count": 0,
+      "started_at": "2026-08-15T13:32:19.492822713Z"
+    },
+    "lnd": {
+      "state": "active",
+      "main_pid": 48729,
+      "restart_count": 2
+    },
+    "electrs": {
+      "state": "running",
+      "restart_count": 0
+    }
+  },
+  "validation": {
+    "go_test_all": "pass",
+    "linux_privileged_compile": "pass",
+    "focused_snapshot_recovery_tests": "pass",
+    "bounded_concurrency_and_cache_copy_tests": "pass",
+    "authenticated_live_catalog_reads": "pass"
+  },
+  "cleanup": {
+    "remote_operator_checkouts": 0,
+    "remote_upgrade_worktrees": 0,
+    "temporary_credentials_persisted": false
+  },
+  "remaining_gate": "Electrs must finish its resumed mainnet index before final PR approval."
+}

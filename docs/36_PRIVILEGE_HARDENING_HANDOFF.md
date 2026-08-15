@@ -1156,3 +1156,29 @@ reaches tip before final PR approval, and do not overlap that index with more
 heavy app/build tests on this VM. Five temporary operator checkouts, all upgrade
 worktrees, and the local console screenshot were removed. Evidence:
 `docs/baselines/privilege-hardening-heavy-app-storage-los-test2-2026-08-15.json`.
+
+## App Store status stability closure (2026-08-15)
+
+An interrupted read-only broker request left a root-owned
+`.lightningos-write-*` file in the Fedimint Gateway execution snapshot. The
+strict validator rejected that internal residue before reaching Docker, so the
+installed, stopped app appeared as `unknown`. Commit `3266eebe` safely ignores
+fresh internal atomic-write files, removes stale ones, and keeps manager-owned
+app declarations strict. Commit `d62070bc` also removes snapshot creation from
+ordinary Compose-app status reads: validated apps are now inspected through
+the catalog-fixed Docker project/service labels, while all lifecycle mutations
+still use the protected execution snapshots.
+
+The live catalog exposed a second shared issue: 19 app inspections plus
+duplicated Electrs/Mempool full-node checks ran serially, taking 24--33 seconds
+and allowing UI polling to amplify node load. Commits `d37860ff` and `41e85914`
+bound inspection concurrency to four, deduplicate overlapping refreshes, cache
+the immutable base response for ten seconds, invalidate it after lifecycle
+completion, and share the full-node availability probe. On LOS TESTE2 the cold
+authenticated request fell to 1.788 seconds and the next two reads to 1--2 ms.
+All 19 installed apps had concrete status, Fedimint Gateway was `stopped`, and
+the unknown count was zero. Bitcoin, LND, and Electrs retained their runtime
+state; no app was started or stopped by the status gate. The interrupted
+checkout and worktree were removed, leaving zero operator checkouts, upgrade
+worktrees, or atomic snapshot temporaries. Evidence:
+`docs/baselines/privilege-hardening-app-store-status-los-test2-2026-08-15.json`.

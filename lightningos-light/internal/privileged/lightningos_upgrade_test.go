@@ -2,7 +2,11 @@ package privileged
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +26,18 @@ func (manager *recordingLightningOSUpgradeManager) Start(_ context.Context, para
 func validLightningOSUpgradeParams() LightningOSUpgradeStartParams {
 	return LightningOSUpgradeStartParams{
 		Version: "0.5.3-beta", Tag: "0.5.3-Beta", Commit: strings.Repeat("a", 40), HelperContent: "trusted helper", VerifyOnly: true,
+	}
+}
+
+func TestLightningOSUpgradeHelperDigestMatchesEmbeddedAsset(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "server", "assets", "upgrade-app.sh"))
+	if err != nil {
+		t.Fatalf("read embedded upgrade helper: %v", err)
+	}
+	canonical := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
+	digest := sha256.Sum256([]byte(canonical))
+	if got := hex.EncodeToString(digest[:]); got != lightningOSUpgradeHelperSHA256 {
+		t.Fatalf("upgrade helper digest = %s, want %s", got, lightningOSUpgradeHelperSHA256)
 	}
 }
 

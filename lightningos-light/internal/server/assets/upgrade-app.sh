@@ -708,7 +708,7 @@ stage_privilege_cutover() {
       'RestrictSUIDSGID=true' \
       'CapabilityBoundingSet=' \
       'AmbientCapabilities=' \
-      'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' \
+      'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
       'SystemCallArchitectures=native' \
       'SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap' \
       'ReadWritePaths=' \

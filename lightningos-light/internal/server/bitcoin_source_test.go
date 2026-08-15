@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"testing"
 )
@@ -100,4 +101,18 @@ func TestParseBitcoinSourceFromGlobalExistingNodeOptions(t *testing.T) {
 	if got := parseBitcoinSourceFromLNDConf("bitcoin.active=1\nbitcoind.rpchost=127.0.0.1:8332\n"); got != "local" {
 		t.Fatalf("global local source = %q, want local", got)
 	}
+}
+
+func TestLocalInterfaceRPCAddressIsClassifiedAsLocal(t *testing.T) {
+	for _, ip := range localInterfaceIPs() {
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+			continue
+		}
+		rpcHost := net.JoinHostPort(ip.String(), "8332")
+		if !isLocalRPCHost(rpcHost) {
+			t.Fatalf("host interface RPC address %q was classified as remote", rpcHost)
+		}
+		return
+	}
+	t.Skip("host has no non-loopback interface address")
 }

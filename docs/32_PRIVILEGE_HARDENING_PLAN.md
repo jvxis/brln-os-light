@@ -1941,6 +1941,27 @@ from 24--33 seconds to 1.788 seconds and cached reads to 1--2 ms. Bitcoin, LND,
 Electrs, and the stopped/running choices of other apps were preserved. Evidence:
 `docs/baselines/privilege-hardening-app-store-status-los-test2-2026-08-15.json`.
 
+The final combined existing-node upgrade gate is closed at `c79451c2`. A fresh
+Ubuntu 24 full clone first ran an authenticated official LND 0.21.1-beta with a
+disposable wallet and remote mainnet Bitcoin RPC/ZMQ. The exact official
+`0.5.2-Beta` `install_existing.sh` then installed LightningOS without changing
+the LND PID, restart count, activation timestamp, configuration hash, or binary
+hash. The authenticated Manager UI/API upgraded from 0.5.2 to the exact PR 33
+commit and completed the automatic privilege cutover in `enforce`.
+
+This gate exposed one legacy compatibility gap before acceptance: an existing
+node can keep the remote Bitcoin credentials only in `lnd.conf`, and dotted
+`bitcoind.*` options can legally be in the global INI preamble rather than a
+`[Bitcoind]` section. One read-only resolver now uses the active LND remote
+configuration for Manager status, source switching, BTCPay, Elements, Public
+Pool, BIP110, and the remote wizard without duplicating, returning, or logging
+the credentials. After the correction, Manager Bitcoin status returned
+mainnet, equal blocks/headers, RPC and both ZMQ feeds healthy. The deliberate
+reboot restored Manager, broker, PostgreSQL, and LND automatically; health was
+`OK`, LND was unlocked and chain-synchronized with three peers, the broker
+self-test passed, and the LND configuration and binary hashes remained exact.
+Evidence: `docs/baselines/privilege-hardening-install-existing-052-upgrade-2026-08-15.json`.
+
 ## Completion criteria
 
 This issue is complete only when:

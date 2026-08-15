@@ -1,0 +1,122 @@
+{
+  "date_utc": "2026-08-15",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "implementation_commit": "c79451c209621573cb808f294a26ee8afd247bf7",
+  "scope": "Ubuntu 24 disposable existing-node path: pre-existing official LND using remote mainnet Bitcoin, official LightningOS 0.5.2 install_existing.sh, authenticated in-app upgrade to the complete PR 33 privilege boundary, and reboot persistence",
+  "target": {
+    "vm_base": "brln-os-basica full clone",
+    "os": "Ubuntu 24.04",
+    "architecture": "amd64",
+    "network": "VirtualBox NAT with localhost-only SSH and Manager forwards; no LAN scan, bridge change, DHCP renewal, or adapter restart",
+    "source_tag": "0.5.2-Beta",
+    "source_commit": "55c929d10f6eb247202e8a3d040ebe812e6efba9",
+    "source_version": "0.5.2-Beta",
+    "target_version": "0.5.3-Beta"
+  },
+  "existing_lnd_fixture": {
+    "release": "official LND v0.21.1-beta",
+    "release_authentication": "archive hash matched a manifest authenticated by 6 pinned official LND signers",
+    "bitcoin": "remote mainnet full node through RPC and ZMQ",
+    "wallet": "disposable seedless wallet with no funds or channels",
+    "service_user_group": "lnd:lnd",
+    "pre_install_pid": 9787,
+    "pre_install_restarts": 0,
+    "pre_install_active_since_utc": "2026-08-15 16:08:45 UTC",
+    "config_sha256": "ef803d953c498fd7b99e40b8e15ed3c1118948e1330057082e02e8b86d164536",
+    "binary_sha256": "6e81455653754b1463d1798889251aee177490962eb8ac309b6685cb88cc1281",
+    "private_node_identifiers_recorded": false
+  },
+  "official_0_5_2_install": {
+    "installer": "install_existing.sh from the exact official tag checkout",
+    "manager_active": true,
+    "postgresql_active": true,
+    "lnd_pid_preserved": true,
+    "lnd_restart_count_preserved": true,
+    "lnd_activation_timestamp_preserved": true,
+    "lnd_config_hash_preserved": true,
+    "lnd_binary_hash_preserved": true,
+    "bitcoin_service_installed_or_modified": false,
+    "execution_note": "Ubuntu unattended-upgrades temporarily held the dpkg lock; it was allowed to complete normally, dpkg --audit passed, and the idempotent installer then completed"
+  },
+  "release_fixture": {
+    "reason": "0.5.3-Beta is not yet a public immutable release",
+    "exact_commit": "c79451c209621573cb808f294a26ee8afd247bf7",
+    "transport": "guest-loopback TLS release API and guest-local bare Git repository",
+    "public_tag_release_or_merge_created": false,
+    "product_source_modified": false
+  },
+  "authenticated_ui_api_upgrade": {
+    "reported_current_version": "0.5.2-beta",
+    "reported_latest_version": "0.5.3-beta",
+    "update_available_before_start": true,
+    "start_accepted": true,
+    "legacy_upgrade_completed": true,
+    "automatic_privilege_transition_completed": true,
+    "release_tag_version_commit_binding": "passed",
+    "final_build_stamp_exact": true
+  },
+  "privilege_boundary": {
+    "mode": "enforce",
+    "manager_groups": ["lightningos", "systemd-journal", "lnd"],
+    "broker_socket_active": true,
+    "broker_self_test": "passed before and after reboot",
+    "manager_effective_sudo": false,
+    "manager_docker_group": false,
+    "manager_docker_socket_readable": false,
+    "legacy_sudoers_absent": true,
+    "rollback_schema": 6,
+    "rollback_state": "root:root:0700",
+    "rollback_helper_present": true,
+    "upgrade_staging_files_after_completion": 0,
+    "temporary_transition_helper_after_completion": "absent"
+  },
+  "existing_remote_bitcoin_compatibility": {
+    "finding": "existing LND configurations may keep bitcoind.* credentials in lnd.conf only and in the global preamble without a Bitcoind section",
+    "correction": "one non-persisting resolver now supplies the active remote endpoint to status, source switching, BTCPay, Elements, Public Pool, BIP110, and the remote wizard",
+    "manager_source": "remote",
+    "rpc_ok": true,
+    "chain": "main",
+    "blocks_equal_headers": true,
+    "initial_block_download": false,
+    "zmq_rawblock_ok": true,
+    "zmq_rawtx_ok": true,
+    "credentials_copied_persisted_logged_or_returned": false
+  },
+  "preservation_before_intentional_reboot": {
+    "lnd_pid_preserved_across_install_and_upgrade": true,
+    "lnd_restart_count": 0,
+    "lnd_activation_timestamp_preserved": true,
+    "lnd_config_hash_preserved": true,
+    "lnd_binary_hash_preserved": true
+  },
+  "post_reboot": {
+    "system_state": "running",
+    "manager_active": true,
+    "broker_socket_active": true,
+    "postgresql_active": true,
+    "lnd_active": true,
+    "health": "OK",
+    "bitcoin_mainnet_rpc_and_zmq": "passed",
+    "lnd_wallet": "unlocked",
+    "lnd_synced_to_chain": true,
+    "lnd_synced_to_graph": false,
+    "lnd_connected_peers": 3,
+    "lnd_config_hash_preserved": true,
+    "lnd_binary_hash_preserved": true
+  },
+  "validation": {
+    "go_test_all": "passed",
+    "go_vet_server": "passed",
+    "go_vet_all": "blocked by the pre-existing unreachable-code finding at internal/privileged/apps.go:1178",
+    "rollback_execution": "not repeated; schema-v6 state and helper were verified, while the supported rollback path already passed the dedicated direct-upgrade gate",
+    "pull_request": 33,
+    "merge_performed": false
+  },
+  "cleanup": {
+    "disposable_vms_removed": 2,
+    "virtual_disks_removed": true,
+    "console_capture_removed": true,
+    "temporary_repository_files": 0
+  },
+  "secrets_rpc_credentials_macaroons_or_private_node_identifiers_recorded": false
+}

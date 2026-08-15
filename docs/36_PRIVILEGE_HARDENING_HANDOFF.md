@@ -1182,3 +1182,30 @@ state; no app was started or stopped by the status gate. The interrupted
 checkout and worktree were removed, leaving zero operator checkouts, upgrade
 worktrees, or atomic snapshot temporaries. Evidence:
 `docs/baselines/privilege-hardening-app-store-status-los-test2-2026-08-15.json`.
+
+## Final 0.5.2 install_existing upgrade gate (2026-08-15)
+
+Commit `c79451c209621573cb808f294a26ee8afd247bf7` closes the last combined
+install/upgrade matrix gap. A clean Ubuntu 24 VM began with only an official,
+authenticated LND 0.21.1-beta using a remote mainnet Bitcoin full node. The
+official `0.5.2-Beta` `install_existing.sh` completed without changing or
+restarting LND, and the authenticated LightningOS upgrade API then installed
+the exact PR 33 commit and performed the automatic privilege transition.
+
+The first pass found that Manager remote-Bitcoin status still depended on
+LightningOS `secrets.env`, while existing nodes commonly keep credentials only
+in `lnd.conf`; it also found a valid global-preamble LND format without a
+`[Bitcoind]` section. The shared resolver now accepts both global and sectioned
+LND formats and supplies the effective remote configuration to status,
+Bitcoin-source switching, BTCPay, Elements, Public Pool, BIP110, and the remote
+wizard. It reads credentials in memory only and never persists, logs, or
+returns them.
+
+The exact final upgrade ran in `enforce`, passed the broker self-test, removed
+Manager sudo and Docker access, retained root-only schema-v6 rollback state,
+and left LND at the same PID with zero restarts until the planned reboot. After
+reboot, Manager, broker, PostgreSQL, and LND were active; `/api/health` was
+`OK`; Bitcoin RPC/ZMQ was healthy on mainnet; LND was unlocked,
+chain-synchronized, and connected to three peers. Configuration and LND binary
+hashes matched the pre-install baseline. Evidence:
+`docs/baselines/privilege-hardening-install-existing-052-upgrade-2026-08-15.json`.

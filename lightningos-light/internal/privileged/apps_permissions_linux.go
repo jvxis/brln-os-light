@@ -430,6 +430,10 @@ func privilegedPathOwnedByRoot(info os.FileInfo) bool {
 	return ok && stat.Uid == 0 && stat.Gid == 0
 }
 
+func privilegedPathOwnerIsSafe(info os.FileInfo) bool {
+	return os.Geteuid() != 0 || privilegedPathOwnedByRoot(info)
+}
+
 func replaceRegularFilePreservingMetadata(path string, raw []byte) (retErr error) {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {

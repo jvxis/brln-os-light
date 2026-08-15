@@ -149,7 +149,7 @@ func (manager *ComposeAppManager) createFedimintSnapshot(appID string, files fed
 		composeName = appmanifest.FedimintGatewayComposeFile
 		allowed = map[string]bool{composeName: true, fedimintSnapshotEnvFile: true, "lnd": false}
 	}
-	if err := validateSnapshotDirectoryEntries(snapshotRoot, allowed); err != nil {
+	if err := validateExecutionSnapshotDirectoryEntries(snapshotRoot, allowed); err != nil {
 		return composeAppSnapshot{}, func() {}, errors.New("Fedimint execution snapshot contains unexpected assets")
 	}
 	snapshot := composeAppSnapshot{root: snapshotRoot, composePath: filepath.Join(snapshotRoot, composeName)}

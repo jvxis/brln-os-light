@@ -191,7 +191,7 @@ func (manager *ComposeAppManager) createLNDgSnapshot(files lndgValidatedFiles) (
 	if err := ensureDirectoryTreeNoSymlink(snapshotRoot, 0700); err != nil {
 		return snapshot, func() {}, errors.New("failed to secure LNDg execution snapshot")
 	}
-	if err := validateSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
 		appmanifest.LNDgComposeFile:    true,
 		appmanifest.LNDgEnvFile:        true,
 		appmanifest.LNDgEntrypointFile: true,
@@ -207,7 +207,7 @@ func (manager *ComposeAppManager) createLNDgSnapshot(files lndgValidatedFiles) (
 	if err := setPrivilegedPathGroup(lndDir, appmanifest.LNDgContainerGID); err != nil {
 		return snapshot, func() {}, errors.New("failed to assign LNDg snapshot group")
 	}
-	if err := validateSnapshotDirectoryEntries(lndDir, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(lndDir, map[string]bool{
 		appmanifest.LNDgTLSCertFile:   true,
 		appmanifest.LNDgMacaroonFile:  true,
 		appmanifest.LNDgChannelDBFile: true,

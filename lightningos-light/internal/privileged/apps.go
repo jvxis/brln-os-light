@@ -32,6 +32,8 @@ const (
 	ufwPath                   = "/usr/sbin/ufw"
 	btcpayPostgresReadyTries  = 30
 	btcpayPostgresRetryDelay  = time.Second
+	atomicWriteTempPrefix     = ".lightningos-write-"
+	atomicWriteTempMaxAge     = time.Minute
 )
 
 type ComposeAppManager struct {
@@ -1649,7 +1651,7 @@ func (manager *ComposeAppManager) createBTCPaySnapshot(files btcpayValidatedFile
 	if err := ensureDirectoryTreeNoSymlink(lndSnapshotDir, 0700); err != nil {
 		return snapshot, func() {}, errors.New("failed to secure BTCPay LND snapshot")
 	}
-	if err := validateSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
 		appmanifest.BTCPayComposeFile: true,
 		appmanifest.BTCPayEnvFile:     true,
 		appmanifest.BTCPayDBInitFile:  true,
@@ -1657,7 +1659,7 @@ func (manager *ComposeAppManager) createBTCPaySnapshot(files btcpayValidatedFile
 	}); err != nil {
 		return snapshot, func() {}, errors.New("BTCPay execution snapshot contains unexpected assets")
 	}
-	if err := validateSnapshotDirectoryEntries(lndSnapshotDir, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(lndSnapshotDir, map[string]bool{
 		appmanifest.BTCPayTLSCertFile:            true,
 		appmanifest.BTCPayMacaroonFile:           true,
 		appmanifest.BTCPayLegacySnapshotAuthFile: true,
@@ -1698,7 +1700,7 @@ func (manager *ComposeAppManager) createBTCPaySnapshot(files btcpayValidatedFile
 	} else if !os.IsNotExist(err) {
 		return composeAppSnapshot{}, func() {}, errors.New("legacy BTCPay LND credential is unavailable")
 	}
-	if err := validateSnapshotDirectoryEntries(lndSnapshotDir, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(lndSnapshotDir, map[string]bool{
 		appmanifest.BTCPayTLSCertFile:  true,
 		appmanifest.BTCPayMacaroonFile: true,
 	}); err != nil {
@@ -1985,6 +1987,67 @@ func validateSnapshotDirectoryEntries(directory string, allowed map[string]bool)
 	return nil
 }
 
+// validateExecutionSnapshotDirectoryEntries keeps the execution snapshot
+// allowlist strict while tolerating private temporary files created by
+// writeAtomicRegularFile. A broker process can be interrupted between writing
+// and renaming one of these files (for example when an HTTP status request is
+// cancelled). The unfinished file is never read or executed, so it must not
+// make every later status inspection report "unknown". Old leftovers are
+// removed opportunistically; a concurrent writer's fresh temporary file is
+// left alone.
+func validateExecutionSnapshotDirectoryEntries(directory string, allowed map[string]bool) error {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if isAtomicWriteTempName(entry.Name()) {
+			path := filepath.Join(directory, entry.Name())
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+				return errors.New("invalid atomic snapshot temporary file")
+			}
+			if !privilegedPathOwnerIsSafe(info) {
+				return errors.New("atomic snapshot temporary file is not root-owned")
+			}
+			if time.Since(info.ModTime()) >= atomicWriteTempMaxAge {
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					return errors.New("failed to remove stale atomic snapshot temporary file")
+				}
+			}
+			continue
+		}
+		expectFile, ok := allowed[entry.Name()]
+		if !ok {
+			return errors.New("unexpected snapshot entry")
+		}
+		info, err := os.Lstat(filepath.Join(directory, entry.Name()))
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("invalid snapshot entry")
+		}
+		if expectFile && !info.Mode().IsRegular() {
+			return errors.New("snapshot file is invalid")
+		}
+		if !expectFile && !info.IsDir() {
+			return errors.New("snapshot directory is invalid")
+		}
+	}
+	return nil
+}
+
+func isAtomicWriteTempName(name string) bool {
+	suffix := strings.TrimPrefix(name, atomicWriteTempPrefix)
+	if suffix == name || suffix == "" {
+		return false
+	}
+	for _, char := range suffix {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func validateRegularDirectory(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -2032,7 +2095,7 @@ func isManagerSharedStorageRoot(path string) bool {
 
 func writeAtomicRegularFile(path string, data []byte, mode os.FileMode) error {
 	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".lightningos-write-")
+	temporary, err := os.CreateTemp(directory, atomicWriteTempPrefix)
 	if err != nil {
 		return err
 	}

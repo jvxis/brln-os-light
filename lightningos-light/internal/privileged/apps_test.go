@@ -1133,6 +1133,49 @@ func TestWriteAtomicRegularFileReplacesExistingContent(t *testing.T) {
 	}
 }
 
+func TestValidateExecutionSnapshotDirectoryEntriesRecoversAtomicWriteTemporaryFiles(t *testing.T) {
+	directory := t.TempDir()
+	allowedPath := filepath.Join(directory, "compose.yaml")
+	if err := os.WriteFile(allowedPath, []byte("services: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	freshPath := filepath.Join(directory, atomicWriteTempPrefix+"123")
+	if err := os.WriteFile(freshPath, []byte("in progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stalePath := filepath.Join(directory, atomicWriteTempPrefix+"456")
+	if err := os.WriteFile(stalePath, []byte("interrupted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	staleTime := time.Now().Add(-2 * atomicWriteTempMaxAge)
+	if err := os.Chtimes(stalePath, staleTime, staleTime); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validateExecutionSnapshotDirectoryEntries(directory, map[string]bool{"compose.yaml": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(freshPath); err != nil {
+		t.Fatalf("fresh atomic write temporary file was removed: %v", err)
+	}
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Fatalf("stale atomic write temporary file was not removed: %v", err)
+	}
+	if err := validateSnapshotDirectoryEntries(directory, map[string]bool{"compose.yaml": true}); err == nil {
+		t.Fatal("manager-owned declaration validator accepted an atomic temporary file")
+	}
+}
+
+func TestValidateExecutionSnapshotDirectoryEntriesRejectsSpoofedTemporaryEntry(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.Mkdir(filepath.Join(directory, atomicWriteTempPrefix+"123"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateExecutionSnapshotDirectoryEntries(directory, nil); err == nil {
+		t.Fatal("execution snapshot validator accepted a temporary directory")
+	}
+}
+
 func TestComposeAppLifecycleSupportsFixedStandaloneBinary(t *testing.T) {
 	appsRoot, _ := writeTestCPUMinerApp(t)
 	runner := &composeRecordingRunner{standalone: true}

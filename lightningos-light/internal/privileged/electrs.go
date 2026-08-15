@@ -143,7 +143,7 @@ func (manager *ComposeAppManager) createElectrsSnapshot(files electrsValidatedFi
 	if err := ensureDirectoryTreeNoSymlink(snapshotRoot, 0700); err != nil {
 		return snapshot, func() {}, errors.New("failed to secure Electrs execution snapshot")
 	}
-	if err := validateSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
 		appmanifest.ElectrsComposeFile: true,
 		appmanifest.ElectrsEnvFile:     true,
 		appmanifest.ElectrsCookieFile:  true,
@@ -197,7 +197,7 @@ func (manager *ComposeAppManager) removeElectrsExecutionSnapshot(snapshotRoot st
 	if err := validateRegularDirectory(expectedRoot); err != nil {
 		return errors.New("invalid Electrs execution snapshot")
 	}
-	if err := validateSnapshotDirectoryEntries(expectedRoot, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(expectedRoot, map[string]bool{
 		appmanifest.ElectrsComposeFile: true,
 		appmanifest.ElectrsEnvFile:     true,
 		appmanifest.ElectrsCookieFile:  true,

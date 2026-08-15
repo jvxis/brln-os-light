@@ -168,7 +168,7 @@ func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFile
 	if err := ensureDirectoryTreeNoSymlink(snapshotRoot, 0700); err != nil {
 		return snapshot, func() {}, errors.New("failed to secure LNbits execution snapshot")
 	}
-	if err := validateSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
 		appmanifest.LNbitsComposeFile: true,
 		appmanifest.LNbitsEnvFile:     true,
 		appmanifest.LNbitsLNDDir:      false,
@@ -182,7 +182,7 @@ func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFile
 	if err := setPrivilegedPathGroup(lndDir, appmanifest.LNbitsContainerGID); err != nil {
 		return snapshot, func() {}, errors.New("failed to assign LNbits snapshot group")
 	}
-	if err := validateSnapshotDirectoryEntries(lndDir, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(lndDir, map[string]bool{
 		appmanifest.LNbitsTLSCertFile:  true,
 		appmanifest.LNbitsMacaroonFile: true,
 	}); err != nil {

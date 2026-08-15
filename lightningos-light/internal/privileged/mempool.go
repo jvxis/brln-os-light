@@ -67,7 +67,7 @@ func (manager *ComposeAppManager) createMempoolSnapshot(files mempoolValidatedFi
 	if err := ensureDirectoryTreeNoSymlink(snapshotRoot, 0700); err != nil {
 		return snapshot, func() {}, errors.New("failed to secure Mempool execution snapshot")
 	}
-	if err := validateSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(snapshotRoot, map[string]bool{
 		appmanifest.MempoolComposeFile: true,
 		appmanifest.MempoolEnvFile:     true,
 		catalogStorageDataDirFile:      true,
@@ -103,7 +103,7 @@ func (manager *ComposeAppManager) removeMempoolExecutionSnapshot(snapshotRoot st
 	if filepath.Clean(snapshotRoot) != expectedRoot || validateRegularDirectory(expectedRoot) != nil {
 		return errors.New("invalid Mempool execution snapshot")
 	}
-	if err := validateSnapshotDirectoryEntries(expectedRoot, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(expectedRoot, map[string]bool{
 		appmanifest.MempoolComposeFile: true,
 		appmanifest.MempoolEnvFile:     true,
 		catalogStorageDataDirFile:      true,

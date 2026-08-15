@@ -386,13 +386,13 @@ func (manager *NativeBarkWalletManager) validateSnapshot() error {
 	if err := validateBarkWalletSnapshotPermissions(manager.Paths); err != nil {
 		return err
 	}
-	if err := validateSnapshotDirectoryEntries(manager.Paths.SnapshotRoot, map[string]bool{
+	if err := validateExecutionSnapshotDirectoryEntries(manager.Paths.SnapshotRoot, map[string]bool{
 		appmanifest.BarkWalletComposeFile: true, appmanifest.BarkWalletCaddyfile: true,
 		appmanifest.BarkWalletTLSDir: false,
 	}); err != nil {
 		return errors.New("Bark Wallet snapshot contains an unexpected entry")
 	}
-	if err := validateSnapshotDirectoryEntries(manager.Paths.TLSDir, map[string]bool{"server.crt": true, "server.key": true}); err != nil {
+	if err := validateExecutionSnapshotDirectoryEntries(manager.Paths.TLSDir, map[string]bool{"server.crt": true, "server.key": true}); err != nil {
 		return errors.New("Bark Wallet TLS snapshot contains an unexpected entry")
 	}
 	composeRaw, err := readRegularFile(manager.Paths.ComposePath, 64*1024)

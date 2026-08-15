@@ -179,10 +179,15 @@ func magmaTokenExpiryWarning(token string, now time.Time) string {
 
 // MagmaCapacity is the on-chain picture behind an accept decision.
 type MagmaCapacity struct {
-	ConfirmedSat  int64 `json:"confirmed_sat"`
-	CommittedSat  int64 `json:"committed_sat"`
-	CommittedJobs int   `json:"committed_orders"`
-	AvailableSat  int64 `json:"available_sat"`
+	ConfirmedSat int64 `json:"confirmed_sat"`
+	// UnconfirmedSat is mostly our own change coming back from a funding
+	// transaction just broadcast. AvailableSat deliberately ignores it so the
+	// accept decision stays conservative; the offer guard does not, because to
+	// it that same money looks like the balance collapsing.
+	UnconfirmedSat int64 `json:"unconfirmed_sat"`
+	CommittedSat   int64 `json:"committed_sat"`
+	CommittedJobs  int   `json:"committed_orders"`
+	AvailableSat   int64 `json:"available_sat"`
 }
 
 // magmaCommittedStates are the orders where we already owe the buyer a channel:
@@ -210,7 +215,10 @@ func (s *MagmaService) Capacity(ctx context.Context) (MagmaCapacity, error) {
 	if err != nil {
 		return MagmaCapacity{}, err
 	}
-	capacity := MagmaCapacity{ConfirmedSat: balances.OnchainConfirmedSat}
+	capacity := MagmaCapacity{
+		ConfirmedSat:   balances.OnchainConfirmedSat,
+		UnconfirmedSat: balances.OnchainUnconfirmedSat,
+	}
 	if err := s.db.QueryRow(ctx, `
 select coalesce(sum(size_sat),0), count(*) from magma_orders
 where local_state = any($1) and not (magma_status = any($2))

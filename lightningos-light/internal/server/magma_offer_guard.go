@@ -96,6 +96,18 @@ func magmaOfferRemaining(offer MagmaOffer) int64 {
 // and the kind of surprise the other modes should not spring on an operator who
 // expects to approve each step.
 func (s *MagmaService) syncOfferBalanceGuard(ctx context.Context, token string) {
+	// A sale in flight makes the wallet an unreliable witness. Between broadcast
+	// and confirmation the inputs are gone from the confirmed balance while the
+	// change has not landed yet, so the balance reads far lower than it is. On
+	// 2026-08-15 that took a 8,071,425 sat offer down for four minutes: 4,844,175
+	// sat of our own change was invisible, and the offer came back untouched the
+	// moment the funding transaction confirmed.
+	//
+	// Beyond the arithmetic, taking an offer off the market in the middle of
+	// selling through it is simply the wrong moment to do anything.
+	if s.saleInFlight(ctx) {
+		return
+	}
 	policy, err := s.loadPolicy(ctx)
 	if err != nil {
 		return
@@ -106,6 +118,11 @@ func (s *MagmaService) syncOfferBalanceGuard(ctx context.Context, token string) 
 		// guessing would take live offers down over a transient RPC failure.
 		return
 	}
+	// Count the unconfirmed too. Any channel open - Magma or not - spends
+	// confirmed inputs and returns the change unconfirmed, so a confirmed-only
+	// view reports a collapse on every single open. Being generous here is safe:
+	// the per-order accept decision still runs on AvailableSat, which is not.
+	availableSat := capacity.AvailableSat + capacity.UnconfirmedSat
 	offers, err := s.amboss.Offers(ctx, token)
 	if err != nil {
 		return
@@ -114,7 +131,7 @@ func (s *MagmaService) syncOfferBalanceGuard(ctx context.Context, token string) 
 
 	// Everything is measured against the balance left after the reserve the
 	// operator asked to keep untouched.
-	budget := capacity.AvailableSat - policy.MinOnchainReserve
+	budget := availableSat - policy.MinOnchainReserve
 	if budget < 0 {
 		budget = 0
 	}
@@ -152,9 +169,9 @@ func (s *MagmaService) syncOfferBalanceGuard(ctx context.Context, token string) 
 			}
 			continue
 		}
-		s.markOfferAutoDisabled(ctx, offer.ID, capacity.AvailableSat, required)
+		s.markOfferAutoDisabled(ctx, offer.ID, availableSat, required)
 		s.notifyOfferGuard(ctx, offer, "disabled", remaining, policy.MinOnchainReserve,
-			required, capacity.AvailableSat)
+			required, availableSat)
 	}
 
 	// Restore in a fixed order so the same balance always brings back the same
@@ -191,8 +208,30 @@ func (s *MagmaService) syncOfferBalanceGuard(ctx context.Context, token string) 
 		budget -= remaining
 		s.clearOfferAutoDisable(ctx, offer.ID)
 		s.notifyOfferGuard(ctx, offer, "enabled", remaining, policy.MinOnchainReserve,
-			remaining+policy.MinOnchainReserve, capacity.AvailableSat)
+			remaining+policy.MinOnchainReserve, availableSat)
 	}
+}
+
+// magmaSaleInFlightStates covers everything from the moment an order is accepted
+// until the channel is confirmed. magmaCommittedStates stops at "opening", which
+// is exactly one step too early: open_broadcast and confirming are the window
+// where the change is still unconfirmed.
+var magmaSaleInFlightStates = []string{
+	magmaStateAccepting, magmaStateAccepted, magmaStateOpening,
+	magmaStateOpenBroadcast, magmaStateConfirming,
+}
+
+func (s *MagmaService) saleInFlight(ctx context.Context) bool {
+	var inFlight bool
+	if err := s.db.QueryRow(ctx, `
+select exists(
+  select 1 from magma_orders
+  where local_state = any($1) and not (magma_status = any($2))
+)`, magmaSaleInFlightStates, magmaTerminalStatusList()).Scan(&inFlight); err != nil {
+		// Unreadable state is not a licence to act: hold the offers as they are.
+		return true
+	}
+	return inFlight
 }
 
 func magmaOfferHasBlockingConflict(conflicts []MagmaOfferConflict) bool {

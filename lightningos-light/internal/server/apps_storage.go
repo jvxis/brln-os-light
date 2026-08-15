@@ -43,13 +43,14 @@ type appStorageTargetsResponse struct {
 }
 
 type storageMount struct {
-	Mount     string
-	Source    string
-	FSType    string
-	Options   string
-	SizeBytes int64
-	UsedBytes int64
-	FreeBytes int64
+	Mount      string
+	Source     string
+	FSType     string
+	Options    string
+	SizeBytes  int64
+	UsedBytes  int64
+	FreeBytes  int64
+	RootDevice bool
 }
 
 type findmntOutput struct {
@@ -92,6 +93,7 @@ func appStorageTargets(ctx context.Context, appID string) (appStorageTargetsResp
 	if err != nil {
 		return appStorageTargetsResponse{}, fmt.Errorf("failed to list mounted volumes: %w", err)
 	}
+	markRootDeviceMounts(mounts)
 	targets := make([]appStorageTarget, 0, len(mounts))
 	for _, mount := range mounts {
 		targets = append(targets, buildAppStorageTarget(appID, mount))
@@ -111,6 +113,30 @@ func appStorageTargets(ctx context.Context, appID string) (appStorageTargetsResp
 		MinFreeGB:   kibToGB(appMinFreeKiB(appID)),
 		Targets:     targets,
 	}, nil
+}
+
+func markRootDeviceMounts(mounts []storageMount) {
+	rootSource := ""
+	for _, mount := range mounts {
+		if path.Clean(strings.TrimSpace(mount.Mount)) == "/" {
+			rootSource = storageBackingSource(mount.Source)
+			break
+		}
+	}
+	if rootSource == "" {
+		return
+	}
+	for index := range mounts {
+		mounts[index].RootDevice = storageBackingSource(mounts[index].Source) == rootSource
+	}
+}
+
+func storageBackingSource(source string) string {
+	normalized := strings.TrimSpace(source)
+	if index := strings.IndexByte(normalized, '['); index > 0 && strings.HasSuffix(normalized, "]") {
+		normalized = normalized[:index]
+	}
+	return normalized
 }
 
 func resolveInstallDataDirFromStorageMount(ctx context.Context, appID string, mount string) (string, error) {
@@ -263,6 +289,9 @@ func storageMountEligibility(appID string, mount storageMount, suggestedPath str
 	}
 	if normalizedMount == "/" {
 		return false, "root filesystem is not selectable"
+	}
+	if mount.RootDevice {
+		return false, "volume uses the root filesystem"
 	}
 	if storageMountBlocked(normalizedMount) {
 		return false, "system mount is not selectable"

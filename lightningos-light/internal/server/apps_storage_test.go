@@ -56,11 +56,35 @@ func TestStorageMountEligibility(t *testing.T) {
 	if ok, _ := storageMountEligibility(bitcoinCoreAppID, rootMount, suggestedStorageDataDir(bitcoinCoreAppID, rootMount.Mount)); ok {
 		t.Fatal("expected root filesystem to be ineligible")
 	}
+	rootBindMount := eligibleMount
+	rootBindMount.Mount = "/data/lnd"
+	rootBindMount.RootDevice = true
+	if ok, reason := storageMountEligibility(mempoolAppID, rootBindMount, suggestedStorageDataDir(mempoolAppID, rootBindMount.Mount)); ok || reason != "volume uses the root filesystem" {
+		t.Fatalf("expected a root-backed bind mount to be ineligible, got ok=%v reason=%q", ok, reason)
+	}
 
 	exfatMount := eligibleMount
 	exfatMount.FSType = "exfat"
 	if ok, _ := storageMountEligibility(elementsAppID, exfatMount, suggestedStorageDataDir(elementsAppID, exfatMount.Mount)); ok {
 		t.Fatal("expected non-Linux permissions filesystem to be ineligible")
+	}
+}
+
+func TestMarkRootDeviceMountsRecognizesBindMountSources(t *testing.T) {
+	mounts := []storageMount{
+		{Mount: "/", Source: "/dev/sda2", FSType: "ext4"},
+		{Mount: "/data/lnd", Source: "/dev/sda2[/data/lnd]", FSType: "ext4"},
+		{Mount: "/blockchain", Source: "/dev/sdb1", FSType: "ext4"},
+	}
+	markRootDeviceMounts(mounts)
+	if !mounts[0].RootDevice || !mounts[1].RootDevice {
+		t.Fatalf("root-backed mounts were not identified: %#v", mounts)
+	}
+	if mounts[2].RootDevice {
+		t.Fatalf("external mount was classified as root-backed: %#v", mounts[2])
+	}
+	if got := storageBackingSource("/dev/sda2[/var/lib/lightningos]"); got != "/dev/sda2" {
+		t.Fatalf("unexpected bind backing source %q", got)
 	}
 }
 

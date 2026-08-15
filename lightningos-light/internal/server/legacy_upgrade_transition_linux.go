@@ -87,9 +87,10 @@ func startLegacyPrivilegeTransition(ctx context.Context, cfg *config.Config, inf
 	}
 
 	// This is deliberately the only post-Phase-4 legacy privilege invocation.
-	// It is reachable solely while the recognized 0.5.2 wildcard sudoers still
-	// exists. The root helper independently authenticates the release, captures
-	// rollback state, installs the typed broker, and removes that sudoers file.
+	// It is reachable solely after the recognized 0.5.2 updater has installed
+	// the exact 0.5.8 Manager while its reviewed wildcard sudoers still exists.
+	// The root helper independently authenticates the release, captures rollback
+	// state, installs the typed broker, and removes that sudoers file.
 	cmd := exec.CommandContext(ctx,
 		legacyTransitionSudoPath, "-n", legacyTransitionRunPath,
 		"--unit", legacyTransitionUnitName,

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # Normalizes pre-hardening existing-node installations whose Manager still
-# runs as the original operator account. The 0.5.3 privilege reconciler can
+# runs as the original operator account. The 0.5.8 privilege reconciler can
 # then perform its authenticated broker cutover without touching LND or
 # Bitcoin Core.
 

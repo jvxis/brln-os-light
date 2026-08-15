@@ -11,6 +11,38 @@ import (
 	"testing"
 )
 
+func TestInstallerEntryPointsDefaultToLatestPublishedRelease(t *testing.T) {
+	helperRaw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install-release-bootstrap.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := strings.ReplaceAll(string(helperRaw), "\r\n", "\n")
+	for _, expected := range []string{
+		`local install_source="${LIGHTNINGOS_INSTALL_SOURCE:-latest}"`,
+		`latest) ;;`,
+		`checkout) return 0 ;;`,
+		`BRLN_INSTALLER="$installer"`,
+		`LIGHTNINGOS_RELEASE_BOOTSTRAPPED=1`,
+		`bash "$bootstrap" "$@"`,
+	} {
+		if !strings.Contains(helper, expected) {
+			t.Fatalf("release bootstrap is missing latest-release policy %q", expected)
+		}
+	}
+
+	for _, installer := range []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", installer))
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		expected := `lightningos_bootstrap_latest_release "` + installer + `" "$@"`
+		if !strings.Contains(content, `source "$REPO_ROOT/scripts/install-release-bootstrap.sh"`) || !strings.Contains(content, expected) {
+			t.Fatalf("%s does not enter the latest published release bootstrap", installer)
+		}
+	}
+}
+
 func TestInstallersVerifyPinnedGoAndGoTTYBeforeExtraction(t *testing.T) {
 	tests := []struct {
 		name        string

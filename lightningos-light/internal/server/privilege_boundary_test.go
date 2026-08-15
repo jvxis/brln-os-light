@@ -56,9 +56,9 @@ var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 
 var legacyWildcardSudoLines = map[string]struct{}{}
 
-// The legacy-identity migrator reproduces the authenticated 0.5.3 transition
-// grant only long enough for that release's broker cutover to remove it. Keep
-// these exact lines under review; any expansion or relocation must fail.
+// The legacy-identity migrator reproduces the authenticated transition grant
+// only long enough for the current bridge release's broker cutover to remove
+// it. Keep these exact lines under review; any expansion or relocation must fail.
 var reviewedMigrationWildcardSudoLines = map[string]struct{}{
 	"scripts/migrate-legacy-manager.sh:Cmnd_Alias LIGHTNINGOS_SYSTEM_LIGHTNINGOS = /usr/bin/systemctl restart lnd, /usr/bin/systemctl restart --no-block lnd, /usr/bin/systemctl restart lightningos-manager, /usr/bin/systemctl restart postgresql, /usr/bin/systemctl is-active lightningos-lnd-upgrade, /usr/bin/systemctl is-active lightningos-app-upgrade, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, /usr/local/sbin/lightningos-upgrade-lnd, /usr/local/sbin/lightningos-upgrade-app, /usr/sbin/smartctl *, /usr/bin/tee /etc/lightningos/config.yaml": {},
 	"scripts/migrate-legacy-manager.sh:Cmnd_Alias LIGHTNINGOS_APPS_LIGHTNINGOS = /usr/bin/apt-get *, /usr/bin/apt *, /usr/bin/dpkg *, /usr/bin/docker *, /usr/bin/docker-compose *, /usr/bin/systemd-run *, /usr/sbin/ufw *": {},
@@ -67,8 +67,8 @@ var reviewedMigrationWildcardSudoLines = map[string]struct{}{
 var legacyDockerGroupLines = map[string]struct{}{}
 
 var legacyPrivilegedShellLiteralBudgets = map[string]int{
-	// A 0.5.2 Manager already has wildcard systemd-run authority. The 0.5.3
-	// transition uses it once to execute the digest-verified current upgrader;
+	// A 0.5.2 Manager already has wildcard systemd-run authority. The 0.5.8
+	// bridge uses it once to execute the digest-verified current upgrader;
 	// the upgrader installs the broker and removes the legacy sudoers grant.
 	"internal/server/legacy_upgrade_transition_linux.go": 1,
 	// Closed non-root container entrypoints copy the immutable upstream web/API

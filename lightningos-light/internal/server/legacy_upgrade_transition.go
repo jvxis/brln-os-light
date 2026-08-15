@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	legacyTransitionTargetVersion = "0.5.3-beta"
+	legacyTransitionTargetVersion = "0.5.8-beta"
 	legacyTransitionUnitName      = "lightningos-legacy-privilege-transition"
 	legacyTransitionRetryCount    = 60
 	legacyTransitionRetryDelay    = 10 * time.Second
@@ -53,7 +53,7 @@ func (s *Server) startLegacyPrivilegeTransitionReconciler() {
 				state, err = startLegacyPrivilegeTransition(ctx, s.cfg, info, embeddedAppUpgradeScript)
 				if state == legacyTransitionStarted {
 					if s.logger != nil {
-						s.logger.Printf("legacy 0.5.3 privilege transition started")
+						s.logger.Printf("legacy 0.5.2 upgrade bridge to 0.5.8 started")
 					}
 				}
 				if state == legacyTransitionNotApplicable {
@@ -64,7 +64,7 @@ func (s *Server) startLegacyPrivilegeTransitionReconciler() {
 			cancel()
 
 			if err != nil && s.logger != nil && (attempt == 0 || attempt == legacyTransitionRetryCount-1) {
-				s.logger.Printf("legacy 0.5.3 privilege transition pending: %v", err)
+				s.logger.Printf("legacy 0.5.2 upgrade bridge to 0.5.8 pending: %v", err)
 			}
 			if !s.waitLegacyPrivilegeTransitionRetry(attempt) {
 				return
@@ -88,7 +88,7 @@ func (s *Server) waitLegacyPrivilegeTransitionRetry(attempt int) bool {
 func validateLegacyTransitionRelease(info appReleaseInfo, currentVersion string) error {
 	current := normalizeAppVersion(currentVersion)
 	if current != legacyTransitionTargetVersion || info.Version != legacyTransitionTargetVersion {
-		return errors.New("legacy privilege transition is limited to the 0.5.3 release")
+		return fmt.Errorf("legacy privilege transition is limited to the %s release", legacyTransitionTargetVersion)
 	}
 	if !appReleaseTagMatchesVersion(info.Tag, info.Version) {
 		return errors.New("legacy privilege transition release tag is invalid")

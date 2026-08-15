@@ -152,6 +152,25 @@ autoassinados legados reconhecidos do LightningOS e mantém um backup com data
 e hora. Certificados personalizados nunca são substituídos; a descoberta
 `.local` só é anunciada quando o certificado ativo cobre esse nome.
 
+### Atualização de instalações existentes para a 0.5.8
+
+> [!IMPORTANT]
+> O caminho oficial `0.5.2-Beta -> 0.5.8-Beta` começa em **Upgrade do App na
+> interface do LightningOS** e termina em duas etapas executadas no próprio
+> node. Primeiro, o atualizador legado instala o Manager e a UI exatos da 0.5.8;
+> depois, o novo Manager autentica a tag e o commit completo da release, instala
+> o broker de privilégios restrito e remove a permissão legada revisada. Mantenha
+> o host ligado e não inicie outro upgrade durante a transição. Fechar o
+> navegador não interrompe a operação no servidor. O corte de privilégios não
+> reinicia o Bitcoin Core nem o LND.
+
+Nodes que já estão na `0.5.7-Beta` usam o fluxo normal de upgrade pela interface
+para a `0.5.8-Beta`. Não execute novamente `install.sh` ou
+`install_existing.sh` apenas para atualizar qualquer uma dessas versões
+suportadas. A release `0.5.6-Beta` possui um defeito específico no bootstrap do
+atualizador e exige um procedimento assistido, em vez de novas tentativas pela
+interface.
+
 ## Primeiro acesso com segurança
 - A proteção por login vem habilitada por padrão em instalações novas.
 - Ao final de `install.sh`, `install_existing.sh` e `install_existing_pi.sh`, o instalador imprime no console a URL da UI e um setup token de admin quando ainda não existe senha configurada.

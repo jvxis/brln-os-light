@@ -1,7 +1,7 @@
 # Development (local)
 
 ## Prerequisites
-- Go 1.22+
+- Go 1.24+
 - Node.js 20+
 
 ## Quick start

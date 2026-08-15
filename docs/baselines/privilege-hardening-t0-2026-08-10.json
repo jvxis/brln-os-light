@@ -1,0 +1,935 @@
+{
+  "active_units": [
+    "ModemManager.service",
+    "NetworkManager-wait-online.service",
+    "NetworkManager.service",
+    "accounts-daemon.service",
+    "alsa-restore.service",
+    "anacron.timer",
+    "apparmor.service",
+    "apport.service",
+    "apt-daily-upgrade.timer",
+    "apt-daily.timer",
+    "avahi-daemon.service",
+    "avahi-daemon.socket",
+    "basic.target",
+    "colord.service",
+    "console-setup.service",
+    "containerd.service",
+    "cron.service",
+    "cryptsetup.target",
+    "cups-browsed.service",
+    "cups.path",
+    "cups.service",
+    "cups.socket",
+    "dbus.service",
+    "dbus.socket",
+    "docker.service",
+    "docker.socket",
+    "dpkg-db-backup.timer",
+    "e2scrub_all.timer",
+    "fstrim.timer",
+    "fwupd-refresh.timer",
+    "gdm.service",
+    "getty-pre.target",
+    "getty.target",
+    "gnome-remote-desktop.service",
+    "graphical.target",
+    "i2pd.service",
+    "integritysetup.target",
+    "kerneloops.service",
+    "keyboard-setup.service",
+    "kmod-static-nodes.service",
+    "lightningos-manager.service",
+    "lightningos-reports.timer",
+    "lightningos-terminal.service",
+    "lnd.service",
+    "local-fs-pre.target",
+    "local-fs.target",
+    "logrotate.timer",
+    "man-db.timer",
+    "motd-news.timer",
+    "multi-user.target",
+    "network-online.target",
+    "network-pre.target",
+    "network.target",
+    "nss-lookup.target",
+    "nss-user-lookup.target",
+    "openvpn.service",
+    "paths.target",
+    "plymouth-quit-wait.service",
+    "plymouth-read-write.service",
+    "plymouth-start.service",
+    "polkit.service",
+    "postgresql.service",
+    "postgresql@18-main.service",
+    "power-profiles-daemon.service",
+    "remote-fs.target",
+    "rsyslog.service",
+    "rtkit-daemon.service",
+    "setvtrgb.service",
+    "slices.target",
+    "snapd.apparmor.service",
+    "snapd.mounts-pre.target",
+    "snapd.mounts.target",
+    "snapd.seeded.service",
+    "snapd.service",
+    "snapd.socket",
+    "sockets.target",
+    "sound.target",
+    "ssh.service",
+    "ssh.socket",
+    "swap.target",
+    "switcheroo-control.service",
+    "sysinit.target",
+    "syslog.socket",
+    "sysstat-collect.timer",
+    "sysstat-summary.timer",
+    "sysstat.service",
+    "systemd-ask-password-plymouth.path",
+    "systemd-ask-password-wall.path",
+    "systemd-binfmt.service",
+    "systemd-fsckd.socket",
+    "systemd-initctl.socket",
+    "systemd-journal-flush.service",
+    "systemd-journald-dev-log.socket",
+    "systemd-journald.service",
+    "systemd-journald.socket",
+    "systemd-logind.service",
+    "systemd-modules-load.service",
+    "systemd-oomd.service",
+    "systemd-oomd.socket",
+    "systemd-random-seed.service",
+    "systemd-remount-fs.service",
+    "systemd-resolved.service",
+    "systemd-rfkill.socket",
+    "systemd-sysctl.service",
+    "systemd-sysext.socket",
+    "systemd-timesyncd.service",
+    "systemd-tmpfiles-clean.timer",
+    "systemd-tmpfiles-setup-dev-early.service",
+    "systemd-tmpfiles-setup-dev.service",
+    "systemd-tmpfiles-setup.service",
+    "systemd-udev-trigger.service",
+    "systemd-udevd-control.socket",
+    "systemd-udevd-kernel.socket",
+    "systemd-udevd.service",
+    "systemd-update-utmp.service",
+    "systemd-user-sessions.service",
+    "time-set.target",
+    "timers.target",
+    "tor.service",
+    "tor@default.service",
+    "ubuntu-fan.service",
+    "udisks2.service",
+    "ufw.service",
+    "unattended-upgrades.service",
+    "update-notifier-download.timer",
+    "update-notifier-motd.timer",
+    "upower.service",
+    "user-runtime-dir@1000.service",
+    "user-runtime-dir@120.service",
+    "user@1000.service",
+    "user@120.service",
+    "uuidd.socket",
+    "veritysetup.target",
+    "whoopsie.path",
+    "wpa_supplicant.service"
+  ],
+  "bitcoin": {
+    "available": true,
+    "blocks": 960336,
+    "chain": "main",
+    "headers": 961864,
+    "initial_block_download": true,
+    "source": "docker",
+    "verification_progress": 0.9965939238430757
+  },
+  "docker": {
+    "available": true,
+    "containers": [
+      {
+        "image": "edef874712d5",
+        "name": "angry_boyd",
+        "state": "exited",
+        "status": "Exited (1) 6 days ago"
+      },
+      {
+        "image": "secondark/bark-web-api:0.3.0",
+        "name": "bark-wallet-api-1",
+        "state": "exited",
+        "status": "Exited (137) 5 days ago"
+      },
+      {
+        "image": "secondark/bark:0.3.0",
+        "name": "bark-wallet-barkd-1",
+        "state": "exited",
+        "status": "Exited (0) 5 days ago"
+      },
+      {
+        "image": "caddy:2.8-alpine",
+        "name": "bark-wallet-proxy-1",
+        "state": "exited",
+        "status": "Exited (0) 5 days ago"
+      },
+      {
+        "image": "secondark/bark-web:0.3.0",
+        "name": "bark-wallet-web-1",
+        "state": "exited",
+        "status": "Exited (0) 5 days ago"
+      },
+      {
+        "image": "bitcoin/bitcoin:latest",
+        "name": "bitcoincore-bitcoind-1",
+        "state": "running",
+        "status": "Up 2 days"
+      },
+      {
+        "image": "postgres:16",
+        "name": "btcpay-db",
+        "state": "exited",
+        "status": "Exited (0) 4 days ago"
+      },
+      {
+        "image": "nicolasdorier/nbxplorer:2.6.8",
+        "name": "btcpay-nbxplorer",
+        "state": "exited",
+        "status": "Exited (0) 4 days ago"
+      },
+      {
+        "image": "btcpayserver/btcpayserver:2.4.0",
+        "name": "btcpay-server",
+        "state": "exited",
+        "status": "Exited (0) 4 days ago"
+      },
+      {
+        "image": "osminogin/tor-simple:<redacted-ipv4>",
+        "name": "btcpay-tor",
+        "state": "exited",
+        "status": "Exited (0) 4 days ago"
+      },
+      {
+        "image": "8aba97834d6a",
+        "name": "cpuminer-cpuminer-1",
+        "state": "exited",
+        "status": "Exited (137) 4 days ago"
+      },
+      {
+        "image": "fedimint/gatewayd:v0.11.1",
+        "name": "fedimint-gateway-gatewayd-1",
+        "state": "exited",
+        "status": "Exited (1) 5 days ago"
+      },
+      {
+        "image": "fedimint/fedimintd:v0.11.1",
+        "name": "fedimint-guardian-fedimintd-1",
+        "state": "running",
+        "status": "Up 2 days"
+      },
+      {
+        "image": "edef874712d5",
+        "name": "fervent_wozniak",
+        "state": "exited",
+        "status": "Exited (1) 6 days ago"
+      },
+      {
+        "image": "lnbits/lnbits:latest",
+        "name": "lnbits-lnbits-1",
+        "state": "exited",
+        "status": "Exited (137) 5 days ago"
+      },
+      {
+        "image": "lndg-lndg",
+        "name": "lndg-lndg-1",
+        "state": "running",
+        "status": "Up 2 days"
+      },
+      {
+        "image": "postgres:16",
+        "name": "lndg-lndg-db-1",
+        "state": "running",
+        "status": "Up 2 days"
+      },
+      {
+        "image": "sethforprivacy/public-pool:latest",
+        "name": "publicpool-public-pool-1",
+        "state": "exited",
+        "status": "Exited (0) 5 days ago"
+      },
+      {
+        "image": "sethforprivacy/public-pool-ui:latest",
+        "name": "publicpool-public-pool-ui-1",
+        "state": "exited",
+        "status": "Exited (0) 5 days ago"
+      },
+      {
+        "image": "caddy:2.8-alpine",
+        "name": "robosats-proxy-1",
+        "state": "exited",
+        "status": "Exited (0) 4 days ago"
+      },
+      {
+        "image": "recksato/robosats-client:v0.8.4-alpha",
+        "name": "robosats-robosats-1",
+        "state": "exited",
+        "status": "Exited (137) 4 days ago"
+      },
+      {
+        "image": "osminogin/tor-simple:<redacted-ipv4>",
+        "name": "robosats-tor-1",
+        "state": "exited",
+        "status": "Exited (0) 4 days ago"
+      },
+      {
+        "image": "lightninglabs/taproot-assets:v0.8.0",
+        "name": "tapd-tapd-1",
+        "state": "exited",
+        "status": "Exited (0) 4 days ago"
+      },
+      {
+        "image": "edef874712d5",
+        "name": "zen_hypatia",
+        "state": "exited",
+        "status": "Exited (1) 6 days ago"
+      }
+    ],
+    "images": [
+      {
+        "id": "da25cedc66b1",
+        "repository": "bitcoin/bitcoin",
+        "size": "336MB",
+        "tag": "latest"
+      },
+      {
+        "id": "8861fc45db49",
+        "repository": "btcpayserver/btcpayserver",
+        "size": "520MB",
+        "tag": "2.4.0"
+      },
+      {
+        "id": "af32e97399fe",
+        "repository": "caddy",
+        "size": "69.8MB",
+        "tag": "2.8-alpine"
+      },
+      {
+        "id": "8aba97834d6a",
+        "repository": "cniweb/cpuminer-opt",
+        "size": "692MB",
+        "tag": "<none>"
+      },
+      {
+        "id": "ba23a29ae5b7",
+        "repository": "fedimint/fedimintd",
+        "size": "1.25GB",
+        "tag": "v0.11.1"
+      },
+      {
+        "id": "65365fceb2e8",
+        "repository": "fedimint/gatewayd",
+        "size": "773MB",
+        "tag": "v0.11.1"
+      },
+      {
+        "id": "868e8dec4174",
+        "repository": "lightninglabs/taproot-assets",
+        "size": "197MB",
+        "tag": "v0.8.0"
+      },
+      {
+        "id": "9f8682f435d0",
+        "repository": "lnbits/lnbits",
+        "size": "909MB",
+        "tag": "latest"
+      },
+      {
+        "id": "9259dc4197fa",
+        "repository": "lndg-lndg",
+        "size": "1.13GB",
+        "tag": "latest"
+      },
+      {
+        "id": "1ae5e23a3306",
+        "repository": "nicolasdorier/nbxplorer",
+        "size": "368MB",
+        "tag": "2.6.8"
+      },
+      {
+        "id": "7bde1c9f4f53",
+        "repository": "osminogin/tor-simple",
+        "size": "59.2MB",
+        "tag": "<redacted-ipv4>"
+      },
+      {
+        "id": "33f923b05f64",
+        "repository": "postgres",
+        "size": "642MB",
+        "tag": "16"
+      },
+      {
+        "id": "db3ff2e1800a",
+        "repository": "python",
+        "size": "189MB",
+        "tag": "3.11-slim"
+      },
+      {
+        "id": "57cd7c3a7a27",
+        "repository": "python",
+        "size": "179MB",
+        "tag": "3.12-slim"
+      },
+      {
+        "id": "85bf9ace2eaf",
+        "repository": "recksato/robosats-client",
+        "size": "31.1MB",
+        "tag": "v0.8.4-alpha"
+      },
+      {
+        "id": "4cfa73136f80",
+        "repository": "secondark/bark",
+        "size": "216MB",
+        "tag": "<none>"
+      },
+      {
+        "id": "d00308ef6739",
+        "repository": "secondark/bark-web",
+        "size": "77.4MB",
+        "tag": "<none>"
+      },
+      {
+        "id": "846086e4507e",
+        "repository": "secondark/bark-web-api",
+        "size": "239MB",
+        "tag": "<none>"
+      },
+      {
+        "id": "96347cbbc2ec",
+        "repository": "sethforprivacy/public-pool",
+        "size": "819MB",
+        "tag": "latest"
+      },
+      {
+        "id": "69d9e88eba5f",
+        "repository": "sethforprivacy/public-pool-ui",
+        "size": "104MB",
+        "tag": "latest"
+      }
+    ],
+    "networks": [
+      {
+        "driver": "bridge",
+        "name": "bark-wallet_default",
+        "scope": "local"
+      },
+      {
+        "driver": "bridge",
+        "name": "bitcoincore_default",
+        "scope": "local"
+      },
+      {
+        "driver": "bridge",
+        "name": "bridge",
+        "scope": "local"
+      },
+      {
+        "driver": "bridge",
+        "name": "btcpay_default",
+        "scope": "local"
+      },
+      {
+        "driver": "bridge",
+        "name": "cpuminer_default",
+        "scope": "local"
+      },
+      {
+        "driver": "bridge",
+        "name": "fedimint-gateway_default",
+        "scope": "local"
+      },
+      {
+        "driver": "bridge",
+        "name": "fedimint-guardian_default",
+        "scope": "local"
+      },
+      {
+        "driver": "host",
+        "name": "host",
+        "scope": "local"
+      },
+      {
+        "driver": "bridge",
+        "name": "lnbits_default",
+        "scope": "local"
+      },
+      {
+        "driver": "bridge",
+        "name": "lndg_default",
+        "scope": "local"
+      },
+      {
+        "driver": "null",
+        "name": "none",
+        "scope": "local"
+      },
+      {
+        "driver": "bridge",
+        "name": "publicpool_default",
+        "scope": "local"
+      },
+      {
+        "driver": "bridge",
+        "name": "robosats_default",
+        "scope": "local"
+      }
+    ],
+    "volumes": [
+      {
+        "driver": "local",
+        "name": "bark-wallet_caddy-config"
+      },
+      {
+        "driver": "local",
+        "name": "bark-wallet_caddy-data"
+      },
+      {
+        "driver": "local",
+        "name": "btcpay_btcpay-tor-data"
+      },
+      {
+        "driver": "local",
+        "name": "btcpay_btcpay-tor-log"
+      },
+      {
+        "driver": "local",
+        "name": "robosats_caddy-config"
+      },
+      {
+        "driver": "local",
+        "name": "robosats_caddy-data"
+      },
+      {
+        "driver": "local",
+        "name": "robosats_tor-data"
+      },
+      {
+        "driver": "local",
+        "name": "robosats_tor-log"
+      }
+    ]
+  },
+  "firewall": {
+    "rule_count": 0,
+    "rules_sha256": "41de42ed5201da9f8bdd8c755c3d6d4afacca3021bbfaaeadf4aeaccf2dd0e33",
+    "state": "inactive"
+  },
+  "lnd": {
+    "channel_balance": {
+      "available": true,
+      "balance": "0",
+      "local_balance": {
+        "msat": "0",
+        "sat": "0"
+      },
+      "pending_open_balance": "0",
+      "remote_balance": {
+        "msat": "98998000",
+        "sat": "98998"
+      },
+      "unsettled_local_balance": {
+        "msat": "0",
+        "sat": "0"
+      },
+      "unsettled_remote_balance": {
+        "msat": "0",
+        "sat": "0"
+      }
+    },
+    "channels": {
+      "active_count": 1,
+      "available": true,
+      "capacity_sat": 100000,
+      "count": 1,
+      "local_balance_sat": 0,
+      "private_count": 0,
+      "remote_balance_sat": 98998
+    },
+    "info": {
+      "available": true,
+      "block_height": 961865,
+      "num_active_channels": 1,
+      "num_inactive_channels": 0,
+      "num_peers": 5,
+      "num_pending_channels": 0,
+      "synced_to_chain": true,
+      "synced_to_graph": true,
+      "version": "0.21.2-beta.rc1 commit=v0.21.2-beta.rc1"
+    },
+    "wallet": {
+      "available": true,
+      "confirmed_balance": "0",
+      "locked_balance": "0",
+      "total_balance": "0",
+      "unconfirmed_balance": "0"
+    }
+  },
+  "managed_path_metadata": [
+    {
+      "group": "root",
+      "mode": "755",
+      "owner": "root",
+      "path": "/opt/lightningos/manager",
+      "size": 4096,
+      "type": "directory"
+    },
+    {
+      "group": "root",
+      "mode": "755",
+      "owner": "root",
+      "path": "/opt/lightningos/manager/lightningos-manager",
+      "size": 40990046,
+      "type": "regular file"
+    },
+    {
+      "group": "root",
+      "mode": "644",
+      "owner": "root",
+      "path": "/opt/lightningos/manager/.build_stamp",
+      "size": 106,
+      "type": "regular file"
+    },
+    {
+      "group": "admin",
+      "mode": "755",
+      "owner": "admin",
+      "path": "/opt/lightningos/ui",
+      "size": 4096,
+      "type": "directory"
+    },
+    {
+      "group": "admin",
+      "mode": "644",
+      "owner": "admin",
+      "path": "/opt/lightningos/ui/version.txt",
+      "size": 10,
+      "type": "regular file"
+    },
+    {
+      "group": "lightningos",
+      "mode": "750",
+      "owner": "root",
+      "path": "/etc/lightningos",
+      "size": 4096,
+      "type": "directory"
+    },
+    {
+      "group": "lightningos",
+      "mode": "640",
+      "owner": "root",
+      "path": "/etc/lightningos/config.yaml",
+      "size": 627,
+      "type": "regular file"
+    },
+    {
+      "group": "lightningos",
+      "mode": "660",
+      "owner": "root",
+      "path": "/etc/lightningos/secrets.env",
+      "size": 1994,
+      "type": "regular file"
+    },
+    {
+      "group": "lightningos",
+      "mode": "750",
+      "owner": "root",
+      "path": "/etc/lightningos/tls",
+      "size": 4096,
+      "type": "directory"
+    },
+    {
+      "group": "lightningos",
+      "mode": "640",
+      "owner": "root",
+      "path": "/etc/lightningos/tls/server.crt",
+      "size": 1830,
+      "type": "regular file"
+    },
+    {
+      "group": "lightningos",
+      "mode": "640",
+      "owner": "root",
+      "path": "/etc/lightningos/tls/server.key",
+      "size": 2484,
+      "type": "regular file"
+    },
+    {
+      "path": "/etc/lightningos/tls/local-ca.crt",
+      "present": false
+    },
+    {
+      "path": "/etc/lightningos/tls/local-ca.key",
+      "present": false
+    },
+    {
+      "group": "root",
+      "mode": "644",
+      "owner": "root",
+      "path": "/etc/lightningos/tls/access.env",
+      "size": 68,
+      "type": "regular file"
+    },
+    {
+      "group": "root",
+      "mode": "440",
+      "owner": "root",
+      "path": "/etc/sudoers.d/lightningos",
+      "size": 854,
+      "type": "regular file"
+    },
+    {
+      "path": "/etc/sudoers.d/lightningos-auth-enable",
+      "present": false
+    },
+    {
+      "group": "root",
+      "mode": "644",
+      "owner": "root",
+      "path": "/etc/systemd/system/lightningos-manager.service",
+      "size": 603,
+      "type": "regular file"
+    },
+    {
+      "group": "root",
+      "mode": "644",
+      "owner": "root",
+      "path": "/etc/systemd/system/lnd.service",
+      "size": 577,
+      "type": "regular file"
+    },
+    {
+      "group": "root",
+      "mode": "644",
+      "owner": "root",
+      "path": "/etc/systemd/system/lightningos-terminal.service",
+      "size": 435,
+      "type": "regular file"
+    },
+    {
+      "group": "root",
+      "mode": "644",
+      "owner": "root",
+      "path": "/etc/systemd/system/lightningos-reports.service",
+      "size": 615,
+      "type": "regular file"
+    },
+    {
+      "group": "root",
+      "mode": "644",
+      "owner": "root",
+      "path": "/etc/systemd/system/lightningos-reports.timer",
+      "size": 163,
+      "type": "regular file"
+    },
+    {
+      "group": "root",
+      "mode": "755",
+      "owner": "root",
+      "path": "/usr/local/sbin/lightningos-fix-lnd-perms",
+      "size": 769,
+      "type": "regular file"
+    },
+    {
+      "group": "root",
+      "mode": "755",
+      "owner": "root",
+      "path": "/usr/local/sbin/lightningos-upgrade-lnd",
+      "size": 5964,
+      "type": "regular file"
+    },
+    {
+      "path": "/usr/local/sbin/lightningos-upgrade-app",
+      "present": false
+    },
+    {
+      "group": "root",
+      "mode": "755",
+      "owner": "root",
+      "path": "/usr/local/sbin/lightningos-terminal",
+      "size": 993,
+      "type": "regular file"
+    },
+    {
+      "group": "root",
+      "mode": "755",
+      "owner": "root",
+      "path": "/usr/local/sbin/lightningos-terminal-password",
+      "size": 914,
+      "type": "regular file"
+    },
+    {
+      "group": "root",
+      "mode": "755",
+      "owner": "root",
+      "path": "/usr/local/sbin/lightningos-manager-firewall",
+      "size": 5083,
+      "type": "regular file"
+    },
+    {
+      "group": "lnd",
+      "mode": "750",
+      "owner": "lnd",
+      "path": "/data/lnd",
+      "size": 4096,
+      "type": "directory"
+    },
+    {
+      "group": "lnd",
+      "mode": "777",
+      "owner": "lnd",
+      "path": "/home/lnd/.lnd",
+      "size": 9,
+      "type": "symbolic link"
+    },
+    {
+      "group": "lnd",
+      "mode": "640",
+      "owner": "lnd",
+      "path": "/data/lnd/tls.cert",
+      "size": 834,
+      "type": "regular file"
+    },
+    {
+      "group": "lnd",
+      "mode": "640",
+      "owner": "lnd",
+      "path": "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
+      "size": 293,
+      "type": "regular file"
+    },
+    {
+      "group": "lightningos",
+      "mode": "750",
+      "owner": "lightningos",
+      "path": "/var/lib/lightningos",
+      "size": 4096,
+      "type": "directory"
+    },
+    {
+      "group": "lightningos",
+      "mode": "750",
+      "owner": "lightningos",
+      "path": "/var/lib/lightningos/apps",
+      "size": 4096,
+      "type": "directory"
+    },
+    {
+      "group": "lightningos",
+      "mode": "750",
+      "owner": "lightningos",
+      "path": "/var/lib/lightningos/apps-data",
+      "size": 4096,
+      "type": "directory"
+    },
+    {
+      "group": "lightningos",
+      "mode": "755",
+      "owner": "lightningos",
+      "path": "/var/log/lightningos",
+      "size": 4096,
+      "type": "directory"
+    },
+    {
+      "group": "docker",
+      "mode": "660",
+      "owner": "root",
+      "path": "/var/run/docker.sock",
+      "size": 0,
+      "type": "socket"
+    }
+  ],
+  "manager_groups": [
+    "docker",
+    "lightningos",
+    "lnd",
+    "systemd-journal"
+  ],
+  "manager_sudo_commands": [
+    "NOPASSWD: /usr/bin/systemctl restart lnd, /usr/bin/systemctl restart --no-block lnd, /usr/bin/systemctl restart lightningos-manager, /usr/bin/systemctl restart postgresql, /usr/bin/systemctl is-active lightningos-lnd-upgrade, /usr/bin/systemctl is-active lightningos-app-upgrade, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, /usr/local/sbin/lightningos-upgrade-lnd, /usr/local/sbin/lightningos-upgrade-app, /usr/sbin/smartctl *, /usr/bin/tee /etc/lightningos/config.yaml, /usr/bin/apt-get *, /usr/bin/apt *, /usr/bin/dpkg *, /usr/bin/docker *, /usr/bin/docker-compose *, /usr/bin/systemd-run *, /usr/sbin/ufw *"
+  ],
+  "meta": {
+    "architecture": "amd64",
+    "captured_at": "2026-08-10T10:11:38Z",
+    "deployed_commit": "3cbad807c2e69fa8ccea4913ca0f886dd465b9d5",
+    "install_type": "install",
+    "kernel": "7.0.0-28-generic",
+    "lightningos_version": "0.5.2-Beta",
+    "manager_health_http_code": "200",
+    "os": "Ubuntu 24.04.4 LTS"
+  },
+  "services": [
+    {
+      "active": "active",
+      "enabled": "enabled",
+      "unit": "lightningos-manager"
+    },
+    {
+      "active": "active",
+      "enabled": "enabled",
+      "unit": "lnd"
+    },
+    {
+      "active": "active",
+      "enabled": "enabled",
+      "unit": "lightningos-terminal"
+    },
+    {
+      "active": "active",
+      "enabled": "enabled",
+      "unit": "lightningos-reports.timer"
+    },
+    {
+      "active": "active",
+      "enabled": "enabled",
+      "unit": "docker"
+    },
+    {
+      "active": "active",
+      "enabled": "enabled",
+      "unit": "postgresql"
+    },
+    {
+      "active": "active",
+      "enabled": "enabled",
+      "unit": "ufw"
+    },
+    {
+      "active": "inactive",
+      "enabled": "not-found",
+      "unit": "tailscaled"
+    },
+    {
+      "active": "inactive",
+      "enabled": "not-found",
+      "unit": "bitcoin"
+    },
+    {
+      "active": "inactive",
+      "enabled": "not-found",
+      "unit": "bitcoind"
+    },
+    {
+      "active": "inactive",
+      "enabled": "not-found",
+      "unit": "elementsd"
+    },
+    {
+      "active": "active",
+      "enabled": "enabled",
+      "unit": "tor"
+    },
+    {
+      "active": "active",
+      "enabled": "enabled-runtime",
+      "unit": "tor@default"
+    }
+  ]
+}

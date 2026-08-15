@@ -1,0 +1,95 @@
+{
+  "date_utc": "2026-08-14",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "implementation_commit": "8d3743365b9c54a4e29f3a9293ed546c78046968",
+  "scope": "in-place upgrade of an existing arm64 LND node that uses remote mainnet Bitcoin",
+  "target": {
+    "installation_type": "install_existing_pi",
+    "os": "Debian 13 (additional compatibility evidence; not a substitute for Ubuntu 24.04 acceptance)",
+    "architecture": "arm64",
+    "source_version": "0.5.1-Beta",
+    "target_version": "0.5.3-Beta",
+    "bitcoin_source": "remote",
+    "lnd_service_identity": "pre-existing non-canonical service identity preserved",
+    "private_node_identifiers_recorded": false
+  },
+  "repository": {
+    "origin_main_commit_integrated": "55c929d10f6eb247202e8a3d040ebe812e6efba9",
+    "merge_commit": "7c4f404fd799860cf171c35a8f8873eba8ba0870",
+    "origin_main_is_ancestor_of_final_head": true,
+    "intermediate_0_5_2_release_available": false,
+    "upgrade_path": "latest published 0.5.1-Beta release directly to the exact trusted PR checkout"
+  },
+  "failure_injection": {
+    "legacy_lnd_identity_failure": "failed closed because the first implementation assumed lnd:lnd; exact rollback passed",
+    "slow_getinfo_failure": "failed closed when credential verification depended on an LND GetInfo call that exceeded the broker deadline; exact rollback passed",
+    "rollback_preserved": [
+      "installed version",
+      "Manager health",
+      "LND PID and activation timestamp",
+      "Docker PID and activation timestamp",
+      "LND configuration hash",
+      "legacy access boundary"
+    ]
+  },
+  "accepted_upgrade": {
+    "trusted_checkout_exact_commit": true,
+    "manager_health": "passed",
+    "authenticated_api": "passed",
+    "bitcoin_remote": true,
+    "bitcoin_network": "mainnet",
+    "lnd_wallet_state": "unlocked",
+    "lnd_synced_to_chain": true,
+    "lnd_synced_to_graph": true,
+    "lnd_service_identity_preserved": true,
+    "lnd_pid_preserved": true,
+    "lnd_activation_timestamp_preserved": true,
+    "docker_pid_preserved": true,
+    "docker_activation_timestamp_preserved": true,
+    "lnd_configuration_hash_preserved": true,
+    "restricted_manager_credential": "root:lightningos:0640",
+    "admin_credential_mode": "0600 with original service ownership",
+    "manager_credential_reads": [
+      "list macaroon IDs",
+      "wallet balance",
+      "channel balance"
+    ],
+    "manager_effective_sudo": false,
+    "privileged_mode": "enforce",
+    "terminal_final_state": "disabled, inactive and read-only",
+    "rollback_schema": 6,
+    "rollback_command_present": true,
+    "build_stamp_exact_commit_and_version": true,
+    "idempotent_reupgrade": "passed"
+  },
+  "observed_lnd_behavior": {
+    "not_caused_by_upgrade": true,
+    "fast_read_calls": [
+      "ListMacaroonIDs",
+      "WalletBalance",
+      "ChannelBalance"
+    ],
+    "calls_observed_exceeding_probe_deadline_before_upgrade": [
+      "GetInfo",
+      "ListPeers",
+      "ListInvoices"
+    ],
+    "post_upgrade_manager_api_info_known": true
+  },
+  "validation": {
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "ui_production_build": "passed",
+    "shell_syntax": "passed",
+    "codeql_go": "passed",
+    "codeql_javascript_typescript": "passed",
+    "pull_request": 33,
+    "merge_performed": false
+  },
+  "cleanup": {
+    "temporary_trusted_checkouts": 0,
+    "temporary_authentication_material": 0,
+    "temporary_upgrade_logs": 0
+  },
+  "secrets_or_private_node_identifiers_recorded": false
+}

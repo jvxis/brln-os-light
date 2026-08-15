@@ -8,11 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"lightningos-light/internal/system"
 )
 
 const (
@@ -23,7 +24,15 @@ const (
 	peerswapLNDIdentityTimeout = 6 * time.Second
 )
 
-var peerswapElementsHTTPClient = &http.Client{Timeout: 8 * time.Second}
+var (
+	peerswapElementsHTTPClient = &http.Client{
+		Timeout: 8 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	peerswapRemoteEndpointPattern = regexp.MustCompile(`^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?/?$`)
+)
 
 type peerswapInstallOptions struct {
 	ElementsMode        string `json:"elements_mode"`
@@ -85,7 +94,7 @@ func (opts peerswapInstallOptions) sourceRequest() peerswapElementsSourceRequest
 
 func (s *Server) handlePeerswapElementsSourceGet(w http.ResponseWriter, r *http.Request) {
 	paths := peerswapAppPaths()
-	source, configured, err := readPeerswapElementsSource(paths)
+	source, configured, err := readPeerswapElementsSource(r.Context(), paths)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -96,10 +105,14 @@ func (s *Server) handlePeerswapElementsSourceGet(w http.ResponseWriter, r *http.
 	} else if completed, _, err := s.completePeerswapElementsSource(r.Context(), source); err == nil {
 		source = completed
 	}
-	installed := peerswapInstalled(paths)
-	status := ""
-	if installed {
-		status, _ = peerswapServiceStatus(r.Context())
+	handled, brokerState, statusErr := system.PeerSwapStatusWithBroker(r.Context())
+	if !handled {
+		writeError(w, http.StatusServiceUnavailable, "PeerSwap requires the privileged broker in enforce mode")
+		return
+	}
+	if statusErr != nil {
+		writeError(w, http.StatusInternalServerError, statusErr.Error())
+		return
 	}
 	resp := peerswapElementsSourceResponse{
 		Configured:  configured,
@@ -109,8 +122,8 @@ func (s *Server) handlePeerswapElementsSourceGet(w http.ResponseWriter, r *http.
 		Wallet:      peerswapSourceWallet(source),
 		LocalReady:  localReady,
 		LocalStatus: localStatus,
-		Installed:   installed,
-		Running:     status == "running",
+		Installed:   brokerState.Installed,
+		Running:     brokerState.Status == "running",
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -154,19 +167,20 @@ func (s *Server) handlePeerswapElementsSourcePost(w http.ResponseWriter, r *http
 		return
 	}
 	paths := peerswapAppPaths()
-	if err := os.MkdirAll(paths.AppDataDir, 0750); err != nil {
+	previous, previousSet, _ := readPeerswapElementsSource(r.Context(), paths)
+	handled, brokerState, statusErr := system.PeerSwapStatusWithBroker(r.Context())
+	if !handled || statusErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "PeerSwap status is unavailable")
+		return
+	}
+	if err := writePeerswapElementsSource(r.Context(), paths, source); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	previous, previousSet, _ := readPeerswapElementsSource(paths)
-	if err := writePeerswapElementsSource(paths, source); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if peerswapInstalled(paths) {
+	if brokerState.Installed {
 		if err := s.reconfigureInstalledPeerswap(r.Context(), paths, source); err != nil {
 			if previousSet {
-				_ = writePeerswapElementsSource(paths, previous)
+				_ = writePeerswapElementsSource(r.Context(), paths, previous)
 			}
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -184,7 +198,7 @@ func (s *Server) peerswapElementsSourceFromRequestOrStored(ctx context.Context, 
 		return normalizePeerswapElementsSourceRequest(req)
 	}
 	paths := peerswapAppPaths()
-	source, configured, err := readPeerswapElementsSource(paths)
+	source, configured, err := readPeerswapElementsSource(ctx, paths)
 	if err != nil {
 		return peerswapElementsSource{}, err
 	}
@@ -210,21 +224,21 @@ func (s *Server) preparePeerswapElementsSourceForInstall(ctx context.Context, pa
 	if err != nil {
 		return peerswapElementsSource{}, err
 	}
-	if err := writePeerswapElementsSource(paths, source); err != nil {
+	if err := writePeerswapElementsSource(ctx, paths, source); err != nil {
 		return peerswapElementsSource{}, err
 	}
 	return source, nil
 }
 
 func (s *Server) preparePeerswapElementsSourceForStart(ctx context.Context, paths peerswapPaths) (peerswapElementsSource, error) {
-	source, configured, err := readPeerswapElementsSource(paths)
+	source, configured, err := readPeerswapElementsSource(ctx, paths)
 	if err != nil {
 		return peerswapElementsSource{}, err
 	}
 	if !configured {
 		if ok, _ := peerswapLocalElementsReady(ctx); ok {
 			source = peerswapElementsSource{Mode: peerswapElementsModeLocal, Wallet: peerswapElementsWallet}
-			if err := writePeerswapElementsSource(paths, source); err != nil {
+			if err := writePeerswapElementsSource(ctx, paths, source); err != nil {
 				return peerswapElementsSource{}, err
 			}
 		} else {
@@ -237,7 +251,7 @@ func (s *Server) preparePeerswapElementsSourceForStart(ctx context.Context, path
 	}
 	source = completed
 	if changed {
-		if err := writePeerswapElementsSource(paths, source); err != nil {
+		if err := writePeerswapElementsSource(ctx, paths, source); err != nil {
 			return peerswapElementsSource{}, err
 		}
 	}
@@ -252,7 +266,7 @@ func (s *Server) resolvePeerswapElementsSourceForInstall(ctx context.Context, pa
 	if strings.TrimSpace(req.Mode) != "" {
 		return normalizePeerswapElementsSourceRequest(req)
 	}
-	if source, configured, err := readPeerswapElementsSource(paths); err != nil {
+	if source, configured, err := readPeerswapElementsSource(ctx, paths); err != nil {
 		return peerswapElementsSource{}, err
 	} else if configured {
 		return s.completeConfiguredPeerswapElementsSource(ctx, source)
@@ -264,7 +278,7 @@ func (s *Server) resolvePeerswapElementsSourceForInstall(ctx context.Context, pa
 }
 
 func (s *Server) resolvePeerswapElementsSourceForConfig(ctx context.Context, paths peerswapPaths) (peerswapElementsSource, error) {
-	if source, configured, err := readPeerswapElementsSource(paths); err != nil {
+	if source, configured, err := readPeerswapElementsSource(ctx, paths); err != nil {
 		return peerswapElementsSource{}, err
 	} else if configured {
 		return s.completeConfiguredPeerswapElementsSource(ctx, source)
@@ -391,6 +405,9 @@ func normalizePeerswapRemoteEndpoint(raw string) (peerswapRemoteEndpoint, error)
 	if value == "" {
 		return peerswapRemoteEndpoint{}, errors.New("remote Elements RPC URL is required")
 	}
+	if len(value) > 512 || !peerswapRemoteEndpointPattern.MatchString(value) {
+		return peerswapRemoteEndpoint{}, errors.New("remote Elements RPC URL has an invalid format")
+	}
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return peerswapRemoteEndpoint{}, errors.New("remote Elements RPC URL must include scheme and host")
@@ -420,45 +437,43 @@ func normalizePeerswapRemoteEndpoint(raw string) (peerswapRemoteEndpoint, error)
 	if host == "" {
 		return peerswapRemoteEndpoint{}, errors.New("remote Elements RPC URL host is required")
 	}
+	hostForURL := host
+	if strings.Contains(hostForURL, ":") {
+		hostForURL = "[" + hostForURL + "]"
+	}
 	canonicalURL := parsed.Scheme + "://" + parsed.Host
 	return peerswapRemoteEndpoint{
 		URL:  canonicalURL,
-		Host: parsed.Scheme + "://" + host,
+		Host: parsed.Scheme + "://" + hostForURL,
 		Port: port,
 	}, nil
 }
 
-func readPeerswapElementsSource(paths peerswapPaths) (peerswapElementsSource, bool, error) {
-	data, err := os.ReadFile(paths.ElementsSourcePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return peerswapElementsSource{}, false, nil
-		}
+func readPeerswapElementsSource(ctx context.Context, _ peerswapPaths) (peerswapElementsSource, bool, error) {
+	handled, brokerSource, err := system.ReadPeerSwapSourceWithBroker(ctx)
+	if !handled {
+		return peerswapElementsSource{}, false, errors.New("PeerSwap requires the privileged broker in enforce mode")
+	}
+	if err != nil || !brokerSource.Configured {
 		return peerswapElementsSource{}, false, err
 	}
-	var source peerswapElementsSource
-	if err := json.Unmarshal(data, &source); err != nil {
-		return peerswapElementsSource{}, false, err
-	}
-	source.Mode = strings.ToLower(strings.TrimSpace(source.Mode))
-	if source.Mode == "" {
-		source.Mode = peerswapElementsModeLocal
-	}
-	if source.Wallet == "" {
-		source.Wallet = peerswapElementsWallet
-	}
+	source := peerswapElementsSource{Mode: brokerSource.Mode, URL: brokerSource.URL, User: brokerSource.User, Password: brokerSource.Password, Wallet: brokerSource.Wallet}
 	return source, true, nil
 }
 
-func writePeerswapElementsSource(paths peerswapPaths, source peerswapElementsSource) error {
-	if err := os.MkdirAll(filepath.Dir(paths.ElementsSourcePath), 0750); err != nil {
-		return err
+func writePeerswapElementsSource(ctx context.Context, _ peerswapPaths, source peerswapElementsSource) error {
+	handled, err := system.WritePeerSwapSourceWithBroker(ctx, system.PeerSwapBrokerSource{
+		Configured: true,
+		Mode:       source.Mode,
+		URL:        source.URL,
+		User:       source.User,
+		Password:   source.Password,
+		Wallet:     source.Wallet,
+	})
+	if !handled {
+		return errors.New("PeerSwap requires the privileged broker in enforce mode")
 	}
-	data, err := json.MarshalIndent(source, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(paths.ElementsSourcePath, append(data, '\n'), 0600)
+	return err
 }
 
 func peerswapSourceWallet(source peerswapElementsSource) string {
@@ -495,13 +510,14 @@ func testPeerswapElementsSource(ctx context.Context, source peerswapElementsSour
 }
 
 func testPeerswapRemoteElementsRPC(ctx context.Context, source peerswapElementsSource) (string, error) {
-	if _, err := normalizePeerswapRemoteEndpoint(source.URL); err != nil {
+	endpoint, err := normalizePeerswapRemoteEndpoint(source.URL)
+	if err != nil {
 		return "", err
 	}
 	payload := []byte(`{"jsonrpc":"1.0","id":"t","method":"getblockchaininfo","params":[]}`)
 	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, source.URL+"/", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint.URL+"/", bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}
@@ -537,29 +553,18 @@ func testPeerswapRemoteElementsRPC(ctx context.Context, source peerswapElementsS
 	return result.Chain, nil
 }
 
-func peerswapInstalled(paths peerswapPaths) bool {
-	return fileExists(paths.VersionPath) && fileExists(filepath.Join(paths.BinDir, "peerswapd"))
-}
-
 func (s *Server) reconfigureInstalledPeerswap(ctx context.Context, paths peerswapPaths, source peerswapElementsSource) error {
-	if err := ensurePeerswapElementsDataDir(ctx); err != nil {
+	if err := s.ensurePeerswapBrokerRuntime(ctx, paths, source); err != nil {
 		return err
 	}
-	if err := ensurePeerswapConfigDir(ctx, paths); err != nil {
-		return err
+	handled, state, err := system.PeerSwapStatusWithBroker(ctx)
+	if !handled {
+		return errors.New("PeerSwap requires the privileged broker in enforce mode")
 	}
-	if err := s.ensurePeerswapConfig(ctx, paths); err != nil {
-		return err
-	}
-	if err := ensurePeerswapServices(ctx, paths, source.Mode); err != nil {
-		return err
-	}
-	status, err := peerswapServiceStatus(ctx)
-	if err == nil && status == "running" {
-		if _, err := runSystemd(ctx, "systemctl", "restart", peerswapServiceName); err != nil {
-			return err
-		}
-		if _, err := runSystemd(ctx, "systemctl", "restart", pswebServiceName); err != nil {
+	if err == nil && state.Status == "running" {
+		if handled, err := system.PeerSwapLifecycleWithBroker(ctx, "restart"); !handled {
+			return errors.New("PeerSwap requires the privileged broker in enforce mode")
+		} else if err != nil {
 			return err
 		}
 	}

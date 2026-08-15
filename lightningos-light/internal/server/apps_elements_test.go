@@ -1,16 +1,12 @@
 package server
 
 import (
-	"reflect"
 	"testing"
 )
 
-func TestElementsServiceLifecyclePersistsAcrossReboots(t *testing.T) {
-	if got, want := elementsStartSystemctlArgs(), []string{"systemctl", "enable", "--now", elementsServiceName}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected Elements start args: got %#v want %#v", got, want)
-	}
-	if got, want := elementsStopSystemctlArgs(), []string{"systemctl", "disable", "--now", elementsServiceName}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected Elements stop args: got %#v want %#v", got, want)
+func TestElementsDefinitionHasNoLNDDisclaimer(t *testing.T) {
+	if notices := elementsDefinition().SecurityNotices; len(notices) != 0 {
+		t.Fatalf("Elements must not declare an unrelated LND disclaimer: %v", notices)
 	}
 }
 
@@ -86,6 +82,25 @@ bitcoind.rpcpass=local-pass
 	}
 	if cfg.Host != "127.0.0.1:8332" {
 		t.Fatalf("expected normalized host, got %q", cfg.Host)
+	}
+}
+
+func TestParseBitcoindRPCConfigFromLNDConfAcceptsGlobalExistingNodeOptions(t *testing.T) {
+	raw := `bitcoin.active=1
+bitcoin.mainnet=1
+bitcoind.rpchost=remote.example:8332
+bitcoind.rpcuser=existing-user
+bitcoind.rpcpass=existing-pass
+bitcoind.zmqpubrawblock=tcp://remote.example:28332
+bitcoind.zmqpubrawtx=tcp://remote.example:28333
+`
+
+	cfg, ok := parseBitcoindRPCConfigFromLNDConf(raw)
+	if !ok {
+		t.Fatalf("expected global existing-node config")
+	}
+	if cfg.Host != "remote.example:8332" || cfg.User != "existing-user" || cfg.Pass != "existing-pass" {
+		t.Fatalf("unexpected global config: %+v", cfg)
 	}
 }
 

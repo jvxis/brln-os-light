@@ -23,10 +23,23 @@ postgres:
 ui:
   static_dir: "/opt/lightningos/ui"
 
+privileged:
+  # disabled (default), shadow validation, or enforce broker execution
+  mode: "disabled"
+  timeout_seconds: 5
+
 features:
   enable_login: true
   enable_bitcoin_local_placeholder: true
   enable_app_store_placeholder: true
+
+`privileged.mode` must remain `disabled` until the root-owned broker has been
+installed and its non-mutating self-test has passed. `shadow` currently covers
+typed service restart validation while preserving the legacy execution path.
+`enforce` removes that fallback for migrated operations. The timeout accepts 1
+through 30 seconds. Environment overrides are
+`LIGHTNINGOS_PRIVILEGED_MODE` and
+`LIGHTNINGOS_PRIVILEGED_TIMEOUT_SECONDS`.
 
 ## /etc/lightningos/secrets.env (chmod 660 root:lightningos)
 # Postgres DSN for LND backend
@@ -49,10 +62,9 @@ NOTIFICATIONS_TG_CHAT_ID=
 # Web terminal (GoTTY)
 TERMINAL_ENABLED=0
 TERMINAL_CREDENTIAL=
-TERMINAL_ALLOW_WRITE=1
+TERMINAL_ALLOW_WRITE=0
 TERMINAL_PORT=7681
 TERMINAL_OPERATOR_USER=losop
-TERMINAL_OPERATOR_PASSWORD=
 TERMINAL_TERM=xterm
 TERMINAL_SHELL=/bin/bash
 TERMINAL_WS_ORIGIN=

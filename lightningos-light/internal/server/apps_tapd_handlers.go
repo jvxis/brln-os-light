@@ -5,13 +5,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
+
+	"lightningos-light/internal/appmanifest"
 )
 
 // HTTP handlers for the Taproot Assets (tapd) app. They are thin wrappers that
@@ -58,12 +62,12 @@ func extractJSON(s string) string {
 }
 
 func (s *Server) handleTapdInfo(w http.ResponseWriter, r *http.Request) {
-	out, err := s.tapcli(r.Context(), "getinfo")
+	out, err := s.tapcli(r.Context(), appmanifest.TapdCLIRequest{Command: appmanifest.TapdCLIGetInfo})
 	writeTapcli(w, out, err)
 }
 
 func (s *Server) handleTapdAssets(w http.ResponseWriter, r *http.Request) {
-	out, err := s.tapcli(r.Context(), "assets", "balance")
+	out, err := s.tapcli(r.Context(), appmanifest.TapdCLIRequest{Command: appmanifest.TapdCLIAssetsBalance})
 	writeTapcli(w, out, err)
 }
 
@@ -87,14 +91,9 @@ func (s *Server) handleTapdAddress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "amount must be greater than zero")
 		return
 	}
-	args := []string{"addrs", "new"}
-	if assetID != "" {
-		args = append(args, "--asset_id", assetID)
-	} else {
-		args = append(args, "--group_key", groupKey)
-	}
-	args = append(args, "--amt", strconv.FormatUint(req.Amount, 10))
-	out, err := s.tapcli(r.Context(), args...)
+	out, err := s.tapcli(r.Context(), appmanifest.TapdCLIRequest{
+		Command: appmanifest.TapdCLIAddressNew, AssetID: assetID, GroupKey: groupKey, Amount: req.Amount,
+	})
 	writeTapcli(w, out, err)
 }
 
@@ -113,13 +112,10 @@ func (s *Server) handleTapdUniverseSync(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "universe_host is required")
 		return
 	}
-	args := []string{"universe", "sync", "--universe_host", host}
-	if gk := strings.TrimSpace(req.GroupKey); gk != "" {
-		args = append(args, "--group_key", gk)
-	} else if id := strings.TrimSpace(req.AssetID); id != "" {
-		args = append(args, "--asset_id", id)
-	}
-	out, err := s.tapcli(r.Context(), args...)
+	out, err := s.tapcli(r.Context(), appmanifest.TapdCLIRequest{
+		Command: appmanifest.TapdCLIUniverseSync, UniverseHost: host,
+		GroupKey: strings.TrimSpace(req.GroupKey), AssetID: strings.TrimSpace(req.AssetID),
+	})
 	writeTapcli(w, out, err)
 }
 
@@ -145,27 +141,14 @@ func (s *Server) handleTapdMint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "supply must be greater than zero")
 		return
 	}
-	args := []string{
-		"assets", "mint",
-		"--type", "normal",
-		"--name", name,
-		"--supply", strconv.FormatUint(req.Supply, 10),
-	}
-	if req.DecimalDisplay > 0 {
-		args = append(args, "--decimal_display", strconv.FormatUint(uint64(req.DecimalDisplay), 10))
-	}
 	// Reissue into an existing group when group_key is given. tapd requires
 	// --grouped_asset alongside --group_key ("must set grouped asset to mint into
 	// a specific group"). Otherwise start a new reissuable group if requested.
-	if gk := strings.TrimSpace(req.GroupKey); gk != "" {
-		args = append(args, "--grouped_asset", "--group_key", gk)
-	} else if req.Grouped {
-		args = append(args, "--new_grouped_asset")
-	}
-	if meta := strings.TrimSpace(req.Meta); meta != "" {
-		args = append(args, "--meta_bytes", meta, "--meta_type", "json")
-	}
-	out, err := s.tapcli(r.Context(), args...)
+	out, err := s.tapcli(r.Context(), appmanifest.TapdCLIRequest{
+		Command: appmanifest.TapdCLIMint, Name: name, Supply: req.Supply,
+		DecimalDisplay: req.DecimalDisplay, Grouped: req.Grouped,
+		GroupKey: strings.TrimSpace(req.GroupKey), Metadata: strings.TrimSpace(req.Meta),
+	})
 	writeTapcli(w, out, err)
 }
 
@@ -174,21 +157,22 @@ func (s *Server) handleTapdMint(w http.ResponseWriter, r *http.Request) {
 // Optional fee_rate (sat/vByte) overrides LND's fee estimate.
 func (s *Server) handleTapdMintFinalize(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		FeeRate uint32 `json:"fee_rate"`
+		FeeRate         uint32 `json:"fee_rate"`
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	_ = readJSON(r, &req) // body optional
-	args := []string{"assets", "mint", "finalize"}
-	if req.FeeRate > 0 {
-		args = append(args, "--sat_per_vbyte", strconv.FormatUint(uint64(req.FeeRate), 10))
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+		return
 	}
-	out, err := s.tapcli(r.Context(), args...)
+	out, err := s.tapcli(r.Context(), appmanifest.TapdCLIRequest{Command: appmanifest.TapdCLIMintFinalize, FeeRate: req.FeeRate})
 	writeTapcli(w, out, err)
 }
 
 func (s *Server) handleTapdSend(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Addr    string `json:"addr"`
-		FeeRate uint32 `json:"fee_rate"`
+		Addr            string `json:"addr"`
+		FeeRate         uint32 `json:"fee_rate"`
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -199,12 +183,11 @@ func (s *Server) handleTapdSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "addr is required")
 		return
 	}
-	// A Taproot Assets address already encodes the amount, so `--addr` is enough.
-	args := []string{"assets", "send", "--addr", addr}
-	if req.FeeRate > 0 {
-		args = append(args, "--sat_per_vbyte", strconv.FormatUint(uint64(req.FeeRate), 10))
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+		return
 	}
-	out, err := s.tapcli(r.Context(), args...)
+	// A Taproot Assets address already encodes the amount, so `--addr` is enough.
+	out, err := s.tapcli(r.Context(), appmanifest.TapdCLIRequest{Command: appmanifest.TapdCLISend, Address: addr, FeeRate: req.FeeRate})
 	writeTapcli(w, out, err)
 }
 
@@ -223,7 +206,7 @@ func (s *Server) handleTapdDecodeAddr(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "addr is required")
 		return
 	}
-	out, err := s.tapcli(r.Context(), "addrs", "decode", "--addr", addr)
+	out, err := s.tapcli(r.Context(), appmanifest.TapdCLIRequest{Command: appmanifest.TapdCLIDecodeAddress, Address: addr})
 	writeTapcli(w, out, err)
 }
 
@@ -257,34 +240,49 @@ type universeRootsResp struct {
 	} `json:"universe_roots"`
 }
 
-// handleTapdDiscover fetches a universe's public REST catalog
-// (https://<host>/v1/taproot-assets/universe/roots) and returns a compact asset
-// list so users can browse and then targeted-sync an asset. The tapcli/gRPC
-// full-sync does NOT return the whole catalog, but this read endpoint does.
+const (
+	tapdDefaultDiscoveryUniverseHost = "universe.lightning.finance"
+	tapdDefaultDiscoveryUniverseURL  = "https://universe.lightning.finance/v1/taproot-assets/universe/roots"
+)
+
+func isApprovedTapdDiscoveryUniverse(host string) bool {
+	return strings.EqualFold(strings.TrimSpace(host), tapdDefaultDiscoveryUniverseHost)
+}
+
+// handleTapdDiscover fetches the public REST catalog from a server-approved
+// universe and returns a compact asset list so users can browse and then
+// targeted-sync an asset. Arbitrary hosts remain available to the separate
+// tapcli/gRPC sync action, which does not make an HTTP request from the manager.
 func (s *Server) handleTapdDiscover(w http.ResponseWriter, r *http.Request) {
-	host := strings.TrimSpace(r.URL.Query().Get("host"))
-	if host == "" {
+	requestedHost := strings.TrimSpace(r.URL.Query().Get("host"))
+	if requestedHost == "" {
 		writeError(w, http.StatusBadRequest, "host is required")
 		return
 	}
-	// Accept a bare hostname[:port] and build the fixed roots path ourselves, to
-	// keep the request surface limited.
-	if strings.ContainsAny(host, " /\\?#") || strings.Contains(host, "://") {
-		writeError(w, http.StatusBadRequest, "invalid host")
+	if !isApprovedTapdDiscoveryUniverse(requestedHost) {
+		writeError(w, http.StatusBadRequest, "universe discovery host is not approved")
 		return
 	}
-	endpoint := "https://" + host + "/v1/taproot-assets/universe/roots"
+
+	// Both the network policy and request URL are server-owned constants. The
+	// user-provided value only selects this closed entry and never reaches the
+	// resolver, dialer, TLS authority, or HTTP request URL.
+	client, err := publicUniverseHTTPClient(r.Context(), tapdDefaultDiscoveryUniverseHost)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "universe host is not publicly routable")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tapdDefaultDiscoveryUniverseURL, nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, "universe request failed")
 		return
 	}
 	defer resp.Body.Close()
@@ -292,9 +290,14 @@ func (s *Server) handleTapdDiscover(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("universe returned status %d", resp.StatusCode))
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	const maxUniverseResponse = 4 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUniverseResponse+1))
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, "universe response read failed")
+		return
+	}
+	if len(body) > maxUniverseResponse {
+		writeError(w, http.StatusBadGateway, "universe response is too large")
 		return
 	}
 	var parsed universeRootsResp
@@ -319,6 +322,83 @@ func (s *Server) handleTapdDiscover(w http.ResponseWriter, r *http.Request) {
 		assets = assets[:maxAssets]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"assets": assets, "total": total})
+}
+
+func publicUniverseHTTPClient(ctx context.Context, universeHost string) (*http.Client, error) {
+	host := universeHost
+	port := "443"
+	if strings.HasPrefix(universeHost, "[") || strings.Count(universeHost, ":") == 1 {
+		var err error
+		host, port, err = net.SplitHostPort(universeHost)
+		if err != nil {
+			return nil, err
+		}
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil || len(addresses) == 0 {
+		return nil, errors.New("universe host resolution failed")
+	}
+	public := make([]net.IP, 0, len(addresses))
+	for _, address := range addresses {
+		ip := address.IP
+		if !isPublicUniverseIP(ip) {
+			continue
+		}
+		public = append(public, ip)
+	}
+	if len(public) == 0 {
+		return nil, errors.New("universe host is not publicly routable")
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(dialCtx context.Context, network, address string) (net.Conn, error) {
+			requestedHost, requestedPort, err := net.SplitHostPort(address)
+			if err != nil || !strings.EqualFold(requestedHost, host) || requestedPort != port {
+				return nil, errors.New("universe redirect target is not allowed")
+			}
+			var lastErr error
+			for _, ip := range public {
+				connection, dialErr := dialer.DialContext(dialCtx, network, net.JoinHostPort(ip.String(), port))
+				if dialErr == nil {
+					return connection, nil
+				}
+				lastErr = dialErr
+			}
+			return nil, lastErr
+		},
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   25 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("universe redirects are not allowed")
+		},
+	}, nil
+}
+
+func isPublicUniverseIP(ip net.IP) bool {
+	if ip == nil || !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	address = address.Unmap()
+	blocked := []string{
+		"100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15",
+		"198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4",
+		"100::/64", "2001:db8::/32",
+	}
+	for _, rawPrefix := range blocked {
+		if netip.MustParsePrefix(rawPrefix).Contains(address) {
+			return false
+		}
+	}
+	return true
 }
 
 // normalizeUniverseID returns a lowercase hex string for a universe id field,

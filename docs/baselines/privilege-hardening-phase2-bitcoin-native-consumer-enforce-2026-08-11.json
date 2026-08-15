@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-11T11:07:03Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "1d3a890bca3b0f563eab089b5639252cd5b41b08",
+  "tested_patch_object": "393963c749228f36a8d1bb8d07a9b83e9924d171",
+  "scope": "fixed typed Bitcoin consumer network plus compatibility with an existing native/systemd Bitcoin Core service",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "architecture": "amd64"
+  },
+  "official_bitcoin_artifact": {
+    "image": "lightningos/bitcoin-core:31.1",
+    "image_id": "sha256:18ab17063a6c00cb9756fc1282d5f497930670794c13b4eed721c5ed804f4555",
+    "daemon_version": "Bitcoin Core daemon version v31.1.0 bitcoind",
+    "bitcoind_sha256": "986e63b3c8770f08d0059820ad3dd085d1ab9e1bea23946c243f858a06888a08"
+  },
+  "broker_contract": {
+    "operation": "bitcoin.consumer-network.ensure",
+    "caller_supplied_network_arguments": false,
+    "network": "bitcoincore_default",
+    "driver": "bridge",
+    "scope": "local",
+    "internal": false,
+    "subnet": "172.31.253.0/24",
+    "gateway": "172.31.253.1",
+    "compose_project_label": "bitcoincore",
+    "compose_network_label": "default",
+    "audit_success": true,
+    "ufw_runtime_state": "inactive",
+    "ufw_active_contract_tests": "passed"
+  },
+  "native_service_contract": {
+    "service_manager": "systemd transient gate unit",
+    "service_user": "admin",
+    "chain": "regtest",
+    "pruned": false,
+    "txindex": true,
+    "rpc_bind": [
+      "127.0.0.1",
+      "172.31.253.1"
+    ],
+    "rpc_allow_reason": "Docker-to-host traffic was observed by Bitcoin Core after host source NAT; RPC remained bound only to localhost and the private Docker gateway",
+    "natpmp": false,
+    "upnp": false,
+    "discover": false,
+    "manager_mutated_external_config": false,
+    "manager_restarted_external_service": false
+  },
+  "accepted_gate": {
+    "linux_go_test_all": "passed",
+    "consumer_runs": 2,
+    "consumer_rpc": "getblockchaininfo passed",
+    "service_start_timestamp_unchanged": true,
+    "server_config_hash_unchanged": true,
+    "manager_active": true,
+    "port_mapping_added": false,
+    "mainnet_started": false,
+    "persistent_blockchain_data_used": false
+  },
+  "final_linux_validation": {
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "manager_build": "passed",
+    "broker_build": "passed",
+    "manager_active": true,
+    "bitcoin_started_during_final_validation": false
+  },
+  "safety_observation": {
+    "accepted": false,
+    "description": "The first discarded regtest fixture inherited NAT-PMP defaults and briefly attempted a router mapping. The temporary service was stopped immediately. The accepted fixture explicitly disabled NAT-PMP, UPnP, and discovery and verified no mapping event in its execution window."
+  },
+  "final_state": {
+    "temporary_native_service": "inactive and removed with transient runtime",
+    "temporary_network_present": false,
+    "temporary_remote_checkout_present": false,
+    "temporary_patch_present": false,
+    "official_local_image_present": true,
+    "manager_active_before_shutdown": true,
+    "gate_vm": "powered_off_by_acpi",
+    "los_test2": "untouched"
+  },
+  "remaining_scope": [
+    "full product install gates for BTCPay, Electrs, Fedimint, Mempool, and Public Pool against native Bitcoin",
+    "typed operational bitcoin-cli and log access",
+    "mainnet P2P firewall contract",
+    "operator-facing native bitcoin.conf preflight and remediation guidance"
+  ]
+}

@@ -775,11 +775,13 @@ Notas operacionais:
 ## Terminal web (opcional)
 LightningOS pode expor um terminal web protegido usando GoTTY.
 
-O instalador habilita automaticamente o terminal e gera credencial quando ausente.
-Você pode revisar/sobrescrever em `/etc/lightningos/secrets.env`:
-- `TERMINAL_ENABLED=1`
+O instalador provisiona o terminal desativado e somente leitura. A conta `losop`
+tem a senha Linux bloqueada, não pertence a grupos suplementares privilegiados e
+recebe somente o ambiente dedicado do terminal.
+Você pode revisar as opções de runtime em `/etc/lightningos/terminal.env`:
+- `TERMINAL_ENABLED=0` (defina `1` apenas como opt-in explícito do administrador do host)
 - `TERMINAL_CREDENTIAL=user:pass`
-- `TERMINAL_ALLOW_WRITE=0` (defina `1` para permitir input)
+- `TERMINAL_ALLOW_WRITE=0` (modo gravável é um opt-in explícito e sem privilégios)
 - `TERMINAL_PORT=7681` (opcional)
 - `TERMINAL_WS_ORIGIN=^https://.*:8443$` (opcional, padrão permite todas as origens)
 
@@ -787,7 +789,8 @@ Inicie (ou reinicie) o serviço:
 ```bash
 sudo systemctl enable --now lightningos-terminal
 ```
-A página Terminal mostra a senha atual e botão de cópia.
+A rotação exige reautenticação recente no LightningOS e retorna a nova senha
+GoTTY apenas uma vez. Ela nunca altera nem desbloqueia a senha Linux.
 
 ## Taproot Assets (experimental)
 

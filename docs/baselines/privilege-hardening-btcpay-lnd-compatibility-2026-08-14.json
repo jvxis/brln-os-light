@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-14T21:51:38Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "implementation_commit": "03900316226401abb00312e70ce0b45add0d51fa",
+  "scope": "BTCPay 2.4.2 dedicated LND credential compatibility and state-preserving functional gate",
+  "regression": {
+    "node": "LOS TESTE2",
+    "symptom": "BTCPay Lightning was unavailable while the App Store reported the application running",
+    "initial_log_error": "Invalid setting BTC.lightning: macaroonfilepath must point to a .macaroon file",
+    "root_cause": "the interim hardening snapshot renamed the dedicated restricted credential to btcpay.auth, which BTCPay 2.4.2 rejects by filename",
+    "invalid_lightning_setting_count_before": 1
+  },
+  "accepted_boundary": {
+    "container_credential_path": "/etc/lnd/btcpay.macaroon",
+    "snapshot_owner": "root:root",
+    "snapshot_mode": "0600",
+    "container_mount_read_only": true,
+    "dedicated_credential_required": true,
+    "admin_macaroon_rejected": true,
+    "admin_macaroon_referenced_or_mounted": false,
+    "legacy_btcpay_auth_accepted_only_for_migration": true,
+    "legacy_btcpay_auth_removed_after_migration": true,
+    "exact_snapshot_entry_allowlist_revalidated": true
+  },
+  "official_images": {
+    "btcpay": {
+      "reference": "btcpayserver/btcpayserver:2.4.2",
+      "image_id": "sha256:66a7e88964d44302a0312bf601c9ef0e4c3af71696e2e4edac6daa2742854e79"
+    },
+    "nbxplorer": {
+      "reference": "nicolasdorier/nbxplorer:2.6.10",
+      "image_id": "sha256:7d2ab1f6ce38e301cba98a4f85bfbfcf2912d5034bd88af056f9d60e5511f911"
+    },
+    "postgres": {
+      "reference": "postgres:16",
+      "image_id": "sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20"
+    }
+  },
+  "functional_gate": {
+    "manager_build_stamp": "03900316226401abb00312e70ce0b45add0d51fa 0.5.3-Beta",
+    "bitcoin_source": "local App Store Bitcoin Core",
+    "nbxplorer_network": "bitcoincore_default",
+    "nbxplorer_state": "Ready",
+    "btcpay_health_synchronized": true,
+    "lnd_rest_getinfo_synced_to_chain": true,
+    "lnd_rest_getinfo_synced_to_graph": true,
+    "invalid_lightning_setting_count_after": 0,
+    "final_btcpay_status": "running",
+    "final_nbxplorer_status": "running",
+    "final_postgres_status": "running",
+    "final_restart_count_each_container": 0
+  },
+  "container_preservation": {
+    "btcpay_started_at_before": "2026-08-14T21:39:44.530501811Z",
+    "btcpay_started_at_after": "2026-08-14T21:49:32.899383397Z",
+    "btcpay_recreated_as_intended": true,
+    "nbxplorer_started_at_before": "2026-08-14T21:39:44.227886996Z",
+    "nbxplorer_started_at_after": "2026-08-14T21:39:44.227886996Z",
+    "postgres_started_at_before": "2026-08-14T21:39:41.114773255Z",
+    "postgres_started_at_after": "2026-08-14T21:39:41.114773255Z"
+  },
+  "dependency_preservation": {
+    "lnd_pid_before": 169808,
+    "lnd_pid_after": 169808,
+    "lnd_restart_count_before": 3,
+    "lnd_restart_count_after": 3,
+    "bitcoin_started_at_before": "2026-08-14T20:13:51.188437451Z",
+    "bitcoin_started_at_after": "2026-08-14T20:13:51.188437451Z",
+    "bitcoin_restart_count_before": 0,
+    "bitcoin_restart_count_after": 0
+  },
+  "validation": {
+    "go_test_all": "passed",
+    "manager_build": "passed",
+    "broker_build": "passed",
+    "git_diff_check": "passed",
+    "legacy_snapshot_migration_test": "passed"
+  },
+  "cleanup": {
+    "temporary_operator_checkouts_remaining": 0,
+    "temporary_upgrade_worktrees_remaining": 0,
+    "secrets_recorded_in_evidence": false
+  }
+}

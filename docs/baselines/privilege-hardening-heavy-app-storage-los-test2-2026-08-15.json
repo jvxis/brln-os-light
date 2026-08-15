@@ -1,0 +1,104 @@
+{
+  "schema": "lightningos-privilege-hardening-heavy-app-storage-v1",
+  "observed_at": "2026-08-15T13:36:00Z",
+  "node": "LOS TESTE2",
+  "deployed_commit": "0718916fa7e9f1c11eca206df4104c2fdf243dee",
+  "implementation_commits": {
+    "external_catalog_storage": "2cfd6fe93a02a621063f973fdd99cbf8d05bb8ad",
+    "host_mount_namespace": "5e4d602dce604edba5a3efb7105d5b6b462e13bf",
+    "legacy_electrs_rpcauth": "8c0c5a2298de4cc0d7803393b263e191c0bb790b",
+    "active_migration_finalize": "daea60ed07a6fc00fc087f087a5d22b930a7ba02",
+    "root_alias_exclusion": "7d60fbc9e8c22db638c3c15010858988befbf459",
+    "mempool_frontend_runtime": "0718916fa7e9f1c11eca206df4104c2fdf243dee"
+  },
+  "storage_policy": {
+    "electrs_initial_min_free_gib": 100,
+    "electrs_operational_reserve_gib": 5,
+    "mempool_initial_min_free_gib": 20,
+    "mempool_operational_reserve_gib": 2,
+    "broker_rejects_custom_paths_on_root_device": true,
+    "ui_excludes_root_backed_bind_mount_aliases": true,
+    "eligible_mempool_targets_after_fix": ["/blockchain"],
+    "selected_electrs_path": "/blockchain/lightningos/electrs",
+    "selected_mempool_path": "/blockchain/lightningos/mempool"
+  },
+  "electrs_migration": {
+    "legacy_source_files": 770,
+    "legacy_source_logical_bytes": 58603663098,
+    "copy_verified_before_root_only_record": true,
+    "legacy_source_entries_after_finalize": 0,
+    "migration_record_removed": true,
+    "container_image": "lightningos/electrs:0.11.1",
+    "container_image_id": "sha256:8dd8bd11848deda1c874e7d4f7d9c02ec99e60d33b97a49bd7a58bab706a1545",
+    "data_mount": "bind:/blockchain/lightningos/electrs/db:/data/db",
+    "container_user": "1000:1000",
+    "read_only_root_filesystem": true,
+    "capabilities_dropped": "ALL",
+    "no_new_privileges": true,
+    "dedicated_legacy_rpcauth_replaced": true,
+    "unrelated_rpc_auth_entries_preserved": true,
+    "index_height_after_recovery": 288263,
+    "tip_height_after_recovery": 962578,
+    "indexing": true
+  },
+  "mempool_live_gate": {
+    "install_http_status": 200,
+    "frontend": "mempool/frontend:v3.3.1",
+    "backend": "mempool/backend:v3.3.1",
+    "database": "mariadb:10.11.18",
+    "database_mount": "bind:/blockchain/lightningos/mempool/db:/var/lib/mysql",
+    "cache_mount": "bind:/blockchain/lightningos/mempool/cache:/run/backend/cache",
+    "named_persistent_volumes_attached": false,
+    "all_services_non_root": true,
+    "all_services_read_only_root_filesystem": true,
+    "all_capabilities_dropped": true,
+    "all_no_new_privileges": true,
+    "frontend_tmpfs_limit_mib": 512,
+    "frontend_tmpfs_observed_used_mib": 198,
+    "frontend_http_status": 200,
+    "database_healthy": true,
+    "final_state": "stopped"
+  },
+  "root_space": {
+    "failure_state": "98G filesystem, 94G used, no usable free space",
+    "primary_cause": "legacy Electrs Docker named-volume data",
+    "final_state": "98G filesystem, 38G used, 56G available, 41 percent used"
+  },
+  "post_boot_health": {
+    "shutdown_method": "delayed but clean VirtualBox ACPI shutdown; no forced reset was executed",
+    "bitcoin": {
+      "status": "running",
+      "chain": "main",
+      "blocks": 962578,
+      "headers": 962578,
+      "verification_progress": 1,
+      "initial_block_download": false,
+      "pruned": false,
+      "rpc_ok": true,
+      "cadence_samples": 12
+    },
+    "lnd": {
+      "service_active": true,
+      "wallet_state": "unlocked",
+      "synced_to_chain": true,
+      "synced_to_graph": true,
+      "block_height": 962578,
+      "db_backend": "postgres"
+    }
+  },
+  "validation": {
+    "go_test_all": "pass",
+    "ui_production_build": "pass",
+    "trusted_checkout_upgrade": "pass",
+    "storage_selection_live_gate": "pass",
+    "electrs_bind_migration": "pass",
+    "mempool_install_start_http_stop": "pass"
+  },
+  "cleanup": {
+    "remote_operator_checkouts_removed": 5,
+    "remote_upgrade_worktrees_remaining": 0,
+    "local_console_screenshot_removed": true,
+    "temporary_credentials_persisted": false
+  },
+  "remaining_gate": "Electrs must finish its resumed mainnet index before final PR approval."
+}

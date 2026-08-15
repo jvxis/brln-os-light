@@ -1,0 +1,138 @@
+{
+  "captured_at_utc": "2026-08-12T12:15:44Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "add437a1fd21dc4fcf53fd63ea6f33f33a73d1f2",
+  "scope": "LNbits broker-owned declaration, execution snapshot, legacy LND credential/settings migration, functional lifecycle, and data preservation",
+  "upstream_contract": {
+    "release": "v1.5.6",
+    "image": "lnbits/lnbits:v1.5.6@sha256:6e37fbf9b847c066d7e022e19a018b3df7f12602a370f117857165d36bfb165b",
+    "official_dockerfile": "https://raw.githubusercontent.com/lnbits/lnbits/v1.5.6/Dockerfile",
+    "official_environment_reference": "https://raw.githubusercontent.com/lnbits/lnbits/v1.5.6/.env.example",
+    "ephemeral_image_gate": {
+      "network": "none",
+      "user": "65532:65532",
+      "read_only_root": true,
+      "capabilities_dropped": "ALL",
+      "no_new_privileges": true,
+      "closed_command_help": "pass"
+    }
+  },
+  "legacy_node_before": {
+    "installed": true,
+    "selected_state": "stopped",
+    "legacy_container_state": "exited",
+    "persistent_file_count": 5,
+    "private_lnd_directory": "absent",
+    "sqlite_databases": 1,
+    "sqlite_application_tables": 13,
+    "sqlite_rows": 273,
+    "sqlite_integrity": "ok",
+    "admin_ui_override_detected": true
+  },
+  "credential_migration": {
+    "dedicated_macaroon": true,
+    "separate_root_key": true,
+    "permissions": [
+      "info:read",
+      "invoices:read",
+      "invoices:write",
+      "offchain:read",
+      "offchain:write",
+      "onchain:read",
+      "onchain:write",
+      "peers:read",
+      "peers:write"
+    ],
+    "safe_getinfo": "allowed",
+    "address_creation": "denied",
+    "native_admin_byte_equality": false,
+    "whole_native_lnd_mount": false
+  },
+  "admin_ui_settings_migration": {
+    "database_table": "system_settings",
+    "transactional": true,
+    "parameterized_updates": true,
+    "network": "none",
+    "container_user": "65532:65532",
+    "read_only_root": true,
+    "updated_fields": [
+      "lnbits_backend_wallet_class",
+      "lnd_rest_endpoint",
+      "lnd_rest_cert",
+      "lnd_rest_macaroon"
+    ],
+    "alternate_lnd_credential_selectors_scrubbed": true,
+    "unrelated_rows_changed_by_contract": false
+  },
+  "broker_runtime": {
+    "manager_direct_docker_ufw_systemctl_calls": 0,
+    "execution_snapshot_root": "/var/lib/lightningos-privileged/apps/lnbits",
+    "snapshot_root_owner_mode": "0:0:0700",
+    "snapshot_environment_owner_mode": "0:0:0600",
+    "snapshot_macaroon_owner_mode": "0:65532:0640",
+    "container_user": "65532:65532",
+    "host_passwd_uid_collision": false,
+    "host_group_gid_collision": false,
+    "read_only_root": true,
+    "capabilities_dropped": "ALL",
+    "no_new_privileges": true,
+    "privileged": false,
+    "host_network": false,
+    "docker_socket": false,
+    "fixed_network": "lnbits_default",
+    "published_port": 5000,
+    "writable_mounts": [
+      "/app/data"
+    ],
+    "read_only_lnd_mounts": [
+      "/etc/lnd/tls.cert",
+      "/etc/lnd/lnbits.macaroon"
+    ]
+  },
+  "functional_gate": {
+    "broker_dry_run_start": "pass",
+    "stopped_container_and_network_create_before_internal_firewall": "pass",
+    "broker_start": "pass",
+    "broker_inspect_running": "pass",
+    "broker_firewall": "pass",
+    "http_status": 200,
+    "funding_source": "LndRestWallet",
+    "void_wallet_fallback_after_migration": false,
+    "broker_stop": "pass",
+    "broker_inspect_stopped": "pass",
+    "final_state": "stopped"
+  },
+  "data_preservation": {
+    "sqlite_databases_after": 1,
+    "sqlite_application_tables_preserved": 13,
+    "sqlite_rows_after": 273,
+    "row_count_decreased": false,
+    "table_removed": false,
+    "integrity_after": "ok"
+  },
+  "service_preservation": {
+    "lnd_activation_timestamp_before_after_equal": true,
+    "bitcoin_container_started_at_before_after_equal": true,
+    "bitcoin_restarted": false,
+    "lnd_restarted": false,
+    "manager_health": 200,
+    "manager_privileged_mode": "shadow"
+  },
+  "cleanup": {
+    "remote_gate_backups": 0,
+    "remote_uploaded_binaries": 0,
+    "remote_log_captures": 0,
+    "remote_render_helpers": 0,
+    "local_build_artifacts": 0,
+    "network_scan_or_adapter_operation": false
+  },
+  "validation": {
+    "focused_go_tests": "pass",
+    "go_vet": "pass",
+    "go_build_all": "pass",
+    "linux_privileged_test_compile": "pass",
+    "ui_production_build": "pass",
+    "full_go_test_note": "All packages passed except the two pre-existing Windows CRLF-sensitive installer script assertions; the LNbits and privilege-boundary suites passed.",
+    "git_diff_check": "pass"
+  }
+}

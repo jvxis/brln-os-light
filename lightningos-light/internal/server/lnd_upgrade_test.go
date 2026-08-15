@@ -127,6 +127,15 @@ func TestLndReleaseCacheMatchesCurrent(t *testing.T) {
 	}
 }
 
+func TestLNDReleaseArchitectureIsClosed(t *testing.T) {
+	tests := map[string]string{"amd64": "amd64", "arm64": "arm64", "arm": "armv7", "386": "", "mips": ""}
+	for input, want := range tests {
+		if got := lndReleaseArchitecture(input); got != want {
+			t.Fatalf("lndReleaseArchitecture(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func testLndRelease(tag string, prerelease bool) ghRelease {
 	version := normalizeLndVersion(tag)
 	return ghRelease{

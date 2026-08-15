@@ -1,16 +1,25 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestTerminalStatusDoesNotExposeCredentials(t *testing.T) {
-	t.Setenv("TERMINAL_ENABLED", "1")
-	t.Setenv("TERMINAL_CREDENTIAL", "losop:secret-value")
-	t.Setenv("TERMINAL_OPERATOR_USER", "losop")
-	t.Setenv("TERMINAL_OPERATOR_PASSWORD", "secret-value")
+	originalPath := terminalRuntimeEnvPath
+	terminalRuntimeEnvPath = filepath.Join(t.TempDir(), "terminal.env")
+	t.Cleanup(func() { terminalRuntimeEnvPath = originalPath })
+	if err := os.WriteFile(terminalRuntimeEnvPath, []byte("TERMINAL_ENABLED=1\nTERMINAL_CREDENTIAL=losop:secret-value\nTERMINAL_ALLOW_WRITE=0\nTERMINAL_OPERATOR_USER=losop\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest("GET", "/api/terminal/status", nil)
@@ -31,6 +40,57 @@ func TestTerminalStatusDoesNotExposeCredentials(t *testing.T) {
 	}
 	if got := body["operator_user"]; got != "losop" {
 		t.Fatalf("operator_user = %#v, want losop", got)
+	}
+}
+
+func TestTerminalControlRequiresExplicitStateAndFreshReauth(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	auth := &AuthService{enabled: true, now: func() time.Time { return now }, sessions: make(map[string]*authSession)}
+	auth.sessions["session-id"] = &authSession{
+		ID:           "session-id",
+		CSRFToken:    "csrf-token",
+		ExpiresAt:    now.Add(time.Hour),
+		ReauthScopes: make(map[string]time.Time),
+	}
+	server := &Server{auth: auth}
+	snapshot := authSessionSnapshot{ID: "session-id", CSRFToken: "csrf-token", ExpiresAt: now.Add(time.Hour)}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/terminal/control", bytes.NewBufferString(`{"enabled":true}`))
+	request = request.WithContext(context.WithValue(request.Context(), authSessionContextKey, snapshot))
+	recorder := httptest.NewRecorder()
+	server.handleTerminalControl(recorder, request)
+	if recorder.Code != http.StatusPreconditionRequired || !strings.Contains(recorder.Body.String(), "terminal_control_reauth_required") {
+		t.Fatalf("expected terminal control reauth challenge, got status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	auth.sessions["session-id"].ReauthScopes[authScopeTerminalControl] = now.Add(time.Minute)
+	for _, body := range []string{`{}`, `{"enabled":true,"command":"/bin/sh"}`, `{"enabled":true}{"enabled":false}`} {
+		request = httptest.NewRequest(http.MethodPost, "/api/terminal/control", bytes.NewBufferString(body))
+		request = request.WithContext(context.WithValue(request.Context(), authSessionContextKey, snapshot))
+		recorder = httptest.NewRecorder()
+		server.handleTerminalControl(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("unsafe terminal control body accepted: body=%q status=%d response=%q", body, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestTerminalStatusFailsClosedWithoutDedicatedRuntimeEnvironment(t *testing.T) {
+	originalPath := terminalRuntimeEnvPath
+	terminalRuntimeEnvPath = filepath.Join(t.TempDir(), "missing.env")
+	t.Cleanup(func() { terminalRuntimeEnvPath = originalPath })
+	t.Setenv("TERMINAL_ENABLED", "1")
+	t.Setenv("TERMINAL_CREDENTIAL", "losop:must-not-be-used")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("GET", "/api/terminal/status", nil)
+	(&Server{}).handleTerminalStatus(recorder, request)
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["enabled"] != false || body["credential_configured"] != false {
+		t.Fatalf("terminal did not fail closed: %#v", body)
 	}
 }
 

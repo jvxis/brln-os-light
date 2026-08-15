@@ -90,6 +90,27 @@ func (c *Client) ListMacaroonIDs(ctx context.Context) ([]uint64, error) {
 	return ids, nil
 }
 
+func (c *Client) DeleteMacaroonID(ctx context.Context, rootKeyID uint64) error {
+	if rootKeyID == 0 {
+		return errors.New("root key ID must be positive")
+	}
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+	response, err := client.DeleteMacaroonID(ctx, &lnrpc.DeleteMacaroonIDRequest{RootKeyId: rootKeyID})
+	if err != nil {
+		return err
+	}
+	if !response.GetDeleted() {
+		return errors.New("LND macaroon root key was not deleted")
+	}
+	return nil
+}
+
 func (c *Client) BakeCustomMacaroon(ctx context.Context, params BakeCustomMacaroonRequest) (BakeCustomMacaroonResult, error) {
 	permissions, err := NormalizeMacaroonPermissions(params.Permissions)
 	if err != nil {

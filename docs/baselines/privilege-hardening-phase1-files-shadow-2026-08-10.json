@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T11:13:08Z",
+  "node_alias": "los-test2",
+  "secret_free": true,
+  "architecture": "x86_64",
+  "source": {
+    "branch": "agent/0.5.3-privilege-hardening",
+    "branch_head_at_rollout": "ee0cb9e1cca5998cf1d8a62146c389d30e8545c6",
+    "runtime_version_before_rollout": "0.5.3-Beta-shadow"
+  },
+  "deployment": {
+    "mode": "shadow",
+    "manager_sha256": "1e8b04addbf347074cee1d549f43a9b09860f9146b0636ff6a190aa789474deb",
+    "broker_sha256": "9573f34da4d757ecb8bce45fe03fdb26cb742ce94501b15b306d0d1518d81ef7",
+    "mutation_lock_created": false
+  },
+  "rollback": {
+    "backup_directory": "/var/lib/lightningos/privilege-hardening-backups/ee0cb9e-20260810T111308Z",
+    "previous_manager_broker_config_and_sudoers_preserved": true,
+    "automatic_rollback_armed": true,
+    "automatic_rollback_triggered": false
+  },
+  "validation": {
+    "manager_startup_self_test": "passed",
+    "files_enable_login_dry_run": "accepted",
+    "caller_controlled_path": "rejected",
+    "caller_controlled_content": "rejected",
+    "manager_config_hash": "unchanged",
+    "manager_service": "active",
+    "lnd_service": "active",
+    "postgresql_service": "active",
+    "audit_event_count": 16,
+    "audit_file_dry_run_start_count": 1,
+    "audit_rejected_completion_count": 4,
+    "file_mutation_executed_by_broker": false
+  },
+  "excluded": [
+    "ip_addresses",
+    "hostnames",
+    "credentials",
+    "configuration_contents",
+    "sudoers_contents",
+    "audit_request_parameters"
+  ]
+}

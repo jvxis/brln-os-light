@@ -13,35 +13,20 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
 const (
-	// robosatsImage is pinned to the version Umbrel/Start9 ship and that renders
-	// orders correctly in self-hosted mode. v0.8.5-alpha (:latest) regressed: the
-	// order screen never leaves the loading spinner even though the coordinator
-	// returns the order plus its bond invoice. Bump this only after verifying a
-	// newer tag actually renders the make/take flow self-hosted.
-	robosatsImage    = "recksato/robosats-client:v0.8.4-alpha"
-	robosatsTorImage = "osminogin/tor-simple:0.4.9.5"
-	// robosatsProxyImage terminates TLS/HTTP2 in front of the RoboSats client.
-	// The client is served plain HTTP/1.1, which caps the browser at 6
-	// connections per host; over Tor each coordinator poll takes many seconds,
-	// so the polls pile up and starve the Nostr relay WebSockets the order flow
-	// depends on. HTTP/2 multiplexes them over a single connection and removes
-	// that limit.
-	robosatsProxyImage = "caddy:2.8-alpine"
 	// robosatsPort is both the external HTTPS port (Caddy) and the internal
 	// port the client's own nginx listens on inside its container.
-	robosatsPort = 12596
+	robosatsPort = appmanifest.RoboSatsPort
 )
 
 type robosatsPaths struct {
 	Root          string
-	DataDir       string
 	ComposePath   string
 	TLSDir        string
 	CaddyfilePath string
@@ -78,12 +63,16 @@ func (a robosatsApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "robosats")
+	handled, brokerStatus, _, err := system.InspectAppWithBroker(ctx, appmanifest.RoboSatsID)
+	if !handled {
+		info.Status = "unknown"
+		return info, errors.New("RoboSats status requires privileged broker enforce mode")
+	}
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
 	}
-	info.Status = status
+	info.Status = brokerStatus
 	return info, nil
 }
 
@@ -105,10 +94,8 @@ func (a robosatsApp) Stop(ctx context.Context) error {
 
 func robosatsAppPaths() robosatsPaths {
 	root := filepath.Join(appsRoot, "robosats")
-	dataDir := filepath.Join(appsDataRoot, "robosats")
 	return robosatsPaths{
 		Root:          root,
-		DataDir:       dataDir,
 		ComposePath:   filepath.Join(root, "docker-compose.yaml"),
 		TLSDir:        filepath.Join(root, "tls"),
 		CaddyfilePath: filepath.Join(root, "Caddyfile"),
@@ -116,26 +103,22 @@ func robosatsAppPaths() robosatsPaths {
 }
 
 func (s *Server) installRobosats(ctx context.Context) error {
-	if err := ensureDocker(ctx); err != nil {
+	if err := ensureDockerForCatalogApp(ctx); err != nil {
 		return err
 	}
 	paths := robosatsAppPaths()
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
-	if err := os.MkdirAll(paths.DataDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app data directory: %w", err)
-	}
 	if err := ensureRobosatsImages(ctx); err != nil {
 		return err
 	}
-	if err := ensureRobosatsProxyAssets(paths); err != nil {
+	if err := prepareRoboSatsCatalogAssets(paths); err != nil {
 		return err
 	}
-	if _, err := ensureFileWithChange(paths.ComposePath, robosatsComposeContents(paths)); err != nil {
-		return err
-	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
+	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.RoboSatsID, "start"); !handled {
+		return errors.New("RoboSats lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
 		return err
 	}
 	if err := ensureRobosatsUfwAccess(ctx); err != nil && s.logger != nil {
@@ -145,9 +128,16 @@ func (s *Server) installRobosats(ctx context.Context) error {
 }
 
 func (s *Server) uninstallRobosats(ctx context.Context) error {
-	paths := robosatsAppPaths()
+	return removeRoboSatsApp(ctx, robosatsAppPaths())
+}
+
+func removeRoboSatsApp(ctx context.Context, paths robosatsPaths) error {
 	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		if handled, err := system.RemoveAppWithBroker(ctx, appmanifest.RoboSatsID); !handled {
+			return errors.New("RoboSats removal requires privileged broker enforce mode")
+		} else if err != nil {
+			return err
+		}
 	}
 	if err := os.RemoveAll(paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)
@@ -157,22 +147,14 @@ func (s *Server) uninstallRobosats(ctx context.Context) error {
 
 func (s *Server) startRobosats(ctx context.Context) error {
 	paths := robosatsAppPaths()
-	if err := os.MkdirAll(paths.Root, 0750); err != nil {
-		return fmt.Errorf("failed to create app directory: %w", err)
+	if fileExists(paths.ComposePath) {
+		if err := prepareRoboSatsCatalogAssets(paths); err != nil {
+			return err
+		}
 	}
-	if err := os.MkdirAll(paths.DataDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app data directory: %w", err)
-	}
-	if err := ensureRobosatsImages(ctx); err != nil {
-		return err
-	}
-	if err := ensureRobosatsProxyAssets(paths); err != nil {
-		return err
-	}
-	if _, err := ensureFileWithChange(paths.ComposePath, robosatsComposeContents(paths)); err != nil {
-		return err
-	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
+	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.RoboSatsID, "start"); !handled {
+		return errors.New("RoboSats lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
 		return err
 	}
 	if err := ensureRobosatsUfwAccess(ctx); err != nil && s.logger != nil {
@@ -183,49 +165,28 @@ func (s *Server) startRobosats(ctx context.Context) error {
 
 func (s *Server) stopRobosats(ctx context.Context) error {
 	paths := robosatsAppPaths()
-	if !fileExists(paths.ComposePath) {
-		return errors.New("RoboSats is not installed")
+	if fileExists(paths.ComposePath) {
+		if err := prepareRoboSatsCatalogAssets(paths); err != nil {
+			return err
+		}
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
+	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.RoboSatsID, "stop"); !handled {
+		return errors.New("RoboSats lifecycle requires privileged broker enforce mode")
+	} else {
+		return err
+	}
 }
 
 func robosatsComposeContents(paths robosatsPaths) string {
-	return fmt.Sprintf(`services:
-  tor:
-    image: %s
-    restart: unless-stopped
-    volumes:
-      - tor-data:/var/lib/tor
-      - tor-log:/var/log/tor
-  robosats:
-    image: %s
-    user: "0:0"
-    restart: unless-stopped
-    depends_on:
-      - tor
-    environment:
-      TOR_PROXY_IP: tor
-      TOR_PROXY_PORT: 9050
-    volumes:
-      - %s:/usr/src/robosats/data
-  proxy:
-    image: %s
-    restart: unless-stopped
-    depends_on:
-      - robosats
-    ports:
-      - "%d:%d"
-    volumes:
-      - %s:/etc/caddy/Caddyfile:ro
-      - %s:/etc/caddy/tls:ro
-      - caddy-data:/data
-      - caddy-config:/config
-volumes:
-  tor-data:
-  tor-log:
-  caddy-data:
-  caddy-config:
-`, robosatsTorImage, robosatsImage, paths.DataDir, robosatsProxyImage, robosatsPort, robosatsPort, paths.CaddyfilePath, paths.TLSDir)
+	return appmanifest.RoboSatsCompose(paths.CaddyfilePath, paths.TLSDir)
+}
+
+func prepareRoboSatsCatalogAssets(paths robosatsPaths) error {
+	if err := ensureRobosatsProxyAssets(paths); err != nil {
+		return err
+	}
+	_, err := ensureFileWithChange(paths.ComposePath, robosatsComposeContents(paths))
+	return err
 }
 
 // robosatsCaddyfileContents serves the client over TLS/HTTP2 and reverse-proxies
@@ -240,20 +201,7 @@ volumes:
 // cascades down and cancels the Tor attempt, freeing it for the live ones. It
 // only bounds time-to-first-header, so established WebSockets stream freely.
 func robosatsCaddyfileContents() string {
-	return fmt.Sprintf(`{
-	admin off
-	auto_https off
-}
-
-https://:%d {
-	tls /etc/caddy/tls/server.crt /etc/caddy/tls/server.key
-	reverse_proxy robosats:%d {
-		transport http {
-			response_header_timeout 8s
-		}
-	}
-}
-`, robosatsPort, robosatsPort)
+	return appmanifest.RoboSatsCaddyfile()
 }
 
 func ensureRobosatsProxyAssets(paths robosatsPaths) error {
@@ -323,41 +271,24 @@ func writePEMFile(path, blockType string, der []byte, perm os.FileMode) error {
 }
 
 func ensureRobosatsImages(ctx context.Context) error {
-	for _, image := range []string{robosatsImage, robosatsTorImage, robosatsProxyImage} {
-		if err := ensureDockerImage(ctx, image); err != nil {
+	for _, variant := range appmanifest.RoboSatsImageVariants() {
+		_, err := appmanifest.RoboSatsImageForVariant(variant)
+		if err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// ensureDockerImage pulls the image only when it is not already cached. Every
-// RoboSats image is pinned to an exact tag, so a local copy is authoritative and
-// bumping a pin simply pulls the new tag on the next install/start.
-func ensureDockerImage(ctx context.Context, image string) error {
-	if _, err := system.RunCommandWithSudo(ctx, "docker", "image", "inspect", image); err == nil {
-		return nil
-	}
-	return pullDockerImage(ctx, image)
-}
-
-func pullDockerImage(ctx context.Context, image string) error {
-	out, err := system.RunCommandWithSudo(ctx, "docker", "pull", image)
-	if err != nil {
-		msg := strings.TrimSpace(out)
-		if msg == "" {
-			return fmt.Errorf("failed to pull %s: %w", image, err)
+		if handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.RoboSatsID, string(variant)); !handled {
+			return errors.New("RoboSats image preparation requires privileged broker enforce mode")
+		} else if err != nil {
+			return fmt.Errorf("robosats image %s unavailable: %w", variant, err)
 		}
-		return fmt.Errorf("failed to pull %s: %s", image, msg)
 	}
 	return nil
 }
 
 func ensureRobosatsUfwAccess(ctx context.Context) error {
-	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
-	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
-		return nil
+	if handled, _, err := system.EnsureAppFirewallWithBroker(ctx, appmanifest.RoboSatsID); !handled {
+		return errors.New("RoboSats firewall requires privileged broker enforce mode")
+	} else {
+		return err
 	}
-	_, err = system.RunCommandWithSudo(ctx, "ufw", "allow", fmt.Sprintf("%d/tcp", robosatsPort))
-	return err
 }

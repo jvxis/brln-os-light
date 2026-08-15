@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-11T23:25:57Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "9f7098c",
+  "scope": "cookie-backed typed Bitcoin Core status in enforce, restart-free legacy enrollment, and restored synchronization visibility in shadow",
+  "integration_node_touched": true,
+  "integration_node": "LOS TESTE2",
+  "platform": {
+    "ubuntu_version": "24.04",
+    "architecture": "amd64",
+    "privileged_mode": "shadow"
+  },
+  "regression_diagnosis": {
+    "previous_behavior": "shadow used direct Compose inspection, in-container cookie authentication, and a bounded debug.log synchronization fallback",
+    "regression": "the broker migration required authoritative inspect before reaching that compatibility fallback, so shadow returned unknown first",
+    "legacy_config": "rpcauth is present but its password is intentionally not recoverable",
+    "normal_existing_node_contract": "the source switcher retains remote and local credentials in tagged lnd.conf blocks",
+    "los_test2_remote_lnd_credentials_present": true,
+    "los_test2_local_lnd_user_and_password_present": false,
+    "blockchain_loss": false,
+    "bitcoin_stopped": false
+  },
+  "typed_enforce_contract": {
+    "operation": "app.bitcoincore.status",
+    "params": {},
+    "mutating": false,
+    "authentication": "Bitcoin Core runtime cookie inside the fixed container",
+    "credential_returned_or_logged": false,
+    "caller_selected_rpc_method_or_argument": false,
+    "allowed_methods": [
+      "getblockchaininfo",
+      "getnetworkinfo",
+      "getblockheader"
+    ],
+    "mainnet_only": true,
+    "bounded_status_timeout_seconds": 45,
+    "optional_queries_skipped_when_budget_is_low": true
+  },
+  "existing_node_migration": {
+    "canonical_legacy_layout_enrolled": true,
+    "storage_metadata_owner_mode": "root:root 0600",
+    "version_marker_written_after_success": true,
+    "bitcoin_restarted": false,
+    "docker_restarted": false,
+    "network_changed": false,
+    "dependent_apps_restarted": false,
+    "credential_rotated": false
+  },
+  "live_typed_gate": {
+    "caller": "root-direct",
+    "chain": "main",
+    "blocks": 961515,
+    "headers": 962059,
+    "verification_progress": 0.9987213279325636,
+    "initial_block_download": true,
+    "pruned": false,
+    "size_on_disk": 865937179829,
+    "network_fields_omitted_when_optional_query_exceeded_budget": true,
+    "result": "passed"
+  },
+  "live_shadow_compatibility_gate": {
+    "authenticated_api": "/api/bitcoin-local/status",
+    "status": "running",
+    "blocks": 961534,
+    "verification_progress": 0.998754,
+    "progress_source_when_rpc_busy": "bounded debug.log fallback",
+    "rpc_ok": false,
+    "rpc_failure_reason": "getblockchaininfo exceeded the eight-second compatibility budget while the node was indexing",
+    "zero_percent_reported": false,
+    "unknown_progress_reported": false,
+    "ui_poll_interval_seconds": 6,
+    "healthy_typed_status_cache_seconds": 120,
+    "result": "passed"
+  },
+  "node_preservation": {
+    "bitcoin_container_id_unchanged": true,
+    "bitcoin_container_started_at_unchanged": true,
+    "bitcoin_data_dir_preserved": true,
+    "bitcoin_config_preserved": true,
+    "bitcoin_unpruned": true,
+    "manager_restarted_for_test_binary": true,
+    "bitcoin_restarted": false,
+    "lan_scan_performed": false,
+    "host_or_vm_network_changed": false
+  },
+  "validation": {
+    "linux_go_test_all": "passed",
+    "linux_go_vet_all": "passed",
+    "windows_focused_tests": "passed",
+    "windows_go_vet_all": "passed",
+    "ui_build": "passed",
+    "known_windows_only_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ]
+  },
+  "final_state": {
+    "manager": "active with accepted shadow compatibility fix",
+    "privileged_mode": "shadow",
+    "bitcoin": "running with original container identity and start time",
+    "temporary_remote_binaries_present": false,
+    "temporary_rollback_copies_present": false,
+    "temporary_local_gate_binaries_present": false
+  }
+}

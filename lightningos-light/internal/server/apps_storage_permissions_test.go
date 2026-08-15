@@ -3,25 +3,8 @@ package server
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 )
-
-func TestAppStorageInstallArgsUsesOnlyRequestedPathsAndManagerIdentity(t *testing.T) {
-	got := appStorageInstallArgs(123, 456, appsRoot)
-	want := []string{
-		"/usr/bin/install",
-		"-d",
-		"-m", "0750",
-		"-o", "123",
-		"-g", "456",
-		"--",
-		"/var/lib/lightningos/apps",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("appStorageInstallArgs() = %#v, want %#v", got, want)
-	}
-}
 
 func TestEnsureWritableDirectoriesCreatesAndChecksRoots(t *testing.T) {
 	base := t.TempDir()

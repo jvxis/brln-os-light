@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T13:15:00Z",
+  "secret_free": true,
+  "environment": {
+    "hypervisor": "VirtualBox 7.2.14",
+    "base_vm": "brln-os-basica",
+    "test_vm": "brln-os-hardening-053-tmp-20260810",
+    "os": "Ubuntu 24.04.3 LTS",
+    "architecture": "amd64",
+    "final_power_state": "poweroff",
+    "retained_for_follow_up": true
+  },
+  "source": {
+    "branch": "agent/0.5.3-privilege-hardening",
+    "initial_manifest_commit": "b367bd0",
+    "stop_timeout_fix_commit": "9e34e50",
+    "accepted_commit": "490d9c9bb417c9755afac6254975751c0e2dcbca",
+    "checkout_dirty_after_acceptance": false,
+    "install_source": "checkout"
+  },
+  "local_validation": {
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "app_registry_validation": "passed",
+    "linux_amd64_broker_cross_build": "passed",
+    "negative_unit_cases": [
+      "unknown_app",
+      "unknown_action",
+      "unknown_parameter",
+      "caller_path",
+      "caller_argument_array",
+      "modified_compose",
+      "modified_environment",
+      "unknown_image",
+      "symlinked_compose"
+    ]
+  },
+  "disposable_install": {
+    "idempotent_installer_exit_code": 0,
+    "manager_service": "active",
+    "docker_and_compose_installed_by_app_flow": true,
+    "cpu_miner_install_http": 200,
+    "pre_test_app_state": "absent"
+  },
+  "timeout_discovery": {
+    "initial_stop_http": 500,
+    "client_error": "broker transport killed at five-second deadline",
+    "compose_default_stop_seconds": 10,
+    "broker_completion_audit": "success_after_client_deadline",
+    "broker_completion_duration_ms": 10567,
+    "risk": "fail-ambiguous mutation despite a failed HTTP response",
+    "repair": "catalog-fixed two-second CPU Miner stop timeout"
+  },
+  "enforce_acceptance": {
+    "privileged_mode_during_test": "enforce",
+    "cpu_miner_stop_http": 200,
+    "running_containers_after_stop": 0,
+    "stop_audit_pair": "start_and_successful_complete",
+    "stop_duration_ms": 2519,
+    "cpu_miner_start_http": 200,
+    "running_containers_after_start": 1,
+    "start_audit_pair": "start_and_successful_complete",
+    "start_duration_ms": 529,
+    "dry_run": "accepted_without_mutation_lock_acquisition",
+    "dry_run_duration_ms": 3,
+    "valid_lifecycle_audit_events_added": 6,
+    "unknown_app": "invalid_request",
+    "caller_argument_array": "invalid_request",
+    "snapshot_directories_after_operations": 0,
+    "mutation_lock": "root:root:0600"
+  },
+  "final_state": {
+    "cpu_miner_uninstall_http": 200,
+    "cpu_miner_app_path": "absent",
+    "cpu_miner_running_containers": 0,
+    "privileged_mode": "disabled",
+    "manager_service": "active",
+    "docker_service": "inactive",
+    "docker_packages_retained_on_disposable_vm": true,
+    "manager_docker_group_retained": true,
+    "root_only_rollback_bundle": "present",
+    "transient_test_scripts_removed": 3
+  },
+  "scope": {
+    "migrated": [
+      "cpuminer_start",
+      "cpuminer_stop"
+    ],
+    "not_yet_migrated": [
+      "cpuminer_install",
+      "cpuminer_uninstall",
+      "cpuminer_status",
+      "cpuminer_config_apply",
+      "cpuminer_image_probe",
+      "cpuminer_metrics",
+      "remaining_catalog_apps",
+      "docker_group_removal"
+    ],
+    "integration_node_changed": false
+  },
+  "excluded": [
+    "ip_addresses",
+    "credentials",
+    "setup_tokens",
+    "csrf_tokens",
+    "cookie_contents",
+    "configuration_contents",
+    "audit_request_parameters",
+    "private_node_identifiers"
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T19:27:45Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "39904b3267da07c8284af913baa608c1dfff7e4f",
+  "tested_source": "source_head_before_slice plus the uncommitted typed RoboSats firewall slice",
+  "scope": "RoboSats catalog-only external TCP access through app.firewall.ensure in enforce mode",
+  "integration_node_touched": false,
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "codename": "noble",
+    "architecture": "amd64"
+  },
+  "binary_sha256": {
+    "lightningos_manager": "de6c547876caa8365f809b8cb382208bc3c0e54e73c609012867125d7b2e9c0c",
+    "lightningos_privileged": "2addc6e82afd9df07f4af8db9708bd89e5516ffc1fa104c00aabd282ed3c6822"
+  },
+  "preconditions": {
+    "broker_mode": "enforce",
+    "robosats_installed": true,
+    "robosats_initial_status": "stopped",
+    "ufw_installed_path": "/usr/sbin/ufw",
+    "ufw_initial_status": "inactive",
+    "initial_12596_tcp_rules": 0,
+    "manager_process_groups": [984, 999, 1002],
+    "docker_gid": 982,
+    "legacy_direct_sudo_ufw_as_manager_exit_code": 0,
+    "legacy_direct_sudo_reason": "global UFW wildcard remains for other unmigrated app handlers"
+  },
+  "catalog_boundary": {
+    "operation": "app.firewall.ensure",
+    "request_fields": ["app_id"],
+    "allowed_app_id": "robosats",
+    "catalog_tcp_port": 12596,
+    "fixed_executable": "/usr/sbin/ufw",
+    "fixed_status_arguments": ["status"],
+    "fixed_allow_arguments": ["allow", "12596/tcp"],
+    "caller_supplied_port": false,
+    "caller_supplied_protocol": false,
+    "caller_supplied_executable": false,
+    "caller_supplied_arguments": false,
+    "dry_run_executes_commands": false,
+    "compatible_states": ["active", "inactive", "unavailable"]
+  },
+  "inactive_gate": {
+    "start_response_ok": true,
+    "status_after_start": "running",
+    "stop_response_ok": true,
+    "firewall_rule_created": false
+  },
+  "active_gate": {
+    "temporary_ssh_guard": "22/tcp IPv4 and IPv6",
+    "ufw_status_before_start": "active",
+    "start_response_ok": true,
+    "status_after_start": "running",
+    "created_rules": [
+      "12596/tcp IPv4",
+      "12596/tcp IPv6"
+    ],
+    "external_https_status": 200,
+    "broker_firewall_success_events_total": 2
+  },
+  "negative_gate": {
+    "request_extra_field": "port",
+    "request_extra_value": 22,
+    "accepted": false,
+    "code": "invalid_request",
+    "message": "invalid privileged broker request",
+    "message_sanitized": true
+  },
+  "local_validation": {
+    "focused_catalog_protocol_broker_client_system_server_tests": "passed",
+    "go_vet_all": "passed",
+    "linux_amd64_manager_and_broker_build": "passed",
+    "privilege_boundary_budgets": "passed",
+    "full_go_test_all": "only the two pre-existing Windows CRLF-sensitive installer tests failed"
+  },
+  "remaining_scope": [
+    "robosats uninstall",
+    "migrate other UFW consumers before removing the global UFW sudo wildcard"
+  ],
+  "final_state": {
+    "robosats_status": "stopped",
+    "ufw_status": "inactive",
+    "test_rules_remaining": 0,
+    "gate_vm": "powered_off_by_acpi",
+    "los_test2": "running_and_untouched",
+    "temporary_host_build_artifacts": "removed",
+    "previous_gate_binaries": "preserved as recoverable backups on the disposable VM"
+  }
+}

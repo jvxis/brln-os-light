@@ -1,0 +1,49 @@
+{
+  "schema": "lightningos.privilege-hardening.bark-wallet-reauth.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "fresh LightningOS reauthentication before Bark Wallet recovery-phrase reveal",
+  "decision": {
+    "official_backup_flow_preserved": true,
+    "lightningos_scope": "bark_seed_reveal",
+    "authorization_ttl_minutes": 3,
+    "login_disabled_behavior": "upstream Bark authenticated session and CSRF boundary remains",
+    "manager_receives_mnemonic": false,
+    "manager_receives_bark_session_token_or_password": false
+  },
+  "proxy_boundary": {
+    "intercepted_route": "/api/reveal-mnemonic",
+    "authorization_route": "/api/apps/bark-wallet/reveal-authorization",
+    "authorization_response": "HTTP 204 without body",
+    "direct_barkd_mnemonic_route": "HTTP 404",
+    "manager_origin": "fixed host gateway and fixed HTTPS port",
+    "manager_ca": "/etc/lightningos/tls/local-ca.crt",
+    "manager_tls_sni": "localhost",
+    "insecure_tls_verification": false,
+    "caller_selectable_host_port_ca_or_route": false,
+    "active_ufw_manager_admission": "TCP 8443 only on the bridge derived from the validated Bark Docker network ID"
+  },
+  "validation": {
+    "focused_go_tests": "passed",
+    "full_go_test": "passed",
+    "go_vet": "passed",
+    "go_build": "passed",
+    "ui_production_build": "passed",
+    "caddy_version": "2.10.2",
+    "caddy_official_release_checksum_verified": true,
+    "caddy_config_adapt": "passed on disposable Ubuntu 26.04 VM",
+    "network_scan_or_adapter_change": false,
+    "package_install_or_service_mutation": false,
+    "persistent_test_node_used": false,
+    "temporary_gate_files_removed": true
+  },
+  "excluded": [
+    "addresses",
+    "usernames",
+    "passwords",
+    "mnemonic bytes",
+    "session cookies",
+    "node identifiers"
+  ]
+}

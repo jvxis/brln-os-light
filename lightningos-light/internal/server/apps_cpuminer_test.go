@@ -1,21 +1,372 @@
 package server
 
 import (
+	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/system"
 )
+
+type cpuMinerPrivilegedClient struct {
+	mode              string
+	appCalls          int
+	appID             string
+	action            string
+	dryRun            bool
+	lifecycleErr      error
+	removeCalls       int
+	removeAppID       string
+	removeDryRun      bool
+	removeErr         error
+	dockerCalls       int
+	dockerStatusCalls int
+	dockerDryRun      bool
+	dockerErr         error
+	dockerStatus      string
+	packageCalls      int
+	packageFeature    string
+	packageDryRun     bool
+	packageStatus     string
+	packageErr        error
+	prepareCalls      int
+	preparedVariants  []string
+	imageVariant      string
+	imageDryRun       bool
+	imageStatus       string
+	imageErr          error
+	statusCalls       int
+	probeCalls        int
+	probeResult       bool
+	probeErr          error
+	firewallCalls     int
+	firewallAppID     string
+	firewallDryRun    bool
+	firewallStatus    string
+	firewallErr       error
+	inspectCalls      int
+	inspectAppID      string
+	inspectStatus     string
+	inspectErr        error
+	storageCalls      int
+	storageDataDir    string
+	storageDryRun     bool
+	storageErr        error
+	networkCalls      int
+	networkDryRun     bool
+	networkStatus     string
+	networkErr        error
+}
+
+func (client *cpuMinerPrivilegedClient) EnsureBitcoinConsumerNetwork(_ context.Context, dryRun bool) (string, error) {
+	client.networkCalls++
+	client.networkDryRun = dryRun
+	if client.networkErr != nil {
+		return "", client.networkErr
+	}
+	if client.networkStatus != "" {
+		return client.networkStatus, nil
+	}
+	if dryRun {
+		return "validated", nil
+	}
+	return "ready", nil
+}
+
+func (client *cpuMinerPrivilegedClient) Mode() string { return client.mode }
+
+func (client *cpuMinerPrivilegedClient) EnsureBitcoinCoreStorage(_ context.Context, dataDir string, dryRun bool) (string, error) {
+	client.storageCalls++
+	client.storageDataDir = dataDir
+	client.storageDryRun = dryRun
+	if client.storageErr != nil {
+		return "", client.storageErr
+	}
+	if dryRun {
+		return "validated", nil
+	}
+	return "ready", nil
+}
+func (client *cpuMinerPrivilegedClient) EnsureAppStorage(_ context.Context, dryRun bool) (string, bool, error) {
+	if dryRun {
+		return "validated", false, nil
+	}
+	return "ready", false, nil
+}
+func (client *cpuMinerPrivilegedClient) RestartService(context.Context, string, bool, bool) error {
+	return nil
+}
+func (client *cpuMinerPrivilegedClient) EnableLogin(context.Context, bool) error { return nil }
+func (client *cpuMinerPrivilegedClient) InspectApp(_ context.Context, appID string) (string, float64, error) {
+	client.inspectCalls++
+	client.inspectAppID = appID
+	status := client.inspectStatus
+	if status == "" {
+		status = "stopped"
+	}
+	return status, 0, client.inspectErr
+}
+func (client *cpuMinerPrivilegedClient) AppLifecycle(_ context.Context, appID, action string, dryRun bool) error {
+	client.appCalls++
+	client.appID = appID
+	client.action = action
+	client.dryRun = dryRun
+	return client.lifecycleErr
+}
+
+func (client *cpuMinerPrivilegedClient) RemoveApp(_ context.Context, appID string, dryRun bool) error {
+	client.removeCalls++
+	client.removeAppID = appID
+	client.removeDryRun = dryRun
+	return client.removeErr
+}
+
+func (client *cpuMinerPrivilegedClient) EnsureDockerRuntime(_ context.Context, dryRun bool) (string, error) {
+	client.dockerCalls++
+	client.dockerDryRun = dryRun
+	return client.dockerStatus, client.dockerErr
+}
+
+func (client *cpuMinerPrivilegedClient) DockerRuntimeStatus(_ context.Context) (string, error) {
+	client.dockerStatusCalls++
+	return client.dockerStatus, client.dockerErr
+}
+
+func (client *cpuMinerPrivilegedClient) EnsurePackageFeature(_ context.Context, feature string, dryRun bool) (string, error) {
+	client.packageCalls++
+	client.packageFeature = feature
+	client.packageDryRun = dryRun
+	status := client.packageStatus
+	if status == "" {
+		status = "ready"
+	}
+	return status, client.packageErr
+}
+
+func (client *cpuMinerPrivilegedClient) PackageFeatureStatus(context.Context, string) (string, error) {
+	status := client.packageStatus
+	if status == "" {
+		status = "ready"
+	}
+	return status, client.packageErr
+}
+
+func (client *cpuMinerPrivilegedClient) PrepareAppImage(_ context.Context, appID string, variant string, dryRun bool) (string, error) {
+	client.prepareCalls++
+	client.appID = appID
+	client.imageVariant = variant
+	client.preparedVariants = append(client.preparedVariants, variant)
+	client.imageDryRun = dryRun
+	return client.imageStatus, client.imageErr
+}
+
+func (client *cpuMinerPrivilegedClient) AppImageStatus(_ context.Context, appID string, variant string) (string, error) {
+	client.statusCalls++
+	client.appID = appID
+	client.imageVariant = variant
+	return client.imageStatus, client.imageErr
+}
+
+func (client *cpuMinerPrivilegedClient) ProbeAppImage(_ context.Context, appID string, variant string, dryRun bool) (bool, error) {
+	client.probeCalls++
+	client.appID = appID
+	client.imageVariant = variant
+	client.imageDryRun = dryRun
+	return client.probeResult, client.probeErr
+}
+
+func (client *cpuMinerPrivilegedClient) EnsureAppFirewall(_ context.Context, appID string, dryRun bool) (string, error) {
+	client.firewallCalls++
+	client.firewallAppID = appID
+	client.firewallDryRun = dryRun
+	return client.firewallStatus, client.firewallErr
+}
+
+func TestApplyCpuMinerComposeEnforceUsesBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	paths := cpuMinerPaths{Root: t.TempDir(), ComposePath: filepath.Join(t.TempDir(), "untrusted.yaml")}
+	if err := applyCpuMinerCompose(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	if client.appCalls != 1 || client.appID != cpuMinerAppID || client.action != "start" || client.dryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
+func TestApplyCpuMinerComposeEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", lifecycleErr: errors.New("rejected")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := applyCpuMinerCompose(context.Background(), cpuMinerPaths{}); err == nil {
+		t.Fatal("expected broker rejection to fail closed")
+	}
+	if client.appCalls != 1 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+}
+
+func TestStartCpuMinerMigratesLegacyComposeAndPreservesEnv(t *testing.T) {
+	root := t.TempDir()
+	paths := cpuMinerPaths{
+		Root:        root,
+		ComposePath: filepath.Join(root, "docker-compose.yaml"),
+		EnvPath:     filepath.Join(root, ".env"),
+	}
+	legacyCompose := "services:\n  cpuminer:\n    image: ${CPUMINER_IMAGE}\n"
+	legacyEnv := "CPUMINER_IMAGE=jvx1971/cpu-lottery-miner:v1\nPOOL_MODE=brln\nMINING_ADDRESS=bc1qlegacy\nTHREADS=1\n"
+	if err := os.WriteFile(paths.ComposePath, []byte(legacyCompose), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.EnvPath, []byte(legacyEnv), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := startCpuMinerAtPaths(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	compose, err := os.ReadFile(paths.ComposePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(compose), "stop_grace_period: 2s") {
+		t.Fatalf("legacy compose was not migrated:\n%s", compose)
+	}
+	env, err := os.ReadFile(paths.EnvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEnv := strings.Replace(legacyEnv, "jvx1971/cpu-lottery-miner:v1", cpuMinerBaselineImage, 1)
+	if string(env) != wantEnv {
+		t.Fatalf("legacy migration changed settings other than the image:\ngot:  %q\nwant: %q", env, wantEnv)
+	}
+	if client.appCalls != 1 || client.appID != cpuMinerAppID || client.action != "start" || client.dryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
+func TestRemoveCpuMinerAppEnforceUsesBrokerBeforeDeletingFiles(t *testing.T) {
+	root := t.TempDir()
+	paths := cpuMinerPaths{Root: root, ComposePath: filepath.Join(root, "docker-compose.yaml"), EnvPath: filepath.Join(root, ".env")}
+	if err := os.WriteFile(paths.ComposePath, []byte("manager-owned"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := removeCpuMinerApp(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	if client.removeCalls != 1 || client.removeAppID != cpuMinerAppID || client.removeDryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("app files still exist or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestRemoveCpuMinerAppEnforceFailsClosedAndPreservesFiles(t *testing.T) {
+	root := t.TempDir()
+	paths := cpuMinerPaths{Root: root, ComposePath: filepath.Join(root, "docker-compose.yaml"), EnvPath: filepath.Join(root, ".env")}
+	if err := os.WriteFile(paths.ComposePath, []byte("manager-owned"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := &cpuMinerPrivilegedClient{mode: "enforce", removeErr: errors.New("rejected")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := removeCpuMinerApp(context.Background(), paths); err == nil {
+		t.Fatal("expected broker rejection to fail closed")
+	}
+	if client.removeCalls != 1 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+	if _, err := os.Stat(paths.ComposePath); err != nil {
+		t.Fatalf("app files were removed after broker failure: %v", err)
+	}
+}
+
+func TestPrepareCpuMinerImageEnforceUsesBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	if err := prepareCpuMinerImage(context.Background(), cpuMinerBaselineImage); err != nil {
+		t.Fatal(err)
+	}
+	if client.prepareCalls != 1 || client.appID != cpuMinerAppID || client.imageVariant != "baseline" || client.imageDryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
+func TestPrepareCpuMinerImageEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageErr: errors.New("pull failed")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	if err := prepareCpuMinerImage(context.Background(), cpuMinerBaselineImage); err == nil {
+		t.Fatal("expected broker failure")
+	}
+	if client.prepareCalls != 1 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+}
+
+func TestProbeCpuMinerImageEnforceUsesBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", probeResult: true}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	server := &Server{}
+	if !server.probeCpuMinerImage(context.Background(), cpuMinerFastImages[0]) {
+		t.Fatal("expected typed probe to report runnable")
+	}
+	if client.probeCalls != 1 || client.imageVariant != "fast_pinned" || client.imageDryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
+func TestCpuMinerImageBrokerHelpersRejectUnknownImage(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready", probeResult: true}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	if err := prepareCpuMinerImage(context.Background(), "evil/root:latest"); err == nil {
+		t.Fatal("expected unknown image to fail")
+	}
+	server := &Server{}
+	if server.probeCpuMinerImage(context.Background(), "evil/root:latest") {
+		t.Fatal("expected unknown image probe to fail")
+	}
+	if client.prepareCalls != 0 || client.probeCalls != 0 {
+		t.Fatalf("unknown image reached broker: %#v", client)
+	}
+}
 
 func TestCpuMinerComposeContents(t *testing.T) {
 	contents := cpuMinerComposeContents()
 	checks := []string{
 		"image: ${CPUMINER_IMAGE}",
+		"stop_grace_period: 2s",
 		"127.0.0.1:4048:4048",
 		"stratum+tcp://${STRATUM_HOST}:${STRATUM_PORT}",
 		"${MINING_ADDRESS}.${WORKER_NAME}",
 		`cpus: "${THREADS}"`,
 		"cpu_shares: 128",
+		`user: "65534:65534"`,
+		"read_only: true",
+		"cap_drop:",
+		"security_opt:",
+		"no-new-privileges:true",
+		"/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777",
 		"- \"cpuminer\"",
 		"--algo",
 		"sha256d",

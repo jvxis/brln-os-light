@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-11T14:43:26Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "a5444b2d5f0dd151589e7d006942ca7f73f0c06d",
+  "tested_code_patch_object": "e3e99f55c1be0ef66f34334b316b90eca54fa724",
+  "scope": "urgent BTCPay and NBXplorer security release advance through the closed privileged-broker image catalog",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "official_advisory": {
+    "url": "https://blog.btcpayserver.org/security-advisory-btcpay-server-2-4-2/",
+    "published_at": "2026-08-07",
+    "affected": "all BTCPay versions before 2.4.2, including release candidates",
+    "impact": "unauthenticated disclosure of LND .macaroon credentials with confirmed exploitation and stolen funds",
+    "required_btcpay": "2.4.2",
+    "required_lnd": "0.21.1",
+    "recommended_nbxplorer": "2.6.10"
+  },
+  "closed_catalog": {
+    "server": "btcpayserver/btcpayserver:2.4.2",
+    "nbxplorer": "nicolasdorier/nbxplorer:2.6.10",
+    "server_refresh_on_every_prepare": true,
+    "caller_supplied_image": false,
+    "caller_supplied_tag": false
+  },
+  "lightningos_lnd_boundary": {
+    "install_version": "0.21.1-beta",
+    "dedicated_btcpay_macaroon": true,
+    "admin_macaroon_referenced": false,
+    "offchain_write_granted": false,
+    "onchain_write_granted": false
+  },
+  "accepted_gate": {
+    "ubuntu_version": "24.04",
+    "architecture": "amd64",
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "go_build_commands": "passed",
+    "broker_dry_run": "validated",
+    "btcpay_status": "ready",
+    "btcpay_digest": "sha256:66a7e88964d44302a0312bf601c9ef0e4c3af71696e2e4edac6daa2742854e79",
+    "nbxplorer_status": "ready",
+    "nbxplorer_digest": "sha256:7d2ab1f6ce38e301cba98a4f85bfbfcf2912d5034bd88af056f9d60e5511f911",
+    "containers_created": false,
+    "manager_active": true,
+    "audit_contains_parameters_or_secrets": false
+  },
+  "windows_validation": {
+    "affected_packages": "passed except the two known CRLF-sensitive installer-script tests",
+    "known_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ]
+  },
+  "unchanged_contracts": {
+    "bitcoin_source_resolution_invoked": false,
+    "lnd_connection_invoked": false,
+    "los_test2_touched": false
+  }
+}

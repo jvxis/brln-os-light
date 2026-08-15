@@ -1,15 +1,191 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/system"
 )
+
+func TestRoboSatsStartAndStopEnforceUseBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	server := &Server{}
+
+	if err := server.startRobosats(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.appCalls != 1 || client.appID != appmanifest.RoboSatsID || client.action != "start" || client.dryRun || client.firewallCalls != 1 || client.firewallAppID != appmanifest.RoboSatsID || client.firewallDryRun {
+		t.Fatalf("unexpected start broker call: %#v", client)
+	}
+	if err := server.stopRobosats(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.appCalls != 2 || client.appID != appmanifest.RoboSatsID || client.action != "stop" || client.dryRun {
+		t.Fatalf("unexpected stop broker call: %#v", client)
+	}
+}
+
+func TestEnsureRoboSatsUFWAccessEnforceUsesClosedBrokerApp(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", firewallStatus: "active"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureRobosatsUfwAccess(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.firewallCalls != 1 || client.firewallAppID != appmanifest.RoboSatsID || client.firewallDryRun {
+		t.Fatalf("unexpected firewall broker call: %#v", client)
+	}
+}
+
+func TestEnsureRoboSatsUFWAccessEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", firewallErr: errors.New("ufw failed")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureRobosatsUfwAccess(context.Background()); err == nil {
+		t.Fatal("expected firewall broker failure")
+	}
+	if client.firewallCalls != 1 {
+		t.Fatalf("unexpected firewall broker calls: %#v", client)
+	}
+}
+
+func TestRoboSatsLifecycleEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", lifecycleErr: errors.New("rejected")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	server := &Server{}
+
+	if err := server.startRobosats(context.Background()); err == nil {
+		t.Fatal("expected broker rejection to fail start")
+	}
+	if err := server.stopRobosats(context.Background()); err == nil {
+		t.Fatal("expected broker rejection to fail stop")
+	}
+	if client.appCalls != 2 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+}
+
+func TestRemoveRoboSatsAppEnforceUsesBrokerBeforeDeletingFiles(t *testing.T) {
+	root := t.TempDir()
+	paths := robosatsPaths{Root: root, ComposePath: filepath.Join(root, appmanifest.RoboSatsComposeFile)}
+	if err := os.WriteFile(paths.ComposePath, []byte("manager-owned"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := removeRoboSatsApp(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	if client.removeCalls != 1 || client.removeAppID != appmanifest.RoboSatsID || client.removeDryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("app files still exist or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestRemoveRoboSatsAppEnforceFailsClosedAndPreservesFiles(t *testing.T) {
+	root := t.TempDir()
+	paths := robosatsPaths{Root: root, ComposePath: filepath.Join(root, appmanifest.RoboSatsComposeFile)}
+	if err := os.WriteFile(paths.ComposePath, []byte("manager-owned"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client := &cpuMinerPrivilegedClient{mode: "enforce", removeErr: errors.New("rejected")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := removeRoboSatsApp(context.Background(), paths); err == nil {
+		t.Fatal("expected broker rejection")
+	}
+	if client.removeCalls != 1 {
+		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+	if _, err := os.Stat(paths.ComposePath); err != nil {
+		t.Fatalf("manager files were removed after broker failure: %v", err)
+	}
+}
+
+func TestEnsureRoboSatsImagesEnforceUsesClosedBrokerVariants(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureRobosatsImages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"client", "tor", "proxy"}
+	if client.prepareCalls != 3 || !reflect.DeepEqual(client.preparedVariants, want) || client.appID != appmanifest.RoboSatsID || client.imageDryRun {
+		t.Fatalf("unexpected image broker calls: %#v", client)
+	}
+}
+
+func TestEnsureRoboSatsImagesEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageErr: errors.New("pull failed")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureRobosatsImages(context.Background()); err == nil {
+		t.Fatal("expected image broker failure")
+	}
+	if client.prepareCalls != 1 || client.preparedVariants[0] != "client" {
+		t.Fatalf("unexpected fail-closed sequence: %#v", client)
+	}
+}
+
+func TestEnsureDockerForCatalogAppEnforceUsesPackageAndRuntimeBroker(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", dockerStatus: "ready"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureDockerForCatalogApp(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.packageCalls != 2 || client.packageFeature != "docker_runtime" || client.packageDryRun || client.dockerCalls != 1 || client.dockerDryRun {
+		t.Fatalf("unexpected Docker preparation broker calls: %#v", client)
+	}
+}
+
+func TestEnsureDockerForCatalogAppEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", packageErr: errors.New("package failed")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureDockerForCatalogApp(context.Background()); err == nil {
+		t.Fatal("expected package broker failure")
+	}
+	if client.packageCalls != 1 || client.dockerCalls != 0 {
+		t.Fatalf("package failure did not stop before runtime: %#v", client)
+	}
+}
+
+func TestEnsureDockerForCatalogAppStrictRejectsLegacyFallback(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "disabled"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureDockerForCatalogAppEnforce(context.Background()); err == nil || !strings.Contains(err.Error(), "requires privileged broker enforce mode") {
+		t.Fatalf("strict Docker preparation did not fail closed: %v", err)
+	}
+	if client.packageCalls != 0 || client.dockerCalls != 0 {
+		t.Fatalf("disabled broker unexpectedly executed Docker preparation: %#v", client)
+	}
+}
 
 func TestRobosatsComposeContentsUsesPinnedTorImageAndVolumes(t *testing.T) {
 	got := robosatsComposeContents(robosatsPaths{
-		DataDir:       "/tmp/robosats-data",
 		CaddyfilePath: "/tmp/robosats/Caddyfile",
 		TLSDir:        "/tmp/robosats/tls",
 	})
@@ -20,12 +196,12 @@ func TestRobosatsComposeContentsUsesPinnedTorImageAndVolumes(t *testing.T) {
 		"image: osminogin/tor-simple:0.4.9.5",
 		"- tor-data:/var/lib/tor",
 		"- tor-log:/var/log/tor",
-		"- /tmp/robosats-data:/usr/src/robosats/data",
+		"- robosats-data:/usr/src/robosats/data",
 		// The client is no longer published directly; the TLS/HTTP2 proxy fronts it.
 		"image: caddy:2.8-alpine",
 		"- /tmp/robosats/Caddyfile:/etc/caddy/Caddyfile:ro",
 		"- /tmp/robosats/tls:/etc/caddy/tls:ro",
-		"volumes:\n  tor-data:\n  tor-log:\n  caddy-data:\n  caddy-config:\n",
+		"volumes:\n  robosats-data:\n  tor-data:\n  tor-log:\n  caddy-data:\n  caddy-config:\n",
 	}
 	for _, want := range checks {
 		if !strings.Contains(got, want) {

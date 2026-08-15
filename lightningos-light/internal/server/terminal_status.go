@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -11,13 +11,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"lightningos-light/internal/system"
 )
 
-const terminalPasswordHelperPath = "/usr/local/sbin/lightningos-terminal-password"
-
 var (
-	terminalCredentialRotationMu sync.Mutex
-	terminalOperatorUserPattern  = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+	terminalMutationMu          sync.Mutex
+	terminalOperatorUserPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+	terminalRuntimeEnvPath      = "/etc/lightningos/terminal.env"
 )
 
 type terminalStatus struct {
@@ -38,18 +39,27 @@ type terminalCredentialRotateResponse struct {
 	RestartPending bool   `json:"restart_pending"`
 }
 
+type terminalControlRequest struct {
+	Enabled         *bool  `json:"enabled"`
+	ConfirmPassword string `json:"confirm_password"`
+}
+
+type terminalControlResponse struct {
+	Enabled bool `json:"enabled"`
+}
+
 func (s *Server) handleTerminalStatus(w http.ResponseWriter, r *http.Request) {
 	port := 7681
-	if raw := strings.TrimSpace(os.Getenv("TERMINAL_PORT")); raw != "" {
+	if raw := terminalRuntimeValue("TERMINAL_PORT"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {
 			port = parsed
 		}
 	}
 
 	writeJSON(w, http.StatusOK, terminalStatus{
-		Enabled:              strings.TrimSpace(os.Getenv("TERMINAL_ENABLED")) == "1",
-		CredentialConfigured: terminalCredentialConfigured(os.Getenv("TERMINAL_CREDENTIAL")),
-		AllowWrite:           strings.TrimSpace(os.Getenv("TERMINAL_ALLOW_WRITE")) == "1",
+		Enabled:              terminalRuntimeValue("TERMINAL_ENABLED") == "1",
+		CredentialConfigured: terminalCredentialConfigured(terminalRuntimeValue("TERMINAL_CREDENTIAL")),
+		AllowWrite:           terminalRuntimeValue("TERMINAL_ALLOW_WRITE") == "1",
 		OperatorUser:         terminalOperatorUser(),
 		Port:                 port,
 	})
@@ -72,8 +82,8 @@ func (s *Server) handleTerminalCredentialRotate(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	terminalCredentialRotationMu.Lock()
-	defer terminalCredentialRotationMu.Unlock()
+	terminalMutationMu.Lock()
+	defer terminalMutationMu.Unlock()
 
 	operatorUser := terminalOperatorUser()
 	if !terminalOperatorUserPattern.MatchString(operatorUser) {
@@ -85,48 +95,38 @@ func (s *Server) handleTerminalCredentialRotate(w http.ResponseWriter, r *http.R
 		writeErrorCode(w, http.StatusInternalServerError, "terminal_credential_generation_failed", "failed to generate terminal credential")
 		return
 	}
-	stagedPath, err := stageTerminalPassword(password)
-	if err != nil {
-		writeErrorCode(w, http.StatusInternalServerError, "terminal_credential_stage_failed", "failed to stage terminal credential")
-		return
-	}
-	defer os.Remove(stagedPath)
-
 	oldCredential := os.Getenv("TERMINAL_CREDENTIAL")
-	oldOperatorPassword := os.Getenv("TERMINAL_OPERATOR_PASSWORD")
 	newCredential := operatorUser + ":" + password
 	updates := map[string]string{
-		"TERMINAL_CREDENTIAL":        newCredential,
-		"TERMINAL_OPERATOR_PASSWORD": password,
+		"TERMINAL_CREDENTIAL": newCredential,
 	}
 	if err := authPersistSecrets(updates); err != nil {
 		writeErrorCode(w, http.StatusInternalServerError, "terminal_credential_persist_failed", "failed to persist terminal credential")
 		return
 	}
 	_ = os.Setenv("TERMINAL_CREDENTIAL", newCredential)
-	_ = os.Setenv("TERMINAL_OPERATOR_PASSWORD", password)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	if out, err := runSystemd(ctx, terminalPasswordHelperPath, stagedPath, operatorUser); err != nil {
+	if handled, err := system.RotateTerminalCredentialWithBroker(ctx, operatorUser, password); !handled || err != nil {
 		rollbackErr := authPersistSecrets(map[string]string{
-			"TERMINAL_CREDENTIAL":        oldCredential,
-			"TERMINAL_OPERATOR_PASSWORD": oldOperatorPassword,
+			"TERMINAL_CREDENTIAL": oldCredential,
 		})
 		_ = os.Setenv("TERMINAL_CREDENTIAL", oldCredential)
-		_ = os.Setenv("TERMINAL_OPERATOR_PASSWORD", oldOperatorPassword)
 		if s.logger != nil {
-			s.logger.Printf("terminal credential rotation failed: %v (%s); rollback: %v", err, strings.TrimSpace(out), rollbackErr)
+			s.logger.Printf("terminal credential rotation failed: %v; rollback: %v", err, rollbackErr)
 		}
 		writeErrorCode(w, http.StatusInternalServerError, "terminal_credential_apply_failed", "failed to apply terminal credential")
 		return
 	}
 
 	restartPending := false
-	if out, err := runSystemd(ctx, "/bin/systemctl", "restart", "lightningos-terminal.service"); err != nil {
-		restartPending = true
-		if s.logger != nil {
-			s.logger.Printf("terminal credential rotated but terminal restart failed: %v (%s)", err, strings.TrimSpace(out))
+	if terminalRuntimeValue("TERMINAL_ENABLED") == "1" {
+		if err := system.RestartServiceWithBroker(ctx, "lightningos-terminal", false); err != nil {
+			restartPending = true
+			if s.logger != nil {
+				s.logger.Printf("terminal credential rotated but terminal restart failed: %v", err)
+			}
 		}
 	}
 
@@ -139,40 +139,60 @@ func (s *Server) handleTerminalCredentialRotate(w http.ResponseWriter, r *http.R
 	})
 }
 
+func (s *Server) handleTerminalControl(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil || !s.auth.Enabled() {
+		writeErrorCode(w, http.StatusForbidden, "terminal_control_login_required", "enable LightningOS login protection before changing terminal state")
+		return
+	}
+
+	var req terminalControlRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "terminal_control_invalid_request", "invalid request body")
+		return
+	}
+	if req.Enabled == nil || decoder.Decode(&struct{}{}) != io.EOF {
+		writeErrorCode(w, http.StatusBadRequest, "terminal_control_invalid_request", "invalid request body")
+		return
+	}
+	if !s.requireSensitiveReauth(w, r, authScopeTerminalControl, req.ConfirmPassword,
+		"terminal_control_reauth_required", "confirm your LightningOS password to change terminal state") {
+		return
+	}
+
+	terminalMutationMu.Lock()
+	defer terminalMutationMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if handled, err := system.SetTerminalEnabledWithBroker(ctx, *req.Enabled); !handled || err != nil {
+		if s.logger != nil {
+			s.logger.Printf("terminal control failed: %v", err)
+		}
+		writeErrorCode(w, http.StatusInternalServerError, "terminal_control_apply_failed", "failed to change terminal state")
+		return
+	}
+
+	s.recordAuditEvent(r, "terminal.control", terminalOperatorUser(), map[string]any{"enabled": *req.Enabled})
+	writeJSON(w, http.StatusOK, terminalControlResponse{Enabled: *req.Enabled})
+}
+
 func terminalCredentialConfigured(raw string) bool {
 	user, password, ok := strings.Cut(strings.TrimSpace(raw), ":")
 	return ok && strings.TrimSpace(user) != "" && password != ""
 }
 
 func terminalOperatorUser() string {
-	if user := strings.TrimSpace(os.Getenv("TERMINAL_OPERATOR_USER")); user != "" {
+	if user := terminalRuntimeValue("TERMINAL_OPERATOR_USER"); user != "" {
 		return user
 	}
 	return "losop"
 }
 
-func stageTerminalPassword(password string) (string, error) {
-	if err := os.MkdirAll("/var/lib/lightningos", 0o750); err != nil {
-		return "", fmt.Errorf("create terminal staging directory: %w", err)
-	}
-	file, err := os.CreateTemp("/var/lib/lightningos", "terminal-password-")
+func terminalRuntimeValue(key string) string {
+	value, err := readEnvFileValue(terminalRuntimeEnvPath, key)
 	if err != nil {
-		return "", fmt.Errorf("create terminal password staging file: %w", err)
+		return ""
 	}
-	path := file.Name()
-	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return "", fmt.Errorf("chmod terminal password staging file: %w", err)
-	}
-	if _, err := file.WriteString(password + "\n"); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return "", fmt.Errorf("write terminal password staging file: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("close terminal password staging file: %w", err)
-	}
-	return path, nil
+	return strings.TrimSpace(value)
 }

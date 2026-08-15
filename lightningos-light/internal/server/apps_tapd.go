@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/system"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,9 +30,9 @@ import (
 //   - network_mode: host lets tapd reach LND (127.0.0.1:10009) and the LOS
 //     Postgres (127.0.0.1:5432) with no host networking changes. tapd's own
 //     RPC/REST are bound to loopback only, so 10029/8089 are never on the LAN.
-//   - The manager talks to tapd via `docker exec <container> tapcli ... ` and
-//     parses the JSON output (same pattern as resetLndgAdminPassword). No taprpc
-//     proto stubs are vendored.
+//   - The manager submits typed Tapd operations to the privileged broker. The
+//     broker resolves the fixed container identity and constructs tapcli argv;
+//     no taprpc proto stubs or raw Docker arguments are exposed to the manager.
 //   - tapd stores its data (proofs, macaroon, tls) under the mounted data dir,
 //     so Uninstall keeps assets intact — it never drops the DB or deletes data.
 //
@@ -37,33 +40,17 @@ import (
 // this app as experimental/advanced.
 
 const (
-	tapdAppID = "tapd"
-	// tapdImage is the official Lightning Labs image, pinned. Validate the exact
-	// v0.8.x tag against Docker Hub before release.
-	tapdImage    = "lightninglabs/taproot-assets:v0.8.0"
-	tapdNetwork  = "mainnet"
-	tapdRPCPort  = 10029
-	tapdRESTPort = 8089
-	tapdDBName   = "tapd"
-	tapdDBUser   = "tapd"
+	tapdAppID  = appmanifest.TapdID
+	tapdDBName = "tapd"
+	tapdDBUser = "tapd"
 	// tapdDSNKey is where we record the provisioned DSN (for idempotent
 	// reinstalls). The secret lives in the LOS secrets.env, never exposed by any
 	// API.
 	tapdDSNKey = "TAPD_PG_DSN"
-	// lndMacaroonPathInTapd / lndTLSPathInTapd point at the LND data dir mounted
-	// read-only into the tapd container.
-	lndMacaroonPathInTapd = "/root/.lnd/data/chain/bitcoin/mainnet/admin.macaroon"
-	lndTLSPathInTapd      = "/root/.lnd/tls.cert"
-	tapdDirInContainer    = "/root/.tapd"
 )
 
 type tapdPaths struct {
-	Root        string
-	DataDir     string
-	ComposePath string
-	// ConfPath lives inside DataDir so it maps to <tapddir>/tapd.conf in the
-	// container (tapd auto-reads it). It holds the DB password, so it is 0600.
-	ConfPath string
+	Root string
 }
 
 type tapdApp struct {
@@ -93,22 +80,21 @@ func (a tapdApp) Definition() appDefinition {
 func (a tapdApp) Info(ctx context.Context) (appInfo, error) {
 	def := a.Definition()
 	info := newAppInfo(def)
-	if holder := a.server.htlcInterceptorConflict(ctx); holder != "" {
+	handled, state, err := system.TapdStatusWithBroker(ctx)
+	if !handled {
+		return info, errors.New("Tapd status requires privileged broker enforce mode")
+	}
+	if state.InterceptorConflict {
 		info.Available = false
 		info.UnavailableReason = tapdInterceptorConflictReason
-		info.UnavailableMessage = tapdInterceptorConflictMessage(holder)
+		info.UnavailableMessage = tapdInterceptorConflictMessage("Fedimint Lightning Gateway")
 	}
-	paths := tapdAppPaths()
-	if !fileExists(paths.ComposePath) {
-		return info, nil
-	}
-	info.Installed = true
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, tapdAppID)
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
 	}
-	info.Status = status
+	info.Installed = state.Installed
+	info.Status = state.Status
 	return info, nil
 }
 
@@ -129,57 +115,61 @@ func (a tapdApp) Stop(ctx context.Context) error {
 }
 
 func tapdAppPaths() tapdPaths {
-	root := filepath.Join(appsRoot, tapdAppID)
-	dataDir := filepath.Join(appsDataRoot, tapdAppID, "data")
-	return tapdPaths{
-		Root:        root,
-		DataDir:     dataDir,
-		ComposePath: filepath.Join(root, "docker-compose.yaml"),
-		ConfPath:    filepath.Join(dataDir, "tapd.conf"),
-	}
+	return tapdPaths{Root: filepath.Join(appsRoot, tapdAppID)}
 }
 
 func (s *Server) installTapd(ctx context.Context) error {
-	if holder := s.htlcInterceptorConflict(ctx); holder != "" {
-		return errors.New(tapdInterceptorConflictMessage(holder))
-	}
-	if err := ensureDocker(ctx); err != nil {
+	if err := ensureDockerForCatalogAppEnforce(ctx); err != nil {
 		return err
 	}
-	paths := tapdAppPaths()
-	if err := os.MkdirAll(paths.Root, 0750); err != nil {
-		return fmt.Errorf("failed to create app directory: %w", err)
+	handled, state, err := system.TapdStatusWithBroker(ctx)
+	if !handled {
+		return errors.New("Tapd preparation requires privileged broker enforce mode")
 	}
-	if err := os.MkdirAll(paths.DataDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app data directory: %w", err)
+	if err != nil {
+		return err
 	}
-
+	if state.InterceptorConflict {
+		return errors.New(tapdInterceptorConflictMessage("Fedimint Lightning Gateway"))
+	}
 	dbPassword, err := s.ensureTapdDB(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to provision tapd database: %w", err)
 	}
-
-	if _, err := ensureFileWithChange(paths.ConfPath, tapdConfContents(dbPassword)); err != nil {
+	certificate, macaroon, err := s.tapdLNDMaterial(ctx, state.HasLNDMacaroon)
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(paths.ConfPath, 0600); err != nil {
-		return fmt.Errorf("failed to secure tapd.conf: %w", err)
+	if handled, err := system.EnsureTapdWithBroker(ctx, dbPassword, certificate, macaroon); !handled {
+		return errors.New("Tapd preparation requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Tapd preparation failed: %w", err)
 	}
-	if _, err := ensureFileWithChange(paths.ComposePath, tapdComposeContents(paths)); err != nil {
-		return err
+	if handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.TapdID, string(appmanifest.TapdImageApp)); !handled {
+		return errors.New("Tapd image preparation requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Tapd image unavailable: %w", err)
 	}
-
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", tapdAppID)
+	if handled, runnable, err := system.ProbeAppImageWithBroker(ctx, appmanifest.TapdID, string(appmanifest.TapdImageApp)); !handled {
+		return errors.New("Tapd image verification requires privileged broker enforce mode")
+	} else if err != nil || !runnable {
+		return errors.New("official Tapd image verification failed")
+	}
+	if handled, err := system.TapdLifecycleWithBroker(ctx, "start"); !handled {
+		return errors.New("Tapd lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Tapd start failed: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) uninstallTapd(ctx context.Context) error {
-	paths := tapdAppPaths()
-	if fileExists(paths.ComposePath) {
-		// down WITHOUT -v: keep the tapd data dir (proofs/macaroon) and the
-		// Postgres database. Removing them would destroy access to the assets
-		// (and the BTC that anchors them).
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+	if handled, err := system.RemoveTapdWithBroker(ctx); !handled {
+		return errors.New("Tapd removal requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Tapd removal failed: %w", err)
 	}
+	paths := tapdAppPaths()
 	// Remove only the compose/app dir, never the data dir or the DB.
 	if err := os.RemoveAll(paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)
@@ -188,25 +178,18 @@ func (s *Server) uninstallTapd(ctx context.Context) error {
 }
 
 func (s *Server) startTapd(ctx context.Context) error {
-	if holder := s.htlcInterceptorConflict(ctx); holder != "" {
-		return errors.New(tapdInterceptorConflictMessage(holder))
-	}
-	paths := tapdAppPaths()
-	if !fileExists(paths.ComposePath) {
-		return errors.New("Taproot Assets is not installed")
-	}
-	if err := os.MkdirAll(paths.DataDir, 0750); err != nil {
-		return fmt.Errorf("failed to create app data directory: %w", err)
-	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", tapdAppID)
+	// Re-apply the closed declaration on every start. This transparently
+	// migrates legacy installs while preserving their data and database.
+	return s.installTapd(ctx)
 }
 
 func (s *Server) stopTapd(ctx context.Context) error {
-	paths := tapdAppPaths()
-	if !fileExists(paths.ComposePath) {
-		return errors.New("Taproot Assets is not installed")
+	if handled, err := system.TapdLifecycleWithBroker(ctx, "stop"); !handled {
+		return errors.New("Tapd lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Tapd stop failed: %w", err)
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
+	return nil
 }
 
 // ensureTapdDB provisions a dedicated `tapd` role + `tapd` database inside the
@@ -303,44 +286,6 @@ func passwordFromDSN(raw string) string {
 	return pw
 }
 
-// tapdConfContents builds the tapd.conf placed in the data dir (→
-// <tapddir>/tapd.conf inside the container). Field names follow the lnd-style
-// go-flags ini format; validate against tapd v0.8 before release.
-func tapdConfContents(dbPassword string) string {
-	return fmt.Sprintf(`network=%s
-debuglevel=info
-rpclisten=127.0.0.1:%d
-restlisten=127.0.0.1:%d
-tlsextradomain=localhost
-
-lnd.host=127.0.0.1:10009
-lnd.macaroonpath=%s
-lnd.tlspath=%s
-
-databasebackend=postgres
-postgres.host=127.0.0.1
-postgres.port=5432
-postgres.user=%s
-postgres.password=%s
-postgres.dbname=%s
-postgres.requiressl=false
-`, tapdNetwork, tapdRPCPort, tapdRESTPort, lndMacaroonPathInTapd, lndTLSPathInTapd, tapdDBUser, dbPassword, tapdDBName)
-}
-
-func tapdComposeContents(paths tapdPaths) string {
-	return fmt.Sprintf(`services:
-  tapd:
-    image: %s
-    restart: unless-stopped
-    network_mode: host
-    command:
-      - "--tapddir=%s"
-    volumes:
-      - /data/lnd:/root/.lnd:ro
-      - %s:%s:rw
-`, tapdImage, tapdDirInContainer, paths.DataDir, tapdDirInContainer)
-}
-
 const tapdInterceptorConflictReason = "requires_htlc_interceptor"
 
 // htlcInterceptorConflict returns the display name of a running app that already
@@ -349,38 +294,68 @@ const tapdInterceptorConflictReason = "requires_htlc_interceptor"
 // LND grants it to only one client at a time — so tapd cannot run alongside such
 // an app. Currently the only store app that holds it is the Fedimint Lightning
 // Gateway (`gatewayd lnd`). Extend this as more interceptor apps are added.
-func (s *Server) htlcInterceptorConflict(ctx context.Context) string {
-	gw := fedimintGatewayAppPaths()
-	if fileExists(gw.ComposePath) {
-		if status, err := getComposeStatus(ctx, gw.Root, gw.ComposePath, "gatewayd"); err == nil && status == "running" {
-			return "Fedimint Lightning Gateway"
-		}
-	}
-	return ""
-}
-
 func tapdInterceptorConflictMessage(holder string) string {
 	return fmt.Sprintf("%s is using LND's HTLC interceptor, which tapd also requires. LND allows only one at a time — stop %s before installing or starting Taproot Assets.", holder, holder)
 }
 
-// tapcli runs a tapcli command inside the running tapd container and returns its
-// raw stdout (JSON). Reuses the docker-exec pattern from resetLndgAdminPassword.
-func (s *Server) tapcli(ctx context.Context, args ...string) (string, error) {
-	paths := tapdAppPaths()
-	if !fileExists(paths.ComposePath) {
-		return "", errors.New("Taproot Assets is not installed")
+func (s *Server) tapdLNDMaterial(ctx context.Context, hasExistingMacaroon bool) ([]byte, []byte, error) {
+	certificate, err := os.ReadFile("/data/lnd/tls.cert")
+	if err != nil || len(certificate) == 0 {
+		return nil, nil, errors.New("LND TLS certificate is unavailable")
 	}
-	containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, tapdAppID)
+	if hasExistingMacaroon {
+		return certificate, nil, nil
+	}
+	if s == nil || s.lnd == nil {
+		return nil, nil, errors.New("LND client unavailable")
+	}
+	ids, err := s.lnd.ListMacaroonIDs(ctx)
 	if err != nil {
-		return "", err
+		return nil, nil, fmt.Errorf("failed to list LND macaroon IDs: %w", err)
 	}
-	if containerID == "" {
-		return "", errors.New("tapd container not running")
-	}
-	execArgs := append([]string{"exec", containerID, "tapcli", "--network=" + tapdNetwork}, args...)
-	out, err := system.RunCommandWithSudo(ctx, "docker", execArgs...)
+	rootKeyID, err := lndclient.GenerateMacaroonRootKeyID(ids, time.Now())
 	if err != nil {
-		return out, err
+		return nil, nil, err
 	}
-	return out, nil
+	baked, err := s.lnd.BakeCustomMacaroon(ctx, lndclient.BakeCustomMacaroonRequest{
+		Permissions: tapdMacaroonPermissions(), RootKeyID: rootKeyID,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to bake dedicated Tapd macaroon: %w", err)
+	}
+	macaroon, err := hex.DecodeString(baked.MacaroonHex)
+	if err != nil || len(macaroon) == 0 {
+		return nil, nil, errors.New("invalid LND macaroon response")
+	}
+	equal, err := lndCredentialEqualsNativeAdmin(macaroon)
+	if err != nil {
+		return nil, nil, err
+	}
+	if equal {
+		return nil, nil, errors.New("Tapd LND credential must not be the admin macaroon")
+	}
+	return certificate, macaroon, nil
+}
+
+// Derived from the LND RPCs used by the official taproot-assets v0.8.0 source.
+func tapdMacaroonPermissions() []lndclient.MacaroonPermission {
+	return []lndclient.MacaroonPermission{
+		{Entity: "address", Action: "read"},
+		{Entity: "info", Action: "read"},
+		{Entity: "invoices", Action: "write"},
+		{Entity: "offchain", Action: "read"},
+		{Entity: "offchain", Action: "write"},
+		{Entity: "onchain", Action: "read"},
+		{Entity: "onchain", Action: "write"},
+		{Entity: "peers", Action: "read"},
+		{Entity: "signer", Action: "generate"},
+	}
+}
+
+func (s *Server) tapcli(ctx context.Context, request appmanifest.TapdCLIRequest) (string, error) {
+	handled, output, err := system.TapdCLIWithBroker(ctx, request)
+	if !handled {
+		return "", errors.New("Tapd commands require privileged broker enforce mode")
+	}
+	return output, err
 }

@@ -9,7 +9,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -612,24 +611,14 @@ func (s *bip110MonitorService) activeRPCConfig(ctx context.Context) (bitcoinRPCC
 		return bitcoinRPCConfig{}, "active_bitcoind", errors.New("server unavailable")
 	}
 	if readBitcoinSource() == "local" {
-		cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+		cfg, err := readBitcoinLocalRPCConfig(ctx)
 		return cfg, "local_bitcoind", err
 	}
-	user := strings.TrimSpace(os.Getenv("BITCOIN_RPC_USER"))
-	pass := strings.TrimSpace(os.Getenv("BITCOIN_RPC_PASS"))
-	if user == "" || pass == "" {
-		fileUser, filePass := readBitcoinSecrets()
-		if user == "" {
-			user = fileUser
-		}
-		if pass == "" {
-			pass = filePass
-		}
-	}
-	if user == "" || pass == "" {
+	remoteCfg := resolveBitcoinRemoteRPCConfig(s.server.cfg)
+	if remoteCfg.User == "" || remoteCfg.Pass == "" {
 		return bitcoinRPCConfig{}, "remote_bitcoind", errors.New("remote RPC credentials missing")
 	}
-	return bitcoinRPCConfig{Host: s.server.cfg.BitcoinRemote.RPCHost, User: user, Pass: pass}, "remote_bitcoind", nil
+	return remoteCfg, "remote_bitcoind", nil
 }
 
 func (s *bip110MonitorService) rpcCall(ctx context.Context, cfg bitcoinRPCConfig, method string, params []any, out any) error {

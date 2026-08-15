@@ -4,8 +4,14 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/system"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,8 +24,8 @@ func TestBtcpayDefinition(t *testing.T) {
 	if def.Port != btcpayPort {
 		t.Fatalf("unexpected port: %d", def.Port)
 	}
-	if len(def.SecurityNotices) != 1 || def.SecurityNotices[0] != appSecurityNoticeElevatedLNDAccess {
-		t.Fatalf("BTCPay must disclose elevated LND access: %v", def.SecurityNotices)
+	if len(def.SecurityNotices) != 1 || def.SecurityNotices[0] != appSecurityNoticeLimitedLNDAccess {
+		t.Fatalf("BTCPay must disclose limited LND access: %v", def.SecurityNotices)
 	}
 }
 
@@ -183,8 +189,61 @@ func TestBtcpayComposeContentsRemoteSource(t *testing.T) {
 }
 
 func TestBtcpayImageTracksLatestStableRelease(t *testing.T) {
-	if btcpayImage != "btcpayserver/btcpayserver:latest" {
+	if btcpayImage != appmanifest.BTCPayServerImage {
+		t.Fatalf("server and catalog BTCPay images differ: %q != %q", btcpayImage, appmanifest.BTCPayServerImage)
+	}
+	if btcpayImage != "btcpayserver/btcpayserver:2.4.2" || appmanifest.BTCPayRelease != "2.4.2" {
 		t.Fatalf("BTCPay image must track the latest stable release, got %q", btcpayImage)
+	}
+	if btcpayNbxplorerImage != "nicolasdorier/nbxplorer:2.6.10" {
+		t.Fatalf("NBXplorer must track the companion release recommended by BTCPay, got %q", btcpayNbxplorerImage)
+	}
+}
+
+func TestEnsureBtcpayImagesEnforceUsesClosedBrokerVariants(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureBtcpayImages(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"server", "nbxplorer", "postgres"}
+	if client.prepareCalls != 3 || !reflect.DeepEqual(client.preparedVariants, want) || client.appID != appmanifest.BTCPayID || client.imageDryRun {
+		t.Fatalf("unexpected non-Tor image broker calls: %#v", client)
+	}
+
+	client.prepareCalls = 0
+	client.preparedVariants = nil
+	if err := ensureBtcpayImages(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	want = append(want, "tor")
+	if client.prepareCalls != 4 || !reflect.DeepEqual(client.preparedVariants, want) {
+		t.Fatalf("unexpected Tor image broker calls: %#v", client)
+	}
+}
+
+func TestEnsureBtcpayImagesEnforceFailsClosed(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageErr: errors.New("pull failed")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureBtcpayImages(context.Background(), false); err == nil {
+		t.Fatal("expected broker image failure")
+	}
+	if client.prepareCalls != 1 || len(client.preparedVariants) != 1 || client.preparedVariants[0] != "server" {
+		t.Fatalf("unexpected fail-closed sequence: %#v", client)
+	}
+}
+
+func TestEnsureBtcpayImagesRejectsLegacyFallback(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "disabled"}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	if err := ensureBtcpayImages(context.Background(), false); err == nil || !strings.Contains(err.Error(), "requires privileged broker enforce mode") {
+		t.Fatalf("BTCPay image preparation did not fail closed: %v", err)
 	}
 }
 
@@ -205,6 +264,29 @@ func TestBtcpayComposeContentsAppSource(t *testing.T) {
 	}
 	if strings.Contains(compose, "btcpay-tor") || strings.Contains(compose, "NBXPLORER_SOCKSENDPOINT") {
 		t.Fatal("local Bitcoin source must not start the BTCPay Tor proxy")
+	}
+}
+
+func TestBtcpayComposeMatchesSharedCatalog(t *testing.T) {
+	paths := btcpayAppPaths()
+	catalogPaths := appmanifest.BTCPayComposePaths{
+		DataDir:    paths.DataDir,
+		NbxDir:     paths.NbxDir,
+		PgDir:      paths.PgDir,
+		DbInitPath: paths.DbInitPath,
+		LndDir:     paths.LndDir,
+	}
+	for _, wiring := range []btcpayBitcoinWiring{
+		{Source: "remote"},
+		{Source: "remote", UseTorProxy: true},
+		{Source: "app", JoinBitcoinNetwork: true},
+		{Source: "external", JoinBitcoinNetwork: true},
+	} {
+		got := btcpayComposeContents(paths, wiring)
+		want := appmanifest.BTCPayCompose(catalogPaths, wiring.JoinBitcoinNetwork, wiring.UseTorProxy)
+		if got != want {
+			t.Fatalf("server BTCPay compose diverged from the broker catalog for %#v", wiring)
+		}
 	}
 }
 
@@ -240,66 +322,47 @@ func TestEnsureBtcpayEnvIncludesTorSocksEndpoint(t *testing.T) {
 	}
 }
 
+func TestEnsureBtcpayEnvRewritesClosedSet(t *testing.T) {
+	paths := btcpayPaths{EnvPath: filepath.Join(t.TempDir(), ".env")}
+	if err := os.WriteFile(paths.EnvPath, []byte("ATTACKER=value\nNBXPLORER_SOCKSENDPOINT=tor:9050\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wiring := btcpayBitcoinWiring{
+		RPCURL:       "http://bitcoin.example:8085/",
+		RPCUser:      "user",
+		RPCPass:      "pass",
+		NodeEndpoint: "bitcoin.example:8333",
+	}
+	if err := ensureBtcpayEnv(paths, wiring, strings.Repeat("a", 32)); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(paths.EnvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "BTCPAY_DB_PASSWORD=" + strings.Repeat("a", 32) + "\n" +
+		"NBXPLORER_BTCRPCURL=http://bitcoin.example:8085/\n" +
+		"NBXPLORER_BTCRPCUSER=user\n" +
+		"NBXPLORER_BTCRPCPASSWORD=pass\n" +
+		"NBXPLORER_BTCNODEENDPOINT=bitcoin.example:8333\n"
+	if string(raw) != want {
+		t.Fatalf("unexpected closed environment:\n%s", raw)
+	}
+	if info, err := os.Stat(paths.EnvPath); err != nil || (runtime.GOOS == "linux" && info.Mode().Perm() != 0600) {
+		t.Fatalf("BTCPay environment mode is not 0600: %v/%v", info, err)
+	}
+}
+
 func TestBtcpayDbInitContents(t *testing.T) {
 	sql := btcpayDbInitContents()
+	if sql != appmanifest.BTCPayDBInit() {
+		t.Fatal("server BTCPay SQL diverged from the broker catalog")
+	}
 	if !strings.Contains(sql, "CREATE DATABASE nbxplorer") {
 		t.Fatalf("init sql missing nbxplorer database: %s", sql)
 	}
 	if !strings.Contains(sql, "LC_CTYPE 'C'") {
 		t.Fatalf("init sql missing C locale: %s", sql)
-	}
-}
-
-func TestEnsureBtcpayNbxplorerDatabaseCreatesMissingDatabase(t *testing.T) {
-	var commands [][]string
-	run := func(_ context.Context, name string, args ...string) (string, error) {
-		command := append([]string{name}, args...)
-		commands = append(commands, command)
-		switch {
-		case len(args) > 2 && args[2] == "pg_isready":
-			return "btcpay-db:5432 - accepting connections\n", nil
-		case len(args) > 2 && args[2] == "psql":
-			return "", nil
-		case len(args) > 2 && args[2] == "createdb":
-			return "", nil
-		default:
-			return "", errors.New("unexpected command")
-		}
-	}
-
-	if err := ensureBtcpayNbxplorerDatabase(context.Background(), run); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(commands) != 3 {
-		t.Fatalf("expected readiness, lookup, and create commands; got %d: %v", len(commands), commands)
-	}
-	createdb := strings.Join(commands[2], " ")
-	for _, required := range []string{"--owner=btcpay", "--template=template0", "--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer"} {
-		if !strings.Contains(createdb, required) {
-			t.Fatalf("createdb command missing %q: %s", required, createdb)
-		}
-	}
-}
-
-func TestEnsureBtcpayNbxplorerDatabaseKeepsExistingDatabase(t *testing.T) {
-	var commands [][]string
-	run := func(_ context.Context, name string, args ...string) (string, error) {
-		commands = append(commands, append([]string{name}, args...))
-		switch {
-		case len(args) > 2 && args[2] == "pg_isready":
-			return "btcpay-db:5432 - accepting connections\n", nil
-		case len(args) > 2 && args[2] == "psql":
-			return "1\n", nil
-		default:
-			return "", errors.New("unexpected command")
-		}
-	}
-
-	if err := ensureBtcpayNbxplorerDatabase(context.Background(), run); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(commands) != 2 {
-		t.Fatalf("existing database must not be recreated; got commands: %v", commands)
 	}
 }
 

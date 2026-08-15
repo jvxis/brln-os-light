@@ -1,0 +1,84 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-system-integrations.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "base_commit": "3258b58669b3d509c02e7dc0a8aedec09191ef32",
+  "scope": "typed system integration assets, policy application, Bitcoin storage enrollment ordering, and finalization",
+  "boundary": {
+    "operations": [
+      "files.system-integration.install",
+      "system.integrations.status",
+      "system.integrations.apply",
+      "system.integrations.finalize"
+    ],
+    "asset_count": 4,
+    "asset_destinations_fixed_by_broker": true,
+    "asset_sha256_fixed_by_broker": true,
+    "caller_selects_path": false,
+    "caller_selects_mode": false,
+    "caller_selects_owner": false,
+    "caller_selects_executable": false,
+    "legacy_generic_reconciler_removed": true,
+    "manager_run_systemd_calls_removed": 1,
+    "marker_written_only_after_bitcoin_storage_enrollment": true,
+    "marker_status_validates_root_owner_mode_and_asset_hashes": true,
+    "bitcoin_restart_present": false
+  },
+  "tests": {
+    "protocol_unknown_asset_rejected": "passed",
+    "protocol_extra_path_rejected": "passed",
+    "digest_mismatch_rejected": "passed",
+    "typed_broker_lock_and_audit": "passed",
+    "idempotent_asset_install": "passed",
+    "root_owner_and_mode_validation": "passed",
+    "fixed_helper_execution": "passed",
+    "lnd_dropin_idempotency": "passed",
+    "marker_deferred_until_finalize": "passed",
+    "client_and_orchestration_contract": "passed",
+    "focused_go_test": "passed"
+  },
+  "ubuntu24_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "amd64",
+    "root_filesystem_unit_test": "passed",
+    "caller": "lightningos service user through the exact broker sudo entry",
+    "official_asset_dry_runs": 4,
+    "apply_dry_run": "passed",
+    "finalize_dry_run": "passed",
+    "status_read_only": "passed",
+    "tampered_content_failed_closed": true,
+    "injected_path_failed_closed": true,
+    "package_state_changed": false,
+    "mutation_lock_changed": false,
+    "firewall_changed": false,
+    "manager_lnd_postgres_activation_changed": false,
+    "real_tls_firewall_application_executed": false,
+    "bitcoin_restart_executed": false,
+    "integration_node_mutated": false
+  },
+  "cleanup": {
+    "original_broker_restored_by_byte_comparison": true,
+    "preexisting_audit_content_preserved": true,
+    "gate_audit_suffix_validated_and_removed": true,
+    "audit_owner_group_mode_preserved": true,
+    "audit_timestamp_restoration_asserted": false,
+    "remote_temporary_artifacts_removed": true,
+    "local_temporary_artifacts_moved_to_recycle_bin": true,
+    "vm_powered_off_cleanly": true,
+    "loopback_nat_forward_removed": true,
+    "original_bridged_adapter_restored": true,
+    "host_network_adapter_restarted": false
+  },
+  "remaining": [
+    "exercise real TLS, mDNS, and firewall application only in the final disposable fresh-install matrix"
+  ],
+  "excluded": [
+    "credentials",
+    "tokens",
+    "ip addresses",
+    "private node identifiers",
+    "audit payload content outside the fixed gate suffix"
+  ]
+}

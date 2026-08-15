@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-11T20:42:43Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "1a0178d7f2f92c32bd21ce608b3e7d3ae68ff7d1",
+  "scope": "LNDg supply-chain inventory, closed image catalog, broker-owned verified source build, and disposable functional image gate",
+  "priority": {
+    "order": ["lndg", "lnbits", "brln-loop-and-magma", "fedimint-electrs-and-mempool"],
+    "basis": "observed user adoption",
+    "electrs_and_mempool_full_node_gate_deferred": true
+  },
+  "upstream": {
+    "repository": "cryptosharks131/lndg",
+    "release": "v1.11.0",
+    "source_commit": "0fe400029240fc59431b56b6ce47e24b764396b1",
+    "release_commit_matches_catalog": true,
+    "commit_verified_by_github": true,
+    "official_container_image_published": false,
+    "official_release_assets_published": false,
+    "source_archive_sha256": "390789734f729608cdc54f3b356e26f98e6184570f4677ba4df273980eea5df4"
+  },
+  "closed_image": {
+    "image": "lightningos/lndg:1.11.0",
+    "base_image": "python:3.12-slim@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36",
+    "source_selector_mutable": false,
+    "git_clone_during_build": false,
+    "source_checksum_verified_before_broker_build": true,
+    "direct_upstream_requirements_pinned": true,
+    "lightningos_extra_dependencies": {
+      "supervisor": "4.3.0",
+      "whitenoise": "6.12.0",
+      "psycopg2-binary": "2.9.12"
+    },
+    "attestation_fields": ["image_id", "release", "commit", "source_sha256", "base_image"],
+    "broker_enforce_skips_manager_build": true,
+    "shadow_legacy_build_uses_same_closed_source": true
+  },
+  "functional_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "ubuntu_version": "24.04",
+    "architecture": "amd64",
+    "docker_version": "29.1.3",
+    "network_discovery_performed": false,
+    "ssh_transport": "localhost-only VirtualBox NAT port forward",
+    "source_checksum_passed": true,
+    "docker_build_passed": true,
+    "critical_python_imports_passed": true,
+    "image_id": "sha256:374025a562a4dbba3b79ac9177cee0c92364ecbf76347ed4c9b3be0c033c8c56",
+    "image_id_bound_to_attestation_contract": true,
+    "app_container_started": false,
+    "bitcoin_touched": false,
+    "lnd_touched": false,
+    "funds_moved": false
+  },
+  "lnd_credential_inventory": {
+    "current_mount": "/data/lnd mounted read-only as a whole",
+    "current_default_credential": "admin.macaroon",
+    "read_only_macaroon_sufficient": false,
+    "required_capability_classes": [
+      "node and channel analytics",
+      "peer connect and disconnect",
+      "channel open and close",
+      "channel policy and status updates",
+      "invoice creation and lookup",
+      "payment and rebalance execution",
+      "on-chain address and send operations",
+      "message signing and shared-key derivation",
+      "watchtower client management"
+    ],
+    "next_boundary": "broker-generated dedicated LNDg macaroon plus a root-owned execution snapshot containing only the required credential, TLS certificate, and separately justified channel database access",
+    "whole_lnd_directory_mount_accepted_final_state": false
+  },
+  "supply_chain_limitations": {
+    "upstream_signed_release_manifest_available": false,
+    "runtime_source_authentication": "closed SHA-256 pinned after verification that the release ref resolves to the GitHub-verified commit",
+    "cryptographic_upstream_release_signature_claimed": false,
+    "transitive_python_dependency_hash_lock_complete": false,
+    "issue_34_follow_up_required": true
+  },
+  "windows_validation": {
+    "appmanifest_tests": "passed",
+    "privileged_tests": "passed",
+    "focused_server_registry_and_privilege_tests": "passed",
+    "git_diff_check": "passed",
+    "known_unrelated_crlf_sensitive_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ]
+  },
+  "remaining_lndg_scope": [
+    "closed secret-bearing Compose snapshot and dedicated LND credential",
+    "fixed PostgreSQL preparation and password synchronization",
+    "typed install-start-stop-status-remove lifecycle",
+    "typed LND config and firewall policy without arbitrary shell",
+    "full functional lifecycle gate without payments or fund movement"
+  ]
+}

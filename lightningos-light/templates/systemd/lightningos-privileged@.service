@@ -1,0 +1,29 @@
+[Unit]
+Description=LightningOS privileged broker request
+
+[Service]
+Type=exec
+User=root
+Group=root
+ExecStart=/usr/local/libexec/lightningos-privileged
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+SyslogIdentifier=lightningos-privileged
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/usr/local /etc/lightningos /etc/ufw /etc/systemd/system -/etc/avahi/services
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @reboot @swap
+TimeoutStartSec=30min

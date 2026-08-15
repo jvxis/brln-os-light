@@ -1,15 +1,43 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"lightningos-light/internal/lndclient"
+	"lightningos-light/internal/system"
 )
+
+type loopStatusTestClient struct {
+	*cpuMinerPrivilegedClient
+	installed bool
+	status    string
+	err       error
+}
+
+func (client *loopStatusTestClient) LoopStatus(context.Context) (bool, string, bool, bool, error) {
+	return client.installed, client.status, false, false, client.err
+}
+func (client *loopStatusTestClient) EnsureLoop(context.Context, []byte, []byte, bool) (string, error) {
+	return "ready", nil
+}
+func (client *loopStatusTestClient) LoopLifecycle(context.Context, string, bool) (string, error) {
+	return client.status, nil
+}
+func (client *loopStatusTestClient) RemoveLoop(context.Context, bool) error { return nil }
+func (client *loopStatusTestClient) EnsureLoopPermissions(context.Context, bool) error {
+	return nil
+}
+func (client *loopStatusTestClient) EnsureLoopClientMaterial(context.Context, bool) error {
+	return nil
+}
 
 func TestLoopDefinitionDisclosesElevatedLNDAccess(t *testing.T) {
 	def := loopDefinition()
@@ -18,12 +46,28 @@ func TestLoopDefinitionDisclosesElevatedLNDAccess(t *testing.T) {
 	}
 }
 
-func TestLoopServiceLifecyclePersistsAcrossReboots(t *testing.T) {
-	if got, want := loopStartSystemctlArgs(), []string{"systemctl", "enable", "--now", loopServiceName}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected Loop start args: got %#v want %#v", got, want)
+func TestLoopStatusUsesBrokerInstallationState(t *testing.T) {
+	client := &loopStatusTestClient{
+		cpuMinerPrivilegedClient: &cpuMinerPrivilegedClient{mode: "enforce"},
+		installed:                true,
+		status:                   "stopped",
 	}
-	if got, want := loopStopSystemctlArgs(), []string{"systemctl", "disable", "--now", loopServiceName}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected Loop stop args: got %#v want %#v", got, want)
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/apps/loop/status", nil)
+	(&Server{}).handleLoopStatus(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response loopStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Installed || response.Running {
+		t.Fatalf("unexpected Loop status: %#v", response)
 	}
 }
 
@@ -39,18 +83,6 @@ func TestLoopAssetForArch(t *testing.T) {
 	}
 	if _, err := loopAssetForArch("386"); err == nil {
 		t.Fatal("expected unsupported architecture error")
-	}
-}
-
-func TestNormalizeLoopManagerGroupID(t *testing.T) {
-	groupID, err := normalizeLoopManagerGroupID(" 1001 ")
-	if err != nil || groupID != "1001" {
-		t.Fatalf("unexpected normalized group ID %q: %v", groupID, err)
-	}
-	for _, value := range []string{"", "lightningos", "1001;touch /tmp/pwned", "-1"} {
-		if _, err := normalizeLoopManagerGroupID(value); err == nil {
-			t.Fatalf("expected invalid group ID %q to fail", value)
-		}
 	}
 }
 
@@ -128,36 +160,12 @@ func TestLoopAPIUsesManagerReadableClientMaterial(t *testing.T) {
 	if paths.ClientTLSCert == paths.LoopTLSCert || paths.ClientMacaroon == paths.LoopMacaroon {
 		t.Fatal("manager client material must be separate from daemon-owned credentials")
 	}
-	if !strings.HasPrefix(paths.ClientTLSCert, paths.Root+string(filepath.Separator)) ||
-		!strings.HasPrefix(paths.ClientMacaroon, paths.Root+string(filepath.Separator)) {
+	if !strings.HasPrefix(paths.ClientTLSCert, paths.Root+"/") ||
+		!strings.HasPrefix(paths.ClientMacaroon, paths.Root+"/") {
 		t.Fatal("manager client material must stay inside the Loop app directory")
 	}
-	syncScript := loopClientMaterialSyncScript(paths)
-	for _, expected := range []string{"PATH=/usr/bin:/bin", "umask 0027", "test ! -L", "mkdir -p", paths.ClientDir, paths.ClientTLSCert, paths.ClientMacaroon, "chmod 0640"} {
-		if !strings.Contains(syncScript, expected) {
-			t.Fatalf("client material sync missing %q", expected)
-		}
-	}
-	syncArgs := loopClientMaterialSyncRunArgs(paths, "1001")
-	joinedArgs := strings.Join(syncArgs, " ")
-	for _, expected := range []string{"--uid=" + loopUser, "--gid=1001", "/bin/sh", "-c"} {
-		if !strings.Contains(joinedArgs, expected) {
-			t.Fatalf("client material sync arguments missing %q: %q", expected, syncArgs)
-		}
-	}
-	if strings.Contains(joinedArgs, "--gid="+loopUser) {
-		t.Fatal("client material must inherit the manager group, not the isolated daemon group")
-	}
-	if syncArgs[len(syncArgs)-1] != syncScript {
-		t.Fatal("client material repair must execute the fixed inline script")
-	}
-	if strings.Contains(syncScript, "sleep 0.2") || strings.Contains(syncScript, `while [ "$i"`) {
-		t.Fatal("client material repair must not impose a startup deadline on the daemon")
-	}
-	for _, forbidden := range []string{"/data/lnd", "systemctl", "postgres", "bitcoin", "rm -", "chown -R", "usermod"} {
-		if strings.Contains(syncScript, forbidden) {
-			t.Fatalf("client material repair contains out-of-scope operation %q", forbidden)
-		}
+	if !strings.HasSuffix(paths.ClientTLSCert, "tls.cert") || !strings.HasSuffix(paths.ClientMacaroon, "loop.macaroon") {
+		t.Fatal("manager client material paths must remain fixed by the shared manifest")
 	}
 }
 
@@ -243,31 +251,6 @@ func TestValidateLoopDaemonMaterial(t *testing.T) {
 	missing := filepath.Join(dir, "missing")
 	if err := validateLoopDaemonMaterial(missing, "API certificate"); err == nil || !strings.Contains(err.Error(), "is unavailable") {
 		t.Fatalf("expected explicit missing material error, got %v", err)
-	}
-}
-
-func TestLoopDirectorySetupProvisionsDedicatedServiceAccount(t *testing.T) {
-	paths := loopAppPaths()
-	script := loopDirectorySetupScript(paths, "1001")
-	for _, expected := range []string{
-		"getent group 'lightningos-loop'",
-		"groupadd --system 'lightningos-loop'",
-		"id -u 'lightningos-loop'",
-		"useradd --system --gid 'lightningos-loop'",
-		"--no-create-home --shell /usr/sbin/nologin 'lightningos-loop'",
-		"DEBIAN_FRONTEND=noninteractive apt-get install -y acl",
-		"setfacl -m u:'lightningos-loop':--x '/var/lib/lightningos' '/var/lib/lightningos/apps' '/var/lib/lightningos/apps-data'",
-		"chown -R lightningos-loop:1001",
-	} {
-		if !strings.Contains(script, expected) {
-			t.Fatalf("directory setup missing %q:\n%s", expected, script)
-		}
-	}
-	if strings.Contains(script, "losop") {
-		t.Fatal("Loop daemon setup must not depend on the terminal operator")
-	}
-	if strings.Contains(script, "chmod 751 '/var/lib/lightningos'") || strings.Contains(script, "chown lightningos-loop '/var/lib/lightningos'") {
-		t.Fatal("Loop setup must not broaden global state-directory permissions or ownership")
 	}
 }
 

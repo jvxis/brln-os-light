@@ -779,19 +779,21 @@ Operational notes:
 ## Web terminal (optional)
 LightningOS can expose a protected web terminal using GoTTY.
 
-The installer auto-enables the terminal and generates a credential when it is missing.
-You can review or override in `/etc/lightningos/secrets.env`:
-- `TERMINAL_ENABLED=1`
+The installer provisions the terminal in a disabled, read-only state. The `losop`
+account has a locked Linux password, belongs to no privileged supplementary
+groups, and receives only the dedicated terminal environment.
+Enable or disable it from the LightningOS Terminal page. Both transitions
+require fresh confirmation of the LightningOS administrator password and are
+applied by the typed privileged broker; the terminal always returns to
+`TERMINAL_ALLOW_WRITE=0`.
+You can review the runtime settings in `/etc/lightningos/terminal.env`:
+- `TERMINAL_ENABLED=0` (managed by the Terminal page)
 - `TERMINAL_CREDENTIAL=user:pass`
-- `TERMINAL_ALLOW_WRITE=0` (set `1` to allow input)
+- `TERMINAL_ALLOW_WRITE=0` (enforced by terminal control)
 - `TERMINAL_PORT=7681` (optional)
 - `TERMINAL_WS_ORIGIN=^https://.*:8443$` (optional, default allows all origins)
-
-Start (or restart) the service:
-```bash
-sudo systemctl enable --now lightningos-terminal
-```
-The Terminal page shows the current password and a copy button.
+Credential rotation requires fresh LightningOS reauthentication and returns the
+new GoTTY password once. It never changes or unlocks the Linux password.
 
 ## Taproot Assets (experimental)
 
@@ -831,6 +833,12 @@ Daily report rows also include provenance freshness fields when the report is ge
 ## Security notes
 - The seed phrase is never stored. It is displayed once in the wizard.
 - RPC credentials are stored only in `/etc/lightningos/secrets.env` (root:lightningos, `chmod 660`).
+- Release `0.5.2` still gives the manager a root-equivalent host boundary: the
+  service belongs to the `docker` group and its passwordless sudo policy allows
+  unrestricted arguments for package, Docker, `systemd-run`, and UFW commands.
+  Login, TLS, CSRF, and LAN/VPN firewalling do not contain a compromised manager
+  process. The replacement broker and privilege-removal work is tracked in
+  [`docs/32_PRIVILEGE_HARDENING_PLAN.md`](docs/32_PRIVILEGE_HARDENING_PLAN.md).
 - API/UI bind to `0.0.0.0` by default for LAN access. If you want localhost-only, set `server.host: "127.0.0.1"` in `/etc/lightningos/config.yaml`.
 - Set `UTXO_LOCK_REQUIRES_REAUTH=true` to require the same wallet-send reauth scope before UTXO lock/unlock actions. This is optional because lock/unlock are reversible, but useful on shared admin sessions.
 - Sensitive API actions are recorded in Postgres `audit_events` and can be reviewed in the UI under `Audit`.

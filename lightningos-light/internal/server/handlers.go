@@ -20,7 +20,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/lndclient"
+	"lightningos-light/internal/privileged"
 	"lightningos-light/internal/system"
 )
 
@@ -31,7 +33,6 @@ const (
 	lndWalletDBPath           = "/data/lnd/data/chain/bitcoin/mainnet/wallet.db"
 	lndChannelDBPath          = "/data/lnd/data/graph/mainnet/channel.db"
 	lndAdminMacaroonPath      = "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"
-	lndFixPermsScript         = "/usr/local/sbin/lightningos-fix-lnd-perms"
 	mempoolBaseURL            = "https://mempool.space/api/v1/lightning"
 	boostPeersDefaultLimit    = 3
 	boostPeersMaxLimit        = 10
@@ -447,6 +448,8 @@ type bitcoinRPCConfig struct {
 	ZMQTx    string
 }
 
+var errBitcoinRPCCredentialsRestartConfirmationRequired = errors.New("confirm the one-time Bitcoin Core restart to activate managed RPC credentials")
+
 func (s *Server) handleBitcoin(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
@@ -480,8 +483,9 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		Source        string `json:"source"`
-		AllowUnsynced bool   `json:"allow_unsynced"`
+		Source                string `json:"source"`
+		AllowUnsynced         bool   `json:"allow_unsynced"`
+		ConfirmBitcoinRestart bool   `json:"confirm_bitcoin_restart"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -495,30 +499,23 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "source must be local or remote")
 		return
 	}
-	if source == "local" && !req.AllowUnsynced {
-		readyCtx, readyCancel := context.WithTimeout(r.Context(), 6*time.Second)
-		defer readyCancel()
-		ready, _ := s.bitcoinLocalReady(readyCtx)
-		if !ready {
-			writeError(w, http.StatusBadRequest, "local bitcoin is not fully synced")
-			return
-		}
-	}
-
-	remoteUser, remotePass := readBitcoinSecrets()
-	if source == "remote" && (remoteUser == "" || remotePass == "") {
+	remoteCfg := resolveBitcoinRemoteRPCConfig(s.cfg)
+	if source == "remote" && (remoteCfg.User == "" || remoteCfg.Pass == "") {
 		writeError(w, http.StatusBadRequest, "remote RPC credentials missing")
 		return
 	}
-	remoteCfg := bitcoinRPCConfig{
-		Host:     s.cfg.BitcoinRemote.RPCHost,
-		User:     remoteUser,
-		Pass:     remotePass,
-		ZMQBlock: s.cfg.BitcoinRemote.ZMQRawBlock,
-		ZMQTx:    s.cfg.BitcoinRemote.ZMQRawTx,
-	}
 
-	localCfg, localUpdated, err := readBitcoinLocalRPCConfig(r.Context())
+	var localCfg bitcoinRPCConfig
+	var err error
+	if source == "local" {
+		localCfg, err = s.resolveBitcoinLocalRPCConfigForSource(r.Context(), req.ConfirmBitcoinRestart)
+		if errors.Is(err, errBitcoinRPCCredentialsRestartConfirmationRequired) {
+			writeErrorCode(w, http.StatusConflict, "bitcoin_rpc_credentials_restart_required", err.Error())
+			return
+		}
+	} else {
+		localCfg, err = readBitcoinLocalRPCConfig(r.Context())
+	}
 	if err != nil && source == "local" {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -529,7 +526,15 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 			ZMQBlock: "tcp://127.0.0.1:28332",
 			ZMQTx:    "tcp://127.0.0.1:28333",
 		}
-		localUpdated = false
+	}
+	if source == "local" && !req.AllowUnsynced {
+		readyCtx, readyCancel := context.WithTimeout(r.Context(), 6*time.Second)
+		defer readyCancel()
+		ready, _ := bitcoinRPCReady(readyCtx, localCfg)
+		if !ready {
+			writeError(w, http.StatusBadRequest, "local bitcoin is not fully synced")
+			return
+		}
 	}
 
 	if err := updateLNDConfBitcoinSource(source, remoteCfg, localCfg); err != nil {
@@ -541,23 +546,21 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 	}
 	s.invalidateBitcoinStatusCaches()
 
-	needsBitcoinRestart := source == "local" && localUpdated
-	if source == "local" && !needsBitcoinRestart {
+	needsBitcoinRestart := false
+	if source == "local" {
 		rpcCtx, rpcCancel := context.WithTimeout(r.Context(), 4*time.Second)
 		defer rpcCancel()
 		if _, err := fetchBitcoinInfo(rpcCtx, localCfg.Host, localCfg.User, localCfg.Pass); err != nil {
-			var statusErr rpcStatusError
-			if errors.As(err, &statusErr) && statusErr.statusCode == http.StatusForbidden {
+			if isBitcoinRPCAuthenticationError(err) {
 				needsBitcoinRestart = true
 			}
 		}
 	}
 
 	if needsBitcoinRestart {
-		paths := bitcoinCoreAppPaths()
 		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 		defer cancel()
-		if err := runCompose(ctx, paths.Root, paths.ComposePath, "restart", "bitcoind"); err != nil {
+		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
 			writeError(w, http.StatusInternalServerError, "bitcoin restart failed")
 			return
 		}
@@ -582,27 +585,129 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (s *Server) bitcoinStatus(ctx context.Context) (bitcoinStatus, error) {
-	rpcUser := os.Getenv("BITCOIN_RPC_USER")
-	rpcPass := os.Getenv("BITCOIN_RPC_PASS")
-	if rpcUser == "" || rpcPass == "" {
-		fileUser, filePass := readBitcoinSecrets()
-		if rpcUser == "" {
-			rpcUser = fileUser
+func (s *Server) resolveBitcoinLocalRPCConfigForSource(ctx context.Context, confirmBitcoinRestart bool) (bitcoinRPCConfig, error) {
+	paths := bitcoinCoreAppPaths()
+	if fileExists(paths.ComposePath) {
+		storageCtx, storageCancel := context.WithTimeout(ctx, 12*time.Second)
+		handled, storageErr := system.EnsureBitcoinCoreStorageWithBroker(storageCtx, paths.DataDir)
+		storageCancel()
+		if !handled {
+			return bitcoinRPCConfig{}, errors.New("local Bitcoin storage repair requires privileged broker enforce mode")
 		}
-		if rpcPass == "" {
-			rpcPass = filePass
+		if storageErr != nil {
+			return bitcoinRPCConfig{}, fmt.Errorf("failed to validate local Bitcoin storage: %w", storageErr)
 		}
 	}
-	status := bitcoinStatus{
-		Mode:        "remote",
-		RPCHost:     s.cfg.BitcoinRemote.RPCHost,
-		ZMQRawBlock: s.cfg.BitcoinRemote.ZMQRawBlock,
-		ZMQRawTx:    s.cfg.BitcoinRemote.ZMQRawTx,
+	cfg, readErr := readBitcoinLocalRPCConfig(ctx)
+	if !fileExists(paths.ComposePath) {
+		return cfg, readErr
+	}
+	if readErr == nil {
+		probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		_, probeErr := fetchBitcoinInfo(probeCtx, cfg.Host, cfg.User, cfg.Pass)
+		cancel()
+		if probeErr == nil {
+			return cfg, nil
+		}
+		if !isBitcoinRPCAuthenticationError(probeErr) {
+			return cfg, nil
+		}
+	}
+	if !confirmBitcoinRestart {
+		return bitcoinRPCConfig{}, errBitcoinRPCCredentialsRestartConfirmationRequired
 	}
 
-	if rpcUser != "" && rpcPass != "" {
-		info, err := fetchBitcoinInfo(ctx, s.cfg.BitcoinRemote.RPCHost, rpcUser, rpcPass)
+	ensureCtx, ensureCancel := context.WithTimeout(ctx, 12*time.Second)
+	user, password, status, _, handled, err := system.EnsureBitcoinCoreCredentialsWithBroker(ensureCtx, paths.DataDir, false)
+	ensureCancel()
+	if !handled {
+		return bitcoinRPCConfig{}, errors.New("local RPC credential repair requires privileged broker enforce mode")
+	}
+	if err != nil {
+		return bitcoinRPCConfig{}, fmt.Errorf("failed to prepare local RPC credentials: %w", err)
+	}
+	if status != "ready" && status != "restart_required" {
+		return bitcoinRPCConfig{}, errors.New("local RPC credential repair returned an invalid state")
+	}
+	cfg = bitcoinRPCConfig{
+		Host:     "127.0.0.1:8332",
+		User:     user,
+		Pass:     password,
+		ZMQBlock: "tcp://127.0.0.1:28332",
+		ZMQTx:    "tcp://127.0.0.1:28333",
+	}
+	if raw, configErr := readBitcoinCoreConfigRaw(ctx, paths); configErr == nil {
+		_, _, cfg.ZMQBlock, cfg.ZMQTx = parseBitcoinCoreRPCConfig(raw)
+		cfg.ZMQBlock = normalizeLocalZMQ(cfg.ZMQBlock, "tcp://127.0.0.1:28332")
+		cfg.ZMQTx = normalizeLocalZMQ(cfg.ZMQTx, "tcp://127.0.0.1:28333")
+	}
+	if status == "restart_required" {
+		if err := ensureBitcoinCoreImage(ctx); err != nil {
+			return bitcoinRPCConfig{}, fmt.Errorf("failed to attest Bitcoin Core before RPC credential migration: %w", err)
+		}
+		restartCtx, restartCancel := context.WithTimeout(ctx, 20*time.Second)
+		err := runBitcoinCoreLifecycle(restartCtx, "restart")
+		restartCancel()
+		if err != nil {
+			return bitcoinRPCConfig{}, fmt.Errorf("failed to restart Bitcoin Core after RPC credential migration: %w", err)
+		}
+		if err := waitForBitcoinRPC(ctx, cfg, 2*time.Minute); err != nil {
+			return bitcoinRPCConfig{}, err
+		}
+	}
+	return cfg, nil
+}
+
+func waitForBitcoinRPC(ctx context.Context, cfg bitcoinRPCConfig, timeout time.Duration) error {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		probeCtx, probeCancel := context.WithTimeout(waitCtx, 4*time.Second)
+		ready, _ := bitcoinRPCReady(probeCtx, cfg)
+		probeCancel()
+		if ready {
+			return nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return errors.New("Bitcoin Core RPC did not return after credential migration")
+		case <-ticker.C:
+		}
+	}
+}
+
+func bitcoinRPCReady(ctx context.Context, cfg bitcoinRPCConfig) (bool, string) {
+	info, err := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
+	if err != nil {
+		return false, "rpc_unavailable"
+	}
+	if info.InitialBlockDownload || info.VerificationProgress < 0.9999 || (info.Headers > 0 && info.Blocks < info.Headers) {
+		return false, "syncing"
+	}
+	return true, "ready"
+}
+
+func isBitcoinRPCAuthenticationError(err error) bool {
+	var statusErr rpcStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	return statusErr.statusCode == http.StatusUnauthorized || statusErr.statusCode == http.StatusForbidden
+}
+
+func (s *Server) bitcoinStatus(ctx context.Context) (bitcoinStatus, error) {
+	remoteCfg := resolveBitcoinRemoteRPCConfig(s.cfg)
+	status := bitcoinStatus{
+		Mode:        "remote",
+		RPCHost:     remoteCfg.Host,
+		ZMQRawBlock: remoteCfg.ZMQBlock,
+		ZMQRawTx:    remoteCfg.ZMQTx,
+	}
+
+	if remoteCfg.User != "" && remoteCfg.Pass != "" {
+		info, err := fetchBitcoinInfo(ctx, remoteCfg.Host, remoteCfg.User, remoteCfg.Pass)
 		if err == nil {
 			status.RPCOk = true
 			status.Chain = info.Chain
@@ -611,7 +716,7 @@ func (s *Server) bitcoinStatus(ctx context.Context) (bitcoinStatus, error) {
 			status.VerificationProgress = info.VerificationProgress
 			status.InitialBlockDownload = info.InitialBlockDownload
 			status.BestBlockHash = info.BestBlockHash
-			if netInfo, netErr := fetchBitcoinNetworkInfo(ctx, s.cfg.BitcoinRemote.RPCHost, rpcUser, rpcPass); netErr == nil {
+			if netInfo, netErr := fetchBitcoinNetworkInfo(ctx, remoteCfg.Host, remoteCfg.User, remoteCfg.Pass); netErr == nil {
 				status.Version = netInfo.Version
 				status.Subversion = netInfo.Subversion
 			}
@@ -620,8 +725,8 @@ func (s *Server) bitcoinStatus(ctx context.Context) (bitcoinStatus, error) {
 		}
 	}
 
-	status.ZMQRawBlockOk = testTCP(s.cfg.BitcoinRemote.ZMQRawBlock)
-	status.ZMQRawTxOk = testTCP(s.cfg.BitcoinRemote.ZMQRawTx)
+	status.ZMQRawBlockOk = testTCP(remoteCfg.ZMQBlock)
+	status.ZMQRawTxOk = testTCP(remoteCfg.ZMQTx)
 
 	return status, nil
 }
@@ -635,7 +740,7 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 		ZMQRawTx:    "tcp://127.0.0.1:28333",
 	}
 	if !fileExists(paths.ComposePath) {
-		cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+		cfg, err := readBitcoinLocalRPCConfig(ctx)
 		if err == nil && strings.TrimSpace(cfg.Host) != "" {
 			status.RPCHost = cfg.Host
 			if strings.TrimSpace(cfg.ZMQBlock) != "" {
@@ -657,31 +762,39 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 	return status, nil
 }
 
-func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, bool, error) {
+func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, error) {
 	paths := bitcoinCoreAppPaths()
 	if !fileExists(paths.ComposePath) {
 		for _, candidate := range localBitcoinConfigCandidates(paths) {
 			if cfg, ok := readBitcoinConfRPCConfig(candidate); ok {
-				return cfg, false, nil
+				return cfg, nil
 			}
 		}
 		if cfg, ok := readBitcoinTaggedRPCConfigFromLNDConf("local"); ok {
-			return cfg, false, nil
+			return cfg, nil
 		}
 		if cfg, ok := readBitcoindRPCConfigFromLNDConf(); ok {
 			if isLocalRPCHost(cfg.Host) {
-				return cfg, false, nil
+				return cfg, nil
 			}
 		}
-		return bitcoinRPCConfig{}, false, errors.New("bitcoin core is not installed")
+		return bitcoinRPCConfig{}, errors.New("bitcoin core is not installed")
 	}
-	raw, updated, err := syncBitcoinCoreRPCAllowList(ctx, paths)
+	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
 	if err != nil {
-		return bitcoinRPCConfig{}, false, fmt.Errorf("failed to read local bitcoin.conf: %w", err)
+		return bitcoinRPCConfig{}, fmt.Errorf("failed to read local bitcoin.conf: %w", err)
 	}
 	user, pass, zmqBlock, zmqTx := parseBitcoinCoreRPCConfig(raw)
+	credentialUser, credentialPass, handled, credentialErr := system.ReadBitcoinCoreCredentialsWithBroker(ctx, paths.DataDir)
+	if handled && credentialErr == nil {
+		user = credentialUser
+		pass = credentialPass
+	}
 	if user == "" || pass == "" {
-		return bitcoinRPCConfig{}, false, errors.New("local RPC credentials missing")
+		if handled && credentialErr != nil {
+			return bitcoinRPCConfig{}, fmt.Errorf("local RPC credentials unavailable: %w", credentialErr)
+		}
+		return bitcoinRPCConfig{}, errors.New("local RPC credentials missing")
 	}
 	zmqBlock = normalizeLocalZMQ(zmqBlock, "tcp://127.0.0.1:28332")
 	zmqTx = normalizeLocalZMQ(zmqTx, "tcp://127.0.0.1:28333")
@@ -691,7 +804,7 @@ func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, bool, err
 		Pass:     pass,
 		ZMQBlock: zmqBlock,
 		ZMQTx:    zmqTx,
-	}, updated, nil
+	}, nil
 }
 
 func localBitcoinConfigCandidates(paths bitcoinCorePaths) []string {
@@ -768,7 +881,10 @@ func readBitcoindRPCConfigFromLNDConf() (bitcoinRPCConfig, bool) {
 
 func parseBitcoindRPCConfigFromLNDConf(raw string) (bitcoinRPCConfig, bool) {
 	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
-	inBitcoind := false
+	// go-flags accepts dotted LND options before the first INI section. This is
+	// common on nodes that predate LightningOS, so treat the global preamble as
+	// part of the effective Bitcoind configuration as well as [Bitcoind].
+	inBitcoind := true
 	cfg := bitcoinRPCConfig{
 		Host:     "127.0.0.1:8332",
 		ZMQBlock: "tcp://127.0.0.1:28332",
@@ -1069,7 +1185,8 @@ func (s *Server) handleWizardBitcoinRemote(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	info, err := fetchBitcoinInfo(ctx, s.cfg.BitcoinRemote.RPCHost, user, pass)
+	remoteCfg := resolveBitcoinRemoteRPCConfig(s.cfg)
+	info, err := fetchBitcoinInfo(ctx, remoteCfg.Host, user, pass)
 	if err != nil {
 		msg := "bitcoin rpc check failed"
 		msg = fmt.Sprintf("bitcoin rpc check failed: %v", err)
@@ -1088,9 +1205,9 @@ func (s *Server) handleWizardBitcoinRemote(w http.ResponseWriter, r *http.Reques
 		ctx,
 		user,
 		pass,
-		s.cfg.BitcoinRemote.RPCHost,
-		s.cfg.BitcoinRemote.ZMQRawBlock,
-		s.cfg.BitcoinRemote.ZMQRawTx,
+		remoteCfg.Host,
+		remoteCfg.ZMQBlock,
+		remoteCfg.ZMQTx,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update lnd.conf")
 		return
@@ -1229,16 +1346,16 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	if service == "lnd" {
-		err = system.SystemctlRestartNoBlock(ctx, service)
+		err = system.RestartServiceWithBroker(ctx, service, true)
 	} else {
-		err = system.SystemctlRestart(ctx, service)
+		err = system.RestartServiceWithBroker(ctx, service, service == "lightningos-manager")
 	}
 	if err != nil {
 		if service == "lnd" && s.logger != nil {
 			s.logger.Printf("lnd restart command failed: %v", err)
 		}
 		if service == "lnd" {
-			writeError(w, http.StatusInternalServerError, "lnd restart command failed; check manager sudoers for systemctl restart --no-block lnd")
+			writeError(w, http.StatusInternalServerError, "lnd restart failed through the privileged broker")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "restart failed")
@@ -1278,7 +1395,7 @@ func (s *Server) handleSystemAction(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
 
-	if err := system.SystemctlPower(ctx, action); err != nil {
+	if err := system.PowerHostWithBroker(ctx, action); err != nil {
 		writeError(w, http.StatusInternalServerError, "system action failed")
 		return
 	}
@@ -1420,13 +1537,11 @@ func isBitcoinLogService(service string) bool {
 
 func (s *Server) readBitcoinLocalLogLines(ctx context.Context, lines int, since string) ([]string, string, error) {
 	paths := bitcoinCoreAppPaths()
-	var dockerErr error
 	if fileExists(paths.ComposePath) {
-		out, err := readBitcoinComposeLogLines(ctx, paths, lines, since)
-		if err == nil {
-			return out, "docker:bitcoind", nil
+		if handled, out, source, err := system.ReadAppLogsWithBroker(ctx, appmanifest.BitcoinCoreID, lines, since); handled {
+			return out, source, err
 		}
-		dockerErr = err
+		return nil, "", errors.New("Bitcoin Core logs require privileged broker enforce mode")
 	}
 
 	if service := bitcoinSystemdLogService(ctx); service != "" {
@@ -1434,14 +1549,7 @@ func (s *Server) readBitcoinLocalLogLines(ctx context.Context, lines int, since 
 		if err == nil {
 			return out, "systemd:" + service, nil
 		}
-		if dockerErr != nil {
-			return nil, "", fmt.Errorf("docker log read failed: %v; systemd log read failed: %w", dockerErr, err)
-		}
 		return nil, "", err
-	}
-
-	if dockerErr != nil {
-		return nil, "", dockerErr
 	}
 
 	out, err := system.JournalTailSince(ctx, "bitcoind", lines, since)
@@ -1449,32 +1557,6 @@ func (s *Server) readBitcoinLocalLogLines(ctx context.Context, lines int, since 
 		return nil, "", errors.New("local bitcoin logs not available")
 	}
 	return out, "systemd:bitcoind", nil
-}
-
-func readBitcoinComposeLogLines(ctx context.Context, paths bitcoinCorePaths, lines int, since string) ([]string, error) {
-	return readComposeServiceLogLines(ctx, paths.Root, paths.ComposePath, "bitcoind", lines, since)
-}
-
-func readComposeServiceLogLines(ctx context.Context, root string, composePath string, serviceName string, lines int, since string) ([]string, error) {
-	if lines <= 0 {
-		lines = 200
-	}
-	cmd, baseArgs, err := resolveCompose(ctx)
-	if err != nil {
-		return nil, err
-	}
-	fullArgs := append(baseArgs, composeBaseArgs(root, composePath)...)
-	fullArgs = append(fullArgs, "logs", "--no-color", "--tail", strconv.Itoa(lines))
-	if strings.TrimSpace(since) != "" {
-		fullArgs = append(fullArgs, "--since", strings.TrimSpace(since))
-	}
-	fullArgs = append(fullArgs, serviceName)
-
-	out, err := system.RunCommandWithSudo(ctx, cmd, fullArgs...)
-	if err != nil {
-		return nil, err
-	}
-	return splitLogLines(out), nil
 }
 
 func bitcoinSystemdLogService(ctx context.Context) string {
@@ -3805,7 +3887,7 @@ func restartLNDService(ctx context.Context) error {
 	if !system.SystemctlIsActive(ctx, service) && system.SystemctlIsActive(ctx, "lnd@default") {
 		service = "lnd@default"
 	}
-	return system.SystemctlRestartNoBlock(ctx, service)
+	return system.RestartServiceWithBroker(ctx, service, true)
 }
 
 type lndOptionUpdate struct {
@@ -4038,13 +4120,13 @@ func (s *Server) handleOnchainUtxos(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("min_conf")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-			minConfs = int32(parsed)
+		if parsed, ok := parseNonNegativeInt32(raw); ok {
+			minConfs = parsed
 		}
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("max_conf")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-			maxConfs = int32(parsed)
+		if parsed, ok := parseNonNegativeInt32(raw); ok {
+			maxConfs = parsed
 			maxConfSet = true
 		}
 	}
@@ -4096,13 +4178,13 @@ func (s *Server) handleOnchainTransactions(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("min_conf")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-			minConfs = int32(parsed)
+		if parsed, ok := parseNonNegativeInt32(raw); ok {
+			minConfs = parsed
 		}
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("max_conf")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-			maxConfs = int32(parsed)
+		if parsed, ok := parseNonNegativeInt32(raw); ok {
+			maxConfs = parsed
 		}
 	}
 	if maxConfs > 0 && maxConfs < minConfs {
@@ -4142,6 +4224,14 @@ func (s *Server) handleOnchainTransactions(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func parseNonNegativeInt32(raw string) (int32, bool) {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 32)
+	if err != nil || parsed < 0 {
+		return 0, false
+	}
+	return int32(parsed), true
 }
 
 func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
@@ -5119,7 +5209,7 @@ func parseBitcoinInfo(body []byte) (bitcoinInfo, error) {
 		return bitcoinInfo{}, err
 	}
 	if payload.Error != nil {
-		return bitcoinInfo{}, fmt.Errorf(payload.Error.Message)
+		return bitcoinInfo{}, errors.New(payload.Error.Message)
 	}
 	return payload.Result, nil
 }
@@ -5130,7 +5220,7 @@ func parseBitcoinNetworkInfo(body []byte) (bitcoinNetworkInfo, error) {
 		return bitcoinNetworkInfo{}, err
 	}
 	if payload.Error != nil {
-		return bitcoinNetworkInfo{}, fmt.Errorf(payload.Error.Message)
+		return bitcoinNetworkInfo{}, errors.New(payload.Error.Message)
 	}
 	return payload.Result, nil
 }
@@ -5346,7 +5436,9 @@ func parseBitcoinSourceFromLNDConf(raw string) string {
 		return ""
 	}
 	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
-	inBitcoind := false
+	// Existing LND installations often keep dotted bitcoind.* options in the
+	// global INI preamble instead of a [Bitcoind] section.
+	inBitcoind := true
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
@@ -5497,73 +5589,6 @@ func normalizeLocalZMQ(value string, fallback string) string {
 	return "tcp://" + trimmed
 }
 
-func dockerContainerGateways(ctx context.Context, containerID string) []string {
-	if containerID == "" {
-		return []string{}
-	}
-	out, err := system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"inspect",
-		"-f",
-		"{{range $k,$v := .NetworkSettings.Networks}}{{println $v.Gateway}}{{end}}",
-		containerID,
-	)
-	if err != nil {
-		return []string{}
-	}
-	gateways := []string{}
-	seen := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		trimmed := strings.TrimSpace(line)
-		ip := net.ParseIP(trimmed)
-		if ip == nil {
-			continue
-		}
-		normalized := ip.String()
-		if seen[normalized] {
-			continue
-		}
-		seen[normalized] = true
-		gateways = append(gateways, normalized)
-	}
-	return gateways
-}
-
-func dockerContainerCIDRs(ctx context.Context, containerID string) []string {
-	if containerID == "" {
-		return []string{}
-	}
-	out, err := system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"inspect",
-		"-f",
-		"{{range $k,$v := .NetworkSettings.Networks}}{{printf \"%s/%d\\n\" $v.IPAddress $v.IPPrefixLen}}{{end}}",
-		containerID,
-	)
-	if err != nil {
-		return []string{}
-	}
-	cidrs := []string{}
-	seen := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "/") {
-			continue
-		}
-		if _, cidr, parseErr := net.ParseCIDR(trimmed); parseErr == nil && cidr != nil {
-			normalized := cidr.String()
-			if normalized == "" || seen[normalized] {
-				continue
-			}
-			seen[normalized] = true
-			cidrs = append(cidrs, normalized)
-		}
-	}
-	return cidrs
-}
-
 func updateLNDConfRPC(ctx context.Context, user, pass, host, zmqBlock, zmqTx string) error {
 	remoteCfg := bitcoinRPCConfig{
 		Host:     host,
@@ -5572,7 +5597,7 @@ func updateLNDConfRPC(ctx context.Context, user, pass, host, zmqBlock, zmqTx str
 		ZMQBlock: zmqBlock,
 		ZMQTx:    zmqTx,
 	}
-	localCfg, _, err := readBitcoinLocalRPCConfig(ctx)
+	localCfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		localCfg = bitcoinRPCConfig{
 			Host:     "127.0.0.1:8332",
@@ -5729,10 +5754,40 @@ func (s *Server) scheduleLNDPermissionsFix(reason string) {
 		waitCtx, waitCancel := context.WithTimeout(context.Background(), 12*time.Second)
 		waitForFile(waitCtx, lndAdminMacaroonPath)
 		waitCancel()
-		runCtx, runCancel := context.WithTimeout(context.Background(), 6*time.Second)
-		defer runCancel()
-		if _, err := system.RunCommandWithSudo(runCtx, lndFixPermsScript); err != nil {
+		convergeCtx, convergeCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer convergeCancel()
+		state, handled, err := convergeLNDManagerCredential(convergeCtx, 6, 2*time.Second, func(parent context.Context) (privileged.LNDManagerCredentialState, bool, error) {
+			runCtx, runCancel := context.WithTimeout(parent, 20*time.Second)
+			defer runCancel()
+			return system.EnsureLNDManagerCredentialWithBroker(runCtx)
+		})
+		if !handled {
+			s.logger.Printf("lnd permissions fix skipped (%s): privileged broker enforce mode is required", reason)
+			return
+		}
+		if err != nil {
+			s.logger.Printf("lnd manager credential migration failed (%s): %v", reason, err)
+			return
+		}
+		if state.Status == "pending" {
+			s.logger.Printf("lnd manager credential migration pending (%s): LND RPC is not ready", reason)
+			return
+		}
+		repairCtx, repairCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer repairCancel()
+		if handled, err := system.RepairLNDPermissionsWithBroker(repairCtx); !handled {
+			s.logger.Printf("lnd permissions fix skipped (%s): privileged broker enforce mode is required", reason)
+			return
+		} else if err != nil {
 			s.logger.Printf("lnd permissions fix failed (%s): %v", reason, err)
+			return
+		}
+		if s.cfg != nil && state.Status == "ready" && s.cfg.LND.AdminMacaroonPath != state.ConfiguredPath {
+			restartCtx, restartCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer restartCancel()
+			if err := system.RestartServiceWithBroker(restartCtx, "lightningos-manager", true); err != nil {
+				s.logger.Printf("manager restart after LND credential migration failed (%s): %v", reason, err)
+			}
 		}
 	}()
 }

@@ -1,0 +1,88 @@
+{
+  "schema": "lightningos.privilege-hardening.evidence.v1",
+  "phase": "2",
+  "slice": "fedimint-guardian-gateway",
+  "captured_at": "2026-08-13",
+  "catalog": {
+    "release": "0.11.1",
+    "upstream_commit": "2620789610a2c65c1068de973ebb5657d08d549d",
+    "guardian_image": "fedimint/fedimintd:v0.11.1@sha256:ba23a29ae5b71cf7685c0a4f6594ac92dc9fd6c8915fccc09c8100710177283e",
+    "gateway_image": "fedimint/gatewayd:v0.11.1@sha256:65365fceb2e85dfb01837553be53a3372f118e094a23f672ef52bc38baf28ddf"
+  },
+  "boundary": {
+    "manager_direct_privileged_calls": 0,
+    "broker_validates_exact_manifest": true,
+    "broker_owned_execution_snapshot": true,
+    "gateway_mounts_native_lnd_tree": false,
+    "gateway_uses_admin_macaroon": false,
+    "gateway_dedicated_lnd_permissions": [
+      "info:read",
+      "invoices:read",
+      "invoices:write",
+      "offchain:read",
+      "offchain:write",
+      "onchain:read",
+      "onchain:write",
+      "peers:read",
+      "peers:write"
+    ],
+    "bitcoin_modes": ["app-store", "native-systemd", "remote"],
+    "legacy_data_preserved": true,
+    "legacy_stopped_choice_preserved_until_operator_start": true
+  },
+  "disposable_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "network_during_gate": "NAT with localhost-only SSH forwarding",
+    "lan_scan_or_host_adapter_mutation": false,
+    "guardian": {
+      "version": "fedimintd 0.11.1",
+      "uid_gid": "1000:1000",
+      "read_only_root": true,
+      "cap_drop_all": true,
+      "no_new_privileges": true
+    },
+    "gateway": {
+      "version": "fedimint-gateway-server 0.11.1",
+      "uid_gid": "1000:1000",
+      "read_only_root": true,
+      "cap_drop_all": true,
+      "no_new_privileges": true
+    },
+    "cleanup": {
+      "containers_remaining": 0,
+      "project_networks_remaining": 0,
+      "catalog_images_remaining": 0,
+      "test_binary_removed": true,
+      "vm_powered_off": true,
+      "original_bridge_restored": true
+    }
+  },
+  "los_teste2_read_only": {
+    "guardian_status": "running",
+    "guardian_started_at": "2026-08-07T15:01:47.559010448Z",
+    "guardian_image_id": "sha256:ba23a29ae5b71cf7685c0a4f6594ac92dc9fd6c8915fccc09c8100710177283e",
+    "guardian_files": 15,
+    "gateway_status": "exited",
+    "gateway_started_at": "2026-08-04T11:30:01.405962959Z",
+    "gateway_finished_at": "2026-08-04T11:30:02.302162414Z",
+    "gateway_image_id": "sha256:65365fceb2e85dfb01837553be53a3372f118e094a23f672ef52bc38baf28ddf",
+    "gateway_files": 40,
+    "bitcoin_started_at": "2026-08-07T15:01:47.444810527Z",
+    "manager_active_enter_monotonic": "423170333669",
+    "lnd_active_enter_monotonic": "165280210848",
+    "mutation_performed": false
+  },
+  "tests": {
+    "focused_go": "pass",
+    "privileged_and_system_packages": "pass",
+    "go_vet": "pass",
+    "windows_builds": "pass",
+    "linux_amd64_builds": "pass",
+    "ui_production_build": "pass",
+    "full_go_suite": "known Windows CRLF fixture failures only",
+    "known_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ]
+  }
+}

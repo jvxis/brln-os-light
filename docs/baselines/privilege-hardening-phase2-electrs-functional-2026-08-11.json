@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-11T23:25:57Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "9f7098c",
+  "tested_source": "source_head_before_slice plus the Electrs and Bitcoin Local status slice",
+  "scope": "verified-source Electrs image, closed non-root manifest, private Bitcoin credential, broker-owned execution snapshot, full-node gate, lifecycle, inspection, and volume-removing uninstall",
+  "integration_node_used_as_positive_gate": false,
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "platform": {
+    "ubuntu_version": "24.04",
+    "architecture": "amd64",
+    "docker": "29.1.3",
+    "docker_compose": "2.40.3",
+    "go": "1.24.12"
+  },
+  "upstream": {
+    "project": "romanz/electrs",
+    "release": "0.11.1",
+    "tag": "v0.11.1",
+    "tag_object": "8e9bf28431b00286552248bd438ba5c2d4efaada",
+    "resolved_commit": "35216c6d30148be8e6763d913d437330f431fc03",
+    "source_url": "https://codeload.github.com/romanz/electrs/tar.gz/refs/tags/v0.11.1",
+    "source_sha256": "d51db4ffe2eac77deb62b6cf51745c3c9ef3965ca1bd72d3fd5c69f64540e33f",
+    "base_image": "debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258",
+    "output_image": "lightningos/electrs:0.11.1",
+    "gate_image_id": "sha256:db39852159a1324aefca44fc4dd8f0a3d968a8a6891ab1565e0bfa6dee827141"
+  },
+  "runtime_contract": {
+    "container_non_root": true,
+    "read_only_root_filesystem": true,
+    "all_capabilities_dropped": true,
+    "no_new_privileges": true,
+    "electrum_and_metrics_localhost_only": true,
+    "docker_socket_mounted": false,
+    "bitcoin_config_mounted": false,
+    "lnd_material_mounted": false,
+    "dedicated_cookie_read_only": true,
+    "caller_selected_images_paths_ports_networks_or_volumes": false,
+    "index_volume_removed_only_by_catalog_uninstall": true
+  },
+  "functional_gate": {
+    "chain": "regtest",
+    "blocks": 101,
+    "headers": 101,
+    "pruned": false,
+    "initial_block_download": false,
+    "txindex_enabled": true,
+    "txindex_synchronized": true,
+    "electrum_protocol": "passed",
+    "prometheus_metrics": "passed",
+    "stop_start": "passed",
+    "index_preserved_across_stop": true,
+    "uninstall_removed_index_volume": true,
+    "lifecycle_result": "passed"
+  },
+  "negative_gates": {
+    "bad_authentication": "rejected before Compose",
+    "pruned_node": "rejected before Compose",
+    "initial_block_download": "rejected before Compose",
+    "unsynchronized_chain": "rejected before Compose",
+    "missing_or_unsynchronized_txindex": "rejected before Compose",
+    "manifest_environment_or_cookie_tamper": "rejected",
+    "unsafe_secret_mode_or_symlink": "rejected",
+    "unattested_image": "rejected",
+    "caller_volume_flag": "rejected",
+    "invalid_failure_marker": "rejected"
+  },
+  "failures_retained_and_fixed": [
+    {
+      "failure": "source build could not authenticate crates.io because the runtime base lacked CA certificates",
+      "fail_closed": true,
+      "fix": "install ca-certificates in the catalog Dockerfile"
+    },
+    {
+      "failure": "the isolated Bitcoin fixture had no loaded wallet for address generation",
+      "fail_closed": true,
+      "fix": "create the dedicated electrs-gate regtest wallet"
+    },
+    {
+      "failure": "the transaction index had not yet caught up with the generated chain",
+      "fail_closed": true,
+      "fix": "retain the gate and wait boundedly for txindex to report fully synchronized"
+    }
+  ],
+  "validation": {
+    "linux_go_test_all": "passed",
+    "linux_go_vet_all": "passed",
+    "linux_manager_and_broker_build": "passed",
+    "registry_validation": "passed",
+    "ui_build": "passed"
+  },
+  "final_state": {
+    "temporary_electrs_containers_present": false,
+    "temporary_bitcoin_containers_present": false,
+    "temporary_networks_present": false,
+    "temporary_volumes_present": false,
+    "temporary_privileged_snapshot_present": false,
+    "temporary_remote_source_tree_present": false,
+    "gate_vm": "powered_off_and_network_restored",
+    "los_test2_changed_by_electrs_gate": false
+  },
+  "remaining_scope": [
+    "legacy rpcauth nodes need a one-time dedicated Electrs credential migration before installation",
+    "run the final supported-version matrix",
+    "continue the full PR 33 plan after this application slice"
+  ]
+}

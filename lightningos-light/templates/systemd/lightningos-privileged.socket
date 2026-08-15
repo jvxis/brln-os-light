@@ -1,0 +1,14 @@
+[Unit]
+Description=LightningOS privileged broker socket
+
+[Socket]
+ListenStream=/run/lightningos-privileged/broker.sock
+SocketUser=root
+SocketGroup=lightningos
+SocketMode=0660
+DirectoryMode=0750
+Accept=yes
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

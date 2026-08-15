@@ -559,9 +559,20 @@ POST /api/lnops/succession/simulate
 
 GET /api/apps
 - Returns app list with status.
+- While a lifecycle action is active, the affected app includes `operation` with `action`, UTC `started_at`, and an optional truthful `stage` for instrumented workflows.
 - Apps that currently receive privileged direct LND access include `security_notices=["elevated_lnd_access"]`. `lndg` additionally reports `lnd_data_directory_read`. These values are informational disclosures and do not alter lifecycle behavior.
-- Public Pool may include optional `ufw_active` and `ufw_command` fields when UFW is active and the active Bitcoin source is an existing systemd/external local node.
+- Public Pool firewall admission is broker-owned and fixed to its UI and Stratum ports; no executable UFW command is returned to the manager or API client.
 - `bark-wallet` reports `scheme=https`, port `4004`, and the path of its generated UI login password. Its Bark daemon and API are not published on the host.
+
+GET /api/apps/operations
+- Returns a lightweight object keyed by app ID for active install, start, stop, and uninstall actions.
+- Each value contains `action`, UTC `started_at`, and an optional `stage`; completed apps are omitted.
+- Intended for App Store progress polling without repeatedly inspecting every app runtime.
+
+GET /api/apps/bark-wallet/reveal-authorization
+- Authorizes the Bark Wallet proxy to forward its recovery-phrase reveal endpoint.
+- Requires recent `bark_seed_reveal` reauthentication when LightningOS login protection is enabled. Missing reauthentication returns HTTP 428 with `code=bark_seed_reauth_required`.
+- Returns HTTP 204 and no sensitive data. The manager never receives the Bark mnemonic, Bark session token, or Bark UI password.
 
 POST /api/apps/{id}/install
 - Installs an app.
@@ -572,8 +583,16 @@ POST /api/apps/{id}/install
 - `data_dir` is install-time only; existing blockchain data is not migrated.
 - `bitcoincore` defaults to `/data/bitcoin`; `elements` defaults to `/data/elements`.
 - Custom `bitcoincore` data directories must be on an already mounted volume and have at least 10 GiB free.
+- Installing `electrs` against Bitcoin Core managed by the App Store requires
+  `{"confirm_bitcoin_restart":true}`. On a legacy `rpcauth` installation the
+  manager adds a root-stored dedicated Electrs credential and may restart
+  Bitcoin Core exactly once to activate it. The restart is skipped when the
+  credential is already active. Native/systemd Bitcoin configurations and
+  services are never modified by this migration.
 
 POST /api/apps/{id}/start
+- Starting `electrs` against App Store Bitcoin accepts the same
+  `confirm_bitcoin_restart` body and restart policy as installation.
 POST /api/apps/{id}/stop
 POST /api/apps/{id}/uninstall
 - Uninstalling `bark-wallet` removes its containers and app definition but intentionally preserves `/var/lib/lightningos/apps-data/bark-wallet` so wallet/off-chain state is not destroyed by the generic App Store action.
@@ -709,9 +728,17 @@ GET /api/terminal/status
 - Returns whether the web terminal is enabled, whether a credential is configured, the write mode, port and operator username.
 - It never returns the GoTTY Basic credential or the Linux operator password.
 
+POST /api/terminal/control
+- Body: `{"enabled":true,"confirm_password":"..."}`.
+- Requires login protection and fresh reauthentication with scope `terminal_control` for both enable and disable.
+- Uses the typed privileged-broker operation `terminal.control`; the Manager never edits the runtime environment or invokes `systemctl` directly.
+- Enabling validates the fixed root-owned service, launcher and GoTTY binary, preserves the existing dedicated credential, forces `TERMINAL_ALLOW_WRITE=0`, verifies the service is active/enabled, and waits for the fixed loopback listener before returning success. Disabling stops and disables the service. A failed transition fails closed by forcing the runtime setting off and best-effort stopping/disabling the service.
+- Response: `{"enabled":true}`.
+
 POST /api/terminal/credential/rotate
 - Requires login protection and a recent reauthentication with scope `terminal_credential`.
-- Generates a new GoTTY/Linux operator credential, restarts `lightningos-terminal.service`, and returns the password once with `Cache-Control: no-store`.
+- Generates only a new GoTTY credential, updates the dedicated root-owned terminal environment, restarts `lightningos-terminal.service` when enabled, and returns the password once with `Cache-Control: no-store`.
+- It never changes or unlocks the Linux operator password.
 - Response: `{"operator_user":"losop","password":"...","restart_pending":false}`. The password cannot be retrieved after this response.
 ### Chat
 

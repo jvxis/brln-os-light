@@ -1,0 +1,95 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-installer-apt-repositories.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "issue 34 NodeSource and i2pd installer repository authentication",
+  "policy": {
+    "remote_setup_scripts_executed": false,
+    "remote_content_piped_to_shell": false,
+    "https_only": true,
+    "https_redirects_only": true,
+    "minimum_tls": "1.2",
+    "exact_downloaded_key_sha256_required": true,
+    "exact_primary_openpgp_fingerprint_required": true,
+    "single_primary_key_required": true,
+    "dedicated_signed_by_keyring": true,
+    "deb822_source_definition": true,
+    "caller_version_override": false,
+    "supported_architectures": [
+      "amd64",
+      "arm64"
+    ]
+  },
+  "repositories": [
+    {
+      "project": "NodeSource",
+      "node_major": 24,
+      "suite": "nodistro",
+      "key_format": "ascii-armored OpenPGP",
+      "downloaded_key_sha256": "b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d",
+      "primary_fingerprint": "6F71F525282841EEDAF851B42F59B5F99B1BE0B4",
+      "ubuntu24_repository_version_seen": "24.19.0-1nodesource1",
+      "verified": true
+    },
+    {
+      "project": "i2pd",
+      "suite": "noble",
+      "key_format": "binary OpenPGP",
+      "downloaded_key_sha256": "c9db4fa521b75bb2821c103e595173f289efe282aa5cbe9613f523983000140f",
+      "primary_fingerprint": "951928BB317024EFD053D73C66F6C87B98EBCFE2",
+      "ubuntu24_repository_version_seen": "2.61.0-1noble1",
+      "verified": true
+    }
+  ],
+  "negative_tests": {
+    "wrong_key_sha256": "rejected before keyring installation",
+    "wrong_primary_fingerprint": "rejected before keyring installation",
+    "non_https_key_url": "rejected before download",
+    "symlink_keyring_destination": "rejected before download",
+    "valid_key_with_trailing_junk": "rejected by whole-file SHA-256 before OpenPGP processing"
+  },
+  "tests": {
+    "all_installer_shell_syntax": "passed",
+    "all_installers_pin_node_major_24": "passed",
+    "all_installers_use_explicit_nodesource_repository": "passed",
+    "fresh_installer_uses_explicit_i2pd_repository": "passed",
+    "remote_setup_helper_regression_guard": "passed",
+    "focused_go_test": "passed",
+    "full_go_test": "passed",
+    "go_vet": "passed"
+  },
+  "ubuntu24_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "amd64",
+    "real_repository_keys_downloaded": 2,
+    "real_repository_metadata_authenticated": true,
+    "apt_state_isolated_under_temporary_directory": true,
+    "system_keyrings_and_sources_preserved": true,
+    "installed_packages_and_binary_hashes_preserved": true,
+    "service_activation_state_preserved": true,
+    "existing_newer_nodejs_preserved_without_downgrade": true,
+    "system_installation_executed": false,
+    "integration_node_mutated": false
+  },
+  "cleanup": {
+    "remote_target_validated_before_removal": true,
+    "remote_temporary_artifacts_removed": true,
+    "vm_powered_off_cleanly": true,
+    "loopback_nat_forward_removed": true,
+    "original_bridged_adapter_restored": true,
+    "host_network_adapter_restarted": false
+  },
+  "remaining_issue_34_scope": [
+    "apply authenticated LND release verification to every installer variant",
+    "authenticate remaining installer repository keys before installation",
+    "complete Ubuntu 24.04 and Ubuntu 26.04 fresh-install, upgrade, and negative matrices"
+  ],
+  "excluded": [
+    "credentials",
+    "tokens",
+    "ip addresses",
+    "private node identifiers"
+  ]
+}

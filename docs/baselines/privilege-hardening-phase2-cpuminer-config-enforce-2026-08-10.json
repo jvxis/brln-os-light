@@ -1,0 +1,22 @@
+{
+  "broker_mode_during_gate": "enforce",
+  "commit": "60371ea18dd242d24824a437e839bc668cbffbd9",
+  "config_apply_passed": true,
+  "date": "2026-08-10",
+  "final_app_absent": true,
+  "final_broker_mode": "disabled",
+  "final_docker_inactive": true,
+  "final_manager_docker_group_restored": true,
+  "manager_docker_group_during_config_apply": false,
+  "platform": "VirtualBox disposable Ubuntu 24.04 clone of brln-os-basica",
+  "schema": "lightningos.privilege-hardening.phase2.cpuminer-config.v1",
+  "secrets_in_evidence": false,
+  "tampered_environment_failed_closed": true,
+  "threads_apply_passed": true,
+  "typed_inspection_successes": 2,
+  "typed_lifecycle_expected_failure_codes": {
+    "app_lifecycle_failed": 1
+  },
+  "typed_lifecycle_successes": 3,
+  "worker_sanitization_passed": true
+}

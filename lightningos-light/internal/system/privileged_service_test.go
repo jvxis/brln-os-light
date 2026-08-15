@@ -1,0 +1,1373 @@
+package system
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+type fakePrivilegedServiceClient struct {
+	mode                     string
+	calls                    int
+	unit                     string
+	noBlock                  bool
+	dryRun                   bool
+	err                      error
+	powerCalls               int
+	powerAction              string
+	powerDryRun              bool
+	powerErr                 error
+	fileCalls                int
+	fileDryRun               bool
+	fileErr                  error
+	appCalls                 int
+	appID                    string
+	action                   string
+	appDryRun                bool
+	appErr                   error
+	snapshotCalls            int
+	snapshotAppID            string
+	snapshotDryRun           bool
+	snapshotErr              error
+	inspectCalls             int
+	inspectAppID             string
+	inspectStatus            string
+	inspectCPU               float64
+	inspectErr               error
+	removeCalls              int
+	removeAppID              string
+	removeDryRun             bool
+	removeErr                error
+	adminResetCalls          int
+	adminResetAppID          string
+	adminResetDryRun         bool
+	adminResetErr            error
+	dockerCalls              int
+	dockerStatusCalls        int
+	dockerDryRun             bool
+	dockerErr                error
+	dockerStatus             string
+	dockerStatusValues       []string
+	packageCalls             int
+	packageStatusCalls       int
+	packageFeature           string
+	packageDryRun            bool
+	packageStatus            string
+	packageEnsureValues      []string
+	packageValues            []string
+	packageErr               error
+	prepareCalls             int
+	imageAppID               string
+	imageVariant             string
+	imageDryRun              bool
+	prepareStatus            string
+	prepareErr               error
+	statusCalls              int
+	statusValues             []string
+	statusErr                error
+	probeCalls               int
+	probeRunnable            bool
+	probeErr                 error
+	firewallCalls            int
+	firewallAppID            string
+	firewallDryRun           bool
+	firewallStatus           string
+	firewallErr              error
+	lndHostCalls             int
+	lndHostAppID             string
+	lndHostDryRun            bool
+	lndHostErr               error
+	lndUpgradeCalls          int
+	lndUpgradeVersion        string
+	lndUpgradeHelper         string
+	lndUpgradeVerify         bool
+	lndUpgradeDryRun         bool
+	lndUpgradeUnit           string
+	lndUpgradeErr            error
+	torRefreshCalls          int
+	torUpgradeCalls          int
+	torUpgradeHelper         string
+	torUpgradeVerify         bool
+	torUpgradeDryRun         bool
+	torUpgradeUnit           string
+	torUpgradeErr            error
+	lightningOSUpgradeCalls  int
+	lightningOSUpgradeParams []string
+	lightningOSUpgradeVerify bool
+	lightningOSUpgradeDryRun bool
+	lightningOSUpgradeUnit   string
+	lightningOSUpgradeErr    error
+	appStorageCalls          int
+	appStorageDryRun         bool
+	appStorageStatus         string
+	appStorageChanged        bool
+	appStorageErr            error
+	smartCalls               int
+	smartDevice              string
+	smartOutput              string
+	smartAvailable           bool
+	smartErr                 error
+	lndPermissionsCalls      int
+	lndPermissionsDryRun     bool
+	lndPermissionsStatus     string
+	lndPermissionsChanged    bool
+	lndPermissionsErr        error
+	storageCalls             int
+	storageDataDir           string
+	storageDryRun            bool
+	storageStatus            string
+	storageErr               error
+	networkCalls             int
+	networkDryRun            bool
+	networkStatus            string
+	networkErr               error
+	configCalls              int
+	configOperation          string
+	configDataDir            string
+	configContent            string
+	configDryRun             bool
+	configStatus             string
+	configErr                error
+	electrsCredentialCalls   int
+	electrsCredentialStatus  string
+	electrsCredentialChanged bool
+	electrsCredentialDryRun  bool
+	electrsCredentialErr     error
+	bitcoinStatusCalls       int
+	bitcoinStatusJSON        string
+	bitcoinStatusErr         error
+	loopCalls                int
+	loopAction               string
+	loopDryRun               bool
+	loopInstalled            bool
+	loopStatus               string
+	loopHasMacaroon          bool
+	loopHasState             bool
+	loopErr                  error
+}
+
+type fakeManagerFirewallClient struct {
+	*fakePrivilegedServiceClient
+	raw   string
+	err   error
+	calls int
+}
+
+func (client *fakeManagerFirewallClient) ManagerFirewallStatus(context.Context) (string, error) {
+	client.calls++
+	return client.raw, client.err
+}
+
+func TestReadManagerFirewallStatusWithBrokerUsesEnforceAndShadow(t *testing.T) {
+	for _, mode := range []string{"enforce", "shadow"} {
+		t.Run(mode, func(t *testing.T) {
+			client := &fakeManagerFirewallClient{
+				fakePrivilegedServiceClient: &fakePrivilegedServiceClient{mode: mode},
+				raw:                         `{"installed":true,"active":true}`,
+			}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			raw, handled, err := ReadManagerFirewallStatusWithBroker(context.Background())
+			if err != nil || !handled || raw != client.raw || client.calls != 1 {
+				t.Fatalf("raw/handled/error/calls=%q/%v/%v/%d", raw, handled, err, client.calls)
+			}
+		})
+	}
+}
+
+func TestLoopBrokerHelpersFailClosedAndShadowValidates(t *testing.T) {
+	client := &fakePrivilegedServiceClient{
+		mode:            "enforce",
+		loopInstalled:   true,
+		loopStatus:      "running",
+		loopHasMacaroon: true,
+		loopHasState:    true,
+	}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+
+	handled, state, err := LoopStatusWithBroker(context.Background())
+	if !handled || err != nil || !state.Installed || state.Status != "running" || !state.HasLNDMacaroon || !state.HasPersistentState {
+		t.Fatalf("unexpected Loop broker status: handled=%v state=%+v err=%v", handled, state, err)
+	}
+	if handled, err := LoopLifecycleWithBroker(context.Background(), "stop"); !handled || err != nil || client.loopAction != "stop" || client.loopDryRun {
+		t.Fatalf("Loop enforce lifecycle did not execute: handled=%v err=%v client=%+v", handled, err, client)
+	}
+
+	client.mode = "shadow"
+	if handled, err := EnsureLoopPermissionsWithBroker(context.Background()); handled || err != nil || client.loopAction != "permissions" || !client.loopDryRun {
+		t.Fatalf("Loop shadow operation did not validate only: handled=%v err=%v client=%+v", handled, err, client)
+	}
+	if handled, _, err := LoopStatusWithBroker(context.Background()); handled || err != nil {
+		t.Fatalf("Loop status must fail closed outside enforce mode: handled=%v err=%v", handled, err)
+	}
+}
+
+func (client *fakePrivilegedServiceClient) LoopStatus(_ context.Context) (bool, string, bool, bool, error) {
+	client.loopCalls++
+	return client.loopInstalled, client.loopStatus, client.loopHasMacaroon, client.loopHasState, client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureLoop(_ context.Context, _, _ []byte, dryRun bool) (string, error) {
+	client.loopCalls++
+	client.loopAction = "ensure"
+	client.loopDryRun = dryRun
+	if dryRun {
+		return "validated", client.loopErr
+	}
+	return client.loopStatus, client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) LoopLifecycle(_ context.Context, action string, dryRun bool) (string, error) {
+	client.loopCalls++
+	client.loopAction = action
+	client.loopDryRun = dryRun
+	if dryRun {
+		return "validated", client.loopErr
+	}
+	return client.loopStatus, client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) RemoveLoop(_ context.Context, dryRun bool) error {
+	client.loopCalls++
+	client.loopAction = "remove"
+	client.loopDryRun = dryRun
+	return client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureLoopPermissions(_ context.Context, dryRun bool) error {
+	client.loopCalls++
+	client.loopAction = "permissions"
+	client.loopDryRun = dryRun
+	return client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureLoopClientMaterial(_ context.Context, dryRun bool) error {
+	client.loopCalls++
+	client.loopAction = "client-material"
+	client.loopDryRun = dryRun
+	return client.loopErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureBitcoinConsumerNetwork(_ context.Context, dryRun bool) (string, error) {
+	client.networkCalls++
+	client.networkDryRun = dryRun
+	status := client.networkStatus
+	if status == "" {
+		if dryRun {
+			status = "validated"
+		} else {
+			status = "ready"
+		}
+	}
+	return status, client.networkErr
+}
+
+func (client *fakePrivilegedServiceClient) AppLifecycle(_ context.Context, appID string, action string, dryRun bool) error {
+	client.appCalls++
+	client.appID = appID
+	client.action = action
+	client.appDryRun = dryRun
+	return client.appErr
+}
+
+func (client *fakePrivilegedServiceClient) SnapshotApp(_ context.Context, appID string, dryRun bool) error {
+	client.snapshotCalls++
+	client.snapshotAppID = appID
+	client.snapshotDryRun = dryRun
+	return client.snapshotErr
+}
+
+func (client *fakePrivilegedServiceClient) InspectApp(_ context.Context, appID string) (string, float64, error) {
+	client.inspectCalls++
+	client.inspectAppID = appID
+	return client.inspectStatus, client.inspectCPU, client.inspectErr
+}
+
+func (client *fakePrivilegedServiceClient) RemoveApp(_ context.Context, appID string, dryRun bool) error {
+	client.removeCalls++
+	client.removeAppID = appID
+	client.removeDryRun = dryRun
+	return client.removeErr
+}
+
+func (client *fakePrivilegedServiceClient) ResetAppAdmin(_ context.Context, appID string, dryRun bool) error {
+	client.adminResetCalls++
+	client.adminResetAppID = appID
+	client.adminResetDryRun = dryRun
+	return client.adminResetErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureDockerRuntime(_ context.Context, dryRun bool) (string, error) {
+	client.dockerCalls++
+	client.dockerDryRun = dryRun
+	return client.dockerStatus, client.dockerErr
+}
+
+func (client *fakePrivilegedServiceClient) DockerRuntimeStatus(_ context.Context) (string, error) {
+	client.dockerStatusCalls++
+	if client.dockerErr != nil {
+		return "", client.dockerErr
+	}
+	if len(client.dockerStatusValues) == 0 {
+		return client.dockerStatus, nil
+	}
+	status := client.dockerStatusValues[0]
+	client.dockerStatusValues = client.dockerStatusValues[1:]
+	return status, nil
+}
+
+func (client *fakePrivilegedServiceClient) EnsurePackageFeature(_ context.Context, feature string, dryRun bool) (string, error) {
+	client.packageCalls++
+	client.packageFeature = feature
+	client.packageDryRun = dryRun
+	if client.packageErr != nil {
+		return "", client.packageErr
+	}
+	if len(client.packageEnsureValues) == 0 {
+		return client.packageStatus, nil
+	}
+	status := client.packageEnsureValues[0]
+	client.packageEnsureValues = client.packageEnsureValues[1:]
+	return status, nil
+}
+
+func (client *fakePrivilegedServiceClient) PackageFeatureStatus(_ context.Context, feature string) (string, error) {
+	client.packageStatusCalls++
+	client.packageFeature = feature
+	if client.packageErr != nil {
+		return "", client.packageErr
+	}
+	if len(client.packageValues) == 0 {
+		return client.packageStatus, nil
+	}
+	status := client.packageValues[0]
+	client.packageValues = client.packageValues[1:]
+	return status, nil
+}
+
+func (client *fakePrivilegedServiceClient) PrepareAppImage(_ context.Context, appID string, variant string, dryRun bool) (string, error) {
+	client.prepareCalls++
+	client.imageAppID = appID
+	client.imageVariant = variant
+	client.imageDryRun = dryRun
+	return client.prepareStatus, client.prepareErr
+}
+
+func (client *fakePrivilegedServiceClient) AppImageStatus(_ context.Context, appID string, variant string) (string, error) {
+	client.statusCalls++
+	client.imageAppID = appID
+	client.imageVariant = variant
+	if client.statusErr != nil {
+		return "", client.statusErr
+	}
+	if len(client.statusValues) == 0 {
+		return "absent", nil
+	}
+	status := client.statusValues[0]
+	client.statusValues = client.statusValues[1:]
+	return status, nil
+}
+
+func (client *fakePrivilegedServiceClient) ProbeAppImage(_ context.Context, appID string, variant string, dryRun bool) (bool, error) {
+	client.probeCalls++
+	client.imageAppID = appID
+	client.imageVariant = variant
+	client.imageDryRun = dryRun
+	return client.probeRunnable, client.probeErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureAppFirewall(_ context.Context, appID string, dryRun bool) (string, error) {
+	client.firewallCalls++
+	client.firewallAppID = appID
+	client.firewallDryRun = dryRun
+	return client.firewallStatus, client.firewallErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureAppLNDHostAccess(_ context.Context, appID string, dryRun bool) error {
+	client.lndHostCalls++
+	client.lndHostAppID = appID
+	client.lndHostDryRun = dryRun
+	return client.lndHostErr
+}
+
+func (client *fakePrivilegedServiceClient) StartLNDUpgrade(_ context.Context, version string, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
+	client.lndUpgradeCalls++
+	client.lndUpgradeVersion = version
+	client.lndUpgradeHelper = helperContent
+	client.lndUpgradeVerify = verifyOnly
+	client.lndUpgradeDryRun = dryRun
+	unit := client.lndUpgradeUnit
+	if unit == "" {
+		unit = "lightningos-lnd-upgrade"
+	}
+	status := "started"
+	if dryRun {
+		status = "validated"
+	}
+	return status, unit, client.lndUpgradeErr
+}
+
+func (client *fakePrivilegedServiceClient) RefreshTorMetadata(_ context.Context, dryRun bool) (string, error) {
+	client.torRefreshCalls++
+	client.torUpgradeDryRun = dryRun
+	status := "refreshed"
+	if dryRun {
+		status = "validated"
+	}
+	return status, client.torUpgradeErr
+}
+
+func (client *fakePrivilegedServiceClient) StartTorUpgrade(_ context.Context, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
+	client.torUpgradeCalls++
+	client.torUpgradeHelper = helperContent
+	client.torUpgradeVerify = verifyOnly
+	client.torUpgradeDryRun = dryRun
+	unit := client.torUpgradeUnit
+	if unit == "" {
+		unit = "lightningos-tor-upgrade"
+		if verifyOnly {
+			unit = "lightningos-tor-verify"
+		}
+	}
+	status := "started"
+	if dryRun {
+		status = "validated"
+	}
+	return status, unit, client.torUpgradeErr
+}
+
+func (client *fakePrivilegedServiceClient) StartLightningOSUpgrade(_ context.Context, version, tag, commit, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
+	client.lightningOSUpgradeCalls++
+	client.lightningOSUpgradeParams = []string{version, tag, commit, helperContent}
+	client.lightningOSUpgradeVerify = verifyOnly
+	client.lightningOSUpgradeDryRun = dryRun
+	unit := client.lightningOSUpgradeUnit
+	if unit == "" {
+		unit = "lightningos-app-upgrade"
+		if verifyOnly {
+			unit = "lightningos-app-verify"
+		}
+	}
+	status := "started"
+	if dryRun {
+		status = "validated"
+	}
+	return status, unit, client.lightningOSUpgradeErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureAppStorage(_ context.Context, dryRun bool) (string, bool, error) {
+	client.appStorageCalls++
+	client.appStorageDryRun = dryRun
+	status := client.appStorageStatus
+	if status == "" {
+		status = "ready"
+		if dryRun {
+			status = "validated"
+		}
+	}
+	return status, client.appStorageChanged, client.appStorageErr
+}
+
+func (client *fakePrivilegedServiceClient) ReadSMART(_ context.Context, device string) (string, bool, error) {
+	client.smartCalls++
+	client.smartDevice = device
+	return client.smartOutput, client.smartAvailable, client.smartErr
+}
+
+func (client *fakePrivilegedServiceClient) RepairLNDPermissions(_ context.Context, dryRun bool) (string, bool, error) {
+	client.lndPermissionsCalls++
+	client.lndPermissionsDryRun = dryRun
+	status := client.lndPermissionsStatus
+	if status == "" {
+		status = "ready"
+		if dryRun {
+			status = "validated"
+		}
+	}
+	return status, client.lndPermissionsChanged, client.lndPermissionsErr
+}
+
+func (client *fakePrivilegedServiceClient) EnableLogin(_ context.Context, dryRun bool) error {
+	client.fileCalls++
+	client.fileDryRun = dryRun
+	return client.fileErr
+}
+
+func (client *fakePrivilegedServiceClient) Mode() string { return client.mode }
+
+func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreStorage(_ context.Context, dataDir string, dryRun bool) (string, error) {
+	client.storageCalls++
+	client.storageDataDir = dataDir
+	client.storageDryRun = dryRun
+	status := client.storageStatus
+	if status == "" {
+		if dryRun {
+			status = "validated"
+		} else {
+			status = "ready"
+		}
+	}
+	return status, client.storageErr
+}
+
+func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreConfig(_ context.Context, dataDir string, content string, _ bool, dryRun bool) (string, error) {
+	client.recordBitcoinCoreConfig("ensure", dataDir, content, dryRun)
+	return client.bitcoinCoreConfigStatus(dryRun), client.configErr
+}
+
+func (client *fakePrivilegedServiceClient) ReadBitcoinCoreCredentials(context.Context, string) (string, string, error) {
+	return "lightningos", strings.Repeat("a", 64), nil
+}
+
+func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreCredentials(_ context.Context, _ string, dryRun bool) (string, string, string, bool, error) {
+	if dryRun {
+		return "", "", "validated", false, nil
+	}
+	return "lightningos", strings.Repeat("a", 64), "ready", false, nil
+}
+
+func (client *fakePrivilegedServiceClient) EnsureBitcoinCoreElectrsCredentials(_ context.Context, _ string, dryRun bool) (string, string, string, bool, error) {
+	client.electrsCredentialCalls++
+	client.electrsCredentialDryRun = dryRun
+	status := client.electrsCredentialStatus
+	if status == "" {
+		if dryRun {
+			status = "validated"
+		} else {
+			status = "ready"
+		}
+	}
+	if dryRun {
+		return "", "", status, false, client.electrsCredentialErr
+	}
+	return "electrs", strings.Repeat("b", 64), status, client.electrsCredentialChanged, client.electrsCredentialErr
+}
+
+func (client *fakePrivilegedServiceClient) ReadBitcoinCoreConfig(_ context.Context, dataDir string) (string, error) {
+	content := client.configContent
+	client.recordBitcoinCoreConfig("read", dataDir, "", false)
+	return content, client.configErr
+}
+
+func (client *fakePrivilegedServiceClient) BitcoinCoreStatus(_ context.Context) (string, error) {
+	client.bitcoinStatusCalls++
+	return client.bitcoinStatusJSON, client.bitcoinStatusErr
+}
+
+func (client *fakePrivilegedServiceClient) WriteBitcoinCoreConfig(_ context.Context, dataDir string, content string, dryRun bool) (string, error) {
+	client.recordBitcoinCoreConfig("write", dataDir, content, dryRun)
+	return client.bitcoinCoreConfigStatus(dryRun), client.configErr
+}
+
+func (client *fakePrivilegedServiceClient) recordBitcoinCoreConfig(operation string, dataDir string, content string, dryRun bool) {
+	client.configCalls++
+	client.configOperation = operation
+	client.configDataDir = dataDir
+	client.configContent = content
+	client.configDryRun = dryRun
+}
+
+func (client *fakePrivilegedServiceClient) bitcoinCoreConfigStatus(dryRun bool) string {
+	if client.configStatus != "" {
+		return client.configStatus
+	}
+	if dryRun {
+		return "validated"
+	}
+	return "ready"
+}
+
+func (client *fakePrivilegedServiceClient) RestartService(_ context.Context, unit string, noBlock bool, dryRun bool) error {
+	client.calls++
+	client.unit = unit
+	client.noBlock = noBlock
+	client.dryRun = dryRun
+	return client.err
+}
+
+func (client *fakePrivilegedServiceClient) PowerHost(_ context.Context, action string, dryRun bool) error {
+	client.powerCalls++
+	client.powerAction = action
+	client.powerDryRun = dryRun
+	return client.powerErr
+}
+
+func TestRestartServiceWithBrokerEnforce(t *testing.T) {
+	client := &fakePrivilegedServiceClient{mode: "enforce", err: errors.New("rejected")}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+
+	err := RestartServiceWithBroker(context.Background(), "lnd", true)
+	if err == nil {
+		t.Fatal("expected broker rejection")
+	}
+	if client.calls != 1 || client.unit != "lnd" || !client.noBlock || client.dryRun {
+		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
+func TestRestartServiceWithBrokerManagerUsesNoBlock(t *testing.T) {
+	client := &fakePrivilegedServiceClient{mode: "enforce"}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+
+	if err := RestartServiceWithBroker(context.Background(), "lightningos-manager", true); err != nil {
+		t.Fatalf("restart manager: %v", err)
+	}
+	if client.calls != 1 || client.unit != "lightningos-manager" || !client.noBlock || client.dryRun {
+		t.Fatalf("manager restart must use one real non-blocking broker call: %#v", client)
+	}
+}
+
+func TestRestartServiceWithBrokerShadowValidatesAndFailsClosed(t *testing.T) {
+	client := &fakePrivilegedServiceClient{mode: "shadow", err: errors.New("rejected")}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+
+	err := RestartServiceWithBroker(context.Background(), "lnd", false)
+	if err == nil || !strings.Contains(err.Error(), "enforce mode") {
+		t.Fatalf("error = %v, want enforce-mode failure", err)
+	}
+	if client.calls != 1 || !client.dryRun {
+		t.Fatalf("shadow mode did not issue exactly one dry-run: %#v", client)
+	}
+}
+
+func TestRestartServiceWithBrokerDisabledFailsClosed(t *testing.T) {
+	client := &fakePrivilegedServiceClient{mode: "disabled"}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+
+	err := RestartServiceWithBroker(context.Background(), "lnd", false)
+	if err == nil || client.calls != 0 {
+		t.Fatalf("disabled mode error/calls = %v/%d", err, client.calls)
+	}
+}
+
+func TestPowerHostWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name       string
+		mode       string
+		wantErr    bool
+		wantCalls  int
+		wantDryRun bool
+	}{
+		{name: "enforce", mode: "enforce", wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantErr: true, wantCalls: 1, wantDryRun: true},
+		{name: "disabled", mode: "disabled", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			err := PowerHostWithBroker(context.Background(), "poweroff")
+			if (err != nil) != test.wantErr {
+				t.Fatalf("error = %v", err)
+			}
+			if client.powerCalls != test.wantCalls || client.powerDryRun != test.wantDryRun {
+				t.Fatalf("unexpected power call: %#v", client)
+			}
+			if client.powerCalls > 0 && client.powerAction != "poweroff" {
+				t.Fatalf("power action = %q", client.powerAction)
+			}
+		})
+	}
+}
+
+func TestEnableLoginConfigWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		path        string
+		fileErr     error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled", path: "/etc/lightningos/config.yaml"},
+		{name: "shadow", mode: "shadow", path: "/etc/lightningos/config.yaml", fileErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", path: "/etc/lightningos/config.yaml", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", path: "/etc/lightningos/config.yaml", fileErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+		{name: "custom shadow fallback", mode: "shadow", path: "/tmp/config.yaml"},
+		{name: "custom enforce rejected", mode: "enforce", path: "/tmp/config.yaml", wantHandled: true, wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, fileErr: test.fileErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := EnableLoginConfigWithBroker(context.Background(), test.path)
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.fileCalls != test.wantCalls || client.fileDryRun != test.wantDryRun {
+				t.Fatalf("unexpected file call: %#v", client)
+			}
+		})
+	}
+}
+
+func TestAppLifecycleWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		appErr      error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", appErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", appErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, appErr: test.appErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := AppLifecycleWithBroker(context.Background(), "cpuminer", "start")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.appCalls != test.wantCalls || client.appDryRun != test.wantDryRun {
+				t.Fatalf("unexpected app call: %#v", client)
+			}
+			if test.wantCalls == 1 && (client.appID != "cpuminer" || client.action != "start") {
+				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestSnapshotAppWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		snapshotErr error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", snapshotErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", snapshotErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, snapshotErr: test.snapshotErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := SnapshotAppWithBroker(context.Background(), "btcpay")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.snapshotCalls != test.wantCalls || client.snapshotDryRun != test.wantDryRun {
+				t.Fatalf("unexpected snapshot call: %#v", client)
+			}
+			if test.wantCalls == 1 && client.snapshotAppID != "btcpay" {
+				t.Fatalf("unexpected typed snapshot params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestEnsureAppFirewallWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		firewallErr error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", firewallErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", firewallErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, firewallStatus: "active", firewallErr: test.firewallErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, status, err := EnsureAppFirewallWithBroker(context.Background(), "robosats")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/status/error = %v/%q/%v", handled, status, err)
+			}
+			if client.firewallCalls != test.wantCalls || client.firewallDryRun != test.wantDryRun {
+				t.Fatalf("unexpected firewall call: %#v", client)
+			}
+			if test.wantCalls == 1 && client.firewallAppID != "robosats" {
+				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestEnsureAppLNDHostAccessWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		hostErr     error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", hostErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", hostErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, lndHostErr: test.hostErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := EnsureAppLNDHostAccessWithBroker(context.Background(), "btcpay")
+			if handled != test.wantHandled || (err != nil) != test.wantError || client.lndHostCalls != test.wantCalls || client.lndHostDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+			if test.wantCalls == 1 && client.lndHostAppID != "btcpay" {
+				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestInspectAppWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		inspectErr  error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", inspectErr: errors.New("rejected"), wantCalls: 1},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", inspectErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, inspectStatus: "running", inspectCPU: 99.5, inspectErr: test.inspectErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, status, cpu, err := InspectAppWithBroker(context.Background(), "cpuminer")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.inspectCalls != test.wantCalls {
+				t.Fatalf("unexpected inspect calls: %#v", client)
+			}
+			if test.wantHandled && !test.wantError && (status != "running" || cpu != 99.5) {
+				t.Fatalf("unexpected inspection = %q/%v", status, cpu)
+			}
+		})
+	}
+}
+
+func TestRemoveAppWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		removeErr   error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", removeErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", removeErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, removeErr: test.removeErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := RemoveAppWithBroker(context.Background(), "cpuminer")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.removeCalls != test.wantCalls || client.removeDryRun != test.wantDryRun {
+				t.Fatalf("unexpected remove call: %#v", client)
+			}
+			if test.wantCalls == 1 && client.removeAppID != "cpuminer" {
+				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestResetAppAdminWithBrokerModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		resetErr    error
+		wantHandled bool
+		wantError   bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", resetErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", resetErr: errors.New("failed"), wantHandled: true, wantError: true, wantCalls: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, adminResetErr: test.resetErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := ResetAppAdminWithBroker(context.Background(), "lndg")
+			if handled != test.wantHandled || (err != nil) != test.wantError {
+				t.Fatalf("handled/error = %v/%v", handled, err)
+			}
+			if client.adminResetCalls != test.wantCalls || client.adminResetDryRun != test.wantDryRun {
+				t.Fatalf("unexpected reset call: %#v", client)
+			}
+			if test.wantCalls == 1 && client.adminResetAppID != "lndg" {
+				t.Fatalf("unexpected typed app params: %#v", client)
+			}
+		})
+	}
+}
+
+func TestEnsureDockerRuntimeWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		mode         string
+		dockerErr    error
+		dockerStatus string
+		wantHandled  bool
+		wantError    bool
+		wantCalls    int
+		wantDryRun   bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", dockerErr: errors.New("rejected"), wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", dockerStatus: "ready", wantHandled: true, wantCalls: 1},
+		{name: "enforce error", mode: "enforce", dockerErr: errors.New("missing"), wantHandled: true, wantError: true, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, dockerErr: test.dockerErr, dockerStatus: test.dockerStatus}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := EnsureDockerRuntimeWithBroker(context.Background())
+			if handled != test.wantHandled || (err != nil) != test.wantError || client.dockerCalls != test.wantCalls || client.dockerDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+		})
+	}
+}
+
+func TestEnsurePackageFeatureWithBrokerStagesAndModes(t *testing.T) {
+	client := &fakePrivilegedServiceClient{
+		mode:                "enforce",
+		packageEnsureValues: []string{"indexing", "installing", "ready"},
+		packageValues:       []string{"indexed", "ready"},
+	}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+	handled, err := EnsurePackageFeatureWithBroker(context.Background(), "docker_runtime")
+	if !handled || err != nil || client.packageCalls != 3 || client.packageStatusCalls != 2 || client.packageFeature != "docker_runtime" {
+		t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+	}
+
+	shadow := &fakePrivilegedServiceClient{mode: "shadow", packageErr: errors.New("rejected")}
+	ConfigurePrivilegedClient(shadow)
+	handled, err = EnsurePackageFeatureWithBroker(context.Background(), "docker_runtime")
+	if handled || err != nil || shadow.packageCalls != 1 || !shadow.packageDryRun {
+		t.Fatalf("shadow handled/error/client=%v/%v/%#v", handled, err, shadow)
+	}
+}
+
+func TestPrepareAppImageWithBrokerWaitsForReady(t *testing.T) {
+	client := &fakePrivilegedServiceClient{mode: "enforce", prepareStatus: "preparing", statusValues: []string{"preparing", "ready"}}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+	handled, err := PrepareAppImageWithBroker(context.Background(), "cpuminer", "baseline")
+	if !handled || err != nil || client.prepareCalls != 1 || client.statusCalls != 2 || client.imageAppID != "cpuminer" || client.imageVariant != "baseline" {
+		t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+	}
+}
+
+func TestEnsureDockerRuntimeWithBrokerWaitsForReady(t *testing.T) {
+	client := &fakePrivilegedServiceClient{mode: "enforce", dockerStatus: "starting", dockerStatusValues: []string{"starting", "ready"}}
+	ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+	handled, err := EnsureDockerRuntimeWithBroker(context.Background())
+	if !handled || err != nil || client.dockerCalls != 1 || client.dockerStatusCalls != 2 {
+		t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+	}
+}
+
+func TestPrepareAppImageWithBrokerModesAndFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		prepare     string
+		status      []string
+		wantHandled bool
+		wantError   bool
+		wantDryRun  bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", prepare: "validated", wantDryRun: true},
+		{name: "ready", mode: "enforce", prepare: "ready", wantHandled: true},
+		{name: "failed", mode: "enforce", prepare: "preparing", status: []string{"failed"}, wantHandled: true, wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, prepareStatus: test.prepare, statusValues: test.status}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := PrepareAppImageWithBroker(context.Background(), "cpuminer", "baseline")
+			if handled != test.wantHandled || (err != nil) != test.wantError || client.imageDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+		})
+	}
+}
+
+func TestProbeAppImageWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		mode         string
+		runnable     bool
+		wantHandled  bool
+		wantRunnable bool
+		wantCalls    int
+		wantDryRun   bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", runnable: true, wantHandled: true, wantRunnable: true, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, probeRunnable: test.runnable}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, runnable, err := ProbeAppImageWithBroker(context.Background(), "cpuminer", "fast_pinned")
+			if err != nil || handled != test.wantHandled || runnable != test.wantRunnable || client.probeCalls != test.wantCalls || client.imageDryRun != test.wantDryRun {
+				t.Fatalf("handled/runnable/error/client=%v/%v/%v/%#v", handled, runnable, err, client)
+			}
+		})
+	}
+}
+
+func TestEnsureBitcoinCoreStorageWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		status      string
+		wantHandled bool
+		wantCalls   int
+		wantDryRun  bool
+		wantError   bool
+	}{
+		{name: "disabled", mode: "disabled"},
+		{name: "shadow", mode: "shadow", wantCalls: 1, wantDryRun: true},
+		{name: "enforce", mode: "enforce", status: "ready", wantHandled: true, wantCalls: 1},
+		{name: "invalid state", mode: "enforce", status: "validated", wantHandled: true, wantCalls: 1, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, storageStatus: test.status}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := EnsureBitcoinCoreStorageWithBroker(context.Background(), "/mnt/bitcoin-ssd/bitcoin")
+			if handled != test.wantHandled || (err != nil) != test.wantError || client.storageCalls != test.wantCalls || client.storageDryRun != test.wantDryRun || (client.storageCalls > 0 && client.storageDataDir != "/mnt/bitcoin-ssd/bitcoin") {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+		})
+	}
+}
+
+func TestEnsureBitcoinConsumerNetworkWithBrokerModes(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		status      string
+		brokerErr   error
+		wantHandled bool
+		wantErr     bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "enforce", mode: "enforce", status: "ready", wantHandled: true, wantCalls: 1},
+		{name: "enforce failure", mode: "enforce", brokerErr: errors.New("rejected"), wantHandled: true, wantErr: true, wantCalls: 1},
+		{name: "enforce invalid state", mode: "enforce", status: "invalid", wantHandled: true, wantErr: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", status: "validated", wantCalls: 1, wantDryRun: true},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, networkStatus: test.status, networkErr: test.brokerErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := EnsureBitcoinConsumerNetworkWithBroker(context.Background())
+			if handled != test.wantHandled || (err != nil) != test.wantErr || client.networkCalls != test.wantCalls || client.networkDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+		})
+	}
+}
+
+func TestBitcoinCoreConfigBrokerHelpersAreEnforceOnly(t *testing.T) {
+	const dataDir = "/mnt/bitcoin-ssd/bitcoin"
+	const content = "server=1\nrpcpassword=secret\n"
+
+	t.Run("shadow validates ensure without handling", func(t *testing.T) {
+		client := &fakePrivilegedServiceClient{mode: "shadow"}
+		ConfigurePrivilegedClient(client)
+		t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+		handled, err := EnsureBitcoinCoreConfigWithBroker(context.Background(), dataDir, content, true)
+		if err != nil || handled || client.configCalls != 1 || client.configOperation != "ensure" || !client.configDryRun || client.configContent != content {
+			t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+		}
+	})
+
+	t.Run("enforce reads and writes", func(t *testing.T) {
+		client := &fakePrivilegedServiceClient{mode: "enforce", configContent: content}
+		ConfigurePrivilegedClient(client)
+		t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+		read, handled, err := ReadBitcoinCoreConfigWithBroker(context.Background(), dataDir)
+		if err != nil || !handled || read != content || client.configOperation != "read" {
+			t.Fatalf("read/handled/error/client=%q/%v/%v/%#v", read, handled, err, client)
+		}
+		handled, err = WriteBitcoinCoreConfigWithBroker(context.Background(), dataDir, content)
+		if err != nil || !handled || client.configOperation != "write" || client.configDryRun || client.configContent != content {
+			t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+		}
+	})
+}
+
+func TestEnsureBitcoinCoreElectrsCredentialsWithBrokerModes(t *testing.T) {
+	const dataDir = "/mnt/bitcoin-ssd/bitcoin"
+	for _, test := range []struct {
+		name        string
+		mode        string
+		status      string
+		changed     bool
+		brokerErr   error
+		wantHandled bool
+		wantErr     bool
+		wantCalls   int
+		wantDryRun  bool
+	}{
+		{name: "enforce ready", mode: "enforce", status: "ready", wantHandled: true, wantCalls: 1},
+		{name: "enforce restart required", mode: "enforce", status: "restart_required", changed: true, wantHandled: true, wantCalls: 1},
+		{name: "enforce failure", mode: "enforce", brokerErr: errors.New("rejected"), wantHandled: true, wantErr: true, wantCalls: 1},
+		{name: "shadow validates only", mode: "shadow", status: "validated", wantCalls: 1, wantDryRun: true},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{
+				mode: test.mode, electrsCredentialStatus: test.status,
+				electrsCredentialChanged: test.changed, electrsCredentialErr: test.brokerErr,
+			}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			user, password, status, changed, handled, err := EnsureBitcoinCoreElectrsCredentialsWithBroker(t.Context(), dataDir)
+			if handled != test.wantHandled || (err != nil) != test.wantErr || client.electrsCredentialCalls != test.wantCalls || client.electrsCredentialDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+			if test.wantHandled && !test.wantErr {
+				if user != "electrs" || len(password) != 64 || status != test.status || changed != test.changed {
+					t.Fatalf("credential result=%q/%d/%q/%v", user, len(password), status, changed)
+				}
+			} else if user != "" || password != "" || status != "" || changed {
+				t.Fatalf("unexpected compatibility result=%q/%q/%q/%v", user, password, status, changed)
+			}
+		})
+	}
+}
+
+func TestBitcoinCoreStatusBrokerHelperUsesReadOnlyCapability(t *testing.T) {
+	const statusJSON = `{"chain":"main","blocks":100}`
+	for _, test := range []struct {
+		name        string
+		mode        string
+		brokerErr   error
+		wantHandled bool
+		wantErr     bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "enforce failure", mode: "enforce", brokerErr: errors.New("unavailable"), wantHandled: true, wantErr: true, wantCalls: 1},
+		{name: "shadow preserves compatibility status", mode: "shadow"},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode, bitcoinStatusJSON: statusJSON, bitcoinStatusErr: test.brokerErr}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			raw, handled, err := ReadBitcoinCoreStatusWithBroker(context.Background())
+			if handled != test.wantHandled || (err != nil) != test.wantErr || client.bitcoinStatusCalls != test.wantCalls {
+				t.Fatalf("raw/handled/error/client=%q/%v/%v/%#v", raw, handled, err, client)
+			}
+			if test.wantHandled && !test.wantErr && raw != statusJSON {
+				t.Fatalf("status=%q want=%q", raw, statusJSON)
+			}
+		})
+	}
+}
+
+func TestLNDUpgradeBrokerHelperEnforcesAndShadowsTypedOperation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantHandled bool
+		wantDryRun  bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantDryRun: true, wantCalls: 1},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, unit, err := StartLNDUpgradeWithBroker(context.Background(), "0.21.1-beta", "trusted helper", false)
+			if err != nil || handled != test.wantHandled || client.lndUpgradeCalls != test.wantCalls || client.lndUpgradeDryRun != test.wantDryRun {
+				t.Fatalf("handled/unit/error/client=%v/%q/%v/%#v", handled, unit, err, client)
+			}
+			if test.wantCalls == 1 && (client.lndUpgradeVersion != "0.21.1-beta" || client.lndUpgradeHelper != "trusted helper" || client.lndUpgradeVerify) {
+				t.Fatalf("typed LND upgrade fields were not preserved: %#v", client)
+			}
+		})
+	}
+}
+
+func TestTorUpgradeBrokerHelpersEnforceAndShadowTypedOperations(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantHandled bool
+		wantDryRun  bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantDryRun: true, wantCalls: 1},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+
+			refreshHandled, err := RefreshTorMetadataWithBroker(context.Background())
+			if err != nil || refreshHandled != test.wantHandled || client.torRefreshCalls != test.wantCalls || client.torUpgradeDryRun != test.wantDryRun {
+				t.Fatalf("refresh handled/error/client=%v/%v/%#v", refreshHandled, err, client)
+			}
+
+			handled, unit, err := StartTorUpgradeWithBroker(context.Background(), "trusted helper", true)
+			if err != nil || handled != test.wantHandled || client.torUpgradeCalls != test.wantCalls || client.torUpgradeDryRun != test.wantDryRun {
+				t.Fatalf("upgrade handled/unit/error/client=%v/%q/%v/%#v", handled, unit, err, client)
+			}
+			if test.wantCalls == 1 && (client.torUpgradeHelper != "trusted helper" || !client.torUpgradeVerify) {
+				t.Fatalf("typed Tor upgrade fields were not preserved: %#v", client)
+			}
+		})
+	}
+}
+
+func TestLightningOSUpgradeBrokerHelperEnforcesAndShadowsTypedOperation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantHandled bool
+		wantDryRun  bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantDryRun: true, wantCalls: 1},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, unit, err := StartLightningOSUpgradeWithBroker(context.Background(), "0.5.3-beta", "0.5.3-Beta", strings.Repeat("a", 40), "trusted helper", true)
+			if err != nil || handled != test.wantHandled || client.lightningOSUpgradeCalls != test.wantCalls || client.lightningOSUpgradeDryRun != test.wantDryRun {
+				t.Fatalf("handled/unit/error/client=%v/%q/%v/%#v", handled, unit, err, client)
+			}
+			if test.wantCalls == 1 && (!client.lightningOSUpgradeVerify || !reflect.DeepEqual(client.lightningOSUpgradeParams, []string{"0.5.3-beta", "0.5.3-Beta", strings.Repeat("a", 40), "trusted helper"})) {
+				t.Fatalf("typed LightningOS upgrade fields were not preserved: %#v", client)
+			}
+		})
+	}
+}
+
+func TestAppStorageBrokerHelperRequiresEnforceForMutation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantHandled bool
+		wantDryRun  bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantDryRun: true, wantCalls: 1},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := EnsureAppStorageWithBroker(context.Background())
+			if err != nil || handled != test.wantHandled || client.appStorageCalls != test.wantCalls || client.appStorageDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+		})
+	}
+}
+
+func TestSMARTBrokerHelperHandlesEnforceAndShadowReads(t *testing.T) {
+	for _, mode := range []string{"enforce", "shadow"} {
+		t.Run(mode, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: mode, smartOutput: "SMART payload", smartAvailable: true}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			output, handled, err := ReadSMARTWithBroker(context.Background(), "/dev/sda")
+			if err != nil || !handled || output != "SMART payload" || client.smartCalls != 1 || client.smartDevice != "/dev/sda" {
+				t.Fatalf("output/handled/error/client=%q/%v/%v/%#v", output, handled, err, client)
+			}
+		})
+	}
+}
+
+func TestLNDPermissionsBrokerHelperRequiresEnforceForMutation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mode        string
+		wantHandled bool
+		wantDryRun  bool
+		wantCalls   int
+	}{
+		{name: "enforce", mode: "enforce", wantHandled: true, wantCalls: 1},
+		{name: "shadow", mode: "shadow", wantDryRun: true, wantCalls: 1},
+		{name: "disabled", mode: "disabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakePrivilegedServiceClient{mode: test.mode}
+			ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
+			handled, err := RepairLNDPermissionsWithBroker(context.Background())
+			if err != nil || handled != test.wantHandled || client.lndPermissionsCalls != test.wantCalls || client.lndPermissionsDryRun != test.wantDryRun {
+				t.Fatalf("handled/error/client=%v/%v/%#v", handled, err, client)
+			}
+		})
+	}
+}

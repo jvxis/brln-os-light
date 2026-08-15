@@ -1,0 +1,114 @@
+{
+  "captured_at_utc": "2026-08-12T12:34:30Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "b0e0338",
+  "scope": "native BRLN Loop Out and Magma OS-privilege boundary",
+  "architecture": {
+    "runtime": "in-process manager services",
+    "container_lifecycle": false,
+    "systemd_lifecycle": false,
+    "external_firewall_port": false,
+    "root_file_write": false,
+    "sudo_calls": 0,
+    "direct_docker_calls": 0,
+    "privileged_broker_operations": 0,
+    "lifecycle_persistence": "manager PostgreSQL"
+  },
+  "static_boundary": {
+    "production_files_scanned": [
+      "apps_loopout_brln.go",
+      "apps_magma.go",
+      "loopout_brln_*.go",
+      "magma_*.go"
+    ],
+    "blocked_imports": [
+      "os/exec",
+      "syscall",
+      "lightningos-light/internal/privileged",
+      "lightningos-light/internal/system"
+    ],
+    "blocked_operation_classes": [
+      "sudo and systemd wrappers",
+      "Docker and Compose wrappers",
+      "typed OS-privileged broker calls",
+      "host file mutation",
+      "host listener creation"
+    ],
+    "gate": "pass"
+  },
+  "lnd_authority": {
+    "loopout_brln": {
+      "capabilities": [
+        "list channels",
+        "decode invoice",
+        "pay invoice through selected outgoing channels",
+        "track payment",
+        "create on-chain return address"
+      ],
+      "fresh_reauthentication_before_job_or_sensitive_return_control": true,
+      "central_spending_guard": true
+    },
+    "magma": {
+      "capabilities": [
+        "create invoice",
+        "read balances and channels",
+        "connect peer",
+        "preview and open channel",
+        "read pending channels and on-chain transactions",
+        "enforce sold-channel fee ceilings"
+      ],
+      "fresh_reauthentication_before_manual_channel_open": true,
+      "installed_mode_during_gate": "monitor",
+      "amboss_token_returned_by_api": false
+    }
+  },
+  "app_store_disclosure": {
+    "third_party_disclaimer_required": false,
+    "reason": "BRLN Loop Out and Magma are first-party native manager features",
+    "loopout_brln_elevated_notice": false,
+    "magma_elevated_notice": false
+  },
+  "los_teste2_gate": {
+    "manager_service_user": "lightningos",
+    "manager_service_group": "lightningos",
+    "manager_health": 200,
+    "login_protection": true,
+    "authenticated_app_inventory": "pass",
+    "loopout_brln_installed_before_after": true,
+    "loopout_brln_status_before_after": "running",
+    "loopout_brln_active_jobs_before_restart": 0,
+    "magma_installed_before_after": true,
+    "magma_status_before_after": "running",
+    "magma_transient_orders_before_restart": 0,
+    "magma_mode_before_after": "monitor",
+    "fund_movement_or_channel_open_during_gate": false
+  },
+  "global_cutover_dependency": {
+    "manager_still_in_legacy_docker_group": true,
+    "reason": "the integration node remains in shadow until all Docker App Store contracts pass",
+    "native_app_specific_docker_dependency": false,
+    "required_final_action": "remove manager Docker group and socket access during the shared enforce cutover"
+  },
+  "service_preservation": {
+    "bitcoin_container_started_at_before_after_equal": true,
+    "lnd_activation_timestamp_before_after_equal": true,
+    "bitcoin_restarted": false,
+    "lnd_restarted": false
+  },
+  "cleanup": {
+    "remote_uploaded_binaries": 0,
+    "remote_binary_backups": 0,
+    "remote_session_cookies": 0,
+    "local_build_artifacts": 0,
+    "network_scan_or_adapter_operation": false
+  },
+  "validation": {
+    "focused_native_brln_tests": "pass",
+    "registry_first_party_notice_test": "pass",
+    "static_privilege_boundary_test": "pass",
+    "go_vet": "pass",
+    "go_build_all": "pass",
+    "ui_production_build": "pass",
+    "full_go_test_note": "All packages passed except the two pre-existing Windows CRLF-sensitive installer script assertions; the native BRLN and privilege-boundary suites passed."
+  }
+}

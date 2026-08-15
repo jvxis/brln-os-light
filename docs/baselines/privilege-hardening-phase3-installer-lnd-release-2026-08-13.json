@@ -1,0 +1,79 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-installer-lnd-release.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "issue 34 authenticated LND release installation across installer variants",
+  "release": {
+    "project": "LND",
+    "version": "0.21.1-beta",
+    "archive_source": "official lightningnetwork/lnd GitHub release",
+    "manifest": "manifest-v0.21.1-beta.txt",
+    "minimum_valid_signatures": 5,
+    "valid_signatures_observed": 6,
+    "signer_primary_fingerprints_pinned": true,
+    "archive_sha256_from_authenticated_manifest": true,
+    "archive_paths_validated_before_extraction": true,
+    "archive_version_validated_before_installation": true
+  },
+  "policy": {
+    "canonical_helper": "internal/server/assets/upgrade-lnd.sh",
+    "obsolete_unauthenticated_helper_removed": true,
+    "all_installers_install_canonical_helper": true,
+    "fresh_installer_version_override": false,
+    "fresh_installer_url_override": false,
+    "https_only": true,
+    "https_redirects_only": true,
+    "minimum_tls": "1.2",
+    "new_install_refuses_existing_lnd_or_lncli": true,
+    "new_install_uses_no_clobber_commit": true,
+    "new_install_failure_removes_own_committed_files": true,
+    "unknown_existing_version_fails_closed": true,
+    "newer_existing_version_is_not_downgraded": true
+  },
+  "tests": {
+    "all_installer_shell_syntax": "passed",
+    "canonical_helper_static_authentication_order": "passed",
+    "canonical_helper_install_new_boundary": "passed",
+    "legacy_helper_absence_regression": "passed",
+    "focused_go_test": "passed",
+    "full_go_test": "passed",
+    "go_vet": "passed"
+  },
+  "ubuntu24_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "amd64",
+    "container": "temporary Ubuntu 24.04 root filesystem",
+    "real_release_downloaded": true,
+    "real_manifest_authenticated": true,
+    "real_archive_checksum_authenticated": true,
+    "real_install_new_completed": true,
+    "installed_lnd_version": "0.21.1-beta",
+    "installed_lncli_version": "0.21.1-beta",
+    "staging_files_absent_after_install": true,
+    "host_lnd_and_lncli_hashes_preserved": true,
+    "host_lnd_bitcoin_manager_postgres_state_preserved": true,
+    "temporary_container_removed": true,
+    "temporary_image_removed": true,
+    "integration_node_mutated": false
+  },
+  "cleanup": {
+    "remote_target_validated_before_removal": true,
+    "remote_temporary_artifacts_removed": true,
+    "vm_powered_off_cleanly": true,
+    "loopback_nat_forward_removed": true,
+    "original_bridged_adapter_restored": true,
+    "host_network_adapter_restarted": false
+  },
+  "remaining_issue_34_scope": [
+    "authenticate remaining installer repository keys before installation",
+    "complete Ubuntu 24.04 and Ubuntu 26.04 fresh-install, upgrade, and negative matrices"
+  ],
+  "excluded": [
+    "credentials",
+    "tokens",
+    "ip addresses",
+    "private node identifiers"
+  ]
+}

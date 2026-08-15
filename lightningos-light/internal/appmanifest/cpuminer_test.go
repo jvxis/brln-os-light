@@ -1,0 +1,112 @@
+package appmanifest
+
+import "testing"
+
+func TestValidateCPUMinerEnv(t *testing.T) {
+	valid := "CPUMINER_IMAGE=" + CPUMinerBaselineImage + "\n" +
+		"POOL_MODE=brln\n" +
+		"STRATUM_HOST=btcpool.br-ln.com\n" +
+		"STRATUM_PORT=3332\n" +
+		"MINING_ADDRESS=bc1qexampleaddress000000000000000000000000\n" +
+		"WORKER_NAME=cpu-lottery\n" +
+		"THREADS=1\n"
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{name: "valid BR-LN", raw: valid},
+		{name: "valid local", raw: "CPUMINER_IMAGE=" + CPUMinerFastImage + "\nPOOL_MODE=local\nSTRATUM_HOST=host.docker.internal\nSTRATUM_PORT=3333\nMINING_ADDRESS=1ExampleAddress00000000000000000000\nWORKER_NAME=worker_1\nTHREADS=2\n"},
+		{name: "legacy mutable baseline rejected", raw: replaceEnvValue(valid, "CPUMINER_IMAGE", cpuminerLegacyBaselineImage), wantErr: true},
+		{name: "legacy mutable fast rejected", raw: replaceEnvValue(valid, "CPUMINER_IMAGE", cpuminerLegacyFastImage), wantErr: true},
+		{name: "unknown key", raw: valid + "COMPOSE_FILE=/tmp/evil.yaml\n", wantErr: true},
+		{name: "duplicate key", raw: valid + "THREADS=2\n", wantErr: true},
+		{name: "image injection", raw: replaceEnvValue(valid, "CPUMINER_IMAGE", "evil/image:latest"), wantErr: true},
+		{name: "pool mismatch", raw: replaceEnvValue(valid, "STRATUM_HOST", "attacker.example"), wantErr: true},
+		{name: "worker interpolation", raw: replaceEnvValue(valid, "WORKER_NAME", "${PWD}"), wantErr: true},
+		{name: "invalid threads", raw: replaceEnvValue(valid, "THREADS", "01"), wantErr: true},
+		{name: "comment rejected", raw: "# source /etc/shadow\n" + valid, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateCPUMinerEnv([]byte(test.raw))
+			if (err != nil) != test.wantErr {
+				t.Fatalf("ValidateCPUMinerEnv() error = %v, wantErr %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestCPUMinerImageRequiresValidatedEnvironment(t *testing.T) {
+	valid := "CPUMINER_IMAGE=" + CPUMinerBaselineImage + "\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
+	image, err := CPUMinerImage([]byte(valid))
+	if err != nil || image != CPUMinerBaselineImage {
+		t.Fatalf("CPUMinerImage() = %q/%v", image, err)
+	}
+	if _, err := CPUMinerImage([]byte(replaceEnvValue(valid, "CPUMINER_IMAGE", "evil/root:latest"))); err == nil {
+		t.Fatal("expected unallowlisted image to fail")
+	}
+}
+
+func TestCPUMinerImageVariantsAreClosedMappings(t *testing.T) {
+	tests := []struct {
+		variant CPUMinerImageVariant
+		image   string
+	}{
+		{variant: CPUMinerImageBaseline, image: CPUMinerBaselineImage},
+		{variant: CPUMinerImageFastPinned, image: CPUMinerFastImage},
+	}
+	for _, test := range tests {
+		image, err := CPUMinerImageForVariant(test.variant)
+		if err != nil || image != test.image {
+			t.Fatalf("CPUMinerImageForVariant(%q)=%q/%v", test.variant, image, err)
+		}
+		variant, err := CPUMinerVariantForImage(test.image)
+		if err != nil || variant != test.variant {
+			t.Fatalf("CPUMinerVariantForImage(%q)=%q/%v", test.image, variant, err)
+		}
+	}
+	if _, err := CPUMinerImageForVariant("../../evil"); err == nil {
+		t.Fatal("expected unknown variant to fail")
+	}
+	if _, err := CPUMinerVariantForImage("evil/root:latest"); err == nil {
+		t.Fatal("expected unknown image to fail")
+	}
+}
+
+func TestLegacyCPUMinerImagesAreMigrationOnly(t *testing.T) {
+	base := "CPUMINER_IMAGE=" + cpuminerLegacyBaselineImage + "\nPOOL_MODE=brln\nSTRATUM_HOST=btcpool.br-ln.com\nSTRATUM_PORT=3332\nMINING_ADDRESS=bc1qexampleaddress000000000000000000000000\nWORKER_NAME=cpu-lottery\nTHREADS=1\n"
+	if err := ValidateLegacyCPUMinerEnv([]byte(base)); err != nil {
+		t.Fatalf("legacy declaration was not recognized: %v", err)
+	}
+	if err := ValidateCPUMinerEnv([]byte(base)); err == nil {
+		t.Fatal("legacy mutable image reached current validation")
+	}
+	for legacy, want := range map[string]string{
+		cpuminerLegacyBaselineImage: CPUMinerBaselineImage,
+		cpuminerLegacyFastImage:     CPUMinerFastImage,
+	} {
+		if got, ok := NormalizeCPUMinerImage(legacy); !ok || got != want {
+			t.Fatalf("NormalizeCPUMinerImage(%q)=%q/%v, want %q/true", legacy, got, ok, want)
+		}
+	}
+	if _, ok := NormalizeCPUMinerImage("evil/root:latest"); ok {
+		t.Fatal("unexpected image normalized")
+	}
+}
+
+func replaceEnvValue(raw string, key string, value string) string {
+	oldStart := key + "="
+	start := 0
+	for start < len(raw) {
+		end := start
+		for end < len(raw) && raw[end] != '\n' {
+			end++
+		}
+		if len(raw[start:end]) >= len(oldStart) && raw[start:start+len(oldStart)] == oldStart {
+			return raw[:start] + oldStart + value + raw[end:]
+		}
+		start = end + 1
+	}
+	return raw
+}

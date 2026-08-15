@@ -1,0 +1,78 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-lnd-permissions.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "typed bounded LND metadata reconciliation",
+  "operation": {
+    "name": "storage.lnd.permissions.repair",
+    "caller_fields": [],
+    "fixed_identity": "lnd",
+    "fixed_root": "/data/lnd",
+    "directories": [
+      "/data/lnd",
+      "/data/lnd/data",
+      "/data/lnd/data/chain",
+      "/data/lnd/data/chain/bitcoin",
+      "/data/lnd/data/chain/bitcoin/mainnet"
+    ],
+    "fixed_files": ["lnd.conf", "tls.cert"],
+    "bounded_glob": "/data/lnd/data/chain/bitcoin/mainnet/*.macaroon",
+    "recursive_walk": false,
+    "descriptor_relative": true,
+    "nofollow": true,
+    "serialized": true,
+    "dry_run_supported": true,
+    "manager_direct_sudo": false
+  },
+  "tests": {
+    "closed_empty_request": "passed",
+    "caller_path_uid_gid_rejected": "passed",
+    "root_symlink_rejected": "passed",
+    "macaroon_symlink_rejected": "passed",
+    "missing_tree_not_created": "passed",
+    "fixed_directory_modes": "passed",
+    "fixed_file_modes": "passed",
+    "content_byte_preservation": "passed",
+    "channel_database_metadata_untouched": "passed",
+    "broker_serialization": "passed",
+    "strict_client_response_decode": "passed",
+    "system_enforce_and_shadow_routing": "passed",
+    "focused_go_test": "passed",
+    "go_test_all": "passed",
+    "go_vet_all": "passed"
+  },
+  "ubuntu24_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "amd64",
+    "caller": "lightningos service user through the exact broker sudo entry",
+    "real_lnd_tree_mode": "dry-run",
+    "temporary_tree_real_mutation": true,
+    "caller_selected_metadata_rejected": true,
+    "symlink_gates": "passed",
+    "real_lnd_metadata_changed": false,
+    "manager_service_state_changed": false,
+    "lnd_service_state_changed": false,
+    "bitcoin_service_state_changed": false,
+    "integration_node_mutated": false
+  },
+  "cleanup": {
+    "original_broker_restored_by_hash": true,
+    "remote_temporary_artifacts_removed": true,
+    "vm_powered_off_cleanly": true,
+    "loopback_nat_forward_removed": true,
+    "original_bridged_adapter_restored": true
+  },
+  "remaining": [
+    "remove the now-unused direct lightningos-fix-lnd-perms sudoers grant during the coordinated Phase 4 cutover"
+  ],
+  "excluded": [
+    "file contents",
+    "macaroon bytes",
+    "ip addresses",
+    "credentials",
+    "tokens",
+    "private node identifiers"
+  ]
+}

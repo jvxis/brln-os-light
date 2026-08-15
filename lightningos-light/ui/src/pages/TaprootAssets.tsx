@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
 import {
+  APIError,
   getApps,
   getMempoolFees,
   getTapdAssets,
@@ -14,10 +15,12 @@ import {
   tapdSend,
   tapdUniverseSync
 } from '../api'
+import SensitiveActionModal from '../components/SensitiveActionModal'
 
 type AppRow = { id: string; installed?: boolean; status?: string }
 
 type ActionResult = { ok: boolean; data: unknown }
+type SensitiveTapdAction = 'send' | 'mint-finalize'
 
 function pretty(value: unknown): string {
   try {
@@ -176,6 +179,9 @@ export default function TaprootAssets() {
   const [sendFee, setSendFee] = useState('')
   const [sendPreview, setSendPreview] = useState<{ asset_id?: string; group_key?: string; amount?: string } | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
+  const [sensitiveAction, setSensitiveAction] = useState<SensitiveTapdAction | null>(null)
+  const [sensitivePassword, setSensitivePassword] = useState('')
+  const [sensitiveError, setSensitiveError] = useState('')
   // Discover
   const [discHost, setDiscHost] = useState('universe.lightning.finance')
   const [discAssets, setDiscAssets] = useState<DiscoverAsset[]>([])
@@ -361,6 +367,31 @@ export default function TaprootAssets() {
       setBusy('')
     }
   }, [loadDaemon])
+
+  const runSensitive = useCallback(async (action: SensitiveTapdAction, confirmPassword = '') => {
+    setBusy(action)
+    setSensitiveError('')
+    setResult(null)
+    try {
+      const data = action === 'send'
+        ? await tapdSend({ addr: sendAddr.trim(), fee_rate: Number(sendFee) || undefined, confirm_password: confirmPassword || undefined })
+        : await tapdMintFinalize({ fee_rate: Number(mintFee) || undefined, confirm_password: confirmPassword || undefined })
+      setSensitiveAction(null)
+      setSensitivePassword('')
+      setResult({ ok: true, data })
+      await loadDaemon()
+    } catch (err) {
+      if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
+        setSensitiveAction(action)
+      } else if (sensitiveAction) {
+        setSensitiveError(err instanceof Error ? err.message : String(err))
+      } else {
+        setResult({ ok: false, data: err instanceof Error ? err.message : String(err) })
+      }
+    } finally {
+      setBusy('')
+    }
+  }, [loadDaemon, mintFee, sendAddr, sendFee, sensitiveAction])
 
   // Sync a universe and remember any learned asset so it can be picked by name
   // in Receive afterwards.
@@ -602,7 +633,7 @@ export default function TaprootAssets() {
                 <button
                   className="btn-primary"
                   disabled={busy === 'send'}
-                  onClick={() => void run('send', () => tapdSend({ addr: sendAddr.trim(), fee_rate: Number(sendFee) || undefined }))}
+                  onClick={() => void runSensitive('send')}
                 >
                   {t('tapd.send')}
                 </button>
@@ -674,7 +705,7 @@ export default function TaprootAssets() {
                 <button
                   className="btn-primary"
                   disabled={busy === 'mint-finalize'}
-                  onClick={() => void run('mint-finalize', () => tapdMintFinalize({ fee_rate: Number(mintFee) || undefined }))}
+                  onClick={() => void runSensitive('mint-finalize')}
                 >
                   {t('tapd.finalizeMint')}
                 </button>
@@ -798,6 +829,18 @@ export default function TaprootAssets() {
           )}
         </>
       )}
+      <SensitiveActionModal
+        open={sensitiveAction !== null}
+        title={t('tapd.reauthTitle')}
+        description={sensitiveAction === 'send' ? t('tapd.reauthSend') : t('tapd.reauthMint')}
+        password={sensitivePassword}
+        busy={Boolean(busy)}
+        error={sensitiveError}
+        confirmLabel={t('tapd.reauthConfirm')}
+        onPasswordChange={setSensitivePassword}
+        onConfirm={() => sensitiveAction ? runSensitive(sensitiveAction, sensitivePassword) : undefined}
+        onClose={() => { setSensitiveAction(null); setSensitivePassword(''); setSensitiveError('') }}
+      />
     </div>
   )
 }

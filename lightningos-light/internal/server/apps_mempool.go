@@ -6,25 +6,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
-// Versions are pinned to upstream mempool v3.2.1 (2025-04-14) so a broken
-// :latest tag never breaks installs. Bump these constants together when
-// upgrading; mariadb tracks what upstream's docker-compose.yml ships with.
 const (
-	mempoolAppID            = "mempool"
-	mempoolBackendImage     = "mempool/backend:v3.2.1"
-	mempoolFrontendImage    = "mempool/frontend:v3.2.1"
-	mempoolDBImage          = "mariadb:10.5.21"
-	mempoolFrontendHostPort = 8999
-	mempoolFrontendInternal = 8080
-	mempoolBackendInternal  = 8999
-	mempoolDBVolumeName     = "mempool_dbdata"
+	mempoolAppID            = appmanifest.MempoolID
+	mempoolFrontendHostPort = appmanifest.MempoolPort
 )
+
+type mempoolInstallOptions struct {
+	StorageMount string `json:"storage_mount"`
+}
 
 type mempoolPaths struct {
 	Root        string
@@ -32,44 +27,31 @@ type mempoolPaths struct {
 	EnvPath     string
 }
 
-type mempoolRuntimeValues struct {
-	BitcoinRPCUser string
-	BitcoinRPCPass string
-	BitcoinRPCPort int
-	DBPassword     string
-	DBRootPassword string
-}
+type mempoolApp struct{ server *Server }
 
-type mempoolApp struct {
-	server *Server
-}
-
-func newMempoolApp(s *Server) appHandler {
-	return mempoolApp{server: s}
-}
+func newMempoolApp(s *Server) appHandler { return mempoolApp{server: s} }
 
 func mempoolDefinition() appDefinition {
 	return appDefinition{
-		ID:          mempoolAppID,
-		Name:        "Mempool",
+		ID: mempoolAppID, Name: "Mempool",
 		Description: "Self-hosted mempool.space dashboard for your Bitcoin Core node. Requires Electrs installed and running.",
 		Port:        mempoolFrontendHostPort,
 	}
 }
 
-func (a mempoolApp) Definition() appDefinition {
-	return mempoolDefinition()
-}
+func (a mempoolApp) Definition() appDefinition { return mempoolDefinition() }
 
 func (a mempoolApp) Info(ctx context.Context) (appInfo, error) {
-	def := a.Definition()
-	info := newAppInfo(def)
-	paths := mempoolAppPaths()
-	if !fileExists(paths.ComposePath) {
+	info := newAppInfo(a.Definition())
+	if !fileExists(mempoolAppPaths().ComposePath) {
 		return info, nil
 	}
 	info.Installed = true
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "mempool-web")
+	handled, status, _, err := system.InspectAppWithBroker(ctx, mempoolAppID)
+	if !handled {
+		info.Status = "unknown"
+		return info, errors.New("Mempool status requires privileged broker enforce mode")
+	}
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
@@ -78,30 +60,37 @@ func (a mempoolApp) Info(ctx context.Context) (appInfo, error) {
 	return info, nil
 }
 
-func (a mempoolApp) Install(ctx context.Context) error {
-	return a.server.applyMempool(ctx)
+func (a mempoolApp) Install(ctx context.Context) error { return a.server.applyMempool(ctx, "") }
+func (a mempoolApp) Start(ctx context.Context) error   { return a.server.applyMempool(ctx, "") }
+
+func (s *Server) installMempoolWithOptions(ctx context.Context, opts mempoolInstallOptions) error {
+	return s.applyMempool(ctx, opts.StorageMount)
 }
 
-func (a mempoolApp) Start(ctx context.Context) error {
-	return a.server.applyMempool(ctx)
+func (s *Server) startMempoolWithOptions(ctx context.Context, opts mempoolInstallOptions) error {
+	return s.applyMempool(ctx, opts.StorageMount)
 }
 
 func (a mempoolApp) Stop(ctx context.Context) error {
-	paths := mempoolAppPaths()
-	if !fileExists(paths.ComposePath) {
+	if !fileExists(mempoolAppPaths().ComposePath) {
 		return errors.New("Mempool is not installed")
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
+	if handled, err := system.AppLifecycleWithBroker(ctx, mempoolAppID, "stop"); !handled {
+		return errors.New("Mempool lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Mempool stop failed: %w", err)
+	}
+	return nil
 }
 
 func (a mempoolApp) Uninstall(ctx context.Context) error {
 	paths := mempoolAppPaths()
 	if fileExists(paths.ComposePath) {
-		// --volumes wipes the named DB volume. Mempool's statistics history is
-		// a consulting app's cache — all rebuildable from Bitcoin Core, so a
-		// clean uninstall is preferred over preserving an orphaned DB that
-		// would then go stale vs. rotated credentials on the next install.
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--volumes", "--remove-orphans")
+		if handled, err := system.RemoveAppWithBroker(ctx, mempoolAppID); !handled {
+			return errors.New("Mempool removal requires privileged broker enforce mode")
+		} else if err != nil {
+			return fmt.Errorf("Mempool removal failed: %w", err)
+		}
 	}
 	if err := os.RemoveAll(paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)
@@ -112,23 +101,17 @@ func (a mempoolApp) Uninstall(ctx context.Context) error {
 func mempoolAppPaths() mempoolPaths {
 	root := filepath.Join(appsRoot, mempoolAppID)
 	return mempoolPaths{
-		Root:        root,
-		ComposePath: filepath.Join(root, "docker-compose.yaml"),
-		EnvPath:     filepath.Join(root, ".env"),
+		Root: root, ComposePath: filepath.Join(root, appmanifest.MempoolComposeFile),
+		EnvPath: filepath.Join(root, appmanifest.MempoolEnvFile),
 	}
 }
 
-func (s *Server) applyMempool(ctx context.Context) error {
-	if err := ensureDocker(ctx); err != nil {
+func (s *Server) applyMempool(ctx context.Context, storageMount string) error {
+	if err := ensureDockerForCatalogAppEnforce(ctx); err != nil {
 		return err
 	}
 	if err := s.requireFullIndexApps(ctx); err != nil {
 		return err
-	}
-
-	bitcoinPaths := bitcoinCoreAppPaths()
-	if !fileExists(bitcoinPaths.ComposePath) {
-		return errors.New("Mempool requires the Bitcoin Core app to be installed")
 	}
 	if !fileExists(electrsAppPaths().ComposePath) {
 		return errors.New("Mempool requires the Electrs app to be installed")
@@ -145,223 +128,131 @@ func (s *Server) applyMempool(ctx context.Context) error {
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
-
-	if err := ensureDockerImage(ctx, mempoolBackendImage); err != nil {
-		return err
-	}
-	if err := ensureDockerImage(ctx, mempoolFrontendImage); err != nil {
-		return err
-	}
-	if err := ensureDockerImage(ctx, mempoolDBImage); err != nil {
-		return err
-	}
-
-	values, err := s.resolveMempoolRuntimeValues(ctx, bitcoinPaths, paths)
-	if err != nil {
-		return err
-	}
-
-	if err := ensureMempoolEnv(paths, values); err != nil {
-		return err
-	}
-	if _, err := ensureFileWithChange(paths.ComposePath, mempoolComposeContents(paths)); err != nil {
-		return err
-	}
-
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
-		return err
-	}
-	if err := ensureMempoolUfwAccess(ctx); err != nil && s.logger != nil {
-		s.logger.Printf("mempool: ufw rule failed: %v", err)
-	}
-	return nil
-}
-
-// ensureMempoolUfwAccess opens the frontend port on ufw when the firewall is
-// active. Matches the lnbits helper — silently no-ops when ufw is disabled so
-// dev machines without a firewall still work.
-func ensureMempoolUfwAccess(ctx context.Context) error {
-	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
-	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
-		return nil
-	}
-	_, err = system.RunCommandWithSudo(ctx, "ufw", "allow", fmt.Sprintf("%d/tcp", mempoolFrontendHostPort))
-	return err
-}
-
-func (s *Server) resolveMempoolRuntimeValues(ctx context.Context, bitcoinPaths bitcoinCorePaths, paths mempoolPaths) (mempoolRuntimeValues, error) {
-	localCfg, updated, err := readBitcoinLocalRPCConfig(ctx)
-	if err != nil {
-		return mempoolRuntimeValues{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
-	}
-	if strings.TrimSpace(localCfg.User) == "" || strings.TrimSpace(localCfg.Pass) == "" {
-		return mempoolRuntimeValues{}, errors.New("local bitcoin RPC credentials missing")
-	}
-	if updated {
-		if err := runCompose(ctx, bitcoinPaths.Root, bitcoinPaths.ComposePath, "restart", "bitcoind"); err != nil {
-			return mempoolRuntimeValues{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", err)
-		}
-	}
-	_, rpcPort := parseMainchainRPC(localCfg.Host)
-
-	values := mempoolRuntimeValues{
-		BitcoinRPCUser: localCfg.User,
-		BitcoinRPCPass: localCfg.Pass,
-		BitcoinRPCPort: rpcPort,
-	}
-
-	// Reuse generated DB credentials from a previous install so the rocksdb-
-	// like history under DBDataDir stays usable across reinstalls.
-	if fileExists(paths.EnvPath) {
-		if _, existing, err := envValueState(paths.EnvPath, "MEMPOOL_DB_PASSWORD"); err == nil {
-			values.DBPassword = strings.TrimSpace(existing)
-		}
-		if _, existing, err := envValueState(paths.EnvPath, "MEMPOOL_DB_ROOT_PASSWORD"); err == nil {
-			values.DBRootPassword = strings.TrimSpace(existing)
-		}
-	}
-	if values.DBPassword == "" {
-		token, err := randomToken(24)
-		if err != nil {
-			return mempoolRuntimeValues{}, fmt.Errorf("failed to generate db password: %w", err)
-		}
-		values.DBPassword = token
-	}
-	if values.DBRootPassword == "" {
-		token, err := randomToken(24)
-		if err != nil {
-			return mempoolRuntimeValues{}, fmt.Errorf("failed to generate db root password: %w", err)
-		}
-		values.DBRootPassword = token
-	}
-	return values, nil
-}
-
-func ensureMempoolEnv(paths mempoolPaths, values mempoolRuntimeValues) error {
-	required := [][2]string{
-		{"MEMPOOL_BITCOIN_RPC_USER", values.BitcoinRPCUser},
-		{"MEMPOOL_BITCOIN_RPC_PASS", values.BitcoinRPCPass},
-		{"MEMPOOL_BITCOIN_RPC_PORT", strconv.Itoa(values.BitcoinRPCPort)},
-		{"MEMPOOL_DB_PASSWORD", values.DBPassword},
-		{"MEMPOOL_DB_ROOT_PASSWORD", values.DBRootPassword},
-	}
-	if !fileExists(paths.EnvPath) {
-		lines := make([]string, 0, len(required)+1)
-		for _, kv := range required {
-			lines = append(lines, kv[0]+"="+kv[1])
-		}
-		lines = append(lines, "")
-		return writeFile(paths.EnvPath, strings.Join(lines, "\n"), 0600)
-	}
-	for _, kv := range required {
-		exists, value, err := envValueState(paths.EnvPath, kv[0])
+	dataDir := appmanifest.MempoolDefaultDataDir
+	if strings.TrimSpace(storageMount) != "" {
+		var err error
+		dataDir, err = resolveInstallDataDirFromStorageMount(ctx, mempoolAppID, storageMount)
 		if err != nil {
 			return err
 		}
-		if !exists {
-			if err := appendEnvLine(paths.EnvPath, kv[0], kv[1]); err != nil {
-				return err
-			}
-			continue
+	} else if raw, readErr := os.ReadFile(paths.EnvPath); readErr == nil {
+		if existing, parseErr := appmanifest.ParseMempoolRuntimeEnv(raw); parseErr == nil && existing.DataDir != "" {
+			dataDir = existing.DataDir
 		}
-		if strings.TrimSpace(value) != kv[1] {
-			if err := setEnvValue(paths.EnvPath, kv[0], kv[1]); err != nil {
-				return err
-			}
+	}
+	if handled, err := system.EnsureCatalogStorageWithBroker(ctx, mempoolAppID, dataDir, false); !handled {
+		return errors.New("Mempool storage requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Mempool storage unavailable: %w", err)
+	}
+	runtime, err := s.resolveMempoolRuntime(ctx, paths, dataDir)
+	if err != nil {
+		return err
+	}
+	for _, variant := range appmanifest.MempoolImageVariants() {
+		if handled, err := system.PrepareAppImageWithBroker(ctx, mempoolAppID, string(variant)); !handled {
+			return errors.New("Mempool image preparation requires privileged broker enforce mode")
+		} else if err != nil {
+			return err
 		}
+		if handled, runnable, err := system.ProbeAppImageWithBroker(ctx, mempoolAppID, string(variant)); !handled {
+			return errors.New("Mempool image probe requires privileged broker enforce mode")
+		} else if err != nil {
+			return err
+		} else if !runnable {
+			return errors.New("Mempool image failed the closed runtime probe")
+		}
+	}
+	env, err := appmanifest.MempoolRuntimeEnv(runtime)
+	if err != nil {
+		return err
+	}
+	if err := writeFile(paths.EnvPath, env, 0600); err != nil {
+		return fmt.Errorf("failed to write Mempool environment: %w", err)
+	}
+	if err := os.Chmod(paths.EnvPath, 0600); err != nil {
+		return fmt.Errorf("failed to secure Mempool environment: %w", err)
+	}
+	compose, err := appmanifest.MempoolCompose(runtime)
+	if err != nil {
+		return err
+	}
+	if _, err := ensureFileWithChange(paths.ComposePath, compose); err != nil {
+		return err
+	}
+	if handled, err := system.AppLifecycleWithBroker(ctx, mempoolAppID, "start"); !handled {
+		return errors.New("Mempool lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("Mempool start failed: %w", err)
+	}
+	if _, err := system.EnsureCatalogStorageWithBroker(ctx, mempoolAppID, dataDir, true); err != nil {
+		return fmt.Errorf("Mempool legacy storage cleanup failed: %w", err)
+	}
+	if handled, _, err := system.EnsureAppFirewallWithBroker(ctx, mempoolAppID); !handled {
+		return errors.New("Mempool firewall requires privileged broker enforce mode")
+	} else if err != nil && s.logger != nil {
+		s.logger.Printf("mempool: broker firewall rule failed: %v", err)
 	}
 	return nil
 }
 
-// mempoolComposeContents builds the docker-compose file. Three services share
-// an internal `default` network for db talk; the backend additionally joins the
-// existing bitcoincore_default and electrs_default external networks (created
-// by those apps' compose files) so it can reach bitcoind:8332 and electrs:50001
-// without needing to publish those on the host. Substitution variables come
-// from the sibling `.env` file written by ensureMempoolEnv.
-//
-// Persistence model: the MariaDB data dir lives in a Docker-managed named
-// volume so the manager (running as `lightningos`) never has to mkdir/chown
-// host paths that need uid 999 escalation. Mempool's /backend/cache is left
-// ephemeral inside the container — everything there is regenerable from
-// bitcoind + electrs, so wiping it between restarts costs nothing.
-func mempoolComposeContents(_ mempoolPaths) string {
-	return fmt.Sprintf(`services:
-  mempool-web:
-    image: %[1]s
-    container_name: mempool-web
-    restart: unless-stopped
-    stop_grace_period: 1m
-    depends_on:
-      - mempool-api
-    environment:
-      FRONTEND_HTTP_PORT: "%[6]d"
-      BACKEND_MAINNET_HTTP_HOST: "mempool-api"
-      BACKEND_MAINNET_HTTP_PORT: "%[7]d"
-    command: "./wait-for mempool-db:3306 --timeout=720 -- nginx -g 'daemon off;'"
-    ports:
-      - "%[5]d:%[6]d"
-  mempool-api:
-    image: %[2]s
-    container_name: mempool-api
-    restart: unless-stopped
-    stop_grace_period: 1m
-    depends_on:
-      - mempool-db
-    environment:
-      MEMPOOL_BACKEND: "electrum"
-      ELECTRUM_HOST: "electrs"
-      ELECTRUM_PORT: "50001"
-      ELECTRUM_TLS_ENABLED: "false"
-      CORE_RPC_HOST: "bitcoind"
-      CORE_RPC_PORT: "${MEMPOOL_BITCOIN_RPC_PORT}"
-      CORE_RPC_USERNAME: "${MEMPOOL_BITCOIN_RPC_USER}"
-      CORE_RPC_PASSWORD: "${MEMPOOL_BITCOIN_RPC_PASS}"
-      DATABASE_ENABLED: "true"
-      DATABASE_HOST: "mempool-db"
-      DATABASE_PORT: "3306"
-      DATABASE_DATABASE: "mempool"
-      DATABASE_USERNAME: "mempool"
-      DATABASE_PASSWORD: "${MEMPOOL_DB_PASSWORD}"
-      STATISTICS_ENABLED: "true"
-    command: "./wait-for-it.sh mempool-db:3306 --timeout=720 --strict -- ./start.sh"
-    networks:
-      - default
-      - bitcoincore
-      - electrs
-  mempool-db:
-    image: %[3]s
-    container_name: mempool-db
-    restart: unless-stopped
-    stop_grace_period: 1m
-    environment:
-      MYSQL_DATABASE: "mempool"
-      MYSQL_USER: "mempool"
-      MYSQL_PASSWORD: "${MEMPOOL_DB_PASSWORD}"
-      MYSQL_ROOT_PASSWORD: "${MEMPOOL_DB_ROOT_PASSWORD}"
-    volumes:
-      - %[4]s:/var/lib/mysql
+func (s *Server) resolveMempoolRuntime(ctx context.Context, paths mempoolPaths, dataDir string) (appmanifest.MempoolRuntime, error) {
+	localCfg, err := readBitcoinLocalRPCConfig(ctx)
+	if err != nil {
+		return appmanifest.MempoolRuntime{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
+	}
+	if strings.TrimSpace(localCfg.User) == "" || strings.TrimSpace(localCfg.Pass) == "" {
+		return appmanifest.MempoolRuntime{}, errors.New("local bitcoin RPC credentials missing")
+	}
+	_, rpcPort := parseMainchainRPC(localCfg.Host)
+	if rpcPort != 8332 {
+		return appmanifest.MempoolRuntime{}, errors.New("Mempool requires the catalog Bitcoin mainnet RPC port")
+	}
+	mode := appmanifest.MempoolBitcoinModeApp
+	if !fileExists(bitcoinCoreAppPaths().ComposePath) {
+		if !isLocalRPCHost(localCfg.Host) {
+			return appmanifest.MempoolRuntime{}, fmt.Errorf("local bitcoin RPC host is not local: %s", localCfg.Host)
+		}
+		if err := ensureLocalExternalBitcoinConsumerNetwork(ctx); err != nil {
+			return appmanifest.MempoolRuntime{}, err
+		}
+		mode = appmanifest.MempoolBitcoinModeNative
+	}
+	runtime := appmanifest.MempoolRuntime{
+		BitcoinMode: mode, Network: "bitcoin", BitcoinRPCUser: localCfg.User, BitcoinRPCPass: localCfg.Pass,
+		DataDir: dataDir,
+	}
+	// Canonical 0.5.3 environments are preferred. The two legacy database
+	// keys are read only as a one-time migration so an existing MariaDB volume
+	// remains usable after the broker takes ownership of execution.
+	if raw, readErr := os.ReadFile(paths.EnvPath); readErr == nil {
+		if existing, parseErr := appmanifest.ParseMempoolRuntimeEnv(raw); parseErr == nil {
+			runtime.DBPassword = existing.DBPassword
+			runtime.DBRootPassword = existing.DBRootPassword
+		} else {
+			runtime.DBPassword = strings.TrimSpace(readEnvValue(paths.EnvPath, "MEMPOOL_DB_PASSWORD"))
+			runtime.DBRootPassword = strings.TrimSpace(readEnvValue(paths.EnvPath, "MEMPOOL_DB_ROOT_PASSWORD"))
+		}
+	}
+	if runtime.DBPassword == "" {
+		runtime.DBPassword, err = randomToken(24)
+		if err != nil {
+			return appmanifest.MempoolRuntime{}, fmt.Errorf("failed to generate database credential: %w", err)
+		}
+	}
+	if runtime.DBRootPassword == "" {
+		runtime.DBRootPassword, err = randomToken(24)
+		if err != nil {
+			return appmanifest.MempoolRuntime{}, fmt.Errorf("failed to generate database root credential: %w", err)
+		}
+	}
+	if err := appmanifest.ValidateMempoolRuntime(runtime); err != nil {
+		return appmanifest.MempoolRuntime{}, err
+	}
+	return runtime, nil
+}
 
-networks:
-  default:
-    name: mempool_default
-  bitcoincore:
-    external: true
-    name: bitcoincore_default
-  electrs:
-    external: true
-    name: electrs_default
-
-volumes:
-  %[4]s:
-    name: %[4]s
-`,
-		mempoolFrontendImage,
-		mempoolBackendImage,
-		mempoolDBImage,
-		mempoolDBVolumeName,
-		mempoolFrontendHostPort,
-		mempoolFrontendInternal,
-		mempoolBackendInternal,
-	)
+func mempoolComposeContents(_ mempoolPaths, runtime appmanifest.MempoolRuntime) string {
+	compose, _ := appmanifest.MempoolCompose(runtime)
+	return compose
 }

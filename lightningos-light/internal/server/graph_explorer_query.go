@@ -199,7 +199,7 @@ order by
 	}
 	defer rows.Close()
 
-	items := make([]GraphExplorerSearchResult, 0, limit)
+	items := make([]GraphExplorerSearchResult, 0)
 	for rows.Next() {
 		var item GraphExplorerSearchResult
 		if err := rows.Scan(

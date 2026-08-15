@@ -1,0 +1,64 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-app-storage.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "typed shared App Store storage reconciliation",
+  "operation": {
+    "name": "storage.apps.ensure",
+    "caller_fields": [],
+    "fixed_identity": "lightningos",
+    "fixed_paths": [
+      "/var/lib/lightningos",
+      "/var/lib/lightningos/apps",
+      "/var/lib/lightningos/apps-data"
+    ],
+    "fixed_mode": "0750",
+    "descriptor_relative": true,
+    "nofollow": true,
+    "serialized": true,
+    "dry_run_supported": true,
+    "manager_direct_sudo_systemd_run_or_privileged_shell": false
+  },
+  "tests": {
+    "closed_empty_request": "passed",
+    "unknown_path_field_rejected": "passed",
+    "symlinked_state_root_rejected": "passed",
+    "dry_run_created_nothing": "passed",
+    "fixed_tree_owner_and_mode": "passed",
+    "broker_serialization": "passed",
+    "strict_client_response_decode": "passed",
+    "system_enforce_and_shadow_routing": "passed",
+    "focused_go_test": "passed",
+    "go_test_all": "passed",
+    "go_vet_all": "passed"
+  },
+  "ubuntu24_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "amd64",
+    "caller": "lightningos service user through the exact broker sudo entry",
+    "real_tree_mode": "dry-run",
+    "temporary_tree_real_mutation": true,
+    "caller_selected_path_rejected": true,
+    "symlink_rejected": true,
+    "real_storage_metadata_changed": false,
+    "manager_service_state_changed": false,
+    "lnd_service_state_changed": false,
+    "bitcoin_service_state_changed": false,
+    "integration_node_mutated": false
+  },
+  "cleanup": {
+    "original_broker_restored_by_hash": true,
+    "remote_temporary_artifacts_removed": true,
+    "vm_powered_off_cleanly": true,
+    "loopback_nat_forward_removed": true,
+    "original_bridged_adapter_restored": true
+  },
+  "excluded": [
+    "ip addresses",
+    "credentials",
+    "tokens",
+    "private node identifiers"
+  ]
+}

@@ -9,15 +9,16 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/lndclient"
 )
 
 func TestPeerswapServiceLifecyclePersistsAcrossReboots(t *testing.T) {
-	for _, serviceName := range []string{peerswapServiceName, pswebServiceName} {
-		if got, want := peerswapStartSystemctlArgs(serviceName), []string{"systemctl", "enable", "--now", serviceName}; !reflect.DeepEqual(got, want) {
-			t.Fatalf("unexpected %s start args: got %#v want %#v", serviceName, got, want)
-		}
-		if got, want := peerswapStopSystemctlArgs(serviceName), []string{"systemctl", "disable", "--now", serviceName}; !reflect.DeepEqual(got, want) {
-			t.Fatalf("unexpected %s stop args: got %#v want %#v", serviceName, got, want)
+	paths := appmanifest.DefaultPeerSwapPaths()
+	for _, unit := range []string{appmanifest.PeerSwapServiceUnit(paths, peerswapElementsModeLocal), appmanifest.PeerSwapWebServiceUnit(paths)} {
+		if !strings.Contains(unit, "WantedBy=multi-user.target") {
+			t.Fatalf("PeerSwap service must remain enable-able across reboots:\n%s", unit)
 		}
 	}
 }
@@ -82,7 +83,7 @@ func TestApplyPeerswapConfigOverridesPreservesBitcoinSwaps(t *testing.T) {
 	}
 
 	cfg := map[string]any{}
-	paths := peerswapPaths{ConfigDir: "/home/losop/.peerswap"}
+	paths := peerswapPaths{ConfigDir: appmanifest.DefaultPeerSwapPaths().RuntimeDir}
 	if !updatePSWebConfigMap(cfg, paths, values, bitcoinRPCConfig{}, false) {
 		t.Fatalf("expected psweb config to change")
 	}
@@ -98,7 +99,7 @@ func TestUpdatePSWebConfigMapNormalizesBitcoinHostAndElementsPaths(t *testing.T)
 		"ElementsDir":       "home/losop/.elements",
 		"ElementsDirMapped": "home/losop/.elements",
 	}
-	paths := peerswapPaths{ConfigDir: "/home/losop/.peerswap"}
+	paths := peerswapPaths{ConfigDir: appmanifest.DefaultPeerSwapPaths().RuntimeDir}
 	bitcoinCfg := bitcoinRPCConfig{
 		Host: "http://127.0.0.1:8332",
 		User: "minibolt",
@@ -126,7 +127,7 @@ func TestUpdatePSWebConfigMapSanitizesExistingDuplicateBitcoinHost(t *testing.T)
 	cfg := map[string]any{
 		"BitcoinHost": "http://127.0.0.1:8332:8332",
 	}
-	paths := peerswapPaths{ConfigDir: "/home/losop/.peerswap"}
+	paths := peerswapPaths{ConfigDir: appmanifest.DefaultPeerSwapPaths().RuntimeDir}
 
 	if !updatePSWebConfigMap(cfg, paths, testPeerswapConfigValues(), bitcoinRPCConfig{}, false) {
 		t.Fatalf("expected psweb config to change")
@@ -139,14 +140,17 @@ func TestUpdatePSWebConfigMapSanitizesExistingDuplicateBitcoinHost(t *testing.T)
 func TestPSWebServiceUsesExplicitDataDirAndUserEnv(t *testing.T) {
 	paths := peerswapPaths{
 		BinDir:    "/opt/lightningos/apps/peerswap/bin",
-		ConfigDir: "/home/losop/.peerswap",
+		ConfigDir: appmanifest.DefaultPeerSwapPaths().RuntimeDir,
 	}
 	raw := pswebServiceContents(paths)
-	if !strings.Contains(raw, "Environment=USER=losop") {
+	if !strings.Contains(raw, "Environment=USER="+appmanifest.PeerSwapUser) {
 		t.Fatalf("expected USER env in psweb service:\n%s", raw)
 	}
-	if !strings.Contains(raw, "psweb -datadir /home/losop/.peerswap") {
+	if !strings.Contains(raw, "psweb -datadir "+appmanifest.DefaultPeerSwapPaths().RuntimeDir) {
 		t.Fatalf("expected explicit psweb datadir:\n%s", raw)
+	}
+	if strings.Contains(raw, "SupplementaryGroups=lnd") || strings.Contains(raw, "User=losop") {
+		t.Fatalf("psweb must not inherit human/LND-group privileges:\n%s", raw)
 	}
 }
 
@@ -173,6 +177,31 @@ func TestNormalizePeerswapRemoteEndpointSplitsHostAndPort(t *testing.T) {
 	}
 	if endpoint.Host != "http://elements.br-ln.com" || endpoint.Port != 8086 {
 		t.Fatalf("unexpected host/port: %s %d", endpoint.Host, endpoint.Port)
+	}
+
+	ipv6, err := normalizePeerswapRemoteEndpoint("https://[2001:db8::1]:7041")
+	if err != nil {
+		t.Fatalf("unexpected IPv6 error: %v", err)
+	}
+	if ipv6.URL != "https://[2001:db8::1]:7041" || ipv6.Host != "https://[2001:db8::1]" || ipv6.Port != 7041 {
+		t.Fatalf("unexpected IPv6 endpoint: %+v", ipv6)
+	}
+}
+
+func TestNormalizePeerswapRemoteEndpointRejectsRequestSmugglingParts(t *testing.T) {
+	for _, raw := range []string{
+		"ftp://elements.example:7041",
+		"http://user:pass@elements.example:7041",
+		"http://elements.example:7041/wallet/other",
+		"http://elements.example:7041/?query=1",
+		"http://elements.example:7041/#fragment",
+		"http://elements_example:7041",
+		"http://elements.example:99999",
+		"http://elements.example:7041\nInjected: value",
+	} {
+		if _, err := normalizePeerswapRemoteEndpoint(raw); err == nil {
+			t.Fatalf("unsafe remote Elements endpoint accepted: %q", raw)
+		}
 	}
 }
 
@@ -244,10 +273,61 @@ func TestTestPeerswapRemoteElementsRPC(t *testing.T) {
 	}
 }
 
+func TestTestPeerswapRemoteElementsRPCDoesNotFollowRedirects(t *testing.T) {
+	redirectHits := 0
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectHits++
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"result":{"chain":"liquidv1"},"error":null}`))
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer source.Close()
+
+	_, err := testPeerswapRemoteElementsRPC(context.Background(), peerswapElementsSource{
+		Mode:     peerswapElementsModeRemote,
+		URL:      source.URL,
+		User:     "elements",
+		Password: "secret",
+	})
+	if err == nil || !strings.Contains(err.Error(), "302") {
+		t.Fatalf("remote Elements redirect was not rejected: %v", err)
+	}
+	if redirectHits != 0 {
+		t.Fatalf("remote Elements credentials followed a redirect (%d target hits)", redirectHits)
+	}
+}
+
+func TestPeerSwapMacaroonPermissionsMatchUpstreamRPCInventory(t *testing.T) {
+	got := lndclient.MacaroonPermissionStrings(peerSwapMacaroonPermissions())
+	want := []string{
+		"address:write",
+		"info:read",
+		"invoices:read",
+		"invoices:write",
+		"offchain:read",
+		"offchain:write",
+		"onchain:read",
+		"onchain:write",
+		"peers:read",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected PeerSwap macaroon permissions: got %#v want %#v", got, want)
+	}
+	for _, permission := range got {
+		if permission == "macaroons:write" {
+			t.Fatal("PeerSwap must never receive macaroon administration permission")
+		}
+	}
+}
+
 func testPeerswapConfigValues() peerswapConfigValues {
 	return peerswapConfigValues{
-		LndTLSPath:          "/data/lnd/tls.cert",
-		LndMacaroonPath:     "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
+		LndTLSPath:          appmanifest.DefaultPeerSwapPaths().LNDTLSCertPath,
+		LndMacaroonPath:     appmanifest.DefaultPeerSwapPaths().LNDMacaroonPath,
 		ElementsRPCUser:     "elements",
 		ElementsRPCPass:     "secret",
 		ElementsRPCHost:     "http://127.0.0.1",

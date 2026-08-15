@@ -177,7 +177,7 @@ export const getBitcoin = () => request('/api/bitcoin')
 export const getBitcoinActive = () => request('/api/bitcoin/active')
 export const getBIP110Monitor = () => request('/api/bitcoin/bip110')
 export const getBitcoinSource = () => request('/api/bitcoin/source')
-export const setBitcoinSource = (payload: { source: 'local' | 'remote'; allow_unsynced?: boolean }) =>
+export const setBitcoinSource = (payload: { source: 'local' | 'remote'; allow_unsynced?: boolean; confirm_bitcoin_restart?: boolean }) =>
   request('/api/bitcoin/source', { method: 'POST', body: JSON.stringify(payload) })
 export const getBitcoinMarket = () => request('/api/bitcoin/market')
 export const getBitcoinLocalStatus = () => request('/api/bitcoin-local/status')
@@ -749,6 +749,9 @@ export const testTelegramBackup = () =>
 
 export const getTerminalStatus = () => request('/api/terminal/status')
 
+export const setTerminalEnabled = (payload: { enabled: boolean; confirm_password?: string }) =>
+  request('/api/terminal/control', { method: 'POST', body: JSON.stringify(payload) })
+
 export const rotateTerminalCredential = (payload: { confirm_password?: string } = {}) =>
   request('/api/terminal/credential/rotate', { method: 'POST', body: JSON.stringify(payload) })
 
@@ -1105,6 +1108,12 @@ export type StorageTarget = {
   suggested_path: string
 }
 
+export type AppOperationInfo = {
+  action: 'install' | 'start' | 'stop' | 'uninstall'
+  started_at: string
+  stage?: string
+}
+
 export type AppStoreInfo = {
   id: string
   name: string
@@ -1121,9 +1130,13 @@ export type AppStoreInfo = {
   ufw_active?: boolean
   ufw_command?: string
   security_notices?: string[]
+  operation?: AppOperationInfo
 }
 
 export const getApps = (): Promise<AppStoreInfo[]> => request('/api/apps')
+export const getAppOperations = (): Promise<Record<string, AppOperationInfo>> => request('/api/apps/operations')
+export const getBarkWalletRevealAuthorization = () =>
+  request('/api/apps/bark-wallet/reveal-authorization')
 export const getAppStorageTargets = (app: string) =>
   request(`/api/apps/storage-targets${buildQuery({ app })}`)
 export const getElectrsStatus = () => request('/api/apps/electrs/status')
@@ -1165,11 +1178,11 @@ export const tapdUniverseSync = (payload: { universe_host: string; group_key?: s
 export const getTapdDiscover = (host: string) => request(`/api/apps/tapd/discover${buildQuery({ host })}`)
 export const tapdMint = (payload: { name: string; supply: number; decimal_display?: number; grouped?: boolean; group_key?: string; meta?: string }) =>
   request('/api/apps/tapd/mint', { method: 'POST', body: JSON.stringify(payload) })
-export const tapdMintFinalize = (payload?: { fee_rate?: number }) =>
+export const tapdMintFinalize = (payload?: { fee_rate?: number; confirm_password?: string }) =>
   request('/api/apps/tapd/mint-finalize', { method: 'POST', body: JSON.stringify(payload || {}) })
 export const tapdDecodeAddr = (payload: { addr: string }) =>
   request('/api/apps/tapd/decode-addr', { method: 'POST', body: JSON.stringify(payload) })
-export const tapdSend = (payload: { addr: string; fee_rate?: number }) =>
+export const tapdSend = (payload: { addr: string; fee_rate?: number; confirm_password?: string }) =>
   request('/api/apps/tapd/send', { method: 'POST', body: JSON.stringify(payload) })
 
 export type LoopTerms = {
@@ -1709,10 +1722,11 @@ export const updateMagmaSettings = (payload: {
   request('/api/apps/magma-sales/settings', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
-export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string }) =>
+export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string; confirm_bitcoin_restart?: boolean }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`, { method: 'POST' })
-export const startApp = (id: string) => request(`/api/apps/${id}/start`, { method: 'POST' })
+export const startApp = (id: string, payload?: { confirm_bitcoin_restart?: boolean }) =>
+  request(`/api/apps/${id}/start`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const stopApp = (id: string) => request(`/api/apps/${id}/stop`, { method: 'POST' })
 export const resetAppAdmin = (id: string) => request(`/api/apps/${id}/reset-admin`, { method: 'POST' })
 

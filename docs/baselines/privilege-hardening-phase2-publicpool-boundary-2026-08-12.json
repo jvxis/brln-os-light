@@ -1,0 +1,99 @@
+{
+  "schema": "lightningos.privilege-hardening.publicpool-boundary.v1",
+  "captured_at": "2026-08-13T00:41:01Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "node": "LOS-TESTE2",
+  "scope": "state-preserving Public Pool Docker boundary migration",
+  "images": {
+    "backend": {
+      "reference": "sethforprivacy/public-pool:9938a05@sha256:96347cbbc2ec6f27ec1b282e8353e41197fad6ca56e011873e69e7c3b6555b14",
+      "source": "https://github.com/sethforprivacy/public-pool",
+      "revision": "9938a05d2dfd65f3fe7c48d51033d72b9f8d5925",
+      "node_version": "v22.11.0",
+      "probe": "passed"
+    },
+    "ui": {
+      "reference": "sethforprivacy/public-pool-ui:20798ec@sha256:69d9e88eba5f8acd6cb097c03286c0bb49fb64294149aec22b916b21788981c1",
+      "source": "https://github.com/sethforprivacy/public-pool-ui",
+      "revision": "20798ece23d351bceb8e6cce15b108a22585f225",
+      "caddy_version": "v2.8.4 h1:q3pe0wpBj1OcHFZ3n/1nl4V4bxBrYoSoab7rL9BMYNk=",
+      "probe": "passed"
+    },
+    "mutable_latest_tags_used": false,
+    "request_selectable_images": false,
+    "oci_source_revision_match": true
+  },
+  "broker": {
+    "linux_amd64_binary_sha256": "3e3aa243d2c7a9f0a54fddc4e09f32358a7580dc38d235318d5dbd26ba0db590",
+    "operations": [
+      "app.publicpool.status",
+      "app.publicpool.ensure",
+      "app.publicpool.lifecycle",
+      "app.publicpool.remove",
+      "app.publicpool.firewall"
+    ],
+    "status": "stopped",
+    "start_dry_run": "passed",
+    "stop_dry_run": "passed",
+    "firewall_dry_run": "passed",
+    "caller_selected_image_rejected": true,
+    "audit_contains_rpc_credentials": false
+  },
+  "runtime_boundary": {
+    "snapshot_owner_mode": "0:0:0700",
+    "compose_owner_mode": "0:0:0600",
+    "environment_owner_mode": "0:0:0600",
+    "caddyfile_owner_mode": "0:65532:0640",
+    "container_uid_gid": "65532:65532",
+    "read_only_root_filesystem": true,
+    "all_capabilities_dropped": true,
+    "no_new_privileges": true,
+    "backend_only_writable_bind": "/var/lib/lightningos/apps-data/publicpool/db",
+    "ui_writable_state": "bounded tmpfs only",
+    "docker_socket_mounted": false,
+    "privileged_container": false,
+    "host_network": false,
+    "fixed_external_tcp_ports": [3333, 8081]
+  },
+  "bitcoin_contract": {
+    "supported_modes": ["local_app", "local_external", "remote"],
+    "local_network": "bitcoincore_default",
+    "local_external_gateway": "172.31.253.1",
+    "local_rpc_port": 8332,
+    "local_rawblock_zmq_port": 28332,
+    "caller_selectable_network_or_firewall_port": false
+  },
+  "preserved_state": {
+    "publicpool_before": "stopped",
+    "publicpool_after": "stopped",
+    "data_files": 3,
+    "data_bytes": 106936,
+    "data_content_sha256_before_after": "9def204d63d52ed5baae284d25c580e987d392f79d62deeb81df0eef324f6de5",
+    "data_metadata_sha256_after_ownership_migration": "224c8a4db15c197344fb04d14549f36a621159b50ac2b0b7c0b1c2935c754d0b",
+    "bitcoin_container_started_at_before_after": "2026-08-07T15:01:47.444810527Z",
+    "lnd_active_enter_timestamp_monotonic_before_after": 165280210848,
+    "manager_active_enter_timestamp_monotonic_before_after": 423170333669
+  },
+  "local_gates": {
+    "focused_go_tests": "passed",
+    "go_vet": "passed",
+    "manager_build": "passed",
+    "broker_build": "passed",
+    "registry_validation": "passed",
+    "full_go_suite": "all packages passed except two pre-existing Windows CRLF fixture failures",
+    "known_windows_fixture_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ],
+    "privileged_manager_call_sites": 0
+  },
+  "network_configuration_mutation": false,
+  "firewall_mutation": false,
+  "publicpool_lifecycle_mutation": false,
+  "manager_restart": false,
+  "lnd_restart": false,
+  "bitcoin_restart": false,
+  "remote_gate_files_cleaned": true,
+  "local_temporary_files_cleaned": true,
+  "secrets_captured": false
+}

@@ -157,6 +157,12 @@ type Server struct {
 	bitcoinLocalCache           cachedBitcoinLocalStatus
 	bitcoinMarketMu             sync.Mutex
 	bitcoinMarketCache          cachedBitcoinMarketStatus
+	appOperationsMu             sync.Mutex
+	appOperations               map[string]appOperationState
+	appOperationSequence        uint64
+	appListMu                   sync.Mutex
+	appListGroup                singleflight.Group
+	appListCache                cachedAppList
 	lndGraphProgressMu          sync.Mutex
 	lndGraphProgressCache       lndGraphProgressCache
 	lndGraphProgressRefreshing  bool
@@ -173,6 +179,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 		lnd:                 lndclient.New(cfg, logger),
 		networkMapGeoCache:  make(map[string]networkMapGeoCacheEntry),
 		bitcoinActiveCache:  make(map[string]cachedBitcoinStatus),
+		appOperations:       make(map[string]appOperationState),
 		spendingGuardAlerts: make(map[string]spendingGuardAlertState),
 		provenanceMetrics:   NewProvenanceMetrics(),
 	}
@@ -195,8 +202,8 @@ func (s *Server) Run() error {
 	s.startSystemIntegrationReconciler()
 	s.startLNDRuntimeMonitor()
 	s.startLNDGraphProgressWarmup()
+	s.startLegacyPrivilegeTransitionReconciler()
 	s.startAppUpgradeChecker()
-	s.startPublicPoolRuntimeReconciler()
 	s.initNotifications()
 	s.initAuditLog()
 	s.initSpendingGuard()
@@ -291,6 +298,7 @@ func (s *Server) Run() error {
 	go func() {
 		errCh <- httpServer.ListenAndServeTLS(s.cfg.Server.TLSCert, s.cfg.Server.TLSKey)
 	}()
+	s.scheduleLNDPermissionsFix("manager startup")
 
 	select {
 	case err := <-errCh:

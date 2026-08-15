@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-08-13",
+  "target": "preserved LOS TESTE2 integration node",
+  "checkpoint": "f02b3320e073d709177069a25253323398ba6510",
+  "result": "passed",
+  "layout": {
+    "origin": "managed install.sh installation",
+    "ubuntu": "24.04",
+    "bitcoin": "App Store Docker container with external volume",
+    "lnd": "native lnd.service with PostgreSQL",
+    "network": "Bitcoin and LND mainnet"
+  },
+  "preflight": {
+    "bitcoin_full_node_sync": "passed",
+    "system_volume_free_space": "greater than 3 GiB",
+    "manager_mode": "shadow",
+    "rollback_bundle": "root-only and checksum-verified"
+  },
+  "upgrade_gate": {
+    "source": "root-invoked commit-pinned clean trusted checkout",
+    "transactional_manager_ui_rollback": "prepared",
+    "broker_socket_readiness": "passed",
+    "manager_mode": "enforce",
+    "manager_docker_group": "absent",
+    "manager_docker_socket": "denied",
+    "wildcard_sudoers": "absent",
+    "manager_systemd_confinement": "passed",
+    "dedicated_manager_lnd_credential": "root:lightningos:0640",
+    "native_admin_lnd_credential": "lnd:lnd:0600"
+  },
+  "preservation_gate": {
+    "bitcoin_container_started_at": "unchanged",
+    "bitcoin_mainnet_full_node_sync": "passed",
+    "lnd_pid": "unchanged",
+    "docker_daemon_invocation": "unchanged",
+    "installed_running_container_names_and_images": "unchanged",
+    "postgresql": "active",
+    "manager_health": "passed",
+    "bitcoin_lnd_docker_host_restart": "not performed"
+  },
+  "secrets": "Only metadata and boolean/status outcomes were compared. No credential, token, seed, password, macaroon bytes, RPC secret, IP address, or node identity is recorded."
+}

@@ -441,7 +441,7 @@ limit $1
 	}
 	defer rows.Close()
 
-	out := make([]NodeRetirementSession, 0, limit)
+	out := make([]NodeRetirementSession, 0)
 	for rows.Next() {
 		var item NodeRetirementSession
 		if err := rows.Scan(
@@ -501,7 +501,7 @@ limit $2
 	}
 	defer rows.Close()
 
-	items := make([]NodeRetirementEvent, 0, limit)
+	items := make([]NodeRetirementEvent, 0)
 	for rows.Next() {
 		var item NodeRetirementEvent
 		if err := rows.Scan(&item.ID, &item.SessionID, &item.EventType, &item.Severity, &item.Payload, &item.CreatedAt); err != nil {

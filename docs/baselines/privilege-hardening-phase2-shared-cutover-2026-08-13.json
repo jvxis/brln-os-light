@@ -1,0 +1,67 @@
+{
+  "schema": "lightningos.privilege-hardening.shared-cutover.v1",
+  "captured_at": "2026-08-13",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "final manager Docker boundary and reversible Phase 2 privilege cutover",
+  "catalog": {
+    "registered_apps": 20,
+    "compose_apps": 13,
+    "native_systemd_apps": 3,
+    "in_process_apps": 4,
+    "manager_direct_docker_or_compose_execution": false,
+    "manager_docker_socket_access": false,
+    "permanent_source_boundary_test": true
+  },
+  "cutover": {
+    "fresh_default_mode": "enforce",
+    "installer_docker_sudoers_grants": false,
+    "installer_manager_docker_group_membership": false,
+    "upgrade_removes_legacy_docker_membership": true,
+    "upgrade_removes_live_process_docker_gid_after_restart": true,
+    "upgrade_preserves_non_docker_supplementary_groups": true,
+    "upgrade_preserves_config_owner_group_mode_acl_and_xattrs": true,
+    "root_only_rollback_state": true,
+    "rollback_restores_prior_config_service_dropin_sudoers_and_docker_membership": true,
+    "rollback_touches_bitcoin_lnd_or_app_data": false
+  },
+  "new_typed_operations": [
+    "app.compose.logs for bitcoincore",
+    "app.lnd-host-access.ensure for btcpay"
+  ],
+  "disposable_gate": {
+    "vm": "brln-os-hardening-053-pkg-20260810",
+    "os": "Ubuntu 24.04",
+    "architecture": "amd64",
+    "access": "VirtualBox NAT with localhost-only SSH forwarding",
+    "lan_scan_or_host_adapter_mutation": false,
+    "shell_syntax": "passed",
+    "legacy_manager_docker_group_simulation": "passed",
+    "forward_cutover": "passed",
+    "effective_process_docker_gid_removed": "passed",
+    "broker_self_test": "passed",
+    "manager_restart": "passed",
+    "rollback": "passed",
+    "rollback_restored_legacy_docker_membership": "passed",
+    "second_forward_cutover": "passed",
+    "config_acl_regression_detected_and_fixed": true,
+    "config_acl_preservation": "passed",
+    "bitcoin_activation_timestamp_changed": false,
+    "lnd_activation_timestamp_changed": false
+  },
+  "tests": {
+    "go_test_all_local": "passed",
+    "go_vet_all": "passed",
+    "manager_build_windows": "passed",
+    "broker_build_windows": "passed",
+    "ui_production_build": "passed",
+    "linux_privileged_package_except_unavailable_loop_identity_fixtures": "passed",
+    "linux_changed_privileged_tests": "passed",
+    "linux_known_environment_failures": [
+      "TestNativeLoopEnsureUsesOnlyClosedManifest: fixed Lightning Loop service identity is absent from the disposable clone",
+      "TestNativeLoopClientMaterialCopiesWithoutExposingDaemonFiles: fixed Lightning Loop service identity is absent from the disposable clone"
+    ]
+  },
+  "remaining_phase2_gate": "complete per-app lifecycle and reboot matrix on Ubuntu 24.04 and Ubuntu 26.04",
+  "integration_node_mutated": false,
+  "secrets_captured": false
+}

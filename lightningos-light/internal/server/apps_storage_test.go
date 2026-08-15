@@ -1,6 +1,10 @@
 package server
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestSuggestedStorageDataDir(t *testing.T) {
 	tests := []struct {
@@ -10,6 +14,8 @@ func TestSuggestedStorageDataDir(t *testing.T) {
 	}{
 		{appID: bitcoinCoreAppID, mount: "/mnt/chain-ssd", want: "/mnt/chain-ssd/lightningos/bitcoin"},
 		{appID: elementsAppID, mount: "/mnt/liquid-ssd/", want: "/mnt/liquid-ssd/lightningos/elements"},
+		{appID: electrsAppID, mount: "/mnt/chain-ssd", want: "/mnt/chain-ssd/lightningos/electrs"},
+		{appID: mempoolAppID, mount: "/mnt/chain-ssd", want: "/mnt/chain-ssd/lightningos/mempool"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.appID, func(t *testing.T) {
@@ -30,17 +36,55 @@ func TestStorageMountEligibility(t *testing.T) {
 	if ok, reason := storageMountEligibility(bitcoinCoreAppID, eligibleMount, suggestedStorageDataDir(bitcoinCoreAppID, eligibleMount.Mount)); !ok {
 		t.Fatalf("expected eligible mount, got reason %q", reason)
 	}
+	electrsMount := eligibleMount
+	electrsMount.FreeBytes = 99 * 1024 * 1024 * 1024
+	if ok, _ := storageMountEligibility(electrsAppID, electrsMount, suggestedStorageDataDir(electrsAppID, electrsMount.Mount)); ok {
+		t.Fatal("expected Electrs volume below 100 GiB free to be rejected")
+	}
+	electrsMount.FreeBytes = 101 * 1024 * 1024 * 1024
+	if ok, reason := storageMountEligibility(electrsAppID, electrsMount, suggestedStorageDataDir(electrsAppID, electrsMount.Mount)); !ok {
+		t.Fatalf("expected Electrs volume above minimum to be eligible: %s", reason)
+	}
+	mempoolMount := eligibleMount
+	mempoolMount.FreeBytes = 19 * 1024 * 1024 * 1024
+	if ok, _ := storageMountEligibility(mempoolAppID, mempoolMount, suggestedStorageDataDir(mempoolAppID, mempoolMount.Mount)); ok {
+		t.Fatal("expected Mempool volume below 20 GiB free to be rejected")
+	}
 
 	rootMount := eligibleMount
 	rootMount.Mount = "/"
 	if ok, _ := storageMountEligibility(bitcoinCoreAppID, rootMount, suggestedStorageDataDir(bitcoinCoreAppID, rootMount.Mount)); ok {
 		t.Fatal("expected root filesystem to be ineligible")
 	}
+	rootBindMount := eligibleMount
+	rootBindMount.Mount = "/data/lnd"
+	rootBindMount.RootDevice = true
+	if ok, reason := storageMountEligibility(mempoolAppID, rootBindMount, suggestedStorageDataDir(mempoolAppID, rootBindMount.Mount)); ok || reason != "volume uses the root filesystem" {
+		t.Fatalf("expected a root-backed bind mount to be ineligible, got ok=%v reason=%q", ok, reason)
+	}
 
 	exfatMount := eligibleMount
 	exfatMount.FSType = "exfat"
 	if ok, _ := storageMountEligibility(elementsAppID, exfatMount, suggestedStorageDataDir(elementsAppID, exfatMount.Mount)); ok {
 		t.Fatal("expected non-Linux permissions filesystem to be ineligible")
+	}
+}
+
+func TestMarkRootDeviceMountsRecognizesBindMountSources(t *testing.T) {
+	mounts := []storageMount{
+		{Mount: "/", Source: "/dev/sda2", FSType: "ext4"},
+		{Mount: "/data/lnd", Source: "/dev/sda2[/data/lnd]", FSType: "ext4"},
+		{Mount: "/blockchain", Source: "/dev/sdb1", FSType: "ext4"},
+	}
+	markRootDeviceMounts(mounts)
+	if !mounts[0].RootDevice || !mounts[1].RootDevice {
+		t.Fatalf("root-backed mounts were not identified: %#v", mounts)
+	}
+	if mounts[2].RootDevice {
+		t.Fatalf("external mount was classified as root-backed: %#v", mounts[2])
+	}
+	if got := storageBackingSource("/dev/sda2[/var/lib/lightningos]"); got != "/dev/sda2" {
+		t.Fatalf("unexpected bind backing source %q", got)
 	}
 }
 
@@ -63,5 +107,18 @@ func TestPreferStorageMountUsesRealFilesystemOverAutomount(t *testing.T) {
 	}
 	if preferStorageMount(automount, raidMount) {
 		t.Fatal("expected autofs automount not to replace xfs raid mount")
+	}
+}
+
+func TestReadHostMountOptionsUsesPIDOneNamespace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mountinfo")
+	raw := "148 31 8:17 / /blockchain rw,relatime shared:644 - ext4 /dev/sdb1 rw\n" +
+		"149 31 8:18 / /media/My\\040Disk ro,nosuid - ext4 /dev/sdc1 ro\n"
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	options := readHostMountOptions(path)
+	if options["/blockchain"] != "rw,relatime" || options["/media/My Disk"] != "ro,nosuid" {
+		t.Fatalf("unexpected host mount options: %#v", options)
 	}
 }

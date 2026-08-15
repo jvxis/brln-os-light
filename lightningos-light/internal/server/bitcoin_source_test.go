@@ -1,6 +1,24 @@
 package server
 
-import "testing"
+import (
+	"errors"
+	"net/http"
+	"testing"
+)
+
+func TestBitcoinRPCAuthenticationErrorRecognizesCoreResponses(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		if !isBitcoinRPCAuthenticationError(rpcStatusError{statusCode: status}) {
+			t.Fatalf("status %d was not recognized as an authentication error", status)
+		}
+	}
+	if isBitcoinRPCAuthenticationError(rpcStatusError{statusCode: http.StatusInternalServerError}) {
+		t.Fatal("server error was misclassified as authentication failure")
+	}
+	if isBitcoinRPCAuthenticationError(errors.New("dial failed")) {
+		t.Fatal("transport error was misclassified as authentication failure")
+	}
+}
 
 func TestResolveBitcoinSourcePrefersLNDConf(t *testing.T) {
 	t.Run("lnd conf local overrides env remote", func(t *testing.T) {
@@ -73,4 +91,13 @@ func TestParseBitcoinSourceFromLNDConf(t *testing.T) {
 			t.Fatalf("expected local, got %q", got)
 		}
 	})
+}
+
+func TestParseBitcoinSourceFromGlobalExistingNodeOptions(t *testing.T) {
+	if got := parseBitcoinSourceFromLNDConf("bitcoin.active=1\nbitcoind.rpchost=remote.example:8332\n"); got != "remote" {
+		t.Fatalf("global remote source = %q, want remote", got)
+	}
+	if got := parseBitcoinSourceFromLNDConf("bitcoin.active=1\nbitcoind.rpchost=127.0.0.1:8332\n"); got != "local" {
+		t.Fatalf("global local source = %q, want local", got)
+	}
 }

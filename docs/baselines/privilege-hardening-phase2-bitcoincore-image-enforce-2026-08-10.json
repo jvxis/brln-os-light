@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T20:29:08Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "a7d49fd62f44dc05259ab8dfe660c7657e08e132",
+  "tested_source": "source_head_before_slice plus the uncommitted Bitcoin Core image catalog slice",
+  "scope": "Bitcoin Core typed Docker readiness and single-image preparation in enforce mode; no app lifecycle or blockchain synchronization",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "architecture": "amd64"
+  },
+  "binary_sha256": {
+    "lightningos_manager": "cd11085d625ae98080a621a5113476848738960044925c1ef64927e34396db14",
+    "lightningos_privileged": "4142fdd71b1a379408dab9ca0f6ce259cb095624f934997b6131fce990df5806"
+  },
+  "preconditions": {
+    "broker_mode": "enforce",
+    "manager_user_docker_group_removed": true,
+    "manager_unit_docker_supplementary_group_removed": true,
+    "manager_process_groups": [984, 999, 1002],
+    "docker_gid": 982,
+    "direct_docker_as_manager_exit_code": 1,
+    "bitcoin_core_image_absent": true,
+    "bitcoin_core_app_root_absent": true,
+    "bitcoin_core_data_dir_absent": true
+  },
+  "catalog_boundary": {
+    "request_fields": ["app_id", "variant"],
+    "app_id": "bitcoincore",
+    "variant": "node",
+    "image": "bitcoin/bitcoin:31.1",
+    "transient_unit": "lightningos-bitcoincore-image-node",
+    "caller_supplied_image": false,
+    "caller_supplied_unit": false,
+    "caller_supplied_executable": false,
+    "caller_supplied_arguments": false
+  },
+  "broker_gate": {
+    "prepare_status": "preparing",
+    "final_status": "ready",
+    "elapsed_seconds_upper_bound": 17.3,
+    "audit_prepare_success": true,
+    "audit_status_success": true,
+    "transient_unit_final_load_state": "not-found",
+    "transient_unit_final_result": "success",
+    "negative_request_extra_image_field": {
+      "accepted": false,
+      "code": "invalid_request",
+      "message_sanitized": true
+    }
+  },
+  "image_gate": {
+    "image_id": "sha256:da25cedc66b1daefff9f412ee196c901a899c3fa68a33b20849c3e08b5c40d63",
+    "reported_version": "Bitcoin Core daemon version v31.1.0 bitcoind",
+    "temporary_container_removed": true,
+    "image_removed_after_gate": true
+  },
+  "local_validation": {
+    "focused_appmanifest_privileged_server_tests": "passed",
+    "privilege_boundary_tests": "passed",
+    "linux_amd64_manager_and_broker_build": "passed",
+    "full_go_test_all": "only the two pre-existing Windows CRLF-sensitive installer tests failed"
+  },
+  "remaining_bitcoin_core_scope": [
+    "storage target enrollment and identity guard",
+    "bitcoin.conf seed/read/write and RPC allowlist updates",
+    "Compose install/start/stop/status/uninstall",
+    "bitcoin-cli and log inspection",
+    "P2P firewall and dependent-app network contracts"
+  ],
+  "final_state": {
+    "bitcoin_core_image_present": false,
+    "bitcoin_core_app_root_present": false,
+    "bitcoin_core_data_dir_present": false,
+    "gate_vm": "powered_off_by_acpi",
+    "los_test2": "running_and_untouched",
+    "recoverable_gate_binary_backups": "preserved"
+  }
+}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/system"
 )
@@ -22,13 +23,12 @@ import (
 // ships its own bitcoind + LND. This compose reuses the node's existing
 // Bitcoin source and the native LND over REST (see docs/19_BACKLOG.md §14).
 const (
-	btcpayAppID            = "btcpay"
-	btcpayImage            = "btcpayserver/btcpayserver:latest"
-	btcpayNbxplorerImage   = "nicolasdorier/nbxplorer:2.6.8"
-	btcpayPostgresImage    = "postgres:16"
-	btcpayTorImage         = robosatsTorImage
-	btcpayPort             = 23000
-	btcpayNbxplorerPort    = 32838
+	btcpayAppID            = appmanifest.BTCPayID
+	btcpayImage            = appmanifest.BTCPayServerImage
+	btcpayNbxplorerImage   = appmanifest.BTCPayNbxplorerImage
+	btcpayPostgresImage    = appmanifest.BTCPayPostgresImage
+	btcpayTorImage         = appmanifest.BTCPayTorImage
+	btcpayPort             = appmanifest.BTCPayPort
 	btcpayLndTLSWaitSteps  = 15
 	btcpayTorSOCKSEndpoint = "tor:9050"
 )
@@ -77,7 +77,7 @@ func btcpayDefinition() appDefinition {
 		Description: "Self-hosted payment processor (invoices, Point of Sale, payment buttons) using your existing Bitcoin source and LND.",
 		Port:        btcpayPort,
 		SecurityNotices: []string{
-			appSecurityNoticeElevatedLNDAccess,
+			appSecurityNoticeLimitedLNDAccess,
 		},
 	}
 }
@@ -94,7 +94,11 @@ func (a btcpayApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "btcpayserver")
+	handled, status, _, err := system.InspectAppWithBroker(ctx, btcpayAppID)
+	if !handled {
+		info.Status = "unknown"
+		return info, errors.New("BTCPay status requires privileged broker enforce mode")
+	}
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
@@ -116,13 +120,22 @@ func (a btcpayApp) Stop(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("BTCPay Server is not installed")
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
+	if handled, err := system.AppLifecycleWithBroker(ctx, btcpayAppID, "stop"); !handled {
+		return errors.New("BTCPay lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("BTCPay stop failed: %w", err)
+	}
+	return nil
 }
 
 func (a btcpayApp) Uninstall(ctx context.Context) error {
 	paths := btcpayAppPaths()
 	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		if handled, err := system.RemoveAppWithBroker(ctx, btcpayAppID); !handled {
+			return errors.New("BTCPay removal requires privileged broker enforce mode")
+		} else if err != nil {
+			return fmt.Errorf("BTCPay removal failed: %w", err)
+		}
 	}
 	// Keep appsDataRoot/btcpay: it may hold store hot-wallet seeds, the
 	// invoice database, and the baked LND macaroon for a future reinstall.
@@ -154,7 +167,7 @@ func btcpayAppPaths() btcpayPaths {
 // applyBtcpay drives both Install and Start so a bitcoin source switch after
 // install re-wires NBXplorer automatically on the next start.
 func (s *Server) applyBtcpay(ctx context.Context) error {
-	if err := ensureDocker(ctx); err != nil {
+	if err := ensureDockerForCatalogAppEnforce(ctx); err != nil {
 		return err
 	}
 	paths := btcpayAppPaths()
@@ -174,19 +187,8 @@ func (s *Server) applyBtcpay(ctx context.Context) error {
 		return err
 	}
 
-	if err := ensureBtcpayImage(ctx); err != nil {
+	if err := ensureBtcpayImages(ctx, wiring.UseTorProxy); err != nil {
 		return err
-	}
-	if err := ensureDockerImage(ctx, btcpayNbxplorerImage); err != nil {
-		return err
-	}
-	if err := ensureDockerImage(ctx, btcpayPostgresImage); err != nil {
-		return err
-	}
-	if wiring.UseTorProxy {
-		if err := ensureDockerImage(ctx, btcpayTorImage); err != nil {
-			return err
-		}
 	}
 
 	dbPassword, err := ensureBtcpayDbPassword(paths)
@@ -202,18 +204,10 @@ func (s *Server) applyBtcpay(ctx context.Context) error {
 	if _, err := ensureFileWithChange(paths.ComposePath, btcpayComposeContents(paths, wiring)); err != nil {
 		return err
 	}
-
-	// Init scripts under /docker-entrypoint-initdb.d only run while postgres is
-	// creating an empty data directory. Repair an already-initialized pgdata
-	// volume that is missing NBXplorer's database before starting dependants.
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "btcpay-db"); err != nil {
-		return err
-	}
-	if err := ensureBtcpayNbxplorerDatabase(ctx, system.RunCommandWithSudo); err != nil {
-		return err
-	}
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
-		return err
+	if handled, err := system.AppLifecycleWithBroker(ctx, btcpayAppID, "start"); !handled {
+		return errors.New("BTCPay lifecycle requires privileged broker enforce mode")
+	} else if err != nil {
+		return fmt.Errorf("BTCPay start failed: %w", err)
 	}
 	if err := ensureBtcpayUfwAccess(ctx); err != nil && s.logger != nil {
 		s.logger.Printf("btcpay: ufw rule failed: %v", err)
@@ -221,14 +215,26 @@ func (s *Server) applyBtcpay(ctx context.Context) error {
 	return nil
 }
 
-// The BTCPay image intentionally tracks upstream's latest stable release so
-// security updates are picked up on both install and a user-initiated start.
+// The BTCPay image tracks the catalog's newest official stable release and is
+// refreshed on both install and a user-initiated start.
 // Pinned dependency images keep using the shared cache-aware helper.
-func ensureBtcpayImage(ctx context.Context) error {
-	if strings.HasSuffix(btcpayImage, ":latest") {
-		return pullDockerImage(ctx, btcpayImage)
+func ensureBtcpayImages(ctx context.Context, useTor bool) error {
+	for _, variant := range appmanifest.BTCPayImageVariants(useTor) {
+		if err := ensureBtcpayImageVariant(ctx, variant); err != nil {
+			return fmt.Errorf("btcpay image %s unavailable: %w", variant, err)
+		}
 	}
-	return ensureDockerImage(ctx, btcpayImage)
+	return nil
+}
+
+func ensureBtcpayImageVariant(ctx context.Context, variant appmanifest.AppImageVariant) error {
+	if _, err := appmanifest.BTCPayImageForVariant(variant); err != nil {
+		return err
+	}
+	if handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.BTCPayID, string(variant)); handled {
+		return err
+	}
+	return errors.New("BTCPay image preparation requires privileged broker enforce mode")
 }
 
 func ensureBtcpayPaths(paths btcpayPaths) error {
@@ -267,7 +273,7 @@ func (s *Server) resolveBtcpayBitcoinWiring(ctx context.Context) (btcpayBitcoinW
 
 func (s *Server) resolveBtcpayLocalWiring(ctx context.Context) (btcpayBitcoinWiring, error) {
 	bitcoinPaths := bitcoinCoreAppPaths()
-	cfg, updated, err := readBitcoinLocalRPCConfig(ctx)
+	cfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		return btcpayBitcoinWiring{}, err
 	}
@@ -275,11 +281,6 @@ func (s *Server) resolveBtcpayLocalWiring(ctx context.Context) (btcpayBitcoinWir
 		return btcpayBitcoinWiring{}, errors.New("local bitcoin RPC credentials missing")
 	}
 	if fileExists(bitcoinPaths.ComposePath) {
-		if updated {
-			if err := runCompose(ctx, bitcoinPaths.Root, bitcoinPaths.ComposePath, "restart", "bitcoind"); err != nil {
-				return btcpayBitcoinWiring{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", err)
-			}
-		}
 		// NBXplorer joins the Bitcoin Core app's compose network (mempool
 		// precedent) so RPC and P2P stay off the host interfaces.
 		return btcpayBitcoinWiring{
@@ -296,15 +297,20 @@ func (s *Server) resolveBtcpayLocalWiring(ctx context.Context) (btcpayBitcoinWir
 	if !isLocalRPCHost(cfg.Host) {
 		return btcpayBitcoinWiring{}, fmt.Errorf("local bitcoin RPC host is not local: %s", cfg.Host)
 	}
+	if err := ensureLocalExternalBitcoinConsumerNetwork(ctx); err != nil {
+		return btcpayBitcoinWiring{}, err
+	}
 	_, port := parseMainchainRPC(cfg.Host)
+	dockerHost := appmanifest.BitcoinConsumerHostGateway
 	return btcpayBitcoinWiring{
-		Source:       "external",
-		RPCURL:       fmt.Sprintf("http://host.docker.internal:%d/", port),
-		RPCUser:      cfg.User,
-		RPCPass:      cfg.Pass,
-		NodeEndpoint: "host.docker.internal:8333",
-		ProbeRPCHost: cfg.Host,
-		ProbeP2P:     "127.0.0.1:8333",
+		Source:             "external",
+		RPCURL:             fmt.Sprintf("http://%s:%d/", dockerHost, port),
+		RPCUser:            cfg.User,
+		RPCPass:            cfg.Pass,
+		NodeEndpoint:       net.JoinHostPort(dockerHost, "8333"),
+		ProbeRPCHost:       cfg.Host,
+		ProbeP2P:           "127.0.0.1:8333",
+		JoinBitcoinNetwork: true,
 	}, nil
 }
 
@@ -312,12 +318,12 @@ func (s *Server) resolveBtcpayRemoteWiring(ctx context.Context) (btcpayBitcoinWi
 	if s.cfg == nil {
 		return btcpayBitcoinWiring{}, errors.New("config unavailable")
 	}
-	user, pass := readBitcoinSecrets()
-	networkInfo, err := fetchBitcoinNetworkInfo(ctx, s.cfg.BitcoinRemote.RPCHost, user, pass)
+	remoteCfg := resolveBitcoinRemoteRPCConfig(s.cfg)
+	networkInfo, err := fetchBitcoinNetworkInfo(ctx, remoteCfg.Host, remoteCfg.User, remoteCfg.Pass)
 	if err != nil {
 		return btcpayBitcoinWiring{}, fmt.Errorf("failed to discover the remote Bitcoin P2P endpoint: %w", err)
 	}
-	return buildBtcpayRemoteWiring(s.cfg.BitcoinRemote.RPCHost, user, pass, networkInfo.LocalAddresses)
+	return buildBtcpayRemoteWiring(remoteCfg.Host, remoteCfg.User, remoteCfg.Pass, networkInfo.LocalAddresses)
 }
 
 func buildBtcpayRemoteWiring(rpcHost, user, pass string, localAddresses []bitcoinNetworkLocalAddress) (btcpayBitcoinWiring, error) {
@@ -385,11 +391,13 @@ func probeBtcpayBitcoin(ctx context.Context, wiring btcpayBitcoinWiring) error {
 }
 
 // ensureBtcpayLndMaterial prepares the LND surface BTCPay needs: REST access
-// from Docker (shared lnbits helper), a private copy of tls.cert, and a
+// from Docker (through the privileged broker), a private copy of tls.cert, and a
 // dedicated macaroon baked with the minimal permission set documented by
 // BTCPay — never the admin macaroon.
 func (s *Server) ensureBtcpayLndMaterial(ctx context.Context, paths btcpayPaths) error {
-	if err := ensureLnbitsRestAccess(ctx); err != nil {
+	if handled, err := system.EnsureAppLNDHostAccessWithBroker(ctx, appmanifest.BTCPayID); !handled {
+		return errors.New("BTCPay LND host access requires privileged broker enforce mode")
+	} else if err != nil {
 		return err
 	}
 	if err := copyBtcpayLndCert(paths); err != nil {
@@ -443,8 +451,8 @@ func btcpayMacaroonPermissions() []lndclient.MacaroonPermission {
 // copyBtcpayLndCert keeps a private copy of tls.cert in the app data dir. The
 // copy (not /data/lnd itself) is what gets mounted: a whole-dir mount would
 // expose admin.macaroon and a single-file mount would pin a stale inode after
-// LND regenerates the cert. ensureLnbitsRestAccess may have just restarted LND,
-// so wait for the regenerated cert to appear.
+// LND regenerates the cert. The broker may have just restarted LND while
+// reconciling REST access, so wait for the regenerated cert to appear.
 func copyBtcpayLndCert(paths btcpayPaths) error {
 	const certSource = "/data/lnd/tls.cert"
 	var raw []byte
@@ -500,101 +508,26 @@ func ensureBtcpayEnv(paths btcpayPaths, wiring btcpayBitcoinWiring, dbPassword s
 	if wiring.UseTorProxy {
 		required = append(required, [2]string{"NBXPLORER_SOCKSENDPOINT", btcpayTorSOCKSEndpoint})
 	}
-	if !fileExists(paths.EnvPath) {
-		lines := make([]string, 0, len(required)+1)
-		for _, kv := range required {
-			lines = append(lines, kv[0]+"="+kv[1])
-		}
-		lines = append(lines, "")
-		return writeFile(paths.EnvPath, strings.Join(lines, "\n"), 0600)
-	}
+	lines := make([]string, 0, len(required)+1)
 	for _, kv := range required {
-		exists, value, err := envValueState(paths.EnvPath, kv[0])
-		if err != nil {
-			return err
-		}
-		if !exists {
-			if err := appendEnvLine(paths.EnvPath, kv[0], kv[1]); err != nil {
-				return err
-			}
-			continue
-		}
-		if strings.TrimSpace(value) != kv[1] {
-			if err := setEnvValue(paths.EnvPath, kv[0], kv[1]); err != nil {
-				return err
-			}
-		}
+		lines = append(lines, kv[0]+"="+kv[1])
 	}
-	return nil
+	lines = append(lines, "")
+	expected := strings.Join(lines, "\n")
+	if current, err := os.ReadFile(paths.EnvPath); err == nil && string(current) == expected {
+		return os.Chmod(paths.EnvPath, 0600)
+	}
+	return writeFile(paths.EnvPath, expected, 0600)
 }
 
 // btcpayDbInitContents creates the second database on first postgres boot.
 // LC_CTYPE/LC_COLLATE 'C' follows the upstream NBXplorer requirement.
 func btcpayDbInitContents() string {
-	return `CREATE DATABASE nbxplorer TEMPLATE 'template0' LC_CTYPE 'C' LC_COLLATE 'C' ENCODING 'UTF8';
-GRANT ALL PRIVILEGES ON DATABASE nbxplorer TO btcpay;
-`
-}
-
-type btcpayCommandRunner func(context.Context, string, ...string) (string, error)
-
-// ensureBtcpayNbxplorerDatabase makes postgres initialization idempotent. The
-// official postgres entrypoint deliberately ignores init scripts once pgdata
-// exists, so this also repairs installs left half-initialized by an earlier
-// failed attempt.
-func ensureBtcpayNbxplorerDatabase(ctx context.Context, run btcpayCommandRunner) error {
-	var readinessOutput string
-	for attempt := 0; attempt < 30; attempt++ {
-		out, err := run(ctx, "docker", "exec", "btcpay-db", "pg_isready", "-U", "btcpay", "-d", "btcpayserver")
-		readinessOutput = strings.TrimSpace(out)
-		if err == nil {
-			break
-		}
-		if attempt == 29 {
-			if readinessOutput == "" {
-				readinessOutput = err.Error()
-			}
-			return fmt.Errorf("BTCPay postgres did not become ready: %s", readinessOutput)
-		}
-		timer := time.NewTimer(time.Second)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
-
-	out, err := run(
-		ctx,
-		"docker", "exec", "btcpay-db",
-		"psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc",
-		"SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'",
-	)
-	if err != nil {
-		return fmt.Errorf("failed to check the NBXplorer database: %w", err)
-	}
-	if strings.TrimSpace(out) == "1" {
-		return nil
-	}
-
-	if out, err = run(
-		ctx,
-		"docker", "exec", "btcpay-db",
-		"createdb", "-U", "btcpay", "--owner=btcpay", "--template=template0",
-		"--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer",
-	); err != nil {
-		detail := strings.TrimSpace(out)
-		if detail != "" {
-			return fmt.Errorf("failed to create the NBXplorer database: %s: %w", detail, err)
-		}
-		return fmt.Errorf("failed to create the NBXplorer database: %w", err)
-	}
-	return nil
+	return appmanifest.BTCPayDBInit()
 }
 
 func btcpayLightningConnectionString() string {
-	return "type=lnd-rest;server=https://host.docker.internal:8080/;macaroonfilepath=/etc/lnd/btcpay.macaroon;certfilepath=/etc/lnd/tls.cert"
+	return appmanifest.BTCPayLightningConnectionString()
 }
 
 // btcpayComposeContents builds the compose file. NBXplorer and postgres are
@@ -603,137 +536,19 @@ func btcpayLightningConnectionString() string {
 // that app's external network to reach bitcoind:8332/8333 directly. Remote
 // Onion nodes get an isolated Tor service on the internal compose network.
 func btcpayComposeContents(paths btcpayPaths, wiring btcpayBitcoinWiring) string {
-	nbxNetworks := ""
-	torService := ""
-	torDependency := ""
-	torEnvironment := ""
-	torVolumes := ""
-	networksBlock := fmt.Sprintf(`
-networks:
-  default:
-    name: %s_default
-`, btcpayAppID)
-	if wiring.UseTorProxy {
-		torService = fmt.Sprintf(`  tor:
-    image: %s
-    container_name: btcpay-tor
-    restart: unless-stopped
-    volumes:
-      - btcpay-tor-data:/var/lib/tor
-      - btcpay-tor-log:/var/log/tor
-
-`, btcpayTorImage)
-		torDependency = "      - tor\n"
-		torEnvironment = "      NBXPLORER_SOCKSENDPOINT: ${NBXPLORER_SOCKSENDPOINT}\n"
-		torVolumes = `volumes:
-  btcpay-tor-data:
-  btcpay-tor-log:
-`
-	}
-	if wiring.JoinBitcoinNetwork {
-		nbxNetworks = `    networks:
-      - default
-      - bitcoincore
-`
-		networksBlock = fmt.Sprintf(`
-networks:
-  default:
-    name: %s_default
-  bitcoincore:
-    external: true
-    name: bitcoincore_default
-`, btcpayAppID)
-	}
-	return fmt.Sprintf(`services:
-%[14]s
-  btcpay-db:
-    image: %[1]s
-    container_name: btcpay-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: btcpay
-      POSTGRES_PASSWORD: ${BTCPAY_DB_PASSWORD}
-      POSTGRES_DB: btcpayserver
-    expose:
-      - "5432"
-    volumes:
-      - %[2]s:/var/lib/postgresql/data
-      - %[3]s:/docker-entrypoint-initdb.d/init-nbxplorer.sql:ro
-
-  nbxplorer:
-    image: %[4]s
-    container_name: btcpay-nbxplorer
-    restart: unless-stopped
-    depends_on:
-      - btcpay-db
-%[15]s    environment:
-      NBXPLORER_NETWORK: mainnet
-      NBXPLORER_CHAINS: btc
-      NBXPLORER_BIND: 0.0.0.0:%[5]d
-      NBXPLORER_DATADIR: /datadir
-      NBXPLORER_SIGNALFILESDIR: /datadir
-      NBXPLORER_BTCRPCURL: ${NBXPLORER_BTCRPCURL}
-      NBXPLORER_BTCRPCUSER: ${NBXPLORER_BTCRPCUSER}
-      NBXPLORER_BTCRPCPASSWORD: ${NBXPLORER_BTCRPCPASSWORD}
-      NBXPLORER_BTCNODEENDPOINT: ${NBXPLORER_BTCNODEENDPOINT}
-%[16]s      NBXPLORER_POSTGRES: User ID=btcpay;Password=${BTCPAY_DB_PASSWORD};Host=btcpay-db;Port=5432;Application Name=nbxplorer;MaxPoolSize=20;Database=nbxplorer
-    expose:
-      - "%[5]d"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - %[6]s:/datadir
-%[7]s
-  btcpayserver:
-    image: %[8]s
-    container_name: btcpay-server
-    restart: unless-stopped
-    depends_on:
-      - nbxplorer
-    environment:
-      BTCPAY_NETWORK: mainnet
-      BTCPAY_CHAINS: btc
-      BTCPAY_BIND: 0.0.0.0:%[9]d
-      BTCPAY_ROOTPATH: /
-      BTCPAY_DATADIR: /datadir
-      BTCPAY_BTCEXPLORERURL: http://nbxplorer:%[5]d/
-      BTCPAY_POSTGRES: User ID=btcpay;Password=${BTCPAY_DB_PASSWORD};Host=btcpay-db;Port=5432;Application Name=btcpayserver;Database=btcpayserver
-      BTCPAY_EXPLORERPOSTGRES: User ID=btcpay;Password=${BTCPAY_DB_PASSWORD};Host=btcpay-db;Port=5432;Application Name=btcpayserver;MaxPoolSize=80;Database=nbxplorer
-      BTCPAY_BTCLIGHTNING: "%[10]s"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "%[9]d:%[9]d"
-    volumes:
-      - %[11]s:/datadir
-      - %[6]s:/root/.nbxplorer:ro
-      - %[12]s:/etc/lnd:ro
-%[17]s%[13]s`,
-		btcpayPostgresImage,
-		paths.PgDir,
-		paths.DbInitPath,
-		btcpayNbxplorerImage,
-		btcpayNbxplorerPort,
-		paths.NbxDir,
-		nbxNetworks,
-		btcpayImage,
-		btcpayPort,
-		btcpayLightningConnectionString(),
-		paths.DataDir,
-		paths.LndDir,
-		networksBlock,
-		torService,
-		torDependency,
-		torEnvironment,
-		torVolumes,
-	)
+	return appmanifest.BTCPayCompose(appmanifest.BTCPayComposePaths{
+		DataDir:    paths.DataDir,
+		NbxDir:     paths.NbxDir,
+		PgDir:      paths.PgDir,
+		DbInitPath: paths.DbInitPath,
+		LndDir:     paths.LndDir,
+	}, wiring.JoinBitcoinNetwork, wiring.UseTorProxy)
 }
 
 func ensureBtcpayUfwAccess(ctx context.Context) error {
-	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
-	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
-		return nil
+	if handled, _, err := system.EnsureAppFirewallWithBroker(ctx, appmanifest.BTCPayID); !handled {
+		return errors.New("BTCPay firewall requires privileged broker enforce mode")
+	} else {
+		return err
 	}
-	_, err = system.RunCommandWithSudo(ctx, "ufw", "allow", fmt.Sprintf("%d/tcp", btcpayPort))
-	return err
 }

@@ -1,0 +1,51 @@
+{
+  "captured_at": "2026-08-13",
+  "checkpoint": "e92f1c6fd3ef778310d6d45f6fa10d3bd83af333",
+  "result": "passed",
+  "scope": "Ubuntu 24.04 post-upgrade rollback and LOS TESTE2 Bitcoin/App Store regression closure",
+  "disposable_ubuntu24": {
+    "trusted_checkout_upgrade": "passed",
+    "manager_health": "passed",
+    "system_integrations_reconciled": "passed",
+    "broker_marker_private_root": "root:root:0644",
+    "manager_shared_root": "lightningos:lightningos:0750",
+    "rollback_schema": "v5",
+    "rollback_manager_binary_hash": "exact baseline match",
+    "rollback_ui_aggregate_hash": "exact baseline match",
+    "lnd_activation_during_accepted_upgrade_and_rollback": "unchanged",
+    "docker_invocation": "unchanged",
+    "postgresql_invocation": "unchanged",
+    "accepted_regressions": [
+      "broker sandbox permits only the optional Avahi service write path required by fixed mDNS reconciliation",
+      "pre-existing manager macaroon and transaction-state files are captured and restored byte-for-byte",
+      "legacy rollback schema v4 migrates to v5 fail-closed"
+    ]
+  },
+  "los_test2": {
+    "origin": "managed install.sh node with App Store Bitcoin on an external volume",
+    "trusted_checkout_upgrade": "passed",
+    "authenticated_apps_api": "Bitcoin installed and running",
+    "authenticated_bitcoin_local_api": {
+      "installed": true,
+      "status": "running",
+      "source": "app",
+      "rpc_ok": true,
+      "chain": "main",
+      "blocks_equal_headers": true,
+      "verification_progress": 1,
+      "initial_block_download": false,
+      "pruned": false,
+      "data_dir": "/blockchain/bitcoin"
+    },
+    "bitcoin_container_identity": "unchanged",
+    "bitcoin_container_started_at": "unchanged",
+    "bitcoin_restart_count": 0,
+    "lnd_pid": "unchanged",
+    "docker_invocation": "unchanged",
+    "postgresql_invocation": "unchanged",
+    "manager_health": "passed",
+    "rollback_schema": "v5 ready",
+    "temporary_checkout": "removed"
+  },
+  "secrets": "No credential, token, password, macaroon bytes, RPC secret, IP address, node identity, or reusable session material is recorded."
+}

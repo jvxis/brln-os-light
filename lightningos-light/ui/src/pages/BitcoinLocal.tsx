@@ -48,7 +48,7 @@ const formatGB = (value?: number) => {
 }
 
 const formatPercent = (value?: number) => {
-  if (value === undefined || value === null) return '0.00'
+  if (value === undefined || value === null) return null
   return Math.min(100, value * 100).toFixed(2)
 }
 
@@ -215,6 +215,7 @@ export default function BitcoinLocal() {
     const raw = status?.verification_progress ?? 0
     return Math.max(0, Math.min(100, raw * 100))
   }, [status?.verification_progress])
+  const hasSyncProgress = typeof status?.verification_progress === 'number'
 
   const source = status?.source || (status?.installed ? 'app' : 'none')
   const managedByApp = source === 'app'
@@ -222,6 +223,7 @@ export default function BitcoinLocal() {
   const showDetails = managedByApp || externalDetected
   const showNotInstalled = !managedByApp && !externalDetected
   const progress = useMemo(() => formatPercent(status?.verification_progress), [status?.verification_progress])
+  const progressDisplay = progress === null ? t('common.unknown') : `${progress}%`
   const statusClass = statusStyles[status?.status || 'unknown'] || statusStyles.unknown
   const statusLabel = (value?: string) => {
     switch (value) {
@@ -244,7 +246,7 @@ export default function BitcoinLocal() {
     ? Boolean(status?.status === 'running' && status?.rpc_ok)
     : Boolean(status?.rpc_ok)
   const blockCount = 18
-  const activeBlocks = syncing ? Math.max(1, Math.round((progressValue / 100) * blockCount)) : blockCount
+  const activeBlocks = !hasSyncProgress ? 0 : syncing ? Math.max(1, Math.round((progressValue / 100) * blockCount)) : blockCount
   const sweepDuration = syncing ? Math.max(2.5, 7.5 - progressValue / 15) : 12
   const currentPeers = status?.connections ?? 0
   const rpcStatusLabel = ready
@@ -413,7 +415,7 @@ export default function BitcoinLocal() {
                 <div className="chain-track-content">
                   <div className="chain-track-head">
                     <span className="chain-track-label">{syncing ? t('bitcoinLocal.downloadingBlocks') : t('bitcoinLocal.verificationProgress')}</span>
-                    <span className="chain-track-value">{progress}%</span>
+                    <span className="chain-track-value">{progressDisplay}</span>
                   </div>
                   <div className="chain-block-grid">
                     {Array.from({ length: blockCount }).map((_, i) => {
@@ -435,10 +437,10 @@ export default function BitcoinLocal() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-fog/60">{syncing ? t('bitcoinLocal.downloadingBlocks') : t('bitcoinLocal.verificationProgress')}</span>
-                  <span className="font-semibold text-fog">{progress}%</span>
+                  <span className="font-semibold text-fog">{progressDisplay}</span>
                 </div>
                 <div className="h-3 rounded-full bg-white/10 overflow-hidden">
-                  <div className="h-full bg-glow transition-all" style={{ width: `${progress}%` }} />
+                  <div className="h-full bg-glow transition-all" style={{ width: `${progressValue}%` }} />
                 </div>
               </div>
 

@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T19:46:09Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "5fd71b0c4a3af80b232ad9452f4e245ab95a1c31",
+  "tested_source": "source_head_before_slice plus the uncommitted typed RoboSats uninstall slice",
+  "scope": "RoboSats app.compose.remove onboarding with named-volume preservation in enforce mode",
+  "integration_node_touched": false,
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "codename": "noble",
+    "architecture": "amd64"
+  },
+  "binary_sha256": {
+    "lightningos_manager": "563e4f32abfb8a6d7b93cbc16ef38538dc2325667c4946476481f4c7851a358f",
+    "lightningos_privileged": "caeee45c613103a23311ecbeb3eed0f7b16bed68226898b0744976e2872bca67"
+  },
+  "preconditions": {
+    "broker_mode": "enforce",
+    "robosats_installed": true,
+    "robosats_status": "stopped",
+    "project_containers": 3,
+    "manager_catalog_root": "present",
+    "privileged_execution_root": "present",
+    "named_data_volume": "robosats_robosats-data",
+    "manager_process_groups": [984, 999, 1002],
+    "docker_gid": 982,
+    "direct_docker_as_manager_exit_code": 1
+  },
+  "catalog_boundary": {
+    "operation": "app.compose.remove",
+    "request_fields": ["app_id"],
+    "allowed_app_id": "robosats",
+    "fixed_compose_action": ["down", "--remove-orphans", "--timeout", "2"],
+    "caller_supplied_paths": false,
+    "caller_supplied_arguments": false,
+    "caller_supplied_volume_policy": false,
+    "volumes_flag_present": false,
+    "manager_assets_validated": ["compose_exact", "caddy_exact", "regular_files", "no_symlinks", "rsa_certificate_key_pair"],
+    "execution_source": "persistent root-owned snapshot",
+    "execution_snapshot_removed_only_after_success": true,
+    "failed_remove_preserves_retry_state": true,
+    "manager_removes_only_manager_owned_catalog_files": true
+  },
+  "negative_gate": {
+    "request_extra_field": "volumes",
+    "request_extra_value": true,
+    "accepted": false,
+    "code": "invalid_request",
+    "message": "invalid privileged broker request",
+    "message_sanitized": true
+  },
+  "api_gate": {
+    "uninstall_http_status": 200,
+    "uninstall_duration_ms": 622,
+    "response_ok": true,
+    "installed_after": false,
+    "status_after": "not_installed",
+    "project_containers_after": 0,
+    "project_networks_after": 0,
+    "manager_catalog_root_after": "absent",
+    "privileged_execution_root_after": "absent",
+    "named_volumes_after": 5,
+    "data_marker_survived_uninstall": true,
+    "data_marker_removed_after_verification": true,
+    "app_compose_remove_success_event_delta": 1
+  },
+  "local_validation": {
+    "focused_privileged_system_server_tests": "passed",
+    "go_vet_all": "passed",
+    "linux_amd64_manager_and_broker_build": "passed",
+    "app_registry_and_privilege_boundary_tests": "passed",
+    "full_go_test_all": "only the two pre-existing Windows CRLF-sensitive installer tests failed"
+  },
+  "remaining_scope": {
+    "robosats_current_contract": "complete",
+    "phase_2": "other App Store applications remain"
+  },
+  "final_state": {
+    "robosats": "not_installed",
+    "ufw": "inactive",
+    "named_volumes": "preserved",
+    "gate_vm": "powered_off_by_acpi",
+    "los_test2": "running_and_untouched",
+    "temporary_host_build_artifacts": "removed",
+    "previous_gate_binaries": "preserved as recoverable backups on the disposable VM"
+  }
+}

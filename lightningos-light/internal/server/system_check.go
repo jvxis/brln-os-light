@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -180,7 +179,7 @@ func (s *Server) systemCheckApp(ctx context.Context) systemCheckGroup {
 		"inactive",
 	))
 
-	terminalEnabled := strings.TrimSpace(os.Getenv("TERMINAL_ENABLED")) == "1"
+	terminalEnabled := terminalRuntimeValue("TERMINAL_ENABLED") == "1"
 	terminalTone := systemCheckMuted
 	terminalDetail := "disabled"
 	if terminalEnabled {

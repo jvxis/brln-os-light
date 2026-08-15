@@ -680,7 +680,7 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 			return err
 		}
 	}
-	if err := validateOptionalInt("max_concurrent", payload.MaxConcurrent, 1, 0); err != nil {
+	if err := validateOptionalInt("max_concurrent", payload.MaxConcurrent, 1, rebalanceMaxConcurrent); err != nil {
 		return err
 	}
 	if err := validateOptionalInt64("min_amount_sat", payload.MinAmountSat, 0, 0); err != nil {

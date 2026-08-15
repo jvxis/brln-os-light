@@ -9,11 +9,13 @@ export LANG=C
 
 TOR_REPO_URL="https://deb.torproject.org/torproject.org"
 TOR_REPO_KEY_URL="${TOR_REPO_URL}/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc"
+TOR_REPO_KEY_FINGERPRINT="A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89"
 TOR_KEYRING="/usr/share/keyrings/deb.torproject.org-keyring.gpg"
 TOR_SOURCES="/etc/apt/sources.list.d/tor.sources"
 ASSUME_YES=0
 AUTO_CONFIGURE_REPO=0
 AUTO_RESTART=0
+VERIFY_ONLY=0
 
 print_step() {
   echo ""
@@ -53,6 +55,8 @@ Options:
   --yes             Accept update/install confirmations without a terminal.
   --configure-repo  Configure the official repository when it is missing.
   --restart         Restart Tor automatically after a successful update.
+  --verify-only     Authenticate repository availability and its pinned key
+                    without changing APT configuration, packages, or Tor.
   -h, --help        Show this help.
 EOF
 }
@@ -119,7 +123,11 @@ get_os_codename() {
 }
 
 configure_official_repo() {
-  local architecture codename tmp_key
+  local architecture codename tmp_dir key_file keyring_file inrelease_file imported_fingerprint
+
+  require_command curl
+  require_command gpg
+  require_command gpgv
 
   architecture=$(dpkg --print-architecture)
   case "$architecture" in
@@ -130,19 +138,42 @@ configure_official_repo() {
   codename=$(get_os_codename)
   [[ -n "$codename" ]] || die "Could not detect the Debian/Ubuntu codename."
 
-  apt-get update
-  apt-get install -y ca-certificates curl gnupg
+  tmp_dir=$(mktemp -d)
+  chmod 0700 "$tmp_dir"
+  trap 'rm -rf "${tmp_dir:-}"' RETURN EXIT
+  key_file="$tmp_dir/tor-project.asc"
+  keyring_file="$tmp_dir/tor-project.gpg"
+  inrelease_file="$tmp_dir/InRelease"
 
-  print_step "Checking Tor Project repository for ${codename}/${architecture}"
-  curl -fsI "${TOR_REPO_URL}/dists/${codename}/InRelease" >/dev/null \
+  print_step "Authenticating Tor Project repository for ${codename}/${architecture}"
+  curl --proto '=https' --tlsv1.2 -fsSL "${TOR_REPO_URL}/dists/${codename}/InRelease" -o "$inrelease_file" \
     || die "The Tor Project repository is unavailable for codename: ${codename}"
+  curl --proto '=https' --tlsv1.2 -fsSL "$TOR_REPO_KEY_URL" -o "$key_file" \
+    || die "Could not download the Tor Project repository key."
+  gpg --batch --homedir "$tmp_dir" --import "$key_file" >/dev/null 2>&1 \
+    || die "Could not import the Tor Project repository key."
+  imported_fingerprint=$(gpg --batch --homedir "$tmp_dir" --with-colons \
+    --fingerprint "$TOR_REPO_KEY_FINGERPRINT" 2>/dev/null \
+    | awk -F: '$1 == "fpr" { print $10; exit }')
+  if [[ "$imported_fingerprint" != "$TOR_REPO_KEY_FINGERPRINT" ]]; then
+    die "Tor Project repository key fingerprint mismatch."
+  fi
+  gpg --batch --homedir "$tmp_dir" --export "$TOR_REPO_KEY_FINGERPRINT" >"$keyring_file" \
+    || die "Could not export the pinned Tor Project repository key."
+  [[ -s "$keyring_file" ]] || die "Pinned Tor Project repository key export is empty."
+  gpgv --keyring "$keyring_file" "$inrelease_file" >/dev/null 2>&1 \
+    || die "Tor Project repository metadata signature verification failed."
 
-  tmp_key=$(mktemp)
-  trap 'rm -f "${tmp_key:-}"' RETURN
-  curl -fsSL "$TOR_REPO_KEY_URL" | gpg --dearmor > "$tmp_key"
-  install -m 0644 "$tmp_key" "$TOR_KEYRING"
-  rm -f "$tmp_key"
-  trap - RETURN
+  if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+    print_ok "Tor Project repository and pinned signing key verified; no system state was changed."
+    rm -rf "$tmp_dir"
+    trap - RETURN EXIT
+    return 0
+  fi
+
+  install -o root -g root -m 0644 "$keyring_file" "$TOR_KEYRING"
+  rm -rf "$tmp_dir"
+  trap - RETURN EXIT
 
   cat > "$TOR_SOURCES" <<EOF
 Types: deb
@@ -239,6 +270,10 @@ main() {
       --restart)
         AUTO_RESTART=1
         ;;
+      --verify-only)
+        VERIFY_ONLY=1
+        AUTO_CONFIGURE_REPO=1
+        ;;
       --help|-h)
         usage
         exit 0
@@ -256,11 +291,16 @@ main() {
   require_command dpkg
   require_command dpkg-query
   require_command systemctl
+  if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+    configure_official_repo
+    exit 0
+  fi
 
   print_step "Checking Tor package source"
   if official_repo_configured; then
+    print_ok "Official Tor Project repository is configured; re-authenticating it."
+    configure_official_repo
     repo_ready=1
-    print_ok "Official Tor Project repository is configured."
   else
     print_warn "Official Tor Project repository is not configured."
     print_warn "The distribution candidate may be older than the current Tor release."

@@ -915,6 +915,10 @@ func (s *ChannelRankingService) captureHTLCFailureSamples(ctx context.Context, n
 		aggregates[key] = current
 	}
 	for key, sample := range aggregates {
+		channelID, ok := uint64ToInt64(key.ChannelID)
+		if !ok {
+			continue
+		}
 		if _, err := s.db.Exec(ctx, `
 insert into channel_ranking_htlc_failures (
   channel_id, sampled_bucket, total_count, policy_count, liquidity_count, forward_count, created_at
@@ -927,7 +931,7 @@ on conflict (channel_id, sampled_bucket) do update set
   liquidity_count = excluded.liquidity_count,
   forward_count = excluded.forward_count,
   created_at = excluded.created_at
-`, int64(key.ChannelID), key.Bucket, sample.Total, sample.Policy, sample.Liquidity, sample.Forward, now); err != nil {
+`, channelID, key.Bucket, sample.Total, sample.Policy, sample.Liquidity, sample.Forward, now); err != nil {
 			return err
 		}
 	}

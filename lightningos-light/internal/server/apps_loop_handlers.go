@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"lightningos-light/internal/system"
 )
 
 const loopSwapReauthRequiredCode = "loop_swap_reauth_required"
@@ -141,18 +143,21 @@ type loopRawInQuote struct {
 }
 
 func (s *Server) handleLoopStatus(w http.ResponseWriter, r *http.Request) {
-	paths := loopAppPaths()
-	response := loopStatusResponse{Installed: fileExists(paths.LoopdPath), Autoloop: false}
-	if !response.Installed {
-		writeJSON(w, http.StatusOK, response)
+	handled, state, err := system.LoopStatusWithBroker(r.Context())
+	if !handled {
+		writeError(w, http.StatusServiceUnavailable, "Lightning Loop status requires privileged broker enforce mode")
 		return
 	}
-	state, err := loopDisplayServiceState(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to read Lightning Loop service status")
 		return
 	}
-	response.Running = state == "running"
+	response := loopStatusResponse{Installed: state.Installed, Autoloop: false}
+	if !response.Installed {
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	response.Running = state.Status == "running"
 	if !response.Running {
 		writeJSON(w, http.StatusOK, response)
 		return

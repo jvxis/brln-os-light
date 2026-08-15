@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T18:32:43Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "5e08ff034f779aadbc0dbbb3c608d6071aa1ed1c",
+  "tested_source": "source_head_before_slice plus the uncommitted shared Compose catalog and RoboSats lifecycle slice",
+  "scope": "RoboSats status, start, and stop through typed app.compose.inspect/lifecycle operations in enforce mode",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "os": {
+    "id": "ubuntu",
+    "version_id": "24.04",
+    "codename": "noble",
+    "architecture": "amd64"
+  },
+  "binary_sha256": {
+    "lightningos_manager": "628d40b0d514fc032d7cdffc05a918fe20db535929176b6fb3d1b45d2c447f43",
+    "lightningos_privileged": "0b3b9fd178956d821bdbe39f72d6d9a823abec848aee695e3c8a8a01fa1580bf"
+  },
+  "preconditions": {
+    "robosats_installed_by_legacy_handler": true,
+    "images_preloaded": [
+      "recksato/robosats-client:v0.8.4-alpha",
+      "osminogin/tor-simple:0.4.9.5",
+      "caddy:2.8-alpine"
+    ],
+    "broker_mode": "enforce",
+    "manager_user_docker_group_removed": true,
+    "manager_unit_docker_supplementary_group_removed": true,
+    "manager_process_groups": [984, 999, 1002],
+    "docker_gid": 982,
+    "direct_docker_as_manager_exit_code": 1
+  },
+  "catalog_boundary": {
+    "request_fields": ["app_id", "action"],
+    "lifecycle_actions": ["start", "stop"],
+    "primary_service": "robosats",
+    "caller_supplied_paths": false,
+    "caller_supplied_images": false,
+    "caller_supplied_compose_arguments": false,
+    "manager_catalog_validation": ["compose_exact", "caddy_exact", "regular_files", "no_symlinks", "rsa_certificate_key_pair"],
+    "persistent_execution_root": "/var/lib/lightningos-privileged/apps/robosats",
+    "execution_root_owner": "root:root",
+    "execution_directory_mode": "0700",
+    "execution_file_mode": "0600",
+    "data_mount": "docker_named_volume:robosats_robosats-data",
+    "manager_writable_bind_mounts": 0
+  },
+  "design_gate": {
+    "rejected_design": "temporary broker snapshot plus /proc/<pid>/fd data bind",
+    "observed_failure": "Docker retained container mount source paths beyond broker cleanup and failed closed",
+    "corrective_design": "persistent root-owned execution snapshots plus a Docker named data volume",
+    "partial_containers_reconciled_by_fixed_compose": true
+  },
+  "api_gate": {
+    "initial_status": "stopped",
+    "first_start_http_status": 200,
+    "first_running_status": "running",
+    "first_https_status": 200,
+    "first_stop_http_status": 200,
+    "second_start_http_status": 200,
+    "second_running_status": "running",
+    "second_https_status": 200,
+    "second_stop_http_status": 200,
+    "final_status": "stopped",
+    "final_containers": 3,
+    "final_running_containers": 0,
+    "manager_final": "active",
+    "postgresql_final": "active",
+    "docker_final": "active"
+  },
+  "broker_audit_gate_delta": {
+    "app.compose.lifecycle_success": 4,
+    "app.compose.lifecycle_expected_design_probe_failure": 2,
+    "app.compose.inspect_success": 5
+  },
+  "remaining_legacy_scope": [
+    "robosats install and image preparation",
+    "robosats UFW rule",
+    "robosats uninstall"
+  ],
+  "local_validation": {
+    "focused_appmanifest_privileged_system_server_tests": "passed",
+    "linux_amd64_manager_and_broker_build": "passed",
+    "full_go_test_all": "only the two pre-existing Windows CRLF-sensitive installer tests failed"
+  },
+  "virtualbox_console_recovery": {
+    "stuck_clone": "brln-os-hardening-053-tmp-20260810",
+    "final_state": "aborted",
+    "stuck_process_removed": true,
+    "virtualbox_gui_restarted_without_stopping_los_test2": true
+  }
+}

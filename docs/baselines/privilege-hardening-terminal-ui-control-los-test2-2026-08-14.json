@@ -1,0 +1,65 @@
+{
+  "date_utc": "2026-08-14",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "implementation_commit": "988ceb50e4df1a368f90f6a0e5551170a011cd87",
+  "scope": "fresh-reauthenticated read-only terminal enable/disable through the typed privileged broker",
+  "local_validation": {
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "ui_production_build": "passed",
+    "git_diff_check": "passed",
+    "npm_audit_production_dependencies": "0 vulnerabilities",
+    "npm_audit_development_toolchain": "2 known findings (Vite high, transitive esbuild moderate); available npm fix requires a semver-major Vite 8 migration and is outside this focused runtime change"
+  },
+  "github_validation": {
+    "pull_request": 33,
+    "merge_performed": false,
+    "codeql_go": "passed",
+    "codeql_javascript_typescript": "passed"
+  },
+  "los_test2": {
+    "target": "preserved Ubuntu 24.04 install.sh integration node",
+    "upgrade": "passed from a clean trusted checkout at the exact implementation commit",
+    "manager_health": "passed",
+    "broker_self_test": "passed",
+    "manager_restarted": true,
+    "terminal_control": {
+      "initial_failure_reproduced": "manager proxy connection refused while systemd had already reported the terminal unit active",
+      "root_cause": "the enable response could precede the fixed loopback listener becoming reachable",
+      "authenticated_session": "passed",
+      "missing_confirmation_challenge": "HTTP 428 terminal_control_reauth_required",
+      "invalid_confirmation": "HTTP 401 auth_invalid_credentials without enabling the terminal",
+      "invalid_confirmation_ui": "translated accessible error rendered inside the open modal; rejected password cleared",
+      "enable": "HTTP 200 and enabled/active runtime verified",
+      "readiness": "broker waited for the fixed 127.0.0.1:7681 listener before returning the successful enable response",
+      "immediate_proxy_after_enable": "HTTP 200 with no client-side delay or retry",
+      "manager_proxy_with_dedicated_basic_credential": "HTTP 200",
+      "loopback_only": true,
+      "permit_write_argument_absent": true,
+      "runtime_allow_write": false,
+      "disable": "HTTP 200 and disabled/inactive runtime verified",
+      "final_service_active": false,
+      "final_service_enabled": false,
+      "final_runtime_enabled": false,
+      "intermediate_probe_safe_disable": "passed before the bounded-readiness rerun"
+    },
+    "dependency_preservation": {
+      "lnd_pid_preserved": true,
+      "docker_daemon_pid_preserved": true,
+      "bitcoin_container_identity_preserved": true,
+      "bitcoin_container_start_time_preserved": true,
+      "bitcoin_process_pid_preserved": true,
+      "bitcoin_mainnet": true,
+      "bitcoin_full_node": true,
+      "bitcoin_synced": true,
+      "lnd_wallet_unlocked": true,
+      "lnd_synced_to_chain": true,
+      "lnd_synced_to_graph": true,
+      "lnd_database_backend": "postgres"
+    },
+    "temporary_trusted_checkout_removed": true,
+    "temporary_credential_material_removed": true,
+    "upgrade_worktree_leftovers": 0
+  },
+  "secrets_or_private_node_identifiers_recorded": false
+}

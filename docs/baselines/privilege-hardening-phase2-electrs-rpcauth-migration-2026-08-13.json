@@ -1,0 +1,58 @@
+{
+  "schema": "lightningos.privilege-hardening.phase2.electrs-rpcauth-migration.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "implementation_commit": "aadea00a",
+  "scope": "one-time dedicated Electrs RPC credential migration for legacy App Store Bitcoin Core rpcauth nodes",
+  "contract": {
+    "fixed_rpc_user": "electrs",
+    "credential_storage": "root-owned 0600 broker state",
+    "bitcoin_config_change": "additive rpcauth line before network sections",
+    "legacy_credentials_preserved": true,
+    "restart_requires_operator_confirmation": true,
+    "maximum_restart_count_per_request": 1,
+    "restart_skipped_when_credential_active": true,
+    "native_systemd_bitcoin_mutated": false,
+    "rpc_secret_exposed_by_http": false,
+    "audit_contains_secret": false
+  },
+  "local_validation": {
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "go_build_all": "passed",
+    "ui_production_build": "passed",
+    "git_diff_check": "passed"
+  },
+  "ubuntu_24_disposable_gate": {
+    "vm": "brln-os-hardening-053-tmp-20260810",
+    "test": "TestBitcoinCoreGeneratedRPCAuthFunctionalGate",
+    "chain": "regtest",
+    "bitcoin_core_release": "31.1",
+    "image_source": "broker authenticated official Bitcoin Core release build",
+    "primary_credential_before_restart": "accepted",
+    "dedicated_credential_before_restart": "restart_required",
+    "bitcoin_restart_count": 1,
+    "primary_credential_after_restart": "accepted",
+    "dedicated_credential_after_restart": "accepted",
+    "wrong_primary_password": "rejected",
+    "wrong_dedicated_password": "rejected",
+    "second_ensure": "ready and config_unchanged",
+    "attestation_metadata": "root:root:0600",
+    "go_vet_all": "passed",
+    "go_build_all": "passed",
+    "full_go_test_note": "changed packages and the root functional gate passed; the old shared fixture still lacks the fixed Lightning Loop identity and evaluates trusted embedded helpers from an operator-owned checkout, so unrelated pre-existing root ownership tests remain unsuitable on this clone"
+  },
+  "preservation": {
+    "los_test2_touched": false,
+    "production_bitcoin_restarted": false,
+    "production_lnd_restarted": false,
+    "lan_scan_performed": false,
+    "host_or_vm_adapter_changed": false,
+    "test_container_removed": true,
+    "test_checkout_restored": true,
+    "official_image_and_attestation_retained": true,
+    "vm_powered_off_gracefully": true,
+    "host_console_screenshot_recycled": true
+  }
+}

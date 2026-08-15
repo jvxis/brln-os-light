@@ -17,6 +17,7 @@ type Config struct {
 	Postgres      PostgresConfig      `yaml:"postgres"`
 	UI            UIConfig            `yaml:"ui"`
 	Features      FeaturesConfig      `yaml:"features"`
+	Privileged    PrivilegedConfig    `yaml:"privileged"`
 }
 
 type ServerConfig struct {
@@ -52,6 +53,11 @@ type PostgresConfig struct {
 
 type UIConfig struct {
 	StaticDir string `yaml:"static_dir"`
+}
+
+type PrivilegedConfig struct {
+	Mode           string `yaml:"mode"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
 
 type FeaturesConfig struct {
@@ -105,6 +111,31 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.UI.StaticDir == "" {
 		cfg.UI.StaticDir = "/opt/lightningos/ui"
+	}
+	if raw := strings.TrimSpace(os.Getenv("LIGHTNINGOS_PRIVILEGED_MODE")); raw != "" {
+		cfg.Privileged.Mode = raw
+	}
+	if cfg.Privileged.Mode == "" {
+		cfg.Privileged.Mode = "enforce"
+	}
+	cfg.Privileged.Mode = strings.ToLower(strings.TrimSpace(cfg.Privileged.Mode))
+	switch cfg.Privileged.Mode {
+	case "disabled", "shadow", "enforce":
+	default:
+		return nil, fmt.Errorf("invalid privileged.mode value %q", cfg.Privileged.Mode)
+	}
+	if raw := strings.TrimSpace(os.Getenv("LIGHTNINGOS_PRIVILEGED_TIMEOUT_SECONDS")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid LIGHTNINGOS_PRIVILEGED_TIMEOUT_SECONDS value %q", raw)
+		}
+		cfg.Privileged.TimeoutSeconds = value
+	}
+	if cfg.Privileged.TimeoutSeconds == 0 {
+		cfg.Privileged.TimeoutSeconds = 5
+	}
+	if cfg.Privileged.TimeoutSeconds < 1 || cfg.Privileged.TimeoutSeconds > 30 {
+		return nil, fmt.Errorf("privileged.timeout_seconds must be between 1 and 30")
 	}
 
 	if cfg.Server.TLSCert == "" || cfg.Server.TLSKey == "" {

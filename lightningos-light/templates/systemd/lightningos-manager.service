@@ -1,12 +1,12 @@
 [Unit]
 Description=LightningOS Manager
-After=network-online.target lnd.service postgresql.service
-Wants=network-online.target
+After=network-online.target lnd.service postgresql.service lightningos-privileged.socket
+Wants=network-online.target lightningos-privileged.socket
 
 [Service]
 User=lightningos
 Group=lightningos
-SupplementaryGroups=lnd systemd-journal docker
+SupplementaryGroups=lnd systemd-journal
 Type=simple
 EnvironmentFile=/etc/lightningos/secrets.env
 ExecStart=/opt/lightningos/manager/lightningos-manager --config /etc/lightningos/config.yaml
@@ -15,9 +15,25 @@ RestartSec=3
 LimitNOFILE=65536
 
 PrivateTmp=true
-ProtectSystem=full
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/lightningos /var/log/lightningos /etc/lightningos /data/lnd /etc/ufw
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap
+ReadWritePaths=/var/lib/lightningos /var/log/lightningos /etc/lightningos /data/lnd
 
 [Install]
 WantedBy=multi-user.target

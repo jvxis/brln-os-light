@@ -1,12 +1,16 @@
 package server
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 const (
 	appsRoot     = "/var/lib/lightningos/apps"
 	appsDataRoot = "/var/lib/lightningos/apps-data"
 
 	appSecurityNoticeElevatedLNDAccess    = "elevated_lnd_access"
+	appSecurityNoticeLimitedLNDAccess     = "limited_lnd_access"
 	appSecurityNoticeLNDDataDirectoryRead = "lnd_data_directory_read"
 )
 
@@ -23,21 +27,28 @@ type appDefinition struct {
 }
 
 type appInfo struct {
-	ID                 string   `json:"id"`
-	Name               string   `json:"name"`
-	Description        string   `json:"description"`
-	Installed          bool     `json:"installed"`
-	Status             string   `json:"status"`
-	Port               int      `json:"port"`
-	Scheme             string   `json:"scheme,omitempty"`
-	ExternalURL        string   `json:"external_url,omitempty"`
-	AdminPasswordPath  string   `json:"admin_password_path,omitempty"`
-	Available          bool     `json:"available"`
-	UnavailableReason  string   `json:"unavailable_reason,omitempty"`
-	UnavailableMessage string   `json:"unavailable_message,omitempty"`
-	UFWActive          bool     `json:"ufw_active,omitempty"`
-	UFWCommand         string   `json:"ufw_command,omitempty"`
-	SecurityNotices    []string `json:"security_notices,omitempty"`
+	ID                 string            `json:"id"`
+	Name               string            `json:"name"`
+	Description        string            `json:"description"`
+	Installed          bool              `json:"installed"`
+	Status             string            `json:"status"`
+	Port               int               `json:"port"`
+	Scheme             string            `json:"scheme,omitempty"`
+	ExternalURL        string            `json:"external_url,omitempty"`
+	AdminPasswordPath  string            `json:"admin_password_path,omitempty"`
+	Available          bool              `json:"available"`
+	UnavailableReason  string            `json:"unavailable_reason,omitempty"`
+	UnavailableMessage string            `json:"unavailable_message,omitempty"`
+	UFWActive          bool              `json:"ufw_active,omitempty"`
+	UFWCommand         string            `json:"ufw_command,omitempty"`
+	SecurityNotices    []string          `json:"security_notices,omitempty"`
+	Operation          *appOperationInfo `json:"operation,omitempty"`
+}
+
+type appOperationInfo struct {
+	Action    string    `json:"action"`
+	StartedAt time.Time `json:"started_at"`
+	Stage     string    `json:"stage,omitempty"`
 }
 
 type appHandler interface {

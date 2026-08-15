@@ -994,7 +994,7 @@ limit $1
 	}
 	defer rows.Close()
 
-	orders := make([]MagmaOrder, 0, limit)
+	orders := make([]MagmaOrder, 0)
 	for rows.Next() {
 		var order MagmaOrder
 		if err := rows.Scan(
@@ -1038,7 +1038,7 @@ limit $1
 	}
 	defer rows.Close()
 
-	events := make([]MagmaOrderEvent, 0, limit)
+	events := make([]MagmaOrderEvent, 0)
 	for rows.Next() {
 		var event MagmaOrderEvent
 		if err := rows.Scan(&event.ID, &event.OrderID, &event.Kind, &event.Level,

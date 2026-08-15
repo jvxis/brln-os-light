@@ -10,18 +10,51 @@ if [[ -f "$REPO_ROOT/scripts/install-release-bootstrap.sh" ]]; then
   lightningos_bootstrap_latest_release "install.sh" "$@"
 fi
 
-LND_VERSION="${LND_VERSION:-0.21.1-beta}"
-LND_URL_DEFAULT="https://github.com/lightningnetwork/lnd/releases/download/v${LND_VERSION}/lnd-linux-amd64-v${LND_VERSION}.tar.gz"
-LND_URL="${LND_URL:-$LND_URL_DEFAULT}"
+ARTIFACT_VERIFY_SCRIPT="$REPO_ROOT/scripts/install-artifact-verification.sh"
+if [[ ! -r "$ARTIFACT_VERIFY_SCRIPT" ]]; then
+  echo "Missing artifact verification library: $ARTIFACT_VERIFY_SCRIPT" >&2
+  exit 1
+fi
+source "$ARTIFACT_VERIFY_SCRIPT"
 
-GOTTY_VERSION="${GOTTY_VERSION:-1.8.0}"
-GOTTY_URL_DEFAULT="https://github.com/sorenisanerd/gotty/releases/download/v${GOTTY_VERSION}/gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"
-GOTTY_URL="${GOTTY_URL:-$GOTTY_URL_DEFAULT}"
+LND_VERSION="0.21.1-beta"
 
-GO_VERSION="${GO_VERSION:-1.24.12}"
-GO_TARBALL_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+GOTTY_VERSION="1.8.0"
+GOTTY_ARTIFACT="gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"
+GOTTY_URL="https://github.com/sorenisanerd/gotty/releases/download/v${GOTTY_VERSION}/${GOTTY_ARTIFACT}"
+GOTTY_SHA256="9cf032e1f3a49d33da3ba32c79f49892aad94e52edc6417524a76b623ced2f5f"
 
-NODE_VERSION="${NODE_VERSION:-current}"
+GO_VERSION="1.24.12"
+GO_ARTIFACT="go${GO_VERSION}.linux-amd64.tar.gz"
+GO_TARBALL_URL="https://go.dev/dl/${GO_ARTIFACT}"
+GO_TARBALL_SHA256="bddf8e653c82429aea7aec2520774e79925d4bb929fe20e67ecc00dd5af44c50"
+
+NODE_VERSION="24"
+NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+NODESOURCE_KEY_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
+NODESOURCE_KEY_SHA256="b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d"
+NODESOURCE_INRELEASE_URL="https://deb.nodesource.com/node_${NODE_VERSION}.x/dists/nodistro/InRelease"
+NODESOURCE_KEYRING="/usr/share/keyrings/nodesource.gpg"
+NODESOURCE_SOURCE="/etc/apt/sources.list.d/nodesource.sources"
+
+I2PD_KEY_URL="https://repo.i2pd.xyz/r4sas.gpg"
+I2PD_KEY_FINGERPRINT="951928BB317024EFD053D73C66F6C87B98EBCFE2"
+I2PD_KEY_SHA256="c9db4fa521b75bb2821c103e595173f289efe282aa5cbe9613f523983000140f"
+I2PD_KEYRING="/usr/share/keyrings/purplei2p.gpg"
+I2PD_SOURCE="/etc/apt/sources.list.d/purplei2p.sources"
+
+PGDG_KEY_URL="https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+PGDG_KEY_FINGERPRINT="B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
+PGDG_KEY_SHA256="0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76"
+PGDG_KEYRING="/usr/share/keyrings/postgresql.gpg"
+PGDG_SOURCE="/etc/apt/sources.list.d/pgdg.sources"
+
+TOR_REPO_URL="https://deb.torproject.org/torproject.org"
+TOR_KEY_URL="${TOR_REPO_URL}/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc"
+TOR_KEY_FINGERPRINT="A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89"
+TOR_KEY_SHA256="3a17ae045c544aecc065cf401a4ed96dfc99b6081c8b8989716772773c4f2d1d"
+TOR_KEYRING="/usr/share/keyrings/deb.torproject.org-keyring.gpg"
+TOR_SOURCE="/etc/apt/sources.list.d/tor.sources"
 
 POSTGRES_VERSION="${POSTGRES_VERSION:-latest}"
 
@@ -32,10 +65,11 @@ LND_DIR="/data/lnd"
 LND_CONF="${LND_DIR}/lnd.conf"
 LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
-APP_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-app"
 TERMINAL_SCRIPT="/usr/local/sbin/lightningos-terminal"
-TERMINAL_PASSWORD_SCRIPT="/usr/local/sbin/lightningos-terminal-password"
+TERMINAL_ENV_PATH="/etc/lightningos/terminal.env"
 MANAGER_FIREWALL_SCRIPT="/usr/local/sbin/lightningos-manager-firewall"
+PRIVILEGED_BROKER="/usr/local/libexec/lightningos-privileged"
+PRIVILEGED_TMPFILES_CONFIG="/etc/tmpfiles.d/lightningos-privileged.conf"
 SYSTEM_INTEGRATIONS_MARKER="/var/lib/lightningos/system-integrations-20260731-v2"
 TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
 MANAGER_BIN="/opt/lightningos/manager/lightningos-manager"
@@ -79,12 +113,21 @@ print_auth_setup_token() {
     return
   fi
 
-  echo ""
-  echo "Admin setup token:"
+  if [[ ! -t 0 || ! -t 1 || ! -w /dev/tty ]]; then
+    echo "Admin setup token was not generated because no interactive terminal is attached."
+    echo "Generate one later from an interactive terminal with:"
+    echo "  sudo $MANAGER_BIN auth setup-token new"
+    return
+  fi
+
   if token_output=$("$MANAGER_BIN" auth setup-token new 2>/dev/null); then
-    while IFS= read -r line; do
-      echo "  $line"
-    done <<<"$token_output"
+    {
+      echo ""
+      echo "Admin setup token:"
+      while IFS= read -r line; do
+        echo "  $line"
+      done <<<"$token_output"
+    } > /dev/tty
   else
     print_warn "Automatic setup token generation failed"
   fi
@@ -306,7 +349,7 @@ ensure_secrets_env_defaults() {
     echo "TERMINAL_CREDENTIAL=" >> "$file"
   fi
   if ! grep -q '^TERMINAL_ALLOW_WRITE=' "$file"; then
-    echo "TERMINAL_ALLOW_WRITE=1" >> "$file"
+    echo "TERMINAL_ALLOW_WRITE=0" >> "$file"
   fi
   if ! grep -q '^TERMINAL_PORT=' "$file"; then
     echo "TERMINAL_PORT=7681" >> "$file"
@@ -315,9 +358,6 @@ ensure_secrets_env_defaults() {
     echo "TERMINAL_OPERATOR_USER=${TERMINAL_OPERATOR_USER}" >> "$file"
   else
     sed -i "s|^TERMINAL_OPERATOR_USER=.*|TERMINAL_OPERATOR_USER=${TERMINAL_OPERATOR_USER}|" "$file"
-  fi
-  if ! grep -q '^TERMINAL_OPERATOR_PASSWORD=' "$file"; then
-    echo "TERMINAL_OPERATOR_PASSWORD=" >> "$file"
   fi
   if ! grep -q '^TERMINAL_TERM=' "$file"; then
     echo "TERMINAL_TERM=xterm" >> "$file"
@@ -328,22 +368,40 @@ ensure_secrets_env_defaults() {
   if ! grep -q '^TERMINAL_WS_ORIGIN=' "$file"; then
     echo "TERMINAL_WS_ORIGIN=" >> "$file"
   fi
-  local current_credential operator_pass
+  local current_credential
   current_credential=$(grep '^TERMINAL_CREDENTIAL=' "$file" | cut -d= -f2- || true)
-  operator_pass=$(grep '^TERMINAL_OPERATOR_PASSWORD=' "$file" | cut -d= -f2- || true)
   if [[ -z "$current_credential" || "$current_credential" == terminal:* ]]; then
-    if [[ -n "$operator_pass" ]]; then
-      sed -i "s|^TERMINAL_CREDENTIAL=.*|TERMINAL_CREDENTIAL=${TERMINAL_OPERATOR_USER}:${operator_pass}|" "$file"
-      sed -i 's|^TERMINAL_ENABLED=.*|TERMINAL_ENABLED=1|' "$file"
-    else
-      local terminal_pass
-      terminal_pass=$(openssl rand -hex 12)
-      sed -i "s|^TERMINAL_CREDENTIAL=.*|TERMINAL_CREDENTIAL=${TERMINAL_OPERATOR_USER}:${terminal_pass}|" "$file"
-      sed -i 's|^TERMINAL_ENABLED=.*|TERMINAL_ENABLED=1|' "$file"
-    fi
+    local terminal_pass
+    terminal_pass=$(openssl rand -hex 16)
+    sed -i "s|^TERMINAL_CREDENTIAL=.*|TERMINAL_CREDENTIAL=${TERMINAL_OPERATOR_USER}:${terminal_pass}|" "$file"
   fi
+  sed -i 's|^TERMINAL_ENABLED=.*|TERMINAL_ENABLED=0|' "$file"
+  sed -i 's|^TERMINAL_ALLOW_WRITE=.*|TERMINAL_ALLOW_WRITE=0|' "$file"
+  sed -i 's|^TERMINAL_OPERATOR_PASSWORD=.*|TERMINAL_OPERATOR_PASSWORD=|' "$file"
+  sync_terminal_runtime_env "$file"
   chown root:lightningos "$file"
   chmod 660 "$file"
+}
+
+sync_terminal_runtime_env() {
+  local source_file="$1"
+  local credential
+  local runtime_tmp
+  credential=$(read_env_file_value TERMINAL_CREDENTIAL "$source_file")
+  [[ ! -L "$TERMINAL_ENV_PATH" ]] || die "Refusing symlinked terminal runtime environment"
+  runtime_tmp=$(mktemp /etc/lightningos/.terminal.env.XXXXXX)
+  (umask 077; {
+    printf 'TERMINAL_ENABLED=0\n'
+    printf 'TERMINAL_CREDENTIAL=%s\n' "$credential"
+    printf 'TERMINAL_ALLOW_WRITE=0\n'
+    printf 'TERMINAL_PORT=7681\n'
+    printf 'TERMINAL_OPERATOR_USER=%s\n' "$TERMINAL_OPERATOR_USER"
+    printf 'TERMINAL_TERM=xterm\n'
+    printf 'TERMINAL_SHELL=/bin/bash\n'
+    printf 'TERMINAL_WS_ORIGIN=\n'
+  } > "$runtime_tmp")
+  install -o root -g lightningos -m 0640 "$runtime_tmp" "$TERMINAL_ENV_PATH"
+  rm -f -- "$runtime_tmp"
 }
 
 trap 'echo ""; echo "Installation failed during: ${CURRENT_STEP:-unknown}"; echo "Last command: $BASH_COMMAND"; echo "Check: systemctl status postgresql --no-pager"; echo "Also: journalctl -u postgresql -n 50 --no-pager"; exit 1' ERR
@@ -446,31 +504,6 @@ resolve_postgres_version() {
   print_ok "Using PostgreSQL ${POSTGRES_VERSION}"
 }
 
-resolve_node_version() {
-  if [[ "$NODE_VERSION" =~ ^[0-9]+$ ]]; then
-    return 0
-  fi
-  local major=""
-  if command -v curl >/dev/null 2>&1; then
-    major=$(curl -fsSL https://nodejs.org/dist/index.json \
-      | grep -oE '"version":"v[0-9]+' \
-      | grep -oE '[0-9]+' \
-      | sort -nr \
-      | head -n1)
-  fi
-  while [[ -n "$major" && "$major" -ge 20 ]]; do
-    if curl -fsIL -o /dev/null "https://deb.nodesource.com/setup_${major}.x"; then
-      NODE_VERSION="$major"
-      print_ok "Using Node.js ${NODE_VERSION}.x"
-      return 0
-    fi
-    print_warn "NodeSource has no setup for Node.js ${major}.x; trying $((major - 1)).x"
-    major=$((major - 1))
-  done
-  print_warn "Could not resolve latest Node.js version; falling back to 22"
-  NODE_VERSION="22"
-}
-
 wait_for_apt_locks() {
   local retries=60
   local i
@@ -546,39 +579,55 @@ stop_unattended_upgrades() {
 
 setup_postgres_repo() {
   print_step "Configuring PostgreSQL repository"
-  local codename
+  local architecture codename source_tmp
   codename=$(get_os_codename)
-  if [[ -z "$codename" ]]; then
-    print_warn "Could not detect OS codename; skipping PGDG repo"
-    return
+  architecture=$(dpkg --print-architecture)
+  if [[ ! "$codename" =~ ^[a-z][a-z0-9-]{1,31}$ || ( "$architecture" != "amd64" && "$architecture" != "arm64" ) ]]; then
+    print_warn "Could not resolve a supported PGDG suite/architecture"
+    return 1
   fi
   apt_get install -y ca-certificates curl gnupg
-  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --batch --yes --dearmor -o /usr/share/keyrings/postgresql.gpg
-  echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main" \
-    > /etc/apt/sources.list.d/pgdg.list
+  install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+  lightningos_install_authenticated_apt_key "$PGDG_KEY_URL" "$PGDG_KEY_FINGERPRINT" "$PGDG_KEY_SHA256" \
+    "https://apt.postgresql.org/pub/repos/apt/dists/${codename}-pgdg/InRelease" "$PGDG_KEYRING" "PGDG repository"
+  source_tmp=$(mktemp)
+  cat > "$source_tmp" <<EOF
+Types: deb
+URIs: https://apt.postgresql.org/pub/repos/apt
+Suites: ${codename}-pgdg
+Components: main
+Architectures: ${architecture}
+Signed-By: ${PGDG_KEYRING}
+EOF
+  install -o root -g root -m 0644 "$source_tmp" "$PGDG_SOURCE"
+  rm -f -- "$source_tmp" /etc/apt/sources.list.d/pgdg.list
   print_ok "PostgreSQL repo ready (${codename}-pgdg)"
 }
 
 setup_tor_repo() {
   print_step "Configuring Tor repository"
-  local codename
+  local architecture codename source_tmp
   codename=$(get_os_codename)
-  if [[ -z "$codename" ]]; then
-    print_warn "Could not detect OS codename; skipping Tor repo"
-    return
+  architecture=$(dpkg --print-architecture)
+  if [[ ! "$codename" =~ ^[a-z][a-z0-9-]{1,31}$ || ( "$architecture" != "amd64" && "$architecture" != "arm64" ) ]]; then
+    print_warn "Could not resolve a supported Tor suite/architecture"
+    return 1
   fi
   apt_get install -y ca-certificates curl gnupg
-  if ! curl -fsI "https://deb.torproject.org/torproject.org/dists/${codename}/InRelease" >/dev/null 2>&1; then
-    print_warn "Tor repo not available for ${codename}, falling back to jammy"
-    codename="jammy"
-  fi
-  curl -fsSL https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc \
-    | gpg --batch --yes --dearmor \
-    | tee /usr/share/keyrings/deb.torproject.org-keyring.gpg >/dev/null
-  cat > /etc/apt/sources.list.d/tor.list <<EOF
-deb     [arch=amd64 signed-by=/usr/share/keyrings/deb.torproject.org-keyring.gpg] https://deb.torproject.org/torproject.org ${codename} main
-deb-src [arch=amd64 signed-by=/usr/share/keyrings/deb.torproject.org-keyring.gpg] https://deb.torproject.org/torproject.org ${codename} main
+  install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+  lightningos_install_authenticated_apt_key "$TOR_KEY_URL" "$TOR_KEY_FINGERPRINT" "$TOR_KEY_SHA256" \
+    "${TOR_REPO_URL}/dists/${codename}/InRelease" "$TOR_KEYRING" "Tor Project repository"
+  source_tmp=$(mktemp)
+  cat > "$source_tmp" <<EOF
+Types: deb
+URIs: ${TOR_REPO_URL}/
+Suites: ${codename}
+Components: main
+Architectures: ${architecture}
+Signed-By: ${TOR_KEYRING}
 EOF
+  install -o root -g root -m 0644 "$source_tmp" "$TOR_SOURCE"
+  rm -f -- "$source_tmp" /etc/apt/sources.list.d/tor.list
   print_ok "Tor repo ready (${codename})"
 }
 
@@ -613,52 +662,18 @@ ensure_user() {
 ensure_operator_user() {
   local user="$TERMINAL_OPERATOR_USER"
   print_step "Ensuring operator user ${user}"
+  [[ "$user" == "losop" ]] || die "The web terminal requires the dedicated losop account"
 
-  local pw="${TERMINAL_OPERATOR_PASSWORD:-}"
-  if [[ -z "$pw" ]]; then
-    local file="/etc/lightningos/secrets.env"
-    mkdir -p /etc/lightningos
-    if [[ ! -f "$file" ]]; then
-      cp "$REPO_ROOT/templates/secrets.env" "$file"
-    fi
-    if ! grep -q '^TERMINAL_OPERATOR_USER=' "$file"; then
-      echo "TERMINAL_OPERATOR_USER=${user}" >> "$file"
-    fi
-    if ! grep -q '^TERMINAL_OPERATOR_PASSWORD=' "$file"; then
-      echo "TERMINAL_OPERATOR_PASSWORD=" >> "$file"
-    fi
-    pw=$(grep '^TERMINAL_OPERATOR_PASSWORD=' "$file" | cut -d= -f2- || true)
-    if [[ -z "$pw" ]]; then
-      pw=$(openssl rand -hex 12)
-      sed -i "s|^TERMINAL_OPERATOR_PASSWORD=.*|TERMINAL_OPERATOR_PASSWORD=${pw}|" "$file"
-    fi
-    TERMINAL_OPERATOR_PASSWORD="$pw"
-    export TERMINAL_OPERATOR_PASSWORD
-    if id lightningos >/dev/null 2>&1; then
-      chown root:lightningos "$file"
-      chmod 660 "$file"
-    fi
-  fi
-
-  if id "$user" >/dev/null 2>&1; then
-    ensure_group_member "$user" lightningos
-    ensure_group_member "$user" sudo
-    ensure_group_member "$user" systemd-journal
-    print_ok "Operator user ${user} already exists"
-    return
-  fi
-
-  if command -v adduser >/dev/null 2>&1; then
-    adduser --disabled-password --gecos "" "$user"
-  else
+  if ! id "$user" >/dev/null 2>&1; then
     useradd -m -d "/home/${user}" -s /bin/bash "$user"
   fi
-
-  echo "${user}:${pw}" | chpasswd
-  ensure_group_member "$user" lightningos
-  ensure_group_member "$user" sudo
-  ensure_group_member "$user" systemd-journal
-  print_ok "Operator user ${user} ready"
+  for group in lightningos sudo systemd-journal; do
+    if id -nG "$user" | tr ' ' '\n' | grep -Fxq "$group"; then
+      gpasswd -d "$user" "$group" >/dev/null
+    fi
+  done
+  usermod -L "$user"
+  print_ok "Restricted terminal user ${user} ready (password locked, no privileged groups)"
 }
 
 create_lnd_user() {
@@ -694,87 +709,6 @@ ensure_group_member() {
     return
   fi
   usermod -a -G "$group" "$user"
-}
-
-sudoers_no_requiretty_line() {
-  local user="$1"
-  local visudo_path
-  visudo_path=$(command -v visudo || true)
-  [[ -n "$visudo_path" ]] || return 0
-  local tmp
-  tmp=$(mktemp)
-  printf 'Defaults:%s !requiretty\n' "$user" > "$tmp"
-  if "$visudo_path" -cf "$tmp" >/dev/null 2>&1; then
-    printf 'Defaults:%s !requiretty\n' "$user"
-  fi
-  rm -f "$tmp"
-}
-
-configure_sudoers() {
-  print_step "Configuring sudoers"
-  local manager_user="lightningos"
-  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path ufw_path tee_path
-  systemctl_path=$(command -v systemctl || true)
-  apt_get_path=$(command -v apt-get || true)
-  apt_path=$(command -v apt || true)
-  dpkg_path=$(command -v dpkg || true)
-  docker_path=$(command -v docker || true)
-  docker_compose_path=$(command -v docker-compose || true)
-  systemd_run_path=$(command -v systemd-run || true)
-  smartctl_path=$(command -v smartctl || true)
-  ufw_path=$(command -v ufw || true)
-  tee_path=$(command -v tee || true)
-  if [[ -z "$docker_path" ]]; then
-    docker_path="/usr/bin/docker"
-  fi
-  if [[ -z "$docker_compose_path" ]]; then
-    docker_compose_path="/usr/bin/docker-compose"
-  fi
-  if [[ -z "$systemd_run_path" ]]; then
-    systemd_run_path="/usr/bin/systemd-run"
-  fi
-  if [[ -z "$smartctl_path" ]]; then
-    smartctl_path="/usr/sbin/smartctl"
-  fi
-  if [[ -z "$tee_path" ]]; then
-    tee_path="/usr/bin/tee"
-  fi
-  if [[ -z "$systemctl_path" ]]; then
-    print_warn "systemctl not found; skipping sudoers setup"
-    return
-  fi
-  local system_cmds
-  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"
-  local app_cmds=()
-  [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
-  [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
-  [[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")
-  [[ -n "$docker_path" ]] && app_cmds+=("${docker_path} *")
-  [[ -n "$docker_compose_path" ]] && app_cmds+=("${docker_compose_path} *")
-  [[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")
-  [[ -n "$ufw_path" ]] && app_cmds+=("${ufw_path} *")
-  local app_cmds_line
-  app_cmds_line=$(IFS=", "; echo "${app_cmds[*]}")
-  if [[ -z "$app_cmds_line" ]]; then
-    app_cmds_line="/bin/true"
-  fi
-  local alias_suffix system_alias app_alias
-  alias_suffix=$(printf '%s' "$manager_user" | tr '[:lower:]-' '[:upper:]_' | tr -cd 'A-Z0-9_')
-  if [[ -z "$alias_suffix" ]]; then
-    alias_suffix="LIGHTNINGOS"
-  fi
-  system_alias="LIGHTNINGOS_SYSTEM_${alias_suffix}"
-  app_alias="LIGHTNINGOS_APPS_${alias_suffix}"
-  local no_requiretty_line
-  no_requiretty_line=$(sudoers_no_requiretty_line "$manager_user")
-  cat > /etc/sudoers.d/lightningos <<EOF
-${no_requiretty_line}
-Cmnd_Alias ${system_alias} = ${system_cmds}
-Cmnd_Alias ${app_alias} = ${app_cmds_line}
-${manager_user} ALL=NOPASSWD: ${system_alias}, ${app_alias}
-EOF
-  chmod 440 /etc/sudoers.d/lightningos
-  print_ok "Sudoers configured"
 }
 
 install_packages() {
@@ -852,7 +786,34 @@ configure_tor() {
 install_i2pd() {
   print_step "Installing i2pd"
   if ! command -v i2pd >/dev/null 2>&1; then
-    curl -fsSL https://repo.i2pd.xyz/.help/add_repo | bash -s -
+    apt_get install -y ca-certificates curl gnupg
+    local architecture codename source_tmp
+    architecture=$(dpkg --print-architecture)
+    if [[ "$architecture" != "amd64" && "$architecture" != "arm64" ]]; then
+      print_warn "Unsupported i2pd repository architecture: ${architecture}"
+      return 1
+    fi
+    source /etc/os-release
+    codename="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
+    if [[ "${ID:-}" != "ubuntu" || ! "$codename" =~ ^[a-z][a-z0-9-]{1,31}$ ]]; then
+      print_warn "Could not resolve a supported Ubuntu suite for i2pd"
+      return 1
+    fi
+    install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+    lightningos_install_authenticated_apt_key "$I2PD_KEY_URL" "$I2PD_KEY_FINGERPRINT" "$I2PD_KEY_SHA256" \
+      "https://repo.i2pd.xyz/ubuntu/dists/${codename}/InRelease" "$I2PD_KEYRING" "i2pd repository"
+    source_tmp=$(mktemp)
+    cat > "$source_tmp" <<EOF
+Types: deb
+URIs: https://repo.i2pd.xyz/ubuntu
+Suites: ${codename}
+Components: main
+Architectures: ${architecture}
+Signed-By: ${I2PD_KEYRING}
+EOF
+    install -o root -g root -m 0644 "$source_tmp" "$I2PD_SOURCE"
+    rm -f -- "$source_tmp"
+    rm -f -- /etc/apt/sources.list.d/purplei2p.list
     apt_get update
     apt_get install -y i2pd
   fi
@@ -874,16 +835,29 @@ install_go() {
     fi
   fi
 
+  local tmp archive
+  tmp=$(mktemp -d)
+  archive="$tmp/$GO_ARTIFACT"
+  if ! lightningos_download_verified_artifact "$GO_TARBALL_URL" "$archive" "$GO_TARBALL_SHA256" "Go ${GO_VERSION} linux-amd64"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if ! tar -tzf "$archive" >/dev/null 2>&1; then
+    rm -rf -- "$tmp"
+    print_warn "Verified Go archive is not a valid gzip tarball"
+    return 1
+  fi
   rm -rf /usr/local/go
-  curl -L "$GO_TARBALL_URL" -o /tmp/go.tgz
-  tar -C /usr/local -xzf /tmp/go.tgz
-  rm -f /tmp/go.tgz
+  if ! tar -C /usr/local -xzf "$archive"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  rm -rf -- "$tmp"
   export PATH="/usr/local/go/bin:$PATH"
   print_ok "Go installed"
 }
 
 install_node() {
-  resolve_node_version
   print_step "Installing Node.js ${NODE_VERSION}.x"
   if command -v node >/dev/null 2>&1; then
     local major
@@ -894,9 +868,50 @@ install_node() {
     fi
   fi
 
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_VERSION}.x" | bash -
+  apt_get install -y ca-certificates curl gnupg
+  local architecture source_tmp
+  architecture=$(dpkg --print-architecture)
+  if [[ "$architecture" != "amd64" && "$architecture" != "arm64" ]]; then
+    print_warn "Unsupported NodeSource architecture: ${architecture}"
+    return 1
+  fi
+  install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+  lightningos_install_authenticated_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256" \
+    "$NODESOURCE_INRELEASE_URL" "$NODESOURCE_KEYRING" "NodeSource repository"
+  source_tmp=$(mktemp)
+  cat > "$source_tmp" <<EOF
+Types: deb
+URIs: https://deb.nodesource.com/node_${NODE_VERSION}.x
+Suites: nodistro
+Components: main
+Architectures: ${architecture}
+Signed-By: ${NODESOURCE_KEYRING}
+EOF
+  install -o root -g root -m 0644 "$source_tmp" "$NODESOURCE_SOURCE"
+  rm -f -- "$source_tmp"
+  rm -f -- /etc/apt/sources.list.d/nodesource.list
+  apt_get update
   apt-get install -y nodejs >/dev/null
   print_ok "Node.js installed"
+}
+
+ensure_native_app_identity() {
+  local user="$1"
+  local home="$2"
+  if ! getent group "$user" >/dev/null 2>&1; then
+    groupadd --system "$user"
+  fi
+  if id "$user" >/dev/null 2>&1; then
+    [[ "$(id -gn "$user")" == "$user" ]] || die "Existing ${user} account has an incompatible primary group"
+    return 0
+  fi
+  useradd --system --gid "$user" --home-dir "$home" --no-create-home --shell /usr/sbin/nologin "$user"
+}
+
+ensure_native_app_identities() {
+  ensure_native_app_identity lightningos-loop /var/lib/lightningos/apps-data/loop
+  ensure_native_app_identity lightningos-elements /data/elements
+  ensure_native_app_identity lightningos-peerswap /var/lib/lightningos/apps-data/peerswap/runtime
 }
 
 install_gotty() {
@@ -910,10 +925,21 @@ install_gotty() {
 
   local tmp
   tmp=$(mktemp -d)
-  curl -fsSL "$GOTTY_URL" -o "$tmp/gotty.tar.gz"
-  tar -xzf "$tmp/gotty.tar.gz" -C "$tmp"
+  if ! lightningos_download_verified_artifact "$GOTTY_URL" "$tmp/$GOTTY_ARTIFACT" "$GOTTY_SHA256" "GoTTY ${GOTTY_VERSION} linux-amd64"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if ! tar -xzf "$tmp/$GOTTY_ARTIFACT" -C "$tmp"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  if [[ ! -f "$tmp/gotty" || -L "$tmp/gotty" ]]; then
+    rm -rf -- "$tmp"
+    print_warn "Verified GoTTY archive does not contain a regular gotty binary"
+    return 1
+  fi
   install -m 0755 "$tmp/gotty" /usr/local/bin/gotty
-  rm -rf "$tmp"
+  rm -rf -- "$tmp"
   print_ok "GoTTY installed"
 }
 
@@ -944,13 +970,6 @@ install_helper_scripts() {
     print_warn "Missing helper script: $terminal_src"
   fi
 
-  local terminal_password_src="$REPO_ROOT/internal/server/assets/lightningos-terminal-password.sh"
-  if [[ -f "$terminal_password_src" ]]; then
-    install -m 0755 "$terminal_password_src" "$TERMINAL_PASSWORD_SCRIPT"
-  else
-    print_warn "Missing helper script: $terminal_password_src"
-  fi
-
   local firewall_src="$REPO_ROOT/internal/server/assets/lightningos-manager-firewall.sh"
   if [[ -f "$firewall_src" ]]; then
     install -m 0755 "$firewall_src" "$MANAGER_FIREWALL_SCRIPT"
@@ -958,7 +977,7 @@ install_helper_scripts() {
     print_warn "Missing helper script: $firewall_src"
   fi
 
-  local upgrade_src="$REPO_ROOT/scripts/upgrade-lnd.sh"
+  local upgrade_src="$REPO_ROOT/internal/server/assets/upgrade-lnd.sh"
   if [[ -f "$upgrade_src" ]]; then
     mkdir -p "$(dirname "$LND_UPGRADE_SCRIPT")"
     install -m 0755 "$upgrade_src" "$LND_UPGRADE_SCRIPT"
@@ -1219,33 +1238,35 @@ update_notifications_admin_dsn() {
   chmod 660 /etc/lightningos/secrets.env
 }
 
-  ensure_notifications_admin() {
-    local admin_user="losadmin"
-    local current
-    current=$(grep '^NOTIFICATIONS_PG_ADMIN_DSN=' /etc/lightningos/secrets.env | cut -d= -f2- || true)
-    local needs_update="false"
-    if [[ -z "$current" || "$current" == *"CHANGE_ME"* ]]; then
+ensure_notifications_admin() {
+  local admin_user="losadmin"
+  local current
+  current=$(grep '^NOTIFICATIONS_PG_ADMIN_DSN=' /etc/lightningos/secrets.env | cut -d= -f2- || true)
+  local needs_update="false"
+  if [[ -z "$current" || "$current" == *"CHANGE_ME"* ]]; then
+    needs_update="true"
+  else
+    local userinfo
+    userinfo="${current#postgres://}"
+    userinfo="${userinfo%%@*}"
+    if [[ "$userinfo" != *":"* ]]; then
+      needs_update="true"
+    elif ! PGCONNECT_TIMEOUT=5 psql -X "$current" -tAc "select 1" >/dev/null 2>&1; then
       needs_update="true"
     else
-      local userinfo
-      userinfo="${current#postgres://}"
-      userinfo="${userinfo%%@*}"
-      if [[ "$userinfo" != *":"* ]]; then
+      local current_user
+      current_user="${userinfo%%:*}"
+      local role_flags
+      role_flags=$(psql_as_postgres -tAc "select rolcreaterole, rolcreatedb from pg_roles where rolname='${current_user}'" 2>&1)
+      role_flags=$(echo "$role_flags" | tr -d '[:space:]')
+      if [[ "$role_flags" != "t|t" ]]; then
         needs_update="true"
-      else
-        local current_user
-        current_user="${userinfo%%:*}"
-        local role_flags
-        role_flags=$(psql_as_postgres -tAc "select rolcreaterole, rolcreatedb from pg_roles where rolname='${current_user}'" 2>&1)
-        role_flags=$(echo "$role_flags" | tr -d '[:space:]')
-        if [[ "$role_flags" != "t|t" ]]; then
-          needs_update="true"
-        fi
       fi
     fi
-    if [[ "$needs_update" == "false" ]]; then
-      return 0
-    fi
+  fi
+  if [[ "$needs_update" == "false" ]]; then
+    return 0
+  fi
 
   local role_exists
   role_exists=$(psql_as_postgres -tAc "select 1 from pg_roles where rolname='${admin_user}'" 2>&1)
@@ -1268,6 +1289,7 @@ update_notifications_admin_dsn() {
 
 install_lnd() {
   print_step "Installing LND ${LND_VERSION}"
+  local install_mode="new"
   if [[ -x /usr/local/bin/lnd && -x /usr/local/bin/lncli ]]; then
     local current
     current=$(extract_lnd_version "$(/usr/local/bin/lnd --version 2>/dev/null || true)")
@@ -1303,32 +1325,27 @@ install_lnd() {
             print_warn "Target LND version v${LND_VERSION} is a release candidate (RC). Proceeding without extra confirmation."
           fi
         fi
+        install_mode="upgrade"
       else
         print_ok "LND already installed (v${current})"
         return
       fi
     else
-      print_warn "LND version mismatch (installed v${current:-unknown}, target v${LND_VERSION}); upgrading"
+      echo "Unable to authenticate the installed LND version; refusing replacement" >&2
+      return 1
     fi
   fi
 
-  local tmp
-  tmp=$(mktemp -d)
-  curl -L "$LND_URL" -o "$tmp/lnd.tar.gz"
-  tar -xzf "$tmp/lnd.tar.gz" -C "$tmp"
-  local lnd_bin lncli_bin
-  lnd_bin=$(find "$tmp" -type f -name "lnd" | head -n1)
-  lncli_bin=$(find "$tmp" -type f -name "lncli" | head -n1)
-  if [[ -z "$lnd_bin" || -z "$lncli_bin" ]]; then
-    echo "LND tarball structure unexpected" >&2
-    echo "Contents:" >&2
-    find "$tmp" -maxdepth 3 -type f >&2
-    exit 1
+  if [[ ! -f "$LND_UPGRADE_SCRIPT" || -L "$LND_UPGRADE_SCRIPT" || ! -x "$LND_UPGRADE_SCRIPT" ]]; then
+    echo "Authenticated LND installer helper is unavailable" >&2
+    return 1
   fi
-  install -m 0755 "$lnd_bin" /usr/local/bin/lnd
-  install -m 0755 "$lncli_bin" /usr/local/bin/lncli
-  rm -rf "$tmp"
-  print_ok "LND installed"
+  if [[ "$install_mode" == "upgrade" ]]; then
+    "$LND_UPGRADE_SCRIPT" --version "$LND_VERSION"
+  else
+    "$LND_UPGRADE_SCRIPT" --version "$LND_VERSION" --install-new
+  fi
+  print_ok "Authenticated LND release installed"
 }
 
 build_ui() {
@@ -1390,7 +1407,28 @@ install_manager() {
   print_ok "Go modules ready"
 
   print_step "Compiling LightningOS Manager"
-  (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go build -o /opt/lightningos/manager/lightningos-manager ./cmd/lightningos-manager)
+  (cd "$REPO_ROOT" && env $go_env GOFLAGS="-mod=mod -buildvcs=false" go build -o /opt/lightningos/manager/lightningos-manager ./cmd/lightningos-manager)
+
+  print_step "Installing privileged broker foundation"
+  mkdir -p "$REPO_ROOT/dist"
+  (cd "$REPO_ROOT" && env $go_env GOFLAGS="-mod=mod -buildvcs=false" go build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
+  local broker_path
+  for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
+    [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"
+  done
+  [[ -f "$REPO_ROOT/templates/lightningos-privileged.tmpfiles.conf" ]] || die "Privileged broker tmpfiles template is missing"
+  install -d -o root -g root -m 0755 /usr/local/libexec
+  install -d -o root -g root -m 0755 /etc/tmpfiles.d
+  install -d -o root -g root -m 0750 /var/log/lightningos-privileged /run/lock/lightningos
+  install -o root -g root -m 0644 "$REPO_ROOT/templates/lightningos-privileged.tmpfiles.conf" "$PRIVILEGED_TMPFILES_CONFIG"
+  /usr/bin/systemd-tmpfiles --create "$PRIVILEGED_TMPFILES_CONFIG"
+  install -o root -g root -m 0755 "$REPO_ROOT/dist/lightningos-privileged" "$PRIVILEGED_BROKER"
+  local broker_response
+  broker_response=$(printf '%s\n' '{"version":1,"request_id":"install_self_test","operation":"self_test","params":{}}' | env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$PRIVILEGED_BROKER")
+  if ! jq -e '.version == 1 and .request_id == "install_self_test" and .ok == true and .result.ready == true' >/dev/null <<<"$broker_response"; then
+    die "Privileged broker self-test failed"
+  fi
+  print_ok "Privileged broker installed and self-test passed"
   if [[ -n "$current_stamp" ]]; then
     echo "$current_stamp" > "$stamp_file"
     chmod 0644 "$stamp_file"
@@ -1476,15 +1514,20 @@ install_systemd() {
   print_step "Installing systemd services"
   cp "$REPO_ROOT/templates/systemd/lnd.service" /etc/systemd/system/lnd.service
   cp "$REPO_ROOT/templates/systemd/lightningos-manager.service" /etc/systemd/system/lightningos-manager.service
+  cp "$REPO_ROOT/templates/systemd/lightningos-privileged.socket" /etc/systemd/system/lightningos-privileged.socket
+  cp "$REPO_ROOT/templates/systemd/lightningos-privileged@.service" /etc/systemd/system/lightningos-privileged@.service
   cp "$REPO_ROOT/templates/systemd/lightningos-terminal.service" /etc/systemd/system/lightningos-terminal.service
   cp "$REPO_ROOT/templates/systemd/lightningos-reports.service" /etc/systemd/system/lightningos-reports.service
   cp "$REPO_ROOT/templates/systemd/lightningos-reports.timer" /etc/systemd/system/lightningos-reports.timer
   strip_crlf /etc/systemd/system/lnd.service
   strip_crlf /etc/systemd/system/lightningos-manager.service
+  strip_crlf /etc/systemd/system/lightningos-privileged.socket
+  strip_crlf /etc/systemd/system/lightningos-privileged@.service
   strip_crlf /etc/systemd/system/lightningos-terminal.service
   strip_crlf /etc/systemd/system/lightningos-reports.service
   strip_crlf /etc/systemd/system/lightningos-reports.timer
   systemctl daemon-reload
+  systemctl enable --now lightningos-privileged.socket
   systemctl enable --now postgresql
   start_tor_service
   if ! wait_for_tor_control; then
@@ -1609,15 +1652,14 @@ main() {
   require_root
   print_step "LightningOS installation starting"
   ensure_operator_user
-  configure_sudoers
   install_packages
   configure_tor
   create_lnd_user
   ensure_group_member lnd debian-tor
   ensure_user lightningos /var/lib/lightningos
+  ensure_native_app_identities
   ensure_group_member lightningos lnd
   ensure_group_member lightningos systemd-journal
-  ensure_group_member lightningos docker
   install_i2pd
   install_go
   install_node

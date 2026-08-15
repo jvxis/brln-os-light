@@ -1,0 +1,48 @@
+{
+  "schema": "lightningos.privilege-hardening.phase3-auth-enable.v1",
+  "captured_at": "2026-08-13",
+  "secret_free": true,
+  "branch": "agent/0.5.3-privilege-hardening",
+  "scope": "broker-only activation of login protection",
+  "flow": {
+    "config_operation": "files.enable_login",
+    "restart_operation": "service.restart",
+    "fixed_config_path": "/etc/lightningos/config.yaml",
+    "manager_direct_yaml_write": false,
+    "manager_sudo_tee": false,
+    "manager_runtime_sudoers_creation": false,
+    "manager_visudo": false,
+    "manager_privileged_shell": false,
+    "manager_systemd_run": false,
+    "disabled_mode_mutation": false,
+    "shadow_mode_mutation": false
+  },
+  "tests": {
+    "disabled_mode_returns_service_unavailable": "passed",
+    "shadow_mode_performs_only_dry_run_validation": "passed",
+    "failed_closed_request_preserves_in_memory_setting": "passed",
+    "privilege_call_budget_zero": "passed",
+    "runtime_wildcard_constructor_removed": "passed",
+    "focused_go_test": "passed",
+    "permanent_privilege_boundary_tests": "passed"
+  },
+  "positive_gate_reuse": {
+    "reason": "both typed operations already have real Ubuntu 24.04 acceptance evidence; this slice only deletes manager fallbacks",
+    "files_enable_login": "docs/baselines/privilege-hardening-phase1-fresh-install-enforce-2026-08-10.json",
+    "manager_service_restart": "docs/baselines/privilege-hardening-phase1-soak-reboot-service-2026-08-10.json",
+    "current_service_boundary": "docs/baselines/privilege-hardening-phase3-service-power-2026-08-13.json",
+    "new_node_mutation_performed": false,
+    "integration_node_mutated": false
+  },
+  "remaining": [
+    "during the coordinated Phase 4 cutover, safely detect and remove any exact legacy /etc/sudoers.d/lightningos-auth-enable file left by an older manager",
+    "remove the broader installer sudoers grants only after all remaining consumers are migrated"
+  ],
+  "excluded": [
+    "config contents",
+    "credentials",
+    "tokens",
+    "ip addresses",
+    "private node identifiers"
+  ]
+}

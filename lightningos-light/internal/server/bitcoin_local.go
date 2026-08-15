@@ -10,8 +10,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,18 +19,15 @@ import (
 )
 
 const (
-	bitcoinCoreMinPruneMiB           = 550
-	bitcoinCoreDataDirInContainer    = "/home/bitcoin/.bitcoin"
-	bitcoinCoreConfigPathInContainer = bitcoinCoreDataDirInContainer + "/bitcoin.conf"
-	blockCadenceWindowSec            = 600
-	blockCadenceBucketCount          = 12
-	blockCadenceCacheTTL             = 60 * time.Second
-	blockCadenceMaxSteps             = 144
-	bitcoinNetworkInfoTimeout        = 2 * time.Second
-	bitcoinCadenceTimeout            = 8 * time.Second
-	bitcoinCadenceMinBudget          = 3 * time.Second
-	bitcoinCLIRPCWaitTimeoutSec      = 10
-	bitcoinCLIRPCClientTimeoutSec    = 8
+	bitcoinCoreMinPruneMiB      = 550
+	blockCadenceWindowSec       = 600
+	blockCadenceBucketCount     = 12
+	blockCadenceCacheTTL        = 60 * time.Second
+	blockCadenceMaxSteps        = 144
+	bitcoinNetworkInfoTimeout   = 2 * time.Second
+	bitcoinCadenceTimeout       = 8 * time.Second
+	bitcoinCadenceMinBudget     = 3 * time.Second
+	maxBitcoinBrokerStatusBytes = 64 * 1024
 )
 
 type bitcoinLocalStatus struct {
@@ -145,7 +140,7 @@ func (s *Server) bitcoinLocalStatus(ctx context.Context) (bitcoinLocalStatus, er
 		DataDir:   paths.DataDir,
 	}
 	if !fileExists(paths.ComposePath) {
-		cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+		cfg, err := readBitcoinLocalRPCConfig(ctx)
 		if err != nil {
 			return resp, nil
 		}
@@ -171,38 +166,28 @@ func (s *Server) bitcoinLocalStatus(ctx context.Context) (bitcoinLocalStatus, er
 	resp.Installed = true
 	resp.Source = "app"
 
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "bitcoind")
-	if err != nil {
-		resp.Status = "unknown"
-		return resp, nil
-	}
-	resp.Status = status
-	if status != "running" {
-		return resp, nil
-	}
-
-	logTip, logTipOK := fetchBitcoinLocalLogTip(ctx, paths)
-	chainInfo, err := fetchBitcoinLocalChainInfoBest(ctx, paths)
-	if err != nil {
-		resp.RPCOk = false
-		if logTipOK {
-			applyBitcoinLogTipToLocalStatus(&resp, logTip)
+	if brokerRaw, handled, brokerErr := system.ReadBitcoinCoreStatusWithBroker(ctx); handled {
+		resp.Status = "running"
+		if brokerErr != nil {
+			resp.Status = "unknown"
+			resp.RPCOk = false
+			return resp, nil
 		}
-		return resp, nil
+		brokerStatus, err := parseBitcoinCoreBrokerStatus(brokerRaw)
+		if err != nil {
+			resp.Status = "unknown"
+			resp.RPCOk = false
+			return resp, nil
+		}
+		brokerStatus.Installed = resp.Installed
+		brokerStatus.Status = resp.Status
+		brokerStatus.Source = resp.Source
+		brokerStatus.DataDir = resp.DataDir
+		return brokerStatus, nil
 	}
 
-	applyBitcoinCLIChainInfoToLocalStatus(&resp, chainInfo)
-	if netInfo, ok := fetchBitcoinLocalNetworkInfoBestEffort(ctx, paths); ok {
-		applyBitcoinCLINetworkInfoToLocalStatus(&resp, netInfo)
-	}
-
-	bestTime, buckets, cadenceOk := fetchBitcoinLocalCadenceBestEffort(ctx, paths, chainInfo.BestBlockHash)
-	if cadenceOk {
-		resp.BestBlockTime = bestTime
-		resp.BlockCadenceWindowSec = blockCadenceWindowSec
-		resp.BlockCadence = buckets
-	}
-
+	resp.Status = "unknown"
+	resp.RPCOk = false
 	return resp, nil
 }
 
@@ -284,12 +269,9 @@ func (s *Server) handleBitcoinLocalConfigPost(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to write bitcoin.conf")
 		return
 	}
-	if err := writeFile(paths.SeedConfigPath, updated, 0640); err != nil {
-		s.logger.Printf("bitcoin local: failed to update seed config: %v", err)
-	}
 
 	if req.ApplyNow {
-		if err := runCompose(ctx, paths.Root, paths.ComposePath, "restart", "bitcoind"); err != nil {
+		if err := runBitcoinCoreLifecycle(ctx, "restart"); err != nil {
 			writeError(w, http.StatusInternalServerError, "restart failed")
 			return
 		}
@@ -299,69 +281,32 @@ func (s *Server) handleBitcoinLocalConfigPost(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func fetchBitcoinLocalChainInfo(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLIChainInfo, error) {
-	out, err := execBitcoinCLI(ctx, paths, "getblockchaininfo")
-	if err != nil {
-		return bitcoinCLIChainInfo{}, err
-	}
-	chainInfo := bitcoinCLIChainInfo{}
-	if err := json.Unmarshal([]byte(out), &chainInfo); err != nil {
-		return bitcoinCLIChainInfo{}, err
-	}
-	return chainInfo, nil
-}
-
-func fetchBitcoinLocalChainInfoBest(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLIChainInfo, error) {
-	if cfg, ok := readBitcoinCoreAppRPCConfig(ctx, paths); ok {
-		info, err := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
-		if err == nil {
-			return bitcoinInfoToCLIChainInfo(info), nil
-		}
-	}
-	return fetchBitcoinLocalChainInfo(ctx, paths)
-}
-
-func fetchBitcoinLocalNetworkInfo(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLINetworkInfo, error) {
-	netOut, err := execBitcoinCLI(ctx, paths, "getnetworkinfo")
-	if err != nil {
-		return bitcoinCLINetworkInfo{}, err
-	}
-	netInfo := bitcoinCLINetworkInfo{}
-	if err := json.Unmarshal([]byte(netOut), &netInfo); err != nil {
-		return bitcoinCLINetworkInfo{}, err
-	}
-	return netInfo, nil
-}
-
-func fetchBitcoinLocalNetworkInfoBest(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLINetworkInfo, error) {
-	if cfg, ok := readBitcoinCoreAppRPCConfig(ctx, paths); ok {
-		info, err := fetchBitcoinNetworkInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
-		if err == nil {
-			return bitcoinNetworkInfoToCLINetworkInfo(info), nil
-		}
-	}
-	return fetchBitcoinLocalNetworkInfo(ctx, paths)
-}
-
 func readBitcoinCoreAppRPCConfig(ctx context.Context, paths bitcoinCorePaths) (bitcoinRPCConfig, bool) {
 	if !fileExists(paths.ComposePath) {
 		return bitcoinRPCConfig{}, false
 	}
 	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
-	if err != nil {
-		return bitcoinRPCConfig{}, false
+	if err == nil {
+		user, pass, zmqBlock, zmqTx := parseBitcoinCoreRPCConfig(raw)
+		if user != "" && pass != "" {
+			return bitcoinRPCConfig{
+				Host:     "127.0.0.1:8332",
+				User:     user,
+				Pass:     pass,
+				ZMQBlock: normalizeLocalZMQ(zmqBlock, "tcp://127.0.0.1:28332"),
+				ZMQTx:    normalizeLocalZMQ(zmqTx, "tcp://127.0.0.1:28333"),
+			}, true
+		}
 	}
-	user, pass, zmqBlock, zmqTx := parseBitcoinCoreRPCConfig(raw)
-	if user == "" || pass == "" {
-		return bitcoinRPCConfig{}, false
+
+	// Older source-switching flows retained the App Store credential in the
+	// commented LightningOS Bitcoin Local block while LND used a remote node.
+	// Reuse it only for this compatibility status path and only when its host
+	// remains local. The enforce path authenticates through the runtime cookie.
+	if cfg, ok := readBitcoinTaggedRPCConfigFromLNDConf("local"); ok && isLocalRPCHost(cfg.Host) {
+		return cfg, true
 	}
-	return bitcoinRPCConfig{
-		Host:     "127.0.0.1:8332",
-		User:     user,
-		Pass:     pass,
-		ZMQBlock: normalizeLocalZMQ(zmqBlock, "tcp://127.0.0.1:28332"),
-		ZMQTx:    normalizeLocalZMQ(zmqTx, "tcp://127.0.0.1:28333"),
-	}, true
+	return bitcoinRPCConfig{}, false
 }
 
 func bitcoinInfoToCLIChainInfo(info bitcoinInfo) bitcoinCLIChainInfo {
@@ -407,18 +352,13 @@ func getBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHas
 	var buckets []blockCadenceBucket
 	var err error
 	if fileExists(paths.ComposePath) {
-		computed := false
 		if cfg, ok := readBitcoinCoreAppRPCConfig(ctx, paths); ok {
 			bestTime, buckets, err = computeBitcoinLocalCadenceRPC(ctx, cfg, trimmed)
-			if err == nil {
-				computed = true
-			}
-		}
-		if !computed {
-			bestTime, buckets, err = computeBitcoinLocalCadence(ctx, paths, trimmed)
+		} else {
+			err = errors.New("local Bitcoin RPC credentials are unavailable")
 		}
 	} else {
-		cfg, _, cfgErr := readBitcoinLocalRPCConfig(ctx)
+		cfg, cfgErr := readBitcoinLocalRPCConfig(ctx)
 		if cfgErr != nil {
 			return 0, nil, cfgErr
 		}
@@ -436,63 +376,6 @@ func getBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHas
 		ExpiresAt: time.Now().Add(blockCadenceCacheTTL),
 	}
 	blockCadenceMu.Unlock()
-
-	return bestTime, buckets, nil
-}
-
-func computeBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHash string) (int64, []blockCadenceBucket, error) {
-	header, err := fetchBitcoinLocalBlockHeader(ctx, paths, bestHash)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	bestTime := header.Time
-	if bestTime == 0 {
-		return 0, nil, errors.New("best block time missing")
-	}
-
-	windowSec := int64(blockCadenceWindowSec)
-	startTime := bestTime - (windowSec * int64(blockCadenceBucketCount))
-	buckets := make([]blockCadenceBucket, blockCadenceBucketCount)
-	for i := 0; i < blockCadenceBucketCount; i++ {
-		start := startTime + (int64(i) * windowSec)
-		buckets[i] = blockCadenceBucket{
-			StartTime: start,
-			EndTime:   start + windowSec,
-			Count:     0,
-		}
-	}
-
-	current := header
-	complete := false
-	for steps := 0; steps < blockCadenceMaxSteps; steps++ {
-		if current.Time < startTime {
-			complete = true
-			break
-		}
-		idx := int((current.Time - startTime) / windowSec)
-		if idx >= 0 && idx < len(buckets) {
-			buckets[idx].Count++
-		}
-
-		nextHash := strings.TrimSpace(current.PreviousBlockHash)
-		if nextHash == "" {
-			complete = true
-			break
-		}
-
-		nextHeader, err := fetchBitcoinLocalBlockHeader(ctx, paths, nextHash)
-		if err != nil {
-			return 0, nil, fmt.Errorf("fetch previous block header failed: %w", err)
-		}
-		current = nextHeader
-	}
-	if !complete && current.Time < startTime {
-		complete = true
-	}
-	if !complete {
-		return 0, nil, errors.New("block cadence scan limit reached before window start")
-	}
 
 	return bestTime, buckets, nil
 }
@@ -554,18 +437,6 @@ func computeBitcoinLocalCadenceRPC(ctx context.Context, cfg bitcoinRPCConfig, be
 	return bestTime, buckets, nil
 }
 
-func fetchBitcoinLocalBlockHeader(ctx context.Context, paths bitcoinCorePaths, hash string) (bitcoinCLIBlockHeader, error) {
-	out, err := execBitcoinCLI(ctx, paths, "getblockheader", hash, "true")
-	if err != nil {
-		return bitcoinCLIBlockHeader{}, err
-	}
-	header := bitcoinCLIBlockHeader{}
-	if err := json.Unmarshal([]byte(out), &header); err != nil {
-		return bitcoinCLIBlockHeader{}, err
-	}
-	return header, nil
-}
-
 func fetchBitcoinNetworkInfoBestEffort(ctx context.Context, host, user, pass string) (bitcoinNetworkInfo, bool) {
 	if !contextHasBudget(ctx, bitcoinCadenceMinBudget) {
 		return bitcoinNetworkInfo{}, false
@@ -575,19 +446,6 @@ func fetchBitcoinNetworkInfoBestEffort(ctx context.Context, host, user, pass str
 	info, err := fetchBitcoinNetworkInfo(infoCtx, host, user, pass)
 	if err != nil {
 		return bitcoinNetworkInfo{}, false
-	}
-	return info, true
-}
-
-func fetchBitcoinLocalNetworkInfoBestEffort(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLINetworkInfo, bool) {
-	if !contextHasBudget(ctx, bitcoinCadenceMinBudget) {
-		return bitcoinCLINetworkInfo{}, false
-	}
-	infoCtx, cancel := context.WithTimeout(ctx, bitcoinNetworkInfoTimeout)
-	defer cancel()
-	info, err := fetchBitcoinLocalNetworkInfoBest(infoCtx, paths)
-	if err != nil {
-		return bitcoinCLINetworkInfo{}, false
 	}
 	return info, true
 }
@@ -622,7 +480,7 @@ func parseBitcoinBlockHeaderRPC(body []byte) (bitcoinCLIBlockHeader, error) {
 		return bitcoinCLIBlockHeader{}, err
 	}
 	if payload.Error != nil {
-		return bitcoinCLIBlockHeader{}, fmt.Errorf(payload.Error.Message)
+		return bitcoinCLIBlockHeader{}, errors.New(payload.Error.Message)
 	}
 	return payload.Result, nil
 }
@@ -695,46 +553,6 @@ func fetchBitcoinBlockHeaderRPC(ctx context.Context, host, user, pass, hash stri
 	return parseBitcoinBlockHeaderRPC(body)
 }
 
-func execBitcoinCLI(ctx context.Context, paths bitcoinCorePaths, args ...string) (string, error) {
-	containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind")
-	if err != nil {
-		return "", err
-	}
-	if containerID == "" {
-		return "", errors.New("bitcoind container not running")
-	}
-	cliArgs := bitcoinCLIExecArgs(containerID, args...)
-	out, err := system.RunCommandWithSudo(ctx, "docker", cliArgs...)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
-}
-
-func bitcoinCLIExecArgs(containerID string, args ...string) []string {
-	return append([]string{
-		"exec", "-i", containerID,
-		"bitcoin-cli",
-		"-datadir=" + bitcoinCoreDataDirInContainer,
-		"-conf=" + bitcoinCoreConfigPathInContainer,
-		fmt.Sprintf("-rpcclienttimeout=%d", bitcoinCLIRPCClientTimeoutSec),
-		"-rpcwait",
-		fmt.Sprintf("-rpcwaittimeout=%d", bitcoinCLIRPCWaitTimeoutSec),
-	}, args...)
-}
-
-func fetchBitcoinLocalLogTip(ctx context.Context, paths bitcoinCorePaths) (bitcoinLogTip, bool) {
-	containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind")
-	if err != nil || containerID == "" {
-		return bitcoinLogTip{}, false
-	}
-	out, err := system.RunCommandWithSudo(ctx, "docker", "logs", "--tail", "500", containerID)
-	if err != nil {
-		return bitcoinLogTip{}, false
-	}
-	return parseBitcoinLogTip(out)
-}
-
 func parseBitcoinLogTip(raw string) (bitcoinLogTip, bool) {
 	var latest bitcoinLogTip
 	found := false
@@ -790,6 +608,20 @@ func applyBitcoinLogTipToLocalStatus(status *bitcoinLocalStatus, tip bitcoinLogT
 	status.BestBlockTime = tip.Time
 	status.VerificationProgress = tip.Progress
 	status.InitialBlockDownload = tip.Progress < 0.999999
+}
+
+func parseBitcoinCoreBrokerStatus(raw string) (bitcoinLocalStatus, error) {
+	var status bitcoinLocalStatus
+	if len(raw) == 0 || len(raw) > maxBitcoinBrokerStatusBytes {
+		return status, errors.New("bitcoin broker status is invalid")
+	}
+	if err := json.Unmarshal([]byte(raw), &status); err != nil || status.Chain != "main" ||
+		status.Blocks < 0 || status.Headers < 0 || status.Blocks > status.Headers ||
+		status.VerificationProgress < 0 || status.VerificationProgress > 1 || strings.TrimSpace(status.BestBlockHash) == "" {
+		return bitcoinLocalStatus{}, errors.New("bitcoin broker status is invalid")
+	}
+	status.RPCOk = true
+	return status, nil
 }
 
 func applyBitcoinInfoToLocalStatus(status *bitcoinLocalStatus, info bitcoinInfo) {
@@ -884,99 +716,24 @@ func readBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) (string,
 }
 
 func readBitcoinCoreConfigRaw(ctx context.Context, paths bitcoinCorePaths) (string, error) {
-	if fileExists(paths.ConfigPath) {
-		raw, err := os.ReadFile(paths.ConfigPath)
-		if err == nil {
-			return string(raw), nil
+	content, handled, err := system.ReadBitcoinCoreConfigWithBroker(ctx, paths.DataDir)
+	if handled {
+		if err != nil {
+			return "", fmt.Errorf("read bitcoin.conf failed: %w", err)
 		}
+		return content, nil
 	}
-
-	containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind")
-	if err == nil && containerID != "" {
-		out, execErr := system.RunCommandWithSudo(ctx, "docker", "exec", "-i", containerID, "sh", "-c", "cat "+bitcoinCoreConfigPathInContainer)
-		if execErr == nil {
-			return out, nil
-		}
-	}
-
-	if err := ensureBitcoinCoreImage(ctx); err != nil {
-		return "", err
-	}
-	out, err := system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"run",
-		"--rm",
-		"--entrypoint",
-		"sh",
-		"--user",
-		"0:0",
-		"-v",
-		fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
-		bitcoinCoreImage,
-		"-c",
-		"cat "+bitcoinCoreConfigPathInContainer,
-	)
-	if err == nil {
-		return out, nil
-	}
-	if strings.Contains(strings.ToLower(out), "no such file") {
-		if fileExists(paths.SeedConfigPath) {
-			raw, readErr := os.ReadFile(paths.SeedConfigPath)
-			if readErr == nil {
-				return string(raw), nil
-			}
-		}
-	}
-	msg := strings.TrimSpace(out)
-	if msg == "" {
-		return "", fmt.Errorf("read bitcoin.conf failed: %w", err)
-	}
-	return "", fmt.Errorf("read bitcoin.conf failed: %s", msg)
+	return "", errors.New("read bitcoin.conf requires privileged broker enforce mode")
 }
 
 func writeBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths, content string) error {
-	tmpPath := filepath.Join(paths.Root, "bitcoin.conf.tmp")
-	if err := writeFile(tmpPath, ensureTrailingNewline(content), 0640); err != nil {
-		return err
-	}
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-
-	cmd := strings.Join([]string{
-		"cp /tmp/bitcoin.conf " + bitcoinCoreConfigPathInContainer,
-		"chown 101:101 " + bitcoinCoreConfigPathInContainer,
-		"chmod 640 " + bitcoinCoreConfigPathInContainer,
-	}, " && ")
-	if err := ensureBitcoinCoreImage(ctx); err != nil {
-		return err
-	}
-	out, err := system.RunCommandWithSudo(
-		ctx,
-		"docker",
-		"run",
-		"--rm",
-		"--entrypoint",
-		"sh",
-		"--user",
-		"0:0",
-		"-v",
-		fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
-		"-v",
-		fmt.Sprintf("%s:/tmp/bitcoin.conf:ro", tmpPath),
-		bitcoinCoreImage,
-		"-c",
-		cmd,
-	)
-	if err != nil {
-		msg := strings.TrimSpace(out)
-		if msg == "" {
+	if handled, err := system.WriteBitcoinCoreConfigWithBroker(ctx, paths.DataDir, ensureTrailingNewline(content)); handled {
+		if err != nil {
 			return fmt.Errorf("write bitcoin.conf failed: %w", err)
 		}
-		return fmt.Errorf("write bitcoin.conf failed: %s", msg)
+		return nil
 	}
-	return nil
+	return errors.New("write bitcoin.conf requires privileged broker enforce mode")
 }
 
 func parseBitcoinCorePrune(raw string) (bool, int) {
@@ -1160,31 +917,6 @@ func normalizeIPv4DottedMaskCIDR(value string) (string, bool) {
 	return network.String(), true
 }
 
-func normalizeBitcoinCoreConfigText(raw string) string {
-	return ensureTrailingNewline(strings.TrimRight(strings.ReplaceAll(raw, "\r\n", "\n"), "\n"))
-}
-
-func rpcAllowLineValue(line string) (string, bool) {
-	key, value, ok := bitcoinCoreConfigKeyValue(line)
-	if !ok || !strings.EqualFold(key, "rpcallowip") {
-		return "", false
-	}
-	return normalizeRPCAllowIPValue(value)
-}
-
-func rpcAllowValueIsCIDR(value string) bool {
-	return strings.Contains(value, "/")
-}
-
-func rpcAllowCIDRContainsIP(cidrValue string, ipValue string) bool {
-	_, cidr, err := net.ParseCIDR(cidrValue)
-	if err != nil || cidr == nil {
-		return false
-	}
-	ip := net.ParseIP(ipValue)
-	return ip != nil && cidr.Contains(ip)
-}
-
 func looksLikeEntrypointLog(line string) bool {
 	if line == "" {
 		return false
@@ -1201,104 +933,12 @@ func looksLikeEntrypointLog(line string) bool {
 	return false
 }
 
-func syncBitcoinCoreRPCAllowList(ctx context.Context, paths bitcoinCorePaths) (string, bool, error) {
-	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
-	if err != nil {
-		return "", false, err
-	}
-
-	allowList := []string{"127.0.0.1"}
-	if gateway, gwErr := dockerGatewayIP(ctx); gwErr == nil && gateway != "" {
-		allowList = append(allowList, gateway)
-	}
-	if containerID, idErr := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind"); idErr == nil && containerID != "" {
-		for _, gateway := range dockerContainerGateways(ctx, containerID) {
-			allowList = append(allowList, gateway)
-		}
-		for _, cidr := range dockerContainerCIDRs(ctx, containerID) {
-			allowList = append(allowList, cidr)
-		}
-	}
-
-	updated, changed := ensureBitcoinCoreRPCAllowList(raw, allowList)
-	if !changed {
-		return raw, false, nil
-	}
-	if err := writeBitcoinCoreConfig(ctx, paths, updated); err != nil {
-		return "", false, err
-	}
-	_ = writeFile(paths.SeedConfigPath, updated, 0640)
-	return updated, true, nil
-}
-
-func ensureBitcoinCoreRPCAllowList(raw string, allow []string) (string, bool) {
-	normalized := sanitizeBitcoinCoreConfig(raw)
-	lines := strings.Split(strings.TrimRight(normalized, "\n"), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		lines = []string{}
-	}
-
-	changed := normalized != normalizeBitcoinCoreConfigText(raw)
-	for _, entry := range allow {
-		trimmed, valid := normalizeRPCAllowIPValue(entry)
-		if !valid {
-			continue
-		}
-		if rpcAllowListContains(lines, trimmed) {
-			continue
-		}
-		lines = append(lines, "rpcallowip="+trimmed)
-		changed = true
-	}
-
-	if !changed {
-		return normalized, false
-	}
-	return ensureTrailingNewline(strings.Join(lines, "\n")), true
-}
-
-func rpcAllowListContains(lines []string, value string) bool {
-	value, valid := normalizeRPCAllowIPValue(value)
-	if !valid {
-		return false
-	}
-	if rpcAllowValueIsCIDR(value) {
-		for _, line := range lines {
-			candidate, ok := rpcAllowLineValue(line)
-			if !ok || !rpcAllowValueIsCIDR(candidate) {
-				continue
-			}
-			if candidate == value {
-				return true
-			}
-		}
-		return false
-	}
-
-	for _, line := range lines {
-		candidate, ok := rpcAllowLineValue(line)
-		if !ok {
-			continue
-		}
-		if rpcAllowValueIsCIDR(candidate) {
-			if rpcAllowCIDRContainsIP(candidate, value) {
-				return true
-			}
-			continue
-		}
-		if candidate == value {
-			return true
-		}
-	}
-	return false
-}
-
 func roundGB(value float64) float64 {
 	return math.Round(value*100) / 100
 }
 
 func (s *Server) bitcoinLocalReady(ctx context.Context) (bool, string) {
-	cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+	cfg, err := readBitcoinLocalRPCConfig(ctx)
 	if err != nil {
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "not installed") {
@@ -1306,18 +946,5 @@ func (s *Server) bitcoinLocalReady(ctx context.Context) (bool, string) {
 		}
 		return false, "rpc_unavailable"
 	}
-	info, err := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
-	if err != nil {
-		return false, "rpc_unavailable"
-	}
-	if info.InitialBlockDownload {
-		return false, "syncing"
-	}
-	if info.VerificationProgress < 0.9999 {
-		return false, "syncing"
-	}
-	if info.Headers > 0 && info.Blocks < info.Headers {
-		return false, "syncing"
-	}
-	return true, "ready"
+	return bitcoinRPCReady(ctx, cfg)
 }

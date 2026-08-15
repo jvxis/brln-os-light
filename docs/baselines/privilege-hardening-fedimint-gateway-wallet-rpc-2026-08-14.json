@@ -1,0 +1,58 @@
+{
+  "date": "2026-08-14",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "commit": "11cd03f8a25bd8a2c9f226fe6d1eac439491cfca",
+  "target": "LOS TESTE2",
+  "network": "mainnet",
+  "policy": {
+    "fresh_app_store_bitcoin": "disablewallet=1",
+    "wallet_rpc_consumer": "fedimint-gateway-only",
+    "confirmation_required": true,
+    "managed_local_bitcoin_only": true,
+    "external_or_systemd_bitcoin_modified": false,
+    "migration_idempotent": true
+  },
+  "local_verification": {
+    "go_test_all": "pass",
+    "go_build_manager": "pass",
+    "ui_production_build": "pass",
+    "git_diff_check": "pass"
+  },
+  "live_upgrade": {
+    "version": "0.5.3-Beta",
+    "trusted_checkout": "pass",
+    "low_cpu_io_priority_recheck": "pass",
+    "lnd_pid_before": 169808,
+    "lnd_pid_after": 169808,
+    "lnd_restart_count_before": 3,
+    "lnd_restart_count_after": 3,
+    "bitcoin_started_at_before": "2026-08-14T20:13:51.188437451Z",
+    "bitcoin_started_at_after": "2026-08-14T20:13:51.188437451Z",
+    "bitcoin_restart_count_after": 0
+  },
+  "bitcoin_status": {
+    "installed": true,
+    "status": "running",
+    "rpc_ok": true,
+    "chain": "main",
+    "blocks_equal_headers": true,
+    "verification_progress": 1,
+    "cadence_bucket_count": 12,
+    "cadence_total_blocks_at_probe": 7,
+    "connections_at_probe": 10,
+    "wallet_rpc_listwallets": "pass"
+  },
+  "fedimint_gateway": {
+    "start": "pass",
+    "webserver": "0.0.0.0:8176",
+    "bitcoin_wallet_rpc_error": false,
+    "stop": "pass",
+    "final_running": false,
+    "bitcoin_restarted_by_idempotent_start": false,
+    "lnd_restarted_by_idempotent_start": false
+  },
+  "cleanup": {
+    "running_optional_containers": [],
+    "temporary_checkouts": []
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "captured_at": "2026-08-13",
+  "target": "disposable Ubuntu 24.04 existing-node fixture",
+  "checkpoint": "9109cfb5c77f869001b20721dc2695330e141652",
+  "result": "passed",
+  "layout": {
+    "bitcoin": "native bitcoind.service with an independently installed official-source-verified binary",
+    "lnd": "pre-existing native lnd.service with PostgreSQL",
+    "installer": "install_existing.sh"
+  },
+  "upgrade_gate": {
+    "installer_exit": 0,
+    "broker_self_test": "passed",
+    "manager_mode": "enforce",
+    "bitcoin_source": "local",
+    "manager_docker_socket": "denied",
+    "bitcoin_pid_during_install": "unchanged",
+    "bitcoin_conf_sha256": "unchanged",
+    "lnd_conf_sha256": "unchanged",
+    "bitcoind_sha256": "unchanged"
+  },
+  "reboot_gate": {
+    "bitcoind": "active and real RPC passed",
+    "lnd": "active, auto-unlocked and real gRPC passed",
+    "manager": "active",
+    "broker_socket": "active",
+    "postgresql": "active",
+    "bitcoin_conf_sha256": "unchanged",
+    "lnd_conf_sha256": "unchanged",
+    "bitcoind_sha256": "unchanged"
+  },
+  "secrets": "Only hashes and boolean/status outcomes were compared. No file content, seed, wallet password, RPC credential, macaroon or node identity is recorded."
+}

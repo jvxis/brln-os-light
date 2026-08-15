@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
@@ -41,13 +43,14 @@ type appStorageTargetsResponse struct {
 }
 
 type storageMount struct {
-	Mount     string
-	Source    string
-	FSType    string
-	Options   string
-	SizeBytes int64
-	UsedBytes int64
-	FreeBytes int64
+	Mount      string
+	Source     string
+	FSType     string
+	Options    string
+	SizeBytes  int64
+	UsedBytes  int64
+	FreeBytes  int64
+	RootDevice bool
 }
 
 type findmntOutput struct {
@@ -68,7 +71,7 @@ type findmntFilesystem struct {
 func (s *Server) handleAppStorageTargets(w http.ResponseWriter, r *http.Request) {
 	appID := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("app")))
 	if !appSupportsStorageTargets(appID) {
-		writeError(w, http.StatusBadRequest, "storage targets are only supported for Bitcoin Core and Elements")
+		writeError(w, http.StatusBadRequest, "storage targets are not supported for this app")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -84,12 +87,13 @@ func (s *Server) handleAppStorageTargets(w http.ResponseWriter, r *http.Request)
 
 func appStorageTargets(ctx context.Context, appID string) (appStorageTargetsResponse, error) {
 	if !appSupportsStorageTargets(appID) {
-		return appStorageTargetsResponse{}, errors.New("storage targets are only supported for Bitcoin Core and Elements")
+		return appStorageTargetsResponse{}, errors.New("storage targets are not supported for this app")
 	}
 	mounts, err := readStorageMounts(ctx)
 	if err != nil {
 		return appStorageTargetsResponse{}, fmt.Errorf("failed to list mounted volumes: %w", err)
 	}
+	markRootDeviceMounts(mounts)
 	targets := make([]appStorageTarget, 0, len(mounts))
 	for _, mount := range mounts {
 		targets = append(targets, buildAppStorageTarget(appID, mount))
@@ -109,6 +113,30 @@ func appStorageTargets(ctx context.Context, appID string) (appStorageTargetsResp
 		MinFreeGB:   kibToGB(appMinFreeKiB(appID)),
 		Targets:     targets,
 	}, nil
+}
+
+func markRootDeviceMounts(mounts []storageMount) {
+	rootSource := ""
+	for _, mount := range mounts {
+		if path.Clean(strings.TrimSpace(mount.Mount)) == "/" {
+			rootSource = storageBackingSource(mount.Source)
+			break
+		}
+	}
+	if rootSource == "" {
+		return
+	}
+	for index := range mounts {
+		mounts[index].RootDevice = storageBackingSource(mounts[index].Source) == rootSource
+	}
+}
+
+func storageBackingSource(source string) string {
+	normalized := strings.TrimSpace(source)
+	if index := strings.IndexByte(normalized, '['); index > 0 && strings.HasSuffix(normalized, "]") {
+		normalized = normalized[:index]
+	}
+	return normalized
 }
 
 func resolveInstallDataDirFromStorageMount(ctx context.Context, appID string, mount string) (string, error) {
@@ -145,11 +173,15 @@ func readStorageMounts(ctx context.Context) ([]storageMount, error) {
 		return nil, err
 	}
 	mounts := []storageMount{}
+	hostOptions := readHostMountOptions("/proc/1/mountinfo")
 	indexByMount := map[string]int{}
 	var walk func([]findmntFilesystem)
 	walk = func(items []findmntFilesystem) {
 		for _, item := range items {
 			candidate := storageMountFromFindmnt(item)
+			if options, ok := hostOptions[candidate.Mount]; ok {
+				candidate.Options = options
+			}
 			if candidate.Mount != "" {
 				if idx, ok := indexByMount[candidate.Mount]; ok {
 					if preferStorageMount(candidate, mounts[idx]) {
@@ -167,6 +199,31 @@ func readStorageMounts(ctx context.Context) ([]storageMount, error) {
 	}
 	walk(parsed.Filesystems)
 	return mounts, nil
+}
+
+func readHostMountOptions(filename string) map[string]string {
+	options := map[string]string{}
+	raw, err := os.ReadFile(filename)
+	if err != nil {
+		return options
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue
+		}
+		mount := decodeMountInfoPath(fields[4])
+		if !strings.HasPrefix(mount, "/") {
+			continue
+		}
+		options[path.Clean(mount)] = fields[5]
+	}
+	return options
+}
+
+func decodeMountInfoPath(value string) string {
+	replacer := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+	return replacer.Replace(value)
 }
 
 func storageMountFromFindmnt(item findmntFilesystem) storageMount {
@@ -233,6 +290,9 @@ func storageMountEligibility(appID string, mount storageMount, suggestedPath str
 	if normalizedMount == "/" {
 		return false, "root filesystem is not selectable"
 	}
+	if mount.RootDevice {
+		return false, "volume uses the root filesystem"
+	}
 	if storageMountBlocked(normalizedMount) {
 		return false, "system mount is not selectable"
 	}
@@ -263,6 +323,10 @@ func storageMountEligibility(appID string, mount storageMount, suggestedPath str
 		}
 	case elementsAppID:
 		if _, err := normalizeElementsDataDir(suggestedPath); err != nil {
+			return false, err.Error()
+		}
+	case electrsAppID, mempoolAppID:
+		if _, err := appmanifest.NormalizeCatalogDataDir(appID, suggestedPath); err != nil {
 			return false, err.Error()
 		}
 	default:
@@ -301,7 +365,7 @@ func suggestedStorageDataDir(appID string, mount string) string {
 }
 
 func appSupportsStorageTargets(appID string) bool {
-	return appID == bitcoinCoreAppID || appID == elementsAppID
+	return appID == bitcoinCoreAppID || appID == elementsAppID || appID == electrsAppID || appID == mempoolAppID
 }
 
 func appStorageDirName(appID string) string {
@@ -321,6 +385,10 @@ func appDefaultDataDir(appID string) string {
 		return bitcoinCoreDefaultDataDir
 	case elementsAppID:
 		return elementsDefaultDataDir
+	case electrsAppID:
+		return appmanifest.ElectrsDefaultDataDir
+	case mempoolAppID:
+		return appmanifest.MempoolDefaultDataDir
 	default:
 		return ""
 	}
@@ -332,6 +400,10 @@ func appMinFreeKiB(appID string) int64 {
 		return bitcoinCoreMinFreeKiB
 	case elementsAppID:
 		return elementsMinFreeKiB
+	case electrsAppID:
+		return 100 * 1024 * 1024
+	case mempoolAppID:
+		return 20 * 1024 * 1024
 	default:
 		return 0
 	}

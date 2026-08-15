@@ -3,11 +3,8 @@ package server
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,8 +14,7 @@ import (
 )
 
 const (
-	torUpgradeUnitName   = "lightningos-tor-upgrade"
-	torUpgradeScriptPath = "/usr/local/sbin/lightningos-check-tor-update"
+	torUpgradeUnitName = "lightningos-tor-upgrade"
 )
 
 var torVersionPattern = regexp.MustCompile(`([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)`)
@@ -55,8 +51,10 @@ func (s *Server) handleTorUpgradeStatus(w http.ResponseWriter, r *http.Request) 
 
 	var refreshErr error
 	if force && !torUpgradeRunning(ctx) {
-		if out, err := system.RunCommandWithSudo(ctx, "apt-get", "update"); err != nil {
-			refreshErr = fmt.Errorf("failed to refresh APT metadata: %s", commandErrorDetail(out, err))
+		if handled, err := system.RefreshTorMetadataWithBroker(ctx); handled {
+			refreshErr = err
+		} else {
+			refreshErr = fmt.Errorf("privileged broker is required to refresh Tor package metadata")
 		}
 	}
 
@@ -86,38 +84,24 @@ func (s *Server) handleTorUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ensureTorUpgradeScript(ctx); err != nil {
-		if s.logger != nil {
-			s.logger.Printf("failed to install Tor update script: %v", err)
+	if handled, unit, err := system.StartTorUpgradeWithBroker(ctx, embeddedTorUpgradeScript, false); handled {
+		if err != nil {
+			details := err.Error()
+			if s.logger != nil {
+				s.logger.Printf("Tor update start failed: %s", details)
+			}
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to start Tor update: %s", details))
+			return
 		}
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to prepare Tor update script: %v", err))
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":             true,
+			"unit":           unit,
+			"target_version": status.CandidateVersion,
+		})
 		return
 	}
 
-	args := []string{
-		"--unit", torUpgradeUnitName,
-		"--collect",
-		"--quiet",
-		"--",
-		torUpgradeScriptPath,
-		"--yes",
-		"--configure-repo",
-		"--restart",
-	}
-	if out, err := system.RunCommandWithSudo(ctx, "systemd-run", args...); err != nil {
-		details := commandErrorDetail(out, err)
-		if s.logger != nil {
-			s.logger.Printf("Tor update start failed: %s", details)
-		}
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to start Tor update: %s", details))
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":             true,
-		"unit":           torUpgradeUnitName,
-		"target_version": status.CandidateVersion,
-	})
+	writeError(w, http.StatusServiceUnavailable, "privileged broker is required for Tor upgrades")
 }
 
 func torUpgradeStatus(ctx context.Context) torUpgradeStatusResponse {
@@ -259,58 +243,9 @@ func firstExistingTorUnit(ctx context.Context) string {
 }
 
 func torUpgradeRunning(ctx context.Context) bool {
-	out, err := system.RunCommand(ctx, "systemctl", "is-active", torUpgradeUnitName)
-	if err != nil {
-		out, _ = system.RunCommandWithSudo(ctx, "systemctl", "is-active", torUpgradeUnitName)
-	}
+	out, _ := system.RunCommand(ctx, "systemctl", "is-active", torUpgradeUnitName)
 	state := strings.TrimSpace(out)
 	return state == "active" || state == "activating"
-}
-
-func ensureTorUpgradeScript(ctx context.Context) error {
-	if strings.TrimSpace(embeddedTorUpgradeScript) == "" {
-		return errors.New("embedded Tor update script is empty")
-	}
-
-	existing, err := os.ReadFile(torUpgradeScriptPath)
-	if err == nil && string(existing) == embeddedTorUpgradeScript {
-		return nil
-	}
-
-	stageDir := "/var/lib/lightningos"
-	if err := os.MkdirAll(stageDir, 0750); err != nil {
-		return err
-	}
-	tmpFile, err := os.CreateTemp(stageDir, "lightningos-check-tor-update-*.sh")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmpFile.Name()
-	if _, err := tmpFile.WriteString(embeddedTorUpgradeScript); err != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	defer os.Remove(tmpPath)
-
-	installCmd := fmt.Sprintf("mkdir -p %s && install -m 0755 %s %s", filepath.Dir(torUpgradeScriptPath), tmpPath, torUpgradeScriptPath)
-	out, err := runSystemd(ctx, "/bin/sh", "-c", installCmd)
-	if err != nil {
-		return fmt.Errorf("failed to install Tor update script: %s", commandErrorDetail(out, err))
-	}
-
-	installed, err := os.ReadFile(torUpgradeScriptPath)
-	if err != nil {
-		return fmt.Errorf("failed to read installed Tor update script: %w", err)
-	}
-	if string(installed) != embeddedTorUpgradeScript {
-		return errors.New("installed Tor update script content does not match embedded script")
-	}
-	return nil
 }
 
 func commandErrorDetail(output string, err error) string {

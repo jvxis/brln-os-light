@@ -1,0 +1,124 @@
+{
+  "captured_at_utc": "2026-08-12T12:59:42Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "6540d3d",
+  "scope": "Lightning Labs Loop native systemd privilege boundary",
+  "identity": {
+    "app_id": "loop",
+    "display_name": "Lightning Loop",
+    "first_party_brln_app": false,
+    "distinct_from_brln_loop_out": true,
+    "elevated_lnd_disclaimer_retained": true
+  },
+  "manager_boundary": {
+    "direct_sudo_calls": 0,
+    "direct_systemd_run_calls": 0,
+    "privileged_shell_calls": 0,
+    "direct_root_file_writes": 0,
+    "direct_user_or_group_mutations": 0,
+    "legacy_privilege_budget_removed": true
+  },
+  "broker_contract": {
+    "operations": [
+      "app.loop.status",
+      "app.loop.ensure",
+      "app.loop.lifecycle",
+      "app.loop.remove",
+      "app.loop.permissions.ensure",
+      "app.loop.client-material.ensure"
+    ],
+    "caller_selected_paths": false,
+    "caller_selected_units": false,
+    "caller_selected_commands": false,
+    "caller_selected_downloads": false,
+    "lifecycle_actions": [
+      "start",
+      "stop"
+    ],
+    "restart_action_rejected": true,
+    "release": "v0.33.3-beta",
+    "release_url_fixed_to_official_github_repository": true,
+    "architecture_checksums_pinned": [
+      "amd64",
+      "arm64",
+      "armv7"
+    ],
+    "archive_extraction_size_bounded": true,
+    "symlinked_app_tree_rejected": true
+  },
+  "runtime_isolation": {
+    "service_user": "lightningos-loop",
+    "service_group": "lightningos-loop",
+    "manager_group_readable_client_copy": true,
+    "lnd_credential": "dedicated Loop macaroon",
+    "native_admin_macaroon_used": false,
+    "rpc_listener": "127.0.0.1:11010",
+    "rest_listener": "127.0.0.1:18081",
+    "systemd_controls": [
+      "NoNewPrivileges",
+      "PrivateTmp",
+      "PrivateDevices",
+      "ProtectSystem=full",
+      "ProtectHome",
+      "UMask=0027"
+    ]
+  },
+  "los_teste2_existing_node_gate": {
+    "global_broker_mode_preserved": "shadow",
+    "broker_exercised_directly_as": "lightningos",
+    "loop_installed": true,
+    "loop_version": "v0.33.3-beta",
+    "original_service_state": "inactive",
+    "final_service_state": "inactive",
+    "original_enablement": "disabled",
+    "final_enablement": "disabled",
+    "persistent_swap_database_present": true,
+    "status_gate": "pass",
+    "permissions_gate": "pass",
+    "idempotent_ensure_gate": "pass",
+    "client_material_gate": "pass",
+    "start_dry_run_gate": "pass",
+    "real_start_or_stop_performed": false,
+    "uninstall_performed": false,
+    "database_hash_before_after_equal": true,
+    "dedicated_lnd_macaroon_hash_before_after_equal": true,
+    "loop_api_macaroon_hash_before_after_equal": true,
+    "loop_tls_private_key_hash_before_after_equal": true,
+    "audit_secret_fields_absent": true,
+    "accepted_gate_operation_count": 5,
+    "manager_can_read_client_macaroon": true,
+    "manager_can_read_daemon_lnd_macaroon": false,
+    "daemon_data_group": "lightningos-loop"
+  },
+  "service_preservation": {
+    "bitcoin_container_started_at": "2026-08-07T15:01:47.444810527Z",
+    "lnd_active_enter_timestamp": "Sun 2026-08-09 12:55:52 UTC",
+    "bitcoin_restarted": false,
+    "lnd_restarted": false,
+    "manager_healthy": true,
+    "network_scan_or_adapter_operation": false
+  },
+  "cleanup": {
+    "remote_uploads": 0,
+    "remote_backups": 0,
+    "remote_request_files": 0,
+    "local_build_artifacts": 0
+  },
+  "validation": {
+    "appmanifest_tests": "pass",
+    "privileged_broker_tests": "pass",
+    "system_mode_tests": "pass",
+    "focused_server_loop_tests": "pass",
+    "privilege_boundary_tests": "pass",
+    "go_vet": "pass",
+    "manager_and_broker_build": "pass",
+    "linux_amd64_cross_build": "pass",
+    "full_go_test_note": "All packages passed except the two pre-existing Windows CRLF-sensitive installer script assertions."
+  },
+  "remaining_acceptance": [
+    "clean install lifecycle on the final Ubuntu 24.04 and 26.04 matrix",
+    "reboot persistence in the shared final matrix",
+    "shared enforce cutover and rollback acceptance",
+    "Elements and PeerSwap native systemd migration"
+  ]
+}

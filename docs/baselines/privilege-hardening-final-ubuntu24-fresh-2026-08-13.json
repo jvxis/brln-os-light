@@ -1,0 +1,55 @@
+{
+  "captured_at": "2026-08-13",
+  "target": "disposable fresh Ubuntu 24.04.3 VirtualBox node",
+  "application_checkpoint": "682c94fa6c68ef33c1dfdf928144aab858ac0308",
+  "final_checkpoint": "9109cfb5c77f869001b20721dc2695330e141652",
+  "result": "passed",
+  "install": {
+    "path": "install.sh from the hardening branch",
+    "manager_mode": "enforce",
+    "authentication": "setup and recovery API passed without token disclosure",
+    "reinstall": "idempotent incremental install passed"
+  },
+  "boundaries": {
+    "manager_docker_socket": "denied",
+    "manager_docker_group": "absent",
+    "manager_no_new_privileges": true,
+    "manager_protect_system": "strict",
+    "broker_socket": "active",
+    "broker_fixed_writable_paths": true
+  },
+  "bitcoin": {
+    "distribution": "official-source-verified LightningOS Bitcoin Core 31.1 image",
+    "network": "main",
+    "pruned": false,
+    "txindex": true,
+    "authentication": "rpcauth",
+    "rpc_and_zmq": "loopback/internal consumers only",
+    "public_port": "8333/tcp only",
+    "status_api": "passed before and after reboot"
+  },
+  "lnd": {
+    "network": "mainnet",
+    "wallet_create_and_first_unlock": "passed",
+    "auto_unlock_after_reboot": "passed",
+    "manager_credential_separation": "passed"
+  },
+  "final_clean_lifecycle": {
+    "loop": "installed; running after reboot",
+    "elements": "real RPC passed; running after reboot",
+    "peerswap": "install-stop-start passed; mainnet config and dedicated non-admin macaroon passed; running after reboot",
+    "tapd": "install-stop-start passed; running after reboot",
+    "publicpool": "install-stop-start passed; running after reboot",
+    "bark-wallet": "install-stop-start passed; running after reboot"
+  },
+  "catalog_coverage": "Remaining catalog apps are covered by their named phase2 functional, security, lifecycle, uninstall and persistence baselines; low-priority full-index apps were not redundantly run against an unsynchronized chain.",
+  "reboot": {
+    "manager": "active",
+    "broker": "active",
+    "postgresql": "active",
+    "docker": "active",
+    "bitcoin": "active",
+    "lnd": "active"
+  },
+  "secrets": "No seed, password, RPC credential, macaroon, token, private node identity or test-node address is recorded."
+}

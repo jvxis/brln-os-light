@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"lightningos-light/internal/config"
+	"lightningos-light/internal/system"
 )
 
 type elementsMainchainState struct {
@@ -93,7 +94,10 @@ func (s *Server) handleElementsMainchainPost(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if _, err := runSystemd(ctx, "systemctl", "restart", elementsServiceName); err != nil {
+	if handled, err := system.RestartElementsWithBroker(ctx); !handled {
+		writeError(w, http.StatusInternalServerError, "elements restart requires privileged broker enforce mode")
+		return
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "elements restart failed")
 		return
 	}
@@ -128,7 +132,7 @@ func defaultElementsMainchainHost(source string, cfg *config.Config) string {
 	if cfg == nil {
 		return ""
 	}
-	host, _ := parseMainchainRPC(cfg.BitcoinRemote.RPCHost)
+	host, _ := parseMainchainRPC(resolveBitcoinRemoteRPCConfig(cfg).Host)
 	return host
 }
 
@@ -139,7 +143,7 @@ func defaultElementsMainchainPort(source string, cfg *config.Config) int {
 	if cfg == nil {
 		return 0
 	}
-	_, port := parseMainchainRPC(cfg.BitcoinRemote.RPCHost)
+	_, port := parseMainchainRPC(resolveBitcoinRemoteRPCConfig(cfg).Host)
 	return port
 }
 

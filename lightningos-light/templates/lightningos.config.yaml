@@ -21,6 +21,12 @@ postgres:
 ui:
   static_dir: "/opt/lightningos/ui"
 
+privileged:
+  # The installer validates the root-owned broker before starting the manager.
+  # App Store operations fail closed unless this boundary is enforced.
+  mode: "enforce"
+  timeout_seconds: 5
+
 features:
   enable_login: true
   enable_bitcoin_local_placeholder: true

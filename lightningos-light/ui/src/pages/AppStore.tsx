@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAppAdminPassword, getAppStorageTargets, getApps, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, type AppStoreInfo, type StorageTarget } from '../api'
+import { APIError, getAppAdminPassword, getAppOperations, getAppStorageTargets, getApps, getBarkWalletRevealAuthorization, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, reauthAuth, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, type AppStoreInfo, type StorageTarget } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
@@ -20,6 +20,7 @@ import loopIcon from '../assets/apps/lightning-loop.svg'
 import loopOutBRLNIcon from '../assets/apps/loopout-brln.png'
 import magmaSalesIcon from '../assets/apps/magma-sales.svg'
 import CpuMinerStats from '../components/CpuMinerStats'
+import SensitiveActionModal from '../components/SensitiveActionModal'
 
 type AppInfo = AppStoreInfo
 
@@ -52,11 +53,17 @@ type InstallPayload = {
   elements_rpc_url?: string
   elements_rpc_user?: string
   elements_rpc_password?: string
+  confirm_bitcoin_restart?: boolean
 }
 
 type PendingElevatedInstall = {
   app: AppInfo
   payload?: InstallPayload
+}
+
+type CatalogStorageDialog = {
+  id: 'electrs' | 'mempool'
+  action: 'install' | 'start'
 }
 
 const iconMap: Record<string, string> = {
@@ -107,10 +114,31 @@ const fedimintGatewayIrohPort = 8177
 const APP_STORE_INSTALL_FILTER_KEY = 'app_store_install_filter'
 const bitcoinCoreDefaultDataDir = '/data/bitcoin'
 const elementsDefaultDataDir = '/data/elements'
+const catalogDefaultDataDirs = { electrs: '/var/lib/lightningos/apps-data/electrs', mempool: '/var/lib/lightningos/apps-data/mempool' } as const
 const peerswapDefaultRemoteUrl = 'http://elements.br-ln.com:8086'
 const hiddenStoreAppIds = new Set(['depixbuy'])
 const elevatedLndAccessNotice = 'elevated_lnd_access'
+const limitedLndAccessNotice = 'limited_lnd_access'
 const lndDataDirectoryReadNotice = 'lnd_data_directory_read'
+
+const operationStatusStyle = 'bg-cyan-500/15 text-cyan-100 border border-cyan-400/30'
+
+const validatedBarkWalletURL = (rawURL: string) => {
+  try {
+    const candidate = new URL(rawURL, window.location.href)
+    const candidateHost = candidate.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    const currentHost = window.location.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    if (
+      candidate.protocol !== 'https:' || candidateHost !== currentHost || candidate.port !== '4004' ||
+      candidate.username !== '' || candidate.password !== ''
+    ) {
+      return ''
+    }
+    return candidate.href
+  } catch {
+    return ''
+  }
+}
 
 export default function AppStore() {
   const { t } = useTranslation()
@@ -142,6 +170,19 @@ export default function AppStore() {
   const [peerswapRemoteMessage, setPeerswapRemoteMessage] = useState('')
   const [peerswapRemoteTested, setPeerswapRemoteTested] = useState(false)
   const [barkWalletInstallOpen, setBarkWalletInstallOpen] = useState(false)
+  const [pendingElectrsAction, setPendingElectrsAction] = useState<{ action: 'install' | 'start', payload?: InstallPayload } | null>(null)
+  const [catalogStorageDialog, setCatalogStorageDialog] = useState<CatalogStorageDialog | null>(null)
+  const [catalogUseStorageMount, setCatalogUseStorageMount] = useState(true)
+  const [catalogStorageTargets, setCatalogStorageTargets] = useState<StorageTarget[]>([])
+  const [catalogSelectedMount, setCatalogSelectedMount] = useState('')
+  const [catalogStorageLoading, setCatalogStorageLoading] = useState(false)
+  const [catalogStorageError, setCatalogStorageError] = useState('')
+  const [pendingFedimintGatewayAction, setPendingFedimintGatewayAction] = useState<'install' | 'start' | null>(null)
+  const [barkRevealReauthOpen, setBarkRevealReauthOpen] = useState(false)
+  const [barkRevealPassword, setBarkRevealPassword] = useState('')
+  const [barkRevealBusy, setBarkRevealBusy] = useState(false)
+  const [barkRevealError, setBarkRevealError] = useState('')
+  const [barkRevealURL, setBarkRevealURL] = useState('')
   const [pendingElevatedInstall, setPendingElevatedInstall] = useState<PendingElevatedInstall | null>(null)
   const [elevatedInstallAcknowledged, setElevatedInstallAcknowledged] = useState(false)
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
@@ -165,6 +206,47 @@ export default function AppStore() {
         return t('common.unknown')
       default:
         return value ? value.replace('_', ' ') : t('common.unknown')
+    }
+  }
+
+  const resolveOperationLabel = (action: string) => {
+    switch (action) {
+      case 'install':
+        return t('appStore.operation.installing')
+      case 'start':
+        return t('appStore.operation.starting')
+      case 'stop':
+        return t('appStore.operation.stopping')
+      case 'uninstall':
+        return t('appStore.operation.uninstalling')
+      default:
+        return t('appStore.operation.working')
+    }
+  }
+
+  const formatOperationElapsed = (startedAt: string) => {
+    const started = Date.parse(startedAt)
+    if (!Number.isFinite(started)) return t('appStore.operation.elapsedUnknown')
+    const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000))
+    if (seconds < 60) return t('appStore.operation.elapsedSeconds', { count: seconds })
+    return t('appStore.operation.elapsedMinutes', { count: Math.floor(seconds / 60) })
+  }
+
+  const resolveOperationStageLabel = (app: AppInfo, stage?: string) => {
+    if (app.id !== 'electrs' || !stage) return ''
+    switch (stage) {
+      case 'validating':
+        return t('appStore.operation.electrs.validating')
+      case 'configuring_bitcoin':
+        return t('appStore.operation.electrs.configuringBitcoin')
+      case 'preparing_image':
+        return t('appStore.operation.electrs.preparingImage')
+      case 'configuring_runtime':
+        return t('appStore.operation.electrs.configuringRuntime')
+      case 'starting_service':
+        return t('appStore.operation.electrs.startingService')
+      default:
+        return ''
     }
   }
 
@@ -226,6 +308,22 @@ export default function AppStore() {
       })
   }, [])
 
+  const hasTrackedAppOperation = apps.some((app) => Boolean(app.operation))
+  const hasLocalAppOperation = Object.values(busy).some((action) => action !== 'reset-admin')
+  useEffect(() => {
+    if (!hasTrackedAppOperation && !hasLocalAppOperation) return
+    const timer = window.setInterval(() => {
+      getAppOperations().then((operations) => {
+        const operationCount = Object.keys(operations || {}).length
+        setApps((current) => current.map((app) => ({ ...app, operation: operations?.[app.id] })))
+        if (hasTrackedAppOperation && operationCount === 0) {
+          getApps().then((data: AppInfo[]) => setApps(data || [])).catch(() => undefined)
+        }
+      }).catch(() => undefined)
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [hasTrackedAppOperation, hasLocalAppOperation])
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     window.localStorage.setItem(APP_STORE_INSTALL_FILTER_KEY, installFilter)
@@ -269,6 +367,23 @@ export default function AppStore() {
         setElementsSelectedMount('')
       })
       .finally(() => setElementsStorageLoading(false))
+  }
+
+  const loadCatalogStorageTargets = (app: 'electrs' | 'mempool') => {
+    setCatalogStorageLoading(true)
+    setCatalogStorageError('')
+    getAppStorageTargets(app)
+      .then((data: { targets?: StorageTarget[] }) => {
+        const targets = data?.targets || []
+        setCatalogStorageTargets(targets)
+        setCatalogSelectedMount(targets.find((target) => target.eligible)?.mount || '')
+      })
+      .catch((err: unknown) => {
+        setCatalogStorageError(err instanceof Error ? err.message : t('appStore.storageLoadFailed'))
+        setCatalogStorageTargets([])
+        setCatalogSelectedMount('')
+      })
+      .finally(() => setCatalogStorageLoading(false))
   }
 
   useEffect(() => {
@@ -349,7 +464,7 @@ export default function AppStore() {
     id: string,
     action: AppAction,
     payload?: InstallPayload,
-    options?: { skipSecurityConfirmation?: boolean }
+    options?: { skipSecurityConfirmation?: boolean, storageSelected?: boolean }
   ) => {
     if (id === 'bark-wallet' && action === 'install' && !payload) {
       setBarkWalletInstallOpen(true)
@@ -367,6 +482,14 @@ export default function AppStore() {
       setElementsSelectedMount('')
       setElementsStorageError('')
       setElementsInstallOpen(true)
+      return
+    }
+    if ((id === 'electrs' || id === 'mempool') && (action === 'install' || action === 'start') && !options?.storageSelected) {
+      setCatalogStorageDialog({ id, action })
+      setCatalogUseStorageMount(true)
+      setCatalogSelectedMount('')
+      setCatalogStorageTargets([])
+      loadCatalogStorageTargets(id)
       return
     }
     if (id === 'peerswap' && action === 'install' && !payload) {
@@ -387,9 +510,23 @@ export default function AppStore() {
       openPeerswapRemoteInstall()
       return
     }
+    if (
+      id === 'electrs' && (action === 'install' || action === 'start') &&
+      bitcoinMode === 'local_app' && !payload?.confirm_bitcoin_restart
+    ) {
+      setPendingElectrsAction({ action, payload })
+      return
+    }
+    if (
+      id === 'fedimint-gateway' && (action === 'install' || action === 'start') &&
+      bitcoinMode === 'local_app' && !payload?.confirm_bitcoin_restart
+    ) {
+      setPendingFedimintGatewayAction(action)
+      return
+    }
     if (action === 'install' && !options?.skipSecurityConfirmation) {
       const app = apps.find((candidate) => candidate.id === id)
-      if (app?.security_notices?.includes(elevatedLndAccessNotice)) {
+      if (app?.security_notices?.some((notice) => notice === elevatedLndAccessNotice || notice === limitedLndAccessNotice)) {
         setPendingElevatedInstall({ app, payload })
         setElevatedInstallAcknowledged(false)
         return
@@ -399,7 +536,7 @@ export default function AppStore() {
     setBusy((prev) => ({ ...prev, [id]: action }))
     try {
       if (action === 'install') await installApp(id, payload)
-      if (action === 'start') await startApp(id)
+      if (action === 'start') await startApp(id, payload)
       if (action === 'stop') await stopApp(id)
       if (action === 'uninstall') await uninstallApp(id)
       if (action === 'uninstall' && installFilter === 'installed') setInstallFilter('all')
@@ -422,6 +559,30 @@ export default function AppStore() {
     await handleAction('bitcoincore', 'install', payload)
   }
 
+  const handleElectrsBitcoinRestartConfirm = async () => {
+    const pending = pendingElectrsAction
+    setPendingElectrsAction(null)
+    if (pending) {
+      await handleAction('electrs', pending.action, { ...pending.payload, confirm_bitcoin_restart: true }, { storageSelected: true })
+    }
+  }
+
+  const handleCatalogStorageConfirm = async () => {
+    const dialog = catalogStorageDialog
+    if (!dialog) return
+    const payload = catalogUseStorageMount ? { storage_mount: catalogSelectedMount } : {}
+    setCatalogStorageDialog(null)
+    await handleAction(dialog.id, dialog.action, payload, { storageSelected: true })
+  }
+
+  const handleFedimintGatewayBitcoinRestartConfirm = async () => {
+    const action = pendingFedimintGatewayAction
+    setPendingFedimintGatewayAction(null)
+    if (action) {
+      await handleAction('fedimint-gateway', action, { confirm_bitcoin_restart: true })
+    }
+  }
+
   const handleElementsInstallConfirm = async () => {
     const payload = elementsUseStorageMount ? { storage_mount: elementsSelectedMount } : { data_dir: elementsDefaultDataDir }
     setElementsInstallOpen(false)
@@ -442,6 +603,86 @@ export default function AppStore() {
   const handleBarkWalletInstallConfirm = async () => {
     setBarkWalletInstallOpen(false)
     await handleAction('bark-wallet', 'install', {})
+  }
+
+  const openBarkWalletWindow = () => {
+    const popup = window.open('about:blank', '_blank')
+    if (popup) popup.opener = null
+    return popup
+  }
+
+  const navigateBarkWalletWindow = (popup: Window | null, url: string) => {
+    if (popup) {
+      popup.location.replace(url)
+      return
+    }
+    window.location.assign(url)
+  }
+
+  const closeBarkRevealReauth = () => {
+    if (barkRevealBusy) return
+    setBarkRevealReauthOpen(false)
+    setBarkRevealPassword('')
+    setBarkRevealError('')
+    setBarkRevealURL('')
+  }
+
+  const handleBarkWalletOpen = (url: string) => {
+    const safeURL = validatedBarkWalletURL(url)
+    if (!safeURL) {
+      setMessage(t('appStore.barkWalletOpenFailed'))
+      return
+    }
+    setMessage('')
+    navigateBarkWalletWindow(openBarkWalletWindow(), safeURL)
+  }
+
+  const handleBarkWalletBackupOpen = async (url: string) => {
+    const safeURL = validatedBarkWalletURL(url)
+    if (!safeURL) {
+      setMessage(t('appStore.barkWalletOpenFailed'))
+      return
+    }
+    const popup = openBarkWalletWindow()
+    setMessage('')
+    try {
+      await getBarkWalletRevealAuthorization()
+      navigateBarkWalletWindow(popup, safeURL)
+    } catch (err) {
+      popup?.close()
+      if (err instanceof APIError && err.code === 'bark_seed_reauth_required') {
+        setBarkRevealURL(safeURL)
+        setBarkRevealPassword('')
+        setBarkRevealError('')
+        setBarkRevealReauthOpen(true)
+        return
+      }
+      setMessage(err instanceof Error ? err.message : t('appStore.barkWalletOpenFailed'))
+    }
+  }
+
+  const handleBarkRevealReauth = async () => {
+    if (!barkRevealPassword.trim()) {
+      setBarkRevealError(t('appStore.barkWalletReauthPasswordRequired'))
+      return
+    }
+    const popup = openBarkWalletWindow()
+    setBarkRevealBusy(true)
+    setBarkRevealError('')
+    try {
+      await reauthAuth({ password: barkRevealPassword, scope: 'bark_seed_reveal' })
+      await getBarkWalletRevealAuthorization()
+      const url = barkRevealURL
+      setBarkRevealReauthOpen(false)
+      setBarkRevealPassword('')
+      setBarkRevealURL('')
+      navigateBarkWalletWindow(popup, url)
+    } catch (err) {
+      popup?.close()
+      setBarkRevealError(err instanceof Error ? err.message : t('appStore.barkWalletOpenFailed'))
+    } finally {
+      setBarkRevealBusy(false)
+    }
   }
 
   const closeElevatedInstall = () => {
@@ -503,6 +744,7 @@ export default function AppStore() {
     ? storeApps.filter((app) => app.id !== 'bitcoincore')
     : storeApps
   const visibleApps = baseVisibleApps.filter((app) => {
+    if (app.operation) return true
     if (installFilter === 'installed') return app.installed
     if (installFilter === 'not_installed') return !app.installed
     return true
@@ -511,6 +753,8 @@ export default function AppStore() {
   const selectedBitcoinCoreStorageTarget = eligibleBitcoinCoreStorageTargets.find((target) => target.mount === bitcoinCoreSelectedMount)
   const eligibleElementsStorageTargets = elementsStorageTargets.filter((target) => target.eligible)
   const selectedElementsStorageTarget = eligibleElementsStorageTargets.find((target) => target.mount === elementsSelectedMount)
+  const eligibleCatalogStorageTargets = catalogStorageTargets.filter((target) => target.eligible)
+  const selectedCatalogStorageTarget = eligibleCatalogStorageTargets.find((target) => target.mount === catalogSelectedMount)
   const formatStorageGB = (value?: number) => {
     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-'
     return value >= 100 ? value.toFixed(0) : value.toFixed(1)
@@ -562,12 +806,14 @@ export default function AppStore() {
       <div className="grid gap-6 lg:grid-cols-2">
         {visibleApps.map((app) => {
           const busyAction = busy[app.id]
-          const isBusy = Boolean(busyAction)
-          const isResetting = busyAction === 'reset-admin'
+          const operationAction = app.operation?.action || busyAction
+          const operationStageLabel = resolveOperationStageLabel(app, app.operation?.stage)
+          const isBusy = Boolean(operationAction)
+          const isResetting = operationAction === 'reset-admin'
           const supportsAdminReset = app.id === 'lndg' || app.id === 'bark-wallet'
           const canResetAdmin = supportsAdminReset && app.status === 'running'
           const resetTitle = canResetAdmin ? t('appStore.resetStoredPassword') : t('appStore.startAppToReset')
-          const statusStyle = statusStyles[app.status] || statusStyles.unknown
+          const statusStyle = operationAction && !isResetting ? operationStatusStyle : (statusStyles[app.status] || statusStyles.unknown)
           const internalRoute = internalRoutes[app.id]
           const internalRouteLabel = app.id === 'bitcoincore'
             ? t('nav.bitcoinLocal')
@@ -593,6 +839,8 @@ export default function AppStore() {
           const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
           const canCopyAdminPassword = app.id === 'lndg' || app.id === 'fedimint-gateway' || app.id === 'bark-wallet'
           const hasElevatedLndAccess = app.security_notices?.includes(elevatedLndAccessNotice) ?? false
+          const hasLimitedLndAccess = app.security_notices?.includes(limitedLndAccessNotice) ?? false
+          const hasDirectLndAccess = hasElevatedLndAccess || hasLimitedLndAccess
           const readsLndDataDirectory = app.security_notices?.includes(lndDataDirectoryReadNotice) ?? false
           return (
             <div key={app.id} className="section-card space-y-4">
@@ -624,25 +872,50 @@ export default function AppStore() {
                           {t('appStore.elevatedLndAccessBadge')}
                         </span>
                       )}
+                      {hasLimitedLndAccess && (
+                        <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-cyan-100">
+                          {t('appStore.limitedLndAccessBadge')}
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm text-fog/60">{app.description}</p>
                   </div>
                 </div>
                 <span className={`text-xs uppercase tracking-wide px-3 py-1 rounded-full ${statusStyle}`}>
-                  {resolveStatusLabel(app.status)}
+                  {operationAction && !isResetting ? resolveOperationLabel(operationAction) : resolveStatusLabel(app.status)}
                 </span>
               </div>
 
-              {hasElevatedLndAccess && (
-                <div className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm">
+              {operationAction && !isResetting && (
+                <div className="rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-4 py-3" role="status" aria-live="polite">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-semibold text-cyan-100">{operationStageLabel || resolveOperationLabel(operationAction)}</span>
+                    <span className="text-xs text-cyan-100/65">
+                      {app.operation ? formatOperationElapsed(app.operation.started_at) : t('appStore.operation.elapsedUnknown')}
+                    </span>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/30">
+                    <div className="app-operation-progress h-full rounded-full bg-gradient-to-r from-cyan-500/30 via-cyan-200 to-cyan-500/30" />
+                  </div>
+                  <p className="mt-2 text-[11px] uppercase tracking-wide text-cyan-100/55">{t('appStore.operation.indeterminate')}</p>
+                  <p className="mt-2 text-xs leading-relaxed text-cyan-100/70">{t('appStore.operation.continuesInBackground')}</p>
+                </div>
+              )}
+
+              {hasDirectLndAccess && (
+                <div className={`rounded-lg px-4 py-3 text-sm ${hasElevatedLndAccess ? 'border border-amber-400/25 bg-amber-500/10' : 'border border-cyan-400/25 bg-cyan-500/10'}`}>
                   <div className="flex items-start gap-3">
-                    <svg viewBox="0 0 24 24" className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" className={`mt-0.5 h-5 w-5 shrink-0 ${hasElevatedLndAccess ? 'text-amber-300' : 'text-cyan-300'}`} fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
                       <path d="M12 3 4.5 6v5.2c0 4.6 3 8.2 7.5 9.8 4.5-1.6 7.5-5.2 7.5-9.8V6L12 3Z" />
                       <path d="M12 8v5M12 16.5v.1" />
                     </svg>
                     <div className="space-y-1">
-                      <p className="font-semibold text-amber-100">{t('appStore.elevatedLndAccessTitle')}</p>
-                      <p className="text-xs leading-relaxed text-amber-100/70">{t('appStore.elevatedLndAccessCardBody')}</p>
+                      <p className={`font-semibold ${hasElevatedLndAccess ? 'text-amber-100' : 'text-cyan-100'}`}>
+                        {t(hasElevatedLndAccess ? 'appStore.elevatedLndAccessTitle' : 'appStore.limitedLndAccessTitle')}
+                      </p>
+                      <p className={`text-xs leading-relaxed ${hasElevatedLndAccess ? 'text-amber-100/70' : 'text-cyan-100/70'}`}>
+                        {t(hasElevatedLndAccess ? 'appStore.elevatedLndAccessCardBody' : 'appStore.limitedLndAccessCardBody')}
+                      </p>
                       {readsLndDataDirectory && (
                         <p className="text-xs leading-relaxed text-amber-100/80">{t('appStore.lndDataDirectoryReadBody')}</p>
                       )}
@@ -659,13 +932,13 @@ export default function AppStore() {
                 ) : null}
                 {app.admin_password_path && (
                   <div className="flex flex-wrap items-center gap-2">
-                    <span>{t('appStore.adminPasswordSavedAt', { path: app.admin_password_path })}</span>
+                    <span>{t(app.id === 'bark-wallet' ? 'appStore.barkWalletAccessPasswordSavedAt' : 'appStore.adminPasswordSavedAt', { path: app.admin_password_path })}</span>
                     {canCopyAdminPassword && (
                       <button
                         className="text-fog/50 hover:text-fog"
                         onClick={() => handleCopyAdminPassword(app.id)}
-                        title={t('appStore.copyAdminPassword')}
-                        aria-label={t('appStore.copyAdminPassword')}
+                        title={t(app.id === 'bark-wallet' ? 'appStore.copyBarkWalletAccessPassword' : 'appStore.copyAdminPassword')}
+                        aria-label={t(app.id === 'bark-wallet' ? 'appStore.copyBarkWalletAccessPassword' : 'appStore.copyAdminPassword')}
                         disabled={Boolean(copying[app.id])}
                       >
                         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -742,6 +1015,8 @@ export default function AppStore() {
                     <p>{t('appStore.barkWalletExternalOperator')}</p>
                     <p>{t('appStore.barkWalletNoLocalLnd')}</p>
                     <p>{t('appStore.barkWalletDataPreserved')}</p>
+                    <p>{t('appStore.barkWalletAccessPasswordScope')}</p>
+                    <p>{t('appStore.barkWalletSeedReauth')}</p>
                   </>
                 )}
               </div>
@@ -763,7 +1038,12 @@ export default function AppStore() {
                         {t('common.open')}
                       </a>
                     )}
-                    {!internalRoute && openUrl && (
+                    {!internalRoute && openUrl && app.id === 'bark-wallet' && (
+                      <button className="btn-primary" type="button" onClick={() => handleBarkWalletOpen(openUrl)}>
+                        {t('common.open')}
+                      </button>
+                    )}
+                    {!internalRoute && openUrl && app.id !== 'bark-wallet' && (
                       <a className="btn-primary" href={openUrl} target="_blank" rel="noreferrer">
                         {t('common.open')}
                       </a>
@@ -776,6 +1056,11 @@ export default function AppStore() {
                         onClick={() => handleResetAdmin(app.id)}
                       >
                         {isResetting ? t('appStore.resetting') : t('appStore.resetAdminPassword')}
+                      </button>
+                    )}
+                    {app.id === 'bark-wallet' && openUrl && (
+                      <button className="btn-secondary" type="button" onClick={() => void handleBarkWalletBackupOpen(openUrl)}>
+                        {t('appStore.barkWalletAuthorizeBackup')}
                       </button>
                     )}
                     <button className="btn-secondary" disabled={isBusy} onClick={() => handleAction(app.id, 'stop')}>
@@ -831,15 +1116,17 @@ export default function AppStore() {
                 </svg>
               </div>
               <div className="space-y-1">
-                <p className="text-xs uppercase tracking-[0.16em] text-amber-300">{t('appStore.elevatedLndAccessBadge')}</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-amber-300">
+                  {t(pendingElevatedInstall.app.security_notices?.includes(limitedLndAccessNotice) ? 'appStore.limitedLndAccessBadge' : 'appStore.elevatedLndAccessBadge')}
+                </p>
                 <h3 id="elevated-lnd-install-title" className="text-lg font-semibold">
-                  {t('appStore.elevatedLndAccessInstallTitle', { app: pendingElevatedInstall.app.name })}
+                  {t(pendingElevatedInstall.app.security_notices?.includes(limitedLndAccessNotice) ? 'appStore.limitedLndAccessInstallTitle' : 'appStore.elevatedLndAccessInstallTitle', { app: pendingElevatedInstall.app.name })}
                 </h3>
               </div>
             </div>
 
             <div className="mt-5 space-y-3 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm leading-relaxed text-fog/80">
-              <p>{t('appStore.elevatedLndAccessInstallBody')}</p>
+              <p>{t(pendingElevatedInstall.app.security_notices?.includes(limitedLndAccessNotice) ? 'appStore.limitedLndAccessInstallBody' : 'appStore.elevatedLndAccessInstallBody')}</p>
               {pendingElevatedInstall.app.security_notices?.includes(lndDataDirectoryReadNotice) && (
                 <p className="text-amber-100/85">{t('appStore.lndDataDirectoryReadInstallBody')}</p>
               )}
@@ -853,7 +1140,7 @@ export default function AppStore() {
                 checked={elevatedInstallAcknowledged}
                 onChange={(event) => setElevatedInstallAcknowledged(event.target.checked)}
               />
-              <span>{t('appStore.elevatedLndAccessAcknowledge')}</span>
+              <span>{t(pendingElevatedInstall.app.security_notices?.includes(limitedLndAccessNotice) ? 'appStore.limitedLndAccessAcknowledge' : 'appStore.elevatedLndAccessAcknowledge')}</span>
             </label>
 
             <div className="mt-6 flex flex-wrap justify-end gap-3">
@@ -896,6 +1183,117 @@ export default function AppStore() {
               </button>
               <button className="btn-primary" type="button" onClick={handleBarkWalletInstallConfirm}>
                 {t('appStore.install')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingElectrsAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-amber-400/25 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">{t('appStore.electrsBitcoinRestartTitle')}</h3>
+              <p className="text-sm text-fog/70">{t('appStore.electrsBitcoinRestartBody')}</p>
+            </div>
+            <div className="mt-5 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm leading-relaxed text-fog/80">
+              <p>{t('appStore.electrsBitcoinRestartImpact')}</p>
+              <p className="mt-2 text-amber-100/85">{t('appStore.electrsBitcoinRestartLimit')}</p>
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-secondary" type="button" onClick={() => setPendingElectrsAction(null)}>
+                {t('common.cancel')}
+              </button>
+              <button className="btn-primary" type="button" onClick={handleElectrsBitcoinRestartConfirm}>
+                {t('appStore.electrsBitcoinRestartConfirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingFedimintGatewayAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true" aria-labelledby="fedimint-gateway-bitcoin-restart-title">
+          <div className="w-full max-w-lg rounded-lg border border-amber-400/25 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <h3 id="fedimint-gateway-bitcoin-restart-title" className="text-lg font-semibold">{t('appStore.fedimintGatewayBitcoinRestartTitle')}</h3>
+              <p className="text-sm text-fog/70">{t('appStore.fedimintGatewayBitcoinRestartBody')}</p>
+            </div>
+            <div className="mt-5 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm leading-relaxed text-fog/80">
+              <p>{t('appStore.fedimintGatewayBitcoinRestartImpact')}</p>
+              <p className="mt-2 text-amber-100/85">{t('appStore.fedimintGatewayBitcoinRestartLimit')}</p>
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-secondary" type="button" onClick={() => setPendingFedimintGatewayAction(null)}>{t('common.cancel')}</button>
+              <button className="btn-primary" type="button" onClick={handleFedimintGatewayBitcoinRestartConfirm}>{t('appStore.fedimintGatewayBitcoinRestartConfirm')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {catalogStorageDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">
+                {t('appStore.catalogStorageTitle', { app: catalogStorageDialog.id === 'electrs' ? 'Electrs' : 'Mempool' })}
+              </h3>
+              <p className="text-sm text-fog/60">{t('appStore.catalogStorageBody')}</p>
+            </div>
+            <div className="mt-5 space-y-4">
+              <label className="flex items-start gap-3 text-sm text-fog/80">
+                <input
+                  className="mt-1"
+                  type="checkbox"
+                  checked={catalogUseStorageMount}
+                  onChange={(event) => setCatalogUseStorageMount(event.target.checked)}
+                />
+                <span>{t('appStore.bitcoinCoreUseStorageMount')}</span>
+              </label>
+              {catalogUseStorageMount ? (
+                <div className="space-y-2">
+                  <label className="text-xs uppercase tracking-wide text-fog/50" htmlFor="catalog-storage-mount">
+                    {t('appStore.storageVolumeLabel')}
+                  </label>
+                  {catalogStorageLoading ? (
+                    <p className="text-sm text-fog/60">{t('appStore.storageLoadingVolumes')}</p>
+                  ) : eligibleCatalogStorageTargets.length > 0 ? (
+                    <select
+                      id="catalog-storage-mount"
+                      className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog"
+                      value={catalogSelectedMount}
+                      onChange={(event) => setCatalogSelectedMount(event.target.value)}
+                    >
+                      {eligibleCatalogStorageTargets.map((target) => (
+                        <option key={target.mount} value={target.mount}>{storageTargetLabel(target)}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-xs text-amber-300/80">{t('appStore.storageNoEligibleVolumes')}</p>
+                  )}
+                  {selectedCatalogStorageTarget && (
+                    <p className="break-all text-xs text-fog/60">
+                      {t('appStore.storageSelectedPath', { path: selectedCatalogStorageTarget.suggested_path })}
+                    </p>
+                  )}
+                  {catalogStorageError && <p className="text-xs text-amber-300/80">{catalogStorageError}</p>}
+                </div>
+              ) : (
+                <p className="break-all rounded-md border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-fog/70">
+                  {t('appStore.storageDefaultPath', { path: catalogDefaultDataDirs[catalogStorageDialog.id] })}
+                </p>
+              )}
+              <p className="text-xs text-amber-200/80">{t('appStore.catalogStorageSpaceGuard')}</p>
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-secondary" type="button" onClick={() => setCatalogStorageDialog(null)}>{t('common.cancel')}</button>
+              <button
+                className="btn-primary"
+                type="button"
+                disabled={catalogUseStorageMount && !catalogSelectedMount}
+                onClick={handleCatalogStorageConfirm}
+              >
+                {catalogStorageDialog.action === 'install' ? t('appStore.install') : t('common.start')}
               </button>
             </div>
           </div>
@@ -1155,6 +1553,19 @@ export default function AppStore() {
           </div>
         </div>
       )}
+
+      <SensitiveActionModal
+        open={barkRevealReauthOpen}
+        title={t('appStore.barkWalletReauthTitle')}
+        description={t('appStore.barkWalletReauthBody')}
+        password={barkRevealPassword}
+        busy={barkRevealBusy}
+        error={barkRevealError}
+        confirmLabel={t('appStore.barkWalletReauthConfirm')}
+        onPasswordChange={setBarkRevealPassword}
+        onConfirm={handleBarkRevealReauth}
+        onClose={closeBarkRevealReauth}
+      />
     </section>
   )
 }

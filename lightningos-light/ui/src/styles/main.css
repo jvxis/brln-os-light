@@ -5601,3 +5601,23 @@ html[data-visual-theme="kernel"] .auth-hero__copy h1 {
     transition: none !important;
   }
 }
+@keyframes app-operation-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(285%);
+  }
+}
+
+.app-operation-progress {
+  width: 35%;
+  animation: app-operation-progress 1.25s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-operation-progress {
+    width: 100%;
+    animation: none;
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "schema": "lightningos.privilege-hardening.bark-wallet-boundary.v1",
+  "captured_at": "2026-08-13T01:19:29Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "base_commit": "c51fcc7ed22f33c7b76f969adc02c4ca0486a831",
+  "node": "LOS-TESTE2",
+  "scope": "state-preserving Bark Wallet Docker boundary migration and functional lifecycle",
+  "upstream": {
+    "web_release": "v0.7.2",
+    "web_source": "https://gitlab.com/ark-bitcoin/labs/bark-web/-/tags/v0.7.2",
+    "web_revision": "0a73b6a565364dfdb60df376d72d750a1ec0ca26",
+    "daemon_release": "0.6.1",
+    "daemon_source": "https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.6.1",
+    "daemon_version_output": "barkd 0.6.1 (8134aed9029e4bbd5dff922500affd8611edb511)",
+    "daemon_amd64_binary_sha256": "41ca75ae2e474b3a3dbb33f51af95175926abb2286134fcb435fb47b995a1efd",
+    "daemon_arm64_binary_sha256": "a078495b095aab9826ccebc921dfad3cc1ae822e1610b94894f9833569552482"
+  },
+  "images": {
+    "web": "secondark/bark-web:0.7.2@sha256:7f2b4469330f287192c981c64557d9469534fb4c4919bc846b829f59e4267655",
+    "api": "secondark/bark-web-api:0.7.2@sha256:bf23f4b89e2c759d0d498f2d2a949b5d0f7fee29d8c1cc2b01a2882315363ffc",
+    "daemon": "secondark/bark:0.6.1@sha256:93bf4f806fb66aef06db071f88c8dff13ab44d5cad21bd94a9ab927ded3dcafc",
+    "proxy": "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d",
+    "mutable_latest_tags_used": false,
+    "request_selectable_images": false,
+    "no_network_runnable_probes_passed": ["web", "api", "daemon", "proxy"],
+    "daemon_published_wrapper_used": false,
+    "daemon_binary_checksum_and_version_attested": true
+  },
+  "broker": {
+    "operations": [
+      "app.bark.status",
+      "app.bark.ensure",
+      "app.bark.lifecycle",
+      "app.bark.remove",
+      "app.bark.firewall",
+      "app.bark.password.read",
+      "app.bark.password.reset"
+    ],
+    "caller_selectable_path_image_mount_port_user_or_command": false,
+    "audit_events_observed": 22,
+    "audit_sensitive_fields_observed": 0,
+    "manager_direct_privileged_call_sites": 0
+  },
+  "runtime_boundary": {
+    "compose_config_validation": "passed",
+    "snapshot_owner_mode": "0:0:0700",
+    "compose_owner_mode": "0:0:0600",
+    "caddyfile_owner_mode": "0:65532:0640",
+    "tls_owner_mode": "0:65532:0640",
+    "auth_directory_owner_mode": "0:65530:0750",
+    "auth_secret_owner_mode": "0:65530:0640",
+    "wallet_owner_mode": "65531:65531:0700",
+    "container_identities": {
+      "web": "101:101",
+      "api": "65530:65530",
+      "daemon": "65531:65531",
+      "proxy": "65532:65532"
+    },
+    "all_root_filesystems_read_only": true,
+    "all_capabilities_dropped": true,
+    "all_no_new_privileges": true,
+    "docker_socket_mounted": false,
+    "privileged_container": false,
+    "host_network": false,
+    "fixed_external_tcp_ports": [4004],
+    "daemon_only_writable_bind": "/var/lib/lightningos/apps-data/bark-wallet/wallet",
+    "other_writable_state": "bounded tmpfs only"
+  },
+  "wallet_security": {
+    "ui_auth_forced": true,
+    "https_root_http_status": 200,
+    "direct_barkd_mnemonic_http_status": 404,
+    "unauthenticated_reveal_http_status": 401,
+    "broker_password_login_http_status": 200,
+    "authenticated_session_verified": true,
+    "cookie_http_only": true,
+    "cookie_same_site": "Strict",
+    "cookie_secure_over_https": true,
+    "state_change_csrf_header_required": true,
+    "mnemonic_reveal_requires_session_and_csrf": true,
+    "mnemonic_reveal_fresh_password_reauthentication": false,
+    "residual_beta_review": "Upstream v0.7.2 protects mnemonic reveal with the authenticated session and CSRF but does not require a fresh password. Preserve official behavior for this boundary slice and resolve the product policy before the final 0.5.3 security sign-off."
+  },
+  "preserved_state": {
+    "bark_before": "stopped",
+    "bark_after": "stopped",
+    "data_files_before_after": 4,
+    "data_bytes_before": 1141,
+    "data_content_sha256_before_and_after_ensure": "d9ac81f28b8c7b7af267af8997fcaf23ef8ea4a742dc66855f00d0502b7706a2",
+    "data_bytes_after_functional_lifecycle": 2859,
+    "data_content_sha256_after_functional_lifecycle": "45689ad7d2f0c445436a9269510b6a19a324edb1308127352d8b76a1c95953aa",
+    "functional_lifecycle_database_writes_expected": true,
+    "legacy_tls_certificate_preserved": true,
+    "legacy_tls_private_key_preserved": true,
+    "bitcoin_container_started_at_before_after": "2026-08-07T15:01:47.444810527Z",
+    "lnd_active_enter_timestamp_monotonic_before_after": 165280210848,
+    "manager_active_enter_timestamp_monotonic_before_after": 423170333669
+  },
+  "local_gates": {
+    "focused_go_tests": "passed",
+    "manager_privilege_boundary_test": "passed",
+    "full_go_suite": "all packages passed except two pre-existing Windows CRLF fixture failures",
+    "known_windows_fixture_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ],
+    "go_vet": "passed",
+    "manager_build": "passed",
+    "broker_build": "passed linux amd64 staging gate",
+    "registry_validation": "passed",
+    "ui_build": "passed"
+  },
+  "network_configuration_mutation": false,
+  "firewall_mutation": false,
+  "manager_restart": false,
+  "lnd_restart": false,
+  "bitcoin_restart": false,
+  "remote_gate_files_cleaned": true,
+  "local_temporary_files_cleaned": true,
+  "secrets_captured": false
+}

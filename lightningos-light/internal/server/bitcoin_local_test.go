@@ -2,60 +2,143 @@ package server
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"lightningos-light/internal/system"
 )
 
-func TestRPCAllowListContainsIPCoveredByCIDR(t *testing.T) {
-	lines := []string{
-		"rpcallowip=127.0.0.1",
-		"rpcallowip=172.21.0.0/16",
+type bitcoinConfigTestClient struct {
+	*cpuMinerPrivilegedClient
+	operation       string
+	dataDir         string
+	content         string
+	generateRPCAuth bool
+	readContent     string
+	dryRun          bool
+	err             error
+}
+
+func (client *bitcoinConfigTestClient) EnsureBitcoinCoreConfig(_ context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (string, error) {
+	client.generateRPCAuth = generateRPCAuth
+	client.recordConfig("ensure", dataDir, content, dryRun)
+	return "ready", client.err
+}
+
+func (client *bitcoinConfigTestClient) ReadBitcoinCoreCredentials(context.Context, string) (string, string, error) {
+	return "", "", client.err
+}
+
+func (client *bitcoinConfigTestClient) EnsureBitcoinCoreCredentials(context.Context, string, bool) (string, string, string, bool, error) {
+	return "lightningos", strings.Repeat("a", 64), "ready", false, client.err
+}
+
+func (client *bitcoinConfigTestClient) EnsureBitcoinCoreElectrsCredentials(context.Context, string, bool) (string, string, string, bool, error) {
+	return "electrs", strings.Repeat("b", 64), "ready", false, client.err
+}
+
+func (client *bitcoinConfigTestClient) ReadBitcoinCoreConfig(_ context.Context, dataDir string) (string, error) {
+	client.recordConfig("read", dataDir, "", false)
+	return client.readContent, client.err
+}
+
+func (client *bitcoinConfigTestClient) WriteBitcoinCoreConfig(_ context.Context, dataDir string, content string, dryRun bool) (string, error) {
+	client.recordConfig("write", dataDir, content, dryRun)
+	return "ready", client.err
+}
+
+func (client *bitcoinConfigTestClient) recordConfig(operation string, dataDir string, content string, dryRun bool) {
+	client.operation = operation
+	client.dataDir = dataDir
+	client.content = content
+	client.dryRun = dryRun
+}
+
+func TestBitcoinCoreConfigServerPathsRequireTypedBroker(t *testing.T) {
+	const dataDir = "/data/bitcoin"
+	const legacy = "server=1\nrpcpassword=preserve-me\n"
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, bitcoinCoreConfigFile), []byte(legacy), 0640); err != nil {
+		t.Fatal(err)
 	}
-	if !rpcAllowListContains(lines, "172.21.0.42") {
-		t.Fatalf("expected IP to be allowed by CIDR")
+	client := &bitcoinConfigTestClient{
+		cpuMinerPrivilegedClient: &cpuMinerPrivilegedClient{mode: "enforce"},
+		readContent:              legacy,
+	}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	paths := bitcoinCorePaths{Root: root, DataDir: dataDir}
+
+	if err := ensureBitcoinCoreConfig(context.Background(), paths); err != nil {
+		t.Fatal(err)
+	}
+	if client.operation != "ensure" || client.dataDir != dataDir || client.content != legacy || client.generateRPCAuth || client.dryRun {
+		t.Fatalf("unexpected ensure request: %#v", client)
+	}
+	if _, err := os.Lstat(filepath.Join(root, bitcoinCoreConfigFile)); !os.IsNotExist(err) {
+		t.Fatalf("legacy seed was not removed after broker success: %v", err)
+	}
+
+	read, err := readBitcoinCoreConfigRaw(context.Background(), paths)
+	if err != nil || read != legacy || client.operation != "read" {
+		t.Fatalf("read/error/client=%q/%v/%#v", read, err, client)
+	}
+	const updated = "server=1\nrpcpassword=preserve-me\nprune=2048\n"
+	if err := writeBitcoinCoreConfig(context.Background(), paths, updated); err != nil {
+		t.Fatal(err)
+	}
+	if client.operation != "write" || client.content != updated || client.dataDir != dataDir {
+		t.Fatalf("unexpected write request: %#v", client)
 	}
 }
 
-func TestRPCAllowListContainsCIDRExactMatch(t *testing.T) {
-	lines := []string{
-		"rpcallowip=172.22.0.0/16",
+func TestNewBitcoinCoreConfigRequestsBrokerGeneratedRPCAuth(t *testing.T) {
+	client := &bitcoinConfigTestClient{cpuMinerPrivilegedClient: &cpuMinerPrivilegedClient{mode: "enforce"}}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	paths := bitcoinCorePaths{Root: t.TempDir(), DataDir: "/data/bitcoin"}
+
+	if err := ensureBitcoinCoreConfig(context.Background(), paths); err != nil {
+		t.Fatal(err)
 	}
-	if !rpcAllowListContains(lines, "172.22.0.0/16") {
-		t.Fatalf("expected CIDR exact match to be detected")
+	if client.operation != "ensure" || !client.generateRPCAuth ||
+		strings.Contains(client.content, "rpcpassword=") || strings.Contains(client.content, "rpcuser=") || strings.Contains(client.content, "rpcauth=") {
+		t.Fatalf("new install did not delegate rpcauth generation to broker: %#v", client)
 	}
 }
 
-func TestEnsureBitcoinCoreRPCAllowListAvoidsDuplicateCIDR(t *testing.T) {
-	raw := "rpcallowip=127.0.0.1\nrpcallowip=172.23.0.0/16\n"
-	updated, changed := ensureBitcoinCoreRPCAllowList(raw, []string{"172.23.0.0/16"})
-	if changed {
-		t.Fatalf("expected no change when CIDR already exists, got: %q", updated)
+func TestLegacyBitcoinCoreSeedCleanupUsesOnlyRegularExactFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, bitcoinCoreConfigFile)
+	const content = "server=1\nrpcpassword=legacy\n"
+	if err := os.WriteFile(path, []byte(content), 0640); err != nil {
+		t.Fatal(err)
+	}
+	read, exists, err := readLegacyBitcoinCoreSeedConfig(root)
+	if err != nil || !exists || read != content {
+		t.Fatalf("read/exists/error=%q/%v/%v", read, exists, err)
+	}
+	if err := removeLegacyBitcoinCoreSeedConfig(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("legacy seed still exists: %v", err)
 	}
 }
 
-func TestEnsureBitcoinCoreRPCAllowListSkipsInvalidAllowEntry(t *testing.T) {
-	raw := "server=1\n"
-	updated, changed := ensureBitcoinCoreRPCAllowList(raw, []string{"invalid IP"})
-	if changed {
-		t.Fatalf("expected invalid allow entry to be ignored, got: %q", updated)
+func TestLegacyBitcoinCoreSeedRejectsDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, bitcoinCoreConfigFile), 0750); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(updated, "invalid IP") {
-		t.Fatalf("expected invalid allow entry to be absent, got: %q", updated)
+	if _, _, err := readLegacyBitcoinCoreSeedConfig(root); err == nil {
+		t.Fatal("expected directory seed to be rejected")
 	}
-}
-
-func TestEnsureBitcoinCoreRPCAllowListRemovesInvalidExistingAllowIP(t *testing.T) {
-	raw := "server=1\nrpcallowip=invalid IP\nrpcallowip=127.0.0.1\n"
-	updated, changed := ensureBitcoinCoreRPCAllowList(raw, []string{"invalid IP", "127.0.0.1"})
-	if !changed {
-		t.Fatalf("expected invalid existing rpcallowip to be removed")
-	}
-	if strings.Contains(updated, "invalid IP") {
-		t.Fatalf("expected invalid rpcallowip to be removed, got: %q", updated)
-	}
-	if count := strings.Count(updated, "rpcallowip=127.0.0.1"); count != 1 {
-		t.Fatalf("expected one localhost allow entry, got %d in %q", count, updated)
+	if err := removeLegacyBitcoinCoreSeedConfig(root); err == nil {
+		t.Fatal("expected directory cleanup target to be rejected")
 	}
 }
 
@@ -90,18 +173,25 @@ func TestApplyBitcoinCLIChainInfoToLocalStatusKeepsBasicFieldsWithoutNetwork(t *
 	}
 }
 
-func TestBitcoinCLIExecArgsUseContainerDataDir(t *testing.T) {
-	args := bitcoinCLIExecArgs("bitcoin-container", "getblockchaininfo")
-	wants := []string{
-		"bitcoin-container",
-		"-datadir=" + bitcoinCoreDataDirInContainer,
-		"-conf=" + bitcoinCoreConfigPathInContainer,
-		"-rpcclienttimeout=8",
-		"getblockchaininfo",
+func TestParseBitcoinCoreBrokerStatusPreservesUnknownZeroValues(t *testing.T) {
+	raw := `{"chain":"main","blocks":954700,"headers":954701,"best_block_time":1780000000,"block_cadence_window_sec":600,"block_cadence":[{"start_time":1779992800,"end_time":1779993400,"count":2}],"verification_progress":0.999,"initial_block_download":true,"best_block_hash":"0000000000000000000000000000000000000000000000000000000000000000","pruned":false,"network_ok":true,"version":310100,"subversion":"/Satoshi:31.1.0/","connections":12}`
+	status, err := parseBitcoinCoreBrokerStatus(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range wants {
-		if !stringInSlice(want, args) {
-			t.Fatalf("expected bitcoin-cli arguments to contain %q, got %#v", want, args)
+	if !status.RPCOk || status.Chain != "main" || status.Blocks != 954700 || status.Headers != 954701 || status.VerificationProgress != 0.999 || status.Pruned {
+		t.Fatalf("unexpected broker status: %+v", status)
+	}
+	if status.BlockCadenceWindowSec != 600 || len(status.BlockCadence) != 1 || status.BlockCadence[0].Count != 2 {
+		t.Fatalf("broker cadence was not preserved: %+v", status)
+	}
+	for _, invalid := range []string{
+		`{}`,
+		`{"chain":"regtest","blocks":1,"headers":1,"verification_progress":1,"best_block_hash":"x"}`,
+		`{"chain":"main","blocks":2,"headers":1,"verification_progress":1,"best_block_hash":"x"}`,
+	} {
+		if _, err := parseBitcoinCoreBrokerStatus(invalid); err == nil {
+			t.Fatalf("invalid broker status accepted: %s", invalid)
 		}
 	}
 }

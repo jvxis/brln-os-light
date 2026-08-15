@@ -1,0 +1,81 @@
+{
+  "date_utc": "2026-08-14",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "implementation_commit": "45cc948eed96ccebbf0d280add65fa08497ad538",
+  "scope": {
+    "issue_35": "disable and deprivilege the optional web terminal",
+    "issue_37": "prevent Telegram bot tokens and upstream bodies from crossing error and log boundaries"
+  },
+  "local_validation": {
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "go_build_all": "passed",
+    "app_registry_validation": "passed",
+    "ui_production_build": "passed",
+    "npm_audit_production_dependencies": "0 vulnerabilities",
+    "installer_and_upgrade_shell_syntax": "passed",
+    "git_diff_check": "passed"
+  },
+  "github_validation": {
+    "pull_request": 33,
+    "merge_performed": false,
+    "codeql_go": "passed",
+    "codeql_javascript_typescript": "passed"
+  },
+  "los_test2_upgrade": {
+    "mode": "trusted checkout at the exact implementation commit",
+    "ubuntu_target": "24.04",
+    "manager_health": "passed",
+    "broker_self_test": "passed",
+    "manager_restarted": true,
+    "lnd_pid_preserved": true,
+    "docker_daemon_pid_preserved": true,
+    "bitcoin_container_identity_preserved": true,
+    "bitcoin_container_start_time_preserved": true,
+    "bitcoin_process_pid_preserved": true,
+    "network_link_state_hash_preserved": true,
+    "bitcoin": {
+      "installed": true,
+      "status": "running",
+      "rpc_ok": true,
+      "chain": "main",
+      "blocks_equal_headers": true,
+      "verification_progress": 1,
+      "full_node": true
+    },
+    "lnd": {
+      "service_active": true,
+      "wallet_state": "unlocked",
+      "synced_to_chain": true,
+      "synced_to_graph": true
+    },
+    "terminal": {
+      "service_enabled_before": true,
+      "service_active_before": true,
+      "service_enabled_after": false,
+      "service_active_after": false,
+      "linux_password_locked": true,
+      "privileged_supplementary_groups_removed": true,
+      "runtime_environment_owner_group_mode": "root:lightningos:0640",
+      "runtime_environment_secret_minimal": true,
+      "runtime_allow_write": false,
+      "legacy_password_helper_removed": true,
+      "unit_verification": "passed",
+      "no_new_privileges": true,
+      "protect_system": "strict",
+      "manager_secrets_environment_not_loaded": true
+    },
+    "telegram": {
+      "sentinel_transport_error_tests": "passed",
+      "sentinel_upstream_body_tests": "passed",
+      "credential_bearing_url_in_manager_log_since_upgrade": false
+    },
+    "temporary_trusted_checkout_removed": true,
+    "upgrade_worktree_leftovers": 0
+  },
+  "issue_disposition": {
+    "close_as_resolved_by_pr_33": [32, 35, 37],
+    "keep_open_for_0_5_4": [36, 39]
+  },
+  "secrets_or_private_node_identifiers_recorded": false
+}

@@ -9,8 +9,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
+	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/system"
 )
 
@@ -23,9 +23,6 @@ const (
 	// cpuMinerBaselineImage is our own image, built for a baseline x86-64 target
 	// (see docker/cpu-lottery-miner/Dockerfile). It runs on ANY amd64 CPU,
 	// including constrained VMs without AVX, and is the universal fallback.
-	// Published as a public image on Docker Hub so installs pull it automatically.
-	cpuMinerBaselineImage = "jvx1971/cpu-lottery-miner:v1"
-
 	// Pool targets the miner can point its stratum connection at.
 	cpuMinerPoolLocal = "local" // the Public Pool app running on this machine
 	cpuMinerPoolBRLN  = "brln"  // the BR-LN hosted pool (btcpool.br-ln.com)
@@ -66,8 +63,8 @@ func cpuMinerPoolPreset(mode string) cpuMinerPool {
 	return cpuMinerPool{
 		Mode:        cpuMinerPoolLocal,
 		StratumHost: cpuMinerLocalStratumHost,
-		StratumPort: publicPoolStratumPort,
-		StatsBase:   "http://127.0.0.1:" + strconv.Itoa(publicPoolAPIPort),
+		StratumPort: appmanifest.PublicPoolStratumPort,
+		StatsBase:   "http://127.0.0.1:" + strconv.Itoa(appmanifest.PublicPoolAPIPort),
 	}
 }
 
@@ -78,9 +75,10 @@ func cpuMinerPoolPreset(mode string) cpuMinerPool {
 // an empty ENTRYPOINT with the binary as "cpuminer" in PATH, so
 // cpuMinerComposeContents passes "cpuminer" as the first command argument.
 var cpuMinerFastImages = []string{
-	"cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b",
-	"cniweb/cpuminer-opt:latest",
+	appmanifest.CPUMinerFastImage,
 }
+
+var cpuMinerBaselineImage = appmanifest.CPUMinerBaselineImage
 
 type cpuMinerPaths struct {
 	Root        string
@@ -120,12 +118,16 @@ func (a cpuMinerApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, cpuMinerAppID)
+	handled, brokerStatus, _, err := system.InspectAppWithBroker(ctx, cpuMinerAppID)
+	if !handled {
+		info.Status = "unknown"
+		return info, errors.New("CPU Lottery Miner status requires privileged broker enforce mode")
+	}
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
 	}
-	info.Status = status
+	info.Status = brokerStatus
 	return info, nil
 }
 
@@ -157,16 +159,12 @@ func cpuMinerAppPaths() cpuMinerPaths {
 // publicPoolRunning reports whether the local Public Pool app is up, so the
 // miner can default to (and validate) the local stratum target.
 func (s *Server) publicPoolRunning(ctx context.Context) bool {
-	poolPaths := publicPoolAppPaths()
-	if !fileExists(poolPaths.ComposePath) {
-		return false
-	}
-	status, err := getComposeStatus(ctx, poolPaths.Root, poolPaths.ComposePath, "public-pool")
-	return err == nil && status == "running"
+	handled, state, err := system.PublicPoolStatusWithBroker(ctx)
+	return handled && err == nil && state.Installed && state.Status == "running"
 }
 
 func (s *Server) installCpuMiner(ctx context.Context) error {
-	if err := ensureDocker(ctx); err != nil {
+	if err := ensureDockerForCatalogApp(ctx); err != nil {
 		return err
 	}
 	paths := cpuMinerAppPaths()
@@ -189,15 +187,36 @@ func (s *Server) installCpuMiner(ctx context.Context) error {
 	if err := writeCpuMinerEnv(paths, cfg); err != nil {
 		return err
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
+	return applyCpuMinerCompose(ctx, paths)
 }
 
 func (s *Server) startCpuMiner(ctx context.Context) error {
-	paths := cpuMinerAppPaths()
+	return startCpuMinerAtPaths(ctx, cpuMinerAppPaths())
+}
+
+func startCpuMinerAtPaths(ctx context.Context, paths cpuMinerPaths) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("CPU Lottery Miner is not installed")
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
+	// Re-apply the closed declaration before asking the broker to start it.
+	// This migrates 0.5.2 installs whose compose file is intentionally rejected
+	// by the hardened broker, while preserving pool, payout and thread settings
+	// stored in the existing .env file.
+	if err := migrateCpuMinerImageReference(paths); err != nil {
+		return err
+	}
+	if err := ensureCpuMinerCompose(paths); err != nil {
+		return err
+	}
+	return applyCpuMinerCompose(ctx, paths)
+}
+
+func applyCpuMinerCompose(ctx context.Context, paths cpuMinerPaths) error {
+	if handled, err := system.AppLifecycleWithBroker(ctx, cpuMinerAppID, "start"); !handled {
+		return errors.New("CPU Lottery Miner lifecycle requires privileged broker enforce mode")
+	} else {
+		return err
+	}
 }
 
 func (s *Server) stopCpuMiner(ctx context.Context) error {
@@ -205,13 +224,24 @@ func (s *Server) stopCpuMiner(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("CPU Lottery Miner is not installed")
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
+	if handled, err := system.AppLifecycleWithBroker(ctx, cpuMinerAppID, "stop"); !handled {
+		return errors.New("CPU Lottery Miner lifecycle requires privileged broker enforce mode")
+	} else {
+		return err
+	}
 }
 
 func (s *Server) uninstallCpuMiner(ctx context.Context) error {
-	paths := cpuMinerAppPaths()
+	return removeCpuMinerApp(ctx, cpuMinerAppPaths())
+}
+
+func removeCpuMinerApp(ctx context.Context, paths cpuMinerPaths) error {
 	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		if handled, err := system.RemoveAppWithBroker(ctx, cpuMinerAppID); !handled {
+			return errors.New("CPU Lottery Miner removal requires privileged broker enforce mode")
+		} else if err != nil {
+			return err
+		}
 	}
 	if err := os.RemoveAll(paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)
@@ -256,7 +286,7 @@ func (s *Server) ensureCpuMinerAddress(ctx context.Context, paths cpuMinerPaths)
 func (s *Server) selectCpuMinerImage(ctx context.Context) (string, error) {
 	if cpuinfoHasFlag("avx") {
 		for _, image := range cpuMinerFastImages {
-			if err := ensureDockerImage(ctx, image); err != nil {
+			if err := prepareCpuMinerImage(ctx, image); err != nil {
 				continue
 			}
 			if s.probeCpuMinerImage(ctx, image) {
@@ -267,20 +297,34 @@ func (s *Server) selectCpuMinerImage(ctx context.Context) (string, error) {
 			}
 		}
 	}
-	if err := ensureDockerImage(ctx, cpuMinerBaselineImage); err != nil {
+	if err := prepareCpuMinerImage(ctx, cpuMinerBaselineImage); err != nil {
 		return "", fmt.Errorf("cpuminer baseline image %s unavailable: %w", cpuMinerBaselineImage, err)
 	}
 	return cpuMinerBaselineImage, nil
 }
 
+func prepareCpuMinerImage(ctx context.Context, image string) error {
+	variant, err := appmanifest.CPUMinerVariantForImage(image)
+	if err != nil {
+		return err
+	}
+	if handled, err := system.PrepareAppImageWithBroker(ctx, cpuMinerAppID, string(variant)); handled {
+		return err
+	}
+	return errors.New("CPU Lottery Miner image preparation requires privileged broker enforce mode")
+}
+
 // probeCpuMinerImage runs a brief benchmark to confirm the binary executes on
 // this CPU. A SIGILL from a too-modern build makes docker run exit non-zero.
 func (s *Server) probeCpuMinerImage(ctx context.Context, image string) bool {
-	probeCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
-	defer cancel()
-	_, err := system.RunCommandWithSudo(probeCtx, "docker", "run", "--rm", image,
-		"cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2")
-	return err == nil
+	variant, variantErr := appmanifest.CPUMinerVariantForImage(image)
+	if variantErr != nil {
+		return false
+	}
+	if handled, runnable, err := system.ProbeAppImageWithBroker(ctx, cpuMinerAppID, string(variant)); handled {
+		return err == nil && runnable
+	}
+	return false
 }
 
 // cpuinfoHasFlag reports whether /proc/cpuinfo advertises the given CPU flag.
@@ -312,31 +356,7 @@ func cpuFlagsLineHas(cpuinfo string, flag string) bool {
 }
 
 func cpuMinerComposeContents() string {
-	return fmt.Sprintf(`services:
-  cpuminer:
-    image: ${CPUMINER_IMAGE}
-    restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "127.0.0.1:%d:%d"
-    cpus: "${THREADS}"
-    cpu_shares: 128
-    command:
-      - "cpuminer"
-      - "--algo"
-      - "sha256d"
-      - "--url"
-      - "stratum+tcp://${STRATUM_HOST}:${STRATUM_PORT}"
-      - "--user"
-      - "${MINING_ADDRESS}.${WORKER_NAME}"
-      - "--pass"
-      - "x"
-      - "--threads"
-      - "${THREADS}"
-      - "--api-bind"
-      - "0.0.0.0:%d"
-`, cpuMinerAPIPort, cpuMinerAPIPort, cpuMinerAPIPort)
+	return appmanifest.CPUMinerCompose()
 }
 
 // ensureCpuMinerCompose (re)writes the compose file from the current template.
@@ -353,6 +373,9 @@ func ensureCpuMinerCompose(paths cpuMinerPaths) error {
 // file, falling back to the baseline image.
 func cpuMinerResolveImage(paths cpuMinerPaths) string {
 	if v := strings.TrimSpace(readEnvValue(paths.EnvPath, "CPUMINER_IMAGE")); v != "" {
+		if normalized, ok := appmanifest.NormalizeCPUMinerImage(v); ok {
+			return normalized
+		}
 		return v
 	}
 	if data, err := os.ReadFile(paths.ComposePath); err == nil {
@@ -361,12 +384,36 @@ func cpuMinerResolveImage(paths cpuMinerPaths) string {
 			if strings.HasPrefix(trimmed, "image:") {
 				img := strings.TrimSpace(strings.TrimPrefix(trimmed, "image:"))
 				if img != "" && !strings.Contains(img, "${") {
+					if normalized, ok := appmanifest.NormalizeCPUMinerImage(img); ok {
+						return normalized
+					}
 					return img
 				}
 			}
 		}
 	}
 	return cpuMinerBaselineImage
+}
+
+func migrateCpuMinerImageReference(paths cpuMinerPaths) error {
+	legacyImage := strings.TrimSpace(readEnvValue(paths.EnvPath, "CPUMINER_IMAGE"))
+	image := cpuMinerResolveImage(paths)
+	if _, err := appmanifest.CPUMinerVariantForImage(image); err != nil {
+		return errors.New("CPU Lottery Miner image is not allowed")
+	}
+	if legacyImage == image {
+		return nil
+	}
+	content, err := os.ReadFile(paths.EnvPath)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", paths.EnvPath, err)
+	}
+	legacyLine := "CPUMINER_IMAGE=" + legacyImage
+	if legacyImage == "" || !strings.Contains(string(content), legacyLine) {
+		return errors.New("CPU Lottery Miner image declaration is missing")
+	}
+	migrated := strings.Replace(string(content), legacyLine, "CPUMINER_IMAGE="+image, 1)
+	return writeFile(paths.EnvPath, migrated, 0600)
 }
 
 // cpuMinerMaxThreads caps mining threads at the host core count minus one, so
@@ -404,7 +451,7 @@ func (s *Server) setCpuMinerThreads(ctx context.Context, threads int) error {
 	if err := ensureCpuMinerCompose(paths); err != nil {
 		return err
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
+	return applyCpuMinerCompose(ctx, paths)
 }
 
 type cpuMinerConfig struct {
@@ -517,7 +564,7 @@ func (s *Server) setCpuMinerConfig(ctx context.Context, poolMode, address, worke
 	if err := writeCpuMinerEnv(paths, cfg); err != nil {
 		return err
 	}
-	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
+	return applyCpuMinerCompose(ctx, paths)
 }
 
 // sanitizeCpuMinerWorker keeps the worker name to characters a stratum user

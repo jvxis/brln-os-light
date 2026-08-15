@@ -183,7 +183,7 @@ limit $2
 	}
 	defer rows.Close()
 
-	items := make([]GraphExplorerNodeChannel, 0, limit)
+	items := make([]GraphExplorerNodeChannel, 0)
 	for rows.Next() {
 		var item GraphExplorerNodeChannel
 		var channelID int64
@@ -279,7 +279,7 @@ limit $3
 	}
 	defer rows.Close()
 
-	items := make([]GraphExplorerClosedChannel, 0, limit)
+	items := make([]GraphExplorerClosedChannel, 0)
 	for rows.Next() {
 		var item GraphExplorerClosedChannel
 		var channelID int64

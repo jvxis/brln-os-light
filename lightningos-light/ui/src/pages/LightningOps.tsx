@@ -6064,10 +6064,15 @@ export default function LightningOps() {
   }
 
   const mempoolLink = (channelPoint: string) => {
-    const parts = channelPoint.split(':')
+    const parts = String(channelPoint || '').trim().split(':')
     if (parts.length !== 2) return ''
+    const txid = (parts[0] || '').trim()
+    const vout = (parts[1] || '').trim()
+    if (!/^[0-9a-fA-F]{64}$/.test(txid) || !/^(0|[1-9][0-9]{0,9})$/.test(vout)) return ''
+    const parsedVout = Number(vout)
+    if (!Number.isSafeInteger(parsedVout) || parsedVout > 0xffffffff) return ''
     const base = locale === 'pt-BR' ? 'https://mempool.space/pt' : 'https://mempool.space'
-    return `${base}/tx/${parts[0]}#vout=${parts[1]}`
+    return `${base}/tx/${txid}#vout=${parsedVout}`
   }
 
   const channelPointTxid = (channelPoint?: string) => {
@@ -6078,9 +6083,10 @@ export default function LightningOps() {
   }
 
   const mempoolTxLink = (txid?: string) => {
-    if (!txid) return ''
+    const cleanTxid = String(txid || '').trim()
+    if (!/^[0-9a-fA-F]{64}$/.test(cleanTxid)) return ''
     const base = locale === 'pt-BR' ? 'https://mempool.space/pt' : 'https://mempool.space'
-    return `${base}/tx/${txid}`
+    return `${base}/tx/${cleanTxid}`
   }
 
   const handleCloseChannel = async () => {

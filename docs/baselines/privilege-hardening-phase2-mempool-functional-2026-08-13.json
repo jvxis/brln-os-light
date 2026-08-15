@@ -1,0 +1,113 @@
+{
+  "schema": "lightningos.privilege-hardening.mempool-functional.v1",
+  "captured_at": "2026-08-13T02:38:00Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "node": "isolated disposable VirtualBox clone",
+  "scope": "closed Mempool Docker boundary, legacy database upgrade, and Full Node functional lifecycle",
+  "upstream": {
+    "release": "v3.3.1",
+    "release_url": "https://github.com/mempool/mempool/releases/tag/v3.3.1",
+    "source_commit": "9332d9db97bcc7beed079acc8f79aa21c9b12a3b",
+    "mariadb_upgrade_policy": "https://hub.docker.com/_/mariadb"
+  },
+  "images": {
+    "frontend": "mempool/frontend:v3.3.1@sha256:0a162e7e0d26a01e9686ddf69c96c4beae5fe10b0daa1020f3d392e033c058f1",
+    "backend": "mempool/backend:v3.3.1@sha256:358c0a517c8dcf26e7f5c02447de5bab33ec7e3fa6318685cf8012ce36098e3a",
+    "database": "mariadb:10.11.18@sha256:de61fed4a40d3842f3ee09944ba52792156cfd9adf489b2cc670fc6ded28df8d",
+    "mutable_latest_tags_used": false,
+    "request_selectable_images": false,
+    "closed_no_network_probes": {
+      "frontend": "nginx/1.27.0",
+      "backend": "node v24.13.0",
+      "database": "10.11.18-MariaDB"
+    }
+  },
+  "broker": {
+    "operations": [
+      "docker.runtime.ensure",
+      "app.image.prepare",
+      "app.image.status",
+      "app.image.probe",
+      "app.compose.inspect",
+      "app.compose.lifecycle",
+      "app.compose.remove",
+      "app.firewall.ensure"
+    ],
+    "caller_selectable_path_image_mount_port_user_network_or_command": false,
+    "manager_direct_privileged_call_sites": 0,
+    "root_owned_execution_snapshot": true,
+    "secret_snapshot_mode": "0600"
+  },
+  "runtime_boundary": {
+    "services": ["mempool-web", "mempool-api", "mempool-db"],
+    "container_identities": {
+      "web": "1000:1000",
+      "api": "1000:1000",
+      "database": "999:999"
+    },
+    "all_root_filesystems_read_only": true,
+    "all_capabilities_dropped": true,
+    "all_no_new_privileges": true,
+    "docker_socket_mounted": false,
+    "privileged_container": false,
+    "host_network": false,
+    "fixed_external_tcp_ports": [8999],
+    "persistent_writable_volumes": ["mempool_dbdata", "mempool_cache"],
+    "other_writable_state": "bounded tmpfs only"
+  },
+  "bitcoin_electrs_contract": {
+    "production_network": "bitcoin mainnet",
+    "supported_bitcoin_modes": ["App Store Docker", "existing native/systemd"],
+    "bitcoin_consumer_network": "bitcoincore_default",
+    "electrs_network": "electrs_default",
+    "requires_synchronized_full_node": true,
+    "requires_unpruned": true,
+    "requires_txindex": true,
+    "requires_running_catalog_electrs": true,
+    "positive_gate_chain": "isolated regtest",
+    "positive_gate_blocks": 101,
+    "positive_gate_electrs_ready": true
+  },
+  "functional_gate": {
+    "install": "passed",
+    "api_ready": "passed",
+    "inspect_running": "passed",
+    "stop": "passed",
+    "start_after_stop": "passed",
+    "uninstall": "passed",
+    "database_and_cache_volumes_removed": true,
+    "mariadb_10_5_21_to_10_11_18_upgrade": "passed",
+    "legacy_fixture_row_preserved": true,
+    "mariadb_auto_upgrade": true
+  },
+  "integration_node_read_only_gate": {
+    "node": "LOS-TESTE2",
+    "mempool_before_after": "absent",
+    "electrs_before_after": "absent",
+    "bitcoin_container_started_at_before_after": "2026-08-07T15:01:47.444810527Z",
+    "lnd_active_enter_timestamp_monotonic_before_after": 165280210848,
+    "manager_active_enter_timestamp_monotonic_before_after": 423170333669,
+    "network_mutation": false,
+    "firewall_mutation": false
+  },
+  "local_gates": {
+    "focused_go_tests": "passed",
+    "go_vet": "passed",
+    "manager_build": "passed",
+    "broker_build": "passed",
+    "registry_validation": "passed",
+    "full_go_suite": "all packages passed except two pre-existing Windows CRLF fixture failures",
+    "known_windows_fixture_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ]
+  },
+  "disposable_vm": {
+    "access_during_gate": "localhost-only NAT forwarding",
+    "lan_scan_or_adapter_restart": false,
+    "temporary_containers_networks_volumes_and_binary_cleaned": true,
+    "powered_off_after_gate": true,
+    "original_bridge_configuration_restored": true
+  },
+  "secrets_captured": false
+}

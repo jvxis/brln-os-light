@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-11T17:47:43Z",
+  "branch": "agent/0.5.3-privilege-hardening",
+  "source_head_before_slice": "ea8f1b1636fcbbc1fcb84641d5be69037800fcfc",
+  "tested_code_patch_object": "730b4fa74442e13f3e35a7dbc9685c51747c2ae5",
+  "scope": "BTCPay Compose lifecycle, inspection, removal, Docker preparation, image preparation, and NBXplorer PostgreSQL repair cut over to the privileged broker",
+  "integration_node_touched": false,
+  "base_vm": "brln-os-basica",
+  "gate_vm": "brln-os-hardening-053-pkg-20260810",
+  "closed_catalog": {
+    "app_id": "btcpay",
+    "project": "btcpay",
+    "primary_service": "btcpayserver",
+    "allowed_lifecycle_actions": [
+      "start",
+      "stop"
+    ],
+    "restart_allowed": false,
+    "stop_timeout_seconds": 30,
+    "caller_supplied_paths": false,
+    "caller_supplied_images": false,
+    "caller_supplied_services": false,
+    "caller_supplied_arguments": false
+  },
+  "enforce_boundary": {
+    "docker_package_legacy_fallback": false,
+    "docker_runtime_legacy_fallback": false,
+    "image_prepare_legacy_fallback": false,
+    "compose_lifecycle_legacy_fallback": false,
+    "compose_status_legacy_fallback": false,
+    "compose_remove_legacy_fallback": false,
+    "manager_btcpay_file_calls_runCompose": false,
+    "manager_btcpay_file_calls_getComposeStatus": false,
+    "manager_btcpay_file_calls_pullDockerImage": false,
+    "manager_btcpay_file_calls_ensureDockerImage": false
+  },
+  "start_sequence": [
+    "validate manager inputs against the closed catalog",
+    "persist the root-owned execution snapshot",
+    "inspect the exact catalog images required by the selected Tor wiring",
+    "start only btcpay-db from the protected snapshot",
+    "run fixed pg_isready and database existence commands",
+    "create nbxplorer only when absent with fixed owner/template/encoding/locale",
+    "start the complete BTCPay stack from the protected snapshot"
+  ],
+  "postgres_repair": {
+    "container": "btcpay-db",
+    "database": "nbxplorer",
+    "owner": "btcpay",
+    "template": "template0",
+    "encoding": "UTF8",
+    "collation": "C",
+    "ctype": "C",
+    "existing_database_idempotent": true,
+    "transient_initialization_restart_retried": true,
+    "command_output_exposed_in_errors": false
+  },
+  "remove_contract": {
+    "compose_down_from_privileged_snapshot": true,
+    "remove_orphans": true,
+    "privileged_snapshot_removed_after_success": true,
+    "manager_app_definition_removed_after_success": true,
+    "persistent_apps_data_preserved": true,
+    "database_and_wallet_state_preserved": true,
+    "dedicated_source_macaroon_preserved": true
+  },
+  "accepted_gate": {
+    "ubuntu_version": "24.04",
+    "architecture": "amd64",
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "go_build_commands": "passed",
+    "root_btcpay_lifecycle_tests": "passed",
+    "static_legacy_docker_regression_guard": "passed",
+    "manager_active_after_gate": true,
+    "real_docker_commands_executed": false,
+    "containers_created_by_gate": false,
+    "bitcoin_or_lnd_services_invoked": false
+  },
+  "windows_validation": {
+    "focused_packages": "passed",
+    "go_vet_all": "passed",
+    "go_build_commands": "passed",
+    "go_test_all": "passed except the two known CRLF-sensitive installer-script tests",
+    "known_failures": [
+      "TestInstallAndUpgradeScriptsProvisionBrokerRuntimeDirectory",
+      "TestAppUpgradeMigratesManagerTLSBeforeRestart"
+    ]
+  },
+  "remaining_scope": [
+    "run the full BTCPay 2.4.2 plus LND 0.21.1 functional gate with the dedicated credential",
+    "prove upgrade behavior for an existing BTCPay installation",
+    "move BTCPay firewall access into the typed broker boundary",
+    "remove the manager Docker group and wildcard Docker sudo rules after all App Store apps are migrated"
+  ],
+  "unchanged_contracts": {
+    "remote_full_node_support_removed": false,
+    "local_native_lnd_contract_changed": false,
+    "dedicated_macaroon_permissions_expanded": false,
+    "los_test2_touched": false,
+    "lan_scan_or_network_reset_performed": false
+  }
+}

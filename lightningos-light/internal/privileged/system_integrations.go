@@ -17,12 +17,12 @@ const (
 	defaultManagerTLSMDNSHelperPath  = "/usr/local/sbin/lightningos-setup-manager-tls-mdns"
 	defaultLNDIntegrationDropInPath  = "/etc/systemd/system/lnd.service.d/20-lightningos-restart.conf"
 	defaultManagerTLSCertificatePath = "/etc/lightningos/tls/server.crt"
-	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20260813-v6"
+	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20260815-v7"
 	envExecutablePath                = "/usr/bin/env"
 	idExecutablePath                 = "/usr/bin/id"
 
 	terminalHelperSHA256        = "6958cc1aaee60b009774014a95cdee080e011944aa6ef23457ef5788a7ccd859"
-	managerFirewallHelperSHA256 = "d1defb2adf65db0c2738c3c58033155f2b9c8ac87694b1127fff615b62ab7123"
+	managerFirewallHelperSHA256 = "cb0c9e4e0ef773b67a9b08218f29c4020e29202eea342d11cc9b502e2f4c9dc8"
 	managerTLSMDNSHelperSHA256  = "7ff9f17061eec00aec8eedc389044b0cf283e639f8e8f0cfda4ca47c6074b8f9"
 
 	lndIntegrationDropIn            = "[Service]\nRestart=always\nRestartSec=60\n"

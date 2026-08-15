@@ -2,11 +2,56 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestValidateAppUninstallConfirmation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		req  appUninstallRequest
+		ok   bool
+	}{
+		{name: "confirmed matching app", req: appUninstallRequest{Confirm: true, AppID: "bitcoincore"}, ok: true},
+		{name: "missing confirmation", req: appUninstallRequest{AppID: "bitcoincore"}},
+		{name: "missing app id", req: appUninstallRequest{Confirm: true}},
+		{name: "different app id", req: appUninstallRequest{Confirm: true, AppID: "elements"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateAppUninstallConfirmation("bitcoincore", test.req)
+			if test.ok && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !test.ok && !errors.Is(err, errAppUninstallConfirmationRequired) {
+				t.Fatalf("error=%v, want confirmation required", err)
+			}
+		})
+	}
+}
+
+func TestValidateBitcoinCoreUninstallSource(t *testing.T) {
+	remote := bitcoinRPCConfig{Host: "bitcoin.example:8332", User: "rpc-user", Pass: "rpc-pass"}
+	if err := validateBitcoinCoreUninstallSource("remote", remote); err != nil {
+		t.Fatalf("verified remote source rejected: %v", err)
+	}
+	if err := validateBitcoinCoreUninstallSource("local", remote); !errors.Is(err, errBitcoinCoreSourceSwitchRequired) {
+		t.Fatalf("local source error=%v, want source switch required", err)
+	}
+	for name, cfg := range map[string]bitcoinRPCConfig{
+		"host": {User: "rpc-user", Pass: "rpc-pass"},
+		"user": {Host: "bitcoin.example:8332", Pass: "rpc-pass"},
+		"pass": {Host: "bitcoin.example:8332", User: "rpc-user"},
+	} {
+		t.Run("missing "+name, func(t *testing.T) {
+			if err := validateBitcoinCoreUninstallSource("remote", cfg); !errors.Is(err, errBitcoinCoreRemoteCredentials) {
+				t.Fatalf("error=%v, want remote credentials error", err)
+			}
+		})
+	}
+}
 
 type concurrentInfoTestApp struct {
 	id      string

@@ -14,6 +14,7 @@ type ManagerFirewallInspector struct {
 	Runner     CommandRunner
 	ConfigPath string
 	UFWPath    string
+	HelperPath string
 }
 
 func NewManagerFirewallManager(runner CommandRunner) *ManagerFirewallInspector {
@@ -21,6 +22,7 @@ func NewManagerFirewallManager(runner CommandRunner) *ManagerFirewallInspector {
 		Runner:     runner,
 		ConfigPath: defaultManagerFirewallConfigPath,
 		UFWPath:    ufwPath,
+		HelperPath: defaultManagerFirewallHelperPath,
 	}
 }
 
@@ -29,7 +31,7 @@ func (manager *ManagerFirewallInspector) Status(ctx context.Context) (ManagerFir
 	if manager == nil || manager.Runner == nil {
 		return state, errors.New("manager firewall inspector is unavailable")
 	}
-	state.ConfiguredCIDR, state.ConfigValid = readManagerFirewallConfig(manager.ConfigPath)
+	state = readManagerFirewallConfig(manager.ConfigPath, state)
 	if manager.ConfigPath == defaultManagerFirewallConfigPath {
 		_, statErr := os.Lstat(manager.ConfigPath)
 		if statErr == nil {
@@ -42,7 +44,7 @@ func (manager *ManagerFirewallInspector) Status(ctx context.Context) (ManagerFir
 
 	info, err := os.Lstat(manager.UFWPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return state, nil
+		return classifyManagerFirewallState(state), nil
 	}
 	if err != nil {
 		return state, err
@@ -59,37 +61,131 @@ func (manager *ManagerFirewallInspector) Status(ctx context.Context) (ManagerFir
 
 	output, err := manager.Runner.Run(ctx, manager.UFWPath, "status")
 	if err != nil {
-		return state, nil
+		return classifyManagerFirewallState(state), nil
 	}
 	state.StatusAvailable = true
-	return parseManagerFirewallOutput(output, state), nil
+	return classifyManagerFirewallState(parseManagerFirewallOutput(output, state)), nil
 }
 
-func readManagerFirewallConfig(path string) (string, bool) {
+func readManagerFirewallConfig(path string, state ManagerFirewallState) ManagerFirewallState {
 	if strings.TrimSpace(path) == "" {
-		return "", false
+		return state
 	}
 	raw, err := readRegularFile(path, 4096)
 	if err != nil {
-		return "", false
+		return state
 	}
 	configured := ""
 	for _, line := range strings.Split(string(raw), "\n") {
 		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && strings.TrimSpace(key) == "LAN_CIDR" {
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "LAN_CIDR":
 			configured = strings.TrimSpace(value)
+		case "ACCESS_MODE":
+			state.AccessMode = strings.TrimSpace(value)
+		case "ACKNOWLEDGED_UNPROTECTED":
+			state.Acknowledged = strings.TrimSpace(value) == "1"
 		}
 	}
+	state.ConfiguredCIDR = configured
 	if configured == "" {
-		return "", false
+		return state
 	}
 	if strings.EqualFold(configured, "none") {
-		return "none", true
+		state.ConfigValid = true
+		return state
 	}
 	if _, _, err := net.ParseCIDR(configured); err != nil {
-		return configured, false
+		return state
 	}
-	return configured, true
+	state.ConfigValid = true
+	return state
+}
+
+func classifyManagerFirewallState(state ManagerFirewallState) ManagerFirewallState {
+	if state.AccessMode == "unprotected" && state.Acknowledged {
+		state.ProtectionState = "acknowledged_unprotected"
+		return state
+	}
+	if !state.Installed {
+		state.ProtectionState = "firewall_unavailable"
+		return state
+	}
+	if !state.StatusAvailable {
+		state.ProtectionState = "protection_unverified"
+		return state
+	}
+	if !state.Active {
+		state.ProtectionState = "firewall_inactive"
+		return state
+	}
+	if state.BroadRulePresent {
+		state.ProtectionState = "broad_exposure"
+		return state
+	}
+	if state.ManagerAccessBound {
+		if state.LANRulePresent && state.TailscaleRule {
+			state.ProtectionState = "protected_lan_and_vpn"
+			return state
+		}
+		switch state.AccessMode {
+		case "vpn":
+			state.ProtectionState = "protected_vpn_only"
+		default:
+			state.ProtectionState = "protected_lan_only"
+		}
+		return state
+	}
+	state.ProtectionState = "protection_unverified"
+	return state
+}
+
+func (manager *ManagerFirewallInspector) Configure(ctx context.Context, params ManagerFirewallConfigureParams, dryRun bool) (ManagerFirewallState, error) {
+	if manager == nil || manager.Runner == nil {
+		return ManagerFirewallState{}, errors.New("manager firewall controller is unavailable")
+	}
+	helperPath := manager.HelperPath
+	if helperPath == "" {
+		helperPath = defaultManagerFirewallHelperPath
+	}
+	if helperPath == defaultManagerFirewallHelperPath {
+		if err := validateRootOwnedRegularFile(helperPath, 0755); err != nil {
+			return ManagerFirewallState{}, errors.New("manager firewall helper is unsafe")
+		}
+	}
+	args := []string{"--mode", params.Mode}
+	if params.Mode == "lan" {
+		args = append(args, "--lan-cidr", params.LANCIDR)
+	}
+	if params.Mode == "unprotected" {
+		args = append(args, "--acknowledge-unprotected")
+	}
+	if dryRun {
+		return ManagerFirewallState{AccessMode: params.Mode, ConfiguredCIDR: params.LANCIDR}, nil
+	}
+	if _, err := manager.Runner.Run(ctx, helperPath, args...); err != nil {
+		return ManagerFirewallState{}, errors.New("manager firewall policy application failed")
+	}
+	state, err := manager.Status(ctx)
+	if err != nil {
+		return ManagerFirewallState{}, err
+	}
+	if state.AccessMode != params.Mode {
+		return ManagerFirewallState{}, errors.New("manager firewall policy verification failed")
+	}
+	if params.Mode == "unprotected" {
+		if !state.Acknowledged {
+			return ManagerFirewallState{}, errors.New("unprotected manager exposure was not acknowledged")
+		}
+		return state, nil
+	}
+	if !state.ManagerAccessBound || state.BroadRulePresent {
+		return ManagerFirewallState{}, errors.New("manager firewall policy verification failed")
+	}
+	return state, nil
 }
 
 func parseManagerFirewallOutput(output string, state ManagerFirewallState) ManagerFirewallState {
@@ -114,9 +210,9 @@ func parseManagerFirewallOutput(output string, state ManagerFirewallState) Manag
 	}
 	if state.Active && state.ConfigValid && !state.BroadRulePresent {
 		if configuredLower == "none" {
-			state.ManagerAccessBound = true
+			state.ManagerAccessBound = state.TailscaleRule
 		} else {
-			state.ManagerAccessBound = state.LANRulePresent
+			state.ManagerAccessBound = state.LANRulePresent && (state.AccessMode != "lan" || !state.TailscaleRule)
 		}
 	}
 	return state

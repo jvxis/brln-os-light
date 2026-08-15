@@ -287,6 +287,8 @@ worktree_root="/var/lib/lightningos/worktrees"
 worktree_dir=""
 project_dir=""
 cutover_prepared=0
+legacy_identity_normalized=0
+legacy_migrator=""
 
 owned_by_root() {
   local path=""
@@ -307,6 +309,10 @@ cleanup() {
   if [[ "$exit_status" -ne 0 && "$cutover_prepared" -eq 1 && -x /usr/local/sbin/lightningos-rollback-privilege-cutover ]]; then
     print_warn "Upgrade failed after preparing the transaction; restoring Manager, UI, and privilege boundary"
     /usr/local/sbin/lightningos-rollback-privilege-cutover || true
+  fi
+  if [[ "$exit_status" -ne 0 && "$legacy_identity_normalized" -eq 1 && -n "$legacy_migrator" ]]; then
+    print_warn "Upgrade failed after normalizing a legacy Manager; restoring its previous identity"
+    /usr/bin/bash "$legacy_migrator" --rollback || true
   fi
   if [[ -n "$worktree_dir" && -d "$worktree_dir" ]]; then
     "$GIT_BIN" -C "$mirror_root" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true
@@ -919,6 +925,35 @@ configure_manager_firewall() {
   fi
 }
 
+normalize_legacy_manager_identity() {
+  local manager_user migrator
+  manager_user="$($SYSTEMCTL_BIN show -p User --value lightningos-manager 2>/dev/null | tr -d '[:space:]')"
+  [[ -n "$manager_user" ]] || manager_user="lightningos"
+  if [[ "$manager_user" == "lightningos" ]]; then
+    return 0
+  fi
+
+  migrator="$project_dir/scripts/migrate-legacy-manager.sh"
+  [[ -f "$migrator" && ! -L "$migrator" ]] || die "Legacy Manager identity requires the authenticated migration helper."
+  [[ "$($STAT_BIN -c '%u' "$migrator")" == "0" ]] || die "Legacy Manager migration helper ownership is unsafe."
+  print_step "Normalizing legacy Manager identity without restarting Bitcoin or LND"
+  /usr/bin/bash "$migrator" --check || die "This legacy Manager layout is not recognized for automatic migration."
+  /usr/bin/bash "$migrator" --apply || die "Legacy Manager identity migration failed safely."
+  [[ "$($SYSTEMCTL_BIN show -p User --value lightningos-manager 2>/dev/null | tr -d '[:space:]')" == "lightningos" ]] \
+    || die "Legacy Manager identity migration did not reach the canonical user."
+  legacy_migrator="$migrator"
+  legacy_identity_normalized=1
+  print_ok "Legacy Manager identity normalized; Bitcoin and LND remained running"
+}
+
+finalize_legacy_manager_identity() {
+  [[ "$legacy_identity_normalized" -eq 1 ]] || return 0
+  /usr/bin/bash "$legacy_migrator" --finalize \
+    || die "Legacy Manager privilege cutover could not be finalized safely."
+  legacy_identity_normalized=0
+  print_ok "Legacy Manager privilege cutover finalized; Bitcoin and LND remained running"
+}
+
 mkdir -p "$(dirname "$mirror_root")" "$worktree_root"
 if [[ "$TRUSTED_CHECKOUT" -eq 1 ]]; then
   print_step "Preparing root-owned source from trusted checkout"
@@ -1002,6 +1037,8 @@ if [[ "${source_version#v}" != "${VERSION,,}" ]]; then
   die "Release source version does not match the requested version."
 fi
 print_ok "Using authenticated project directory: $project_dir"
+
+normalize_legacy_manager_identity
 
 go_env="GOPATH=/opt/lightningos/go GOCACHE=/opt/lightningos/go-cache GOMODCACHE=/opt/lightningos/go/pkg/mod"
 mkdir -p /opt/lightningos/go /opt/lightningos/go-cache /opt/lightningos/go/pkg/mod
@@ -1128,6 +1165,8 @@ if ! write_manager_build_stamp; then
   /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "lightningos-manager build provenance could not be recorded"
 fi
+
+finalize_legacy_manager_identity
 
 cutover_prepared=0
 print_ok "App upgrade complete to ${VERSION} (${TAG})"

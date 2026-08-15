@@ -185,6 +185,7 @@ export default function AppStore() {
   const [barkRevealURL, setBarkRevealURL] = useState('')
   const [pendingElevatedInstall, setPendingElevatedInstall] = useState<PendingElevatedInstall | null>(null)
   const [elevatedInstallAcknowledged, setElevatedInstallAcknowledged] = useState(false)
+  const [pendingUninstall, setPendingUninstall] = useState<AppInfo | null>(null)
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
     if (typeof window === 'undefined') return 'all'
     const stored = window.localStorage.getItem(APP_STORE_INSTALL_FILTER_KEY)
@@ -464,8 +465,13 @@ export default function AppStore() {
     id: string,
     action: AppAction,
     payload?: InstallPayload,
-    options?: { skipSecurityConfirmation?: boolean, storageSelected?: boolean }
+    options?: { skipSecurityConfirmation?: boolean, storageSelected?: boolean, uninstallConfirmed?: boolean }
   ) => {
+    if (action === 'uninstall' && !options?.uninstallConfirmed) {
+      const app = apps.find((candidate) => candidate.id === id)
+      if (app) setPendingUninstall(app)
+      return
+    }
     if (id === 'bark-wallet' && action === 'install' && !payload) {
       setBarkWalletInstallOpen(true)
       return
@@ -557,6 +563,12 @@ export default function AppStore() {
     const payload = bitcoinCoreUseStorageMount ? { storage_mount: bitcoinCoreSelectedMount } : {}
     setBitcoinCoreInstallOpen(false)
     await handleAction('bitcoincore', 'install', payload)
+  }
+
+  const handleUninstallConfirm = async () => {
+    const app = pendingUninstall
+    setPendingUninstall(null)
+    if (app) await handleAction(app.id, 'uninstall', undefined, { uninstallConfirmed: true })
   }
 
   const handleElectrsBitcoinRestartConfirm = async () => {
@@ -1103,6 +1115,32 @@ export default function AppStore() {
       )}
       {!loading && apps.length > 0 && visibleApps.length === 0 && (
         <p className="text-fog/60">{t('appStore.noAppsForFilter')}</p>
+      )}
+
+      {pendingUninstall && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true" aria-labelledby="app-uninstall-title">
+          <div className="w-full max-w-lg rounded-lg border border-rose-400/25 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <h3 id="app-uninstall-title" className="text-lg font-semibold">
+                {t('appStore.uninstallConfirmTitle', { app: pendingUninstall.name })}
+              </h3>
+              <p className="text-sm text-fog/70">{t('appStore.uninstallConfirmBody', { app: pendingUninstall.name })}</p>
+            </div>
+            {pendingUninstall.id === 'bitcoincore' && (
+              <div className="mt-5 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm leading-relaxed text-amber-100/85">
+                {t('appStore.uninstallBitcoinCoreGuard')}
+              </div>
+            )}
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-primary" type="button" autoFocus onClick={() => setPendingUninstall(null)}>
+                {t('common.cancel')}
+              </button>
+              <button className="btn-secondary text-rose-200" type="button" onClick={() => void handleUninstallConfirm()}>
+                {t('appStore.uninstallConfirmAction', { app: pendingUninstall.name })}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {pendingElevatedInstall && (

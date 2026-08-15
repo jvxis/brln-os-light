@@ -4,6 +4,9 @@ set -Eeuo pipefail
 MANAGER_PORT="${LIGHTNINGOS_MANAGER_PORT:-8443}"
 CONFIG_PATH="${LIGHTNINGOS_FIREWALL_CONFIG:-/etc/lightningos/manager-firewall.conf}"
 INTERACTIVE=0
+REQUESTED_MODE=""
+REQUESTED_LAN_CIDR=""
+ACKNOWLEDGE_UNPROTECTED=0
 
 print_ok() { echo "[OK] $1"; }
 print_warn() { echo "[WARN] $1" >&2; }
@@ -69,56 +72,136 @@ choose_lan_cidr() {
 }
 
 save_config() {
-  local lan_cidr="$1"
-  mkdir -p "$(dirname "$CONFIG_PATH")"
-  printf 'LAN_CIDR=%s\n' "$lan_cidr" >"$CONFIG_PATH"
-  chmod 0644 "$CONFIG_PATH"
+  local mode="$1" lan_cidr="$2" acknowledged="${3:-0}" config_dir tmp
+  config_dir="$(dirname "$CONFIG_PATH")"
+  [[ -d "$config_dir" && ! -L "$config_dir" ]] || return 1
+  if [[ -e "$CONFIG_PATH" || -L "$CONFIG_PATH" ]]; then
+    [[ -f "$CONFIG_PATH" && ! -L "$CONFIG_PATH" && "$(stat -c '%u' "$CONFIG_PATH")" == "0" ]] || return 1
+  fi
+  tmp="$(mktemp "${config_dir}/.manager-firewall.conf.XXXXXX")"
+  if ! {
+    printf 'ACCESS_MODE=%s\n' "$mode"
+    printf 'LAN_CIDR=%s\n' "$lan_cidr"
+    printf 'ACKNOWLEDGED_UNPROTECTED=%s\n' "$acknowledged"
+  } >"$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  chown root:root "$tmp" || { rm -f -- "$tmp"; return 1; }
+  chmod 0644 "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$CONFIG_PATH" || { rm -f -- "$tmp"; return 1; }
 }
 
 ufw_is_active() { LC_ALL=C ufw status 2>/dev/null | grep -qiE '^status:[[:space:]]+active'; }
 
+tailscale_is_available() {
+  command -v ip >/dev/null 2>&1 && ip link show tailscale0 >/dev/null 2>&1
+}
+
+verify_firewall() {
+  local mode="$1" lan_cidr="$2" status
+  status="$(LC_ALL=C ufw status 2>/dev/null)" || return 1
+  grep -qiE '^status:[[:space:]]+active' <<<"$status" || return 1
+  if grep -Fi "$MANAGER_PORT" <<<"$status" | grep -i 'allow' | grep -i 'anywhere' | grep -qiv 'tailscale0'; then
+    print_warn "Port ${MANAGER_PORT} still has a broad allow rule."
+    return 1
+  fi
+  case "$mode" in
+    lan)
+      grep -Fi "$MANAGER_PORT" <<<"$status" | grep -i 'allow' | grep -Fqi "$lan_cidr" || return 1
+      ! grep -Fi "$MANAGER_PORT" <<<"$status" | grep -i 'allow' | grep -qi 'tailscale0'
+      ;;
+    vpn)
+      grep -Fi "$MANAGER_PORT" <<<"$status" | grep -i 'allow' | grep -qi 'tailscale0'
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 configure_firewall() {
-  local previous lan_cidr tailscale_available=0
+  local previous previous_mode mode lan_cidr
   previous="$(read_config_value LAN_CIDR)"
-  lan_cidr="$(choose_lan_cidr)"
-  save_config "$lan_cidr"
-  if ! command -v ufw >/dev/null 2>&1; then
-    print_warn "UFW is not installed; saved the selected network but did not change firewall rules."
+  previous_mode="$(read_config_value ACCESS_MODE)"
+  mode="${REQUESTED_MODE:-$previous_mode}"
+  if [[ -z "$mode" ]]; then
+    mode="lan"
+  fi
+  case "$mode" in
+    lan|vpn|unprotected) ;;
+    *) print_warn "Invalid access mode '${mode}'."; return 2 ;;
+  esac
+
+  if [[ "$mode" == "unprotected" ]]; then
+    if [[ "$ACKNOWLEDGE_UNPROTECTED" != "1" && "$(read_config_value ACKNOWLEDGED_UNPROTECTED)" != "1" ]]; then
+      print_warn "Continuing without verified firewall protection requires explicit acknowledgement."
+      return 4
+    fi
+    lan_cidr="${REQUESTED_LAN_CIDR:-${previous:-none}}"
+    save_config "$mode" "$lan_cidr" 1
+    print_warn "Manager network exposure is explicitly acknowledged as unprotected."
     return 0
+  fi
+
+  if ! command -v ufw >/dev/null 2>&1; then
+    print_warn "UFW is not installed; Manager exposure is not protected."
+    return 3
   fi
   if ! ufw_is_active; then
-    print_warn "UFW is inactive; saved the selected network but did not change firewall rules."
-    return 0
+    print_warn "UFW is inactive; Manager exposure is not protected."
+    return 3
   fi
-  if command -v ip >/dev/null 2>&1 && ip link show tailscale0 >/dev/null 2>&1; then
-    tailscale_available=1
+
+  if [[ "$mode" == "lan" ]]; then
+    if [[ -n "$REQUESTED_LAN_CIDR" ]]; then
+      lan_cidr="$REQUESTED_LAN_CIDR"
+      valid_ipv4_cidr "$lan_cidr" || { print_warn "Invalid LAN CIDR '${lan_cidr}'."; return 2; }
+    else
+      lan_cidr="$(choose_lan_cidr)"
+    fi
+    if [[ "$lan_cidr" == "none" ]]; then
+      print_warn "LAN mode requires a valid local IPv4 CIDR."
+      return 2
+    fi
+  else
+    lan_cidr="none"
+    if ! tailscale_is_available; then
+      print_warn "VPN-only mode requires the tailscale0 interface."
+      return 3
+    fi
   fi
-  if [[ "$lan_cidr" == "none" && "$tailscale_available" == "0" && "$INTERACTIVE" == "0" ]]; then
-    print_warn "No LAN or Tailscale network could be detected; keeping existing firewall rules to avoid lockout."
-    return 0
+
+  # Add the requested access path before removing the previous LightningOS
+  # rule. This preserves access if a later command fails.
+  if [[ "$mode" == "lan" ]]; then
+    ufw allow from "$lan_cidr" to any port "$MANAGER_PORT" proto tcp comment 'LightningOS LAN'
+    ufw allow from "$lan_cidr" to 224.0.0.251 port 5353 proto udp comment 'LightningOS mDNS'
+  else
+    ufw allow in on tailscale0 to any port "$MANAGER_PORT" proto tcp comment 'LightningOS Tailscale'
   fi
-  if [[ -n "$previous" && "$previous" != "none" ]]; then
+
+  if [[ -n "$previous" && "$previous" != "none" && "$previous" != "$lan_cidr" ]]; then
     ufw --force delete allow from "$previous" to any port "$MANAGER_PORT" proto tcp >/dev/null 2>&1 || true
     ufw --force delete allow from "$previous" to 224.0.0.251 port 5353 proto udp >/dev/null 2>&1 || true
   fi
+  if [[ "$mode" == "lan" ]]; then
+    ufw --force delete allow in on tailscale0 to any port "$MANAGER_PORT" proto tcp >/dev/null 2>&1 || true
+  fi
   ufw --force delete allow "${MANAGER_PORT}/tcp" >/dev/null 2>&1 || true
-  if [[ "$lan_cidr" != "none" ]]; then
-    ufw allow from "$lan_cidr" to any port "$MANAGER_PORT" proto tcp comment 'LightningOS LAN'
-    ufw allow from "$lan_cidr" to 224.0.0.251 port 5353 proto udp comment 'LightningOS mDNS'
-    print_ok "Port ${MANAGER_PORT} allowed only from ${lan_cidr}."
-    print_ok "mDNS discovery allowed only from ${lan_cidr}."
+
+  if ! verify_firewall "$mode" "$lan_cidr"; then
+    print_warn "The requested Manager access policy could not be verified."
+    return 5
   fi
-  if [[ "$tailscale_available" == "1" ]]; then
-    ufw allow in on tailscale0 to any port "$MANAGER_PORT" proto tcp comment 'LightningOS Tailscale'
-    print_ok "Port ${MANAGER_PORT} allowed through tailscale0."
-  elif [[ "$lan_cidr" == "none" ]]; then
-    print_warn "No LAN rule was added and tailscale0 is not available; remote access may be blocked."
-  fi
+  save_config "$mode" "$lan_cidr" 0
+  print_ok "Manager access mode '${mode}' is active and verified."
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --interactive) INTERACTIVE=1 ;;
+    --mode) shift; [[ $# -gt 0 ]] || { echo "Missing --mode value" >&2; exit 2; }; REQUESTED_MODE="$1" ;;
+    --lan-cidr) shift; [[ $# -gt 0 ]] || { echo "Missing --lan-cidr value" >&2; exit 2; }; REQUESTED_LAN_CIDR="$1" ;;
+    --acknowledge-unprotected) ACKNOWLEDGE_UNPROTECTED=1 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
   shift

@@ -86,6 +86,10 @@ type managerFirewallPrivilegedClient interface {
 	ManagerFirewallStatus(ctx context.Context) (statusJSON string, err error)
 }
 
+type managerFirewallConfigurePrivilegedClient interface {
+	ConfigureManagerFirewall(ctx context.Context, mode string, lanCIDR string, acknowledgeUnprotected bool, dryRun bool) (statusJSON string, err error)
+}
+
 type systemIntegrationsPrivilegedClient interface {
 	InstallSystemIntegrationAsset(ctx context.Context, asset string, content string, dryRun bool) (changed bool, err error)
 	SystemIntegrationsStatus(ctx context.Context) (ready bool, err error)
@@ -1413,6 +1417,34 @@ func ReadManagerFirewallStatusWithBroker(ctx context.Context) (string, bool, err
 	}
 	raw, err := firewallClient.ManagerFirewallStatus(ctx)
 	return raw, true, err
+}
+
+func ConfigureManagerFirewallWithBroker(ctx context.Context, mode string, lanCIDR string, acknowledgeUnprotected bool) (string, bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return "", false, nil
+	}
+	firewallClient, ok := client.(managerFirewallConfigurePrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return "", true, errors.New("manager firewall broker capability is unavailable")
+		}
+		return "", false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		raw, err := firewallClient.ConfigureManagerFirewall(ctx, mode, lanCIDR, acknowledgeUnprotected, false)
+		return raw, true, err
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = firewallClient.ConfigureManagerFirewall(shadowCtx, mode, lanCIDR, acknowledgeUnprotected, true)
+		return "", false, nil
+	default:
+		return "", false, nil
+	}
 }
 
 func ReadSMARTWithBroker(ctx context.Context, device string) (string, bool, error) {

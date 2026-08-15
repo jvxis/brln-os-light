@@ -19,6 +19,34 @@ const (
 	appListCacheTTL    = 10 * time.Second
 )
 
+var (
+	errAppUninstallConfirmationRequired = errors.New("explicit app uninstall confirmation is required")
+	errBitcoinCoreSourceSwitchRequired  = errors.New("switch LND to a verified remote Bitcoin source before uninstalling Bitcoin Core")
+	errBitcoinCoreRemoteCredentials     = errors.New("remote Bitcoin RPC credentials are missing")
+)
+
+type appUninstallRequest struct {
+	Confirm bool   `json:"confirm"`
+	AppID   string `json:"app_id"`
+}
+
+func validateAppUninstallConfirmation(appID string, req appUninstallRequest) error {
+	if !req.Confirm || req.AppID != appID {
+		return errAppUninstallConfirmationRequired
+	}
+	return nil
+}
+
+func validateBitcoinCoreUninstallSource(source string, remote bitcoinRPCConfig) error {
+	if normalizeBitcoinSource(source) != "remote" {
+		return errBitcoinCoreSourceSwitchRequired
+	}
+	if remote.User == "" || remote.Pass == "" || remote.Host == "" {
+		return errBitcoinCoreRemoteCredentials
+	}
+	return nil
+}
+
 type cachedAppList struct {
 	at   time.Time
 	apps []appInfo
@@ -353,6 +381,33 @@ func (s *Server) handleAppUninstall(w http.ResponseWriter, r *http.Request) {
 	if app == nil {
 		writeError(w, http.StatusNotFound, "app not found")
 		return
+	}
+	var req appUninstallRequest
+	if err := readJSON(r, &req); err != nil || validateAppUninstallConfirmation(appID, req) != nil {
+		writeErrorCode(w, http.StatusConflict, "app_uninstall_confirmation_required", errAppUninstallConfirmationRequired.Error())
+		return
+	}
+	if appID == appmanifest.BitcoinCoreID {
+		remote := resolveBitcoinRemoteRPCConfig(s.cfg)
+		if err := validateBitcoinCoreUninstallSource(readBitcoinSource(), remote); err != nil {
+			code := "bitcoin_remote_source_required"
+			if errors.Is(err, errBitcoinCoreRemoteCredentials) {
+				code = "bitcoin_remote_credentials_missing"
+			}
+			writeErrorCode(w, http.StatusConflict, code, err.Error())
+			return
+		}
+		probeCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		ready, reason := bitcoinRPCReady(probeCtx, remote)
+		cancel()
+		if !ready {
+			message := "the configured remote Bitcoin RPC is unavailable; test it before uninstalling Bitcoin Core"
+			if reason == "syncing" {
+				message = "the configured remote Bitcoin node is not fully synchronized"
+			}
+			writeErrorCode(w, http.StatusConflict, "bitcoin_remote_not_ready", message)
+			return
+		}
 	}
 	finishOperation, started := s.beginAppOperation(appID, "uninstall")
 	if !started {

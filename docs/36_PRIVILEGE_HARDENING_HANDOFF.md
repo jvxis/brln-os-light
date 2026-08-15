@@ -1106,3 +1106,53 @@ checkout. LND, Docker, Bitcoin Core, and the running Electrs container retained
 their process/container identities and restart counts. Temporary local files,
 operator checkouts, and upgrade worktrees were removed. Evidence:
 `docs/baselines/privilege-hardening-electrs-install-progress-2026-08-14.json`.
+
+## Electrs and Mempool external-storage closure (2026-08-15)
+
+Commit `2cfd6fe93a02a621063f973fdd99cbf8d05bb8ad` adds broker-enrolled,
+operator-selectable storage for Electrs and Mempool. New installs require 100
+GiB and 20 GiB free respectively, while existing enrollments retain smaller
+operational reserves. The Manager discovers host mounts through PID 1's mount
+namespace, but never writes the selected directory; the broker independently
+requires a mounted non-root filesystem, root-only identity metadata, safe
+directory components, exact fixed child ownership, and sufficient capacity.
+Commit `7d60fbc9e8c22db638c3c15010858988befbf459` removes root-backed bind
+aliases from the UI, leaving only the real `/blockchain` disk eligible on LOS
+TESTE2.
+
+The existing 58.6 GB, 770-file Electrs named volume was copied file by file
+with fsync to `/blockchain/lightningos/electrs/db`. A root-only migration
+record was created only after logical source and target summaries matched.
+The app then started from the bind mount; RocksDB immediately and legitimately
+mutated the target, so commit `daea60ed07a6fc00fc087f087a5d22b930a7ba02`
+allows a safe non-empty target to evolve after the verified record while still
+requiring the legacy source to match the recorded summary exactly before
+cleanup. The source is now empty, the record is removed, and root free space
+rose to 56 GB.
+
+The live node also exposed a pre-hardening `electrs` rpcauth with no matching
+recoverable broker state. Commit `8c0c5a2298de4cc0d7803393b263e191c0bb790b`
+replaces only that dedicated hash with the managed credential and preserves
+all unrelated RPC users. It does not leave the obsolete Electrs password
+valid. Bitcoin remained mainnet, unpruned, synchronized, and RPC healthy.
+
+Mempool installed successfully with MariaDB and backend cache bind-mounted at
+`/blockchain/lightningos/mempool`. The official v3.3.1 frontend/backend and
+MariaDB 10.11.18 containers run non-root with read-only roots, all capabilities
+dropped, and `no-new-privileges`. The official frontend exceeded its original
+256 MiB writable runtime ceiling while copying assets; commit
+`0718916fa7e9f1c11eca206df4104c2fdf243dee` raises only the bounded tmpfs to
+512 MiB. Observed use was 198 MiB, HTTP returned 200, the database was healthy,
+and the app finished stopped.
+
+Concurrent Electrs indexing, Mempool, repeated trusted builds, and a graceful
+stop saturated the 6 GiB integration VM. SSH/API stopped responding and the
+first stop exceeded the broker client timeout. A VirtualBox ACPI shutdown was
+requested and eventually completed; no forced reset was executed. After normal
+boot, Bitcoin was full and synchronized at height 962578, LND was unlocked and
+synchronized to chain and graph on PostgreSQL, Mempool was stopped, and Electrs
+resumed from its external index at height 288263. Keep Electrs running until it
+reaches tip before final PR approval, and do not overlap that index with more
+heavy app/build tests on this VM. Five temporary operator checkouts, all upgrade
+worktrees, and the local console screenshot were removed. Evidence:
+`docs/baselines/privilege-hardening-heavy-app-storage-los-test2-2026-08-15.json`.

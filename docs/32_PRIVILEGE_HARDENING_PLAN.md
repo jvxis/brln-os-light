@@ -1175,8 +1175,10 @@ removal, or sudo call in this app. The broker validates the exact declaration,
 private runtime environment, image variants, fixed networks, port, identities,
 volumes, lifecycle and removal policy before it creates a root-only snapshot.
 All three services run non-root with read-only roots, all capabilities dropped,
-`no-new-privileges`, and bounded tmpfs; only the named MariaDB and backend cache
-volumes are persistent and writable.
+`no-new-privileges`, and bounded tmpfs. New installs place MariaDB and backend
+cache data in broker-enrolled bind mounts selected by the operator; legacy
+named volumes are copied and verified transactionally before the old contents
+are removed.
 
 The independent start gate reuses the Electrs Full Node checks, requiring an
 authenticated, synchronized, unpruned Bitcoin node with synchronized
@@ -1295,9 +1297,10 @@ authentication/reporting failure, not blockchain loss. Evidence is stored in
 
 The one-time legacy Electrs credential migration is now accepted. The typed
 `app.bitcoincore.electrs-credentials.ensure` operation generates a fixed
-`electrs` credential into root-only `0600` state, preserves every existing RPC
-credential, and atomically inserts only its additive `rpcauth` line before
-network sections. App Store install/start requires explicit API/UI operator
+`electrs` credential into root-only `0600` state, preserves unrelated RPC
+credentials, and atomically replaces only the pre-hardening `electrs`
+`rpcauth` before network sections so the obsolete password does not remain
+valid. App Store install/start requires explicit API/UI operator
 confirmation. If authentication proves that activation is pending, the manager
 performs exactly one closed Bitcoin lifecycle restart, waits for the credential
 to work, and reruns the strict Full Node/`txindex` gate. An already-active
@@ -1313,6 +1316,27 @@ functional gate passed. The test container was removed, the checkout restored,
 the official image and root-only attestation retained, and the VM powered off.
 LOS TESTE2 was not touched. Evidence is in
 `docs/baselines/privilege-hardening-phase2-electrs-rpcauth-migration-2026-08-13.json`.
+
+The live heavy-app storage gate was completed on LOS TESTE2 on 2026-08-15.
+Electrs and Mempool now expose a disk selector, require respectively 100 GiB
+and 20 GiB free for a new enrollment, retain operational reserves, and repeat
+the same fail-closed validation inside the privileged broker. Root-backed bind
+aliases are not offered as separate disks. The existing 58.6 GB Electrs index
+was copied to `/blockchain`, verified, started from the new bind, and only then
+removed from Docker-root storage, increasing root free space from effectively
+zero to 56 GB. Mempool installed on the same external filesystem, passed HTTP
+readiness with all three official containers confined, and finished stopped.
+Its frontend read-only runtime uses a 512 MiB bounded tmpfs after the official
+image demonstrated a 256 MiB peak was insufficient.
+
+The integration VM became unresponsive when Electrs indexing, Mempool runtime,
+several builds, and a graceful stop overlapped. The requested VirtualBox ACPI
+shutdown eventually completed; no forced reset occurred. After normal boot,
+Bitcoin was mainnet, full and synchronized, LND was unlocked and synchronized
+with PostgreSQL, Mempool was stopped, and Electrs resumed its persistent index.
+Final PR approval still waits for Electrs to reach the current mainnet tip.
+Evidence is in
+`docs/baselines/privilege-hardening-heavy-app-storage-los-test2-2026-08-15.json`.
 
 The dependent products, operational Bitcoin CLI/log paths, and mainnet P2P
 firewall contract are complete. The Mempool and Electrs gates preserve the

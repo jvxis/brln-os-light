@@ -1563,11 +1563,15 @@ func (n *Notifier) runPayments() {
 
 	for {
 		pollInterval := paymentsPollInterval
-		idle := false
+		// This loop was spared the same outage only because a busy node always
+		// has payments in flight, so it never reached the idle branch. That is
+		// luck, not protection.
+		quiet, degraded := false, false
 		if len(pending) == 0 && n != nil && n.lnd != nil {
 			info := n.lnd.CachedRuntimeInfo()
-			idle = lndRuntimeShouldDeferNonessential(info) || lndRuntimeHasNoChannels(info)
-			if idle {
+			quiet = lndRuntimeHasNoChannels(info)
+			degraded = lndRuntimeShouldDeferNonessential(info)
+			if quiet || degraded {
 				pollInterval = notificationIdlePollInterval
 			}
 		}
@@ -1576,9 +1580,8 @@ func (n *Notifier) runPayments() {
 			return
 		case <-time.After(pollInterval):
 		}
-		if idle && len(pending) == 0 {
-			info := n.lnd.CachedRuntimeInfo()
-			if lndRuntimeShouldDeferNonessential(info) || lndRuntimeHasNoChannels(info) {
+		if quiet && len(pending) == 0 && n.lnd != nil {
+			if lndRuntimeHasNoChannels(n.lnd.CachedRuntimeInfo()) {
 				continue
 			}
 		}
@@ -1912,12 +1915,13 @@ func (n *Notifier) runChannels() {
 func (n *Notifier) runPendingChannels() {
 	for {
 		pollInterval := pendingChannelsPollInterval
-		idle := false
+		quiet, degraded := false, false
 		if n != nil && n.lnd != nil {
 			info := n.lnd.CachedRuntimeInfo()
-			idle = lndRuntimeShouldDeferNonessential(info) || lndRuntimeHasNoChannels(info)
+			quiet = lndRuntimeHasNoChannels(info)
+			degraded = lndRuntimeShouldDeferNonessential(info)
 		}
-		if idle {
+		if quiet || degraded {
 			pollInterval = notificationIdlePollInterval
 		}
 		select {
@@ -1925,9 +1929,10 @@ func (n *Notifier) runPendingChannels() {
 			return
 		case <-time.After(pollInterval):
 		}
-		if idle {
-			info := n.lnd.CachedRuntimeInfo()
-			if lndRuntimeShouldDeferNonessential(info) || lndRuntimeHasNoChannels(info) {
+		// Only a node with no channels skips outright; a degraded runtime has
+		// already cost this cycle its slower interval.
+		if quiet && n.lnd != nil {
+			if lndRuntimeHasNoChannels(n.lnd.CachedRuntimeInfo()) {
 				continue
 			}
 		}
@@ -2302,12 +2307,26 @@ func (n *Notifier) runForwards() {
 
 	for {
 		pollInterval := forwardsPollInterval
-		idle := false
+		// Two different situations used to share one flag, and only one of them
+		// justifies skipping the read.
+		//
+		// A node with no channels has no forwards: skipping costs nothing.
+		//
+		// A runtime that is unknown or stale is a reason to slow down, never a
+		// reason to stop reading. Forwards not read are forwards not recorded,
+		// and this loop is the only thing that records them. On 2026-08-15 a
+		// node lost six hours of forwards to that skip: the events reached the
+		// database only when the condition cleared, by which time the Telegram
+		// mirror discarded them as backlog and the operator saw silence.
+		quiet, degraded := false, false
 		if n != nil && n.lnd != nil {
 			info := n.lnd.CachedRuntimeInfo()
-			idle = lndRuntimeShouldDeferNonessential(info) ||
-				(info.NumActiveChannels < 2 && info.NumPendingChannels == 0)
-			if idle {
+			// info.Known guards the channel count: a zero-value RuntimeInfo has
+			// no channels either, and reading that as "nothing to do" is how an
+			// unknown runtime became an excuse to stand still.
+			quiet = info.Known && info.NumActiveChannels < 2 && info.NumPendingChannels == 0
+			degraded = lndRuntimeShouldDeferNonessential(info)
+			if quiet || degraded {
 				pollInterval = notificationIdlePollInterval
 			}
 		}
@@ -2316,10 +2335,9 @@ func (n *Notifier) runForwards() {
 			return
 		case <-time.After(pollInterval):
 		}
-		if idle {
+		if quiet && n.lnd != nil {
 			info := n.lnd.CachedRuntimeInfo()
-			if lndRuntimeShouldDeferNonessential(info) ||
-				(info.NumActiveChannels < 2 && info.NumPendingChannels == 0) {
+			if info.Known && info.NumActiveChannels < 2 && info.NumPendingChannels == 0 {
 				continue
 			}
 		}

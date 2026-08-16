@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getLogs, getTorUpgradeStatus, startTorUpgrade } from '../../api'
 import { getLocale } from '../../i18n'
+import { formatJournalLogLine, formatJournalLogLines } from '../../utils/journalLogs'
 import StatusBadge from './StatusBadge'
 import type { Tone } from './types'
 
@@ -96,7 +97,7 @@ export default function TorUpgradeCard() {
         const res = await getLogs('tor-upgrade', 200, logSince || undefined)
         if (!mounted) return
         const nextLogs: string[] = Array.isArray(res?.lines) ? res.lines : []
-        setLogs(nextLogs)
+        setLogs(formatJournalLogLines(nextLogs, locale))
         setLogsStatus('')
 
         const completed = nextLogs.some((line) => line.includes('Tor update complete.'))
@@ -110,7 +111,7 @@ export default function TorUpgradeCard() {
           setLocked(false)
           setError(null)
         } else if (errorLine) {
-          setError(errorLine)
+          setError(formatJournalLogLine(errorLine, locale))
           setLocked(false)
         }
       } catch (err) {
@@ -135,7 +136,7 @@ export default function TorUpgradeCard() {
       mounted = false
       window.clearInterval(timer)
     }
-  }, [logSince, modalOpen, started, t])
+  }, [locale, logSince, modalOpen, started, t])
 
   const tone: Tone = status?.service_status === 'healthy'
     ? 'ok'

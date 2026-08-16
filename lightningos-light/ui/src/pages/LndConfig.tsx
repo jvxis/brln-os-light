@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { APIError, getBitcoinLocalStatus, getBitcoinSource, getLndConfig, getLndMaintenance, getLndStatus, getLndUpgradeStatus, getLogs, setBitcoinSource, setLndMaintenance, startLndUpgrade, updateLndConfig, updateLndRawConfig, type LndMaintenanceStatus } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
+import { getLocale } from '../i18n'
+import { formatJournalLogLine, formatJournalLogLines } from '../utils/journalLogs'
 
 type BitcoinLocalStatus = {
   installed?: boolean
@@ -21,7 +23,8 @@ type LndConfigProps = {
 }
 
 export default function LndConfig({ externalBitcoinDetected = false }: LndConfigProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = getLocale(i18n.language)
   const [config, setConfig] = useState<any>(null)
   const [alias, setAlias] = useState('')
   const [color, setColor] = useState('#ff9900')
@@ -211,7 +214,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
           }
         }
 
-        setUpgradeLogs(expectedStartMarker && !hasRunSegment ? [] : runLines)
+        setUpgradeLogs(expectedStartMarker && !hasRunSegment ? [] : formatJournalLogLines(runLines, locale))
 
         if (hasRunSegment) {
           const completed = runLines.some((line: string) => line.includes('Upgrade complete.'))
@@ -223,7 +226,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
             setUpgradeLocked(false)
           }
           if (errorLine) {
-            setUpgradeError(errorLine)
+            setUpgradeError(formatJournalLogLine(errorLine, locale))
             setUpgradeLocked(false)
           }
         }
@@ -261,7 +264,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
       mounted = false
       clearInterval(timer)
     }
-  }, [upgradeModalOpen, t, upgrade?.running, upgradeLocked, upgradeStartedVersion, upgradeLogSince, upgradeError])
+  }, [locale, upgradeModalOpen, t, upgrade?.running, upgradeLocked, upgradeStartedVersion, upgradeLogSince, upgradeError])
 
   const isHexColor = (value: string) => /^#[0-9a-fA-F]{6}$/.test(value.trim())
 

@@ -882,6 +882,7 @@
     "clearSelection": "Limpar seleção",
     "aliasFallback": "Sem alias público",
     "indexStatus": "Status do índice local",
+    "staleIndex": "O índice do grafo pode estar desatualizado (snapshot de presença: {{snapshot}}; atualização completa: {{reconcile}}). A busca pode incluir canais antigos.",
     "emptyIndex": "O índice local ainda não possui dados suficientes. Aguarde o bootstrap inicial ou execute a reindexação.",
     "loadingNode": "Carregando visão geral do node...",
     "loadingChannels": "Carregando canais públicos...",
@@ -958,6 +959,7 @@
       "nativeSource": "Histórico nativo",
       "coverageSince": "Cobertura desde {{value}}",
       "streaming": "Stream ativo",
+      "stale": "Índice desatualizado",
       "idle": "Indexador ocioso"
     },
     "tabs": {
@@ -969,6 +971,8 @@
     "statusCards": {
       "nodes": "Nodes",
       "openChannels": "Canais abertos",
+      "lastSnapshot": "Último snapshot de presença",
+      "lastReconcile": "Última atualização completa",
       "lastSync": "Último sync"
     },
     "header": {
@@ -1255,6 +1259,7 @@
     "internal": "Interno",
     "loadFailed": "Falha ao carregar apps.",
     "loadingApps": "Carregando apps...",
+    "nodeBusy": "O node está ocupado com atividade intensa de disco e não confirmou a operação. Aguarde a carga diminuir, atualize a loja e tente novamente.",
     "noApps": "Nenhum app disponível ainda.",
     "noAppsForFilter": "Nenhum app corresponde ao filtro selecionado.",
     "resetAdminPassword": "Redefinir senha admin",

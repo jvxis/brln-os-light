@@ -36,6 +36,7 @@ import {
   type AuthState,
 } from '../../api'
 import { getLocale } from '../../i18n'
+import { formatJournalLogLine, formatJournalLogLines } from '../../utils/journalLogs'
 import AutomationRiskGrid from './AutomationRiskGrid'
 import BIP110MonitorCard from './BIP110MonitorCard'
 import CoreHealthGrid from './CoreHealthGrid'
@@ -902,7 +903,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
         const res = await getLogs('app-upgrade', 200, appUpgradeLogSince || undefined)
         if (!mounted) return
         const lines: string[] = Array.isArray(res?.lines) ? res.lines : []
-        setAppUpgradeLogs(lines)
+        setAppUpgradeLogs(formatJournalLogLines(lines, locale))
         const completed = lines.some((line) => line.includes('App upgrade complete'))
         const errorLine = [...lines].reverse().find((line) =>
           line.includes('[ERROR]') || line.toLowerCase().includes('failed')
@@ -912,7 +913,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
           setAppUpgradeLocked(false)
         }
         if (errorLine) {
-          setAppUpgradeError(errorLine)
+          setAppUpgradeError(formatJournalLogLine(errorLine, locale))
           setAppUpgradeLocked(false)
         }
         setAppUpgradeLogsStatus('')
@@ -950,7 +951,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
       mounted = false
       clearInterval(timer)
     }
-  }, [appUpgradeError, appUpgradeLocked, appUpgradeLogSince, appUpgradeModalOpen, appUpgradeStartedVersion, t])
+  }, [appUpgradeError, appUpgradeLocked, appUpgradeLogSince, appUpgradeModalOpen, appUpgradeStartedVersion, locale, t])
 
   const showConfirmAppUpgrade = Boolean(appUpgrade?.update_available) && !appUpgradeComplete
 

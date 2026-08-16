@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -96,9 +99,9 @@ func TestCollectAppInfosPreservesOrderAndBoundsConcurrency(t *testing.T) {
 			maximum: &maximum,
 		}
 	}
-	infos := collectAppInfos(context.Background(), apps, 4)
-	if maximum.Load() < 2 || maximum.Load() > 4 {
-		t.Fatalf("maximum concurrent app inspections=%d, want 2..4", maximum.Load())
+	infos := collectAppInfos(context.Background(), apps, appInfoWorkerLimit)
+	if maximum.Load() < 2 || maximum.Load() > int32(appInfoWorkerLimit) {
+		t.Fatalf("maximum concurrent app inspections=%d, want 2..%d", maximum.Load(), appInfoWorkerLimit)
 	}
 	for index, info := range infos {
 		if want := fmt.Sprintf("app-%02d", index); info.ID != want {
@@ -115,5 +118,56 @@ func TestCloneAppInfosDoesNotAliasMutableFields(t *testing.T) {
 	cloned[0].Operation.Action = "stop"
 	if original[0].SecurityNotices[0] != "notice" || original[0].Operation.Action != "start" {
 		t.Fatal("app list clone aliases mutable cache fields")
+	}
+}
+
+func TestAppBrokerBusyErrorClassification(t *testing.T) {
+	for _, err := range []error{
+		errors.New("read unix @->/run/lightningos-privileged/broker.sock: i/o timeout"),
+		errors.New("privileged operation timed out"),
+		errors.New("lock_timeout: privileged operation lock timed out"),
+	} {
+		if !isAppBrokerBusyError(err) {
+			t.Fatalf("error %q was not classified as transient broker load", err)
+		}
+	}
+	for _, err := range []error{
+		errors.New("Local Bitcoin RPC is unavailable"),
+		errors.New("dial tcp 203.0.113.1:8332: i/o timeout"),
+		errors.New("app lifecycle operation failed"),
+	} {
+		if isAppBrokerBusyError(err) {
+			t.Fatalf("error %q was incorrectly classified as transient broker load", err)
+		}
+	}
+}
+
+func TestWriteAppOperationErrorHidesBrokerSocketDetails(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeAppOperationError(recorder, http.StatusInternalServerError, errors.New("read unix @->/run/lightningos-privileged/broker.sock: i/o timeout"))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"code":"app_node_busy"`) {
+		t.Fatalf("response does not contain app_node_busy: %s", body)
+	}
+	if strings.Contains(body, "broker.sock") {
+		t.Fatalf("response leaked internal broker path: %s", body)
+	}
+}
+
+func TestInvalidateAppListCachePreservesRecentStaleSnapshot(t *testing.T) {
+	server := &Server{appListCache: cachedAppList{
+		at:   time.Now(),
+		apps: []appInfo{{ID: "mempool", Installed: true, Status: "stopped"}},
+	}}
+	server.invalidateAppListCache()
+	if _, ok := server.cachedAppList(); ok {
+		t.Fatal("invalidated app list remained fresh")
+	}
+	stale, ok := server.staleCachedAppList()
+	if !ok || len(stale) != 1 || stale[0].ID != "mempool" || stale[0].Status != "stopped" {
+		t.Fatalf("stale app list was not preserved: %#v, ok=%v", stale, ok)
 	}
 }

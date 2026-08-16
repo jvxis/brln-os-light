@@ -882,6 +882,7 @@
     "clearSelection": "Clear selection",
     "aliasFallback": "No public alias",
     "indexStatus": "Local index status",
+    "staleIndex": "The graph index may be stale (presence snapshot: {{snapshot}}; complete refresh: {{reconcile}}). Search results may include old channels.",
     "emptyIndex": "The local index does not have enough data yet. Wait for the initial bootstrap or trigger a reindex.",
     "loadingNode": "Loading node overview...",
     "loadingChannels": "Loading public channels...",
@@ -958,6 +959,7 @@
       "nativeSource": "Native history",
       "coverageSince": "Coverage since {{value}}",
       "streaming": "Stream active",
+      "stale": "Index outdated",
       "idle": "Indexer idle"
     },
     "tabs": {
@@ -969,6 +971,8 @@
     "statusCards": {
       "nodes": "Nodes",
       "openChannels": "Open channels",
+      "lastSnapshot": "Last presence snapshot",
+      "lastReconcile": "Last complete refresh",
       "lastSync": "Last sync"
     },
     "header": {
@@ -1255,6 +1259,7 @@
     "internal": "Internal",
     "loadFailed": "Failed to load apps.",
     "loadingApps": "Loading apps...",
+    "nodeBusy": "The node is busy with heavy disk activity and did not confirm the operation. Wait for the load to settle, refresh the store, and try again.",
     "noApps": "No apps available yet.",
     "noAppsForFilter": "No apps match the selected filter.",
     "resetAdminPassword": "Reset admin password",

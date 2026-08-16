@@ -2120,13 +2120,7 @@ func JournalTail(ctx context.Context, service string, lines int) ([]string, erro
 }
 
 func JournalTailSince(ctx context.Context, service string, lines int, since string) ([]string, error) {
-	if lines <= 0 {
-		lines = 200
-	}
-	args := []string{"-u", service, "-n", strconv.Itoa(lines), "--no-pager"}
-	if strings.TrimSpace(since) != "" {
-		args = append(args, "--since", since)
-	}
+	args := journalTailArgs(service, lines, since)
 	out, err := RunCommand(ctx, "journalctl", args...)
 	if err != nil {
 		return nil, err
@@ -2140,4 +2134,18 @@ func JournalTailSince(ctx context.Context, service string, lines int, since stri
 		trimmed = append(trimmed, line)
 	}
 	return trimmed, nil
+}
+
+func journalTailArgs(service string, lines int, since string) []string {
+	if lines <= 0 {
+		lines = 200
+	}
+	// Use a locale-independent timestamp with year and UTC offset. Upgrade UIs
+	// can then render it in the operator's browser locale instead of exposing
+	// journalctl's ambiguous English "Mon DD HH:mm:ss" prefix.
+	args := []string{"-u", service, "-n", strconv.Itoa(lines), "--no-pager", "--output=short-iso"}
+	if strings.TrimSpace(since) != "" {
+		args = append(args, "--since", since)
+	}
+	return args
 }

@@ -25,6 +25,8 @@ type GraphExplorerStatus = {
   available?: boolean
   running?: boolean
   first_native_coverage_at?: string
+  last_snapshot_at?: string
+  last_reconcile_at?: string
   last_sync_at?: string
   last_error?: string
   node_count?: number
@@ -1109,7 +1111,18 @@ export default function GraphExplorer() {
   const node = general?.node || null
   const selectedColor = normalizeNodeColor(node?.color)
   const coverageSince = general?.coverage_since || status?.first_native_coverage_at || ''
-  const statusBadgeClass = status?.running
+  const lastSnapshotAt = parseTimestamp(status?.last_snapshot_at)
+  const lastReconcileAt = parseTimestamp(status?.last_reconcile_at)
+  const indexIsStale = Boolean(status) && (
+    Boolean(status?.last_error)
+    || !lastSnapshotAt
+    || !lastReconcileAt
+    || Date.now() - lastSnapshotAt.getTime() > 8 * 60 * 60 * 1000
+    || Date.now() - lastReconcileAt.getTime() > 8 * 60 * 60 * 1000
+  )
+  const statusBadgeClass = indexIsStale
+    ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+    : status?.running
     ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
     : 'border-white/10 bg-white/[0.04] text-fog/75'
   const selectedResultKey = String(node?.pubkey || selectedPubkey || '').trim()
@@ -1920,7 +1933,11 @@ export default function GraphExplorer() {
               {t('graphExplorer.badges.coverageSince', { value: formatTimestamp(coverageSince) })}
             </span>
             <span className={clsx('rounded-full border px-3 py-1 text-xs font-medium', statusBadgeClass)}>
-              {status?.running ? t('graphExplorer.badges.streaming') : t('graphExplorer.badges.idle')}
+              {indexIsStale
+                ? t('graphExplorer.badges.stale')
+                : status?.running
+                  ? t('graphExplorer.badges.streaming')
+                  : t('graphExplorer.badges.idle')}
             </span>
             <button
               type="button"
@@ -2021,7 +2038,7 @@ export default function GraphExplorer() {
 
           <div className="rounded-[1.5rem] border border-white/10 bg-black/10 p-4">
             <p className="text-sm font-medium text-fog/80">{t('graphExplorer.indexStatus')}</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
               <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.statusCards.nodes')}</p>
                 <p className="mt-2 text-2xl font-semibold">{formatInteger(status?.node_count)}</p>
@@ -2031,10 +2048,26 @@ export default function GraphExplorer() {
                 <p className="mt-2 text-2xl font-semibold">{formatInteger(status?.open_channel_count)}</p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.statusCards.lastSnapshot')}</p>
+                <p className="mt-2 text-sm font-medium text-fog">{formatTimestamp(status?.last_snapshot_at)}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.statusCards.lastReconcile')}</p>
+                <p className="mt-2 text-sm font-medium text-fog">{formatTimestamp(status?.last_reconcile_at)}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.statusCards.lastSync')}</p>
                 <p className="mt-2 text-sm font-medium text-fog">{formatTimestamp(status?.last_sync_at)}</p>
               </div>
             </div>
+            {!statusError && indexIsStale && (
+              <p className="mt-4 text-sm text-amber-200">
+                {t('graphExplorer.staleIndex', {
+                  snapshot: formatTimestamp(status?.last_snapshot_at),
+                  reconcile: formatTimestamp(status?.last_reconcile_at)
+                })}
+              </p>
+            )}
             {statusError && (
               <p className="mt-4 text-sm text-amber-200">{statusError}</p>
             )}

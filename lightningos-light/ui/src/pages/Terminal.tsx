@@ -16,7 +16,7 @@ type RotatedCredential = {
   restart_pending: boolean
 }
 
-type ReauthAction = 'rotate' | 'enable' | 'disable'
+type ReauthAction = 'rotate' | 'interactive' | 'readOnly' | 'disable'
 
 export default function Terminal() {
   const { t } = useTranslation()
@@ -80,19 +80,19 @@ export default function Terminal() {
     }
   }
 
-  const control = async (enabled: boolean, confirmPassword?: string) => {
+  const control = async (enabled: boolean, allowWrite: boolean, confirmPassword?: string) => {
     setBusy(true)
     setStatusMessage('')
     if (confirmPassword !== undefined) setReauthError('')
     try {
-      const result = await setTerminalEnabled({ enabled, confirm_password: confirmPassword }) as { enabled: boolean }
-      setStatus((current) => current ? { ...current, enabled: result.enabled, allow_write: false } : current)
+      const result = await setTerminalEnabled({ enabled, allow_write: enabled ? allowWrite : false, confirm_password: confirmPassword }) as { enabled: boolean; allow_write: boolean }
+      setStatus((current) => current ? { ...current, enabled: result.enabled, allow_write: result.allow_write } : current)
       setReauthAction(null)
       setAdminPassword('')
       setReauthError('')
     } catch (err: any) {
       if (err instanceof APIError && err.code === 'terminal_control_reauth_required') {
-        setReauthAction(enabled ? 'enable' : 'disable')
+        setReauthAction(enabled ? (allowWrite ? 'interactive' : 'readOnly') : 'disable')
         setReauthError('')
       } else if (confirmPassword !== undefined) {
         setReauthError(err instanceof APIError && err.code === 'auth_invalid_credentials'
@@ -112,10 +112,12 @@ export default function Terminal() {
     if (!adminPassword.trim()) return
     if (reauthAction === 'rotate') {
       await rotate(adminPassword)
-    } else if (reauthAction === 'enable') {
-      await control(true, adminPassword)
+    } else if (reauthAction === 'interactive') {
+      await control(true, true, adminPassword)
+    } else if (reauthAction === 'readOnly') {
+      await control(true, false, adminPassword)
     } else if (reauthAction === 'disable') {
-      await control(false, adminPassword)
+      await control(false, false, adminPassword)
     }
   }
 
@@ -125,18 +127,24 @@ export default function Terminal() {
     setReauthError('')
   }
 
-  const reauthTitle = reauthAction === 'enable'
-    ? t('terminal.enableReauthTitle')
+  const reauthTitle = reauthAction === 'interactive'
+    ? t('terminal.interactiveReauthTitle')
+    : reauthAction === 'readOnly'
+      ? t('terminal.readOnlyReauthTitle')
     : reauthAction === 'disable'
       ? t('terminal.disableReauthTitle')
       : t('terminal.reauthTitle')
-  const reauthBody = reauthAction === 'enable'
-    ? t('terminal.enableReauthBody')
+  const reauthBody = reauthAction === 'interactive'
+    ? t('terminal.interactiveReauthBody')
+    : reauthAction === 'readOnly'
+      ? t('terminal.readOnlyReauthBody')
     : reauthAction === 'disable'
       ? t('terminal.disableReauthBody')
       : t('terminal.reauthBody')
-  const reauthConfirm = reauthAction === 'enable'
-    ? t('terminal.enable')
+  const reauthConfirm = reauthAction === 'interactive'
+    ? t('terminal.enableInteractive')
+    : reauthAction === 'readOnly'
+      ? t('terminal.switchReadOnly')
     : reauthAction === 'disable'
       ? t('terminal.disable')
       : t('terminal.rotateCredential')
@@ -176,10 +184,20 @@ export default function Terminal() {
               className="btn-secondary"
               type="button"
               disabled={busy || !status || (!status.enabled && !status.credential_configured)}
-              onClick={() => status && void control(!status.enabled)}
+              onClick={() => status && void control(!status.enabled, !status.enabled)}
             >
               {busy ? t('terminal.updating') : status?.enabled ? t('terminal.disable') : t('terminal.enable')}
             </button>
+            {status?.enabled && (
+              <button
+                className="btn-secondary"
+                type="button"
+                disabled={busy}
+                onClick={() => void control(true, !status.allow_write)}
+              >
+                {status.allow_write ? t('terminal.switchReadOnly') : t('terminal.enableKeyboard')}
+              </button>
+            )}
             <button className="btn-secondary" type="button" disabled={busy} onClick={() => void rotate()}>
               {t('terminal.rotateCredential')}
             </button>

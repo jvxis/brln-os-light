@@ -752,11 +752,11 @@ GET /api/terminal/status
 - It never returns the GoTTY Basic credential or the Linux operator password.
 
 POST /api/terminal/control
-- Body: `{"enabled":true,"confirm_password":"..."}`.
+- Body: `{"enabled":true,"allow_write":true,"confirm_password":"..."}`. `allow_write` is required when enabling; `false` keeps view-only mode and `true` enables keyboard input.
 - Requires login protection and fresh reauthentication with scope `terminal_control` for both enable and disable.
 - Uses the typed privileged-broker operation `terminal.control`; the Manager never edits the runtime environment or invokes `systemctl` directly.
-- Enabling validates the fixed root-owned service, launcher and GoTTY binary, preserves the existing dedicated credential, forces `TERMINAL_ALLOW_WRITE=0`, verifies the service is active/enabled, and waits for the fixed loopback listener before returning success. Disabling stops and disables the service. A failed transition fails closed by forcing the runtime setting off and best-effort stopping/disabling the service.
-- Response: `{"enabled":true}`.
+- Enabling validates the fixed root-owned service, launcher and GoTTY binary, preserves the existing dedicated credential, applies the explicit input mode, restarts only the terminal service, verifies it is active/enabled, and waits for the fixed loopback listener before returning success. Legacy nodes missing the dedicated runtime file migrate their already-configured GoTTY credential without exposing it. Disabling stops and disables the service. A failed transition fails closed by forcing the runtime setting off and best-effort stopping/disabling the service.
+- Response: `{"enabled":true,"allow_write":true}`.
 
 POST /api/terminal/credential/rotate
 - Requires login protection and a recent reauthentication with scope `terminal_credential`.

@@ -42,10 +42,11 @@
 - App secrets are stored in app-specific .env or data files with restrictive permissions.
 
 ## Terminal
-- Optional GoTTY terminal is disabled and read-only by default.
+- Optional GoTTY terminal is disabled by default. Keyboard input is an explicit, freshly reauthenticated opt-in; view-only mode remains available.
 - Its runtime receives only `/etc/lightningos/terminal.env`, never the Manager secrets file.
 - The `losop` Linux password is locked and the account has no `sudo`, `lightningos`, or `systemd-journal` supplementary membership.
 - GoTTY credential rotation never changes the Linux password.
+- Interactive commands run only as the unprivileged `losop` account inside the hardened systemd sandbox; terminal mode changes never restart LND or Bitcoin.
 
 ## Reports and notifications
 - Reports data and notification history are stored in Postgres.

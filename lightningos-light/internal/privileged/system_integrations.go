@@ -19,7 +19,7 @@ const (
 	defaultReportsServicePath        = "/etc/systemd/system/lightningos-reports.service"
 	defaultReportsTimerPath          = "/etc/systemd/system/lightningos-reports.timer"
 	defaultManagerTLSCertificatePath = "/etc/lightningos/tls/server.crt"
-	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20260816-v8"
+	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20260816-v9"
 	envExecutablePath                = "/usr/bin/env"
 	idExecutablePath                 = "/usr/bin/id"
 
@@ -27,8 +27,43 @@ const (
 	managerFirewallHelperSHA256 = "cb0c9e4e0ef773b67a9b08218f29c4020e29202eea342d11cc9b502e2f4c9dc8"
 	managerTLSMDNSHelperSHA256  = "7ff9f17061eec00aec8eedc389044b0cf283e639f8e8f0cfda4ca47c6074b8f9"
 
-	lndIntegrationDropIn = "[Service]\nRestart=always\nRestartSec=60\n"
-	reportsServiceUnit   = `[Unit]
+	lndIntegrationDropIn       = "[Service]\nRestart=always\nRestartSec=60\n"
+	terminalServiceUnitContent = `[Unit]
+Description=LightningOS Terminal (GoTTY)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=losop
+Group=losop
+EnvironmentFile=/etc/lightningos/terminal.env
+ExecCondition=/bin/bash -lc '[ "${TERMINAL_ENABLED}" = "1" ] && [ -n "${TERMINAL_CREDENTIAL}" ]'
+ExecStart=/usr/local/sbin/lightningos-terminal
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+`
+	reportsServiceUnit = `[Unit]
 Description=LightningOS Reports Reconciliation
 After=network-online.target lnd.service postgresql.service
 Wants=network-online.target
@@ -88,6 +123,10 @@ func (manager *NativeSystemIntegrationsManager) Status(_ context.Context) (Syste
 	if err := manager.verifyInstalledAssets(); err != nil {
 		return SystemIntegrationsState{Status: "absent"}, nil
 	}
+	terminalCurrent, err := integrationFileMatches(manager.Paths.TerminalService, []byte(terminalServiceUnitContent), 0644)
+	if err != nil || !terminalCurrent {
+		return SystemIntegrationsState{Status: "absent"}, nil
+	}
 	reportsCurrent, err := manager.reportsUnitsCurrent()
 	if err != nil || !reportsCurrent {
 		return SystemIntegrationsState{Status: "absent"}, nil
@@ -97,6 +136,7 @@ func (manager *NativeSystemIntegrationsManager) Status(_ context.Context) (Syste
 
 type SystemIntegrationPaths struct {
 	TerminalHelper        string
+	TerminalService       string
 	ManagerFirewallHelper string
 	ManagerTLSMDNSHelper  string
 	LNDDropIn             string
@@ -122,6 +162,7 @@ func NewNativeSystemIntegrationsManager(runner CommandRunner) *NativeSystemInteg
 		Runner: runner,
 		Paths: SystemIntegrationPaths{
 			TerminalHelper:        defaultTerminalHelperPath,
+			TerminalService:       terminalServiceUnitPath,
 			ManagerFirewallHelper: defaultManagerFirewallHelperPath,
 			ManagerTLSMDNSHelper:  defaultManagerTLSMDNSHelperPath,
 			LNDDropIn:             defaultLNDIntegrationDropInPath,
@@ -180,6 +221,14 @@ func (manager *NativeSystemIntegrationsManager) Apply(ctx context.Context, dryRu
 
 	state := SystemIntegrationsState{Status: "ready"}
 	systemdChanged := false
+	terminalChanged, err := manager.reconcileTerminalUnit()
+	if err != nil {
+		return SystemIntegrationsState{}, err
+	}
+	if terminalChanged {
+		systemdChanged = true
+		state.TerminalPolicyChanged = true
+	}
 	loaded, err := manager.lndServiceLoaded(ctx)
 	if err != nil {
 		return SystemIntegrationsState{}, err
@@ -246,6 +295,29 @@ func (manager *NativeSystemIntegrationsManager) Apply(ctx context.Context, dryRu
 		return SystemIntegrationsState{}, errors.New("manager firewall integration failed")
 	}
 	return state, nil
+}
+
+func (manager *NativeSystemIntegrationsManager) reconcileTerminalUnit() (bool, error) {
+	current, err := integrationFileMatches(manager.Paths.TerminalService, []byte(terminalServiceUnitContent), 0644)
+	if err != nil {
+		return false, err
+	}
+	if current {
+		return false, nil
+	}
+	if err := ensureDirectoryTreeNoSymlink(filepath.Dir(manager.Paths.TerminalService), 0755); err != nil {
+		return false, errors.New("terminal integration directory is unsafe")
+	}
+	if err := refuseNonRegularDestination(manager.Paths.TerminalService); err != nil {
+		return false, err
+	}
+	if err := writeAtomicRegularFile(manager.Paths.TerminalService, []byte(terminalServiceUnitContent), 0644); err != nil {
+		return false, errors.New("terminal integration policy update failed")
+	}
+	if err := validateSystemIntegrationFile(manager.Paths.TerminalService, 0644); err != nil {
+		return false, errors.New("terminal integration policy is unsafe")
+	}
+	return true, nil
 }
 
 func (manager *NativeSystemIntegrationsManager) reconcileReportsUnits() (bool, error) {

@@ -37,7 +37,7 @@ type NativeTerminalCredentialManager struct {
 	Runner          CommandRunner
 	RuntimeEnvPath  string
 	ApplyCredential func(path string, operatorUser string, password string) error
-	ApplyControl    func(ctx context.Context, path string, operatorUser string, password string, enabled bool) error
+	ApplyControl    func(ctx context.Context, path string, operatorUser string, password string, enabled bool, allowWrite bool) error
 }
 
 func (manager *NativeTerminalCredentialManager) SetEnabled(ctx context.Context, params TerminalControlParams, dryRun bool) (TerminalControlState, error) {
@@ -52,6 +52,7 @@ func (manager *NativeTerminalCredentialManager) SetEnabled(ctx context.Context, 
 	default:
 		return TerminalControlState{}, errors.New("terminal control action is invalid")
 	}
+	allowWrite := enabled && params.AllowWrite
 
 	output, err := manager.Runner.Run(ctx, systemctlPath, "show", "--property=User", "--value", terminalServiceUnit)
 	serviceUser := strings.TrimSpace(output)
@@ -78,12 +79,12 @@ func (manager *NativeTerminalCredentialManager) SetEnabled(ctx context.Context, 
 		if applyControl == nil {
 			applyControl = manager.applyTerminalControl
 		}
-		if err := applyControl(ctx, runtimeEnvPath, operatorUser, password, enabled); err != nil {
+		if err := applyControl(ctx, runtimeEnvPath, operatorUser, password, enabled, allowWrite); err != nil {
 			return TerminalControlState{}, errors.New("terminal control update failed")
 		}
 		status = "applied"
 	}
-	return TerminalControlState{Status: status, Enabled: enabled}, nil
+	return TerminalControlState{Status: status, Enabled: enabled, AllowWrite: allowWrite}, nil
 }
 
 func parseTerminalRuntimeCredential(raw []byte) (string, string, error) {
@@ -101,7 +102,7 @@ func parseTerminalRuntimeCredential(raw []byte) (string, string, error) {
 	return operatorUser, password, nil
 }
 
-func (manager *NativeTerminalCredentialManager) applyTerminalControl(ctx context.Context, path string, operatorUser string, password string, enabled bool) error {
+func (manager *NativeTerminalCredentialManager) applyTerminalControl(ctx context.Context, path string, operatorUser string, password string, enabled bool, allowWrite bool) error {
 	if path != defaultTerminalEnvPath {
 		return errors.New("terminal runtime path is not allowlisted")
 	}
@@ -131,17 +132,22 @@ func (manager *NativeTerminalCredentialManager) applyTerminalControl(ctx context
 	if enabled {
 		enabledValue = "1"
 	}
-	if err := writeAtomicTerminalRuntimeFile(path, []byte(terminalRuntimeEnvContent(enabledValue, operatorUser, password)), gid); err != nil {
+	if err := writeAtomicTerminalRuntimeFile(path, []byte(terminalRuntimeEnvContent(enabledValue, allowWrite, operatorUser, password)), gid); err != nil {
 		return err
 	}
 
-	args := []string{"disable", "--now", terminalServiceUnit}
-	if enabled {
-		args = []string{"enable", "--now", terminalServiceUnit}
-	}
 	transitionCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if _, err := manager.Runner.Run(transitionCtx, systemctlPath, args...); err != nil {
+	if enabled {
+		if _, err := manager.Runner.Run(transitionCtx, systemctlPath, "enable", terminalServiceUnit); err != nil {
+			manager.failClosedTerminal(path, operatorUser, password, gid)
+			return err
+		}
+		if _, err := manager.Runner.Run(transitionCtx, systemctlPath, "restart", terminalServiceUnit); err != nil {
+			manager.failClosedTerminal(path, operatorUser, password, gid)
+			return err
+		}
+	} else if _, err := manager.Runner.Run(transitionCtx, systemctlPath, "disable", "--now", terminalServiceUnit); err != nil {
 		manager.failClosedTerminal(path, operatorUser, password, gid)
 		return err
 	}
@@ -184,7 +190,7 @@ func (manager *NativeTerminalCredentialManager) terminalServiceState(ctx context
 }
 
 func (manager *NativeTerminalCredentialManager) failClosedTerminal(path string, operatorUser string, password string, gid int) {
-	_ = writeAtomicTerminalRuntimeFile(path, []byte(terminalRuntimeEnvContent("0", operatorUser, password)), gid)
+	_ = writeAtomicTerminalRuntimeFile(path, []byte(terminalRuntimeEnvContent("0", false, operatorUser, password)), gid)
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, _ = manager.Runner.Run(rollbackCtx, systemctlPath, "disable", terminalServiceUnit)
@@ -231,11 +237,15 @@ func applyTerminalRuntimeCredential(path string, operatorUser string, password s
 		return errors.New("terminal runtime path is not allowlisted")
 	}
 	enabled := "0"
+	allowWrite := false
 	if raw, err := readRegularFile(path, 4096); err == nil {
 		for _, line := range strings.Split(string(raw), "\n") {
 			key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
 			if ok && key == "TERMINAL_ENABLED" && strings.TrimSpace(value) == "1" {
 				enabled = "1"
+			}
+			if ok && key == "TERMINAL_ALLOW_WRITE" && strings.TrimSpace(value) == "1" {
+				allowWrite = true
 			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -249,15 +259,20 @@ func applyTerminalRuntimeCredential(path string, operatorUser string, password s
 	if err != nil {
 		return err
 	}
-	content := terminalRuntimeEnvContent(enabled, operatorUser, password)
+	content := terminalRuntimeEnvContent(enabled, allowWrite, operatorUser, password)
 	return writeAtomicTerminalRuntimeFile(path, []byte(content), gid)
 }
 
-func terminalRuntimeEnvContent(enabled string, operatorUser string, password string) string {
+func terminalRuntimeEnvContent(enabled string, allowWrite bool, operatorUser string, password string) string {
 	if enabled != "1" {
 		enabled = "0"
+		allowWrite = false
 	}
-	return fmt.Sprintf("TERMINAL_ENABLED=%s\nTERMINAL_CREDENTIAL=%s:%s\nTERMINAL_ALLOW_WRITE=0\nTERMINAL_PORT=7681\nTERMINAL_OPERATOR_USER=%s\nTERMINAL_TERM=xterm\nTERMINAL_SHELL=/bin/bash\nTERMINAL_WS_ORIGIN=\n", enabled, operatorUser, password, operatorUser)
+	allowWriteValue := "0"
+	if allowWrite {
+		allowWriteValue = "1"
+	}
+	return fmt.Sprintf("TERMINAL_ENABLED=%s\nTERMINAL_CREDENTIAL=%s:%s\nTERMINAL_ALLOW_WRITE=%s\nTERMINAL_PORT=7681\nTERMINAL_OPERATOR_USER=%s\nTERMINAL_TERM=xterm\nTERMINAL_SHELL=/bin/bash\nTERMINAL_WS_ORIGIN=\n", enabled, operatorUser, password, allowWriteValue, operatorUser)
 }
 
 func writeAtomicTerminalRuntimeFile(path string, content []byte, gid int) error {

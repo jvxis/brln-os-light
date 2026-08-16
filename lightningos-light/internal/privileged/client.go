@@ -797,7 +797,7 @@ func (client *Client) SystemIntegrationsStatus(ctx context.Context) (bool, error
 	if err := decodeStrict(response.Result, &state); err != nil {
 		return false, errors.New("invalid broker system integrations status response")
 	}
-	if state.CertificateChanged || state.LNDPolicyChanged {
+	if state.CertificateChanged || state.LNDPolicyChanged || state.ReportsPolicyChanged || state.TerminalPolicyChanged {
 		return false, errors.New("invalid broker system integrations status state")
 	}
 	switch state.Status {
@@ -853,27 +853,29 @@ func (client *Client) RotateTerminalCredential(ctx context.Context, operatorUser
 	return state.OperatorUser, nil
 }
 
-func (client *Client) SetTerminalEnabled(ctx context.Context, enabled bool, dryRun bool) (bool, error) {
+func (client *Client) SetTerminalEnabled(ctx context.Context, enabled bool, allowWrite bool, dryRun bool) (bool, bool, error) {
 	action := TerminalControlDisable
 	if enabled {
 		action = TerminalControlEnable
+	} else {
+		allowWrite = false
 	}
-	response, err := client.call(ctx, OperationTerminalControl, TerminalControlParams{Action: action}, dryRun)
+	response, err := client.call(ctx, OperationTerminalControl, TerminalControlParams{Action: action, AllowWrite: allowWrite}, dryRun)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	var state TerminalControlState
 	if err := decodeStrict(response.Result, &state); err != nil {
-		return false, errors.New("invalid broker terminal control response")
+		return false, false, errors.New("invalid broker terminal control response")
 	}
 	expectedStatus := "applied"
 	if dryRun {
 		expectedStatus = "validated"
 	}
-	if state.Status != expectedStatus || state.Enabled != enabled {
-		return false, errors.New("invalid broker terminal control state")
+	if state.Status != expectedStatus || state.Enabled != enabled || state.AllowWrite != allowWrite {
+		return false, false, errors.New("invalid broker terminal control state")
 	}
-	return state.Enabled, nil
+	return state.Enabled, state.AllowWrite, nil
 }
 
 func decodeSystemIntegrationsState(response Response, dryRun bool) (SystemIntegrationsState, error) {
@@ -885,7 +887,7 @@ func decodeSystemIntegrationsState(response Response, dryRun bool) (SystemIntegr
 	if dryRun {
 		expected = "validated"
 	}
-	if state.Status != expected || (dryRun && (state.CertificateChanged || state.LNDPolicyChanged)) {
+	if state.Status != expected || (dryRun && (state.CertificateChanged || state.LNDPolicyChanged || state.ReportsPolicyChanged || state.TerminalPolicyChanged)) {
 		return SystemIntegrationsState{}, errors.New("invalid broker system integrations state")
 	}
 	return state, nil

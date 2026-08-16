@@ -43,23 +43,23 @@ func TestWaitForTerminalTCPReady(t *testing.T) {
 func TestTerminalControlManagerUsesExistingCredentialAndTypedState(t *testing.T) {
 	const password = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
 	runtimePath := filepath.Join(t.TempDir(), "terminal.env")
-	if err := os.WriteFile(runtimePath, []byte(terminalRuntimeEnvContent("0", "losop", password)), 0600); err != nil {
+	if err := os.WriteFile(runtimePath, []byte(terminalRuntimeEnvContent("0", false, "losop", password)), 0600); err != nil {
 		t.Fatal(err)
 	}
 	called := false
 	manager := &NativeTerminalCredentialManager{
 		Runner:         &terminalCredentialRunner{user: "losop"},
 		RuntimeEnvPath: runtimePath,
-		ApplyControl: func(_ context.Context, path string, operatorUser string, appliedPassword string, enabled bool) error {
+		ApplyControl: func(_ context.Context, path string, operatorUser string, appliedPassword string, enabled bool, allowWrite bool) error {
 			called = true
-			if path != runtimePath || operatorUser != "losop" || appliedPassword != password || !enabled {
-				t.Fatalf("unexpected control input: path=%q user=%q password_len=%d enabled=%v", path, operatorUser, len(appliedPassword), enabled)
+			if path != runtimePath || operatorUser != "losop" || appliedPassword != password || !enabled || !allowWrite {
+				t.Fatalf("unexpected control input: path=%q user=%q password_len=%d enabled=%v allow_write=%v", path, operatorUser, len(appliedPassword), enabled, allowWrite)
 			}
 			return nil
 		},
 	}
-	state, err := manager.SetEnabled(context.Background(), TerminalControlParams{Action: TerminalControlEnable}, false)
-	if err != nil || !called || state.Status != "applied" || !state.Enabled {
+	state, err := manager.SetEnabled(context.Background(), TerminalControlParams{Action: TerminalControlEnable, AllowWrite: true}, false)
+	if err != nil || !called || state.Status != "applied" || !state.Enabled || !state.AllowWrite {
 		t.Fatalf("state/called/error=%+v/%v/%v", state, called, err)
 	}
 	called = false
@@ -77,10 +77,10 @@ func TestTerminalControlManagerFailsClosedBeforeMutation(t *testing.T) {
 		content string
 		action  TerminalControlAction
 	}{
-		{name: "root service", user: "root", content: terminalRuntimeEnvContent("0", "root", password), action: TerminalControlEnable},
-		{name: "credential mismatch", user: "other", content: terminalRuntimeEnvContent("0", "losop", password), action: TerminalControlEnable},
+		{name: "root service", user: "root", content: terminalRuntimeEnvContent("0", false, "root", password), action: TerminalControlEnable},
+		{name: "credential mismatch", user: "other", content: terminalRuntimeEnvContent("0", false, "losop", password), action: TerminalControlEnable},
 		{name: "invalid credential", user: "losop", content: "TERMINAL_CREDENTIAL=losop:short\n", action: TerminalControlEnable},
-		{name: "invalid action", user: "losop", content: terminalRuntimeEnvContent("0", "losop", password), action: "restart"},
+		{name: "invalid action", user: "losop", content: terminalRuntimeEnvContent("0", false, "losop", password), action: "restart"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runtimePath := filepath.Join(t.TempDir(), "terminal.env")
@@ -91,7 +91,7 @@ func TestTerminalControlManagerFailsClosedBeforeMutation(t *testing.T) {
 			manager := &NativeTerminalCredentialManager{
 				Runner:         &terminalCredentialRunner{user: test.user},
 				RuntimeEnvPath: runtimePath,
-				ApplyControl: func(context.Context, string, string, string, bool) error {
+				ApplyControl: func(context.Context, string, string, string, bool, bool) error {
 					called = true
 					return nil
 				},
@@ -161,11 +161,11 @@ func TestTerminalCredentialManagerFailsClosedBeforeRuntimeMutation(t *testing.T)
 
 func TestTerminalRuntimeEnvironmentIsSecretMinimalAndReadOnly(t *testing.T) {
 	const password = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
-	content := terminalRuntimeEnvContent("1", "losop", password)
+	content := terminalRuntimeEnvContent("1", true, "losop", password)
 	for _, required := range []string{
 		"TERMINAL_ENABLED=1\n",
 		"TERMINAL_CREDENTIAL=losop:" + password + "\n",
-		"TERMINAL_ALLOW_WRITE=0\n",
+		"TERMINAL_ALLOW_WRITE=1\n",
 	} {
 		if !strings.Contains(content, required) {
 			t.Fatalf("terminal runtime environment is missing %q", required)
@@ -176,8 +176,11 @@ func TestTerminalRuntimeEnvironmentIsSecretMinimalAndReadOnly(t *testing.T) {
 			t.Fatalf("terminal runtime environment contains forbidden key %q", forbidden)
 		}
 	}
-	if strings.Contains(terminalRuntimeEnvContent("unexpected", "losop", password), "TERMINAL_ENABLED=1") {
+	if strings.Contains(terminalRuntimeEnvContent("unexpected", true, "losop", password), "TERMINAL_ENABLED=1") {
 		t.Fatal("unexpected enabled value did not fail closed")
+	}
+	if strings.Contains(terminalRuntimeEnvContent("unexpected", true, "losop", password), "TERMINAL_ALLOW_WRITE=1") {
+		t.Fatal("write access did not fail closed with the terminal disabled")
 	}
 }
 
@@ -216,21 +219,22 @@ func (manager *recordingTerminalCredentialManager) Rotate(_ context.Context, par
 }
 
 func TestTerminalControlProtocolAndBrokerAreTypedAndLocked(t *testing.T) {
-	request := requestWithParams(t, OperationTerminalControl, TerminalControlParams{Action: TerminalControlEnable}, false)
+	request := requestWithParams(t, OperationTerminalControl, TerminalControlParams{Action: TerminalControlEnable, AllowWrite: true}, false)
 	if err := ValidateRequest(request); err != nil {
 		t.Fatalf("valid terminal control request rejected: %v", err)
 	}
-	manager := &recordingTerminalControlManager{state: TerminalControlState{Status: "applied", Enabled: true}}
+	manager := &recordingTerminalControlManager{state: TerminalControlState{Status: "applied", Enabled: true, AllowWrite: true}}
 	locker := &recordingLocker{}
 	broker := &Broker{Runner: &recordingRunner{}, Audit: &recordingAudit{}, Locker: locker, TerminalControl: manager, Caller: "test"}
 	response := broker.Handle(context.Background(), request)
-	if !response.OK || manager.params.Action != TerminalControlEnable || manager.dryRun || locker.locks != 1 || locker.unlocks != 1 {
+	if !response.OK || manager.params.Action != TerminalControlEnable || !manager.params.AllowWrite || manager.dryRun || locker.locks != 1 || locker.unlocks != 1 {
 		t.Fatalf("unexpected broker dispatch: response=%+v manager=%+v locker=%+v", response, manager, locker)
 	}
 	for _, raw := range []string{
 		`{"action":"restart"}`,
 		`{"action":"enable","command":"/bin/sh"}`,
 		`{"action":"enable","path":"/etc/shadow"}`,
+		`{"action":"disable","allow_write":true}`,
 	} {
 		invalid := request
 		invalid.Params = []byte(raw)

@@ -8,21 +8,22 @@ import (
 
 type fakeTerminalCredentialClient struct {
 	*fakePrivilegedServiceClient
-	operator         string
-	password         string
-	dryRun           bool
-	result           string
-	err              error
-	controlRequested bool
-	controlEnabled   bool
-	controlDryRun    bool
-	controlResult    bool
-	controlErr       error
+	operator          string
+	password          string
+	dryRun            bool
+	result            string
+	err               error
+	controlRequested  bool
+	controlEnabled    bool
+	controlAllowWrite bool
+	controlDryRun     bool
+	controlResult     bool
+	controlErr        error
 }
 
-func (client *fakeTerminalCredentialClient) SetTerminalEnabled(_ context.Context, enabled bool, dryRun bool) (bool, error) {
-	client.controlRequested, client.controlEnabled, client.controlDryRun = true, enabled, dryRun
-	return client.controlResult, client.controlErr
+func (client *fakeTerminalCredentialClient) SetTerminalEnabled(_ context.Context, enabled bool, allowWrite bool, dryRun bool) (bool, bool, error) {
+	client.controlRequested, client.controlEnabled, client.controlAllowWrite, client.controlDryRun = true, enabled, allowWrite, dryRun
+	return client.controlResult, allowWrite, client.controlErr
 }
 
 func (client *fakeTerminalCredentialClient) RotateTerminalCredential(_ context.Context, operatorUser string, password string, dryRun bool) (string, error) {
@@ -54,11 +55,11 @@ func TestSetTerminalEnabledWithBrokerModes(t *testing.T) {
 			}
 			ConfigurePrivilegedClient(client)
 			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
-			handled, err := SetTerminalEnabledWithBroker(context.Background(), true)
+			handled, err := SetTerminalEnabledWithBroker(context.Background(), true, true)
 			if handled != test.wantHandled || (err != nil) != test.wantError || client.controlDryRun != test.wantDryRun {
 				t.Fatalf("handled/error/client=%v/%v/%+v", handled, err, client)
 			}
-			if test.mode != "disabled" && (!client.controlRequested || !client.controlEnabled) {
+			if test.mode != "disabled" && (!client.controlRequested || !client.controlEnabled || !client.controlAllowWrite) {
 				t.Fatalf("typed terminal control request was not preserved: %+v", client)
 			}
 		})

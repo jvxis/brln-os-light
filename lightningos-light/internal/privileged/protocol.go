@@ -162,10 +162,11 @@ type SystemIntegrationAssetState struct {
 }
 
 type SystemIntegrationsState struct {
-	Status               string `json:"status"`
-	CertificateChanged   bool   `json:"certificate_changed,omitempty"`
-	LNDPolicyChanged     bool   `json:"lnd_policy_changed,omitempty"`
-	ReportsPolicyChanged bool   `json:"reports_policy_changed,omitempty"`
+	Status                string `json:"status"`
+	CertificateChanged    bool   `json:"certificate_changed,omitempty"`
+	LNDPolicyChanged      bool   `json:"lnd_policy_changed,omitempty"`
+	ReportsPolicyChanged  bool   `json:"reports_policy_changed,omitempty"`
+	TerminalPolicyChanged bool   `json:"terminal_policy_changed,omitempty"`
 }
 
 type TerminalCredentialRotateParams struct {
@@ -186,12 +187,14 @@ const (
 )
 
 type TerminalControlParams struct {
-	Action TerminalControlAction `json:"action"`
+	Action     TerminalControlAction `json:"action"`
+	AllowWrite bool                  `json:"allow_write"`
 }
 
 type TerminalControlState struct {
-	Status  string `json:"status"`
-	Enabled bool   `json:"enabled"`
+	Status     string `json:"status"`
+	Enabled    bool   `json:"enabled"`
+	AllowWrite bool   `json:"allow_write"`
 }
 
 type ManagerFirewallState struct {
@@ -746,6 +749,9 @@ func ValidateRequest(request Request) error {
 		}
 		if params.Action != TerminalControlEnable && params.Action != TerminalControlDisable {
 			return errors.New("terminal control action is not allowed")
+		}
+		if params.Action == TerminalControlDisable && params.AllowWrite {
+			return errors.New("terminal write access cannot be enabled while disabled")
 		}
 	case OperationManagerFirewallStatus:
 		if request.DryRun {

@@ -79,6 +79,11 @@ Current product backlog, after checking the repository against the docs:
     The preferred future shape is a native `waved` sidecar connected to the
     existing LND with a dedicated scoped macaroon, not the browser WASM SDK in
     the main SPA. Do not ship on mainnet yet; see section 15.
+15. **Implemented in 0.5.11-Beta (pending runtime validation)** - Localized
+    upgrade-log timestamps. App, LND, and Tor upgrade logs now request an
+    unambiguous ISO timestamp with year and UTC offset from `journalctl`, then
+    render it using the browser locale and timezone instead of the legacy
+    English `Mon DD HH:mm:ss` prefix.
 
 ## Implemented Since Last Audit
 

@@ -110,6 +110,47 @@ alter table reports_daily add column if not exists net_total_msat bigint not nul
 	return err
 }
 
+// MissingDailyDates returns gaps between the first persisted report and the
+// last complete day. On a new installation only the last complete day is
+// expected, so reconciliation never invents history from before LightningOS.
+func MissingDailyDates(ctx context.Context, db *pgxpool.Pool, endDate time.Time) ([]time.Time, error) {
+	if db == nil {
+		return nil, errors.New("reports database is unavailable")
+	}
+	endDate = normalizeReportDate(endDate)
+	rows, err := db.Query(ctx, `
+with bounds as (
+  select coalesce(min(report_date), $1::date) as start_date
+  from reports_daily
+), expected as (
+  select generate_series(bounds.start_date, $1::date, interval '1 day')::date as report_date
+  from bounds
+)
+select expected.report_date
+from expected
+left join reports_daily existing using (report_date)
+where existing.report_date is null
+order by expected.report_date
+`, endDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	missing := make([]time.Time, 0)
+	for rows.Next() {
+		var reportDate time.Time
+		if err := rows.Scan(&reportDate); err != nil {
+			return nil, err
+		}
+		missing = append(missing, normalizeReportDate(reportDate))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return missing, nil
+}
+
 func UpsertDaily(ctx context.Context, db *pgxpool.Pool, row Row) error {
 	if db == nil {
 		return nil

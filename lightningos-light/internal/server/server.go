@@ -46,6 +46,8 @@ type Server struct {
 	reportsMu                   sync.Mutex
 	reportsInitAt               time.Time
 	reportsWarmupStarted        bool
+	reportsReconcileMu          sync.Mutex
+	reportsReconcileJob         reportsReconciliationJob
 	auth                        *AuthService
 	auditLogInitAt              time.Time
 	auditLogMu                  sync.Mutex

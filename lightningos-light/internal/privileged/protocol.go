@@ -162,9 +162,10 @@ type SystemIntegrationAssetState struct {
 }
 
 type SystemIntegrationsState struct {
-	Status             string `json:"status"`
-	CertificateChanged bool   `json:"certificate_changed,omitempty"`
-	LNDPolicyChanged   bool   `json:"lnd_policy_changed,omitempty"`
+	Status               string `json:"status"`
+	CertificateChanged   bool   `json:"certificate_changed,omitempty"`
+	LNDPolicyChanged     bool   `json:"lnd_policy_changed,omitempty"`
+	ReportsPolicyChanged bool   `json:"reports_policy_changed,omitempty"`
 }
 
 type TerminalCredentialRotateParams struct {

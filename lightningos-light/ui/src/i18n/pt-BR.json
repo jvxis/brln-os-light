@@ -2383,6 +2383,16 @@
       "12m": "12 meses",
       "all": "Todo o período"
     },
+    "reconciliation": {
+      "title": "Há relatórios diários pendentes",
+      "missing": "Detectamos {{count}} dia(s) sem consolidação.",
+      "running": "Reconciliando histórico: {{completed}} de {{total}} dia(s).",
+      "safety": "A operação apenas consulta o histórico e atualiza o banco de relatórios; LND e Bitcoin não são reiniciados.",
+      "action": "Reconciliar relatórios",
+      "reconciling": "Reconciliando...",
+      "failed": "Falha ao iniciar a reconciliação.",
+      "unavailable": "Não foi possível verificar a integridade dos relatórios."
+    },
     "rebalanceCount": "Contagem de Rebalance",
     "rebalanceVolume": "Volume de rebalance",
     "rebalances": "Rebalances",
@@ -2419,7 +2429,7 @@
     "totalCostWithOnchain": "Custo total (offchain + on-chain)",
     "totals": "Totais",
     "unavailable": "Relatórios indisponíveis",
-    "updatedDaily": "Atualizado diariamente às 00:00 no horário local"
+    "updatedDaily": "Reconciliação automática a cada hora"
   },
   "wallet": {
     "spendingGuardTitle": "Proteção de Gastos Lightning",

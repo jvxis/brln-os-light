@@ -24,6 +24,7 @@
 ## Reports CLI
 - Daily run for a specific date:
   lightningos-manager reports-run --date YYYY-MM-DD
+  lightningos-manager reports-reconcile
 - Backfill:
   lightningos-manager reports-backfill --from YYYY-MM-DD --to YYYY-MM-DD
 

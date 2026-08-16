@@ -144,6 +144,8 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 		ManagerFirewallHelper: filepath.Join(root, "sbin", "lightningos-manager-firewall"),
 		ManagerTLSMDNSHelper:  filepath.Join(root, "sbin", "lightningos-setup-manager-tls-mdns"),
 		LNDDropIn:             filepath.Join(root, "systemd", "lnd.service.d", "20-lightningos-restart.conf"),
+		ReportsService:        filepath.Join(root, "systemd", "lightningos-reports.service"),
+		ReportsTimer:          filepath.Join(root, "systemd", "lightningos-reports.timer"),
 		ManagerTLSCertificate: filepath.Join(root, "tls", "server.crt"),
 		Marker:                filepath.Join(root, "state", "system-integrations-v5"),
 	}
@@ -191,11 +193,20 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 	}
 
 	applied, err := manager.Apply(context.Background(), false)
-	if err != nil || applied.Status != "ready" || !applied.CertificateChanged || !applied.LNDPolicyChanged {
+	if err != nil || applied.Status != "ready" || !applied.CertificateChanged || !applied.LNDPolicyChanged || !applied.ReportsPolicyChanged {
 		t.Fatalf("apply integrations: state=%+v err=%v", applied, err)
 	}
 	if raw, err := os.ReadFile(paths.LNDDropIn); err != nil || string(raw) != lndIntegrationDropIn {
 		t.Fatalf("unexpected LND policy: %q err=%v", raw, err)
+	}
+	if raw, err := os.ReadFile(paths.ReportsService); err != nil || string(raw) != reportsServiceUnit {
+		t.Fatalf("unexpected reports service: %q err=%v", raw, err)
+	}
+	if raw, err := os.ReadFile(paths.ReportsTimer); err != nil || string(raw) != reportsTimerUnit {
+		t.Fatalf("unexpected reports timer: %q err=%v", raw, err)
+	}
+	if !containsRecordedCommand(runner.commands, recordedCommand{path: systemctlPath, args: []string{"enable", "--now", "lightningos-reports.timer"}}) {
+		t.Fatalf("reports timer was not activated: %+v", runner.commands)
 	}
 	if _, err := os.Stat(paths.Marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("apply wrote final marker before external enrollment: %v", err)
@@ -220,6 +231,12 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 	if status, err := manager.Status(context.Background()); err != nil || status.Status != "ready" {
 		t.Fatalf("integrations not ready after finalization: state=%+v err=%v", status, err)
 	}
+	if err := os.WriteFile(paths.ReportsTimer, []byte("tampered\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := manager.Status(context.Background()); err != nil || status.Status != "absent" {
+		t.Fatalf("tampered reports timer was not detected: state=%+v err=%v", status, err)
+	}
 }
 
 func TestSystemIntegrationsMarkerIsOutsideManagerSharedState(t *testing.T) {
@@ -229,6 +246,25 @@ func TestSystemIntegrationsMarkerIsOutsideManagerSharedState(t *testing.T) {
 	}
 	if isManagerSharedStorageRoot(markerDir) {
 		t.Fatalf("system integrations marker would mutate a manager shared storage root: %s", markerDir)
+	}
+}
+
+func TestReportsSystemdTemplatesMatchBrokerPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		{name: "service", path: filepath.Join("..", "..", "templates", "systemd", "lightningos-reports.service"), expected: reportsServiceUnit},
+		{name: "timer", path: filepath.Join("..", "..", "templates", "systemd", "lightningos-reports.timer"), expected: reportsTimerUnit},
+	} {
+		raw, err := os.ReadFile(test.path)
+		if err != nil {
+			t.Fatalf("read reports %s template: %v", test.name, err)
+		}
+		if strings.ReplaceAll(string(raw), "\r\n", "\n") != test.expected {
+			t.Fatalf("reports %s template drifted from broker policy", test.name)
+		}
 	}
 }
 

@@ -42,7 +42,7 @@
 - Boost peers by mempool connectivity ranking.
 
 ### Reports
-- Daily job at 00:00 local time computes D-1 metrics and stores in Postgres.
+- An hourly idempotent reconciliation job computes missing complete local days and stores them in Postgres.
 - Idempotent UPSERT by report_date.
 - Stored metrics include revenue, rebalance cost, net, counts, and balances.
 - Live results endpoint computes metrics from 00:00 to now on demand.

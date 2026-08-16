@@ -252,10 +252,12 @@ Environment keys:
 - `NOTIFICATIONS_TG_CHAT_ID`
 
 ## Reports
-Daily routing reports are computed at midnight local time and stored in Postgres (same DB/user as notifications).
+Daily routing reports are stored in Postgres (same DB/user as notifications) and reconciled idempotently through the last complete local day.
 
 Schedule:
-- `lightningos-reports.timer` runs `lightningos-reports.service` at `00:00` local time.
+- `lightningos-reports.timer` runs reconciliation at minute `05` of every hour. Missed or transiently failed days are retried automatically.
+- The UI detects missing complete days at startup and offers a **Reconcile reports** action with progress. This does not restart LND or Bitcoin.
+- Automatic/manual reconciliation: `/opt/lightningos/manager/lightningos-manager reports-reconcile`.
 - Manual run: `/opt/lightningos/manager/lightningos-manager reports-run --date YYYY-MM-DD` (defaults to yesterday).
 - Backfill: `/opt/lightningos/manager/lightningos-manager reports-backfill --from YYYY-MM-DD --to YYYY-MM-DD` (default max 730 days; use `--max-days N` to override).
 - Optional timezone pin: set `REPORTS_TIMEZONE=America/Sao_Paulo` in `/etc/lightningos/secrets.env` to force daily, backfill, and live reports to use the same IANA timezone.

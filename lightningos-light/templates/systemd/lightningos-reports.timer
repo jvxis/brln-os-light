@@ -1,8 +1,8 @@
 [Unit]
-Description=LightningOS Reports Timer
+Description=LightningOS Reports Reconciliation Timer
 
 [Timer]
-OnCalendar=*-*-* 00:00:00
+OnCalendar=*-*-* *:05:00
 Persistent=true
 Unit=lightningos-reports.service
 

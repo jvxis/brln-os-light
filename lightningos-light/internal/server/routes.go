@@ -151,6 +151,8 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/reports/summary/custom", s.handleReportsSummaryCustom)
 	r.Get("/api/reports/live", s.handleReportsLive)
 	r.Get("/api/reports/movement/live", s.handleReportsMovementLive)
+	r.Get("/api/reports/reconciliation", s.handleReportsReconciliationGet)
+	r.Post("/api/reports/reconciliation", s.handleReportsReconciliationPost)
 	r.Get("/api/reports/config", s.handleReportsConfigGet)
 	r.Post("/api/reports/config", s.handleReportsConfigPost)
 	r.Get("/api/depix/config", s.handleDepixConfig)

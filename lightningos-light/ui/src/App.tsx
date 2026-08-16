@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import AuthScreen from './components/AuthScreen'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
+import ReportsReconciliationNotice from './components/ReportsReconciliationNotice'
 import Dashboard from './pages/Dashboard'
 import Reports from './pages/Reports'
 import Wizard from './pages/Wizard'
@@ -587,6 +588,7 @@ export default function App() {
             onLogout={authState.enabled ? handleLogout : undefined}
           />
           <main className="app-content px-6 pb-16 pt-6 lg:px-12">
+            <ReportsReconciliationNotice />
             {current.element}
           </main>
         </div>

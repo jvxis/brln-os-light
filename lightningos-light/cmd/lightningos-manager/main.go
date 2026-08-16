@@ -31,6 +31,9 @@ func main() {
 		case "reports-backfill":
 			runReportsBackfill(os.Args[2:])
 			return
+		case "reports-reconcile":
+			runReportsReconcile(os.Args[2:])
+			return
 		case "broker-self-test":
 			runBrokerSelfTest()
 			return
@@ -315,6 +318,54 @@ func runReportsBackfill(args []string) {
 			row.Metrics.TotalFeeCostWithOnchainSat(),
 			row.Metrics.NetRoutingProfitSat,
 		)
+	}
+}
+
+func runReportsReconcile(args []string) {
+	fs := flag.NewFlagSet("reports-reconcile", flag.ExitOnError)
+	configPath := fs.String("config", "/etc/lightningos/config.yaml", "Path to config.yaml")
+	_ = fs.Parse(args)
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("config load failed: %v", err)
+	}
+	logger := log.New(os.Stdout, "", log.LstdFlags)
+	dsn, err := server.ResolveNotificationsDSN(logger)
+	if err != nil {
+		logger.Fatalf("reports-reconcile failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), reportsRunTimeout())
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		logger.Fatalf("reports-reconcile failed: %v", err)
+	}
+	defer pool.Close()
+
+	svc := reports.NewService(pool, lndclient.New(cfg, logger), logger)
+	if err := svc.EnsureSchema(ctx); err != nil {
+		logger.Fatalf("reports-reconcile failed: %v", err)
+	}
+	loc := resolveReportsLocation(logger)
+	yesterday := time.Now().In(loc).AddDate(0, 0, -1)
+	missing, err := svc.MissingDailyDates(ctx, yesterday)
+	if err != nil {
+		logger.Fatalf("reports-reconcile failed: %v", err)
+	}
+	if len(missing) == 0 {
+		logger.Printf("reports: reconciliation complete; no missing daily reports")
+		return
+	}
+	logger.Printf("reports: reconciling %d missing daily report(s), %s -> %s", len(missing), missing[0].Format("2006-01-02"), missing[len(missing)-1].Format("2006-01-02"))
+	if err := svc.ReconcileDates(ctx, missing, loc, func(completed, total int, reportDate time.Time) {
+		logger.Printf("reports: reconciled %s (%d/%d)", reportDate.Format("2006-01-02"), completed, total)
+	}); err != nil {
+		logger.Fatalf("reports-reconcile failed: %v", err)
+	}
+	if _, err := svc.CaptureMovementTargetForDate(ctx, time.Now().In(loc), loc); err != nil {
+		logger.Printf("reports: movement target capture failed: %v", err)
 	}
 }
 

@@ -262,6 +262,7 @@ export default function Reports() {
   const [includeOnchainCostInCharts, setIncludeOnchainCostInCharts] = useState(false)
   const [includeOnchainBreakdownInCharts, setIncludeOnchainBreakdownInCharts] = useState(false)
   const [useDualScaleInCumulativeChart, setUseDualScaleInCumulativeChart] = useState(false)
+  const [reportsRefreshKey, setReportsRefreshKey] = useState(0)
 
   const formatter = useMemo(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 3 }), [locale])
   const compactFormatter = useMemo(() => new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }), [locale])
@@ -528,7 +529,13 @@ export default function Reports() {
     return () => {
       active = false
     }
-  }, [customRangeWindow, movementLive?.date, range, t])
+  }, [customRangeWindow, movementLive?.date, range, reportsRefreshKey, t])
+
+  useEffect(() => {
+    const refresh = () => setReportsRefreshKey((value) => value + 1)
+    window.addEventListener('reports:reconciled', refresh)
+    return () => window.removeEventListener('reports:reconciled', refresh)
+  }, [])
 
   useEffect(() => {
     const selectedToday = range === 'date' && isTodaySelection(customDate, movementLive?.date)

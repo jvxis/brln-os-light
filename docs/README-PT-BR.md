@@ -249,10 +249,12 @@ Chaves de ambiente:
 - `NOTIFICATIONS_TG_CHAT_ID`
 
 ## Relatórios
-Relatórios diários de roteamento são calculados à meia-noite no horário local e armazenados no Postgres (mesmo DB/usuário de notificações).
+Relatórios diários de roteamento são armazenados no Postgres (mesmo DB/usuário de notificações) e reconciliados de forma idempotente até o último dia local completo.
 
 Agenda:
-- `lightningos-reports.timer` executa `lightningos-reports.service` às `00:00` local.
+- `lightningos-reports.timer` executa a reconciliação no minuto `05` de cada hora. Dias ausentes ou com falha transitória são tentados novamente automaticamente.
+- A UI detecta dias completos ausentes ao abrir e oferece a ação **Reconciliar relatórios**, com progresso. A operação não reinicia LND nem Bitcoin.
+- Reconciliação automática/manual: `/opt/lightningos/manager/lightningos-manager reports-reconcile`.
 - Execução manual: `/opt/lightningos/manager/lightningos-manager reports-run --date YYYY-MM-DD` (padrão: ontem).
 - Backfill: `/opt/lightningos/manager/lightningos-manager reports-backfill --from YYYY-MM-DD --to YYYY-MM-DD` (máximo padrão de 730 dias; use `--max-days N` para sobrescrever).
 - Pin opcional de timezone: defina `REPORTS_TIMEZONE=America/Sao_Paulo` em `/etc/lightningos/secrets.env` para forçar relatórios diários, backfill e live no mesmo timezone IANA.

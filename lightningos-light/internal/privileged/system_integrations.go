@@ -16,8 +16,10 @@ const (
 	defaultManagerFirewallHelperPath = "/usr/local/sbin/lightningos-manager-firewall"
 	defaultManagerTLSMDNSHelperPath  = "/usr/local/sbin/lightningos-setup-manager-tls-mdns"
 	defaultLNDIntegrationDropInPath  = "/etc/systemd/system/lnd.service.d/20-lightningos-restart.conf"
+	defaultReportsServicePath        = "/etc/systemd/system/lightningos-reports.service"
+	defaultReportsTimerPath          = "/etc/systemd/system/lightningos-reports.timer"
 	defaultManagerTLSCertificatePath = "/etc/lightningos/tls/server.crt"
-	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20260815-v7"
+	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20260816-v8"
 	envExecutablePath                = "/usr/bin/env"
 	idExecutablePath                 = "/usr/bin/id"
 
@@ -25,7 +27,41 @@ const (
 	managerFirewallHelperSHA256 = "cb0c9e4e0ef773b67a9b08218f29c4020e29202eea342d11cc9b502e2f4c9dc8"
 	managerTLSMDNSHelperSHA256  = "7ff9f17061eec00aec8eedc389044b0cf283e639f8e8f0cfda4ca47c6074b8f9"
 
-	lndIntegrationDropIn            = "[Service]\nRestart=always\nRestartSec=60\n"
+	lndIntegrationDropIn = "[Service]\nRestart=always\nRestartSec=60\n"
+	reportsServiceUnit   = `[Unit]
+Description=LightningOS Reports Reconciliation
+After=network-online.target lnd.service postgresql.service
+Wants=network-online.target
+
+[Service]
+User=lightningos
+Group=lightningos
+SupplementaryGroups=lnd systemd-journal
+Type=oneshot
+Environment=REPORTS_RUN_TIMEOUT_SEC=600
+EnvironmentFile=/etc/lightningos/secrets.env
+ExecStart=/opt/lightningos/manager/lightningos-manager reports-reconcile --config /etc/lightningos/config.yaml
+LimitNOFILE=65536
+
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/lightningos /var/log/lightningos /etc/lightningos /data/lnd
+
+[Install]
+WantedBy=multi-user.target
+`
+	reportsTimerUnit = `[Unit]
+Description=LightningOS Reports Reconciliation Timer
+
+[Timer]
+OnCalendar=*-*-* *:05:00
+Persistent=true
+Unit=lightningos-reports.service
+
+[Install]
+WantedBy=timers.target
+`
 	systemIntegrationsMarkerContent = "ready\n"
 )
 
@@ -52,6 +88,10 @@ func (manager *NativeSystemIntegrationsManager) Status(_ context.Context) (Syste
 	if err := manager.verifyInstalledAssets(); err != nil {
 		return SystemIntegrationsState{Status: "absent"}, nil
 	}
+	reportsCurrent, err := manager.reportsUnitsCurrent()
+	if err != nil || !reportsCurrent {
+		return SystemIntegrationsState{Status: "absent"}, nil
+	}
 	return SystemIntegrationsState{Status: "ready"}, nil
 }
 
@@ -60,6 +100,8 @@ type SystemIntegrationPaths struct {
 	ManagerFirewallHelper string
 	ManagerTLSMDNSHelper  string
 	LNDDropIn             string
+	ReportsService        string
+	ReportsTimer          string
 	ManagerTLSCertificate string
 	Marker                string
 }
@@ -83,6 +125,8 @@ func NewNativeSystemIntegrationsManager(runner CommandRunner) *NativeSystemInteg
 			ManagerFirewallHelper: defaultManagerFirewallHelperPath,
 			ManagerTLSMDNSHelper:  defaultManagerTLSMDNSHelperPath,
 			LNDDropIn:             defaultLNDIntegrationDropInPath,
+			ReportsService:        defaultReportsServicePath,
+			ReportsTimer:          defaultReportsTimerPath,
 			ManagerTLSCertificate: defaultManagerTLSCertificatePath,
 			Marker:                defaultSystemIntegrationsMarker,
 		},
@@ -135,6 +179,7 @@ func (manager *NativeSystemIntegrationsManager) Apply(ctx context.Context, dryRu
 	}
 
 	state := SystemIntegrationsState{Status: "ready"}
+	systemdChanged := false
 	loaded, err := manager.lndServiceLoaded(ctx)
 	if err != nil {
 		return SystemIntegrationsState{}, err
@@ -157,11 +202,26 @@ func (manager *NativeSystemIntegrationsManager) Apply(ctx context.Context, dryRu
 			if err := validateSystemIntegrationFile(manager.Paths.LNDDropIn, 0644); err != nil {
 				return SystemIntegrationsState{}, errors.New("LND integration policy is unsafe")
 			}
-			if _, err := manager.Runner.Run(ctx, systemctlPath, "daemon-reload"); err != nil {
-				return SystemIntegrationsState{}, errors.New("systemd integration reload failed")
-			}
+			systemdChanged = true
 			state.LNDPolicyChanged = true
 		}
+	}
+
+	reportsChanged, err := manager.reconcileReportsUnits()
+	if err != nil {
+		return SystemIntegrationsState{}, err
+	}
+	if reportsChanged {
+		systemdChanged = true
+		state.ReportsPolicyChanged = true
+	}
+	if systemdChanged {
+		if _, err := manager.Runner.Run(ctx, systemctlPath, "daemon-reload"); err != nil {
+			return SystemIntegrationsState{}, errors.New("systemd integration reload failed")
+		}
+	}
+	if _, err := manager.Runner.Run(ctx, systemctlPath, "enable", "--now", "lightningos-reports.timer"); err != nil {
+		return SystemIntegrationsState{}, errors.New("reports timer activation failed")
 	}
 
 	certificateBefore, err := optionalRegularFileSHA256(manager.Paths.ManagerTLSCertificate, 1024*1024)
@@ -186,6 +246,56 @@ func (manager *NativeSystemIntegrationsManager) Apply(ctx context.Context, dryRu
 		return SystemIntegrationsState{}, errors.New("manager firewall integration failed")
 	}
 	return state, nil
+}
+
+func (manager *NativeSystemIntegrationsManager) reconcileReportsUnits() (bool, error) {
+	units := []struct {
+		path    string
+		content string
+	}{
+		{path: manager.Paths.ReportsService, content: reportsServiceUnit},
+		{path: manager.Paths.ReportsTimer, content: reportsTimerUnit},
+	}
+	changed := false
+	for _, unit := range units {
+		current, err := integrationFileMatches(unit.path, []byte(unit.content), 0644)
+		if err != nil {
+			return false, err
+		}
+		if current {
+			continue
+		}
+		if err := ensureDirectoryTreeNoSymlink(filepath.Dir(unit.path), 0755); err != nil {
+			return false, errors.New("reports integration directory is unsafe")
+		}
+		if err := refuseNonRegularDestination(unit.path); err != nil {
+			return false, err
+		}
+		if err := writeAtomicRegularFile(unit.path, []byte(unit.content), 0644); err != nil {
+			return false, errors.New("reports integration policy update failed")
+		}
+		if err := validateSystemIntegrationFile(unit.path, 0644); err != nil {
+			return false, errors.New("reports integration policy is unsafe")
+		}
+		changed = true
+	}
+	return changed, nil
+}
+
+func (manager *NativeSystemIntegrationsManager) reportsUnitsCurrent() (bool, error) {
+	for _, unit := range []struct {
+		path    string
+		content string
+	}{
+		{path: manager.Paths.ReportsService, content: reportsServiceUnit},
+		{path: manager.Paths.ReportsTimer, content: reportsTimerUnit},
+	} {
+		current, err := integrationFileMatches(unit.path, []byte(unit.content), 0644)
+		if err != nil || !current {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (manager *NativeSystemIntegrationsManager) Finalize(_ context.Context, dryRun bool) (SystemIntegrationsState, error) {

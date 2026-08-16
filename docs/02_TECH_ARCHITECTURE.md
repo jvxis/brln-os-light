@@ -21,8 +21,8 @@
 - LightningOS tables for notifications and reports.
 
 5) Reports service
-- Runs via systemd timer at 00:00 local time.
-- Computes D-1 metrics from LND data.
+- Runs an idempotent reconciliation via systemd timer at minute 05 of every hour.
+- Detects and computes missing metrics through the last complete local day.
 - Writes to reports_daily (UPSERT).
 - Live reports are computed on demand with a short TTL cache.
 
@@ -68,4 +68,4 @@
 - audit_events (session-scoped audit trail for sensitive wallet operations)
 
 ## Scheduler
-- lightningos-reports.timer triggers lightningos-reports.service daily.
+- `lightningos-reports.timer` triggers idempotent reconciliation hourly; the service fills only missing complete local days and retries transient failures.

@@ -852,6 +852,21 @@ export const getReportsSummaryCustom = (from: string, to: string) =>
   request(`/api/reports/summary/custom?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`)
 export const getReportsLive = () => request('/api/reports/live')
 export const getReportsMovementLive = () => request('/api/reports/movement/live')
+export type ReportsReconciliationStatus = {
+  missing_dates: string[]
+  missing_count: number
+  running: boolean
+  total: number
+  completed: number
+  current_date?: string
+  last_error?: string
+  started_at?: string
+  finished_at?: string
+}
+export const getReportsReconciliation = () =>
+  request('/api/reports/reconciliation') as Promise<ReportsReconciliationStatus>
+export const startReportsReconciliation = () =>
+  request('/api/reports/reconciliation', { method: 'POST' }) as Promise<ReportsReconciliationStatus>
 export const getReportsConfig = () => request('/api/reports/config')
 export const updateReportsConfig = (payload: {
   live_timeout_sec?: number | null

@@ -718,6 +718,13 @@ GET /api/reports/summary?range=d-1|month|3m|6m|12m|all
 GET /api/reports/live
 - Metrics from today 00:00 local time to now.
 
+GET /api/reports/reconciliation
+- Returns missing complete local dates plus reconciliation progress and the last error, if any.
+
+POST /api/reports/reconciliation
+- Starts an idempotent asynchronous rebuild of missing daily reports. Returns HTTP 202 while work starts, or HTTP 409 when already running.
+- Reads LND history and updates only the reports database; it does not restart LND or Bitcoin.
+
 ## Rebalance channel automation
 
 POST /api/rebalance/run/preview

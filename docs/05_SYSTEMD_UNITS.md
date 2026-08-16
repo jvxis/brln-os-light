@@ -68,7 +68,7 @@ WantedBy=multi-user.target
 
 ## lightningos-reports.service (template)
 [Unit]
-Description=LightningOS Reports Runner
+Description=LightningOS Reports Reconciliation
 After=network-online.target lnd.service postgresql.service
 Wants=network-online.target
 
@@ -77,8 +77,9 @@ User=lightningos
 Group=lightningos
 SupplementaryGroups=lnd systemd-journal
 Type=oneshot
+Environment=REPORTS_RUN_TIMEOUT_SEC=600
 EnvironmentFile=/etc/lightningos/secrets.env
-ExecStart=/opt/lightningos/manager/lightningos-manager reports-run --config /etc/lightningos/config.yaml
+ExecStart=/opt/lightningos/manager/lightningos-manager reports-reconcile --config /etc/lightningos/config.yaml
 LimitNOFILE=65536
 PrivateTmp=true
 ProtectSystem=full
@@ -90,10 +91,10 @@ WantedBy=multi-user.target
 
 ## lightningos-reports.timer (template)
 [Unit]
-Description=LightningOS Reports Timer
+Description=LightningOS Reports Reconciliation Timer
 
 [Timer]
-OnCalendar=*-*-* 00:00:00
+OnCalendar=*-*-* *:05:00
 Persistent=true
 Unit=lightningos-reports.service
 

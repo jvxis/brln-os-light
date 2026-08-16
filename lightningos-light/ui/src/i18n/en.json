@@ -1259,6 +1259,7 @@
     "internal": "Internal",
     "loadFailed": "Failed to load apps.",
     "loadingApps": "Loading apps...",
+    "nodeBusy": "The node is busy with heavy disk activity and did not confirm the operation. Wait for the load to settle, refresh the store, and try again.",
     "noApps": "No apps available yet.",
     "noAppsForFilter": "No apps match the selected filter.",
     "resetAdminPassword": "Reset admin password",

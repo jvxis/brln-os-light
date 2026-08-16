@@ -270,13 +270,20 @@ export default function AppStore() {
     }
   }
 
+  const appRequestErrorMessage = (err: unknown, fallbackKey: string) => {
+    if (err instanceof APIError && err.code === 'app_node_busy') {
+      return t('appStore.nodeBusy')
+    }
+    return err instanceof Error ? err.message : t(fallbackKey)
+  }
+
   const loadApps = () => {
     setLoading(true)
     getApps().then((data: AppInfo[]) => {
       setApps(data || [])
       setLoading(false)
     }).catch((err: unknown) => {
-      setMessage(err instanceof Error ? err.message : t('appStore.loadFailed'))
+      setMessage(appRequestErrorMessage(err, 'appStore.loadFailed'))
       setLoading(false)
     })
   }
@@ -549,7 +556,7 @@ export default function AppStore() {
       window.dispatchEvent(new CustomEvent('apps:changed', { detail: { id, action } }))
       loadApps()
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : t('appStore.actionFailed'))
+      setMessage(appRequestErrorMessage(err, 'appStore.actionFailed'))
     } finally {
       setBusy((prev) => {
         const next = { ...prev }

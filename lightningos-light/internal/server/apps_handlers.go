@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,9 +16,12 @@ import (
 )
 
 const (
-	appInfoWorkerLimit = 4
-	appListCacheTTL    = 10 * time.Second
+	appInfoWorkerLimit = 2
+	appListCacheTTL    = 30 * time.Second
+	appListStaleTTL    = 2 * time.Minute
 )
+
+const appNodeBusyMessage = "The node is busy and did not confirm the app operation. Wait for disk activity to settle, refresh the App Store, and try again."
 
 var (
 	errAppUninstallConfirmationRequired = errors.New("explicit app uninstall confirmation is required")
@@ -48,13 +52,18 @@ func validateBitcoinCoreUninstallSource(source string, remote bitcoinRPCConfig) 
 }
 
 type cachedAppList struct {
-	at   time.Time
-	apps []appInfo
+	at          time.Time
+	apps        []appInfo
+	invalidated bool
 }
 
 func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.appListSnapshot(r.Context())
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || isAppBrokerBusyError(err) {
+			writeAppNodeBusyError(w)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -71,6 +80,7 @@ func (s *Server) appListSnapshot(ctx context.Context) ([]appInfo, error) {
 	if cached, ok := s.cachedAppList(); ok {
 		return cached, nil
 	}
+	stale, hasStale := s.staleCachedAppList()
 	result := s.appListGroup.DoChan("catalog", func() (any, error) {
 		if cached, ok := s.cachedAppList(); ok {
 			return cached, nil
@@ -95,6 +105,9 @@ func (s *Server) appListSnapshot(ctx context.Context) ([]appInfo, error) {
 		return nil, ctx.Err()
 	case completed := <-result:
 		if completed.Err != nil {
+			if hasStale && (errors.Is(completed.Err, context.DeadlineExceeded) || isAppBrokerBusyError(completed.Err)) {
+				return stale, nil
+			}
 			return nil, completed.Err
 		}
 		apps, ok := completed.Val.([]appInfo)
@@ -108,7 +121,16 @@ func (s *Server) appListSnapshot(ctx context.Context) ([]appInfo, error) {
 func (s *Server) cachedAppList() ([]appInfo, bool) {
 	s.appListMu.Lock()
 	defer s.appListMu.Unlock()
-	if s.appListCache.at.IsZero() || time.Since(s.appListCache.at) >= appListCacheTTL {
+	if s.appListCache.invalidated || s.appListCache.at.IsZero() || time.Since(s.appListCache.at) >= appListCacheTTL {
+		return nil, false
+	}
+	return cloneAppInfos(s.appListCache.apps), true
+}
+
+func (s *Server) staleCachedAppList() ([]appInfo, bool) {
+	s.appListMu.Lock()
+	defer s.appListMu.Unlock()
+	if s.appListCache.at.IsZero() || time.Since(s.appListCache.at) >= appListStaleTTL || len(s.appListCache.apps) == 0 {
 		return nil, false
 	}
 	return cloneAppInfos(s.appListCache.apps), true
@@ -119,8 +141,33 @@ func (s *Server) invalidateAppListCache() {
 		return
 	}
 	s.appListMu.Lock()
-	s.appListCache = cachedAppList{}
+	s.appListCache.invalidated = true
 	s.appListMu.Unlock()
+}
+
+func isAppBrokerBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "broker.sock") && (strings.Contains(message, "timeout") || strings.Contains(message, "deadline")) {
+		return true
+	}
+	return strings.Contains(message, "privileged operation timed out") ||
+		strings.Contains(message, "privileged operation lock timed out") ||
+		strings.Contains(message, "lock_timeout")
+}
+
+func writeAppNodeBusyError(w http.ResponseWriter) {
+	writeErrorCode(w, http.StatusServiceUnavailable, "app_node_busy", appNodeBusyMessage)
+}
+
+func writeAppOperationError(w http.ResponseWriter, status int, err error) {
+	if isAppBrokerBusyError(err) {
+		writeAppNodeBusyError(w)
+		return
+	}
+	writeError(w, status, err.Error())
 }
 
 func cloneAppInfos(apps []appInfo) []appInfo {
@@ -251,7 +298,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	defer finishOperation()
 	if err := ensureAppStorageRoots(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeAppOperationError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if appID == bitcoinCoreAppID {
@@ -263,7 +310,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := s.installBitcoinCoreWithOptions(r.Context(), req); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeAppOperationError(w, http.StatusInternalServerError, err)
 			return
 		}
 		s.invalidateBitcoinStatusCaches()
@@ -279,7 +326,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := s.installElementsWithOptions(r.Context(), req); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeAppOperationError(w, http.StatusInternalServerError, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -294,7 +341,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := s.installPeerswapWithOptions(r.Context(), req); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeAppOperationError(w, http.StatusInternalServerError, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -313,7 +360,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, errElectrsBitcoinRestartConfirmationRequired) {
 				status = http.StatusConflict
 			}
-			writeError(w, status, err.Error())
+			writeAppOperationError(w, status, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -328,7 +375,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := s.installMempoolWithOptions(r.Context(), req); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeAppOperationError(w, http.StatusInternalServerError, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -347,7 +394,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, errFedimintGatewayBitcoinRestartConfirmationRequired) {
 				status = http.StatusConflict
 			}
-			writeError(w, status, err.Error())
+			writeAppOperationError(w, status, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -358,7 +405,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		appContext = withLNDgAccessHost(appContext, r.Host)
 	}
 	if err := app.Install(appContext); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeAppOperationError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if appID == "bitcoincore" {
@@ -416,7 +463,7 @@ func (s *Server) handleAppUninstall(w http.ResponseWriter, r *http.Request) {
 	}
 	defer finishOperation()
 	if err := app.Uninstall(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeAppOperationError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if appID == "bitcoincore" {
@@ -459,7 +506,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, errElectrsBitcoinRestartConfirmationRequired) {
 				status = http.StatusConflict
 			}
-			writeError(w, status, err.Error())
+			writeAppOperationError(w, status, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -474,7 +521,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := s.startMempoolWithOptions(r.Context(), req); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeAppOperationError(w, http.StatusInternalServerError, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -493,7 +540,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, errFedimintGatewayBitcoinRestartConfirmationRequired) {
 				status = http.StatusConflict
 			}
-			writeError(w, status, err.Error())
+			writeAppOperationError(w, status, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -504,7 +551,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		appContext = withLNDgAccessHost(appContext, r.Host)
 	}
 	if err := app.Start(appContext); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeAppOperationError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if appID == "bitcoincore" {
@@ -535,7 +582,7 @@ func (s *Server) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	}
 	defer finishOperation()
 	if err := app.Stop(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeAppOperationError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if appID == "bitcoincore" {
@@ -561,7 +608,7 @@ func (s *Server) handleAppResetAdmin(w http.ResponseWriter, r *http.Request) {
 		err = s.resetLndgAdminPassword(r.Context())
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeAppOperationError(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

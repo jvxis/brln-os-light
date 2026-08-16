@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Relatar vulnerabilidade em privado / Private vulnerability report
+    url: https://github.com/jvxis/brln-os-light/security/advisories/new
+    about: Não publique vulnerabilidades, credenciais ou riscos de perda de fundos em uma Issue pública.

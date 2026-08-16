@@ -1,0 +1,188 @@
+name: Relatar um problema / Bug report
+description: Informe uma falha com dados suficientes para reproduzir e diagnosticar o problema.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por ajudar a melhorar o LightningOS.
+
+        Nunca publique seeds, chaves privadas, senhas, macaroons, cookies, tokens ou credenciais RPC. Para vulnerabilidades ou risco de perda de fundos, use o canal privado indicado na página anterior.
+
+  - type: dropdown
+    id: installation_origin
+    attributes:
+      label: Como o node foi instalado originalmente?
+      description: Esta informação é diferente da forma usada para atualizar o LightningOS.
+      options:
+        - install.sh (instalação nova gerenciada pelo LightningOS)
+        - install_existing.sh (Bitcoin/LND preexistentes)
+        - Não sei / I do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: current_version_method
+    attributes:
+      label: Como chegou à versão atual?
+      options:
+        - Upgrade pela interface (UI)
+        - Upgrade por script ou terminal
+        - Instalação nova, sem upgrade
+        - Outro / Other
+        - Não sei / I do not know
+    validations:
+      required: true
+
+  - type: input
+    id: initial_version
+    attributes:
+      label: Versão instalada originalmente
+      description: Se não souber, escreva "não sei".
+      placeholder: "Ex.: 0.5.2-Beta"
+    validations:
+      required: true
+
+  - type: input
+    id: previous_version
+    attributes:
+      label: Versão anterior ao problema
+      description: Preencha quando o problema começou depois de um upgrade.
+      placeholder: "Ex.: 0.5.10-Beta"
+
+  - type: input
+    id: current_version
+    attributes:
+      label: Versão atual do LightningOS
+      placeholder: "Ex.: 0.5.11-Beta"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ubuntu_version
+    attributes:
+      label: Sistema operacional
+      options:
+        - Ubuntu 24.04 LTS
+        - Ubuntu 26.04
+        - Outra versão do Ubuntu
+        - Outro sistema operacional
+        - Não sei / I do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Arquitetura do host
+      options:
+        - x86_64 / amd64
+        - ARM64 / aarch64
+        - Não sei / I do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bitcoin_source
+    attributes:
+      label: Fonte do Bitcoin Core
+      options:
+        - Bitcoin Core da Loja (Docker)
+        - Bitcoin Core local preexistente (systemd)
+        - Bitcoin Core remoto
+        - Não usa Bitcoin Core
+        - Não sei / I do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: lnd_origin
+    attributes:
+      label: Origem do LND
+      options:
+        - Instalado pelo LightningOS
+        - LND preexistente (install_existing.sh)
+        - Não usa LND
+        - Não sei / I do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected_areas
+    attributes:
+      label: Área afetada
+      multiple: true
+      options:
+        - Instalação ou upgrade
+        - Dashboard ou interface
+        - Bitcoin Core
+        - LND
+        - Loja de aplicativos
+        - Aplicativo da Loja
+        - Reports ou dados históricos
+        - Terminal
+        - Segurança ou privilégios
+        - Outro / Other
+    validations:
+      required: true
+
+  - type: input
+    id: affected_app
+    attributes:
+      label: Aplicativo afetado
+      description: Preencha quando o problema envolver um app da Loja.
+      placeholder: "Ex.: Electrs, Mempool, LNDG"
+
+  - type: textarea
+    id: observed_behavior
+    attributes:
+      label: O que aconteceu?
+      description: Inclua a mensagem de erro completa e quando o problema começou.
+      placeholder: Descreva o comportamento observado.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: O que deveria acontecer?
+      placeholder: Descreva o comportamento esperado.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: Passos para reproduzir
+      description: Liste as ações desde o estado inicial até o erro.
+      placeholder: |
+        1. Acessar ...
+        2. Clicar em ...
+        3. Observar ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: relevant_logs
+    attributes:
+      label: Logs relevantes, sem segredos
+      description: Remova credenciais, macaroons, cookies, tokens, seeds, chaves privadas e dados pessoais antes de colar.
+      render: shell
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Capturas de tela ou informações adicionais
+      description: Arraste imagens aqui e oculte IPs públicos ou outros dados sensíveis quando necessário.
+
+  - type: checkboxes
+    id: safety_confirmation
+    attributes:
+      label: Confirmações de segurança
+      options:
+        - label: Revisei o conteúdo e removi seeds, chaves privadas, senhas, macaroons, cookies, tokens e credenciais RPC.
+          required: true
+        - label: Este relato não descreve uma vulnerabilidade ativa nem risco imediato de perda de fundos.
+          required: true

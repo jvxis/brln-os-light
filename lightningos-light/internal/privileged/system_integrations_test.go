@@ -272,6 +272,15 @@ func TestReportsSystemdTemplatesMatchBrokerPolicy(t *testing.T) {
 	}
 }
 
+func TestReportsUnitSupportsExistingNodesWithoutLNDGroup(t *testing.T) {
+	if strings.Contains(reportsServiceUnit, "SupplementaryGroups=lnd") {
+		t.Fatal("reports service requires a conventional lnd group that existing nodes may not have")
+	}
+	if !strings.Contains(reportsServiceUnit, "SupplementaryGroups=systemd-journal") {
+		t.Fatal("reports service lost its explicit journal access")
+	}
+}
+
 func TestTerminalSystemdTemplateMatchesBrokerPolicy(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "templates", "systemd", "lightningos-terminal.service"))
 	if err != nil {

@@ -19,7 +19,7 @@ const (
 	defaultReportsServicePath        = "/etc/systemd/system/lightningos-reports.service"
 	defaultReportsTimerPath          = "/etc/systemd/system/lightningos-reports.timer"
 	defaultManagerTLSCertificatePath = "/etc/lightningos/tls/server.crt"
-	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20260816-v9"
+	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20260816-v10"
 	envExecutablePath                = "/usr/bin/env"
 	idExecutablePath                 = "/usr/bin/id"
 
@@ -71,7 +71,7 @@ Wants=network-online.target
 [Service]
 User=lightningos
 Group=lightningos
-SupplementaryGroups=lnd systemd-journal
+SupplementaryGroups=systemd-journal
 Type=oneshot
 Environment=REPORTS_RUN_TIMEOUT_SEC=600
 EnvironmentFile=/etc/lightningos/secrets.env

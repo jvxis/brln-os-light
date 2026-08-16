@@ -75,7 +75,7 @@ Wants=network-online.target
 [Service]
 User=lightningos
 Group=lightningos
-SupplementaryGroups=lnd systemd-journal
+SupplementaryGroups=systemd-journal
 Type=oneshot
 Environment=REPORTS_RUN_TIMEOUT_SEC=600
 EnvironmentFile=/etc/lightningos/secrets.env

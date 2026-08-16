@@ -19,33 +19,33 @@ func TestLegacyTransitionTargetMatchesBuiltUIVersion(t *testing.T) {
 
 func TestLegacyTransitionReleaseIsLimitedToExactTargetRelease(t *testing.T) {
 	valid := appReleaseInfo{
-		Version: "0.5.9-beta",
-		Tag:     "0.5.9-Beta",
+		Version: "0.5.10-beta",
+		Tag:     "0.5.10-Beta",
 		Commit:  strings.Repeat("a", 40),
 	}
-	if err := validateLegacyTransitionRelease(valid, "0.5.9-Beta"); err != nil {
+	if err := validateLegacyTransitionRelease(valid, "0.5.10-Beta"); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []appReleaseInfo{
 		{Version: "0.5.7-beta", Tag: "0.5.7-Beta", Commit: valid.Commit},
-		{Version: valid.Version, Tag: "release/0.5.9-beta", Commit: valid.Commit},
+		{Version: valid.Version, Tag: "release/0.5.10-beta", Commit: valid.Commit},
 		{Version: valid.Version, Tag: valid.Tag, Commit: "not-a-commit"},
 	} {
-		if err := validateLegacyTransitionRelease(test, "0.5.9-Beta"); err == nil {
+		if err := validateLegacyTransitionRelease(test, "0.5.10-Beta"); err == nil {
 			t.Fatalf("unsafe legacy transition release accepted: %#v", test)
 		}
 	}
 	for _, installed := range []string{"0.5.2-Beta", "0.5.3-Beta", "0.5.7-Beta", "0.5.8-Beta"} {
 		if err := validateLegacyTransitionRelease(valid, installed); err == nil {
-			t.Fatalf("legacy transition accepted non-0.5.8 installed version %q", installed)
+			t.Fatalf("legacy transition accepted non-target installed version %q", installed)
 		}
 	}
 }
 
 func TestLegacyTransitionRootCommandVerifiesStagedHelper(t *testing.T) {
 	info := appReleaseInfo{
-		Version: "0.5.9-beta",
-		Tag:     "0.5.9-Beta",
+		Version: "0.5.10-beta",
+		Tag:     "0.5.10-Beta",
 		Commit:  strings.Repeat("b", 40),
 	}
 	digest := strings.Repeat("c", 64)
@@ -64,7 +64,7 @@ func TestLegacyTransitionRootCommandVerifiesStagedHelper(t *testing.T) {
 		"1234:1234:700",
 		"/usr/bin/sha256sum -c -",
 		"/usr/bin/install -o root -g root -m 0755",
-		"--version 0.5.9-beta --tag 0.5.9-Beta --commit " + info.Commit,
+		"--version 0.5.10-beta --tag 0.5.10-Beta --commit " + info.Commit,
 		"trap cleanup EXIT",
 	} {
 		if !strings.Contains(command, expected) {
@@ -79,7 +79,7 @@ func TestLegacyTransitionRootCommandVerifiesStagedHelper(t *testing.T) {
 }
 
 func TestLegacyTransitionRejectsUnsafeStagingInputs(t *testing.T) {
-	info := appReleaseInfo{Version: "0.5.9-beta", Tag: "0.5.9-Beta", Commit: strings.Repeat("d", 40)}
+	info := appReleaseInfo{Version: "0.5.10-beta", Tag: "0.5.10-Beta", Commit: strings.Repeat("d", 40)}
 	for _, path := range []string{
 		"/tmp/helper.sh",
 		"/var/lib/lightningos/upgrade-staging/../helper.sh",

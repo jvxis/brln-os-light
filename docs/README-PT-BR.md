@@ -796,20 +796,21 @@ Notas operacionais:
 ## Terminal web (opcional)
 LightningOS pode expor um terminal web protegido usando GoTTY.
 
-O instalador provisiona o terminal desativado e somente leitura. A conta `losop`
+O instalador provisiona o terminal desativado. A conta `losop`
 tem a senha Linux bloqueada, não pertence a grupos suplementares privilegiados e
 recebe somente o ambiente dedicado do terminal.
+Habilite ou desabilite o terminal pela página Terminal do LightningOS. A entrada
+pelo teclado, o retorno ao modo somente leitura e a desativação exigem nova
+confirmação da senha de administrador. Os comandos interativos continuam rodando
+como o usuário restrito `losop`, dentro do sandbox do systemd, e somente o serviço
+do terminal é reiniciado durante uma mudança de modo.
 Você pode revisar as opções de runtime em `/etc/lightningos/terminal.env`:
-- `TERMINAL_ENABLED=0` (defina `1` apenas como opt-in explícito do administrador do host)
+- `TERMINAL_ENABLED=0` (gerenciado pela página Terminal)
 - `TERMINAL_CREDENTIAL=user:pass`
-- `TERMINAL_ALLOW_WRITE=0` (modo gravável é um opt-in explícito e sem privilégios)
+- `TERMINAL_ALLOW_WRITE=0` (somente leitura) ou `1` (opt-in interativo explícito)
 - `TERMINAL_PORT=7681` (opcional)
 - `TERMINAL_WS_ORIGIN=^https://.*:8443$` (opcional, padrão permite todas as origens)
 
-Inicie (ou reinicie) o serviço:
-```bash
-sudo systemctl enable --now lightningos-terminal
-```
 A rotação exige reautenticação recente no LightningOS e retorna a nova senha
 GoTTY apenas uma vez. Ela nunca altera nem desbloqueia a senha Linux.
 

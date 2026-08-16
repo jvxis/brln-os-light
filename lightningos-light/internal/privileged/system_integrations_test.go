@@ -141,6 +141,7 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 	root := t.TempDir()
 	paths := SystemIntegrationPaths{
 		TerminalHelper:        filepath.Join(root, "sbin", "lightningos-terminal"),
+		TerminalService:       filepath.Join(root, "systemd", "lightningos-terminal.service"),
 		ManagerFirewallHelper: filepath.Join(root, "sbin", "lightningos-manager-firewall"),
 		ManagerTLSMDNSHelper:  filepath.Join(root, "sbin", "lightningos-setup-manager-tls-mdns"),
 		LNDDropIn:             filepath.Join(root, "systemd", "lnd.service.d", "20-lightningos-restart.conf"),
@@ -193,7 +194,7 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 	}
 
 	applied, err := manager.Apply(context.Background(), false)
-	if err != nil || applied.Status != "ready" || !applied.CertificateChanged || !applied.LNDPolicyChanged || !applied.ReportsPolicyChanged {
+	if err != nil || applied.Status != "ready" || !applied.CertificateChanged || !applied.LNDPolicyChanged || !applied.ReportsPolicyChanged || !applied.TerminalPolicyChanged {
 		t.Fatalf("apply integrations: state=%+v err=%v", applied, err)
 	}
 	if raw, err := os.ReadFile(paths.LNDDropIn); err != nil || string(raw) != lndIntegrationDropIn {
@@ -204,6 +205,9 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 	}
 	if raw, err := os.ReadFile(paths.ReportsTimer); err != nil || string(raw) != reportsTimerUnit {
 		t.Fatalf("unexpected reports timer: %q err=%v", raw, err)
+	}
+	if raw, err := os.ReadFile(paths.TerminalService); err != nil || string(raw) != terminalServiceUnitContent {
+		t.Fatalf("unexpected terminal service: %q err=%v", raw, err)
 	}
 	if !containsRecordedCommand(runner.commands, recordedCommand{path: systemctlPath, args: []string{"enable", "--now", "lightningos-reports.timer"}}) {
 		t.Fatalf("reports timer was not activated: %+v", runner.commands)
@@ -265,6 +269,16 @@ func TestReportsSystemdTemplatesMatchBrokerPolicy(t *testing.T) {
 		if strings.ReplaceAll(string(raw), "\r\n", "\n") != test.expected {
 			t.Fatalf("reports %s template drifted from broker policy", test.name)
 		}
+	}
+}
+
+func TestTerminalSystemdTemplateMatchesBrokerPolicy(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "templates", "systemd", "lightningos-terminal.service"))
+	if err != nil {
+		t.Fatalf("read terminal service template: %v", err)
+	}
+	if strings.ReplaceAll(string(raw), "\r\n", "\n") != terminalServiceUnitContent {
+		t.Fatal("terminal service template drifted from broker policy")
 	}
 }
 

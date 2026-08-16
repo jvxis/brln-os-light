@@ -102,7 +102,7 @@ type terminalCredentialPrivilegedClient interface {
 }
 
 type terminalControlPrivilegedClient interface {
-	SetTerminalEnabled(ctx context.Context, enabled bool, dryRun bool) (appliedEnabled bool, err error)
+	SetTerminalEnabled(ctx context.Context, enabled bool, allowWrite bool, dryRun bool) (appliedEnabled bool, appliedAllowWrite bool, err error)
 }
 
 func SystemIntegrationsReadyWithBroker(ctx context.Context) (bool, bool, error) {
@@ -154,7 +154,10 @@ func RotateTerminalCredentialWithBroker(ctx context.Context, operatorUser string
 	}
 }
 
-func SetTerminalEnabledWithBroker(ctx context.Context, enabled bool) (bool, error) {
+func SetTerminalEnabledWithBroker(ctx context.Context, enabled bool, allowWrite bool) (bool, error) {
+	if !enabled {
+		allowWrite = false
+	}
 	privilegedState.RLock()
 	client := privilegedState.client
 	privilegedState.RUnlock()
@@ -170,18 +173,18 @@ func SetTerminalEnabledWithBroker(ctx context.Context, enabled bool) (bool, erro
 	}
 	switch client.Mode() {
 	case "enforce":
-		appliedEnabled, err := controlClient.SetTerminalEnabled(ctx, enabled, false)
+		appliedEnabled, appliedAllowWrite, err := controlClient.SetTerminalEnabled(ctx, enabled, allowWrite, false)
 		if err != nil {
 			return true, err
 		}
-		if appliedEnabled != enabled {
+		if appliedEnabled != enabled || appliedAllowWrite != allowWrite {
 			return true, errors.New("terminal control broker returned a mismatched state")
 		}
 		return true, nil
 	case "shadow":
 		shadowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		_, _ = controlClient.SetTerminalEnabled(shadowCtx, enabled, true)
+		_, _, _ = controlClient.SetTerminalEnabled(shadowCtx, enabled, allowWrite, true)
 		return false, nil
 	default:
 		return false, nil

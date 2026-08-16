@@ -799,17 +799,18 @@ Operational notes:
 ## Web terminal (optional)
 LightningOS can expose a protected web terminal using GoTTY.
 
-The installer provisions the terminal in a disabled, read-only state. The `losop`
+The installer provisions the terminal disabled. The `losop`
 account has a locked Linux password, belongs to no privileged supplementary
 groups, and receives only the dedicated terminal environment.
-Enable or disable it from the LightningOS Terminal page. Both transitions
-require fresh confirmation of the LightningOS administrator password and are
-applied by the typed privileged broker; the terminal always returns to
-`TERMINAL_ALLOW_WRITE=0`.
+Enable or disable it from the LightningOS Terminal page. Fresh administrator
+reauthentication is required to enable keyboard input, switch back to view-only
+mode, or disable the service. Interactive commands still run as the restricted
+`losop` account inside the hardened systemd sandbox. The typed privileged
+broker applies each transition and restarts only the terminal service.
 You can review the runtime settings in `/etc/lightningos/terminal.env`:
 - `TERMINAL_ENABLED=0` (managed by the Terminal page)
 - `TERMINAL_CREDENTIAL=user:pass`
-- `TERMINAL_ALLOW_WRITE=0` (enforced by terminal control)
+- `TERMINAL_ALLOW_WRITE=0` (view-only) or `1` (explicit interactive opt-in)
 - `TERMINAL_PORT=7681` (optional)
 - `TERMINAL_WS_ORIGIN=^https://.*:8443$` (optional, default allows all origins)
 Credential rotation requires fresh LightningOS reauthentication and returns the

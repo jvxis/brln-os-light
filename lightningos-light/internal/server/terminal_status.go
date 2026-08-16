@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 var (
 	terminalMutationMu          sync.Mutex
 	terminalOperatorUserPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+	terminalPasswordPattern     = regexp.MustCompile(`^[A-Za-z0-9]{16,128}$`)
 	terminalRuntimeEnvPath      = "/etc/lightningos/terminal.env"
 )
 
@@ -41,11 +43,13 @@ type terminalCredentialRotateResponse struct {
 
 type terminalControlRequest struct {
 	Enabled         *bool  `json:"enabled"`
+	AllowWrite      *bool  `json:"allow_write"`
 	ConfirmPassword string `json:"confirm_password"`
 }
 
 type terminalControlResponse struct {
-	Enabled bool `json:"enabled"`
+	Enabled    bool `json:"enabled"`
+	AllowWrite bool `json:"allow_write"`
 }
 
 func (s *Server) handleTerminalStatus(w http.ResponseWriter, r *http.Request) {
@@ -58,9 +62,9 @@ func (s *Server) handleTerminalStatus(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, terminalStatus{
 		Enabled:              terminalRuntimeValue("TERMINAL_ENABLED") == "1",
-		CredentialConfigured: terminalCredentialConfigured(terminalRuntimeValue("TERMINAL_CREDENTIAL")),
+		CredentialConfigured: terminalCredentialConfigured(terminalStatusRuntimeValue("TERMINAL_CREDENTIAL")),
 		AllowWrite:           terminalRuntimeValue("TERMINAL_ALLOW_WRITE") == "1",
-		OperatorUser:         terminalOperatorUser(),
+		OperatorUser:         terminalStatusOperatorUser(),
 		Port:                 port,
 	})
 }
@@ -152,7 +156,7 @@ func (s *Server) handleTerminalControl(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, "terminal_control_invalid_request", "invalid request body")
 		return
 	}
-	if req.Enabled == nil || decoder.Decode(&struct{}{}) != io.EOF {
+	if req.Enabled == nil || decoder.Decode(&struct{}{}) != io.EOF || (*req.Enabled && req.AllowWrite == nil) || (!*req.Enabled && req.AllowWrite != nil && *req.AllowWrite) {
 		writeErrorCode(w, http.StatusBadRequest, "terminal_control_invalid_request", "invalid request body")
 		return
 	}
@@ -165,7 +169,17 @@ func (s *Server) handleTerminalControl(w http.ResponseWriter, r *http.Request) {
 	defer terminalMutationMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	if handled, err := system.SetTerminalEnabledWithBroker(ctx, *req.Enabled); !handled || err != nil {
+	if *req.Enabled {
+		if err := ensureTerminalRuntimeCredential(ctx); err != nil {
+			if s.logger != nil {
+				s.logger.Printf("terminal runtime credential migration failed")
+			}
+			writeErrorCode(w, http.StatusInternalServerError, "terminal_runtime_migration_failed", "failed to prepare terminal runtime configuration")
+			return
+		}
+	}
+	allowWrite := req.AllowWrite != nil && *req.AllowWrite
+	if handled, err := system.SetTerminalEnabledWithBroker(ctx, *req.Enabled, allowWrite); !handled || err != nil {
 		if s.logger != nil {
 			s.logger.Printf("terminal control failed: %v", err)
 		}
@@ -173,13 +187,13 @@ func (s *Server) handleTerminalControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.recordAuditEvent(r, "terminal.control", terminalOperatorUser(), map[string]any{"enabled": *req.Enabled})
-	writeJSON(w, http.StatusOK, terminalControlResponse{Enabled: *req.Enabled})
+	s.recordAuditEvent(r, "terminal.control", terminalOperatorUser(), map[string]any{"enabled": *req.Enabled, "allow_write": allowWrite})
+	writeJSON(w, http.StatusOK, terminalControlResponse{Enabled: *req.Enabled, AllowWrite: allowWrite})
 }
 
 func terminalCredentialConfigured(raw string) bool {
 	user, password, ok := strings.Cut(strings.TrimSpace(raw), ":")
-	return ok && strings.TrimSpace(user) != "" && password != ""
+	return ok && terminalOperatorUserPattern.MatchString(strings.TrimSpace(user)) && terminalPasswordPattern.MatchString(password)
 }
 
 func terminalOperatorUser() string {
@@ -187,6 +201,52 @@ func terminalOperatorUser() string {
 		return user
 	}
 	return "losop"
+}
+
+func terminalStatusOperatorUser() string {
+	if user := terminalStatusRuntimeValue("TERMINAL_OPERATOR_USER"); terminalOperatorUserPattern.MatchString(user) {
+		return user
+	}
+	if credential := terminalStatusRuntimeValue("TERMINAL_CREDENTIAL"); credential != "" {
+		if user, _, ok := strings.Cut(credential, ":"); ok && terminalOperatorUserPattern.MatchString(user) {
+			return user
+		}
+	}
+	return "losop"
+}
+
+func terminalStatusRuntimeValue(key string) string {
+	value, err := readEnvFileValue(terminalRuntimeEnvPath, key)
+	if err == nil {
+		return strings.TrimSpace(value)
+	}
+	if errors.Is(err, os.ErrNotExist) && (key == "TERMINAL_CREDENTIAL" || key == "TERMINAL_OPERATOR_USER") {
+		return strings.TrimSpace(os.Getenv(key))
+	}
+	return ""
+}
+
+func ensureTerminalRuntimeCredential(ctx context.Context) error {
+	info, err := os.Lstat(terminalRuntimeEnvPath)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return errors.New("terminal runtime configuration is unsafe")
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	credential := strings.TrimSpace(os.Getenv("TERMINAL_CREDENTIAL"))
+	operatorUser, password, ok := strings.Cut(credential, ":")
+	if !ok || !terminalOperatorUserPattern.MatchString(operatorUser) || !terminalPasswordPattern.MatchString(password) {
+		return errors.New("legacy terminal credential is unavailable")
+	}
+	handled, err := system.RotateTerminalCredentialWithBroker(ctx, operatorUser, password)
+	if !handled {
+		return errors.New("terminal credential broker is unavailable")
+	}
+	return err
 }
 
 func terminalRuntimeValue(key string) string {

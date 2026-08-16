@@ -278,11 +278,22 @@ Accepts a bounded alphanumeric GoTTY password and operator name. The broker
 independently reads `User=` from the fixed
 `lightningos-terminal.service`; the requested name must match, and `root` is
 always forbidden. It atomically replaces only the fixed root-owned
-`/etc/lightningos/terminal.env`, preserving a disabled/read-only policy and
+`/etc/lightningos/terminal.env`, preserving its current enabled/input policy and
 never touching the Linux password. The credential is never placed in argv,
 output, errors, or structured audit fields. `dry_run` performs identity
 validation without changing runtime state. Restarting the fixed terminal unit
 is a separate `service.restart` call after the broker returns successfully.
+
+### `terminal.control`
+
+Accepts only `enable` or `disable` plus the boolean `allow_write`. Write access
+is rejected for a disabled terminal. The broker validates the fixed non-root
+service identity, dedicated runtime credential, root-owned unit, launcher and
+GoTTY binary; it then atomically applies the requested mode and transitions only
+`lightningos-terminal.service`. Enabling an already-running terminal performs a
+restart so keyboard-mode changes take effect. Readiness is verified on the fixed
+loopback listener. Any failed transition writes a disabled/read-only runtime and
+best-effort stops/disables the terminal; LND and Bitcoin are never touched.
 
 ### Native Lightning Loop operations
 

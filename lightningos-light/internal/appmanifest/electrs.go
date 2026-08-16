@@ -19,6 +19,7 @@ const (
 	ElectrsRPCPort        = 50001
 	ElectrsMonitorPort    = 4224
 	ElectrsStopTimeout    = 60
+	ElectrsNoFileLimit    = 65536
 	ElectrsContainerUID   = 1000
 	ElectrsContainerGID   = 1000
 
@@ -156,6 +157,10 @@ func ElectrsCompose(runtime ElectrsRuntime) (string, error) {
     user: "%d:%d"
     restart: unless-stopped
     stop_grace_period: %ds
+    ulimits:
+      nofile:
+        soft: %d
+        hard: %d
     read_only: true
     init: true
     cap_drop:
@@ -193,6 +198,7 @@ networks:
     external: true
     name: %s
 %s`, ElectrsImage, ElectrsContainerUID, ElectrsContainerGID, ElectrsStopTimeout,
+		ElectrsNoFileLimit, ElectrsNoFileLimit,
 		ElectrsContainerUID, ElectrsContainerGID,
 		ElectrsRPCPort, ElectrsRPCPort, ElectrsMonitorPort, ElectrsMonitorPort,
 		dataMount, ElectrsCookieFile, network.ElectrsName,

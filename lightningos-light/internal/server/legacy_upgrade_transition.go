@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	legacyTransitionTargetVersion = "0.5.11-beta"
+	legacyTransitionTargetVersion = "0.5.12-beta"
 	legacyTransitionUnitName      = "lightningos-legacy-privilege-transition"
 	legacyTransitionRetryCount    = 60
 	legacyTransitionRetryDelay    = 10 * time.Second
@@ -53,7 +53,7 @@ func (s *Server) startLegacyPrivilegeTransitionReconciler() {
 				state, err = startLegacyPrivilegeTransition(ctx, s.cfg, info, embeddedAppUpgradeScript)
 				if state == legacyTransitionStarted {
 					if s.logger != nil {
-						s.logger.Printf("legacy 0.5.2 upgrade bridge to 0.5.11 started")
+						s.logger.Printf("legacy 0.5.2 upgrade bridge to %s started", legacyTransitionTargetVersion)
 					}
 				}
 				if state == legacyTransitionNotApplicable {
@@ -64,7 +64,7 @@ func (s *Server) startLegacyPrivilegeTransitionReconciler() {
 			cancel()
 
 			if err != nil && s.logger != nil && (attempt == 0 || attempt == legacyTransitionRetryCount-1) {
-				s.logger.Printf("legacy 0.5.2 upgrade bridge to 0.5.11 pending: %v", err)
+				s.logger.Printf("legacy 0.5.2 upgrade bridge to %s pending: %v", legacyTransitionTargetVersion, err)
 			}
 			if !s.waitLegacyPrivilegeTransitionRetry(attempt) {
 				return

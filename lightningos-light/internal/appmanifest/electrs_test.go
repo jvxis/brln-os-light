@@ -68,6 +68,7 @@ func TestElectrsComposeClosesPrivilegesAndBitcoinWiring(t *testing.T) {
 		for _, required := range []string{
 			"image: " + ElectrsImage,
 			"user: \"1000:1000\"",
+			"ulimits:\n      nofile:\n        soft: 65536\n        hard: 65536",
 			"read_only: true",
 			"no-new-privileges:true",
 			"127.0.0.1:50001:50001",

@@ -461,9 +461,7 @@ func (s *GraphExplorerService) runStreamLoop(stopCh <-chan struct{}) {
 			}
 
 			started := time.Now()
-			updateCtx, updateCancel := context.WithTimeout(context.Background(), graphExplorerUpdateTimeout)
-			applyErr := s.applyGraphUpdate(updateCtx, update)
-			updateCancel()
+			applyErr := s.applyGraphUpdate(update)
 			if elapsed := time.Since(started); elapsed > 2*time.Second && s.logger != nil {
 				s.logger.Printf(
 					"graph explorer stream apply slow: duration=%s node_updates=%d channel_updates=%d closed_channels=%d",
@@ -504,62 +502,95 @@ func (s *GraphExplorerService) Refresh(ctx context.Context) error {
 	}
 
 	refreshStartedAt := time.Now().UTC()
+	stageStartedAt := time.Now()
 	snapshot, err := s.lnd.DescribeGraph(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("describe graph: %w", err)
 	}
+	s.logSlowGraphRefreshStage("describe_graph", stageStartedAt, len(snapshot.Channels))
 
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
+	localPubkey := s.loadLocalPubkey(ctx)
+
+	presenceStartedAt := time.Now()
+	if err := s.reconcileSnapshotPresence(ctx, snapshot.Channels, refreshStartedAt, localPubkey); err != nil {
+		return fmt.Errorf("reconcile snapshot presence: %w", err)
+	}
+	if elapsed := time.Since(presenceStartedAt); elapsed > 2*time.Second && s.logger != nil {
+		s.logger.Printf(
+			"graph explorer snapshot presence reconcile slow: duration=%s channels=%d",
+			elapsed.Round(time.Millisecond),
+			len(snapshot.Channels),
+		)
+	}
 
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return err
+		return fmt.Errorf("begin full graph refresh: %w", err)
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
 
+	stageStartedAt = time.Now()
 	currentPolicies, err := loadCurrentGraphPolicies(ctx, tx)
 	if err != nil {
-		return err
+		return fmt.Errorf("load current graph policies: %w", err)
 	}
+	s.logSlowGraphRefreshStage("load_current_policies", stageStartedAt, len(currentPolicies))
 
+	stageStartedAt = time.Now()
 	if err := upsertGraphNodesSnapshot(ctx, tx, snapshot.Nodes, refreshStartedAt); err != nil {
-		return err
+		return fmt.Errorf("refresh graph nodes: %w", err)
 	}
+	s.logSlowGraphRefreshStage("refresh_nodes", stageStartedAt, len(snapshot.Nodes))
+	stageStartedAt = time.Now()
 	if err := upsertGraphChannelsSnapshot(ctx, tx, snapshot.Channels, refreshStartedAt); err != nil {
-		return err
+		return fmt.Errorf("refresh graph channels: %w", err)
 	}
+	s.logSlowGraphRefreshStage("refresh_channels", stageStartedAt, len(snapshot.Channels))
+	stageStartedAt = time.Now()
 	if err := upsertGraphPoliciesSnapshot(ctx, tx, snapshot.Channels, refreshStartedAt, currentPolicies); err != nil {
-		return err
+		return fmt.Errorf("refresh graph policies: %w", err)
 	}
-	localPubkey := s.loadLocalPubkey(ctx)
-	if err := s.reconcileLocalOpenChannels(ctx, tx, localPubkey, refreshStartedAt); err != nil {
-		return err
-	}
-	if err := s.reconcileLocalClosedChannels(ctx, tx, refreshStartedAt); err != nil {
-		return err
-	}
-	if err := reconcileSnapshotClosedChannels(ctx, tx, refreshStartedAt, localPubkey); err != nil {
-		return err
-	}
+	s.logSlowGraphRefreshStage("refresh_policies", stageStartedAt, len(snapshot.Channels))
+	stageStartedAt = time.Now()
 	if err := recomputeGraphNodeAggregates(ctx, tx, refreshStartedAt); err != nil {
-		return err
+		return fmt.Errorf("recompute graph node aggregates: %w", err)
 	}
+	s.logSlowGraphRefreshStage("recompute_node_aggregates", stageStartedAt, len(snapshot.Nodes))
 	if err := upsertGraphSyncStateRefresh(ctx, tx, refreshStartedAt); err != nil {
-		return err
+		return fmt.Errorf("update graph sync state: %w", err)
 	}
 
+	stageStartedAt = time.Now()
 	if err := tx.Commit(ctx); err != nil {
-		return err
+		return fmt.Errorf("commit full graph refresh: %w", err)
 	}
+	s.logSlowGraphRefreshStage("commit", stageStartedAt, len(snapshot.Channels))
 
 	s.setLastSyncAt(refreshStartedAt)
 	return nil
 }
 
-func (s *GraphExplorerService) applyGraphUpdate(ctx context.Context, update lndclient.GraphUpdate) error {
+func (s *GraphExplorerService) logSlowGraphRefreshStage(stage string, startedAt time.Time, itemCount int) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	elapsed := time.Since(startedAt)
+	if elapsed <= 2*time.Second {
+		return
+	}
+	s.logger.Printf(
+		"graph explorer refresh stage slow: stage=%s duration=%s items=%d",
+		stage,
+		elapsed.Round(time.Millisecond),
+		itemCount,
+	)
+}
+
+func (s *GraphExplorerService) applyGraphUpdate(update lndclient.GraphUpdate) error {
 	if s == nil || s.db == nil {
 		return ErrGraphExplorerDBUnavailable
 	}
@@ -573,6 +604,8 @@ func (s *GraphExplorerService) applyGraphUpdate(ctx context.Context, update lndc
 
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), graphExplorerUpdateTimeout)
+	defer cancel()
 
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

@@ -1,0 +1,92 @@
+name: Suggest an improvement (English)
+description: Propose a permanent improvement to LightningOS or its operational workflow.
+title: "[Enhancement]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the suggestion. Describe the problem first; this helps evaluate alternatives and select the appropriate target version.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this improvement solve?
+      placeholder: Describe the current need, limitation, or difficulty.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      placeholder: Explain how you expect the improvement to work.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected_areas
+    attributes:
+      label: Related areas
+      multiple: true
+      options:
+        - Installation or upgrade
+        - Dashboard or web interface
+        - Bitcoin Core
+        - LND
+        - App Store
+        - App Store application
+        - Reports or historical data
+        - Terminal
+        - Security or privileges
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation_scope
+    attributes:
+      label: Which installations are affected?
+      options:
+        - All installations
+        - install.sh only
+        - install_existing.sh only
+        - I do not know
+    validations:
+      required: true
+
+  - type: textarea
+    id: user_impact
+    attributes:
+      label: User impact
+      description: Explain who benefits and what improves in day-to-day operation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe workarounds or different approaches that you have already evaluated.
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and risks
+      description: When applicable, consider upgrades, existing nodes, external Bitcoin/LND services, persistent data, and security.
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional information
+      description: Include examples, mockups, or relevant links without sensitive information.
+
+  - type: checkboxes
+    id: safety_confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: I reviewed the content and did not include wallet seeds, private keys, passwords, macaroons, cookies, tokens, or RPC credentials.
+          required: true

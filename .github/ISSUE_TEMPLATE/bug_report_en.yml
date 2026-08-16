@@ -1,0 +1,188 @@
+name: Report a problem (English)
+description: Report a failure with enough information to reproduce and diagnose it.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve LightningOS.
+
+        Never publish wallet seeds, private keys, passwords, macaroons, cookies, tokens, or RPC credentials. For vulnerabilities or situations that may put funds at risk, use the private reporting channel shown on the previous page.
+
+  - type: dropdown
+    id: installation_origin
+    attributes:
+      label: How was the node originally installed?
+      description: This is different from the method used to update LightningOS.
+      options:
+        - install.sh (new installation managed by LightningOS)
+        - install_existing.sh (pre-existing Bitcoin/LND)
+        - I do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: current_version_method
+    attributes:
+      label: How did the node reach its current version?
+      options:
+        - Upgrade through the web interface (UI)
+        - Upgrade through a script or terminal
+        - Fresh installation without an upgrade
+        - Other
+        - I do not know
+    validations:
+      required: true
+
+  - type: input
+    id: initial_version
+    attributes:
+      label: Originally installed version
+      description: Enter "I do not know" if this information is unavailable.
+      placeholder: "Example: 0.5.2-Beta"
+    validations:
+      required: true
+
+  - type: input
+    id: previous_version
+    attributes:
+      label: Version before the problem
+      description: Complete this field when the problem started after an upgrade.
+      placeholder: "Example: 0.5.10-Beta"
+
+  - type: input
+    id: current_version
+    attributes:
+      label: Current LightningOS version
+      placeholder: "Example: 0.5.12-Beta"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ubuntu_version
+    attributes:
+      label: Operating system
+      options:
+        - Ubuntu 24.04 LTS
+        - Ubuntu 26.04
+        - Another Ubuntu version
+        - Another operating system
+        - I do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Host architecture
+      options:
+        - x86_64 / amd64
+        - ARM64 / aarch64
+        - I do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bitcoin_source
+    attributes:
+      label: Bitcoin Core source
+      options:
+        - App Store Bitcoin Core (Docker)
+        - Pre-existing local Bitcoin Core (systemd)
+        - Remote Bitcoin Core
+        - Bitcoin Core is not used
+        - I do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: lnd_origin
+    attributes:
+      label: LND origin
+      options:
+        - Installed by LightningOS
+        - Pre-existing LND (install_existing.sh)
+        - LND is not used
+        - I do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected_areas
+    attributes:
+      label: Affected area
+      multiple: true
+      options:
+        - Installation or upgrade
+        - Dashboard or web interface
+        - Bitcoin Core
+        - LND
+        - App Store
+        - App Store application
+        - Reports or historical data
+        - Terminal
+        - Security or privileges
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: affected_app
+    attributes:
+      label: Affected application
+      description: Complete this field when the problem involves an App Store application.
+      placeholder: "Example: Electrs, Mempool, LNDG"
+
+  - type: textarea
+    id: observed_behavior
+    attributes:
+      label: What happened?
+      description: Include the complete error message and when the problem started.
+      placeholder: Describe the observed behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: What should have happened?
+      placeholder: Describe the expected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: Steps to reproduce
+      description: List the actions from the initial state until the error appears.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: relevant_logs
+    attributes:
+      label: Relevant logs without secrets
+      description: Remove credentials, macaroons, cookies, tokens, wallet seeds, private keys, and personal information before pasting logs.
+      render: shell
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or additional information
+      description: Drag images here and redact public IP addresses or other sensitive information when necessary.
+
+  - type: checkboxes
+    id: safety_confirmation
+    attributes:
+      label: Security confirmations
+      options:
+        - label: I reviewed the content and removed wallet seeds, private keys, passwords, macaroons, cookies, tokens, and RPC credentials.
+          required: true
+        - label: This report does not describe an active vulnerability or an immediate risk of loss of funds.
+          required: true

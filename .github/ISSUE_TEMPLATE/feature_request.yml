@@ -1,0 +1,92 @@
+name: Sugerir uma melhoria / Feature request
+description: Proponha uma melhoria permanente para o LightningOS ou para seu processo de operação.
+title: "[Melhoria]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado pela sugestão. Explique primeiro o problema que precisa ser resolvido; isso ajuda a avaliar alternativas e definir a versão adequada.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qual problema esta melhoria resolve?
+      placeholder: Descreva a necessidade, limitação ou dificuldade atual.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Solução sugerida
+      placeholder: Explique como você imagina que a melhoria deveria funcionar.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected_areas
+    attributes:
+      label: Áreas relacionadas
+      multiple: true
+      options:
+        - Instalação ou upgrade
+        - Dashboard ou interface
+        - Bitcoin Core
+        - LND
+        - Loja de aplicativos
+        - Aplicativo da Loja
+        - Reports ou dados históricos
+        - Terminal
+        - Segurança ou privilégios
+        - Documentação
+        - Outro / Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation_scope
+    attributes:
+      label: Para quais instalações isso é relevante?
+      options:
+        - Todas as instalações
+        - Apenas install.sh
+        - Apenas install_existing.sh
+        - Não sei / I do not know
+    validations:
+      required: true
+
+  - type: textarea
+    id: user_impact
+    attributes:
+      label: Impacto para o usuário
+      description: Explique quem se beneficia e o que melhora na operação diária.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+      description: Informe soluções temporárias ou abordagens diferentes que você já avaliou.
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibilidade e riscos
+      description: Se aplicável, considere upgrades, nodes existentes, Bitcoin/LND externos, dados persistentes e segurança.
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Informações adicionais
+      description: Inclua exemplos, mockups ou links relevantes, sem dados sensíveis.
+
+  - type: checkboxes
+    id: safety_confirmation
+    attributes:
+      label: Confirmação
+      options:
+        - label: Revisei o conteúdo e não incluí seeds, chaves privadas, senhas, macaroons, cookies, tokens ou credenciais RPC.
+          required: true

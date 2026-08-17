@@ -102,7 +102,7 @@ func managedBitcoinFullIndexStatusAvailability(status bitcoinLocalStatus, rawCon
 		Blocks: status.Blocks, Headers: status.Headers, VerificationProgress: status.VerificationProgress,
 		InitialBlockDownload: status.InitialBlockDownload,
 	}
-	if bitcoinInfoStillSyncing(info) {
+	if fullIndexBitcoinStillSyncing(info) {
 		return fullIndexUnavailable(fullIndexUnavailableBitcoinSync, "Electrs and Mempool require Bitcoin Core to be fully synced.")
 	}
 	if !parseBitcoinCoreBool(rawConfig, "txindex") {
@@ -131,7 +131,7 @@ func fullIndexBitcoinConfigAvailabilityWithFallbackHint(ctx context.Context, cfg
 	if info.Pruned {
 		return fullIndexUnavailable(fullIndexUnavailableUnpruned, "Electrs and Mempool require a non-pruned Bitcoin Core node. Disable pruning before installing."), false
 	}
-	if bitcoinInfoStillSyncing(info) {
+	if fullIndexBitcoinStillSyncing(info) {
 		return fullIndexUnavailable(fullIndexUnavailableBitcoinSync, "Electrs and Mempool require Bitcoin Core to be fully synced."), false
 	}
 	txIndexReady, txIndexKnown, err := bitcoinRPCConfigTxIndexReady(ctx, cfg)
@@ -140,6 +140,13 @@ func fullIndexBitcoinConfigAvailabilityWithFallbackHint(ctx context.Context, cfg
 	}
 
 	return fullIndexAppAvailability{Available: true}, false
+}
+
+func fullIndexBitcoinStillSyncing(info bitcoinInfo) bool {
+	if info.InitialBlockDownload || info.VerificationProgress < 0.9999 {
+		return true
+	}
+	return info.Headers > 0 && info.Headers-info.Blocks > 1
 }
 
 func fullIndexUnavailable(reason, message string) fullIndexAppAvailability {

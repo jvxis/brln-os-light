@@ -70,7 +70,7 @@ func (a lndgApp) Info(ctx context.Context) (appInfo, error) {
 	}
 	info.Installed = true
 	info.AdminPasswordPath = paths.AdminPasswordPath
-	handled, status, _, err := system.InspectAppWithBroker(ctx, appmanifest.LNDgID)
+	handled, status, _, _, err := system.InspectAppWithBroker(ctx, appmanifest.LNDgID)
 	if !handled {
 		info.Status = "unknown"
 		return info, errors.New("LNDg status requires privileged broker enforce mode")

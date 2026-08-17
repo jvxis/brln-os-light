@@ -63,7 +63,7 @@ func (a robosatsApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	handled, brokerStatus, _, err := system.InspectAppWithBroker(ctx, appmanifest.RoboSatsID)
+	handled, brokerStatus, _, _, err := system.InspectAppWithBroker(ctx, appmanifest.RoboSatsID)
 	if !handled {
 		info.Status = "unknown"
 		return info, errors.New("RoboSats status requires privileged broker enforce mode")

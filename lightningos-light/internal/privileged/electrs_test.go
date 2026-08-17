@@ -364,6 +364,8 @@ func TestProbeElectrsBitcoinRPCFullNodeContract(t *testing.T) {
 		wantErr string
 	}{
 		{name: "ready", state: state{chain: "regtest", blocks: 101, headers: 101, tx: &electrsIndexInfo{Synced: true, BestBlockHeight: 101}}},
+		{name: "transient one block lag", state: state{chain: "regtest", blocks: 100, headers: 101, tx: &electrsIndexInfo{Synced: true, BestBlockHeight: 100}}},
+		{name: "relevant block lag", state: state{chain: "regtest", blocks: 99, headers: 101, tx: &electrsIndexInfo{Synced: true, BestBlockHeight: 99}}, wantErr: "fully synchronized Bitcoin Full Node"},
 		{name: "wrong chain", state: state{chain: "main", blocks: 101, headers: 101, tx: &electrsIndexInfo{Synced: true, BestBlockHeight: 101}}, wantErr: "chain does not match"},
 		{name: "pruned", state: state{chain: "regtest", pruned: true, blocks: 101, headers: 101, tx: &electrsIndexInfo{Synced: true, BestBlockHeight: 101}}, wantErr: "unpruned"},
 		{name: "ibd", state: state{chain: "regtest", ibd: true, blocks: 100, headers: 101, tx: &electrsIndexInfo{Synced: true, BestBlockHeight: 100}}, wantErr: "fully synchronized Bitcoin Full Node"},

@@ -47,7 +47,7 @@ func (a mempoolApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	handled, status, _, err := system.InspectAppWithBroker(ctx, mempoolAppID)
+	handled, status, _, _, err := system.InspectAppWithBroker(ctx, mempoolAppID)
 	if !handled {
 		info.Status = "unknown"
 		return info, errors.New("Mempool status requires privileged broker enforce mode")

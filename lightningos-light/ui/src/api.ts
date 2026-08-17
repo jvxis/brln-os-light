@@ -1163,6 +1163,7 @@ export type AppStoreInfo = {
   ufw_command?: string
   security_notices?: string[]
   operation?: AppOperationInfo
+  legacy_migration_required?: boolean
 }
 
 export const getApps = (): Promise<AppStoreInfo[]> => request('/api/apps')
@@ -1754,11 +1755,11 @@ export const updateMagmaSettings = (payload: {
   request('/api/apps/magma-sales/settings', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
-export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string; confirm_bitcoin_restart?: boolean }) =>
+export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string; confirm_bitcoin_restart?: boolean; confirm_legacy_migration?: boolean }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const uninstallApp = (id: string) =>
   request(`/api/apps/${id}/uninstall`, { method: 'POST', body: JSON.stringify({ confirm: true, app_id: id }) })
-export const startApp = (id: string, payload?: { confirm_bitcoin_restart?: boolean }) =>
+export const startApp = (id: string, payload?: { confirm_bitcoin_restart?: boolean; confirm_legacy_migration?: boolean }) =>
   request(`/api/apps/${id}/start`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const stopApp = (id: string) => request(`/api/apps/${id}/stop`, { method: 'POST' })
 export const resetAppAdmin = (id: string) => request(`/api/apps/${id}/reset-admin`, { method: 'POST' })

@@ -87,7 +87,7 @@ func fedimintBrokerInfo(ctx context.Context, definition appDefinition, composePa
 	}
 	info.Installed = true
 	info.AdminPasswordPath = adminPath
-	handled, status, _, err := system.InspectAppWithBroker(ctx, definition.ID)
+	handled, status, _, _, err := system.InspectAppWithBroker(ctx, definition.ID)
 	if !handled {
 		info.Status = "unknown"
 		return info, errors.New("Fedimint status requires privileged broker enforce mode")
@@ -408,7 +408,7 @@ func waitForFedimintAppStableWithPolicy(ctx context.Context, appID string, inter
 	lastStatus := "unknown"
 	var lastErr error
 	for check := 0; check < maxChecks; check++ {
-		handled, status, _, err := system.InspectAppWithBroker(ctx, appID)
+		handled, status, _, _, err := system.InspectAppWithBroker(ctx, appID)
 		if !handled {
 			return errors.New("Fedimint startup status requires privileged broker enforce mode")
 		}

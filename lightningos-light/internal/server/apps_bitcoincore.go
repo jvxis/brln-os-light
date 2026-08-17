@@ -37,9 +37,12 @@ const (
 )
 
 type bitcoinCoreInstallOptions struct {
-	DataDir      string `json:"data_dir"`
-	StorageMount string `json:"storage_mount"`
+	DataDir                string `json:"data_dir"`
+	StorageMount           string `json:"storage_mount"`
+	ConfirmLegacyMigration bool   `json:"confirm_legacy_migration"`
 }
+
+var errBitcoinCoreLegacyMigrationConfirmationRequired = errors.New("Bitcoin Core legacy runtime requires an explicit safe migration confirmation")
 
 func newBitcoinCoreApp(s *Server) appHandler {
 	return bitcoinCoreApp{server: s}
@@ -62,16 +65,24 @@ func (a bitcoinCoreApp) Info(ctx context.Context) (appInfo, error) {
 	def := a.Definition()
 	info := newAppInfo(def)
 	paths := bitcoinCoreAppPaths()
-	if !fileExists(paths.ComposePath) {
-		return info, nil
+	handled, status, _, legacyMigrationRequired, err := system.InspectAppWithBroker(ctx, appmanifest.BitcoinCoreID)
+	if !handled {
+		return info, errors.New("Bitcoin Core status requires privileged broker enforce mode")
 	}
-	info.Installed = true
-	status, err := inspectBitcoinCoreStatus(ctx)
 	if err != nil {
+		if !fileExists(paths.ComposePath) {
+			return info, nil
+		}
+		info.Installed = true
 		info.Status = "unknown"
 		return info, err
 	}
+	if !fileExists(paths.ComposePath) && !legacyMigrationRequired {
+		return info, nil
+	}
+	info.Installed = true
 	info.Status = status
+	info.LegacyMigrationRequired = legacyMigrationRequired
 	return info, nil
 }
 
@@ -165,6 +176,9 @@ func (s *Server) installBitcoinCore(ctx context.Context) error {
 }
 
 func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoinCoreInstallOptions) error {
+	if err := requireBitcoinCoreLegacyMigrationConfirmation(ctx, opts.ConfirmLegacyMigration); err != nil {
+		return err
+	}
 	requestedDataDir, dataDirRequested, err := resolveBitcoinCoreInstallDataDir(ctx, opts)
 	if err != nil {
 		return err
@@ -284,6 +298,13 @@ func (s *Server) uninstallBitcoinCore(ctx context.Context) error {
 }
 
 func (s *Server) startBitcoinCore(ctx context.Context) error {
+	return s.startBitcoinCoreWithOptions(ctx, bitcoinCoreInstallOptions{})
+}
+
+func (s *Server) startBitcoinCoreWithOptions(ctx context.Context, opts bitcoinCoreInstallOptions) error {
+	if err := requireBitcoinCoreLegacyMigrationConfirmation(ctx, opts.ConfirmLegacyMigration); err != nil {
+		return err
+	}
 	paths := bitcoinCoreAppPaths()
 	if paths.DataDir != bitcoinCoreDefaultDataDir {
 		if err := validateBitcoinCoreInstallDataDir(ctx, paths.DataDir); err != nil {
@@ -318,6 +339,23 @@ func (s *Server) startBitcoinCore(ctx context.Context) error {
 		}
 	}
 	return ensureBitcoinCoreP2PFirewall(ctx)
+}
+
+func requireBitcoinCoreLegacyMigrationConfirmation(ctx context.Context, confirmed bool) error {
+	handled, _, _, migrationRequired, err := system.InspectAppWithBroker(ctx, appmanifest.BitcoinCoreID)
+	if !handled {
+		return errors.New("Bitcoin Core migration inspection requires privileged broker enforce mode")
+	}
+	if err != nil {
+		if !fileExists(bitcoinCoreAppPaths().ComposePath) {
+			return nil
+		}
+		return fmt.Errorf("Bitcoin Core migration preflight failed: %w", err)
+	}
+	if migrationRequired && !confirmed {
+		return errBitcoinCoreLegacyMigrationConfirmationRequired
+	}
+	return nil
 }
 
 func (s *Server) stopBitcoinCore(ctx context.Context) error {
@@ -369,7 +407,7 @@ func ensureBitcoinCoreP2PFirewall(ctx context.Context) error {
 }
 
 func inspectBitcoinCoreStatus(ctx context.Context) (string, error) {
-	if handled, status, _, err := system.InspectAppWithBroker(ctx, appmanifest.BitcoinCoreID); !handled {
+	if handled, status, _, _, err := system.InspectAppWithBroker(ctx, appmanifest.BitcoinCoreID); !handled {
 		return "unknown", errors.New("Bitcoin Core status requires privileged broker enforce mode")
 	} else if err != nil {
 		return "unknown", fmt.Errorf("Bitcoin Core status failed: %w", err)

@@ -104,6 +104,11 @@ func TestManagedBitcoinFullIndexStatusAvailability(t *testing.T) {
 	if availability := managedBitcoinFullIndexStatusAvailability(ready, "server=1\ntxindex=1\n"); !availability.Available {
 		t.Fatalf("ready managed Bitcoin rejected: %#v", availability)
 	}
+	oneBlockLag := ready
+	oneBlockLag.Blocks = 899
+	if availability := managedBitcoinFullIndexStatusAvailability(oneBlockLag, "server=1\ntxindex=1\n"); !availability.Available {
+		t.Fatalf("transient one-block lag rejected: %#v", availability)
+	}
 
 	for _, test := range []struct {
 		name   string
@@ -113,7 +118,7 @@ func TestManagedBitcoinFullIndexStatusAvailability(t *testing.T) {
 	}{
 		{name: "RPC unavailable", status: bitcoinLocalStatus{Installed: true, Source: "app"}, config: "txindex=1\n", reason: fullIndexUnavailableBitcoinRPC},
 		{name: "pruned", status: func() bitcoinLocalStatus { value := ready; value.Pruned = true; return value }(), config: "txindex=1\n", reason: fullIndexUnavailableUnpruned},
-		{name: "syncing", status: func() bitcoinLocalStatus { value := ready; value.Blocks = 899; return value }(), config: "txindex=1\n", reason: fullIndexUnavailableBitcoinSync},
+		{name: "syncing", status: func() bitcoinLocalStatus { value := ready; value.Blocks = 898; return value }(), config: "txindex=1\n", reason: fullIndexUnavailableBitcoinSync},
 		{name: "txindex missing", status: ready, config: "server=1\n", reason: fullIndexUnavailableTxIndex},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -257,7 +257,10 @@ func probeElectrsBitcoinRPC(ctx context.Context, endpoint, user, password, expec
 	if chain.Pruned {
 		return errors.New("Electrs requires an unpruned Bitcoin Full Node")
 	}
-	if chain.Blocks < 0 || chain.Headers < 0 || chain.VerificationProgress < 0.999 || chain.VerificationProgress > 1 || chain.InitialBlockDownload || chain.Blocks < chain.Headers {
+	// A fully synchronized node can briefly have one more announced header than
+	// processed blocks while it validates a newly arrived block. Keep the gate
+	// closed for larger lags, IBD, or incomplete verification.
+	if chain.Blocks < 0 || chain.Headers < 0 || chain.VerificationProgress < 0.999 || chain.VerificationProgress > 1 || chain.InitialBlockDownload || chain.Headers-chain.Blocks > 1 {
 		return errors.New("Electrs requires a fully synchronized Bitcoin Full Node")
 	}
 	var indexes map[string]electrsIndexInfo

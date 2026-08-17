@@ -97,6 +97,40 @@ const LND_RESTART_POLL_INTERVAL_MS = 5000
 const LND_RESTART_TIMEOUT_MS = 2 * 60 * 60 * 1000
 const MARKET_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 const BIP110_REFRESH_INTERVAL_MS = 2 * 60 * 1000
+const APP_UPGRADE_MARKER_KEY = 'lightningos.app-upgrade.pending.v1'
+const APP_UPGRADE_MARKER_MAX_AGE_MS = 48 * 60 * 60 * 1000
+
+type AppUpgradeMarker = {
+  target_version: string
+  started_at: string
+}
+
+const readAppUpgradeMarker = (): AppUpgradeMarker | null => {
+  try {
+    const raw = window.localStorage.getItem(APP_UPGRADE_MARKER_KEY)
+    if (!raw) return null
+    const marker = JSON.parse(raw) as Partial<AppUpgradeMarker>
+    const startedAt = typeof marker.started_at === 'string' ? Date.parse(marker.started_at) : Number.NaN
+    const targetVersion = typeof marker.target_version === 'string' ? marker.target_version.trim() : ''
+    const age = Date.now() - startedAt
+    if (!targetVersion || targetVersion.length > 64 || !Number.isFinite(startedAt) || age < -60000 || age > APP_UPGRADE_MARKER_MAX_AGE_MS) {
+      window.localStorage.removeItem(APP_UPGRADE_MARKER_KEY)
+      return null
+    }
+    return { target_version: targetVersion, started_at: new Date(startedAt).toISOString() }
+  } catch {
+    try { window.localStorage.removeItem(APP_UPGRADE_MARKER_KEY) } catch { /* storage unavailable */ }
+    return null
+  }
+}
+
+const writeAppUpgradeMarker = (marker: AppUpgradeMarker) => {
+  try { window.localStorage.setItem(APP_UPGRADE_MARKER_KEY, JSON.stringify(marker)) } catch { /* storage unavailable */ }
+}
+
+const clearAppUpgradeMarker = () => {
+  try { window.localStorage.removeItem(APP_UPGRADE_MARKER_KEY) } catch { /* storage unavailable */ }
+}
 
 type MarketTapeProps = {
   market: BitcoinMarketStatus | null
@@ -732,12 +766,14 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
 
   const closeAppUpgradeModal = () => {
     if (appUpgradeBusy || (appUpgradeLocked && !appUpgradeError && !appUpgradeComplete)) return
+    if (appUpgradeError || appUpgradeComplete) clearAppUpgradeMarker()
     setAppUpgradeModalOpen(false)
   }
 
   const startAppUpgradeFlow = async () => {
     if (!appUpgrade?.latest_version || appUpgradeBusy) return
     const sinceNow = new Date(Date.now() - 15000).toISOString()
+    writeAppUpgradeMarker({ target_version: appUpgrade.latest_version, started_at: new Date().toISOString() })
     setAppUpgradeStartedVersion(appUpgrade.latest_version)
     setAppUpgradeLogSince(sinceNow)
     setAppUpgradeBusy(true)
@@ -759,6 +795,17 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
       loadAppUpgradeStatus(true, true)
     }
   }
+
+  useEffect(() => {
+    const marker = readAppUpgradeMarker()
+    if (!marker) return
+    setAppUpgradeStartedVersion(marker.target_version)
+    setAppUpgradeLogSince(new Date(Date.parse(marker.started_at) - 15000).toISOString())
+    setAppUpgradeModalOpen(true)
+    setAppUpgradeLocked(true)
+    setAppUpgradeComplete(false)
+    setAppUpgradeError(null)
+  }, [])
 
   useEffect(() => {
     if (!lndRestartModalOpen || !lndRestartStartedAt) return
@@ -1330,7 +1377,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
           >
             <h4 id="app-upgrade-title" className="text-lg font-semibold">{t('appUpgrade.confirmTitle')}</h4>
             <p className="mt-2 text-sm text-fog/70">
-              {t('appUpgrade.confirmBody', { version: formatVersion(appUpgrade?.latest_version) })}
+              {t('appUpgrade.confirmBody', { version: formatVersion(appUpgradeStartedVersion || appUpgrade?.latest_version) })}
             </p>
             <p className="mt-3 text-xs text-rose-200">{t('appUpgrade.confirmWarning')}</p>
             {appUpgradeMessage && <p className="mt-3 text-sm text-brass">{appUpgradeMessage}</p>}

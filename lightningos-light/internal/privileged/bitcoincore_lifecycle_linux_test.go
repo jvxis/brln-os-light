@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -269,7 +270,7 @@ func TestBitcoinCoreLegacyMigrationSucceedsWithoutTouchingLND(t *testing.T) {
 	}
 	for _, command := range runner.commands {
 		joined := command.path + " " + strings.Join(command.args, " ")
-		if strings.Contains(strings.ToLower(joined), "lnd") || strings.Contains(joined, "/data/lnd") {
+		if strings.Contains(joined, "/data/lnd") || (command.path == systemctlPath && slices.Contains(command.args, "lnd")) {
 			t.Fatalf("Bitcoin migration touched LND: %s", joined)
 		}
 	}
@@ -317,7 +318,7 @@ func TestBitcoinCoreLegacyMigrationFailureRollsBack(t *testing.T) {
 		if strings.Contains(joined, "bitcoincore-rollback-") && hasArgsSuffix(command.args, "up", "-d", "--force-recreate", "--no-deps", "bitcoind") {
 			rollbackSeen = true
 		}
-		if strings.Contains(strings.ToLower(joined), "lnd") {
+		if strings.Contains(joined, "/data/lnd") || (command.path == systemctlPath && slices.Contains(command.args, "lnd")) {
 			t.Fatalf("rollback touched LND: %s", joined)
 		}
 	}

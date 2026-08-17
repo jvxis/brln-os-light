@@ -276,6 +276,72 @@ func TestBitcoinCoreLegacyMigrationSucceedsWithoutTouchingLND(t *testing.T) {
 	}
 }
 
+func TestBitcoinCoreLegacyMigrationPreflightFailureDoesNotCutOver(t *testing.T) {
+	manager, runner, _, dataDir := newTestBitcoinCoreLifecycleManager(t)
+	legacyID := strings.Repeat("b", 64)
+	legacyImageID := "sha256:" + strings.Repeat("d", 64)
+	baseHook := runner.hook
+	runner.hook = func(path string, args []string) (string, error, bool) {
+		if output, err, handled := baseHook(path, args); handled {
+			return output, err, true
+		}
+		if path == dockerPath && len(args) > 1 && args[0] == "ps" && args[1] == "-a" {
+			return legacyID + "\n", nil, true
+		}
+		if path == dockerPath && reflect.DeepEqual(args, []string{"inspect", legacyID}) {
+			return legacyBitcoinInspectJSON(legacyID, legacyImageID, dataDir), nil, true
+		}
+		if path == dockerPath && reflect.DeepEqual(args, []string{"image", "inspect", legacyImageID}) {
+			return legacyImageID, nil, true
+		}
+		if path == dockerPath && reflect.DeepEqual(args, []string{"commit", "--pause=false", legacyID, bitcoinCoreLegacyRollbackImage}) {
+			return "", errors.New("simulated rollback capture failure"), true
+		}
+		return "", nil, false
+	}
+
+	err := manager.Lifecycle(context.Background(), appmanifest.BitcoinCoreID, AppLifecycleStart, false)
+	if err == nil || !strings.Contains(err.Error(), "rollback image could not be captured") {
+		t.Fatalf("unexpected migration result: %v", err)
+	}
+	for _, command := range runner.commands {
+		joined := strings.Join(command.args, " ")
+		if slices.Contains(command.args, "up") || slices.Contains(command.args, "down") || slices.Contains(command.args, "stop") || slices.Contains(command.args, "rm") {
+			t.Fatalf("preflight failure reached lifecycle cutover: %s", joined)
+		}
+		if strings.Contains(joined, "/data/lnd") || (command.path == systemctlPath && slices.Contains(command.args, "lnd")) {
+			t.Fatalf("preflight failure touched LND: %s", joined)
+		}
+	}
+}
+
+func TestValidatedLegacyBitcoinPortLines(t *testing.T) {
+	type binding struct {
+		HostIP   string `json:"HostIp"`
+		HostPort string `json:"HostPort"`
+	}
+	valid := map[string][]binding{
+		"8332/tcp":  {{HostIP: "127.0.0.1", HostPort: "8332"}},
+		"8333/tcp":  {{HostIP: "0.0.0.0", HostPort: "8333"}},
+		"28332/tcp": {{HostIP: "127.0.0.1", HostPort: "28332"}},
+		"28333/tcp": {{HostIP: "::", HostPort: "28333"}},
+	}
+	if _, err := validatedLegacyBitcoinPortLines(valid); err != nil {
+		t.Fatalf("valid legacy port topology rejected: %v", err)
+	}
+	for name, invalid := range map[string]map[string][]binding{
+		"unknown container port": {"18443/tcp": {{HostPort: "18443"}}},
+		"remapped host port":     {"8332/tcp": {{HostIP: "127.0.0.1", HostPort: "18332"}}},
+		"unexpected host":        {"8332/tcp": {{HostIP: "192.0.2.10", HostPort: "8332"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := validatedLegacyBitcoinPortLines(invalid); err == nil {
+				t.Fatal("unsafe legacy port topology was accepted")
+			}
+		})
+	}
+}
+
 func TestBitcoinCoreLegacyMigrationFailureRollsBack(t *testing.T) {
 	manager, runner, _, dataDir := newTestBitcoinCoreLifecycleManager(t)
 	legacyID := strings.Repeat("b", 64)

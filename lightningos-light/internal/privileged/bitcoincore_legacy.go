@@ -33,6 +33,7 @@ type bitcoinCoreRuntime struct {
 
 type preparedLegacyBitcoinMigration struct {
 	runtime      bitcoinCoreRuntime
+	rollbackBase string
 	rollbackRoot string
 	composePath  string
 }
@@ -41,10 +42,15 @@ func (migration *preparedLegacyBitcoinMigration) cleanup() {
 	if migration == nil || migration.rollbackRoot == "" {
 		return
 	}
+	base := filepath.Clean(migration.rollbackBase)
 	root := filepath.Clean(migration.rollbackRoot)
-	if strings.Contains(filepath.Base(root), "bitcoincore-rollback-") {
-		_ = os.RemoveAll(root)
+	info, err := os.Lstat(root)
+	if base == "." || root == "." || filepath.Dir(root) != base ||
+		!strings.HasPrefix(filepath.Base(root), "bitcoincore-rollback-") ||
+		err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return
 	}
+	_ = os.RemoveAll(root)
 }
 
 func (manager *ComposeAppManager) prepareLegacyBitcoinMigration(ctx context.Context) (*preparedLegacyBitcoinMigration, error) {
@@ -80,11 +86,18 @@ func (manager *ComposeAppManager) prepareLegacyBitcoinMigration(ctx context.Cont
 	if rollbackRootBase == "" {
 		rollbackRootBase = os.TempDir()
 	}
+	rollbackRootBase, err = filepath.Abs(filepath.Clean(rollbackRootBase))
+	if err != nil {
+		return nil, errors.New("Bitcoin Core rollback workspace location is invalid")
+	}
 	rollbackRoot, err := os.MkdirTemp(rollbackRootBase, "bitcoincore-rollback-")
 	if err != nil {
 		return nil, errors.New("Bitcoin Core rollback workspace could not be created")
 	}
-	migration := &preparedLegacyBitcoinMigration{runtime: runtimeState, rollbackRoot: rollbackRoot, composePath: filepath.Join(rollbackRoot, "docker-compose.yaml")}
+	migration := &preparedLegacyBitcoinMigration{
+		runtime: runtimeState, rollbackBase: rollbackRootBase, rollbackRoot: rollbackRoot,
+		composePath: filepath.Join(rollbackRoot, "docker-compose.yaml"),
+	}
 	if err := os.Chmod(rollbackRoot, 0700); err != nil {
 		migration.cleanup()
 		return nil, errors.New("Bitcoin Core rollback workspace could not be secured")

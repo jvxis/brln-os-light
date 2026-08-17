@@ -316,11 +316,7 @@ func TestBitcoinCoreLegacyMigrationPreflightFailureDoesNotCutOver(t *testing.T) 
 }
 
 func TestValidatedLegacyBitcoinPortLines(t *testing.T) {
-	type binding struct {
-		HostIP   string `json:"HostIp"`
-		HostPort string `json:"HostPort"`
-	}
-	valid := map[string][]binding{
+	valid := map[string][]legacyBitcoinPortBinding{
 		"8332/tcp":  {{HostIP: "127.0.0.1", HostPort: "8332"}},
 		"8333/tcp":  {{HostIP: "0.0.0.0", HostPort: "8333"}},
 		"28332/tcp": {{HostIP: "127.0.0.1", HostPort: "28332"}},
@@ -329,7 +325,7 @@ func TestValidatedLegacyBitcoinPortLines(t *testing.T) {
 	if _, err := validatedLegacyBitcoinPortLines(valid); err != nil {
 		t.Fatalf("valid legacy port topology rejected: %v", err)
 	}
-	for name, invalid := range map[string]map[string][]binding{
+	for name, invalid := range map[string]map[string][]legacyBitcoinPortBinding{
 		"unknown container port": {"18443/tcp": {{HostPort: "18443"}}},
 		"remapped host port":     {"8332/tcp": {{HostIP: "127.0.0.1", HostPort: "18332"}}},
 		"unexpected host":        {"8332/tcp": {{HostIP: "192.0.2.10", HostPort: "8332"}}},

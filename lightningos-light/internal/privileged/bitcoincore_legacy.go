@@ -25,10 +25,12 @@ type bitcoinCoreRuntime struct {
 	Running     bool
 	DataDir     string
 	Network     string
-	Ports       map[string][]struct {
-		HostIP   string `json:"HostIp"`
-		HostPort string `json:"HostPort"`
-	}
+	Ports       map[string][]legacyBitcoinPortBinding
+}
+
+type legacyBitcoinPortBinding struct {
+	HostIP   string `json:"HostIp"`
+	HostPort string `json:"HostPort"`
 }
 
 type preparedLegacyBitcoinMigration struct {
@@ -115,10 +117,7 @@ func (manager *ComposeAppManager) prepareLegacyBitcoinMigration(ctx context.Cont
 	return migration, nil
 }
 
-func validatedLegacyBitcoinPortLines(bindings map[string][]struct {
-	HostIP   string `json:"HostIp"`
-	HostPort string `json:"HostPort"`
-}) ([]string, error) {
+func validatedLegacyBitcoinPortLines(bindings map[string][]legacyBitcoinPortBinding) ([]string, error) {
 	allowed := map[string]string{"8332/tcp": "8332", "8333/tcp": "8333", "28332/tcp": "28332", "28333/tcp": "28333"}
 	lines := make([]string, 0, len(bindings))
 	for containerPort, entries := range bindings {
@@ -257,11 +256,8 @@ func (manager *ComposeAppManager) inspectBitcoinCoreCatalogRuntime(ctx context.C
 			Running bool `json:"Running"`
 		} `json:"State"`
 		HostConfig struct {
-			NetworkMode  string `json:"NetworkMode"`
-			PortBindings map[string][]struct {
-				HostIP   string `json:"HostIp"`
-				HostPort string `json:"HostPort"`
-			} `json:"PortBindings"`
+			NetworkMode  string                                `json:"NetworkMode"`
+			PortBindings map[string][]legacyBitcoinPortBinding `json:"PortBindings"`
 		} `json:"HostConfig"`
 		Mounts []struct {
 			Type        string `json:"Type"`

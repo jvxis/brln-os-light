@@ -580,6 +580,26 @@ func TestReleaseBootstrapRequiresImmutableAttestedPublishedRelease(t *testing.T)
 	}
 }
 
+func TestReleaseBootstrapExcludesGitHubMetadataFromNodeCheckout(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "lo_bootstrap.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(raw)
+	for _, required := range []string{
+		`configure_runtime_sparse_checkout`,
+		`sparse-checkout init --no-cone`,
+		`sparse-checkout set --no-cone '/*' '!/.github/'`,
+	} {
+		if !strings.Contains(content, required) {
+			t.Errorf("release bootstrap does not exclude repository-only GitHub metadata: missing %q", required)
+		}
+	}
+	if strings.Count(content, "configure_runtime_sparse_checkout") < 3 {
+		t.Error("release bootstrap must configure sparse checkout for both existing and newly cloned node repositories")
+	}
+}
+
 func TestInstallAndUpgradeBuildsDoNotRequireTrustedGitOwnership(t *testing.T) {
 	scripts := []string{
 		filepath.Join("..", "..", "install.sh"),

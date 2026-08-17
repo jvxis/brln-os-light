@@ -9,3 +9,8 @@ CLAUDE.md
 IMPROVEMENTS-PLAN.md
 PR2-analysis.md
 l2.json
+
+# Repository-only issue stewardship documents. The canonical tracked copies
+# remain on GitHub; runtime node checkouts exclude .github via sparse-checkout.
+.github/ISSUE_TRIAGE_POLICY.md
+.github/ISSUE_TRIAGE_SCHEDULED_PROMPT.md

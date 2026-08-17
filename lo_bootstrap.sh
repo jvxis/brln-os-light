@@ -41,6 +41,15 @@ repo_git() {
   git -c safe.directory="$TARGET_DIR" -C "$TARGET_DIR" "$@"
 }
 
+configure_runtime_sparse_checkout() {
+  # GitHub metadata is required by repository automation, but it is not
+  # application source and should not be materialized on managed nodes.
+  repo_git sparse-checkout init --no-cone \
+    || die "Failed to initialize the LightningOS runtime sparse checkout."
+  repo_git sparse-checkout set --no-cone '/*' '!/.github/' \
+    || die "Failed to exclude repository-only GitHub metadata from the node checkout."
+}
+
 resolve_latest_release() {
   require_cmd curl
 
@@ -108,6 +117,7 @@ ensure_repo() {
     else
       die "LightningOS ref not found after fetch: $ref"
     fi
+    configure_runtime_sparse_checkout
     return
   fi
 
@@ -123,6 +133,7 @@ ensure_repo() {
 
   log "Cloning $REPO_URL into $TARGET_DIR"
   git clone --branch "$ref" --single-branch "$REPO_URL" "$TARGET_DIR"
+  configure_runtime_sparse_checkout
 }
 
 main() {

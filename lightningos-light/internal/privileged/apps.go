@@ -37,14 +37,15 @@ const (
 )
 
 type ComposeAppManager struct {
-	Runner             CommandRunner
-	AppsRoot           string
-	AppsDataRoot       string
-	PrivilegedAppsRoot string
-	LNDDataRoot        string
-	LNDConfigPath      string
-	TempRoot           string
-	ElectrsRPCProbe    electrsRPCProbeFunc
+	Runner                CommandRunner
+	AppsRoot              string
+	AppsDataRoot          string
+	PrivilegedAppsRoot    string
+	LNDDataRoot           string
+	LNDConfigPath         string
+	TempRoot              string
+	ElectrsRPCProbe       electrsRPCProbeFunc
+	BitcoinMigrationProbe func(context.Context, string) error
 }
 
 type composeAppSnapshot struct {
@@ -576,6 +577,7 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	var snapshot composeAppSnapshot
 	var cleanup func()
 	var images []string
+	var legacyBitcoin *preparedLegacyBitcoinMigration
 	switch manifest.ID {
 	case appmanifest.CPUMinerID:
 		composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
@@ -625,6 +627,13 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			state, err := manager.ImageStatus(ctx, appmanifest.BitcoinCoreID, appmanifest.BitcoinCoreImageNode)
 			if err != nil || state.Status != "ready" {
 				return errors.New("verified bitcoin core image is not ready")
+			}
+			legacyBitcoin, err = manager.prepareLegacyBitcoinMigration(ctx)
+			if err != nil {
+				return err
+			}
+			if legacyBitcoin != nil {
+				defer legacyBitcoin.cleanup()
 			}
 		}
 		if dryRun {
@@ -865,7 +874,28 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		}
 	}
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
+		if legacyBitcoin != nil {
+			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, manifest, legacyBitcoin, errors.New("new Bitcoin Core container did not start"))
+		}
 		return errors.New("app lifecycle command failed")
+	}
+	if legacyBitcoin != nil {
+		containerID, lookupErr := manager.catalogRunningContainerID(ctx, manifest)
+		if lookupErr != nil || containerID == "" {
+			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, manifest, legacyBitcoin, errors.New("new Bitcoin Core container is unavailable"))
+		}
+		currentRuntime, found, inspectErr := manager.inspectBitcoinCoreCatalogRuntime(ctx)
+		if inspectErr != nil || !found || currentRuntime.ContainerID != containerID || currentRuntime.ImageRef != appmanifest.BitcoinCoreImage {
+			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, manifest, legacyBitcoin, errors.New("new Bitcoin Core container did not adopt the verified image"))
+		}
+		probe := manager.BitcoinMigrationProbe
+		if probe == nil {
+			probe = manager.probeMigratedBitcoinCore
+		}
+		if probeErr := probe(ctx, containerID); probeErr != nil {
+			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, manifest, legacyBitcoin, probeErr)
+		}
+		_, _ = manager.Runner.Run(ctx, dockerPath, "image", "rm", bitcoinCoreLegacyRollbackImage)
 	}
 	return nil
 }
@@ -1126,8 +1156,23 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 		}
 		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.BitcoinCoreID:
+		runtime, found, runtimeErr := manager.inspectBitcoinCoreCatalogRuntime(ctx)
+		if runtimeErr == nil && found && isLegacyBitcoinCoreImage(runtime.ImageRef) {
+			status := "stopped"
+			if runtime.Running {
+				status = "running"
+			}
+			return AppInspection{Status: status, LegacyMigrationRequired: true}, nil
+		}
 		snapshot, cleanup, err := manager.createBitcoinCoreInspectionSnapshot(ctx)
 		if err != nil {
+			if runtimeErr == nil && found && runtime.ImageRef == appmanifest.BitcoinCoreImage {
+				status := "stopped"
+				if runtime.Running {
+					status = "running"
+				}
+				return AppInspection{Status: status}, nil
+			}
 			return inspection, err
 		}
 		defer cleanup()

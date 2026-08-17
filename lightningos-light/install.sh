@@ -1462,13 +1462,26 @@ install_ui() {
   local current_stamp
   current_stamp=$(ui_build_stamp)
   build_ui
-  rm -rf /opt/lightningos/ui/*
-  cp -a "$REPO_ROOT/ui/dist/." /opt/lightningos/ui/
+  publish_ui_tree
   if [[ -n "$current_stamp" ]]; then
     echo "$current_stamp" > "$stamp_file"
     chmod 0644 "$stamp_file"
   fi
   print_ok "UI installed"
+}
+
+publish_ui_tree() {
+  local source="$REPO_ROOT/ui/dist"
+  local target="/opt/lightningos/ui"
+  [[ -d "$source" && ! -L "$source" ]] || die "UI build output is missing or unsafe"
+  [[ -d "$target" && ! -L "$target" ]] || die "UI destination is missing or unsafe"
+  [[ -z "$(find "$source" -type l -print -quit)" ]] || die "UI build output contains a symbolic link"
+  [[ -z "$(find "$source" ! -type d ! -type f -print -quit)" ]] || die "UI build output contains an unsupported file type"
+  find "$target" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+  cp -R --no-preserve=mode,ownership,timestamps -- "$source/." "$target/"
+  find "$target" -type d -exec chmod 0755 {} +
+  find "$target" -type f -exec chmod 0644 {} +
+  chown -R root:root "$target"
 }
 
 generate_tls() {

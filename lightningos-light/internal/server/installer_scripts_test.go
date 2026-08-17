@@ -798,7 +798,7 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 
 	stage := strings.LastIndex(content, "if ! stage_privilege_cutover; then")
 	prepare := strings.LastIndex(content, "prepare_privilege_cutover\n")
-	uiInstall := strings.LastIndex(content, `"$CP_BIN" -a "$project_dir/ui/dist/." /opt/lightningos/ui/`)
+	uiInstall := strings.LastIndex(content, "\npublish_ui_tree\n")
 	restart := strings.LastIndex(content, `if "$SYSTEMCTL_BIN" restart lightningos-manager; then`)
 	if prepare < 0 || uiInstall < 0 || prepare > uiInstall {
 		t.Fatal("rollback state must be prepared before the manager UI is replaced")
@@ -825,6 +825,62 @@ func TestAppUpgradeRecognizesDocumentedLegacyDockerSudoers(t *testing.T) {
 	}
 	if !strings.Contains(content, `((saw_broker == 0)) || return 1`) || strings.Contains(content, `saw_broker == 1 && saw_lnd_upgrade`) {
 		t.Fatal("legacy sudoers must accept zero or one known broker command, never duplicates")
+	}
+}
+
+func TestInstallersPublishUIWithExplicitSafeModes(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", "install.sh"),
+		filepath.Join("..", "..", "install_existing.sh"),
+		filepath.Join("..", "..", "install_existing_pi.sh"),
+		filepath.Join("assets", "upgrade-app.sh"),
+	}
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		for _, required := range []string{
+			"publish_ui_tree", "! -L", "! -type d ! -type f", "--no-preserve=mode,ownership,timestamps",
+			"-type d", "0755", "-type f", "0644", "root:root",
+		} {
+			if !strings.Contains(content, required) {
+				t.Fatalf("%s UI publication is missing %q", path, required)
+			}
+		}
+		if strings.Contains(content, `cp -a "$REPO_ROOT/ui/dist/." /opt/lightningos/ui/`) ||
+			strings.Contains(content, `"$CP_BIN" -a "$project_dir/ui/dist/." /opt/lightningos/ui/`) {
+			t.Fatalf("%s still preserves arbitrary UI artifact modes", path)
+		}
+	}
+}
+
+func TestDashboardPersistsOnlyNonSensitiveUpgradeResumeMarker(t *testing.T) {
+	path := filepath.Join("..", "..", "ui", "src", "components", "dashboard", "DashboardScreen.tsx")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(raw)
+	for _, required := range []string{
+		"lightningos.app-upgrade.pending.v1", "target_version", "started_at",
+		"window.localStorage.setItem", "window.localStorage.removeItem", "setAppUpgradeModalOpen(true)",
+	} {
+		if !strings.Contains(content, required) {
+			t.Fatalf("upgrade resume marker is missing %q", required)
+		}
+	}
+	markerStart := strings.Index(content, "type AppUpgradeMarker")
+	markerEnd := strings.Index(content[markerStart:], "export default function")
+	if markerStart < 0 || markerEnd < 0 {
+		t.Fatal("upgrade marker boundary is unavailable")
+	}
+	markerCode := strings.ToLower(content[markerStart : markerStart+markerEnd])
+	for _, forbidden := range []string{"password", "cookie", "csrf", "token"} {
+		if strings.Contains(markerCode, forbidden) {
+			t.Fatalf("upgrade resume marker contains sensitive field %q", forbidden)
+		}
 	}
 }
 

@@ -47,6 +47,7 @@ func TestMempoolComposeIsClosedAndHardened(t *testing.T) {
 		"/run/frontend:rw,exec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=0700",
 		"name: bitcoincore_default", "name: electrs_default", "name: mempool_dbdata", "name: mempool_cache",
 		`MARIADB_AUTO_UPGRADE: "1"`,
+		`MEMPOOL_INDEXING_BLOCKS_AMOUNT: "8"`,
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("compose missing %q", required)

@@ -91,7 +91,7 @@ func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
 		status.Threads = threads
 	}
 
-	handled, composeStatus, cpuPercentRaw, err := system.InspectAppWithBroker(ctx, cpuMinerAppID)
+	handled, composeStatus, cpuPercentRaw, _, err := system.InspectAppWithBroker(ctx, cpuMinerAppID)
 	if !handled {
 		return status
 	}

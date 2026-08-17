@@ -19,6 +19,18 @@ func TestBitcoinCoreImageIsPinned(t *testing.T) {
 	}
 }
 
+func TestBitcoinCoreLegacyMigrationRequiresExplicitConfirmation(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", inspectStatus: "running", inspectLegacy: true}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	if err := requireBitcoinCoreLegacyMigrationConfirmation(context.Background(), false); !errors.Is(err, errBitcoinCoreLegacyMigrationConfirmationRequired) {
+		t.Fatalf("unconfirmed migration error = %v", err)
+	}
+	if err := requireBitcoinCoreLegacyMigrationConfirmation(context.Background(), true); err != nil {
+		t.Fatalf("confirmed migration rejected: %v", err)
+	}
+}
+
 func TestDefaultBitcoinCoreConfigAllowsDedicatedConsumerNetwork(t *testing.T) {
 	raw, err := defaultBitcoinCoreConfig()
 	if err != nil {

@@ -573,6 +573,7 @@ POST /api/lnops/succession/simulate
 
 GET /api/apps
 - Returns app list with status.
+- A historical App Store Bitcoin container is returned as installed with `legacy_migration_required=true`; ordinary lifecycle controls must be replaced by the explicit safe-migration flow.
 - While a lifecycle action is active, the affected app includes `operation` with `action`, UTC `started_at`, and an optional truthful `stage` for instrumented workflows.
 - Apps that currently receive privileged direct LND access include `security_notices=["elevated_lnd_access"]`. `lndg` additionally reports `lnd_data_directory_read`. These values are informational disclosures and do not alter lifecycle behavior.
 - Public Pool firewall admission is broker-owned and fixed to its UI and Stratum ports; no executable UFW command is returned to the manager or API client.
@@ -597,14 +598,17 @@ POST /api/apps/{id}/install
 - `data_dir` is install-time only; existing blockchain data is not migrated.
 - `bitcoincore` defaults to `/data/bitcoin`; `elements` defaults to `/data/elements`.
 - Custom `bitcoincore` data directories must be on an already mounted volume and have at least 10 GiB free.
+- A detected legacy Bitcoin runtime requires `{"confirm_legacy_migration":true}`. Before cutover, the broker validates the attested official image, enrolled storage, configuration, network, ports, and a local rollback image. It accepts success only after mainnet RPC and loopback RPC/ZMQ probes pass; otherwise it automatically restores the previous runtime. The flow never restarts LND or removes the blockchain volume.
 - Installing `electrs` against Bitcoin Core managed by the App Store requires
   `{"confirm_bitcoin_restart":true}`. On a legacy `rpcauth` installation the
   manager adds a root-stored dedicated Electrs credential and may restart
   Bitcoin Core exactly once to activate it. The restart is skipped when the
   credential is already active. Native/systemd Bitcoin configurations and
   services are never modified by this migration.
+- Mempool uses a closed lightweight default of `MEMPOOL_INDEXING_BLOCKS_AMOUNT=8` to avoid saturating shared rotational storage during its initial history load. Arbitrary environment overrides remain rejected.
 
 POST /api/apps/{id}/start
+- Starting a detected legacy `bitcoincore` runtime requires `{"confirm_legacy_migration":true}` and follows the same transactional migration and rollback contract as installation.
 - Starting `electrs` against App Store Bitcoin accepts the same
   `confirm_bitcoin_restart` body and restart policy as installation.
 POST /api/apps/{id}/stop

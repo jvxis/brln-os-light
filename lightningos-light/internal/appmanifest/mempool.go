@@ -21,8 +21,11 @@ const (
 	MempoolContainerGID   = 1000
 	MempoolDatabaseUID    = 999
 	MempoolDatabaseGID    = 999
-	MempoolDBVolume       = "mempool_dbdata"
-	MempoolCacheVolume    = "mempool_cache"
+	// Keep the default installation usable when Bitcoin, Electrs and Mempool
+	// share rotational storage. This remains a fixed catalog value.
+	MempoolIndexingBlocksAmount = 8
+	MempoolDBVolume             = "mempool_dbdata"
+	MempoolCacheVolume          = "mempool_cache"
 
 	MempoolRelease = "3.3.1"
 	// These are the official multi-architecture manifests for the upstream
@@ -257,6 +260,7 @@ func MempoolCompose(runtime MempoolRuntime) (string, error) {
       DATABASE_USERNAME: "mempool"
       DATABASE_PASSWORD: "${MEMPOOL_DB_PASSWORD}"
       STATISTICS_ENABLED: "true"
+      MEMPOOL_INDEXING_BLOCKS_AMOUNT: "%d"
     working_dir: /run/backend
     tmpfs:
       - /run/backend:rw,exec,nosuid,nodev,size=512m,uid=%d,gid=%d,mode=0700
@@ -318,7 +322,7 @@ networks:
 		MempoolContainerUID, MempoolContainerGID, MempoolContainerUID, MempoolContainerGID,
 		MempoolPort, MempoolFrontendPort,
 		MempoolBackendImage, MempoolContainerUID, MempoolContainerGID, MempoolStopTimeout,
-		mempoolNetwork, bitcoinHost, network.RPCPort,
+		mempoolNetwork, bitcoinHost, network.RPCPort, MempoolIndexingBlocksAmount,
 		MempoolContainerUID, MempoolContainerGID, MempoolContainerUID, MempoolContainerGID,
 		cacheMount, MempoolDatabaseImage, MempoolDatabaseUID, MempoolDatabaseGID,
 		MempoolStopTimeout, MempoolDatabaseUID, MempoolDatabaseGID, MempoolDatabaseUID, MempoolDatabaseGID,

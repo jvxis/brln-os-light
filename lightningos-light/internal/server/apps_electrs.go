@@ -78,7 +78,7 @@ func (a electrsApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	handled, status, _, err := system.InspectAppWithBroker(ctx, electrsAppID)
+	handled, status, _, _, err := system.InspectAppWithBroker(ctx, electrsAppID)
 	if !handled {
 		info.Status = "unknown"
 		return info, errors.New("Electrs status requires privileged broker enforce mode")
@@ -441,7 +441,7 @@ func (s *Server) fetchElectrsStatus(ctx context.Context) electrsStatus {
 	}
 	out.Installed = true
 
-	handled, composeStatus, _, err := system.InspectAppWithBroker(ctx, electrsAppID)
+	handled, composeStatus, _, _, err := system.InspectAppWithBroker(ctx, electrsAppID)
 	if handled && err == nil && composeStatus == "running" {
 		out.Running = true
 	}

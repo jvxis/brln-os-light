@@ -453,8 +453,9 @@ type PackageFeatureState struct {
 }
 
 type AppInspection struct {
-	Status        string  `json:"status"`
-	CPUPercentRaw float64 `json:"cpu_percent_raw"`
+	Status                  string  `json:"status"`
+	CPUPercentRaw           float64 `json:"cpu_percent_raw"`
+	LegacyMigrationRequired bool    `json:"legacy_migration_required,omitempty"`
 }
 
 type LoopEnsureParams struct {

@@ -259,6 +259,9 @@ NPM_BIN="$(resolve_bin npm /usr/bin/npm /usr/local/bin/npm /bin/npm)" || die "Re
 SYSTEMCTL_BIN="$(resolve_bin systemctl /usr/bin/systemctl /bin/systemctl)" || die "Required command missing: systemctl"
 INSTALL_BIN="$(resolve_bin install /usr/bin/install /bin/install)" || die "Required command missing: install"
 CP_BIN="$(resolve_bin cp /usr/bin/cp /bin/cp)" || die "Required command missing: cp"
+FIND_BIN="$(resolve_bin find /usr/bin/find /bin/find)" || die "Required command missing: find"
+CHMOD_BIN="$(resolve_bin chmod /usr/bin/chmod /bin/chmod)" || die "Required command missing: chmod"
+CHOWN_BIN="$(resolve_bin chown /usr/bin/chown /bin/chown)" || die "Required command missing: chown"
 MV_BIN="$(resolve_bin mv /usr/bin/mv /bin/mv)" || die "Required command missing: mv"
 FLOCK_BIN="$(resolve_bin flock /usr/bin/flock /bin/flock)" || die "Required command missing: flock"
 DATE_BIN="$(resolve_bin date /usr/bin/date /bin/date)" || die "Required command missing: date"
@@ -1057,13 +1060,26 @@ print_step "Building UI"
 (cd "$project_dir/ui" && "$NPM_BIN" ci && "$NPM_BIN" run build)
 print_ok "UI built"
 
+publish_ui_tree() {
+  local source="$project_dir/ui/dist"
+  local target="/opt/lightningos/ui"
+  [[ -d "$source" && ! -L "$source" ]] || die "UI build output is missing or unsafe."
+  [[ -d "$target" && ! -L "$target" ]] || die "UI destination is missing or unsafe."
+  [[ -z "$($FIND_BIN "$source" -type l -print -quit)" ]] || die "UI build output contains a symbolic link."
+  [[ -z "$($FIND_BIN "$source" ! -type d ! -type f -print -quit)" ]] || die "UI build output contains an unsupported file type."
+  "$FIND_BIN" "$target" -mindepth 1 -maxdepth 1 -exec "$RM_BIN" -rf -- {} +
+  "$CP_BIN" -R --no-preserve=mode,ownership,timestamps -- "$source/." "$target/"
+  "$FIND_BIN" "$target" -type d -exec "$CHMOD_BIN" 0755 {} +
+  "$FIND_BIN" "$target" -type f -exec "$CHMOD_BIN" 0644 {} +
+  "$CHOWN_BIN" -R root:root "$target"
+}
+
 print_step "Preparing reversible privilege cutover"
 prepare_privilege_cutover
 cutover_prepared=1
 
 print_step "Installing UI"
-"$RM_BIN" -rf /opt/lightningos/ui/*
-"$CP_BIN" -a "$project_dir/ui/dist/." /opt/lightningos/ui/
+publish_ui_tree
 print_ok "UI installed"
 
 print_step "Ensuring fixed native application identities"

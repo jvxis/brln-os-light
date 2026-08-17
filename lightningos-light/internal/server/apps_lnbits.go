@@ -59,7 +59,7 @@ func (a lnbitsApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	handled, status, _, err := system.InspectAppWithBroker(ctx, appmanifest.LNbitsID)
+	handled, status, _, _, err := system.InspectAppWithBroker(ctx, appmanifest.LNbitsID)
 	if !handled {
 		info.Status = "unknown"
 		return info, errors.New("LNbits status requires privileged broker enforce mode")

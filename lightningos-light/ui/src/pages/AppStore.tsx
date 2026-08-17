@@ -54,6 +54,7 @@ type InstallPayload = {
   elements_rpc_user?: string
   elements_rpc_password?: string
   confirm_bitcoin_restart?: boolean
+  confirm_legacy_migration?: boolean
 }
 
 type PendingElevatedInstall = {
@@ -186,6 +187,7 @@ export default function AppStore() {
   const [pendingElevatedInstall, setPendingElevatedInstall] = useState<PendingElevatedInstall | null>(null)
   const [elevatedInstallAcknowledged, setElevatedInstallAcknowledged] = useState(false)
   const [pendingUninstall, setPendingUninstall] = useState<AppInfo | null>(null)
+  const [bitcoinLegacyMigrationOpen, setBitcoinLegacyMigrationOpen] = useState(false)
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
     if (typeof window === 'undefined') return 'all'
     const stored = window.localStorage.getItem(APP_STORE_INSTALL_FILTER_KEY)
@@ -572,6 +574,11 @@ export default function AppStore() {
     await handleAction('bitcoincore', 'install', payload)
   }
 
+  const handleBitcoinLegacyMigrationConfirm = async () => {
+    setBitcoinLegacyMigrationOpen(false)
+    await handleAction('bitcoincore', 'start', { confirm_legacy_migration: true })
+  }
+
   const handleUninstallConfirm = async () => {
     const app = pendingUninstall
     setPendingUninstall(null)
@@ -921,6 +928,13 @@ export default function AppStore() {
                 </div>
               )}
 
+              {app.legacy_migration_required && (
+                <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/85">
+                  <p className="font-semibold">{t('appStore.bitcoinLegacyMigrationTitle')}</p>
+                  <p className="mt-1 text-xs leading-relaxed">{t('appStore.bitcoinLegacyMigrationCard')}</p>
+                </div>
+              )}
+
               {hasDirectLndAccess && (
                 <div className={`rounded-lg px-4 py-3 text-sm ${hasElevatedLndAccess ? 'border border-amber-400/25 bg-amber-500/10' : 'border border-cyan-400/25 bg-cyan-500/10'}`}>
                   <div className="flex items-start gap-3">
@@ -1050,7 +1064,12 @@ export default function AppStore() {
                     {isBusy ? t('appStore.installing') : t('appStore.install')}
                   </button>
                 )}
-                {app.installed && app.status === 'running' && (
+                {app.legacy_migration_required && (
+                  <button className="btn-primary" disabled={isBusy} onClick={() => setBitcoinLegacyMigrationOpen(true)}>
+                    {t('appStore.bitcoinLegacyMigrationAction')}
+                  </button>
+                )}
+                {app.installed && app.status === 'running' && !app.legacy_migration_required && (
                   <>
                     {internalRoute && (
                       <a className="btn-primary" href={`#${internalRoute}`}>
@@ -1090,7 +1109,7 @@ export default function AppStore() {
                     </button>
                   </>
                 )}
-                {app.installed && app.status !== 'running' && (
+                {app.installed && app.status !== 'running' && !app.legacy_migration_required && (
                   <>
                     <button className="btn-primary" disabled={isBusy || unavailable} title={unavailable ? unavailableMessage : undefined} onClick={() => handleAction(app.id, 'start')}>
                       {isBusy ? t('appStore.starting') : t('common.start')}
@@ -1145,6 +1164,22 @@ export default function AppStore() {
               <button className="btn-secondary text-rose-200" type="button" onClick={() => void handleUninstallConfirm()}>
                 {t('appStore.uninstallConfirmAction', { app: pendingUninstall.name })}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bitcoinLegacyMigrationOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4" role="dialog" aria-modal="true" aria-labelledby="bitcoin-legacy-migration-title">
+          <div className="w-full max-w-lg rounded-lg border border-amber-400/30 bg-ink p-5 shadow-2xl">
+            <h3 id="bitcoin-legacy-migration-title" className="text-lg font-semibold">{t('appStore.bitcoinLegacyMigrationTitle')}</h3>
+            <p className="mt-3 text-sm leading-relaxed text-fog/75">{t('appStore.bitcoinLegacyMigrationBody')}</p>
+            <div className="mt-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm leading-relaxed text-amber-100/85">
+              {t('appStore.bitcoinLegacyMigrationImpact')}
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-secondary" type="button" onClick={() => setBitcoinLegacyMigrationOpen(false)}>{t('common.cancel')}</button>
+              <button className="btn-primary" type="button" onClick={() => void handleBitcoinLegacyMigrationConfirm()}>{t('appStore.bitcoinLegacyMigrationConfirm')}</button>
             </div>
           </div>
         </div>

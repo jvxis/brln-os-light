@@ -1204,6 +1204,12 @@
     }
   },
   "appStore": {
+    "bitcoinLegacyMigrationTitle": "Legacy Bitcoin Core migration required",
+    "bitcoinLegacyMigrationCard": "This node still uses the historical Store image. Ordinary start and stop controls are disabled until the verified image is adopted safely.",
+    "bitcoinLegacyMigrationAction": "Migrate safely",
+    "bitcoinLegacyMigrationBody": "LightningOS will validate the official image, storage, configuration, network and rollback path before replacing the legacy container.",
+    "bitcoinLegacyMigrationImpact": "Bitcoin Core will have a brief controlled restart. LND will not be restarted and the blockchain volume will not be removed. If the new RPC does not become ready on mainnet, the previous runtime is restored automatically.",
+    "bitcoinLegacyMigrationConfirm": "Confirm safe migration",
     "actionFailed": "Action failed.",
     "adminPasswordCopied": "Admin password copied.",
     "adminPasswordSavedAt": "Admin password saved at {{path}}",

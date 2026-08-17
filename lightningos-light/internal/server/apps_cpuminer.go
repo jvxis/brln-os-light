@@ -118,7 +118,7 @@ func (a cpuMinerApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	handled, brokerStatus, _, err := system.InspectAppWithBroker(ctx, cpuMinerAppID)
+	handled, brokerStatus, _, _, err := system.InspectAppWithBroker(ctx, cpuMinerAppID)
 	if !handled {
 		info.Status = "unknown"
 		return info, errors.New("CPU Lottery Miner status requires privileged broker enforce mode")

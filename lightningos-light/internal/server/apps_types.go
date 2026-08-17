@@ -27,22 +27,23 @@ type appDefinition struct {
 }
 
 type appInfo struct {
-	ID                 string            `json:"id"`
-	Name               string            `json:"name"`
-	Description        string            `json:"description"`
-	Installed          bool              `json:"installed"`
-	Status             string            `json:"status"`
-	Port               int               `json:"port"`
-	Scheme             string            `json:"scheme,omitempty"`
-	ExternalURL        string            `json:"external_url,omitempty"`
-	AdminPasswordPath  string            `json:"admin_password_path,omitempty"`
-	Available          bool              `json:"available"`
-	UnavailableReason  string            `json:"unavailable_reason,omitempty"`
-	UnavailableMessage string            `json:"unavailable_message,omitempty"`
-	UFWActive          bool              `json:"ufw_active,omitempty"`
-	UFWCommand         string            `json:"ufw_command,omitempty"`
-	SecurityNotices    []string          `json:"security_notices,omitempty"`
-	Operation          *appOperationInfo `json:"operation,omitempty"`
+	ID                      string            `json:"id"`
+	Name                    string            `json:"name"`
+	Description             string            `json:"description"`
+	Installed               bool              `json:"installed"`
+	Status                  string            `json:"status"`
+	Port                    int               `json:"port"`
+	Scheme                  string            `json:"scheme,omitempty"`
+	ExternalURL             string            `json:"external_url,omitempty"`
+	AdminPasswordPath       string            `json:"admin_password_path,omitempty"`
+	Available               bool              `json:"available"`
+	UnavailableReason       string            `json:"unavailable_reason,omitempty"`
+	UnavailableMessage      string            `json:"unavailable_message,omitempty"`
+	UFWActive               bool              `json:"ufw_active,omitempty"`
+	UFWCommand              string            `json:"ufw_command,omitempty"`
+	SecurityNotices         []string          `json:"security_notices,omitempty"`
+	Operation               *appOperationInfo `json:"operation,omitempty"`
+	LegacyMigrationRequired bool              `json:"legacy_migration_required,omitempty"`
 }
 
 type appOperationInfo struct {

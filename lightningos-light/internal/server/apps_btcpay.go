@@ -94,7 +94,7 @@ func (a btcpayApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	handled, status, _, err := system.InspectAppWithBroker(ctx, btcpayAppID)
+	handled, status, _, _, err := system.InspectAppWithBroker(ctx, btcpayAppID)
 	if !handled {
 		info.Status = "unknown"
 		return info, errors.New("BTCPay status requires privileged broker enforce mode")

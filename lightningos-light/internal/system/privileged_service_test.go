@@ -317,10 +317,10 @@ func (client *fakePrivilegedServiceClient) SnapshotApp(_ context.Context, appID 
 	return client.snapshotErr
 }
 
-func (client *fakePrivilegedServiceClient) InspectApp(_ context.Context, appID string) (string, float64, error) {
+func (client *fakePrivilegedServiceClient) InspectApp(_ context.Context, appID string) (string, float64, bool, error) {
 	client.inspectCalls++
 	client.inspectAppID = appID
-	return client.inspectStatus, client.inspectCPU, client.inspectErr
+	return client.inspectStatus, client.inspectCPU, false, client.inspectErr
 }
 
 func (client *fakePrivilegedServiceClient) RemoveApp(_ context.Context, appID string, dryRun bool) error {
@@ -899,7 +899,7 @@ func TestInspectAppWithBrokerModes(t *testing.T) {
 			client := &fakePrivilegedServiceClient{mode: test.mode, inspectStatus: "running", inspectCPU: 99.5, inspectErr: test.inspectErr}
 			ConfigurePrivilegedClient(client)
 			t.Cleanup(func() { ConfigurePrivilegedClient(nil) })
-			handled, status, cpu, err := InspectAppWithBroker(context.Background(), "cpuminer")
+			handled, status, cpu, _, err := InspectAppWithBroker(context.Background(), "cpuminer")
 			if handled != test.wantHandled || (err != nil) != test.wantError {
 				t.Fatalf("handled/error = %v/%v", handled, err)
 			}

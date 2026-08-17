@@ -24,7 +24,7 @@ type PrivilegedClient interface {
 	RestartService(ctx context.Context, unit string, noBlock bool, dryRun bool) error
 	EnableLogin(ctx context.Context, dryRun bool) error
 	AppLifecycle(ctx context.Context, appID string, action string, dryRun bool) error
-	InspectApp(ctx context.Context, appID string) (status string, cpuPercentRaw float64, err error)
+	InspectApp(ctx context.Context, appID string) (status string, cpuPercentRaw float64, legacyMigrationRequired bool, err error)
 	RemoveApp(ctx context.Context, appID string, dryRun bool) error
 	EnsureDockerRuntime(ctx context.Context, dryRun bool) (status string, err error)
 	DockerRuntimeStatus(ctx context.Context) (status string, err error)
@@ -1685,24 +1685,24 @@ func EnsureAppStorageWithBroker(ctx context.Context) (bool, error) {
 	}
 }
 
-func InspectAppWithBroker(ctx context.Context, appID string) (handled bool, status string, cpuPercentRaw float64, err error) {
+func InspectAppWithBroker(ctx context.Context, appID string) (handled bool, status string, cpuPercentRaw float64, legacyMigrationRequired bool, err error) {
 	privilegedState.RLock()
 	client := privilegedState.client
 	privilegedState.RUnlock()
 	if client == nil {
-		return false, "", 0, nil
+		return false, "", 0, false, nil
 	}
 	switch client.Mode() {
 	case "enforce":
-		status, cpuPercentRaw, err := client.InspectApp(ctx, appID)
-		return true, status, cpuPercentRaw, err
+		status, cpuPercentRaw, legacyMigrationRequired, err := client.InspectApp(ctx, appID)
+		return true, status, cpuPercentRaw, legacyMigrationRequired, err
 	case "shadow":
 		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
-		_, _, _ = client.InspectApp(shadowCtx, appID)
-		return false, "", 0, nil
+		_, _, _, _ = client.InspectApp(shadowCtx, appID)
+		return false, "", 0, false, nil
 	default:
-		return false, "", 0, nil
+		return false, "", 0, false, nil
 	}
 }
 

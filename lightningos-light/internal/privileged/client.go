@@ -1305,28 +1305,28 @@ func (client *Client) ResetAppAdmin(ctx context.Context, appID string, dryRun bo
 	return err
 }
 
-func (client *Client) InspectApp(ctx context.Context, appID string) (string, float64, error) {
+func (client *Client) InspectApp(ctx context.Context, appID string) (string, float64, bool, error) {
 	response, err := client.call(ctx, OperationAppInspect, AppInspectParams{AppID: appID}, false)
 	if err != nil {
 		if client != nil && client.mode == ModeShadow && client.logger != nil {
 			client.logger.Printf("privileged broker shadow inspection rejected app.compose.inspect: %v", err)
 		}
-		return "", 0, err
+		return "", 0, false, err
 	}
 	var result AppInspection
 	if err := decodeStrict(response.Result, &result); err != nil {
-		return "", 0, errors.New("invalid broker app inspection response")
+		return "", 0, false, errors.New("invalid broker app inspection response")
 	}
 	if result.Status != "running" && result.Status != "stopped" {
-		return "", 0, errors.New("invalid broker app inspection status")
+		return "", 0, false, errors.New("invalid broker app inspection status")
 	}
 	if result.CPUPercentRaw < 0 {
-		return "", 0, errors.New("invalid broker app CPU percentage")
+		return "", 0, false, errors.New("invalid broker app CPU percentage")
 	}
 	if client.mode == ModeShadow && client.logger != nil {
 		client.logger.Printf("privileged broker shadow inspection accepted app.compose.inspect for %s", appID)
 	}
-	return result.Status, result.CPUPercentRaw, nil
+	return result.Status, result.CPUPercentRaw, result.LegacyMigrationRequired, nil
 }
 
 func (client *Client) AppLogs(ctx context.Context, appID string, lines int, since string) ([]string, string, error) {

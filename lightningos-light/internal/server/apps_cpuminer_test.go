@@ -51,6 +51,7 @@ type cpuMinerPrivilegedClient struct {
 	inspectCalls      int
 	inspectAppID      string
 	inspectStatus     string
+	inspectLegacy     bool
 	inspectErr        error
 	storageCalls      int
 	storageDataDir    string
@@ -101,14 +102,14 @@ func (client *cpuMinerPrivilegedClient) RestartService(context.Context, string, 
 	return nil
 }
 func (client *cpuMinerPrivilegedClient) EnableLogin(context.Context, bool) error { return nil }
-func (client *cpuMinerPrivilegedClient) InspectApp(_ context.Context, appID string) (string, float64, error) {
+func (client *cpuMinerPrivilegedClient) InspectApp(_ context.Context, appID string) (string, float64, bool, error) {
 	client.inspectCalls++
 	client.inspectAppID = appID
 	status := client.inspectStatus
 	if status == "" {
 		status = "stopped"
 	}
-	return status, 0, client.inspectErr
+	return status, 0, client.inspectLegacy, client.inspectErr
 }
 func (client *cpuMinerPrivilegedClient) AppLifecycle(_ context.Context, appID, action string, dryRun bool) error {
 	client.appCalls++

@@ -462,7 +462,7 @@ func TestClientAppFirewallRejectsInvalidState(t *testing.T) {
 func TestClientInspectAppBuildsTypedRequest(t *testing.T) {
 	transport := &fakeTransport{result: AppInspection{Status: "running", CPUPercentRaw: 123.4}}
 	client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
-	status, cpu, err := client.InspectApp(context.Background(), "cpuminer")
+	status, cpu, _, err := client.InspectApp(context.Background(), "cpuminer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +486,7 @@ func TestClientInspectAppRejectsInvalidResult(t *testing.T) {
 	for _, result := range tests {
 		transport := &fakeTransport{result: result}
 		client := NewClientWithTransport(ModeEnforce, time.Second, transport, nil)
-		if _, _, err := client.InspectApp(context.Background(), "cpuminer"); err == nil {
+		if _, _, _, err := client.InspectApp(context.Background(), "cpuminer"); err == nil {
 			t.Fatalf("expected invalid result to fail: %#v", result)
 		}
 	}

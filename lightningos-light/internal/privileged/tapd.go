@@ -167,6 +167,17 @@ func (manager *NativeTapdManager) Lifecycle(ctx context.Context, action AppLifec
 	if action != AppLifecycleStart && action != AppLifecycleStop {
 		return TapdState{}, errors.New("Tapd lifecycle action is not allowed")
 	}
+	// Tapd installs created before the privileged snapshot was introduced only
+	// have the manager-owned legacy declaration. Keep start fail-closed so it
+	// must adopt the hardened declaration first, but allow stop to target the
+	// exact catalog container by its fixed Compose labels. This is required for
+	// safely quiescing legacy Bitcoin consumers before replacing the historical
+	// Bitcoin network; no user-controlled path, name, or argument reaches Docker.
+	if action == AppLifecycleStop &&
+		(!safeNonEmptyRegularFile(manager.Paths.ComposePath) || !safeNonEmptyRegularFile(manager.Paths.MacaroonPath)) &&
+		safeNonEmptyRegularFile(manager.Paths.LegacyComposePath) {
+		return manager.stopLegacy(ctx, dryRun)
+	}
 	if !safeNonEmptyRegularFile(manager.Paths.ComposePath) || !safeNonEmptyRegularFile(manager.Paths.MacaroonPath) {
 		return TapdState{}, errors.New("Tapd is not ready")
 	}
@@ -202,6 +213,20 @@ func (manager *NativeTapdManager) Lifecycle(ctx context.Context, action AppLifec
 		return TapdState{}, errors.New("Tapd lifecycle command failed")
 	}
 	return manager.Status(ctx)
+}
+
+func (manager *NativeTapdManager) stopLegacy(ctx context.Context, dryRun bool) (TapdState, error) {
+	containerID, err := manager.runningContainerID(ctx)
+	if err != nil {
+		return TapdState{}, errors.New("Tapd legacy container status failed")
+	}
+	if dryRun || containerID == "" {
+		return TapdState{Installed: true, Status: "stopped"}, nil
+	}
+	if _, err := manager.Runner.Run(ctx, dockerPath, "stop", "--time", strconv.Itoa(appmanifest.TapdStopTimeout), containerID); err != nil {
+		return TapdState{}, errors.New("Tapd legacy stop command failed")
+	}
+	return TapdState{Installed: true, Status: "stopped"}, nil
 }
 
 func (manager *NativeTapdManager) Remove(ctx context.Context, dryRun bool) error {

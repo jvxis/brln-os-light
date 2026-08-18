@@ -645,6 +645,10 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "invalid_request", errors.New("invalid app.compose.lifecycle params")
 		}
 		if err := broker.Apps.Lifecycle(ctx, params.AppID, params.Action, request.DryRun); err != nil {
+			var migrationErr *bitcoinLegacyMigrationError
+			if errors.As(err, &migrationErr) {
+				return nil, migrationErr.Code, errors.New(migrationErr.Message)
+			}
 			return nil, "app_lifecycle_failed", errors.New("app lifecycle operation failed")
 		}
 		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil

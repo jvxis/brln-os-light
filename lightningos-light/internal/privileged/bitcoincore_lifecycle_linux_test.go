@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -206,6 +207,36 @@ func TestBitcoinCoreStatusRejectsUntrustedContainerIDBeforeExec(t *testing.T) {
 	}
 }
 
+func TestBitcoinCoreStatusObservesValidatedLegacyRuntimeWithoutEnrollment(t *testing.T) {
+	manager := &ComposeAppManager{Runner: &composeRecordingRunner{}, PrivilegedAppsRoot: filepath.Join(t.TempDir(), "missing")}
+	runner := manager.Runner.(*composeRecordingRunner)
+	containerID := strings.Repeat("b", 64)
+	imageID := "sha256:" + strings.Repeat("d", 64)
+	dataDir := filepath.Join(t.TempDir(), "bitcoin")
+	hash := fmt.Sprintf("%064x", 1)
+	runner.hook = func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && len(args) > 1 && args[0] == "ps" && args[1] == "-a" {
+			return containerID + "\n", nil, true
+		}
+		if path == dockerPath && reflect.DeepEqual(args, []string{"inspect", containerID}) {
+			return legacyBitcoinInspectJSON(containerID, imageID, dataDir), nil, true
+		}
+		if path == dockerPath && len(args) > 0 && args[0] == "exec" && args[len(args)-1] == "getblockchaininfo" {
+			return fmt.Sprintf(`{"chain":"main","blocks":1,"headers":1,"verificationprogress":1,"initialblockdownload":false,"bestblockhash":%q,"pruned":false,"size_on_disk":1}`, hash), nil, true
+		}
+		return "", nil, false
+	}
+	state, err := manager.BitcoinCoreStatus(context.Background())
+	if err != nil || state.Chain != "main" || state.Blocks != 1 {
+		t.Fatalf("legacy status/error=%+v/%v", state, err)
+	}
+	for _, command := range runner.commands {
+		if command.path == dockerPath && slices.Contains(command.args, "compose") {
+			t.Fatalf("legacy fallback unexpectedly used manager Compose state: %#v", command)
+		}
+	}
+}
+
 func TestBitcoinCoreLifecycleRejectsWrongStorageIdentityBeforeDocker(t *testing.T) {
 	manager, runner, _, dataDir := newTestBitcoinCoreLifecycleManager(t)
 	marker := filepath.Join(dataDir, appmanifest.BitcoinCoreStorageMarker)
@@ -244,6 +275,9 @@ func TestBitcoinCoreLegacyMigrationSucceedsWithoutTouchingLND(t *testing.T) {
 		if path == dockerPath && reflect.DeepEqual(args, []string{"inspect", legacyID}) {
 			return legacyBitcoinInspectJSON(legacyID, legacyImageID, dataDir), nil, true
 		}
+		if isLegacyBitcoinNetworkInspect(args) {
+			return legacyBitcoinNetworkInspectOutput(legacyID), nil, true
+		}
 		if path == dockerPath && reflect.DeepEqual(args, []string{"inspect", newID}) {
 			return managedBitcoinInspectJSON(newID, lifecycleTestBitcoinCoreImageID, dataDir), nil, true
 		}
@@ -268,11 +302,18 @@ func TestBitcoinCoreLegacyMigrationSucceedsWithoutTouchingLND(t *testing.T) {
 	if err := manager.Lifecycle(context.Background(), appmanifest.BitcoinCoreID, AppLifecycleStart, false); err != nil {
 		t.Fatal(err)
 	}
+	downSeen := false
 	for _, command := range runner.commands {
 		joined := command.path + " " + strings.Join(command.args, " ")
+		if hasArgsSuffix(command.args, "down", "--remove-orphans", "--timeout", strconv.Itoa(appmanifest.BitcoinCoreStopTimeout)) {
+			downSeen = true
+		}
 		if strings.Contains(joined, "/data/lnd") || (command.path == systemctlPath && slices.Contains(command.args, "lnd")) {
 			t.Fatalf("Bitcoin migration touched LND: %s", joined)
 		}
+	}
+	if !downSeen {
+		t.Fatal("legacy IPAM was not removed before the hardened runtime started")
 	}
 }
 
@@ -290,6 +331,9 @@ func TestBitcoinCoreLegacyMigrationPreflightFailureDoesNotCutOver(t *testing.T) 
 		}
 		if path == dockerPath && reflect.DeepEqual(args, []string{"inspect", legacyID}) {
 			return legacyBitcoinInspectJSON(legacyID, legacyImageID, dataDir), nil, true
+		}
+		if isLegacyBitcoinNetworkInspect(args) {
+			return legacyBitcoinNetworkInspectOutput(legacyID), nil, true
 		}
 		if path == dockerPath && reflect.DeepEqual(args, []string{"image", "inspect", legacyImageID}) {
 			return legacyImageID, nil, true
@@ -311,6 +355,38 @@ func TestBitcoinCoreLegacyMigrationPreflightFailureDoesNotCutOver(t *testing.T) 
 		}
 		if strings.Contains(joined, "/data/lnd") || (command.path == systemctlPath && slices.Contains(command.args, "lnd")) {
 			t.Fatalf("preflight failure touched LND: %s", joined)
+		}
+	}
+}
+
+func TestBitcoinCoreLegacyMigrationRejectsAttachedConsumersBeforeCutover(t *testing.T) {
+	manager, runner, _, dataDir := newTestBitcoinCoreLifecycleManager(t)
+	legacyID := strings.Repeat("b", 64)
+	consumerID := strings.Repeat("c", 64)
+	legacyImageID := "sha256:" + strings.Repeat("d", 64)
+	baseHook := runner.hook
+	runner.hook = func(path string, args []string) (string, error, bool) {
+		if output, err, handled := baseHook(path, args); handled {
+			return output, err, true
+		}
+		if path == dockerPath && len(args) > 1 && args[0] == "ps" && args[1] == "-a" {
+			return legacyID + "\n", nil, true
+		}
+		if path == dockerPath && reflect.DeepEqual(args, []string{"inspect", legacyID}) {
+			return legacyBitcoinInspectJSON(legacyID, legacyImageID, dataDir), nil, true
+		}
+		if isLegacyBitcoinNetworkInspect(args) {
+			return legacyBitcoinNetworkInspectOutput(legacyID, consumerID), nil, true
+		}
+		return "", nil, false
+	}
+	err := manager.Lifecycle(context.Background(), appmanifest.BitcoinCoreID, AppLifecycleStart, false)
+	if err == nil || !strings.Contains(err.Error(), "Stop Electrs, Mempool") {
+		t.Fatalf("unexpected consumer preflight result: %v", err)
+	}
+	for _, command := range runner.commands {
+		if slices.Contains(command.args, "commit") || slices.Contains(command.args, "down") || slices.Contains(command.args, "up") {
+			t.Fatalf("blocked consumer topology reached migration mutation: %#v", command)
 		}
 	}
 }
@@ -355,6 +431,9 @@ func TestBitcoinCoreLegacyMigrationFailureRollsBack(t *testing.T) {
 		if path == dockerPath && reflect.DeepEqual(args, []string{"inspect", legacyID}) {
 			return legacyBitcoinInspectJSON(legacyID, legacyImageID, dataDir), nil, true
 		}
+		if isLegacyBitcoinNetworkInspect(args) {
+			return legacyBitcoinNetworkInspectOutput(legacyID), nil, true
+		}
 		if path == dockerPath && reflect.DeepEqual(args, []string{"image", "inspect", legacyImageID}) {
 			return legacyImageID, nil, true
 		}
@@ -395,6 +474,19 @@ func legacyBitcoinInspectJSON(containerID, imageID, dataDir string) string {
 
 func managedBitcoinInspectJSON(containerID, imageID, dataDir string) string {
 	return fmt.Sprintf(`[{"Id":%q,"Image":%q,"Config":{"Image":%q},"State":{"Running":true},"HostConfig":{"NetworkMode":"bitcoincore_default","PortBindings":{}},"Mounts":[{"Type":"bind","Source":%q,"Destination":"/home/bitcoin/.bitcoin","RW":true}]}]`, containerID, imageID, appmanifest.BitcoinCoreImage, dataDir)
+}
+
+func isLegacyBitcoinNetworkInspect(args []string) bool {
+	return len(args) == 5 && reflect.DeepEqual(args[:3], []string{"network", "inspect", appmanifest.BitcoinCoreNetwork}) && args[3] == "--format"
+}
+
+func legacyBitcoinNetworkInspectOutput(containerIDs ...string) string {
+	endpoints := make([]string, 0, len(containerIDs))
+	for _, containerID := range containerIDs {
+		endpoints = append(endpoints, fmt.Sprintf("%q:{\"Name\":\"bitcoind\"}", containerID))
+	}
+	return fmt.Sprintf("bridge|local|false|%s|default|[{\"Subnet\":\"172.18.0.0/16\",\"Gateway\":\"172.18.0.1\"}]|{%s}",
+		appmanifest.BitcoinCoreProject, strings.Join(endpoints, ","))
 }
 
 func newTestBitcoinCoreLifecycleManager(t *testing.T) (*ComposeAppManager, *composeRecordingRunner, string, string) {

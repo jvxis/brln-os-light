@@ -16,7 +16,11 @@ import (
 	"lightningos-light/internal/appmanifest"
 )
 
-const bitcoinCoreLegacyRollbackImage = "lightningos/bitcoin-core-legacy-rollback:0.5.12"
+const (
+	bitcoinCoreLegacyRollbackImage      = "lightningos/bitcoin-core-legacy-rollback:0.5.13"
+	legacyBitcoinNetworkInspectFormat   = `{{.Driver}}|{{.Scope}}|{{.Internal}}|{{index .Labels "com.docker.compose.project"}}|{{index .Labels "com.docker.compose.network"}}|{{json .IPAM.Config}}|{{json .Containers}}`
+	maxLegacyBitcoinNetworkInspectBytes = 256 * 1024
+)
 
 type bitcoinCoreRuntime struct {
 	ContainerID string
@@ -33,11 +37,43 @@ type legacyBitcoinPortBinding struct {
 	HostPort string `json:"HostPort"`
 }
 
+type legacyBitcoinNetworkEndpoint struct {
+	Name string `json:"Name"`
+}
+
+type legacyBitcoinNetworkState struct {
+	Subnet         string
+	Gateway        string
+	ReplaceNetwork bool
+}
+
+type bitcoinLegacyMigrationError struct {
+	Code    string
+	Message string
+}
+
+func (err *bitcoinLegacyMigrationError) Error() string {
+	if err == nil {
+		return ""
+	}
+	return err.Message
+}
+
 type preparedLegacyBitcoinMigration struct {
 	runtime      bitcoinCoreRuntime
+	network      legacyBitcoinNetworkState
 	rollbackBase string
 	rollbackRoot string
 	composePath  string
+}
+
+func (migration *preparedLegacyBitcoinMigration) rollbackComposeArgs(prefix []string, manifest appmanifest.ComposeManifest) []string {
+	args := append([]string(nil), prefix...)
+	return append(args,
+		"--project-name", manifest.Project,
+		"--project-directory", migration.rollbackRoot,
+		"-f", migration.composePath,
+	)
 }
 
 func (migration *preparedLegacyBitcoinMigration) cleanup() {
@@ -77,6 +113,10 @@ func (manager *ComposeAppManager) prepareLegacyBitcoinMigration(ctx context.Cont
 	if runtimeState.Network != appmanifest.BitcoinCoreNetwork {
 		return nil, errors.New("Bitcoin Core legacy network is not eligible for automatic migration")
 	}
+	networkState, err := manager.inspectLegacyBitcoinNetwork(ctx, runtimeState)
+	if err != nil {
+		return nil, err
+	}
 	portLines, err := validatedLegacyBitcoinPortLines(runtimeState.Ports)
 	if err != nil {
 		return nil, err
@@ -97,17 +137,28 @@ func (manager *ComposeAppManager) prepareLegacyBitcoinMigration(ctx context.Cont
 		return nil, errors.New("Bitcoin Core rollback workspace could not be created")
 	}
 	migration := &preparedLegacyBitcoinMigration{
-		runtime: runtimeState, rollbackBase: rollbackRootBase, rollbackRoot: rollbackRoot,
+		runtime: runtimeState, network: networkState, rollbackBase: rollbackRootBase, rollbackRoot: rollbackRoot,
 		composePath: filepath.Join(rollbackRoot, "docker-compose.yaml"),
 	}
 	if err := os.Chmod(rollbackRoot, 0700); err != nil {
 		migration.cleanup()
 		return nil, errors.New("Bitcoin Core rollback workspace could not be secured")
 	}
-	rollbackCompose := legacyBitcoinRollbackCompose(expectedDataDir, portLines)
+	rollbackCompose := legacyBitcoinRollbackCompose(expectedDataDir, portLines, networkState)
 	if err := os.WriteFile(migration.composePath, []byte(rollbackCompose), 0600); err != nil {
 		migration.cleanup()
 		return nil, errors.New("Bitcoin Core rollback manifest could not be prepared")
+	}
+	commandPath, prefix, err := manager.resolveCompose(ctx)
+	if err != nil {
+		migration.cleanup()
+		return nil, err
+	}
+	manifest, _ := appmanifest.ComposeManifestForApp(appmanifest.BitcoinCoreID)
+	validateArgs := append(migration.rollbackComposeArgs(prefix, manifest), "config", "--quiet")
+	if _, err := manager.Runner.Run(ctx, commandPath, validateArgs...); err != nil {
+		migration.cleanup()
+		return nil, errors.New("Bitcoin Core rollback manifest validation failed")
 	}
 	output, err := manager.Runner.Run(ctx, dockerPath, "commit", "--pause=false", runtimeState.ContainerID, bitcoinCoreLegacyRollbackImage)
 	if err != nil || !dockerImageIDPattern.MatchString(strings.TrimSpace(output)) {
@@ -115,6 +166,49 @@ func (manager *ComposeAppManager) prepareLegacyBitcoinMigration(ctx context.Cont
 		return nil, errors.New("Bitcoin Core legacy rollback image could not be captured")
 	}
 	return migration, nil
+}
+
+func (manager *ComposeAppManager) inspectLegacyBitcoinNetwork(ctx context.Context, runtimeState bitcoinCoreRuntime) (legacyBitcoinNetworkState, error) {
+	output, err := manager.Runner.Run(ctx, dockerPath,
+		"network", "inspect", appmanifest.BitcoinCoreNetwork,
+		"--format", legacyBitcoinNetworkInspectFormat,
+	)
+	if err != nil || len(output) == 0 || len(output) > maxLegacyBitcoinNetworkInspectBytes {
+		return legacyBitcoinNetworkState{}, errors.New("Bitcoin Core legacy network inspection failed")
+	}
+	parts := strings.Split(strings.TrimSpace(output), "|")
+	if len(parts) != 7 || parts[0] != "bridge" || parts[1] != "local" || parts[2] != "false" ||
+		parts[3] != appmanifest.BitcoinCoreProject || parts[4] != "default" {
+		return legacyBitcoinNetworkState{}, errors.New("Bitcoin Core legacy network is not eligible for automatic migration")
+	}
+	var configs []bitcoinConsumerIPAMConfig
+	if json.Unmarshal([]byte(parts[5]), &configs) != nil || len(configs) != 1 {
+		return legacyBitcoinNetworkState{}, errors.New("Bitcoin Core legacy network IPAM is invalid")
+	}
+	subnet := strings.TrimSpace(configs[0].Subnet)
+	gateway := strings.TrimSpace(configs[0].Gateway)
+	gatewayIP := net.ParseIP(gateway)
+	_, parsedSubnet, parseErr := net.ParseCIDR(subnet)
+	if parseErr != nil || parsedSubnet.String() != subnet || gatewayIP == nil || gatewayIP.To4() == nil ||
+		!gatewayIP.IsPrivate() || !parsedSubnet.Contains(gatewayIP) {
+		return legacyBitcoinNetworkState{}, errors.New("Bitcoin Core legacy network IPAM is invalid")
+	}
+	var endpoints map[string]legacyBitcoinNetworkEndpoint
+	if json.Unmarshal([]byte(parts[6]), &endpoints) != nil {
+		return legacyBitcoinNetworkState{}, errors.New("Bitcoin Core legacy network endpoints are invalid")
+	}
+	replaceNetwork := subnet != appmanifest.BitcoinConsumerRPCSubnet || gateway != appmanifest.BitcoinConsumerHostGateway
+	if replaceNetwork {
+		for containerID := range endpoints {
+			if parseDockerContainerID(containerID) == "" || containerID != runtimeState.ContainerID {
+				return legacyBitcoinNetworkState{}, &bitcoinLegacyMigrationError{
+					Code:    "bitcoin_legacy_apps_running",
+					Message: "Stop Electrs, Mempool, and other Bitcoin-dependent App Store apps before retrying the Bitcoin Core migration.",
+				}
+			}
+		}
+	}
+	return legacyBitcoinNetworkState{Subnet: subnet, Gateway: gateway, ReplaceNetwork: replaceNetwork}, nil
 }
 
 func validatedLegacyBitcoinPortLines(bindings map[string][]legacyBitcoinPortBinding) ([]string, error) {
@@ -146,7 +240,7 @@ func validatedLegacyBitcoinPortLines(bindings map[string][]legacyBitcoinPortBind
 	return lines, nil
 }
 
-func legacyBitcoinRollbackCompose(dataDir string, portLines []string) string {
+func legacyBitcoinRollbackCompose(dataDir string, portLines []string, network legacyBitcoinNetworkState) string {
 	ports := ""
 	if len(portLines) > 0 {
 		ports = "\n    ports:\n" + strings.Join(portLines, "\n")
@@ -159,30 +253,45 @@ func legacyBitcoinRollbackCompose(dataDir string, portLines []string) string {
       - %s:%s
 networks:
   default:
-    external: true
     name: %s
-`, bitcoinCoreLegacyRollbackImage, ports, dataDir, appmanifest.BitcoinCoreContainerDataDir, appmanifest.BitcoinCoreNetwork)
+    driver: bridge
+    ipam:
+      config:
+        - subnet: %s
+          gateway: %s
+`, bitcoinCoreLegacyRollbackImage, ports, dataDir, appmanifest.BitcoinCoreContainerDataDir,
+		appmanifest.BitcoinCoreNetwork, network.Subnet, network.Gateway)
 }
 
-func (manager *ComposeAppManager) rollbackLegacyBitcoinMigration(ctx context.Context, commandPath string, prefix []string, manifest appmanifest.ComposeManifest, migration *preparedLegacyBitcoinMigration, cause error) error {
-	rollbackArgs := append([]string(nil), prefix...)
-	rollbackArgs = append(rollbackArgs,
-		"--project-name", manifest.Project,
-		"--project-directory", migration.rollbackRoot,
-		"-f", migration.composePath,
-		"up", "-d", "--force-recreate", "--no-deps", manifest.PrimaryService,
-	)
+func (manager *ComposeAppManager) rollbackLegacyBitcoinMigration(ctx context.Context, commandPath string, prefix []string, executionArgs []string, manifest appmanifest.ComposeManifest, migration *preparedLegacyBitcoinMigration, cause error) error {
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
+	if migration.network.ReplaceNetwork && len(executionArgs) > 0 {
+		cleanupArgs := append(append([]string(nil), executionArgs...), "down", "--remove-orphans", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds))
+		_, _ = manager.Runner.Run(rollbackCtx, commandPath, cleanupArgs...)
+	}
+	rollbackArgs := migration.rollbackComposeArgs(prefix, manifest)
+	rollbackArgs = append(rollbackArgs,
+		"up", "-d", "--force-recreate", "--no-deps", manifest.PrimaryService,
+	)
 	if _, err := manager.Runner.Run(rollbackCtx, commandPath, rollbackArgs...); err != nil {
-		return errors.New("Bitcoin Core migration failed and automatic rollback could not restore the legacy runtime; check local broker logs before taking action")
+		return &bitcoinLegacyMigrationError{
+			Code:    "bitcoin_legacy_rollback_failed",
+			Message: "Bitcoin Core migration failed and automatic rollback could not restore the legacy runtime; check local broker logs before taking action.",
+		}
 	}
 	containerID, err := manager.catalogRunningContainerID(rollbackCtx, manifest)
 	if err != nil || containerID == "" || manager.probeBitcoinCoreMainnet(rollbackCtx, containerID) != nil {
-		return errors.New("Bitcoin Core migration failed and automatic rollback could not verify the restored legacy runtime; check local broker logs before taking action")
+		return &bitcoinLegacyMigrationError{
+			Code:    "bitcoin_legacy_rollback_unverified",
+			Message: "Bitcoin Core migration failed and automatic rollback could not verify the restored legacy runtime; check local broker logs before taking action.",
+		}
 	}
 	_ = cause
-	return errors.New("Bitcoin Core migration failed; the legacy runtime was restored automatically and LND was not restarted")
+	return &bitcoinLegacyMigrationError{
+		Code:    "bitcoin_legacy_migration_rolled_back",
+		Message: "Bitcoin Core migration failed; the legacy runtime was restored automatically and LND was not restarted.",
+	}
 }
 
 func (manager *ComposeAppManager) probeBitcoinCoreMainnet(ctx context.Context, containerID string) error {
@@ -270,11 +379,12 @@ func (manager *ComposeAppManager) inspectBitcoinCoreCatalogRuntime(ctx context.C
 		return bitcoinCoreRuntime{}, false, errors.New("Bitcoin Core runtime inspection returned invalid data")
 	}
 	item := payload[0]
-	if parseDockerContainerID(item.ID) == "" || !dockerImageIDPattern.MatchString(item.Image) {
+	containerID = parseDockerContainerID(item.ID)
+	if containerID == "" || !dockerImageIDPattern.MatchString(item.Image) {
 		return bitcoinCoreRuntime{}, false, errors.New("Bitcoin Core runtime identity is invalid")
 	}
 	runtime := bitcoinCoreRuntime{
-		ContainerID: item.ID,
+		ContainerID: containerID,
 		ImageID:     item.Image,
 		ImageRef:    strings.TrimSpace(item.Config.Image),
 		Running:     item.State.Running,

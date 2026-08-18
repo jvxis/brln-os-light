@@ -673,6 +673,24 @@ func TestBrokerAppLifecycleFailureIsGeneric(t *testing.T) {
 	}
 }
 
+func TestBrokerBitcoinMigrationFailureUsesFixedSafeDetail(t *testing.T) {
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Apps = &recordingApps{err: &bitcoinLegacyMigrationError{
+		Code:    "bitcoin_legacy_apps_running",
+		Message: "Stop Electrs and Mempool before retrying.",
+	}}
+	params, err := MarshalParams(AppLifecycleParams{AppID: appmanifest.BitcoinCoreID, Action: AppLifecycleStart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "bitcoin_migration_failure_1", Operation: OperationAppLifecycle, Params: params,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != "bitcoin_legacy_apps_running" || response.Error.Message != "Stop Electrs and Mempool before retrying." {
+		t.Fatalf("unexpected migration response: %#v", response)
+	}
+}
+
 func TestBrokerAppFirewallUsesTypedManagerAndLock(t *testing.T) {
 	apps := &recordingApps{firewallState: AppFirewallState{Status: "active"}}
 	locker := &recordingLocker{}

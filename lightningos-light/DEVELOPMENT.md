@@ -39,15 +39,39 @@ The sidebar version label is read from `ui/public/version.txt`.
 go test ./internal/server -run TestValidateAppRegistry
 ```
 
-## Rebuild only (server)
-Use this when you only want to recompile without running the full installer.
+## Rebuild only (manager/broker/UI)
+Use this only for development or recovery on an already installed node. A
+`git pull`, checkout, or manager-only rebuild is not a complete LightningOS
+upgrade. Prefer the UI or release upgrade procedure for normal upgrades.
+
+Run the commands below from the `lightningos-light/` application directory.
 
 Rebuild manager:
 ```bash
 sudo /usr/local/go/bin/go build -o dist/lightningos-manager ./cmd/lightningos-manager
 sudo install -m 0755 dist/lightningos-manager /opt/lightningos/manager/lightningos-manager
+```
+
+Rebuild and reinstall the privileged broker before restarting a manually
+rebuilt manager:
+```bash
+sudo /usr/local/go/bin/go build -o dist/lightningos-privileged ./cmd/lightningos-privileged
+sudo install -d -o root -g root -m 0755 /usr/local/libexec /etc/tmpfiles.d
+sudo install -d -o root -g root -m 0750 /var/log/lightningos-privileged /run/lock/lightningos
+sudo install -o root -g root -m 0644 templates/lightningos-privileged.tmpfiles.conf /etc/tmpfiles.d/lightningos-privileged.conf
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/lightningos-privileged.conf
+sudo install -o root -g root -m 0755 dist/lightningos-privileged /usr/local/libexec/lightningos-privileged
+sudo install -o root -g root -m 0644 templates/systemd/lightningos-privileged.socket /etc/systemd/system/lightningos-privileged.socket
+sudo install -o root -g root -m 0644 templates/systemd/lightningos-privileged@.service /etc/systemd/system/lightningos-privileged@.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now lightningos-privileged.socket
+sudo systemctl is-active lightningos-privileged.socket
+sudo test -S /run/lightningos-privileged/broker.sock
 sudo systemctl restart lightningos-manager
 ```
+
+These commands assume that the LightningOS system users and groups already
+exist; they are not a replacement for an initial installer or full upgrade.
 
 Rebuild UI:
 ```bash

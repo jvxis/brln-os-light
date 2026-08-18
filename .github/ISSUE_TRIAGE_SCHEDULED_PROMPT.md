@@ -18,6 +18,7 @@ Schedule context:
   non-maintainer and has no later substantive reply from jvxis.
 - On the first run of the day, include a compact audit of open issues carrying
   needs-info or no area label.
+- Include closed issues whose conversations are still unlocked.
 
 Required policy:
 1. Fetch and follow `.github/ISSUE_TRIAGE_POLICY.md` from the repository default
@@ -36,6 +37,13 @@ Allowed unattended actions:
 - Close a support issue only after explicit reporter confirmation or objective
   final evidence, while preserving any product defect in an already existing
   linked issue.
+- Immediately lock every issue closed by the steward with reason `resolved`, and
+  lock any previously closed issue that remains unlocked.
+- Preserve legitimate comment history. Do not treat an unfamiliar account,
+  foreign-language username, or automated-looking prose as spam without objective
+  evidence. Do not open suspicious links. Minimize comments only individually;
+  use `resolved` for accurate but redundant comments and `spam` only for clear
+  malicious or promotional content.
 
 Never unattended:
 - Do not access nodes or hosts.
@@ -58,6 +66,8 @@ At the end, return a compact run report with:
 - labels changed;
 - comments posted;
 - issues closed;
+- comments moderated;
+- conversations locked;
 - human review required;
 - inaccessible sources or failures.
 

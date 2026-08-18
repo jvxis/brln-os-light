@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	legacyTransitionTargetVersion = "0.5.12-beta"
+	legacyTransitionTargetVersion = "0.5.13-beta"
 	legacyTransitionUnitName      = "lightningos-legacy-privilege-transition"
 	legacyTransitionRetryCount    = 60
 	legacyTransitionRetryDelay    = 10 * time.Second

@@ -54,34 +54,45 @@ func (manager *ComposeAppManager) BitcoinCoreStatus(ctx context.Context) (Bitcoi
 	if manager == nil || manager.Runner == nil {
 		return state, errors.New("compose app manager is unavailable")
 	}
+	containerID := ""
 	snapshot, cleanup, err := manager.createBitcoinCoreInspectionSnapshot(ctx)
-	if err != nil {
-		return state, err
-	}
-	defer cleanup()
-
-	commandPath, prefix, err := manager.resolveCompose(ctx)
-	if err != nil {
-		return state, err
-	}
-	manifest, _ := appmanifest.ComposeManifestForApp(appmanifest.BitcoinCoreID)
-	baseArgs := append([]string(nil), prefix...)
-	baseArgs = append(baseArgs,
-		"--project-name", manifest.Project,
-		"--project-directory", snapshot.root,
-		"-f", snapshot.composePath,
-	)
-	running, err := manager.Runner.Run(ctx, commandPath, append(append([]string(nil), baseArgs...), "ps", "--services", "--filter", "status=running")...)
-	if err != nil || !containsExactLine(running, appmanifest.BitcoinCorePrimaryService) {
-		return state, errors.New("bitcoin core container is not running")
-	}
-	containerOutput, err := manager.Runner.Run(ctx, commandPath, append(append([]string(nil), baseArgs...), "ps", "-q", appmanifest.BitcoinCorePrimaryService)...)
-	if err != nil {
-		return state, errors.New("bitcoin core container lookup failed")
-	}
-	containerID := parseDockerContainerID(containerOutput)
-	if containerID == "" {
-		return state, errors.New("bitcoin core container lookup returned an invalid ID")
+	if err == nil {
+		defer cleanup()
+		commandPath, prefix, resolveErr := manager.resolveCompose(ctx)
+		if resolveErr != nil {
+			return state, resolveErr
+		}
+		manifest, _ := appmanifest.ComposeManifestForApp(appmanifest.BitcoinCoreID)
+		baseArgs := append([]string(nil), prefix...)
+		baseArgs = append(baseArgs,
+			"--project-name", manifest.Project,
+			"--project-directory", snapshot.root,
+			"-f", snapshot.composePath,
+		)
+		running, runErr := manager.Runner.Run(ctx, commandPath, append(append([]string(nil), baseArgs...), "ps", "--services", "--filter", "status=running")...)
+		if runErr != nil || !containsExactLine(running, appmanifest.BitcoinCorePrimaryService) {
+			return state, errors.New("bitcoin core container is not running")
+		}
+		containerOutput, lookupErr := manager.Runner.Run(ctx, commandPath, append(append([]string(nil), baseArgs...), "ps", "-q", appmanifest.BitcoinCorePrimaryService)...)
+		if lookupErr != nil {
+			return state, errors.New("bitcoin core container lookup failed")
+		}
+		containerID = parseDockerContainerID(containerOutput)
+		if containerID == "" {
+			return state, errors.New("bitcoin core container lookup returned an invalid ID")
+		}
+	} else {
+		// Upgraded nodes can have a healthy App Store Bitcoin runtime created by
+		// an older release but no broker enrollment yet. Keep observability
+		// read-only: identify the closed catalog container directly and execute
+		// only the fixed cookie-backed bitcoin-cli commands below. Lifecycle
+		// writes still require full broker enrollment and attestation.
+		runtimeState, found, inspectErr := manager.inspectBitcoinCoreCatalogRuntime(ctx)
+		if inspectErr != nil || !found || !runtimeState.Running ||
+			(runtimeState.ImageRef != appmanifest.BitcoinCoreImage && !isLegacyBitcoinCoreImage(runtimeState.ImageRef)) {
+			return state, errors.New("bitcoin core runtime cannot be safely observed")
+		}
+		containerID = runtimeState.ContainerID
 	}
 
 	chainRaw, err := manager.runBitcoinCoreCLI(ctx, containerID, "getblockchaininfo")

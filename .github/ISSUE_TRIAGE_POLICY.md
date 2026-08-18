@@ -116,6 +116,22 @@ missing and remove it only after the requested evidence arrives.
 - Link any follow-up issues before closing.
 - Close as completed only when no unresolved operational symptom remains.
 
+### Closed conversations and unsolicited comments
+
+- Whenever an issue is closed, lock its conversation with the `resolved` lock
+  reason. Also lock previously closed issues that are still unlocked.
+- Preserve legitimate history. Do not bulk-delete or bulk-minimize comments on
+  closed issues.
+- Do not infer spam from an unfamiliar account, foreign-language username, or
+  automated-looking prose alone. Objective indicators include suspicious links,
+  credential requests, impersonation, unsolicited contact instructions, abuse,
+  or unrelated promotion.
+- A correct but redundant unsolicited comment is not automatically a scam. It
+  may be minimized individually as `resolved` when it adds no evidence, then the
+  already closed conversation should be locked.
+- Never open or follow a suspicious link merely to decide whether a comment is
+  malicious; inspect the visible text and metadata and escalate ambiguity.
+
 ## Safety Boundaries
 
 Never request or expose seeds, private keys, wallet passwords, macaroons, TLS
@@ -130,6 +146,8 @@ Automated runs may:
   for read-only diagnostics;
 - close exact duplicates or explicitly confirmed resolved support issues under
   the rules above.
+- lock closed issue conversations with the `resolved` reason, including closed
+  issues that predate the current run and remain unlocked.
 
 Automated runs must not:
 
@@ -153,4 +171,5 @@ the proposed next step. Do not post the operational instruction publicly.
 - Do not change state when confidence is low; report the ambiguity to the maintainer.
 - Prefer additive label changes. Remove a label only when it is demonstrably wrong.
 - End every run with a compact audit: issues inspected, labels changed, comments
-  posted, issues closed, and items escalated for human review.
+  posted, comments moderated, issues closed, conversations locked, and items
+  escalated for human review.

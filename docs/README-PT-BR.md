@@ -918,15 +918,42 @@ Veja `DEVELOPMENT.md` para setup local e instruções de build.
 ## Systemd
 Templates estão em `templates/systemd/`.
 
-## Rebuild apenas (manager/UI)
-Use quando quiser apenas recompilar sem rodar o instalador completo.
+## Rebuild apenas (manager/broker/UI)
+Use somente para desenvolvimento ou recuperação em um node que já esteja
+instalado. Um `git pull`, um checkout ou a recompilação apenas do manager
+**não** executa um upgrade do LightningOS. Upgrades normais devem usar a UI ou
+o procedimento de upgrade da release, mantendo manager, broker privilegiado,
+unidades systemd, UI e integrações do sistema na mesma versão.
+
+Execute os comandos abaixo a partir do diretório da aplicação `lightningos-light/`.
 
 Rebuild do manager:
 ```bash
 sudo /usr/local/go/bin/go build -o dist/lightningos-manager ./cmd/lightningos-manager
 sudo install -m 0755 dist/lightningos-manager /opt/lightningos/manager/lightningos-manager
+```
+
+Rebuild e reinstalação do broker privilegiado:
+```bash
+sudo /usr/local/go/bin/go build -o dist/lightningos-privileged ./cmd/lightningos-privileged
+sudo install -d -o root -g root -m 0755 /usr/local/libexec /etc/tmpfiles.d
+sudo install -d -o root -g root -m 0750 /var/log/lightningos-privileged /run/lock/lightningos
+sudo install -o root -g root -m 0644 templates/lightningos-privileged.tmpfiles.conf /etc/tmpfiles.d/lightningos-privileged.conf
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/lightningos-privileged.conf
+sudo install -o root -g root -m 0755 dist/lightningos-privileged /usr/local/libexec/lightningos-privileged
+sudo install -o root -g root -m 0644 templates/systemd/lightningos-privileged.socket /etc/systemd/system/lightningos-privileged.socket
+sudo install -o root -g root -m 0644 templates/systemd/lightningos-privileged@.service /etc/systemd/system/lightningos-privileged@.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now lightningos-privileged.socket
+sudo systemctl is-active lightningos-privileged.socket
+sudo test -S /run/lightningos-privileged/broker.sock
 sudo systemctl restart lightningos-manager
 ```
+
+Instale e valide o broker antes de reiniciar um manager recompilado
+manualmente. Estes comandos pressupõem que os usuários e grupos de sistema do
+LightningOS já existem; eles não substituem uma instalação inicial nem um
+upgrade completo.
 
 Rebuild da UI:
 ```bash

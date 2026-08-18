@@ -3,6 +3,8 @@
 > [!IMPORTANT]
 > LightningOS is a local node-control plane and is **not designed for direct public Internet exposure**. Run it only on a trusted LAN or through a private VPN such as Tailscale, behind a host or network firewall. Never forward port `8443` or App Store ports from the public Internet. The installers restrict `8443` to the detected LAN and `tailscale0` only when UFW is already installed and active; they do not enable UFW automatically. Always verify `sudo ufw status` or provide an equivalent external firewall before using the node.
 
+[Security architecture](#security-architecture) · [Private vulnerability reporting](SECURITY.md)
+
 [Join the LightningOS Signal group](https://signal.group/#CjQKIEMiPq5Dy_s5RlfF4fZBhT7_2mqlWHlzEbcQUS20bOGHEhCWL0uFC3ebHZ3W3pAs8Hox)
 
 <img width="1920" height="1080" alt="BRLN-logo" src="https://github.com/user-attachments/assets/7394bf7b-2515-461a-8b80-7488531c7f40" />
@@ -851,20 +853,57 @@ The active backend is reported by `GET /api/onchain/provenance/health` in the `b
 
 Daily report rows also include provenance freshness fields when the report is generated for the previous local day: `provenance_last_sync_at`, `provenance_last_sync_age_hours`, `provenance_health_alert`, and `provenance_last_error`. The alert flag is raised when provenance has never synced, the last sync is older than 24 hours, or the last sync recorded an error.
 
-## Security notes
-- The seed phrase is never stored. It is displayed once in the wizard.
-- RPC credentials are stored only in `/etc/lightningos/secrets.env` (root:lightningos, `chmod 660`).
-- Release `0.5.2` still gives the manager a root-equivalent host boundary: the
-  service belongs to the `docker` group and its passwordless sudo policy allows
-  unrestricted arguments for package, Docker, `systemd-run`, and UFW commands.
-  Login, TLS, CSRF, and LAN/VPN firewalling do not contain a compromised manager
-  process. The replacement broker and privilege-removal work is tracked in
-  [`docs/32_PRIVILEGE_HARDENING_PLAN.md`](docs/32_PRIVILEGE_HARDENING_PLAN.md).
-- API/UI bind to `0.0.0.0` by default for LAN access. If you want localhost-only, set `server.host: "127.0.0.1"` in `/etc/lightningos/config.yaml`.
-- Set `UTXO_LOCK_REQUIRES_REAUTH=true` to require the same wallet-send reauth scope before UTXO lock/unlock actions. This is optional because lock/unlock are reversible, but useful on shared admin sessions.
-- Sensitive API actions are recorded in Postgres `audit_events` and can be reviewed in the UI under `Audit`.
-- Audit events are pruned after `AUDIT_EVENTS_RETENTION_DAYS` days by default (`365`). Set `AUDIT_EVENTS_RETENTION_DAYS=0` or `forever` in `/etc/lightningos/secrets.env` to keep them indefinitely.
-- Public Electrum fallback improves Wallet Flow coverage but reveals queried txids to the selected server; disable it when that does not fit your privacy model.
+## Security architecture
+
+LightningOS is designed as a local control plane for a funds-bearing node. Its
+hardening reduces the blast radius of the web application and optional apps, but
+does not make direct public-Internet exposure safe. Keep the host on a trusted
+LAN or private VPN, maintain a firewall, apply operating-system updates, and
+keep independent LND and wallet backups.
+
+- **Privilege separation:** the Manager runs as the unprivileged `lightningos`
+  account, without Docker-group membership, Linux capabilities, or a general
+  passwordless-sudo path. Host mutations are delegated to a separate,
+  socket-activated privileged broker.
+- **Closed privileged operations:** the broker accepts versioned, typed and
+  allowlisted operations rather than arbitrary shell commands. It validates
+  paths, manifests, images, ownership and operation-specific inputs before
+  making changes. Its systemd unit also applies filesystem, capability and
+  syscall restrictions.
+- **Auditable boundaries:** privileged requests receive request IDs and
+  start/completion audit records without secret values. Sensitive application
+  actions also appear in the LightningOS Audit page.
+- **Web-session protection:** new installations require administrator
+  enrollment. Authentication uses secure HTTP-only cookies, mutating requests
+  require CSRF protection, and high-impact actions such as external on-chain
+  sends and terminal mode changes require fresh reauthentication.
+- **Credential minimization:** seed words are never persisted or logged.
+  Secrets are kept in restricted files and are excluded from broker audit
+  records and user-facing errors. The Manager and supported apps use dedicated
+  LND macaroons where the integration permits scoped credentials; the App Store
+  marks apps whose role still requires sensitive LND access.
+- **Hardened Bitcoin integration:** Store-managed Bitcoin Core is built locally
+  from the official release archive after checksum and multisignature
+  verification. Its managed RPC authentication uses `rpcauth` instead of
+  plaintext `rpcuser`/`rpcpassword` entries, and consumers use a dedicated
+  catalog-controlled network. Existing external or systemd Bitcoin nodes retain
+  their operator-managed authentication model.
+- **Controlled App Store:** app lifecycle actions use reviewed catalog
+  manifests and validated execution snapshots. Image, storage, network,
+  credential and dependency checks are applied according to each app's needs;
+  network mode and trust scope remain application-specific and are shown in the
+  UI when they affect operator risk.
+- **Verified upgrades:** the in-app release flow checks that the requested tag,
+  commit and source version agree before installation. Privilege transitions
+  and supported legacy migrations use bounded verification and rollback paths
+  to avoid silently replacing a working node runtime.
+- **Privacy remains explicit:** optional public services, including public
+  Electrum fallbacks and third-party app backends, may learn request metadata.
+  Disable them when they do not fit your threat model.
+
+Security controls are defense in depth, not a guarantee against host compromise,
+malicious dependencies, operator mistakes or loss of backups. For supported
+versions and private vulnerability reporting, see [SECURITY.md](SECURITY.md).
 
 ## Troubleshooting
 If `https://<SERVER_LAN_IP>:8443` is not reachable:

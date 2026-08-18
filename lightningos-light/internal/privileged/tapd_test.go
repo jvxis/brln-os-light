@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -129,5 +131,73 @@ func TestNativeTapdLegacyRemoveFailsClosedOnAmbiguousContainer(t *testing.T) {
 	}
 	if len(runner.commands) != 1 {
 		t.Fatalf("ambiguous legacy removal executed extra commands: %#v", runner.commands)
+	}
+}
+
+func TestNativeTapdLegacyStopUsesCatalogContainerIdentity(t *testing.T) {
+	const containerID = "0123456789ab"
+	stopArgs := "stop --time " + strconv.Itoa(appmanifest.TapdStopTimeout) + " " + containerID
+	running := true
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && len(args) > 1 && args[0] == "ps" {
+			if running {
+				return containerID + "\n", nil, true
+			}
+			return "", nil, true
+		}
+		if path == dockerPath && strings.Join(args, " ") == stopArgs {
+			running = false
+			return containerID + "\n", nil, true
+		}
+		return "", nil, false
+	}}
+	manager := testTapdManager(t, runner)
+	if err := os.MkdirAll(filepath.Dir(manager.Paths.LegacyComposePath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manager.Paths.LegacyComposePath, []byte("legacy"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := manager.Lifecycle(context.Background(), AppLifecycleStop, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Installed || state.Status != "stopped" || running {
+		t.Fatalf("unexpected legacy Tapd stop state: %#v running=%v", state, running)
+	}
+	if len(runner.commands) != 2 {
+		t.Fatalf("legacy stop executed unexpected commands: %#v", runner.commands)
+	}
+	if got := strings.Join(runner.commands[1].args, " "); got != stopArgs {
+		t.Fatalf("unexpected legacy stop argv: %q", got)
+	}
+	for _, command := range runner.commands {
+		if command.path == dockerComposePath || slices.Contains(command.args, "compose") {
+			t.Fatalf("legacy stop trusted a Compose declaration: %#v", command)
+		}
+	}
+}
+
+func TestNativeTapdLegacyStopFailsClosedOnAmbiguousContainer(t *testing.T) {
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && len(args) > 1 && args[0] == "ps" {
+			return "0123456789ab\nabcdef012345\n", nil, true
+		}
+		return "", nil, false
+	}}
+	manager := testTapdManager(t, runner)
+	if err := os.MkdirAll(filepath.Dir(manager.Paths.LegacyComposePath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manager.Paths.LegacyComposePath, []byte("legacy"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := manager.Lifecycle(context.Background(), AppLifecycleStop, false); err == nil || !strings.Contains(err.Error(), "status failed") {
+		t.Fatalf("expected ambiguous legacy identity to fail closed, got %v", err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("ambiguous legacy stop executed extra commands: %#v", runner.commands)
 	}
 }

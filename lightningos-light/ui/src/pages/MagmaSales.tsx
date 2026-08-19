@@ -998,9 +998,30 @@ function MagmaOfferDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
+  // The routing caps used to start at 0, and 0 is not a neutral default here: it
+  // holds every channel the offer sells at zero fee for the whole commitment.
+  // Setting it deliberately is legitimate, so it is not forbidden - it just has
+  // to be chosen. A new offer starts with these blank until the operator says.
+  const [capsDecided, setCapsDecided] = useState<Record<string, boolean>>(
+    initial ? { fee_rate_cap_ppm: true, base_fee_cap_sat: true } : {}
+  )
+  const capKeys: (keyof MagmaOffer)[] = ['fee_rate_cap_ppm', 'base_fee_cap_sat']
+  const missingCaps = capKeys.filter((key) => !capsDecided[key as string])
+
   const setNum = (key: keyof MagmaOffer, raw: string) => {
-    const value = raw === '' ? 0 : Number(raw)
+    if (raw === '') {
+      // Clearing a cap returns it to undecided rather than silently meaning zero.
+      if (capKeys.includes(key)) {
+        setCapsDecided((prev) => ({ ...prev, [key as string]: false }))
+      }
+      setDraft({ ...draft, [key]: 0 })
+      return
+    }
+    const value = Number(raw)
     if (Number.isNaN(value) || value < 0) return
+    if (capKeys.includes(key)) {
+      setCapsDecided((prev) => ({ ...prev, [key as string]: true }))
+    }
     setDraft({ ...draft, [key]: value })
   }
 
@@ -1013,6 +1034,10 @@ function MagmaOfferDialog({
   }
 
   const save = () => {
+    if (missingCaps.length > 0) {
+      setError(t('magma.offerCapsRequired'))
+      return
+    }
     setBusy(true)
     setError('')
     saveMagmaOffer(draft)
@@ -1033,7 +1058,7 @@ function MagmaOfferDialog({
           className="input-field w-full"
           type="number"
           min={0}
-          value={draft[key] as number}
+          value={capKeys.includes(key) && !capsDecided[key as string] ? '' : (draft[key] as number)}
           onChange={(event) => setNum(key, event.target.value)}
         />
         {suffix && (

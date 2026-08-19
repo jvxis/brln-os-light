@@ -160,8 +160,21 @@ func magmaOfferConflicts(offer MagmaOffer, policy MagmaPolicy) []MagmaOfferConfl
 				perDay, policy.MinPricePPMPerDay)})
 		}
 	}
-	if policy.MinFeeRateCapPPM > 0 && offer.FeeRateCapPPM > 0 &&
-		offer.FeeRateCapPPM < policy.MinFeeRateCapPPM {
+	// A zero cap is a real setting on Amboss, not an unset one: the channel is
+	// contractually held at 0 ppm for the whole commitment. It is a legitimate
+	// choice - a loss leader, a favour, a test - so it is not blocked. But it is
+	// the single most expensive value in this form, so it always says so.
+	// Only the rate cap warns. A zero base fee cap is ordinary - it is what most
+	// real orders carry - while a zero rate cap is what actually zeroes the
+	// revenue for the length of the commitment.
+	if offer.FeeRateCapPPM == 0 {
+		conflicts = append(conflicts, MagmaOfferConflict{Message: fmt.Sprintf(
+			"routing fee capped at 0 ppm: every channel this offer sells routes for "+
+				"free until its commitment ends (%d days)", offer.MinBlockLength/144)})
+	}
+	// The >0 guard that used to sit here read a zero cap as "not informed" and so
+	// skipped the very value the floor exists to catch.
+	if policy.MinFeeRateCapPPM > 0 && offer.FeeRateCapPPM < policy.MinFeeRateCapPPM {
 		conflicts = append(conflicts, MagmaOfferConflict{Blocking: true, Message: fmt.Sprintf(
 			"the offer caps our routing fee at %d ppm, below the policy minimum of %d ppm",
 			offer.FeeRateCapPPM, policy.MinFeeRateCapPPM)})

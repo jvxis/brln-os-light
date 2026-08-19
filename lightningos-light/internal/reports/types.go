@@ -66,8 +66,25 @@ func (m Metrics) WithMagmaSales(sales MagmaSalesRevenue) Metrics {
 	return m.withNetTotal()
 }
 
+// TotalRevenueMsat is everything the node earned in the period.
+func (m Metrics) TotalRevenueMsat() int64 {
+	return m.ForwardFeeRevenueMsat + m.KeysendReceivedMsat + m.SalesRevenueMsat
+}
+
+func (m Metrics) TotalRevenueSat() int64 { return m.TotalRevenueMsat() / 1000 }
+
+// TotalCostMsat is everything it cost to run it. On-chain used to be collected,
+// displayed, and then left out of the bottom line, which made the total read
+// better than reality: opening and closing channels were free in the one number
+// meant to say whether the node made money.
+func (m Metrics) TotalCostMsat() int64 {
+	return m.RebalanceFeeCostMsat + m.PaymentFeeCostMsat + m.OnchainFeeCostMsat
+}
+
+func (m Metrics) TotalCostSat() int64 { return m.TotalCostMsat() / 1000 }
+
 func (m Metrics) withNetTotal() Metrics {
-	m.NetTotalMsat = m.NetRoutingProfitMsat + m.KeysendReceivedMsat + m.SalesRevenueMsat
+	m.NetTotalMsat = m.TotalRevenueMsat() - m.TotalCostMsat()
 	m.NetTotalSat = m.NetTotalMsat / 1000
 	return m
 }

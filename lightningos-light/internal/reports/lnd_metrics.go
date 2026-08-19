@@ -123,7 +123,13 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 		onchainRemoteForceCostMsat = onchain.RemoteForceFeeMsat
 	}
 
-	netMsat := forwardRevenueMsat - rebalanceCostMsat - paymentCostMsat
+	// Routing profit answers one question: is the node profitable at forwarding?
+	// Only rebalances belong against it - liquidity is moved so that forwarding
+	// can happen. The fee on an invoice the operator paid is a real cost, but it
+	// buys something for the operator, not the capacity to route, so counting it
+	// here made a month of heavy personal use look like a month of bad routing.
+	// It stays in the totals, under costs.
+	netMsat := forwardRevenueMsat - rebalanceCostMsat
 	netWithKeysendMsat := netMsat + keysendReceivedMsat
 	metrics := Metrics{
 		ForwardFeeRevenueSat:       forwardRevenueMsat / 1000,
@@ -152,12 +158,15 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 		RebalanceVolumeSat:         rebalanceVolumeMsat / 1000,
 		RebalanceVolumeMsat:        rebalanceVolumeMsat,
 		PaymentCount:               paymentCount,
-		NetTotalSat:                netWithKeysendMsat / 1000,
-		NetTotalMsat:               netWithKeysendMsat,
-		RoutedVolumeSat:            routedVolumeMsat / 1000,
-		RoutedVolumeMsat:           routedVolumeMsat,
+		// Filled in by withNetTotal below, so a node without the Magma app gets
+		// the same total as one with it. Leaving it to WithMagmaSales meant the
+		// bottom line depended on which apps happened to be installed.
+		NetTotalSat:      0,
+		NetTotalMsat:     0,
+		RoutedVolumeSat:  routedVolumeMsat / 1000,
+		RoutedVolumeMsat: routedVolumeMsat,
 	}
-	return metrics, nil
+	return metrics.withNetTotal(), nil
 }
 
 func fetchForwardingMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64) (int64, int64, int64, error) {

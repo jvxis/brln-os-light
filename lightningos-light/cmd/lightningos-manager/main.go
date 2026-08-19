@@ -199,7 +199,7 @@ func runReports(args []string) {
 		reportDate = parsed
 	}
 
-	row, err := svc.RunDaily(ctx, reportDate, loc, nil, nil, nil, nil)
+	row, err := svc.RunDaily(ctx, reportDate, loc, nil, nil, nil, nil, nil)
 	if err != nil {
 		logger.Fatalf("reports-run failed: %v", err)
 	}
@@ -294,6 +294,10 @@ func runReportsBackfill(args []string) {
 	if err != nil {
 		logger.Fatalf("reports-backfill failed: %v", err)
 	}
+	keysendSentByDay, err := reports.FetchKeysendSentByDay(context.Background(), lnd, uint64(startLocal.UTC().Unix()), uint64(endLocal.UTC().Unix()), loc)
+	if err != nil {
+		logger.Fatalf("reports-backfill failed: %v", err)
+	}
 	onchainByDay, err := reports.FetchOnchainFeesByDay(context.Background(), lnd, uint64(startLocal.UTC().Unix()), uint64(endLocal.UTC().Unix()), loc)
 	if err != nil {
 		logger.Fatalf("reports-backfill failed: %v", err)
@@ -322,10 +326,11 @@ func runReportsBackfill(args []string) {
 			rebalanceOverride := rebalanceByDay[dayKey]
 			paymentOverride := paymentByDay[dayKey]
 			keysendOverride := keysendByDay[dayKey]
+			keysendSentOverride := keysendSentByDay[dayKey]
 			onchainOverride := onchainByDay[dayKey]
 			tr := reports.BuildTimeRangeForDate(day, loc)
 			fresh, err := reports.ComputeMetrics(dayCtx, lnd, tr, false,
-				&rebalanceOverride, &paymentOverride, &keysendOverride, &onchainOverride)
+				&rebalanceOverride, &paymentOverride, &keysendOverride, &keysendSentOverride, &onchainOverride)
 			dayCancel()
 			if err != nil {
 				logger.Fatalf("reports-backfill dry run failed on %s: %v", day.Format("2006-01-02"), err)
@@ -369,8 +374,9 @@ func runReportsBackfill(args []string) {
 		rebalanceOverride := rebalanceByDay[dayKey]
 		paymentOverride := paymentByDay[dayKey]
 		keysendOverride := keysendByDay[dayKey]
+		keysendSentOverride := keysendSentByDay[dayKey]
 		onchainOverride := onchainByDay[dayKey]
-		row, err := svc.RunDaily(dayCtx, day, loc, &rebalanceOverride, &paymentOverride, &keysendOverride, &onchainOverride)
+		row, err := svc.RunDaily(dayCtx, day, loc, &rebalanceOverride, &paymentOverride, &keysendOverride, &keysendSentOverride, &onchainOverride)
 		dayCancel()
 		if err != nil {
 			logger.Fatalf("reports-backfill failed on %s: %v", day.Format("2006-01-02"), err)

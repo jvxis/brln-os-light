@@ -20,6 +20,9 @@ type Metrics struct {
 	KeysendReceivedSat         int64
 	KeysendReceivedMsat        int64
 	KeysendReceivedCount       int64
+	KeysendSentSat             int64
+	KeysendSentMsat            int64
+	KeysendSentCount           int64
 	// Channel sales (Magma). Revenue only: the funding transaction fee is
 	// already inside OnchainFeeCost, so counting it here too would double it.
 	SalesRevenueSat      int64
@@ -78,7 +81,8 @@ func (m Metrics) TotalRevenueSat() int64 { return m.TotalRevenueMsat() / 1000 }
 // better than reality: opening and closing channels were free in the one number
 // meant to say whether the node made money.
 func (m Metrics) TotalCostMsat() int64 {
-	return m.RebalanceFeeCostMsat + m.PaymentFeeCostMsat + m.OnchainFeeCostMsat
+	return m.RebalanceFeeCostMsat + m.PaymentFeeCostMsat + m.OnchainFeeCostMsat +
+		m.KeysendSentMsat
 }
 
 func (m Metrics) TotalCostSat() int64 { return m.TotalCostMsat() / 1000 }

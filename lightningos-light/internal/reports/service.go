@@ -72,9 +72,9 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 	return EnsureSchema(ctx, s.db)
 }
 
-func (s *Service) RunDaily(ctx context.Context, reportDate time.Time, loc *time.Location, rebalanceOverride *RebalanceOverride, paymentOverride *PaymentOverride, keysendOverride *KeysendReceivedOverride, onchainOverride *OnchainOverride) (Row, error) {
+func (s *Service) RunDaily(ctx context.Context, reportDate time.Time, loc *time.Location, rebalanceOverride *RebalanceOverride, paymentOverride *PaymentOverride, keysendOverride *KeysendReceivedOverride, keysendSentOverride *KeysendSentOverride, onchainOverride *OnchainOverride) (Row, error) {
 	tr := BuildTimeRangeForDate(reportDate, loc)
-	metrics, err := ComputeMetrics(ctx, s.lnd, tr, false, rebalanceOverride, paymentOverride, keysendOverride, onchainOverride)
+	metrics, err := ComputeMetrics(ctx, s.lnd, tr, false, rebalanceOverride, paymentOverride, keysendOverride, keysendSentOverride, onchainOverride)
 	if err != nil {
 		return Row{}, err
 	}
@@ -434,7 +434,7 @@ func (s *Service) computeLiveSnapshot(ctx context.Context, now time.Time, loc *t
 		s.logger.Printf("reports: live onchain quick scan failed, defaulting to 0 onchain cost: %v", onchainErr)
 	}
 
-	metrics, err := ComputeMetrics(ctx, s.lnd, tr, false, nil, nil, nil, &onchainOverride)
+	metrics, err := ComputeMetrics(ctx, s.lnd, tr, false, nil, nil, nil, nil, &onchainOverride)
 	if err != nil {
 		return liveSnapshot{}, err
 	}

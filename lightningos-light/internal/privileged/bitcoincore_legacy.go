@@ -160,12 +160,44 @@ func (manager *ComposeAppManager) prepareLegacyBitcoinMigration(ctx context.Cont
 		migration.cleanup()
 		return nil, errors.New("Bitcoin Core rollback manifest validation failed")
 	}
-	output, err := manager.Runner.Run(ctx, dockerPath, "commit", "--pause=false", runtimeState.ContainerID, bitcoinCoreLegacyRollbackImage)
-	if err != nil || !dockerImageIDPattern.MatchString(strings.TrimSpace(output)) {
+	if err := manager.captureLegacyBitcoinRollbackImage(ctx, runtimeState.ContainerID); err != nil {
 		migration.cleanup()
-		return nil, errors.New("Bitcoin Core legacy rollback image could not be captured")
+		return nil, err
 	}
 	return migration, nil
+}
+
+func (manager *ComposeAppManager) captureLegacyBitcoinRollbackImage(ctx context.Context, containerID string) error {
+	if _, err := manager.Runner.Run(ctx, dockerPath, "commit", "--pause=false", containerID, bitcoinCoreLegacyRollbackImage); err != nil {
+		return bitcoinLegacyRollbackCaptureError()
+	}
+	rollbackImageID, err := manager.Runner.Run(ctx, dockerPath, "image", "inspect", "--format", "{{.Id}}", bitcoinCoreLegacyRollbackImage)
+	if err != nil || inspectedDockerImageID(rollbackImageID) == "" {
+		return bitcoinLegacyRollbackCaptureError()
+	}
+	return nil
+}
+
+func inspectedDockerImageID(output string) string {
+	imageID := ""
+	for _, line := range strings.Split(output, "\n") {
+		candidate := strings.TrimSpace(line)
+		if !dockerImageIDPattern.MatchString(candidate) {
+			continue
+		}
+		if imageID != "" && imageID != candidate {
+			return ""
+		}
+		imageID = candidate
+	}
+	return imageID
+}
+
+func bitcoinLegacyRollbackCaptureError() error {
+	return &bitcoinLegacyMigrationError{
+		Code:    "bitcoin_legacy_rollback_capture_failed",
+		Message: "Bitcoin Core migration did not start because the rollback image could not be verified; the legacy runtime remains unchanged.",
+	}
 }
 
 func (manager *ComposeAppManager) inspectLegacyBitcoinNetwork(ctx context.Context, runtimeState bitcoinCoreRuntime) (legacyBitcoinNetworkState, error) {

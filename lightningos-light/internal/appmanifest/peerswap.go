@@ -13,11 +13,11 @@ import (
 
 const (
 	PeerSwapID                 = "peerswap"
-	PeerSwapVersion            = "v6.0.0"
-	PeerSwapCommit             = "25a153e5b70cb35830dc6354d0fac6994e0fd610"
+	PeerSwapVersion            = "v6.0.0-8-g816a5bb" // Unreleased post-v6.0.0 snapshot implementing protocol v7.
+	PeerSwapCommit             = "816a5bb12d6ff2a08b667ca387cb8d4b3f706709"
 	PeerSwapWebVersion         = "v6.0.0.1"
 	PeerSwapWebCommit          = "09983da398f253f8c14213e9f5c61b80cc879b67"
-	PeerSwapAssetDirectory     = "version_5_0" // Legacy package path; content is v6.0.0.
+	PeerSwapAssetDirectory     = "version_5_0" // Legacy package path retained for upgrade compatibility.
 	PeerSwapAssetArch          = "amd64"
 	PeerSwapUser               = "lightningos-peerswap"
 	PeerSwapManagerGroup       = "lightningos"
@@ -91,8 +91,8 @@ func PeerSwapPathsForRoots(appsRoot, appsDataRoot, systemdRoot string) PeerSwapP
 
 func PeerSwapBinaries() []PeerSwapBinary {
 	return []PeerSwapBinary{
-		{Name: "peerswapd", SHA256: "bf75a8b7b2bc3f9f152539c0611bc32a890f76a099c6ee2882b11bbf028b472b"},
-		{Name: "pscli", SHA256: "69ca0aeb89b87d8eedd2d549ab542598fee69197e3110b066eb30ad9193bbbd8"},
+		{Name: "peerswapd", SHA256: "b3e131fe046e26a28581e08da241643788898330f2740bde459a4117390a443d"},
+		{Name: "pscli", SHA256: "c6d8e2fb654ca56bdf318a9b50d2b8cb332cd231a4d9cfd6d308c85a65deca80"},
 		{Name: "psweb", SHA256: "7409bff05d16b33929b1ea14d5356658fb201f5c73838a375d58650efde7ee3a"},
 	}
 }

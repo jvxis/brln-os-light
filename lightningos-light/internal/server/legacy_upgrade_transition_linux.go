@@ -28,7 +28,8 @@ const (
 )
 
 func legacyPrivilegeTransitionCandidate(cfg *config.Config, currentVersion string) bool {
-	if cfg == nil || cfg.Privileged.Mode != "enforce" || normalizeAppVersion(currentVersion) != legacyTransitionTargetVersion {
+	builtVersion := legacyTransitionBuildVersion()
+	if cfg == nil || cfg.Privileged.Mode != "enforce" || builtVersion == "" || normalizeAppVersion(currentVersion) != builtVersion {
 		return false
 	}
 	currentUser, err := user.Current()
@@ -88,7 +89,7 @@ func startLegacyPrivilegeTransition(ctx context.Context, cfg *config.Config, inf
 
 	// This is deliberately the only post-Phase-4 legacy privilege invocation.
 	// It is reachable solely after the recognized 0.5.2 updater has installed
-	// the exact target Manager while its reviewed wildcard sudoers still exists.
+	// the exact authenticated Manager build while its reviewed wildcard sudoers still exists.
 	// The root helper independently authenticates the release, captures rollback
 	// state, installs the typed broker, and removes that sudoers file.
 	cmd := exec.CommandContext(ctx,

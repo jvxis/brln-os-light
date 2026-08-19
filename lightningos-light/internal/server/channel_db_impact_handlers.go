@@ -65,7 +65,7 @@ func (s *Server) handleLNChannelDBImpact(w http.ResponseWriter, r *http.Request)
 	}
 
 	var sizeBytes *int64
-	if size, err := lndChannelDBSizeBytes(); err == nil && size > 0 {
+	if size, err := lndChannelDBSizeBytes(r.Context()); err == nil && size > 0 {
 		sizeBytes = &size
 	}
 

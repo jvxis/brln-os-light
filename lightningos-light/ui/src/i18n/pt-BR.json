@@ -191,6 +191,8 @@
     "offerMultiplier3": "3x",
     "offerMultiplier4": "4x",
     "offerMultiplier5": "5x",
+    "offerCapsRequired": "Defina o teto de fee de roteamento e o teto de base fee antes de salvar. 0 e permitido, mas precisa ser escolhido: ele prende cada canal vendido por esta oferta em fee zero ate o fim do compromisso.",
+    "offerCapsHint": "Estes limitam os canais que voce vende, nao o preco da venda. 0 significa o canal roteando de graca por todo o compromisso.",
     "offerFeeRateCap": "Fee máxima de roteamento (ppm)",
     "offerBaseFeeCap": "Base fee máxima (sat)",
     "offerDuration": "Duração do canal",

@@ -3,6 +3,8 @@
 > [!IMPORTANT]
 > O LightningOS é um painel local de controle do node e **não foi projetado para exposição direta à Internet pública**. Use-o somente em uma LAN confiável ou por uma VPN privada, como o Tailscale, sempre protegido por firewall no host ou na rede. Nunca encaminhe a porta `8443` nem as portas da App Store para a Internet. Os instaladores restringem a `8443` à LAN detectada e à interface `tailscale0` somente quando o UFW já está instalado e ativo; eles não ativam o UFW automaticamente. Confirme sempre com `sudo ufw status` ou configure um firewall externo equivalente antes de usar o node.
 
+[Arquitetura de segurança](#arquitetura-de-segurança) · [Relato privado de vulnerabilidades](../SECURITY.md)
+
 <img width="1920" height="1080" alt="logo" src="https://github.com/user-attachments/assets/504ec23e-31f8-407a-a848-3fa4ce3ec1f9" />
 
 [Clique aqui](https://github.com/jvxis/brln-os-light/blob/main/README.md) para ver a versão em inglês (fonte da verdade).
@@ -840,14 +842,59 @@ A aba Wallet Flow do On-chain Hub renderiza um grafo Sankey das transações toc
 
 Use `PROVENANCE_PRIMARY=chain|bitcoind|electrs` para manter a cadeia padrão ou fixar uma única fonte local. A UI mostra a fonte ativa, saúde e freshness; a API de métricas expõe hits, erros, fallthroughs e latência por classe de fonte. O Wallet Flow também oferece rebuild, status e telemetria, e os relatórios diários incluem alerta quando a proveniência está ausente, atrasada ou com erro.
 
-## Notas de segurança
-- A seed phrase nunca é armazenada. Ela é mostrada uma vez no assistente.
-- Credenciais RPC são armazenadas apenas em `/etc/lightningos/secrets.env` (root:lightningos, `chmod 660`).
-- API/UI bindam em `0.0.0.0` por padrão para acesso LAN. Para localhost-only, defina `server.host: "127.0.0.1"` em `/etc/lightningos/config.yaml`.
-- Defina `UTXO_LOCK_REQUIRES_REAUTH=true` para exigir o mesmo escopo de reautenticação de envio da carteira antes de lock/unlock de UTXO.
-- Ações sensíveis da API são gravadas em `audit_events` no Postgres e podem ser revisadas na página Auditoria.
-- Eventos de auditoria são removidos após `AUDIT_EVENTS_RETENTION_DAYS` dias (padrão `365`). Use `0` ou `forever` para mantê-los indefinidamente.
-- O fallback Electrum público amplia a cobertura do Wallet Flow, mas revela os txids consultados ao servidor escolhido; desative-o se isso não atender ao seu modelo de privacidade.
+## Arquitetura de segurança
+
+O LightningOS foi projetado como um plano de controle local para um node que
+custodia fundos. O hardening reduz o impacto potencial da aplicação web e dos
+apps opcionais, mas não torna segura a exposição direta à Internet. Mantenha o
+host em uma LAN confiável ou VPN privada, use firewall, aplique as atualizações
+do sistema operacional e preserve backups independentes do LND e das carteiras.
+
+- **Separação de privilégios:** o Manager executa com a conta não privilegiada
+  `lightningos`, sem pertencer ao grupo Docker, sem capabilities Linux e sem um
+  caminho genérico de sudo sem senha. Alterações no host são delegadas a um
+  broker privilegiado separado e ativado sob demanda por socket.
+- **Operações privilegiadas fechadas:** o broker aceita operações versionadas,
+  tipadas e permitidas explicitamente, em vez de comandos shell arbitrários.
+  Antes de alterar o host, valida caminhos, manifestos, imagens, propriedade e
+  entradas específicas de cada operação. A unidade systemd também restringe
+  filesystem, capabilities e classes de chamadas de sistema.
+- **Fronteiras auditáveis:** requisições privilegiadas recebem identificadores e
+  registros de início/conclusão sem valores secretos. Ações sensíveis da
+  aplicação também aparecem na página Auditoria do LightningOS.
+- **Proteção da sessão web:** instalações novas exigem cadastro do
+  administrador. A autenticação usa cookies seguros e HTTP-only, requisições de
+  alteração exigem proteção CSRF e ações de maior impacto, como envios on-chain
+  externos e mudanças no modo do terminal, exigem reautenticação recente.
+- **Minimização de credenciais:** seeds nunca são persistidas nem registradas em
+  logs. Segredos ficam em arquivos restritos e são excluídos da auditoria do
+  broker e de erros mostrados ao usuário. O Manager e os apps compatíveis usam
+  macaroons LND dedicados quando a integração permite credenciais limitadas; a
+  Loja sinaliza os apps cuja função ainda exige acesso sensível ao LND.
+- **Integração Bitcoin endurecida:** o Bitcoin Core gerenciado pela Loja é
+  construído localmente a partir do arquivo oficial, após verificação de
+  checksum e múltiplas assinaturas. A autenticação RPC gerenciada usa `rpcauth`
+  em vez de entradas `rpcuser`/`rpcpassword` em texto simples, e os consumidores
+  usam uma rede dedicada controlada pelo catálogo. Nodes Bitcoin externos ou
+  systemd preservam o modelo de autenticação administrado pelo operador.
+- **Loja de Apps controlada:** ações de ciclo de vida usam manifestos revisados
+  do catálogo e snapshots de execução validados. As verificações de imagem,
+  storage, rede, credenciais e dependências variam conforme a necessidade de
+  cada app; o modo de rede e o escopo de confiança continuam específicos do app
+  e são destacados na UI quando afetam o risco para o operador.
+- **Upgrades verificados:** o fluxo de release pela aplicação confirma que tag,
+  commit e versão do código correspondem antes da instalação. Transições de
+  privilégio e migrações legadas suportadas usam verificações limitadas e
+  caminhos de rollback para evitar substituir silenciosamente um runtime
+  funcional do node.
+- **Privacidade explícita:** serviços públicos opcionais, incluindo fallbacks
+  Electrum e backends externos de apps, podem observar metadados das consultas.
+  Desative-os quando não forem compatíveis com seu modelo de ameaça.
+
+Esses controles são defesa em profundidade, não uma garantia contra o
+comprometimento do host, dependências maliciosas, erros operacionais ou perda de
+backups. Consulte [SECURITY.md](../SECURITY.md) para versões suportadas e relato
+privado de vulnerabilidades.
 
 ## Troubleshooting
 Se `https://<IP_LAN_DO_SERVIDOR>:8443` não estiver acessível:

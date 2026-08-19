@@ -99,7 +99,7 @@ func (s *Server) lndStatus(ctx context.Context, force bool) (lndStatusResponse, 
 	resp.InfoAgeSeconds = status.InfoAgeSeconds
 	resp.DBBackend = detectLNDDBBackend()
 	if resp.DBBackend == "bolt" {
-		if sizeGB, err := lndChannelDBSizeGB(); err == nil {
+		if sizeGB, err := lndChannelDBSizeGB(ctx); err == nil {
 			resp.ChannelDBSizeGB = &sizeGB
 		}
 	}

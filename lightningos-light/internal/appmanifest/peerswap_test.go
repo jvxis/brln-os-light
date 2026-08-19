@@ -1,7 +1,11 @@
 package appmanifest
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -10,7 +14,7 @@ func TestPeerSwapCatalogPinsUpdatedBinariesInLegacyPackageDirectory(t *testing.T
 	if PeerSwapAssetDirectory != "version_5_0" {
 		t.Fatalf("the package directory is an intentional compatibility path, got %q", PeerSwapAssetDirectory)
 	}
-	if PeerSwapVersion != "v6.0.0" || len(PeerSwapCommit) != 40 {
+	if PeerSwapVersion != "v6.0.0-8-g816a5bb" || PeerSwapCommit != "816a5bb12d6ff2a08b667ca387cb8d4b3f706709" {
 		t.Fatalf("unexpected PeerSwap provenance: %s %s", PeerSwapVersion, PeerSwapCommit)
 	}
 	if PeerSwapWebVersion != "v6.0.0.1" || len(PeerSwapWebCommit) != 40 {
@@ -19,6 +23,15 @@ func TestPeerSwapCatalogPinsUpdatedBinariesInLegacyPackageDirectory(t *testing.T
 	for _, binary := range PeerSwapBinaries() {
 		if len(binary.SHA256) != 64 {
 			t.Fatalf("invalid %s checksum", binary.Name)
+		}
+		assetPath := filepath.Join("..", "..", "assets", "binaries", "peerswap", PeerSwapAssetDirectory, PeerSwapAssetArch, binary.Name)
+		raw, err := os.ReadFile(assetPath)
+		if err != nil {
+			t.Fatalf("read %s asset: %v", binary.Name, err)
+		}
+		actual := fmt.Sprintf("%x", sha256.Sum256(raw))
+		if actual != binary.SHA256 {
+			t.Fatalf("%s asset checksum mismatch: got %s, want %s", binary.Name, actual, binary.SHA256)
 		}
 	}
 }

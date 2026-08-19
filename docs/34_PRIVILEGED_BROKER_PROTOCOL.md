@@ -970,6 +970,21 @@ unmanaged `channel.db` preservation, and root/macaroon symlink rejection.
 Evidence is in
 `docs/baselines/privilege-hardening-phase3-lnd-permissions-2026-08-13.json`.
 
+### LND channel database observability
+
+`lnd.channel-db.status` is a read-only serialized empty request used by the LND
+dashboard card and Channel DB Inspector. The caller cannot provide a path,
+filename, command, uid, gid, mode, or database content. The broker inspects only
+the fixed `/data/lnd/data/graph/mainnet/channel.db` path and returns its byte
+size. The final object must be a regular non-symlink file; missing or unexpected
+objects fail closed. No database bytes are opened or returned, and the operation
+does not acquire the mutation lock.
+
+This boundary preserves observability for hardened `install_existing.sh` nodes
+whose legacy LND directory ancestry is intentionally not traversable by the
+unprivileged Manager, without changing legacy ownership or permissions and
+without granting the Manager broader LND filesystem access.
+
 ### LND manager credential migration
 
 `lnd.manager-credential.ensure` and `lnd.manager-credential.rollback` are

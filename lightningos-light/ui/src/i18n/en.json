@@ -191,6 +191,8 @@
     "offerMultiplier3": "3x",
     "offerMultiplier4": "4x",
     "offerMultiplier5": "5x",
+    "offerCapsRequired": "Set the routing fee cap and the base fee cap before saving. 0 is allowed, but it has to be chosen: it holds every channel this offer sells at zero fee until its commitment ends.",
+    "offerCapsHint": "These bind the channels you sell, not the sale price. 0 means the channel routes for free for the whole commitment.",
     "offerFeeRateCap": "Max routing fee (ppm)",
     "offerBaseFeeCap": "Max base fee (sat)",
     "offerDuration": "Channel duration",

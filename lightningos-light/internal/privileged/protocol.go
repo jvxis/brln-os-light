@@ -51,6 +51,7 @@ const (
 	OperationAppStorageEnsure                Operation = "storage.apps.ensure"
 	OperationCatalogStorageEnsure            Operation = "app.catalog.storage.ensure"
 	OperationSMARTRead                       Operation = "storage.smart.read"
+	OperationLNDChannelDBStatus              Operation = "lnd.channel-db.status"
 	OperationLNDPermissionsRepair            Operation = "storage.lnd.permissions.repair"
 	OperationLNDManagerCredentialEnsure      Operation = "lnd.manager-credential.ensure"
 	OperationLNDManagerCredentialRollback    Operation = "lnd.manager-credential.rollback"
@@ -236,6 +237,10 @@ type SMARTReadState struct {
 type LNDPermissionsState struct {
 	Status  string `json:"status"`
 	Changed bool   `json:"changed,omitempty"`
+}
+
+type LNDChannelDBState struct {
+	SizeBytes int64 `json:"size_bytes"`
 }
 
 type LNDManagerCredentialState struct {
@@ -953,6 +958,14 @@ func ValidateRequest(request Request) error {
 		var params struct{}
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid storage.lnd.permissions.repair params: %w", err)
+		}
+	case OperationLNDChannelDBStatus:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for lnd.channel-db.status")
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid lnd.channel-db.status params: %w", err)
 		}
 	case OperationLNDManagerCredentialEnsure, OperationLNDManagerCredentialRollback:
 		var params struct{}

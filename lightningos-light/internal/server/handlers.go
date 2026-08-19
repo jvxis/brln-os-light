@@ -1142,15 +1142,18 @@ func detectLNDDBBackend() string {
 	return "bolt"
 }
 
-func lndChannelDBSizeGB() (float64, error) {
-	sizeBytes, err := lndChannelDBSizeBytes()
+func lndChannelDBSizeGB(ctx context.Context) (float64, error) {
+	sizeBytes, err := lndChannelDBSizeBytes(ctx)
 	if err != nil {
 		return 0, err
 	}
 	return float64(sizeBytes) / (1000.0 * 1000.0 * 1000.0), nil
 }
 
-func lndChannelDBSizeBytes() (int64, error) {
+func lndChannelDBSizeBytes(ctx context.Context) (int64, error) {
+	if sizeBytes, handled, err := system.ReadLNDChannelDBSizeWithBroker(ctx); handled {
+		return sizeBytes, err
+	}
 	info, err := os.Stat(lndChannelDBPath)
 	if err != nil {
 		return 0, err

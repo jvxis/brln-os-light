@@ -130,6 +130,7 @@ GET /api/mempool/fees
 
 GET /api/lnd/status
 - LND state, sync, channels, balances.
+- For Bolt-backed nodes, `channel_db_size_gb` is populated through the fixed read-only broker operation when the hardened Manager cannot traverse a legacy `install_existing.sh` LND directory.
 - `channels` includes `active`, `inactive`, and `pending`; `peers.connected` is derived from LND's lightweight runtime status.
 - During initial chain or graph synchronization, expensive balance and channel-detail RPCs are deferred and the last cached runtime status may be returned.
 - If `GetInfo` is temporarily unavailable, `block_height` and `graph_sync` can be populated from a bounded, read-only tail of the current LND systemd journal invocation.
@@ -334,6 +335,7 @@ GET /api/lnops/channel-db-impact
 - Returns a channel.db maintenance report for nodes using LND's Bolt channel database.
 - For Postgres-backed LND nodes, returns HTTP 200 with `available=false` and `db_backend="postgres"`.
 - Uses LND `ListChannels.num_updates` to rank open channels by update count, update share, estimated channel.db footprint, updates/day, and updates per 1M sats capacity.
+- On hardened nodes, obtains only the fixed `channel.db` file size through the read-only privileged broker boundary; the Manager does not receive broader access to the LND data directory or database contents.
 - `estimated_db_bytes` and `estimated_db_gb` are proportional estimates based on each channel's share of total updates and the physical `channel.db` size. LND/BoltDB do not expose exact bytes per channel over RPC.
 - Response shape:
 {

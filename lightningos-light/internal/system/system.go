@@ -221,6 +221,10 @@ type lndPermissionsPrivilegedClient interface {
 	RepairLNDPermissions(ctx context.Context, dryRun bool) (status string, changed bool, err error)
 }
 
+type lndObservabilityPrivilegedClient interface {
+	LNDChannelDBSize(ctx context.Context) (sizeBytes int64, err error)
+}
+
 type lndManagerCredentialPrivilegedClient interface {
 	EnsureLNDManagerCredential(ctx context.Context, dryRun bool) (privileged.LNDManagerCredentialState, error)
 	RollbackLNDManagerCredential(ctx context.Context, dryRun bool) (privileged.LNDManagerCredentialState, error)
@@ -1463,6 +1467,21 @@ func ReadSMARTWithBroker(ctx context.Context, device string) (string, bool, erro
 	}
 	output, _, err := smartClient.ReadSMART(ctx, device)
 	return output, true, err
+}
+
+func ReadLNDChannelDBSizeWithBroker(ctx context.Context) (int64, bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return 0, false, nil
+	}
+	observabilityClient, ok := client.(lndObservabilityPrivilegedClient)
+	if !ok {
+		return 0, true, errors.New("privileged broker does not support LND observability")
+	}
+	sizeBytes, err := observabilityClient.LNDChannelDBSize(ctx)
+	return sizeBytes, true, err
 }
 
 func RepairLNDPermissionsWithBroker(ctx context.Context) (bool, error) {

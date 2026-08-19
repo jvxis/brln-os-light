@@ -116,6 +116,18 @@ func (client *Client) ServiceStatus(ctx context.Context, unit string) (string, e
 	return result.Status, nil
 }
 
+func (client *Client) LNDChannelDBSize(ctx context.Context) (int64, error) {
+	response, err := client.call(ctx, OperationLNDChannelDBStatus, struct{}{}, false)
+	if err != nil {
+		return 0, err
+	}
+	var state LNDChannelDBState
+	if err := decodeStrict(response.Result, &state); err != nil || state.SizeBytes < 0 {
+		return 0, errors.New("invalid broker LND channel database status response")
+	}
+	return state.SizeBytes, nil
+}
+
 func (client *Client) ManagerFirewallStatus(ctx context.Context) (string, error) {
 	response, err := client.call(ctx, OperationManagerFirewallStatus, struct{}{}, false)
 	if err != nil {

@@ -95,7 +95,7 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
           tone="warn"
         />
         <MetricTile
-          label={t('reports.netWithKeysend')}
+          label={t('reports.routingNet')}
           value={`${formatSignedSats(locale, metricRoutingNet(live))} sats`}
           sublabel={t('dashboard.todayWindow')}
           tone={metricRoutingNet(live) >= 0 ? 'ok' : 'danger'}

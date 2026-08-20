@@ -342,6 +342,7 @@ export const markWalletActivity = (payload: {
   classification: string
   amount_sat?: number
   occurred_at?: string
+  direction?: string
 }) => request('/api/wallet/activity/mark', { method: 'POST', body: JSON.stringify(payload) })
 export const getWalletActivity = (range: '7d' | '1m' | '1a', limit = 100, offset = 0) =>
   request(`/api/wallet/activity?range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`)

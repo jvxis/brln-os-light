@@ -71,7 +71,7 @@ export default function NodePulseRow({
       />
 
       <MetricTile
-        label={t('reports.netWithKeysend')}
+        label={t('reports.routingNet')}
         value={`${formatSignedSats(locale, metricRoutingNet(live))} sats`}
         sublabel={t('dashboard.todayWindow')}
         detail={netTrendDetail}

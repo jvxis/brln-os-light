@@ -26,7 +26,7 @@ import {
   updateReportsConfig
 } from '../api'
 import { getLocale } from '../i18n'
-import { calculateDisplayApyPct, formatApyPercent, totalBalanceFromPoint } from '../utils/apy'
+import { calculateDisplayApyPct, calculateShortWindowApyPct, formatApyPercent, totalBalanceFromPoint } from '../utils/apy'
 
 type ReportSeriesItem = {
   date: string
@@ -51,6 +51,8 @@ type ReportSeriesItem = {
   keysend_sent_count?: number
   total_revenue_sats?: number
   total_cost_sats?: number
+  marked_revenue_sats?: number
+  marked_cost_sats?: number
   forward_count: number
   rebalance_count: number
   rebalance_volume_sats?: number
@@ -87,6 +89,8 @@ type ReportMetrics = {
   keysend_sent_count?: number
   total_revenue_sats?: number
   total_cost_sats?: number
+  marked_revenue_sats?: number
+  marked_cost_sats?: number
   forward_count: number
   rebalance_count: number
   rebalance_volume_sats?: number
@@ -995,6 +999,8 @@ export default function Reports() {
   const liveNetWithKeysend = live?.net_with_keysend_sats ?? ((live?.net_routing_profit_sats ?? 0) + liveKeysendReceived)
   const liveSalesRevenue = live?.sales_revenue_sats ?? 0
   const liveKeysendSent = live?.keysend_sent_sats ?? 0
+  const liveMarkedRevenue = live?.marked_revenue_sats ?? 0
+  const liveMarkedCost = live?.marked_cost_sats ?? 0
   const liveForwardRevenue = live?.forward_fee_revenue_sats ?? 0
   // Served by the API so the definition of revenue and cost lives in one place.
   const liveTotalRevenue = live?.total_revenue_sats
@@ -1009,8 +1015,11 @@ export default function Reports() {
   // channels, the node as a whole earns on everything it holds.
   const liveOutboundBase = live?.lightning_balance_sats ?? null
   const liveTotalBase = totalBalanceFromPoint(live ?? null)
-  const liveRoutingApy = calculateDisplayApyPct(liveRoutingNet, liveForwardRevenue, 1, liveOutboundBase)
-  const liveTotalApy = calculateDisplayApyPct(liveNetTotal, liveTotalRevenue, 1, liveTotalBase)
+  // The live window is intraday, so it is annualised linearly - see
+  // calculateShortWindowApyPct for why compounding it is not an option.
+  const liveWindowDays = 1
+  const liveRoutingApy = calculateShortWindowApyPct(liveRoutingNet, liveWindowDays, liveOutboundBase)
+  const liveTotalApy = calculateShortWindowApyPct(liveNetTotal, liveWindowDays, liveTotalBase)
   // The toggle drives the historical totals too, so its visibility cannot depend
   // on the live window alone: on a day with no sale the control would vanish
   // while still silently including past sales in the range below.
@@ -1168,23 +1177,24 @@ export default function Reports() {
                   <p className="text-xs uppercase tracking-wide" style={{ color: COLORS.net }}>
                     {t('reports.revenue')}
                   </p>
+                  {/* Only lines with a value are shown. A column of zeroes reads
+                      as noise and buries the one number that moved. */}
                   <div className="mt-2 space-y-1 text-sm text-fog/70">
-                    <div className="flex justify-between gap-3">
-                      <span>{t('reports.forwards')}</span>
-                      <span className="text-fog">{formatSats(liveForwardRevenue)}</span>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span>{t('reports.keysendReceived')}</span>
-                      <span className="text-fog">{formatSats(liveKeysendReceived)}</span>
-                    </div>
-                    {hasSalesData && (
-                      <div className="flex justify-between gap-3">
-                        <span>
-                          {t('reports.salesRevenue')} ({t('reports.salesCount', { count: live.sales_count ?? 0 })})
-                        </span>
-                        <span className="text-fog">{formatSats(liveSalesRevenue)}</span>
+                    {[
+                      { key: 'forwards', label: t('reports.forwards'), value: liveForwardRevenue },
+                      { key: 'keysend', label: t('reports.keysendReceived'), value: liveKeysendReceived },
+                      {
+                        key: 'sales',
+                        label: `${t('reports.salesRevenue')} (${t('reports.salesCount', { count: live.sales_count ?? 0 })})`,
+                        value: liveSalesRevenue
+                      },
+                      { key: 'marked', label: t('reports.markedRevenue'), value: liveMarkedRevenue }
+                    ].filter((line) => line.value !== 0).map((line) => (
+                      <div key={line.key} className="flex justify-between gap-3">
+                        <span>{line.label}</span>
+                        <span className="text-fog">{formatSats(line.value)}</span>
                       </div>
-                    )}
+                    ))}
                   </div>
                   <div className="mt-2 flex justify-between gap-3 border-t border-white/10 pt-2 text-sm">
                     <span className="text-fog/60">{t('reports.total')}</span>
@@ -1199,22 +1209,18 @@ export default function Reports() {
                     {t('reports.cost')}
                   </p>
                   <div className="mt-2 space-y-1 text-sm text-fog/70">
-                    <div className="flex justify-between gap-3">
-                      <span>{t('reports.rebalances')}</span>
-                      <span className="text-fog">{formatSats(liveRebalanceCost)}</span>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span>{t('reports.payments')}</span>
-                      <span className="text-fog">{formatSats(livePaymentCost)}</span>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span>{t('reports.keysendSent')}</span>
-                      <span className="text-fog">{formatSats(liveKeysendSent)}</span>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span>{t('reports.onchainCost')}</span>
-                      <span className="text-fog">{formatSats(liveOnchainCost)}</span>
-                    </div>
+                    {[
+                      { key: 'rebalances', label: t('reports.rebalances'), value: liveRebalanceCost },
+                      { key: 'payments', label: t('reports.payments'), value: livePaymentCost },
+                      { key: 'keysendSent', label: t('reports.keysendSent'), value: liveKeysendSent },
+                      { key: 'marked', label: t('reports.markedCost'), value: liveMarkedCost },
+                      { key: 'onchain', label: t('reports.onchainCost'), value: liveOnchainCost }
+                    ].filter((line) => line.value !== 0).map((line) => (
+                      <div key={line.key} className="flex justify-between gap-3">
+                        <span>{line.label}</span>
+                        <span className="text-fog">{formatSats(line.value)}</span>
+                      </div>
+                    ))}
                   </div>
                   <div className="mt-2 flex justify-between gap-3 border-t border-white/10 pt-2 text-sm">
                     <span className="text-fog/60">{t('reports.total')}</span>
@@ -1235,8 +1241,8 @@ export default function Reports() {
                         <span>{t('reports.routingNet')}</span>
                         <span className="font-semibold">{formatSats(liveRoutingNet)}</span>
                       </div>
-                      <p className="text-xs opacity-80">
-                        {t('reports.apy')} {formatApyPercent(locale, liveRoutingApy)} · {t('reports.apyOverOutbound')}
+                      <p className="truncate text-xs opacity-80" title={t('reports.apyOverOutbound')}>
+                        {t('reports.apy')} {formatApyPercent(locale, liveRoutingApy)}
                       </p>
                     </div>
                     <div style={{ color: liveNetTotal >= 0 ? COLORS.net : COLORS.netNegative }}>
@@ -1244,8 +1250,8 @@ export default function Reports() {
                         <span>{t('reports.total')}</span>
                         <span className="font-semibold">{formatSats(liveNetTotal)}</span>
                       </div>
-                      <p className="text-xs opacity-80">
-                        {t('reports.apy')} {formatApyPercent(locale, liveTotalApy)} · {t('reports.apyOverTotal')}
+                      <p className="truncate text-xs opacity-80" title={t('reports.apyOverTotal')}>
+                        {t('reports.apy')} {formatApyPercent(locale, liveTotalApy)}
                       </p>
                     </div>
                   </div>

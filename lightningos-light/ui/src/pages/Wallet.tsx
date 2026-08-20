@@ -1509,7 +1509,8 @@ export default function Wallet() {
         payment_hash: hash,
         classification: next,
         amount_sat: Math.abs(Number(item.amount_sat || 0)),
-        occurred_at: item.timestamp ? new Date(item.timestamp).toISOString() : undefined
+        occurred_at: item.timestamp ? new Date(item.timestamp).toISOString() : undefined,
+        direction: activityDirection(item)
       })
       setActivityMarks((prev) => {
         const copy = { ...prev }
@@ -2579,34 +2580,32 @@ export default function Wallet() {
             return (
               <div key={itemKey} className="flex items-center gap-2 border-b border-white/10 pb-2">
                 <div className="min-w-0 flex-1">{rowBody}</div>
-                {activityIsMarkable(item) && (
-                  <div className="flex shrink-0 gap-1" title={t('wallet.markHint')}>
+                {/* The direction decides the only classification that can make
+                    sense: money that arrived is revenue or nothing, money that
+                    left is cost or nothing. Offering both turned an obvious
+                    choice into a way to record something impossible. */}
+                {activityIsMarkable(item) && (() => {
+                  const kind = direction === 'in' ? 'revenue' : direction === 'out' ? 'cost' : ''
+                  if (!kind) return null
+                  const active = mark === kind
+                  return (
                     <button
                       type="button"
                       disabled={markBusy === markHash}
-                      onClick={() => void toggleActivityMark(item, 'revenue')}
-                      className={`rounded-full border px-2 py-0.5 text-[10px] transition ${
-                        mark === 'revenue'
-                          ? 'border-emerald-300/70 bg-emerald-500/20 text-emerald-100'
+                      title={t('wallet.markHint')}
+                      onClick={() => void toggleActivityMark(item, kind)}
+                      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] transition ${
+                        active
+                          ? kind === 'revenue'
+                            ? 'border-emerald-300/70 bg-emerald-500/20 text-emerald-100'
+                            : 'border-rose-300/70 bg-rose-500/20 text-rose-100'
                           : 'border-white/10 text-fog/40 hover:border-white/25 hover:text-fog/70'
                       }`}
                     >
-                      {t('wallet.markRevenue')}
+                      {kind === 'revenue' ? t('wallet.markRevenue') : t('wallet.markCost')}
                     </button>
-                    <button
-                      type="button"
-                      disabled={markBusy === markHash}
-                      onClick={() => void toggleActivityMark(item, 'cost')}
-                      className={`rounded-full border px-2 py-0.5 text-[10px] transition ${
-                        mark === 'cost'
-                          ? 'border-rose-300/70 bg-rose-500/20 text-rose-100'
-                          : 'border-white/10 text-fog/40 hover:border-white/25 hover:text-fog/70'
-                      }`}
-                    >
-                      {t('wallet.markCost')}
-                    </button>
-                  </div>
-                )}
+                  )
+                })()}
               </div>
             )
           }) : (

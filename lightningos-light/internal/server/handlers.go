@@ -4455,6 +4455,7 @@ func (s *Server) handleWalletActivityMark(w http.ResponseWriter, r *http.Request
 		Classification string `json:"classification"`
 		AmountSat      int64  `json:"amount_sat"`
 		OccurredAt     string `json:"occurred_at"`
+		Direction      string `json:"direction"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -4464,6 +4465,24 @@ func (s *Server) handleWalletActivityMark(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "payment_hash required")
 		return
 	}
+	// The direction decides the only classification that can make sense: money
+	// that arrived is revenue or nothing, money that left is cost or nothing.
+	// Enforced here as well as in the UI, so the rule holds for anything that
+	// reaches the endpoint.
+	classification := strings.TrimSpace(req.Classification)
+	switch strings.ToLower(strings.TrimSpace(req.Direction)) {
+	case "in":
+		if classification != "" && classification != reports.MarkRevenue {
+			writeError(w, http.StatusBadRequest, "a payment that arrived can only be marked as revenue")
+			return
+		}
+	case "out":
+		if classification != "" && classification != reports.MarkCost {
+			writeError(w, http.StatusBadRequest, "a payment that left can only be marked as cost")
+			return
+		}
+	}
+
 	occurredAt := time.Now().UTC()
 	if raw := strings.TrimSpace(req.OccurredAt); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
@@ -4475,7 +4494,7 @@ func (s *Server) handleWalletActivityMark(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	if err := reports.SetActivityMark(ctx, s.db, req.PaymentHash, req.Classification,
+	if err := reports.SetActivityMark(ctx, s.db, req.PaymentHash, classification,
 		req.AmountSat*1000, occurredAt); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -4483,7 +4502,7 @@ func (s *Server) handleWalletActivityMark(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
 		"payment_hash":   strings.TrimSpace(req.PaymentHash),
-		"classification": strings.TrimSpace(req.Classification),
+		"classification": classification,
 	})
 }
 

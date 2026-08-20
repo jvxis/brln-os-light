@@ -2360,6 +2360,8 @@
     "loadingRange": "Carregando intervalo...",
     "movementProgress": "Movimento {{routed}} / {{target}} ({{percent}}%)",
     "movementProgressUnavailable": "Meta de movimento indisponível para este período.",
+    "markedRevenue": "Marcado como receita",
+    "markedCost": "Marcado como custo",
     "keysendSent": "Keysend enviado",
     "apyOverOutbound": "sobre a liquidez dos canais",
     "apyOverTotal": "sobre toda a liquidez",

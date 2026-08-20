@@ -281,6 +281,10 @@ type reportSeriesItem struct {
 	KeysendReceivedCount      int64   `json:"keysend_received_count"`
 	KeysendSentSat            float64 `json:"keysend_sent_sats"`
 	KeysendSentCount          int64   `json:"keysend_sent_count"`
+	MarkedRevenueSat          float64 `json:"marked_revenue_sats"`
+	MarkedRevenueCount        int64   `json:"marked_revenue_count"`
+	MarkedCostSat             float64 `json:"marked_cost_sats"`
+	MarkedCostCount           int64   `json:"marked_cost_count"`
 	// Totals are served rather than left to the caller: the rule for what counts
 	// as revenue and what counts as cost belongs in one place, not repeated in
 	// every page and card that displays them.
@@ -343,6 +347,10 @@ type reportMetricsPayload struct {
 	KeysendReceivedCount       int64   `json:"keysend_received_count"`
 	KeysendSentSat             float64 `json:"keysend_sent_sats"`
 	KeysendSentCount           int64   `json:"keysend_sent_count"`
+	MarkedRevenueSat           float64 `json:"marked_revenue_sats"`
+	MarkedRevenueCount         int64   `json:"marked_revenue_count"`
+	MarkedCostSat              float64 `json:"marked_cost_sats"`
+	MarkedCostCount            int64   `json:"marked_cost_count"`
 	TotalRevenueSat            float64 `json:"total_revenue_sats"`
 	TotalCostSat               float64 `json:"total_cost_sats"`
 	TotalFeeCostSat            float64 `json:"total_fee_cost_sats"`
@@ -381,6 +389,10 @@ func mapSeries(items []reports.Row) []reportSeriesItem {
 			KeysendReceivedSat:         metricSats(item.Metrics.KeysendReceivedMsat, item.Metrics.KeysendReceivedSat),
 			KeysendSentSat:             metricSats(item.Metrics.KeysendSentMsat, item.Metrics.KeysendSentSat),
 			KeysendSentCount:           item.Metrics.KeysendSentCount,
+			MarkedRevenueSat:           metricSats(item.Metrics.MarkedRevenueMsat, item.Metrics.MarkedRevenueSat),
+			MarkedRevenueCount:         item.Metrics.MarkedRevenueCount,
+			MarkedCostSat:              metricSats(item.Metrics.MarkedCostMsat, item.Metrics.MarkedCostSat),
+			MarkedCostCount:            item.Metrics.MarkedCostCount,
 			TotalRevenueSat:            metricSats(item.Metrics.TotalRevenueMsat(), item.Metrics.TotalRevenueSat()),
 			TotalCostSat:               metricSats(item.Metrics.TotalCostMsat(), item.Metrics.TotalCostSat()),
 			KeysendReceivedCount:       item.Metrics.KeysendReceivedCount,
@@ -421,6 +433,10 @@ func metricsPayload(metrics reports.Metrics) reportMetricsPayload {
 		KeysendReceivedSat:         metricSats(metrics.KeysendReceivedMsat, metrics.KeysendReceivedSat),
 		KeysendSentSat:             metricSats(metrics.KeysendSentMsat, metrics.KeysendSentSat),
 		KeysendSentCount:           metrics.KeysendSentCount,
+		MarkedRevenueSat:           metricSats(metrics.MarkedRevenueMsat, metrics.MarkedRevenueSat),
+		MarkedRevenueCount:         metrics.MarkedRevenueCount,
+		MarkedCostSat:              metricSats(metrics.MarkedCostMsat, metrics.MarkedCostSat),
+		MarkedCostCount:            metrics.MarkedCostCount,
 		TotalRevenueSat:            metricSats(metrics.TotalRevenueMsat(), metrics.TotalRevenueSat()),
 		TotalCostSat:               metricSats(metrics.TotalCostMsat(), metrics.TotalCostSat()),
 		KeysendReceivedCount:       metrics.KeysendReceivedCount,

@@ -2360,6 +2360,8 @@
     "loadingRange": "Loading range...",
     "movementProgress": "Movement {{routed}} / {{target}} ({{percent}}%)",
     "movementProgressUnavailable": "Movement target unavailable for this range.",
+    "markedRevenue": "Marked as revenue",
+    "markedCost": "Marked as cost",
     "keysendSent": "Keysend sent",
     "apyOverOutbound": "over channel liquidity",
     "apyOverTotal": "over all liquidity",

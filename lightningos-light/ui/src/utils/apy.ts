@@ -90,6 +90,25 @@ export const formatApyPercent = (locale: string, value?: number | null, maximumF
   return `${sign}${new Intl.NumberFormat(locale, { maximumFractionDigits }).format(value)}%`
 }
 
+// Annualising a short window by compounding is what produced
+// +7,515,336,264,876,268,000,000,000,000% on a live card: Math.pow(base, 365/1)
+// raises one day's return to the 365th power, and on a small balance that number
+// leaves the realm of arithmetic anyone can read.
+//
+// For windows shorter than a week the return is annualised linearly instead. It
+// answers the honest question - "at today's pace, what would a year look like" -
+// without pretending the pace compounds daily.
+export const calculateShortWindowApyPct = (
+  netSats: number,
+  days: number,
+  baseSats?: number | null
+) => {
+  if (!finiteNumber(netSats) || !finiteNumber(days) || days <= 0) return null
+  if (!finiteNumber(baseSats) || baseSats <= 0) return null
+  const apyPct = (netSats / baseSats) * (365 / days) * 100
+  return Number.isFinite(apyPct) ? apyPct : null
+}
+
 export const calculateRevenueApyPct = (netSats: number, revenueSats: number, days: number) => (
   calculateApyPct(netSats, days, revenueSats)
 )

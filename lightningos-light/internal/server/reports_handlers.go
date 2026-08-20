@@ -268,17 +268,24 @@ type reportSeriesResponse struct {
 }
 
 type reportSeriesItem struct {
-	Date                       string     `json:"date"`
-	ForwardFeeRevenueSat       float64    `json:"forward_fee_revenue_sats"`
-	RebalanceFeeCostSat        float64    `json:"rebalance_fee_cost_sats"`
-	PaymentFeeCostSat          float64    `json:"payment_fee_cost_sats"`
-	OnchainFeeCostSat          float64    `json:"onchain_fee_cost_sats"`
-	OnchainCoopCloseCostSat    float64    `json:"onchain_coop_close_cost_sats"`
-	OnchainLocalForceCostSat   float64    `json:"onchain_local_force_cost_sats"`
-	OnchainRemoteForceCostSat  float64    `json:"onchain_remote_force_cost_sats"`
-	OffchainFeeCostSat         float64    `json:"offchain_fee_cost_sats"`
-	KeysendReceivedSat         float64    `json:"keysend_received_sats"`
-	KeysendReceivedCount       int64      `json:"keysend_received_count"`
+	Date                      string  `json:"date"`
+	ForwardFeeRevenueSat      float64 `json:"forward_fee_revenue_sats"`
+	RebalanceFeeCostSat       float64 `json:"rebalance_fee_cost_sats"`
+	PaymentFeeCostSat         float64 `json:"payment_fee_cost_sats"`
+	OnchainFeeCostSat         float64 `json:"onchain_fee_cost_sats"`
+	OnchainCoopCloseCostSat   float64 `json:"onchain_coop_close_cost_sats"`
+	OnchainLocalForceCostSat  float64 `json:"onchain_local_force_cost_sats"`
+	OnchainRemoteForceCostSat float64 `json:"onchain_remote_force_cost_sats"`
+	OffchainFeeCostSat        float64 `json:"offchain_fee_cost_sats"`
+	KeysendReceivedSat        float64 `json:"keysend_received_sats"`
+	KeysendReceivedCount      int64   `json:"keysend_received_count"`
+	KeysendSentSat            float64 `json:"keysend_sent_sats"`
+	KeysendSentCount          int64   `json:"keysend_sent_count"`
+	// Totals are served rather than left to the caller: the rule for what counts
+	// as revenue and what counts as cost belongs in one place, not repeated in
+	// every page and card that displays them.
+	TotalRevenueSat            float64    `json:"total_revenue_sats"`
+	TotalCostSat               float64    `json:"total_cost_sats"`
 	TotalFeeCostSat            float64    `json:"total_fee_cost_sats"`
 	TotalFeeCostWithOnchainSat float64    `json:"total_fee_cost_with_onchain_sats"`
 	NetRoutingProfitSat        float64    `json:"net_routing_profit_sats"`
@@ -334,6 +341,10 @@ type reportMetricsPayload struct {
 	OffchainFeeCostSat         float64 `json:"offchain_fee_cost_sats"`
 	KeysendReceivedSat         float64 `json:"keysend_received_sats"`
 	KeysendReceivedCount       int64   `json:"keysend_received_count"`
+	KeysendSentSat             float64 `json:"keysend_sent_sats"`
+	KeysendSentCount           int64   `json:"keysend_sent_count"`
+	TotalRevenueSat            float64 `json:"total_revenue_sats"`
+	TotalCostSat               float64 `json:"total_cost_sats"`
 	TotalFeeCostSat            float64 `json:"total_fee_cost_sats"`
 	TotalFeeCostWithOnchainSat float64 `json:"total_fee_cost_with_onchain_sats"`
 	NetRoutingProfitSat        float64 `json:"net_routing_profit_sats"`
@@ -368,6 +379,10 @@ func mapSeries(items []reports.Row) []reportSeriesItem {
 			OnchainRemoteForceCostSat:  metricSats(item.Metrics.OnchainRemoteForceCostMsat, item.Metrics.OnchainRemoteForceCostSat),
 			OffchainFeeCostSat:         offchainFeeCostSats(item.Metrics),
 			KeysendReceivedSat:         metricSats(item.Metrics.KeysendReceivedMsat, item.Metrics.KeysendReceivedSat),
+			KeysendSentSat:             metricSats(item.Metrics.KeysendSentMsat, item.Metrics.KeysendSentSat),
+			KeysendSentCount:           item.Metrics.KeysendSentCount,
+			TotalRevenueSat:            metricSats(item.Metrics.TotalRevenueMsat(), item.Metrics.TotalRevenueSat()),
+			TotalCostSat:               metricSats(item.Metrics.TotalCostMsat(), item.Metrics.TotalCostSat()),
 			KeysendReceivedCount:       item.Metrics.KeysendReceivedCount,
 			TotalFeeCostSat:            totalFeeCostSats(item.Metrics),
 			TotalFeeCostWithOnchainSat: totalFeeCostWithOnchainSats(item.Metrics),
@@ -404,6 +419,10 @@ func metricsPayload(metrics reports.Metrics) reportMetricsPayload {
 		OnchainRemoteForceCostSat:  metricSats(metrics.OnchainRemoteForceCostMsat, metrics.OnchainRemoteForceCostSat),
 		OffchainFeeCostSat:         offchainFeeCostSats(metrics),
 		KeysendReceivedSat:         metricSats(metrics.KeysendReceivedMsat, metrics.KeysendReceivedSat),
+		KeysendSentSat:             metricSats(metrics.KeysendSentMsat, metrics.KeysendSentSat),
+		KeysendSentCount:           metrics.KeysendSentCount,
+		TotalRevenueSat:            metricSats(metrics.TotalRevenueMsat(), metrics.TotalRevenueSat()),
+		TotalCostSat:               metricSats(metrics.TotalCostMsat(), metrics.TotalCostSat()),
 		KeysendReceivedCount:       metrics.KeysendReceivedCount,
 		TotalFeeCostSat:            totalFeeCostSats(metrics),
 		TotalFeeCostWithOnchainSat: totalFeeCostWithOnchainSats(metrics),

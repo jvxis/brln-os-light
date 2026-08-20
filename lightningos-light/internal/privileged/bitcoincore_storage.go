@@ -75,10 +75,12 @@ func (manager *BitcoinCoreStorageManager) Ensure(_ context.Context, dataDir stri
 	}
 
 	if existing {
-		if err := writeBitcoinCoreStorageMarker(normalized, storageID); err != nil {
+		// Keep the expected ID and the volume marker aligned for a legacy
+		// container that may still be running until the confirmed cutover.
+		if err := syncLegacyBitcoinCoreStorageID(manager.legacyStorageIDPath(), storageID); err != nil {
 			return BitcoinCoreStorageState{}, err
 		}
-		if err := syncLegacyBitcoinCoreStorageID(manager.legacyStorageIDPath(), storageID); err != nil {
+		if err := writeBitcoinCoreStorageMarker(normalized, storageID); err != nil {
 			return BitcoinCoreStorageState{}, err
 		}
 		return BitcoinCoreStorageState{Status: "ready"}, nil
@@ -89,23 +91,36 @@ func (manager *BitcoinCoreStorageManager) Ensure(_ context.Context, dataDir stri
 		return BitcoinCoreStorageState{}, legacyErr
 	}
 	if legacyExists {
-		storageID = legacyID
+		if validStorageID(legacyID) {
+			storageID = legacyID
+		} else {
+			// Releases through 0.5.2 generated a 24-byte RawURL Base64 token.
+			// Convert that enrolled identity once instead of weakening the
+			// broker's managed 48-character hexadecimal format.
+			storageID, err = newBitcoinCoreStorageID()
+			if err != nil {
+				return BitcoinCoreStorageState{}, errors.New("bitcoin storage identity migration failed")
+			}
+		}
 	} else {
 		storageID, err = newBitcoinCoreStorageID()
 		if err != nil {
 			return BitcoinCoreStorageState{}, errors.New("bitcoin storage identity generation failed")
 		}
 	}
-	if err := writeBitcoinCoreStorageMarker(normalized, storageID); err != nil {
-		return BitcoinCoreStorageState{}, err
-	}
-	if err := writeAtomicRegularFile(storageIDPath, []byte(storageID+"\n"), 0600); err != nil {
-		return BitcoinCoreStorageState{}, errors.New("bitcoin storage identity persistence failed")
-	}
 	if err := writeAtomicRegularFile(dataDirPath, []byte(normalized+"\n"), 0600); err != nil {
 		return BitcoinCoreStorageState{}, errors.New("bitcoin storage target persistence failed")
 	}
+	if err := writeAtomicRegularFile(storageIDPath, []byte(storageID+"\n"), 0600); err != nil {
+		if removeErr := os.Remove(dataDirPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			return BitcoinCoreStorageState{}, errors.New("bitcoin storage metadata rollback failed")
+		}
+		return BitcoinCoreStorageState{}, errors.New("bitcoin storage identity persistence failed")
+	}
 	if err := syncLegacyBitcoinCoreStorageID(manager.legacyStorageIDPath(), storageID); err != nil {
+		return BitcoinCoreStorageState{}, err
+	}
+	if err := writeBitcoinCoreStorageMarker(normalized, storageID); err != nil {
 		return BitcoinCoreStorageState{}, err
 	}
 	return BitcoinCoreStorageState{Status: "ready"}, nil
@@ -230,6 +245,19 @@ func validStorageID(value string) bool {
 	}
 	_, err := hex.DecodeString(value)
 	return err == nil
+}
+
+func validLegacyStorageID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '-' && char != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func writeBitcoinCoreStorageMarker(dataDir string, storageID string) error {

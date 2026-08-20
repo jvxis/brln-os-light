@@ -140,6 +140,7 @@ func TestFedimintInspectRecognizesLegacyRuntimeWithoutExecutingCompose(t *testin
 			runner := &composeRecordingRunner{}
 			wantArgs := []string{
 				"ps",
+				"--no-trunc",
 				"--filter", "label=com.docker.compose.project=" + test.project,
 				"--filter", "label=com.docker.compose.service=" + test.service,
 				"--format", "{{.ID}}",
@@ -199,6 +200,7 @@ func TestFedimintLifecycleStopsLegacyContainerWithoutExecutingCompose(t *testing
 	containerID := strings.Repeat("d", 64)
 	statusArgs := []string{
 		"ps",
+		"--no-trunc",
 		"--filter", "label=com.docker.compose.project=" + appmanifest.FedimintGuardianProject,
 		"--filter", "label=com.docker.compose.service=" + appmanifest.FedimintGuardianPrimaryService,
 		"--format", "{{.ID}}",

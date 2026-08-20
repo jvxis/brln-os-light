@@ -25,13 +25,16 @@ func readLegacyBitcoinCoreStorageID(path string, dataDir string) (string, bool, 
 		return "", false, errors.New("legacy bitcoin storage identity is unsafe")
 	}
 	storageID := strings.TrimSpace(string(raw))
-	if !validStorageID(storageID) {
+	managedFormat := validStorageID(storageID)
+	legacyFormat := validLegacyStorageID(storageID)
+	if !managedFormat && !legacyFormat {
 		return "", false, errors.New("legacy bitcoin storage identity is invalid")
 	}
 	markerPath := filepath.Join(dataDir, appmanifest.BitcoinCoreStorageMarker)
 	var markerStat unix.Stat_t
 	if err := unix.Lstat(markerPath, &markerStat); err != nil || markerStat.Mode&unix.S_IFMT != unix.S_IFREG ||
-		markerStat.Uid != 0 || markerStat.Gid != 101 || os.FileMode(markerStat.Mode).Perm() != 0o640 {
+		markerStat.Gid != 101 || os.FileMode(markerStat.Mode).Perm() != 0o640 ||
+		(managedFormat && markerStat.Uid != 0) || (legacyFormat && markerStat.Uid != 0 && markerStat.Uid != 101) {
 		return "", false, errors.New("legacy bitcoin storage marker is unsafe")
 	}
 	markerRaw, err := readRegularFile(markerPath, 128)

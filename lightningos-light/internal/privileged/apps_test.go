@@ -53,7 +53,7 @@ func (runner *composeRecordingRunner) Run(_ context.Context, path string, args .
 	if path == dockerPath && len(args) == 3 && args[0] == "image" && args[1] == "inspect" {
 		return "", runner.imageErr
 	}
-	if path == dockerPath && len(args) == 7 && args[0] == "ps" && args[1] == "--filter" && args[3] == "--filter" && reflect.DeepEqual(args[5:], []string{"--format", "{{.ID}}"}) {
+	if path == dockerPath && len(args) == 8 && reflect.DeepEqual(args[:2], []string{"ps", "--no-trunc"}) && args[2] == "--filter" && args[4] == "--filter" && reflect.DeepEqual(args[6:], []string{"--format", "{{.ID}}"}) {
 		return runner.containerID, nil
 	}
 	for index, arg := range args {
@@ -1439,6 +1439,7 @@ func TestComposeAppInspectRecognizesLegacyCPUMinerWithoutExecutingCompose(t *tes
 			containerID := strings.TrimSpace(test.dockerOut)
 			wantStatusArgs := []string{
 				"ps",
+				"--no-trunc",
 				"--filter", "label=com.docker.compose.project=" + appmanifest.CPUMinerProject,
 				"--filter", "label=com.docker.compose.service=" + appmanifest.CPUMinerID,
 				"--format", "{{.ID}}",
@@ -1505,6 +1506,7 @@ func TestComposeAppLifecycleStopsLegacyCPUMinerIdempotently(t *testing.T) {
 	}
 	statusArgs := []string{
 		"ps",
+		"--no-trunc",
 		"--filter", "label=com.docker.compose.project=" + appmanifest.CPUMinerProject,
 		"--filter", "label=com.docker.compose.service=" + appmanifest.CPUMinerID,
 		"--format", "{{.ID}}",

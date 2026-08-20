@@ -1495,6 +1495,10 @@ export default function Wallet() {
     if (!hash) return false
     const type = String(item?.type || '').toLowerCase()
     if (!(type.includes('lightning') || type.includes('invoice') || type.includes('payment'))) return false
+    // Keysend is classified automatically - received is revenue, sent is cost -
+    // precisely because it is unilateral and needs no human judgement. Marking
+    // one would add the same sats a second time, on top of the automatic count.
+    if (item?.keysend) return false
     // A payment that failed moved no money: there is nothing to classify as
     // revenue or cost, and offering the button invited recording a cost the
     // node never paid. Only settled payments reach the report at all.

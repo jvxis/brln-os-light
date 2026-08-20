@@ -2383,6 +2383,7 @@
     "offchainCost": "Offchain cost",
     "netExcluding": "excluding",
     "netTotalLabel": "Node total",
+    "routingRevenue": "Routing revenue",
     "routingNet": "Routing net",
     "netRoutingProfit": "Net routing profit",
     "noData": "No data yet for this range.",

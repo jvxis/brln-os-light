@@ -2383,6 +2383,7 @@
     "offchainCost": "Custo offchain",
     "netExcluding": "sem",
     "netTotalLabel": "Total do no",
+    "routingRevenue": "Receita de roteamento",
     "routingNet": "Líquido de roteamento",
     "netRoutingProfit": "Lucro líquido de roteamento",
     "noData": "Sem dados para este intervalo.",

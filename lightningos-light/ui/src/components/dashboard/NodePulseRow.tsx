@@ -61,8 +61,10 @@ export default function NodePulseRow({
 
   return (
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      {/* Forwards only, not every revenue the node earns - the card sits beside
+          the routing net and both answer the same question. */}
       <MetricTile
-        label={t('reports.revenue')}
+        label={t('reports.routingRevenue')}
         value={`${formatSats(locale, live?.forward_fee_revenue_sats)} sats`}
         sublabel={t('dashboard.todayWindow')}
         detail={monthDays > 0 ? t('dashboard.monthTrendHint', { count: monthDays }) : undefined}

@@ -1494,7 +1494,12 @@ export default function Wallet() {
     const hash = String(item?.payment_hash || '').trim()
     if (!hash) return false
     const type = String(item?.type || '').toLowerCase()
-    return type.includes('lightning') || type.includes('invoice') || type.includes('payment')
+    if (!(type.includes('lightning') || type.includes('invoice') || type.includes('payment'))) return false
+    // A payment that failed moved no money: there is nothing to classify as
+    // revenue or cost, and offering the button invited recording a cost the
+    // node never paid. Only settled payments reach the report at all.
+    const status = String(item?.status || '').trim().toUpperCase()
+    return status === 'SETTLED' || status === 'SUCCEEDED'
   }
 
   const toggleActivityMark = async (item: WalletActivityItem, classification: string) => {

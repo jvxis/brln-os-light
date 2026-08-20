@@ -2381,6 +2381,8 @@
     "netWithKeysend": "Net (routing + keysend)",
     "netWithOnchain": "Net (routing + keysend - on-chain)",
     "offchainCost": "Offchain cost",
+    "netExcluding": "excluding",
+    "netTotalLabel": "Node total",
     "routingNet": "Routing net",
     "netRoutingProfit": "Net routing profit",
     "noData": "No data yet for this range.",

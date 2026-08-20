@@ -2381,6 +2381,8 @@
     "netWithKeysend": "Líquido (roteamento + keysend)",
     "netWithOnchain": "Líquido (roteamento + keysend - on-chain)",
     "offchainCost": "Custo offchain",
+    "netExcluding": "sem",
+    "netTotalLabel": "Total do no",
     "routingNet": "Líquido de roteamento",
     "netRoutingProfit": "Lucro líquido de roteamento",
     "noData": "Sem dados para este intervalo.",

@@ -765,12 +765,15 @@ export default function Reports() {
   // title used to say "routing + keysend" no matter which toggles were on.
   // The net column is now revenue minus cost in one bar, so the separate
   // keysend slice it used to carry is gone.
+  // The line is every revenue minus every cost, so listing the parts would be a
+  // sentence. It names what it is, and only mentions what a toggle is leaving
+  // out - the exception is what the reader needs to know.
   const netChartTitle = (() => {
-    const parts = [t('reports.netPartRouting')]
-    if (includeKeysend) parts.push(t('reports.netPartKeysend'))
-    if (includeSales) parts.push(t('reports.netPartSales'))
-    const base = `${t('reports.net')} (${parts.join(' + ')})`
-    return includePaymentCost ? base : `${base} · ${t('reports.netPartNoPaymentCost')}`
+    const excluded: string[] = []
+    if (!includeKeysend) excluded.push(t('reports.netPartKeysend'))
+    if (!includeSales) excluded.push(t('reports.netPartSales'))
+    const base = t('reports.netTotalLabel')
+    return excluded.length > 0 ? `${base} · ${t('reports.netExcluding')} ${excluded.join(', ')}` : base
   })()
 
   // The net line is every revenue minus every cost, the same definition the
@@ -1375,7 +1378,9 @@ export default function Reports() {
                     {includeOnchainCostInCharts && (
                       <Bar dataKey="onchainCost" stackId="live" name={t('reports.onchainCost')} fill={COLORS.onchain} radius={[8, 8, 8, 8]} />
                     )}
-                    <Bar dataKey="netRouting" stackId="live" name={t('reports.routingNet')} fill={COLORS.net} radius={[8, 8, 8, 8]}>
+                    {/* Carries revenue minus cost, so it is the node total - the
+                        key name is historical and the label must not repeat it. */}
+                    <Bar dataKey="netRouting" stackId="live" name={t('reports.netTotalLabel')} fill={COLORS.net} radius={[8, 8, 8, 8]}>
                       {liveChartData.map((entry) => (
                         <Cell key={entry.name} fill={entry.netRoutingColor ?? COLORS.net} />
                       ))}
@@ -1666,12 +1671,15 @@ export default function Reports() {
                   <XAxis dataKey="label" tick={{ fill: '#cbd5f5', fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: '#cbd5f5', fontSize: 11 }} tickFormatter={formatCompact} axisLine={false} tickLine={false} />
                   <Legend verticalAlign="top" height={24} formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
+                  {/* The cost stack has five series and most days carry only one
+                      or two. Listing the empty ones turns the tooltip into a
+                      column of zeroes that hides the number being hovered. */}
                   <Tooltip
                     cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }}
                     contentStyle={tooltipContentStyle}
                     labelStyle={tooltipLabelStyle}
                     itemStyle={tooltipItemStyle}
-                    formatter={(value) => formatSats(Number(value))}
+                    formatter={(value, name) => (Number(value) === 0 ? [] : [formatSats(Number(value)), name])}
                     labelFormatter={(value) => String(value)}
                   />
                   <Area type="monotone" dataKey="net" name={t('reports.net')} stroke={COLORS.net} fill="url(#netGradient)" strokeWidth={2} />
@@ -1704,12 +1712,15 @@ export default function Reports() {
                   <XAxis dataKey="label" tick={{ fill: '#cbd5f5', fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: '#cbd5f5', fontSize: 11 }} tickFormatter={formatCompact} axisLine={false} tickLine={false} />
                   <Legend verticalAlign="top" height={24} formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
+                  {/* The cost stack has five series and most days carry only one
+                      or two. Listing the empty ones turns the tooltip into a
+                      column of zeroes that hides the number being hovered. */}
                   <Tooltip
                     cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }}
                     contentStyle={tooltipContentStyle}
                     labelStyle={tooltipLabelStyle}
                     itemStyle={tooltipItemStyle}
-                    formatter={(value) => formatSats(Number(value))}
+                    formatter={(value, name) => (Number(value) === 0 ? [] : [formatSats(Number(value)), name])}
                     labelFormatter={(value) => String(value)}
                   />
                   {/* Revenue is one consolidated bar - forwards, keysend, sales

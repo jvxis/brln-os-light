@@ -1225,8 +1225,13 @@
     "filters": {
       "all": "Todos",
       "installed": "Instalados",
-      "notInstalled": "Não instalados"
+      "notInstalled": "Não instalados",
+      "hidden": "Ocultos ({{count}})"
     },
+    "hideApp": "Ocultar {{app}}",
+    "unhideApp": "Mostrar {{app}} na loja",
+    "preferencesLoadFailed": "Não foi possível carregar as preferências de visibilidade dos apps. Atualize a página para tentar novamente.",
+    "preferencesSaveFailed": "Não foi possível salvar a preferência de visibilidade do app.",
     "install": "Instalar",
     "installing": "Instalando...",
     "installAnyway": "Instalar mesmo assim",

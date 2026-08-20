@@ -33,3 +33,27 @@ func TestNormalizeMenuPreferencesRejectsInvalidKey(t *testing.T) {
 		t.Fatal("normalizeMenuPreferences should reject an invalid route key")
 	}
 }
+
+func TestNormalizeAppStorePreferences(t *testing.T) {
+	got, err := normalizeAppStorePreferences(AppStorePreferences{
+		Version: 77,
+		Hidden:  []string{"fedimint-guardian", "cpuminer", "fedimint-guardian"},
+	})
+	if err != nil {
+		t.Fatalf("normalizeAppStorePreferences returned error: %v", err)
+	}
+	want := AppStorePreferences{
+		Version: appStorePreferencesVersion,
+		Hidden:  []string{"fedimint-guardian", "cpuminer"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalizeAppStorePreferences = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalizeAppStorePreferencesRejectsInvalidKey(t *testing.T) {
+	_, err := normalizeAppStorePreferences(AppStorePreferences{Hidden: []string{"../../bitcoin.conf"}})
+	if err == nil {
+		t.Fatal("normalizeAppStorePreferences should reject an invalid app id")
+	}
+}

@@ -53,6 +53,18 @@ Body:
 - Hidden items are removed from favorites during normalization.
 - Preferences are persisted in PostgreSQL. Browser storage remains a fallback when the service is unavailable.
 
+GET /api/ui/preferences/apps
+- Returns the node-wide App Store card preferences.
+
+PUT /api/ui/preferences/apps
+Body:
+{
+  "version": 1,
+  "hidden": ["fedimint-guardian", "cpuminer"]
+}
+- Hidden app IDs are persisted in PostgreSQL for the node.
+- The UI permits hiding only stopped or uninstalled apps. Running apps and active operations remain visible even if an older preference still contains their IDs.
+
 ## Health and system
 
 GET /api/health

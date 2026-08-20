@@ -56,6 +56,16 @@ export type MenuPreferencesRecord = MenuPreferences & {
   updated_at?: string
 }
 
+export type AppStorePreferences = {
+  version: number
+  hidden: string[]
+}
+
+export type AppStorePreferencesRecord = AppStorePreferences & {
+  exists: boolean
+  updated_at?: string
+}
+
 const setCSRFToken = (value?: string) => {
   csrfToken = typeof value === 'string' ? value.trim() : ''
 }
@@ -177,6 +187,10 @@ export const getMenuPreferences = () =>
   request('/api/ui/preferences/menu') as Promise<MenuPreferencesRecord>
 export const updateMenuPreferences = (payload: MenuPreferences) =>
   request('/api/ui/preferences/menu', { method: 'PUT', body: JSON.stringify(payload) }) as Promise<MenuPreferencesRecord>
+export const getAppStorePreferences = () =>
+  request('/api/ui/preferences/apps') as Promise<AppStorePreferencesRecord>
+export const updateAppStorePreferences = (payload: AppStorePreferences) =>
+  request('/api/ui/preferences/apps', { method: 'PUT', body: JSON.stringify(payload) }) as Promise<AppStorePreferencesRecord>
 export const getAmbossHealth = () => request('/api/amboss/health')
 export const updateAmbossHealth = (payload: { enabled: boolean }) =>
   request('/api/amboss/health', { method: 'POST', body: JSON.stringify(payload) })

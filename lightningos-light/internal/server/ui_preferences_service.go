@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	menuPreferencesKey     = "menu"
-	menuPreferencesVersion = 1
-	maxMenuPreferenceItems = 128
+	menuPreferencesKey         = "menu"
+	menuPreferencesVersion     = 1
+	appStorePreferencesKey     = "app-store"
+	appStorePreferencesVersion = 1
+	maxMenuPreferenceItems     = 128
 )
 
 var menuPreferenceKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
@@ -28,6 +30,17 @@ type MenuPreferences struct {
 
 type MenuPreferencesRecord struct {
 	MenuPreferences
+	Exists    bool   `json:"exists"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+type AppStorePreferences struct {
+	Version int      `json:"version"`
+	Hidden  []string `json:"hidden"`
+}
+
+type AppStorePreferencesRecord struct {
+	AppStorePreferences
 	Exists    bool   `json:"exists"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
@@ -127,6 +140,76 @@ returning to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
 	}, nil
 }
 
+func (s *UIPreferencesService) LoadAppStore(ctx context.Context) (AppStorePreferencesRecord, error) {
+	defaults := AppStorePreferencesRecord{AppStorePreferences: AppStorePreferences{
+		Version: appStorePreferencesVersion,
+		Hidden:  []string{},
+	}}
+	if s == nil || s.db == nil {
+		return defaults, errors.New("ui preferences db unavailable")
+	}
+
+	var raw []byte
+	var updatedAt string
+	err := s.db.QueryRow(ctx, `
+select value, to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+from ui_preferences
+where preference_key = $1
+`, appStorePreferencesKey).Scan(&raw, &updatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return defaults, nil
+	}
+	if err != nil {
+		return defaults, err
+	}
+
+	var preferences AppStorePreferences
+	if err := json.Unmarshal(raw, &preferences); err != nil {
+		return defaults, fmt.Errorf("decode app store preferences: %w", err)
+	}
+	normalized, err := normalizeAppStorePreferences(preferences)
+	if err != nil {
+		return defaults, fmt.Errorf("stored app store preferences are invalid: %w", err)
+	}
+	return AppStorePreferencesRecord{
+		AppStorePreferences: normalized,
+		Exists:              true,
+		UpdatedAt:           updatedAt,
+	}, nil
+}
+
+func (s *UIPreferencesService) SaveAppStore(ctx context.Context, preferences AppStorePreferences) (AppStorePreferencesRecord, error) {
+	if s == nil || s.db == nil {
+		return AppStorePreferencesRecord{}, errors.New("ui preferences db unavailable")
+	}
+	normalized, err := normalizeAppStorePreferences(preferences)
+	if err != nil {
+		return AppStorePreferencesRecord{}, err
+	}
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return AppStorePreferencesRecord{}, err
+	}
+
+	var updatedAt string
+	err = s.db.QueryRow(ctx, `
+insert into ui_preferences (preference_key, value, updated_at)
+values ($1, $2::jsonb, now())
+on conflict (preference_key) do update
+set value = excluded.value,
+    updated_at = now()
+returning to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+`, appStorePreferencesKey, string(raw)).Scan(&updatedAt)
+	if err != nil {
+		return AppStorePreferencesRecord{}, err
+	}
+	return AppStorePreferencesRecord{
+		AppStorePreferences: normalized,
+		Exists:              true,
+		UpdatedAt:           updatedAt,
+	}, nil
+}
+
 func normalizeMenuPreferences(preferences MenuPreferences) (MenuPreferences, error) {
 	favorites, err := normalizeMenuPreferenceKeys(preferences.Favorites)
 	if err != nil {
@@ -173,4 +256,15 @@ func normalizeMenuPreferenceKeys(keys []string) ([]string, error) {
 		result = append(result, key)
 	}
 	return result, nil
+}
+
+func normalizeAppStorePreferences(preferences AppStorePreferences) (AppStorePreferences, error) {
+	hidden, err := normalizeMenuPreferenceKeys(preferences.Hidden)
+	if err != nil {
+		return AppStorePreferences{}, fmt.Errorf("hidden: %w", err)
+	}
+	return AppStorePreferences{
+		Version: appStorePreferencesVersion,
+		Hidden:  hidden,
+	}, nil
 }

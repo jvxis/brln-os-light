@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QrScanner from 'qr-scanner'
 import QRCode from 'qrcode'
-import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getSpendingGuard, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, payInvoice, payInvoiceMPP, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain, updateSpendingGuard, type SpendingGuardStatus } from '../api'
+import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getSpendingGuard, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, markWalletActivity, payInvoice, payInvoiceMPP, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain, updateSpendingGuard, type SpendingGuardStatus } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
 import StatusBadge from '../components/dashboard/StatusBadge'
 import { getLocale } from '../i18n'
@@ -271,6 +271,12 @@ export default function Wallet() {
   const [paymentPreviewError, setPaymentPreviewError] = useState('')
   const [activityRange, setActivityRange] = useState<WalletActivityRange>('7d')
   const [activityItems, setActivityItems] = useState<WalletActivityItem[]>([])
+  // What the operator classified as revenue or cost of running the node. The
+  // technical shape of a payment does not reveal its purpose - an invoice paid
+  // might be a coffee or the purchase of a channel - so an unmarked payment
+  // stays out of the report entirely.
+  const [activityMarks, setActivityMarks] = useState<Record<string, string>>({})
+  const [markBusy, setMarkBusy] = useState('')
   const [activityError, setActivityError] = useState('')
   const [activityLoading, setActivityLoading] = useState(true)
   const [activityLoadingMore, setActivityLoadingMore] = useState(false)
@@ -423,6 +429,8 @@ export default function Wallet() {
       const res: any = await getWalletActivity(activityRange, limit, offset)
       const nextItems = Array.isArray(res?.items) ? res.items : []
       setActivityItems((prev) => append ? [...prev, ...nextItems] : nextItems)
+      const nextMarks = (res?.marks && typeof res.marks === 'object') ? res.marks as Record<string, string> : {}
+      setActivityMarks((prev) => append ? { ...prev, ...nextMarks } : nextMarks)
       setActivityHasMore(Boolean(res?.has_more))
     } catch (err: any) {
       if (!silent || activityItems.length === 0) {
@@ -1479,6 +1487,43 @@ export default function Wallet() {
     }
   }
 
+  // Only Lightning payments can be classified for now: on-chain transfers and
+  // keysend were deliberately left for a later phase, so the marking surface
+  // stays small while the reporting side settles.
+  const activityIsMarkable = (item: WalletActivityItem) => {
+    const hash = String(item?.payment_hash || '').trim()
+    if (!hash) return false
+    const type = String(item?.type || '').toLowerCase()
+    return type.includes('lightning') || type.includes('invoice') || type.includes('payment')
+  }
+
+  const toggleActivityMark = async (item: WalletActivityItem, classification: string) => {
+    const hash = String(item?.payment_hash || '').trim()
+    if (!hash) return
+    // Clicking the active classification clears it, which is how a mistake is
+    // undone without a second control.
+    const next = activityMarks[hash] === classification ? '' : classification
+    setMarkBusy(hash)
+    try {
+      await markWalletActivity({
+        payment_hash: hash,
+        classification: next,
+        amount_sat: Math.abs(Number(item.amount_sat || 0)),
+        occurred_at: item.timestamp ? new Date(item.timestamp).toISOString() : undefined
+      })
+      setActivityMarks((prev) => {
+        const copy = { ...prev }
+        if (next) copy[hash] = next
+        else delete copy[hash]
+        return copy
+      })
+    } catch (err: any) {
+      setActivityError(err?.message || t('wallet.markFailed'))
+    } finally {
+      setMarkBusy('')
+    }
+  }
+
   const handlePaymentReauth = async () => {
     if (!paymentReauthPassword.trim()) {
       setPaymentReauthError(t('wallet.paymentPasswordRequired'))
@@ -2500,12 +2545,17 @@ export default function Wallet() {
             const channelLabel = channelAlias ? ` - ${t('wallet.viaChannel', { channel: channelAlias })}` : ''
             const clickable = hasActivityDetail(item)
             const itemKey = item.payment_hash || item.txid || `${item.type || 'activity'}-${item.timestamp || idx}-${idx}`
-            return clickable ? (
+            const markHash = String(item.payment_hash || '').trim()
+            const mark = activityMarks[markHash]
+            // The row itself is a button, so the classification controls cannot
+            // live inside it - a button inside a button is invalid and would
+            // swallow the click that opens the detail. They sit beside it, and
+            // the border moves to the wrapper so the row still reads as one line.
+            const rowBody = clickable ? (
               <button
-                key={itemKey}
                 type="button"
                 onClick={() => setSelectedActivity(item)}
-                className="grid w-full items-center gap-3 rounded-2xl border-b border-white/10 pb-2 text-left transition hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-white/20 sm:grid-cols-[160px_1fr_auto_auto]"
+                className="grid w-full items-center gap-3 rounded-2xl text-left transition hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-white/20 sm:grid-cols-[160px_1fr_auto_auto]"
               >
                 <span className="text-xs text-fog/50">{formatTimestamp(item.timestamp)}</span>
                 <div className="min-w-0">
@@ -2516,7 +2566,7 @@ export default function Wallet() {
                 <span className="text-right">{formatSats(Number(item.amount_sat || 0))} sats</span>
               </button>
             ) : (
-              <div key={itemKey} className="grid items-center gap-3 border-b border-white/10 pb-2 sm:grid-cols-[160px_1fr_auto_auto]">
+              <div className="grid w-full items-center gap-3 sm:grid-cols-[160px_1fr_auto_auto]">
                 <span className="text-xs text-fog/50">{formatTimestamp(item.timestamp)}</span>
                 <div className="min-w-0">
                   <span className="text-fog/70">{typeLabel}</span>
@@ -2524,6 +2574,39 @@ export default function Wallet() {
                 </div>
                 <span className={`text-xs font-mono ${arrowTone}`}>{arrow}</span>
                 <span className="text-right">{formatSats(Number(item.amount_sat || 0))} sats</span>
+              </div>
+            )
+            return (
+              <div key={itemKey} className="flex items-center gap-2 border-b border-white/10 pb-2">
+                <div className="min-w-0 flex-1">{rowBody}</div>
+                {activityIsMarkable(item) && (
+                  <div className="flex shrink-0 gap-1" title={t('wallet.markHint')}>
+                    <button
+                      type="button"
+                      disabled={markBusy === markHash}
+                      onClick={() => void toggleActivityMark(item, 'revenue')}
+                      className={`rounded-full border px-2 py-0.5 text-[10px] transition ${
+                        mark === 'revenue'
+                          ? 'border-emerald-300/70 bg-emerald-500/20 text-emerald-100'
+                          : 'border-white/10 text-fog/40 hover:border-white/25 hover:text-fog/70'
+                      }`}
+                    >
+                      {t('wallet.markRevenue')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={markBusy === markHash}
+                      onClick={() => void toggleActivityMark(item, 'cost')}
+                      className={`rounded-full border px-2 py-0.5 text-[10px] transition ${
+                        mark === 'cost'
+                          ? 'border-rose-300/70 bg-rose-500/20 text-rose-100'
+                          : 'border-white/10 text-fog/40 hover:border-white/25 hover:text-fog/70'
+                      }`}
+                    >
+                      {t('wallet.markCost')}
+                    </button>
+                  </div>
+                )}
               </div>
             )
           }) : (

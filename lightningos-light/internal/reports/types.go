@@ -23,6 +23,12 @@ type Metrics struct {
 	KeysendSentSat             int64
 	KeysendSentMsat            int64
 	KeysendSentCount           int64
+	MarkedRevenueSat           int64
+	MarkedRevenueMsat          int64
+	MarkedRevenueCount         int64
+	MarkedCostSat              int64
+	MarkedCostMsat             int64
+	MarkedCostCount            int64
 	// Channel sales (Magma). Revenue only: the funding transaction fee is
 	// already inside OnchainFeeCost, so counting it here too would double it.
 	SalesRevenueSat      int64
@@ -71,7 +77,8 @@ func (m Metrics) WithMagmaSales(sales MagmaSalesRevenue) Metrics {
 
 // TotalRevenueMsat is everything the node earned in the period.
 func (m Metrics) TotalRevenueMsat() int64 {
-	return m.ForwardFeeRevenueMsat + m.KeysendReceivedMsat + m.SalesRevenueMsat
+	return m.ForwardFeeRevenueMsat + m.KeysendReceivedMsat + m.SalesRevenueMsat +
+		m.MarkedRevenueMsat
 }
 
 func (m Metrics) TotalRevenueSat() int64 { return m.TotalRevenueMsat() / 1000 }
@@ -82,7 +89,7 @@ func (m Metrics) TotalRevenueSat() int64 { return m.TotalRevenueMsat() / 1000 }
 // meant to say whether the node made money.
 func (m Metrics) TotalCostMsat() int64 {
 	return m.RebalanceFeeCostMsat + m.PaymentFeeCostMsat + m.OnchainFeeCostMsat +
-		m.KeysendSentMsat
+		m.KeysendSentMsat + m.MarkedCostMsat
 }
 
 func (m Metrics) TotalCostSat() int64 { return m.TotalCostMsat() / 1000 }
@@ -164,4 +171,16 @@ type MovementLive struct {
 	TargetSat       int64
 	RoutedVolumeSat float64
 	MovementPct     float64
+}
+
+// WithActivityMarks folds in what the operator classified by hand. The principal
+// only, never the fee: the fee is already counted with every other payment fee.
+func (m Metrics) WithActivityMarks(totals ActivityMarkTotals) Metrics {
+	m.MarkedRevenueMsat = totals.RevenueMsat
+	m.MarkedRevenueSat = totals.RevenueMsat / 1000
+	m.MarkedRevenueCount = totals.RevenueUnit
+	m.MarkedCostMsat = totals.CostMsat
+	m.MarkedCostSat = totals.CostMsat / 1000
+	m.MarkedCostCount = totals.CostUnit
+	return m.withNetTotal()
 }

@@ -110,7 +110,12 @@ alter table reports_daily add column if not exists sales_count integer not null 
 alter table reports_daily add column if not exists net_total_sats bigint not null default 0;
 alter table reports_daily add column if not exists net_total_msat bigint not null default 0;
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	// The operator's classifications live alongside the daily rows: they are
+	// report data, not wallet data, and only the report reads them.
+	return EnsureActivityMarkSchema(ctx, db)
 }
 
 // MissingDailyDates returns gaps between the first persisted report and the

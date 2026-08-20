@@ -196,6 +196,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/spending-guard", s.handleSpendingGuardGet)
 		r.Put("/spending-guard", s.handleSpendingGuardUpdate)
 		r.Get("/activity", s.handleWalletActivity)
+		r.Post("/activity/mark", s.handleWalletActivityMark)
 		r.Get("/payments/{paymentHash}", s.handleWalletPaymentDetail)
 		r.Post("/address", s.handleWalletAddress)
 		r.Post("/invoice", s.handleWalletInvoice)

@@ -382,13 +382,13 @@ func runReportsBackfill(args []string) {
 			logger.Fatalf("reports-backfill failed on %s: %v", day.Format("2006-01-02"), err)
 		}
 		logger.Printf(
-			"reports: stored %s (revenue %d sats, offchain cost %d sats, onchain cost %d sats, total cost %d sats, net %d sats)",
+			"reports: stored %s (forwards %d sats, total revenue %d sats, total cost %d sats, routing net %d sats, node total %d sats)",
 			row.ReportDate.Format("2006-01-02"),
 			row.Metrics.ForwardFeeRevenueSat,
-			row.Metrics.TotalFeeCostSat(),
-			row.Metrics.OnchainFeeCostSat,
-			row.Metrics.TotalFeeCostWithOnchainSat(),
+			row.Metrics.TotalRevenueSat(),
+			row.Metrics.TotalCostSat(),
 			row.Metrics.NetRoutingProfitSat,
+			row.Metrics.NetTotalSat,
 		)
 	}
 }

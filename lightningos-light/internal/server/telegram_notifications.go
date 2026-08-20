@@ -1052,12 +1052,16 @@ func reportLiveMovement(ctx context.Context, svc *reports.Service, now time.Time
 	return movement, nil
 }
 
+// "Profit" was ambiguous even before the formula changed, and it arrives on a
+// phone with no surrounding context. It names which of the two figures it is,
+// and carries the node-wide result beside it so the message answers both
+// questions at once.
 func formatReportLine(label string, metrics reports.Metrics) string {
-	return fmt.Sprintf("%s: Forwards %s sats | Cost %s sats | Profit %s sats",
+	return fmt.Sprintf("%s: Forwards %s sats | Routing profit %s sats | Node total %s sats",
 		label,
 		formatSats(metrics.ForwardFeeRevenueSat),
-		formatSats(metrics.TotalFeeCostSat()),
 		formatSats(metrics.NetRoutingProfitSat),
+		formatSats(metrics.NetTotalSat),
 	)
 }
 

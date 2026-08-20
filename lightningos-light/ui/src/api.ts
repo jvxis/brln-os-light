@@ -335,6 +335,14 @@ export const updateSpendingGuard = (payload: {
   rolling_24h_limit_sat: number
   confirm_password?: string
 }): Promise<SpendingGuardStatus> => request('/api/wallet/spending-guard', { method: 'PUT', body: JSON.stringify(payload) })
+// Classifying a payment as revenue or cost of running the node. An empty
+// classification clears the mark.
+export const markWalletActivity = (payload: {
+  payment_hash: string
+  classification: string
+  amount_sat?: number
+  occurred_at?: string
+}) => request('/api/wallet/activity/mark', { method: 'POST', body: JSON.stringify(payload) })
 export const getWalletActivity = (range: '7d' | '1m' | '1a', limit = 100, offset = 0) =>
   request(`/api/wallet/activity?range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`)
 export const getWalletPaymentDetail = (paymentHash: string) =>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { APIError, getAppAdminPassword, getAppOperations, getAppStorageTargets, getApps, getBarkWalletRevealAuthorization, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, reauthAuth, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, type AppStoreInfo, type StorageTarget } from '../api'
+import { APIError, getAppAdminPassword, getAppOperations, getAppStorageTargets, getAppStorePreferences, getApps, getBarkWalletRevealAuthorization, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, reauthAuth, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, updateAppStorePreferences, type AppStoreInfo, type StorageTarget } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
@@ -33,7 +33,7 @@ type BitcoinSourceStatus = {
 }
 
 type BitcoinMode = 'remote' | 'local_app' | 'local_external' | 'local_none'
-type InstallFilter = 'all' | 'installed' | 'not_installed'
+type InstallFilter = 'all' | 'installed' | 'not_installed' | 'hidden'
 
 type ElectrsStatus = {
   installed: boolean
@@ -188,10 +188,13 @@ export default function AppStore() {
   const [elevatedInstallAcknowledged, setElevatedInstallAcknowledged] = useState(false)
   const [pendingUninstall, setPendingUninstall] = useState<AppInfo | null>(null)
   const [bitcoinLegacyMigrationOpen, setBitcoinLegacyMigrationOpen] = useState(false)
+  const [hiddenAppIds, setHiddenAppIds] = useState<string[]>([])
+  const [appPreferencesReady, setAppPreferencesReady] = useState(false)
+  const [appPreferenceBusy, setAppPreferenceBusy] = useState('')
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
     if (typeof window === 'undefined') return 'all'
     const stored = window.localStorage.getItem(APP_STORE_INSTALL_FILTER_KEY)
-    if (stored === 'all' || stored === 'installed' || stored === 'not_installed') {
+    if (stored === 'all' || stored === 'installed' || stored === 'not_installed' || stored === 'hidden') {
       return stored
     }
     return 'all'
@@ -292,6 +295,10 @@ export default function AppStore() {
 
   useEffect(() => {
     loadApps()
+    getAppStorePreferences()
+      .then((preferences) => setHiddenAppIds(Array.isArray(preferences?.hidden) ? preferences.hidden : []))
+      .catch(() => setMessage(t('appStore.preferencesLoadFailed')))
+      .finally(() => setAppPreferencesReady(true))
     Promise.all([
       getBitcoinLocalStatus().catch(() => ({ source: 'none' } as BitcoinLocalStatus)),
       getBitcoinSource().catch(() => ({ source: 'remote' } as BitcoinSourceStatus))
@@ -317,6 +324,24 @@ export default function AppStore() {
         setBitcoinMode('remote')
       })
   }, [])
+
+  const setAppHidden = async (id: string, hidden: boolean) => {
+    if (!appPreferencesReady || appPreferenceBusy) return
+    const next = hidden
+      ? [...new Set([...hiddenAppIds, id])]
+      : hiddenAppIds.filter((candidate) => candidate !== id)
+    setMessage('')
+    setAppPreferenceBusy(id)
+    try {
+      const saved = await updateAppStorePreferences({ version: 1, hidden: next })
+      setHiddenAppIds(Array.isArray(saved?.hidden) ? saved.hidden : next)
+      if (hidden && installFilter === 'hidden') setInstallFilter('all')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : t('appStore.preferencesSaveFailed'))
+    } finally {
+      setAppPreferenceBusy('')
+    }
+  }
 
   const hasTrackedAppOperation = apps.some((app) => Boolean(app.operation))
   const hasLocalAppOperation = Object.values(busy).some((action) => action !== 'reset-admin')
@@ -554,6 +579,9 @@ export default function AppStore() {
       if (action === 'start') await startApp(id, payload)
       if (action === 'stop') await stopApp(id)
       if (action === 'uninstall') await uninstallApp(id)
+      if ((action === 'install' || action === 'start') && hiddenAppIds.includes(id)) {
+        await setAppHidden(id, false)
+      }
       if (action === 'uninstall' && installFilter === 'installed') setInstallFilter('all')
       window.dispatchEvent(new CustomEvent('apps:changed', { detail: { id, action } }))
       loadApps()
@@ -770,6 +798,9 @@ export default function AppStore() {
     ? storeApps.filter((app) => app.id !== 'bitcoincore')
     : storeApps
   const visibleApps = baseVisibleApps.filter((app) => {
+    const preferenceHidden = hiddenAppIds.includes(app.id)
+    if (installFilter === 'hidden') return preferenceHidden
+    if (preferenceHidden && !app.operation && app.status !== 'running') return false
     if (app.operation) return true
     if (installFilter === 'installed') return app.installed
     if (installFilter === 'not_installed') return !app.installed
@@ -824,6 +855,14 @@ export default function AppStore() {
             >
               {t('appStore.filters.notInstalled')}
             </button>
+            <button
+              className={installFilter === 'hidden' ? 'btn-primary text-xs px-3 py-2' : 'btn-secondary text-xs px-3 py-2'}
+              onClick={() => setInstallFilter('hidden')}
+              aria-pressed={installFilter === 'hidden'}
+              type="button"
+            >
+              {t('appStore.filters.hidden', { count: hiddenAppIds.length })}
+            </button>
           </div>
         </div>
         {message && <p className="text-sm text-brass mt-4">{message}</p>}
@@ -835,6 +874,8 @@ export default function AppStore() {
           const operationAction = app.operation?.action || busyAction
           const operationStageLabel = resolveOperationStageLabel(app, app.operation?.stage)
           const isBusy = Boolean(operationAction)
+          const isHidden = hiddenAppIds.includes(app.id)
+          const canHide = appPreferencesReady && !isBusy && !app.operation && (app.status === 'stopped' || !app.installed)
           const isResetting = operationAction === 'reset-admin'
           const supportsAdminReset = app.id === 'lndg' || app.id === 'bark-wallet'
           const canResetAdmin = supportsAdminReset && app.status === 'running'
@@ -907,9 +948,32 @@ export default function AppStore() {
                     <p className="text-sm text-fog/60">{app.description}</p>
                   </div>
                 </div>
-                <span className={`text-xs uppercase tracking-wide px-3 py-1 rounded-full ${statusStyle}`}>
-                  {operationAction && !isResetting ? resolveOperationLabel(operationAction) : resolveStatusLabel(app.status)}
-                </span>
+                <div className="flex shrink-0 items-center gap-2">
+                  {(isHidden || canHide) && (
+                    <button
+                      type="button"
+                      className="rounded-full border border-white/10 p-1.5 text-fog/45 transition hover:border-white/25 hover:text-fog disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={appPreferenceBusy === app.id || (!isHidden && !canHide)}
+                      onClick={() => void setAppHidden(app.id, !isHidden)}
+                      title={t(isHidden ? 'appStore.unhideApp' : 'appStore.hideApp', { app: app.name })}
+                      aria-label={t(isHidden ? 'appStore.unhideApp' : 'appStore.hideApp', { app: app.name })}
+                    >
+                      {isHidden ? (
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                          <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+                          <circle cx="12" cy="12" r="2.5" />
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                          <path d="M3 3l18 18M10.6 6.2A10.7 10.7 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-2.4 3.1M6.1 6.2C3.8 7.8 2.5 12 2.5 12s3.5 6 9.5 6a9.8 9.8 0 0 0 3.1-.5M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+                        </svg>
+                      )}
+                    </button>
+                  )}
+                  <span className={`text-xs uppercase tracking-wide px-3 py-1 rounded-full ${statusStyle}`}>
+                    {operationAction && !isResetting ? resolveOperationLabel(operationAction) : resolveStatusLabel(app.status)}
+                  </span>
+                </div>
               </div>
 
               {operationAction && !isResetting && (

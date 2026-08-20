@@ -355,6 +355,7 @@ fix_lightningos_storage_permissions() {
   # Preserve app-specific ownership below apps/ and apps-data/. Native apps
   # such as Lightning Loop use isolated service accounts and private files.
   chown "$user:$group" /var/lib/lightningos /var/lib/lightningos/apps /var/lib/lightningos/apps-data
+  bash "$REPO_ROOT/scripts/repair-chat-storage-permissions.sh" "$user" "$group"
   chown -R "$user:$group" /var/log/lightningos
   chmod 750 /var/log/lightningos
   print_ok "Permissions updated for /var/lib/lightningos"

@@ -49,6 +49,55 @@ func TestInstallerEntryPointsDefaultToLatestPublishedRelease(t *testing.T) {
 	}
 }
 
+func TestInstallersRepairOnlyKnownChatStoragePaths(t *testing.T) {
+	helperPath := filepath.Join("..", "..", "scripts", "repair-chat-storage-permissions.sh")
+	raw, err := os.ReadFile(helperPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	for _, expected := range []string{
+		`chat_dir="${chat_parent}/chat"`,
+		`! -d "$chat_parent" || -L "$chat_parent"`,
+		`! -d "$chat_dir" || -L "$chat_dir"`,
+		`messages.jsonl`,
+		`messages.jsonl.tmp`,
+		`cursor.txt`,
+		`read-state.json`,
+		`read-state.json.tmp`,
+		`chown --no-dereference "$chat_user:$chat_group" "$path"`,
+		`chmod 0640 "$path"`,
+	} {
+		if !strings.Contains(helper, expected) {
+			t.Fatalf("Chat storage repair is missing %q", expected)
+		}
+	}
+	if strings.Contains(helper, "chown -R") {
+		t.Fatal("Chat storage repair must not recursively change application ownership")
+	}
+
+	for _, installer := range []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"} {
+		installerRaw, err := os.ReadFile(filepath.Join("..", "..", installer))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(installerRaw), `scripts/repair-chat-storage-permissions.sh`) {
+			t.Fatalf("%s does not repair legacy Chat storage", installer)
+		}
+	}
+
+	upgradeRaw, err := os.ReadFile(filepath.Join("assets", "upgrade-app.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgrade := strings.ReplaceAll(string(upgradeRaw), "\r\n", "\n")
+	repairIndex := strings.Index(upgrade, `scripts/repair-chat-storage-permissions.sh`)
+	restartIndex := strings.LastIndex(upgrade, `restart lightningos-manager`)
+	if repairIndex < 0 || restartIndex < 0 || repairIndex > restartIndex {
+		t.Fatal("application upgrade must repair Chat storage before restarting the Manager")
+	}
+}
+
 func TestInstallersVerifyPinnedGoAndGoTTYBeforeExtraction(t *testing.T) {
 	tests := []struct {
 		name        string

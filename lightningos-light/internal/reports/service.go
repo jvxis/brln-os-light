@@ -72,9 +72,9 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 	return EnsureSchema(ctx, s.db)
 }
 
-func (s *Service) RunDaily(ctx context.Context, reportDate time.Time, loc *time.Location, rebalanceOverride *RebalanceOverride, paymentOverride *PaymentOverride, keysendOverride *KeysendReceivedOverride, onchainOverride *OnchainOverride) (Row, error) {
+func (s *Service) RunDaily(ctx context.Context, reportDate time.Time, loc *time.Location, rebalanceOverride *RebalanceOverride, paymentOverride *PaymentOverride, keysendOverride *KeysendReceivedOverride, keysendSentOverride *KeysendSentOverride, onchainOverride *OnchainOverride) (Row, error) {
 	tr := BuildTimeRangeForDate(reportDate, loc)
-	metrics, err := ComputeMetrics(ctx, s.lnd, tr, false, rebalanceOverride, paymentOverride, keysendOverride, onchainOverride)
+	metrics, err := ComputeMetrics(ctx, s.lnd, tr, false, rebalanceOverride, paymentOverride, keysendOverride, keysendSentOverride, onchainOverride)
 	if err != nil {
 		return Row{}, err
 	}
@@ -85,6 +85,7 @@ func (s *Service) RunDaily(ctx context.Context, reportDate time.Time, loc *time.
 		metrics = s.attachProvenanceHealth(ctx, metrics)
 	}
 	metrics = s.attachMagmaSales(ctx, metrics, tr)
+	metrics = s.attachActivityMarks(ctx, metrics, tr)
 
 	row := Row{ReportDate: dateOnly(reportDate, loc), Metrics: metrics}
 	if err := UpsertDaily(ctx, s.db, row); err != nil {
@@ -332,6 +333,19 @@ func (s *Service) attachMagmaSales(ctx context.Context, metrics Metrics, tr Time
 	return metrics.WithMagmaSales(sales)
 }
 
+// attachActivityMarks folds in the operator's classifications. A node where
+// nothing was ever marked reports exactly what it reported before.
+func (s *Service) attachActivityMarks(ctx context.Context, metrics Metrics, tr TimeRange) Metrics {
+	totals, err := FetchActivityMarkTotals(ctx, s.db, tr.StartUTC, tr.EndUTC)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("reports: activity marks unavailable: %v", err)
+		}
+		return metrics
+	}
+	return metrics.WithActivityMarks(totals)
+}
+
 func (s *Service) computeOutboundTarget(ctx context.Context) (int64, error) {
 	if s.lnd == nil {
 		return 0, nil
@@ -434,12 +448,13 @@ func (s *Service) computeLiveSnapshot(ctx context.Context, now time.Time, loc *t
 		s.logger.Printf("reports: live onchain quick scan failed, defaulting to 0 onchain cost: %v", onchainErr)
 	}
 
-	metrics, err := ComputeMetrics(ctx, s.lnd, tr, false, nil, nil, nil, &onchainOverride)
+	metrics, err := ComputeMetrics(ctx, s.lnd, tr, false, nil, nil, nil, nil, &onchainOverride)
 	if err != nil {
 		return liveSnapshot{}, err
 	}
 	metrics = s.attachBalances(ctx, metrics)
 	metrics = s.attachMagmaSales(ctx, metrics, tr)
+	metrics = s.attachActivityMarks(ctx, metrics, tr)
 
 	builtAt := time.Now()
 	return liveSnapshot{

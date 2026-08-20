@@ -57,3 +57,55 @@ func (s *Server) handleMenuPreferencesPut(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, saved)
 }
+
+func (s *Server) handleAppStorePreferencesGet(w http.ResponseWriter, r *http.Request) {
+	service, errMsg := s.uiPreferencesService()
+	if service == nil {
+		if errMsg == "" {
+			errMsg = "ui preferences unavailable"
+		}
+		writeError(w, http.StatusServiceUnavailable, errMsg)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	preferences, err := service.LoadAppStore(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, preferences)
+}
+
+func (s *Server) handleAppStorePreferencesPut(w http.ResponseWriter, r *http.Request) {
+	service, errMsg := s.uiPreferencesService()
+	if service == nil {
+		if errMsg == "" {
+			errMsg = "ui preferences unavailable"
+		}
+		writeError(w, http.StatusServiceUnavailable, errMsg)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	var preferences AppStorePreferences
+	if err := readJSON(r, &preferences); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid app store preferences")
+		return
+	}
+	normalized, err := normalizeAppStorePreferences(preferences)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	saved, err := service.SaveAppStore(ctx, normalized)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
+}

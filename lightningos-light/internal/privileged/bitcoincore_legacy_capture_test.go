@@ -85,6 +85,32 @@ func TestInspectedDockerImageIDRejectsAmbiguousOutput(t *testing.T) {
 	}
 }
 
+func TestBitcoinLegacyMigrationFailureReasonUsesOnlySafeCategories(t *testing.T) {
+	tests := []struct {
+		cause    error
+		wantCode string
+	}{
+		{cause: errBitcoinLegacyNetworkCutover, wantCode: "network_cutover"},
+		{cause: errBitcoinLegacyNetworkRemoval, wantCode: "network_removal"},
+		{cause: errBitcoinLegacyStart, wantCode: "start"},
+		{cause: errBitcoinLegacyRuntimeUnavailable, wantCode: "runtime_lookup"},
+		{cause: errBitcoinLegacyRuntimeIdentity, wantCode: "runtime_identity"},
+		{cause: errBitcoinLegacyRPCUnavailable, wantCode: "rpc_readiness"},
+		{cause: errBitcoinLegacyMainnetUnverified, wantCode: "mainnet"},
+		{cause: errBitcoinLegacyEndpoints, wantCode: "loopback_endpoints"},
+		{cause: errors.New("rpcpassword=must-not-leak"), wantCode: "verification"},
+	}
+	for _, test := range tests {
+		code, message := bitcoinLegacyMigrationFailureReason(test.cause)
+		if code != test.wantCode || code == "" || message == "" {
+			t.Fatalf("failure reason=%q/%q want code=%q", code, message, test.wantCode)
+		}
+		if strings.Contains(message, "must-not-leak") || strings.Contains(message, "rpcpassword") {
+			t.Fatalf("unsafe cause reached the operator message: %q", message)
+		}
+	}
+}
+
 func assertBitcoinRollbackCaptureError(t *testing.T, err error) {
 	t.Helper()
 	var migrationErr *bitcoinLegacyMigrationError

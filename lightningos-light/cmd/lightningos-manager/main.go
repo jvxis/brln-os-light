@@ -199,7 +199,7 @@ func runReports(args []string) {
 		reportDate = parsed
 	}
 
-	row, err := svc.RunDaily(ctx, reportDate, loc, nil, nil, nil, nil)
+	row, err := svc.RunDaily(ctx, reportDate, loc, nil, nil, nil, nil, nil)
 	if err != nil {
 		logger.Fatalf("reports-run failed: %v", err)
 	}
@@ -224,6 +224,7 @@ func runReportsBackfill(args []string) {
 	fromStr := fs.String("from", "", "Start date (YYYY-MM-DD)")
 	toStr := fs.String("to", "", "End date (YYYY-MM-DD)")
 	maxDays := fs.Int("max-days", 0, "Override max range in days (0 uses default limit)")
+	dryRun := fs.Bool("dry-run", false, "Recompute and compare against the stored rows without writing anything")
 	_ = fs.Parse(args)
 
 	if strings.TrimSpace(*fromStr) == "" || strings.TrimSpace(*toStr) == "" {
@@ -293,30 +294,101 @@ func runReportsBackfill(args []string) {
 	if err != nil {
 		logger.Fatalf("reports-backfill failed: %v", err)
 	}
+	keysendSentByDay, err := reports.FetchKeysendSentByDay(context.Background(), lnd, uint64(startLocal.UTC().Unix()), uint64(endLocal.UTC().Unix()), loc)
+	if err != nil {
+		logger.Fatalf("reports-backfill failed: %v", err)
+	}
 	onchainByDay, err := reports.FetchOnchainFeesByDay(context.Background(), lnd, uint64(startLocal.UTC().Unix()), uint64(endLocal.UTC().Unix()), loc)
 	if err != nil {
 		logger.Fatalf("reports-backfill failed: %v", err)
 	}
+	// A dry run answers one question before anything is overwritten: does the node
+	// still hold the data the stored rows were built from? It compares the inputs
+	// - forwards, rebalances, payments, on-chain - rather than the net, because a
+	// changed formula moves the net on its own. A component that recomputes lower
+	// than what is stored means LND has pruned that period, and recalculating it
+	// would replace a real number with a smaller, wrong one.
+	if *dryRun {
+		stored, err := reports.FetchRange(context.Background(), pool, startDate, endDate)
+		if err != nil {
+			logger.Fatalf("reports-backfill dry run failed: %v", err)
+		}
+		storedByDay := make(map[string]reports.Row, len(stored))
+		for _, row := range stored {
+			storedByDay[row.ReportDate.Format("2006-01-02")] = row
+		}
+		logger.Printf("reports: DRY RUN - nothing will be written")
+		logger.Printf("%-12s %-10s %12s %12s %s", "date", "component", "stored", "recomputed", "verdict")
+		suspect := 0
+		for day := startDate; !day.After(endDate); day = day.AddDate(0, 0, 1) {
+			dayCtx, dayCancel := context.WithTimeout(context.Background(), reportsRunTimeout())
+			dayKey := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
+			rebalanceOverride := rebalanceByDay[dayKey]
+			paymentOverride := paymentByDay[dayKey]
+			keysendOverride := keysendByDay[dayKey]
+			keysendSentOverride := keysendSentByDay[dayKey]
+			onchainOverride := onchainByDay[dayKey]
+			tr := reports.BuildTimeRangeForDate(day, loc)
+			fresh, err := reports.ComputeMetrics(dayCtx, lnd, tr, false,
+				&rebalanceOverride, &paymentOverride, &keysendOverride, &keysendSentOverride, &onchainOverride)
+			dayCancel()
+			if err != nil {
+				logger.Fatalf("reports-backfill dry run failed on %s: %v", day.Format("2006-01-02"), err)
+			}
+			label := day.Format("2006-01-02")
+			old, ok := storedByDay[label]
+			if !ok {
+				logger.Printf("%-12s %-10s %12s %12s %s", label, "-", "(no row)", "-", "nothing stored yet")
+				continue
+			}
+			for _, c := range []struct {
+				name             string
+				stored, computed int64
+			}{
+				{"forwards", old.Metrics.ForwardFeeRevenueSat, fresh.ForwardFeeRevenueSat},
+				{"rebalances", old.Metrics.RebalanceFeeCostSat, fresh.RebalanceFeeCostSat},
+				{"payments", old.Metrics.PaymentFeeCostSat, fresh.PaymentFeeCostSat},
+				{"onchain", old.Metrics.OnchainFeeCostSat, fresh.OnchainFeeCostSat},
+				{"keysend", old.Metrics.KeysendReceivedSat, fresh.KeysendReceivedSat},
+			} {
+				verdict := reports.CompareStoredComponent(c.stored, c.computed)
+				if !verdict.SafeToRecalculate() {
+					suspect++
+				}
+				if verdict != reports.DryRunMatches {
+					logger.Printf("%-12s %-10s %12d %12d %s", label, c.name, c.stored, c.computed, verdict)
+				}
+			}
+		}
+		if suspect == 0 {
+			logger.Printf("reports: dry run clean - every component recomputes at or above the stored value")
+		} else {
+			logger.Printf("reports: dry run found %d component(s) recomputing LOWER than stored; recalculating would lose data", suspect)
+		}
+		return
+	}
+
 	for day := startDate; !day.After(endDate); day = day.AddDate(0, 0, 1) {
 		dayCtx, dayCancel := context.WithTimeout(context.Background(), reportsRunTimeout())
 		dayKey := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
 		rebalanceOverride := rebalanceByDay[dayKey]
 		paymentOverride := paymentByDay[dayKey]
 		keysendOverride := keysendByDay[dayKey]
+		keysendSentOverride := keysendSentByDay[dayKey]
 		onchainOverride := onchainByDay[dayKey]
-		row, err := svc.RunDaily(dayCtx, day, loc, &rebalanceOverride, &paymentOverride, &keysendOverride, &onchainOverride)
+		row, err := svc.RunDaily(dayCtx, day, loc, &rebalanceOverride, &paymentOverride, &keysendOverride, &keysendSentOverride, &onchainOverride)
 		dayCancel()
 		if err != nil {
 			logger.Fatalf("reports-backfill failed on %s: %v", day.Format("2006-01-02"), err)
 		}
 		logger.Printf(
-			"reports: stored %s (revenue %d sats, offchain cost %d sats, onchain cost %d sats, total cost %d sats, net %d sats)",
+			"reports: stored %s (forwards %d sats, total revenue %d sats, total cost %d sats, routing net %d sats, node total %d sats)",
 			row.ReportDate.Format("2006-01-02"),
 			row.Metrics.ForwardFeeRevenueSat,
-			row.Metrics.TotalFeeCostSat(),
-			row.Metrics.OnchainFeeCostSat,
-			row.Metrics.TotalFeeCostWithOnchainSat(),
+			row.Metrics.TotalRevenueSat(),
+			row.Metrics.TotalCostSat(),
 			row.Metrics.NetRoutingProfitSat,
+			row.Metrics.NetTotalSat,
 		)
 	}
 }

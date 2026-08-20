@@ -365,7 +365,7 @@ func (s *Server) initNotifications() {
 	if s.chat != nil {
 		chatCtx, chatCancel := context.WithTimeout(context.Background(), 20*time.Second)
 		if err := s.chat.AttachDB(chatCtx, pool); err != nil {
-			s.logger.Printf("chat db persistence disabled: failed to init schema: %v", err)
+			s.logger.Printf("chat database initialization warning: %v", err)
 		}
 		chatCancel()
 	}

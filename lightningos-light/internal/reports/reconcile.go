@@ -64,6 +64,10 @@ func (s *Service) ReconcileDates(ctx context.Context, dates []time.Time, loc *ti
 	if err != nil {
 		return err
 	}
+	keysendSentByDay, err := FetchKeysendSentByDay(ctx, s.lnd, startUnix, endUnix, loc)
+	if err != nil {
+		return err
+	}
 	keysendByDay, err := FetchKeysendReceivedByDay(ctx, s.lnd, startUnix, endUnix, loc)
 	if err != nil {
 		return err
@@ -81,8 +85,9 @@ func (s *Service) ReconcileDates(ctx context.Context, dates []time.Time, loc *ti
 		rebalanceOverride := rebalanceByDay[dayKey]
 		paymentOverride := paymentByDay[dayKey]
 		keysendOverride := keysendByDay[dayKey]
+		keysendSentOverride := keysendSentByDay[dayKey]
 		onchainOverride := onchainByDay[dayKey]
-		if _, err := s.RunDaily(ctx, day, loc, &rebalanceOverride, &paymentOverride, &keysendOverride, &onchainOverride); err != nil {
+		if _, err := s.RunDaily(ctx, day, loc, &rebalanceOverride, &paymentOverride, &keysendOverride, &keysendSentOverride, &onchainOverride); err != nil {
 			return err
 		}
 		if progress != nil {

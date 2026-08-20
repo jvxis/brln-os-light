@@ -19,7 +19,7 @@ type OutgoingPaymentMetrics struct {
 
 func FetchOutgoingPaymentMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool) (OutgoingPaymentMetrics, error) {
 	totals := OutgoingPaymentMetrics{}
-	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, memoMatch, func(_ int64, feeMsat int64, amountMsat int64, isRebalance bool) {
+	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, memoMatch, func(_ int64, feeMsat int64, amountMsat int64, isRebalance bool, _ bool) {
 		if isRebalance {
 			totals.Rebalances.FeeMsat += feeMsat
 			totals.Rebalances.Count++
@@ -37,7 +37,7 @@ func FetchOutgoingPaymentMetrics(ctx context.Context, lnd *lndclient.Client, sta
 
 func FetchPaymentMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool) (PaymentOverride, error) {
 	totals := PaymentOverride{}
-	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, memoMatch, func(_ int64, feeMsat int64, _ int64, isRebalance bool) {
+	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, memoMatch, func(_ int64, feeMsat int64, _ int64, isRebalance bool, _ bool) {
 		if isRebalance {
 			return
 		}
@@ -59,7 +59,7 @@ func FetchPaymentFeesByDay(ctx context.Context, lnd *lndclient.Client, startUnix
 	}
 
 	results := make(map[time.Time]PaymentOverride)
-	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, false, func(ts int64, feeMsat int64, _ int64, isRebalance bool) {
+	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, false, func(ts int64, feeMsat int64, _ int64, isRebalance bool, _ bool) {
 		if isRebalance {
 			return
 		}
@@ -76,7 +76,7 @@ func FetchPaymentFeesByDay(ctx context.Context, lnd *lndclient.Client, startUnix
 	return results, nil
 }
 
-func scanOutgoingPayments(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool, onMatch func(ts int64, feeMsat int64, amountMsat int64, isRebalance bool)) error {
+func scanOutgoingPayments(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool, onMatch func(ts int64, feeMsat int64, amountMsat int64, isRebalance bool, isKeysend bool)) error {
 	if lnd == nil {
 		return fmt.Errorf("lnd client unavailable")
 	}
@@ -160,7 +160,7 @@ func scanOutgoingPayments(ctx context.Context, lnd *lndclient.Client, startUnix 
 			feeMsat := extractPaymentFeeMsat(pay)
 			amountMsat := extractPaymentValueMsat(pay)
 			if onMatch != nil {
-				onMatch(ts, feeMsat, amountMsat, isRebalance)
+				onMatch(ts, feeMsat, amountMsat, isRebalance, paymentIsKeysend(pay))
 			}
 		}
 
@@ -187,4 +187,86 @@ func scanOutgoingPayments(ctx context.Context, lnd *lndclient.Client, startUnix 
 	}
 
 	return nil
+}
+
+// paymentIsKeysend recognises a spontaneous payment by the preimage LND carries
+// in the custom records. A keysend has no invoice, so this is the only marker.
+// It can sit on the payment's first hop or on the last hop of an attempt, and a
+// multi-part payment carries it on every shard - hence the early return.
+func paymentIsKeysend(pay *lnrpc.Payment) bool {
+	if pay == nil {
+		return false
+	}
+	if _, ok := pay.FirstHopCustomRecords[lndclient.KeysendPreimageRecord]; ok {
+		return true
+	}
+	for _, htlc := range pay.Htlcs {
+		if htlc == nil || htlc.Route == nil {
+			continue
+		}
+		hops := htlc.Route.Hops
+		if len(hops) == 0 {
+			continue
+		}
+		last := hops[len(hops)-1]
+		if last == nil {
+			continue
+		}
+		if _, ok := last.CustomRecords[lndclient.KeysendPreimageRecord]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// FetchKeysendSentByDay totals what the node gave away spontaneously.
+//
+// Unlike an invoice payment, a keysend buys nothing: there is no counterparty
+// obligation, no goods, no liquidity acquired. The money leaves and nothing
+// comes back, which is what makes it a cost rather than a transfer - and why it
+// is classified automatically instead of asking the operator to mark each one.
+//
+// The amount is the cost, not the fee: the fee is already counted with every
+// other payment fee.
+func FetchKeysendSentByDay(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, loc *time.Location) (map[time.Time]KeysendSentOverride, error) {
+	if lnd == nil {
+		return nil, fmt.Errorf("lnd client unavailable")
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	results := make(map[time.Time]KeysendSentOverride)
+	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, false, func(ts int64, _ int64, amountMsat int64, isRebalance bool, isKeysend bool) {
+		// A rebalance is a keysend to ourselves. It is already counted against
+		// routing, and counting it again here would charge the same sats twice.
+		if !isKeysend || isRebalance {
+			return
+		}
+		local := time.Unix(ts, 0).In(loc)
+		dayKey := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
+		current := results[dayKey]
+		current.AmountMsat += amountMsat
+		current.Count++
+		results[dayKey] = current
+	})
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// FetchKeysendSent totals the whole window in one go, for the daily run.
+func FetchKeysendSent(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64) (KeysendSentOverride, error) {
+	var totals KeysendSentOverride
+	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, false, func(_ int64, _ int64, amountMsat int64, isRebalance bool, isKeysend bool) {
+		if !isKeysend || isRebalance {
+			return
+		}
+		totals.AmountMsat += amountMsat
+		totals.Count++
+	})
+	if err != nil {
+		return KeysendSentOverride{}, err
+	}
+	return totals, nil
 }

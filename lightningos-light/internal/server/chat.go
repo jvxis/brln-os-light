@@ -103,13 +103,18 @@ func (c *ChatService) AttachDB(ctx context.Context, db *pgxpool.Pool) error {
 	if err := c.ensureSchema(ctx, db); err != nil {
 		return err
 	}
-	if err := c.importLegacyData(ctx, db); err != nil {
-		return err
-	}
 
+	// Attach the database as soon as its schema is ready. A legacy JSONL mirror
+	// created by an older root-run Manager may be unreadable after the
+	// least-privilege cutover. That must not disable the healthy Postgres store
+	// and turn every Chat read into a 500 response.
 	c.mu.Lock()
 	c.db = db
 	c.mu.Unlock()
+
+	if err := c.importLegacyData(ctx, db); err != nil {
+		return fmt.Errorf("legacy chat import failed: %w", err)
+	}
 	return nil
 }
 
@@ -353,15 +358,17 @@ func (c *ChatService) runInvoices() {
 			if invoice.SettleIndex <= settleIndex {
 				continue
 			}
-			settleIndex = invoice.SettleIndex
-			c.saveCursor(settleIndex)
 
 			if !invoice.IsKeysend {
+				settleIndex = invoice.SettleIndex
+				c.saveCursor(settleIndex)
 				continue
 			}
 
 			message, chanID, senderPubkey, senderSignature := extractKeysendMessage(invoice)
 			if message == "" {
+				settleIndex = invoice.SettleIndex
+				c.saveCursor(settleIndex)
 				continue
 			}
 
@@ -391,6 +398,8 @@ func (c *ChatService) runInvoices() {
 				identitySource = "sender_record"
 			}
 			if peerPubkey == "" {
+				settleIndex = invoice.SettleIndex
+				c.saveCursor(settleIndex)
 				continue
 			}
 			if peerAlias == "" {
@@ -410,14 +419,33 @@ func (c *ChatService) runInvoices() {
 				SenderVerified: senderVerified,
 			}
 			persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := c.persistMessage(persistCtx, msg); err != nil {
+			if err := c.persistInboundAndAdvanceCursor(persistCtx, msg, invoice.SettleIndex, &settleIndex); err != nil {
 				c.logger.Printf("chat: failed to persist inbound message: %v", err)
+				cancel()
+				// Do not acknowledge this invoice in the durable cursor. Reconnect
+				// from the previous index so a temporary storage failure cannot
+				// permanently discard a paid Chat message.
+				cleanupStreamCtx()
+				release()
+				break
 			}
 			cancel()
 		}
 
 		time.Sleep(2 * time.Second)
 	}
+}
+
+func (c *ChatService) persistInboundAndAdvanceCursor(ctx context.Context, msg ChatMessage, invoiceIndex uint64, settleIndex *uint64) error {
+	if settleIndex == nil {
+		return errors.New("chat settle cursor is unavailable")
+	}
+	if err := c.persistMessage(ctx, msg); err != nil {
+		return err
+	}
+	*settleIndex = invoiceIndex
+	c.saveCursor(invoiceIndex)
+	return nil
 }
 
 func (c *ChatService) lookupPeerByChanID(chanID uint64) (string, string) {
@@ -458,22 +486,28 @@ func (c *ChatService) resolvePeerAlias(pubkey string) string {
 
 func (c *ChatService) persistMessage(ctx context.Context, msg ChatMessage) error {
 	normalized := normalizeChatMessage(msg)
-	var errs []string
+	var dbErr error
+	dbAttached := false
 
 	if db := c.dbPool(); db != nil {
-		if err := c.dbAppendMessage(ctx, db, normalized); err != nil {
-			errs = append(errs, err.Error())
+		dbAttached = true
+		dbErr = c.dbAppendMessage(ctx, db, normalized)
+	}
+
+	legacyErr := c.legacy.append(normalized)
+	if dbAttached && dbErr == nil {
+		if legacyErr != nil {
+			c.logger.Printf("chat: legacy message mirror unavailable: %v", legacyErr)
 		}
+		return nil
 	}
-
-	if err := c.legacy.append(normalized); err != nil {
-		errs = append(errs, err.Error())
+	if dbAttached && dbErr != nil {
+		if legacyErr != nil {
+			return fmt.Errorf("db: %v; file: %w", dbErr, legacyErr)
+		}
+		return fmt.Errorf("db: %w", dbErr)
 	}
-
-	if len(errs) > 0 {
-		return errors.New(strings.Join(errs, "; "))
-	}
-	return nil
+	return legacyErr
 }
 
 func (c *ChatService) loadCursor() uint64 {

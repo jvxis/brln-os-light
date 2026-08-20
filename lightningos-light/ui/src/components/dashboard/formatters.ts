@@ -103,6 +103,15 @@ export const metricTotalCost = (metrics?: ReportMetrics | null) => {
     ?? (metricOffchainCost(metrics) + (metrics.onchain_fee_cost_sats ?? 0))
 }
 
+// The dashboard reports the forwarding business, so it reads routing alone.
+// Keysend received is income the node earns without routing, and folding it in
+// here flattered the one figure meant to say whether forwarding pays.
+export const metricRoutingNet = (metrics?: ReportMetrics | null) => {
+  if (!metrics) return 0
+  return metrics.net_routing_profit_sats
+    ?? ((metrics.forward_fee_revenue_sats ?? 0) - (metrics.rebalance_fee_cost_sats ?? 0))
+}
+
 export const metricNetWithKeysend = (metrics?: ReportMetrics | null) => {
   if (!metrics) return 0
   return metrics.net_with_keysend_sats

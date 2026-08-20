@@ -260,7 +260,10 @@ func TestBitcoinCoreLegacyMigrationSucceedsWithInspectedRollbackImageWithoutTouc
 	newID := strings.Repeat("c", 64)
 	legacyImageID := "sha256:" + strings.Repeat("d", 64)
 	rollbackImageID := "sha256:" + strings.Repeat("e", 64)
-	runner.containerID = newID
+	// Docker normally abbreviates {{.ID}} unless --no-trunc is requested. Keep
+	// the fallback abbreviated so this test fails if the migration lookup ever
+	// drops the canonical-ID flag again.
+	runner.containerID = newID[:12]
 	baseHook := runner.hook
 	newStarted := false
 	runner.hook = func(path string, args []string) (string, error, bool) {
@@ -268,6 +271,9 @@ func TestBitcoinCoreLegacyMigrationSucceedsWithInspectedRollbackImageWithoutTouc
 			return output, err, true
 		}
 		if path == dockerPath && len(args) > 1 && args[0] == "ps" && args[1] == "-a" {
+			if !slices.Contains(args, "--no-trunc") {
+				return newID[:12] + "\n", nil, true
+			}
 			if newStarted {
 				return newID + "\n", nil, true
 			}
@@ -297,6 +303,16 @@ func TestBitcoinCoreLegacyMigrationSucceedsWithInspectedRollbackImageWithoutTouc
 		}
 		return "", nil, false
 	}
+	baseHookWithCanonicalPS := runner.hook
+	runner.hook = func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && len(args) > 1 && reflect.DeepEqual(args[:2], []string{"ps", "--no-trunc"}) {
+			if newStarted {
+				return newID + "\n", nil, true
+			}
+			return legacyID + "\n", nil, true
+		}
+		return baseHookWithCanonicalPS(path, args)
+	}
 	manager.BitcoinMigrationProbe = func(_ context.Context, containerID string) error {
 		if containerID != newID {
 			t.Fatalf("migration probed container %q, want %q", containerID, newID)
@@ -318,6 +334,15 @@ func TestBitcoinCoreLegacyMigrationSucceedsWithInspectedRollbackImageWithoutTouc
 	}
 	if !downSeen {
 		t.Fatal("legacy IPAM was not removed before the hardened runtime started")
+	}
+	canonicalLookupSeen := false
+	for _, command := range runner.commands {
+		if command.path == dockerPath && len(command.args) > 1 && reflect.DeepEqual(command.args[:2], []string{"ps", "--no-trunc"}) {
+			canonicalLookupSeen = true
+		}
+	}
+	if !canonicalLookupSeen {
+		t.Fatal("migration did not request a canonical Docker container ID")
 	}
 }
 
@@ -501,7 +526,9 @@ func TestBitcoinCoreLegacyMigrationFailureRollsBack(t *testing.T) {
 		return "", nil, false
 	}
 	err := manager.Lifecycle(context.Background(), appmanifest.BitcoinCoreID, AppLifecycleStart, false)
-	if err == nil || !strings.Contains(err.Error(), "restored automatically") || !newStartFailed {
+	var migrationErr *bitcoinLegacyMigrationError
+	if err == nil || !strings.Contains(err.Error(), "restored automatically") || !newStartFailed ||
+		!errors.As(err, &migrationErr) || migrationErr.Code != "bitcoin_legacy_migration_rolled_back_start" {
 		t.Fatalf("migration error/failure=%v/%v", err, newStartFailed)
 	}
 	rollbackSeen := false

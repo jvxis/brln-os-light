@@ -33,6 +33,9 @@ func TestBuildUpsertDaily(t *testing.T) {
 			KeysendReceivedSat:         50,
 			KeysendReceivedMsat:        50000,
 			KeysendReceivedCount:       1,
+			KeysendSentSat:             40,
+			KeysendSentMsat:            40000,
+			KeysendSentCount:           2,
 			NetRoutingProfitSat:        800,
 			NetRoutingProfitMsat:       800000,
 			NetWithKeysendSat:          850,
@@ -75,8 +78,16 @@ func TestBuildUpsertDaily(t *testing.T) {
 	if !strings.Contains(query, "sales_revenue_sats = excluded.sales_revenue_sats") {
 		t.Fatalf("expected channel sale revenue on upsert")
 	}
-	if len(args) != 41 {
-		t.Fatalf("expected 41 args, got %d", len(args))
+	// Derived rather than hardcoded: a column added to the insert without a
+	// matching argument is the failure worth catching, and a fixed number only
+	// reports that the count changed - which it legitimately does every time a
+	// metric is added.
+	placeholders := strings.Count(query[:strings.Index(query, "on conflict")], "$")
+	if len(args) != placeholders {
+		t.Fatalf("insert lists %d placeholders but passes %d args", placeholders, len(args))
+	}
+	if !strings.Contains(query, "keysend_sent_sats = excluded.keysend_sent_sats") {
+		t.Fatalf("expected keysend sent on upsert")
 	}
 
 	argDate, ok := args[0].(time.Time)
@@ -103,29 +114,32 @@ func TestBuildUpsertDaily(t *testing.T) {
 		args[15] != int64(50) || // keysend_received_sats
 		args[16] != int64(50000) || // keysend_received_msat
 		args[17] != int64(1) || // keysend_received_count
-		args[18] != int64(800) || // net_routing_profit_sats
-		args[19] != int64(800000) || // net_routing_profit_msat
-		args[20] != int64(850) || // net_with_keysend_sats
-		args[21] != int64(850000) || // net_with_keysend_msat
-		args[22] != int64(4) || // forward_count
-		args[23] != int64(2) || // rebalance_count
-		args[24] != int64(64000) || // rebalance_volume_sats
-		args[25] != int64(64000000) || // rebalance_volume_msat
-		args[26] != int64(3) || // payment_count
-		args[27] != int64(18000) || // routed_volume_sats
-		args[28] != int64(18000000) || // routed_volume_msat
-		args[29] != nil || // onchain_balance_sats
-		args[30] != nil || // lightning_balance_sats
-		args[31] != nil || // total_balance_sats
-		args[32] != provenanceSyncAt || // provenance_last_sync_at
-		args[33] != provenanceAgeHours || // provenance_last_sync_age_hours
-		args[34] != false || // provenance_health_alert
-		args[35] != "" || // provenance_last_error
-		args[36] != int64(3566) || // sales_revenue_sats
-		args[37] != int64(3566000) || // sales_revenue_msat
-		args[38] != int64(1) || // sales_count
-		args[39] != int64(4416) || // net_total_sats
-		args[40] != int64(4416000) { // net_total_msat
+		args[18] != int64(40) || // keysend_sent_sats
+		args[19] != int64(40000) || // keysend_sent_msat
+		args[20] != int64(2) || // keysend_sent_count
+		args[21] != int64(800) || // net_routing_profit_sats
+		args[22] != int64(800000) || // net_routing_profit_msat
+		args[23] != int64(850) || // net_with_keysend_sats
+		args[24] != int64(850000) || // net_with_keysend_msat
+		args[25] != int64(4) || // forward_count
+		args[26] != int64(2) || // rebalance_count
+		args[27] != int64(64000) || // rebalance_volume_sats
+		args[28] != int64(64000000) || // rebalance_volume_msat
+		args[29] != int64(3) || // payment_count
+		args[30] != int64(18000) || // routed_volume_sats
+		args[31] != int64(18000000) || // routed_volume_msat
+		args[32] != nil || // onchain_balance_sats
+		args[33] != nil || // lightning_balance_sats
+		args[34] != nil || // total_balance_sats
+		args[35] != provenanceSyncAt || // provenance_last_sync_at
+		args[36] != provenanceAgeHours || // provenance_last_sync_age_hours
+		args[37] != false || // provenance_health_alert
+		args[38] != "" || // provenance_last_error
+		args[39] != int64(3566) || // sales_revenue_sats
+		args[40] != int64(3566000) || // sales_revenue_msat
+		args[41] != int64(1) || // sales_count
+		args[42] != int64(4416) || // net_total_sats
+		args[43] != int64(4416000) { // net_total_msat
 		t.Fatalf("unexpected metrics args")
 	}
 }

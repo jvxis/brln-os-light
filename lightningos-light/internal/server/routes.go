@@ -172,6 +172,8 @@ func (s *Server) routes() http.Handler {
 	r.Delete("/api/shortcuts/{id}", s.handleShortcutsDelete)
 	r.Get("/api/ui/preferences/menu", s.handleMenuPreferencesGet)
 	r.Put("/api/ui/preferences/menu", s.handleMenuPreferencesPut)
+	r.Get("/api/ui/preferences/apps", s.handleAppStorePreferencesGet)
+	r.Put("/api/ui/preferences/apps", s.handleAppStorePreferencesPut)
 
 	r.Route("/api/onchain", func(r chi.Router) {
 		r.Get("/utxos", s.handleOnchainUtxos)
@@ -196,6 +198,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/spending-guard", s.handleSpendingGuardGet)
 		r.Put("/spending-guard", s.handleSpendingGuardUpdate)
 		r.Get("/activity", s.handleWalletActivity)
+		r.Post("/activity/mark", s.handleWalletActivityMark)
 		r.Get("/payments/{paymentHash}", s.handleWalletPaymentDetail)
 		r.Post("/address", s.handleWalletAddress)
 		r.Post("/invoice", s.handleWalletInvoice)

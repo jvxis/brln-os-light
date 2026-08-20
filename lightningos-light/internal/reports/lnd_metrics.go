@@ -29,6 +29,13 @@ type KeysendReceivedOverride struct {
 	Count      int64
 }
 
+// KeysendSentOverride carries what the node gave away spontaneously. It is the
+// amount, not the fee: the fee is already counted with every other payment fee.
+type KeysendSentOverride struct {
+	AmountMsat int64
+	Count      int64
+}
+
 type OnchainOverride struct {
 	FeeMsat            int64
 	Count              int64
@@ -37,7 +44,7 @@ type OnchainOverride struct {
 	RemoteForceFeeMsat int64
 }
 
-func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, memoMatch bool, rebalanceOverride *RebalanceOverride, paymentOverride *PaymentOverride, keysendOverride *KeysendReceivedOverride, onchainOverride *OnchainOverride) (Metrics, error) {
+func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, memoMatch bool, rebalanceOverride *RebalanceOverride, paymentOverride *PaymentOverride, keysendOverride *KeysendReceivedOverride, keysendSentOverride *KeysendSentOverride, onchainOverride *OnchainOverride) (Metrics, error) {
 	if lnd == nil {
 		return Metrics{}, fmt.Errorf("lnd client unavailable")
 	}
@@ -103,6 +110,23 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 		keysendReceivedCount = keysend.Count
 	}
 
+	// What the node gave away spontaneously. A keysend buys nothing - no invoice,
+	// no counterparty obligation - so it is a cost, and the amount is the cost.
+	// The fee it paid is already inside paymentCostMsat with every other fee.
+	keysendSentMsat := int64(0)
+	keysendSentCount := int64(0)
+	if keysendSentOverride != nil {
+		keysendSentMsat = keysendSentOverride.AmountMsat
+		keysendSentCount = keysendSentOverride.Count
+	} else {
+		sent, err := FetchKeysendSent(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive())
+		if err != nil {
+			return Metrics{}, err
+		}
+		keysendSentMsat = sent.AmountMsat
+		keysendSentCount = sent.Count
+	}
+
 	onchainCostMsat := int64(0)
 	onchainCoopCloseCostMsat := int64(0)
 	onchainLocalForceCostMsat := int64(0)
@@ -123,7 +147,13 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 		onchainRemoteForceCostMsat = onchain.RemoteForceFeeMsat
 	}
 
-	netMsat := forwardRevenueMsat - rebalanceCostMsat - paymentCostMsat
+	// Routing profit answers one question: is the node profitable at forwarding?
+	// Only rebalances belong against it - liquidity is moved so that forwarding
+	// can happen. The fee on an invoice the operator paid is a real cost, but it
+	// buys something for the operator, not the capacity to route, so counting it
+	// here made a month of heavy personal use look like a month of bad routing.
+	// It stays in the totals, under costs.
+	netMsat := forwardRevenueMsat - rebalanceCostMsat
 	netWithKeysendMsat := netMsat + keysendReceivedMsat
 	metrics := Metrics{
 		ForwardFeeRevenueSat:       forwardRevenueMsat / 1000,
@@ -142,6 +172,9 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 		OnchainRemoteForceCostMsat: onchainRemoteForceCostMsat,
 		KeysendReceivedSat:         keysendReceivedMsat / 1000,
 		KeysendReceivedMsat:        keysendReceivedMsat,
+		KeysendSentSat:             keysendSentMsat / 1000,
+		KeysendSentMsat:            keysendSentMsat,
+		KeysendSentCount:           keysendSentCount,
 		KeysendReceivedCount:       keysendReceivedCount,
 		NetRoutingProfitSat:        netMsat / 1000,
 		NetRoutingProfitMsat:       netMsat,
@@ -152,12 +185,15 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 		RebalanceVolumeSat:         rebalanceVolumeMsat / 1000,
 		RebalanceVolumeMsat:        rebalanceVolumeMsat,
 		PaymentCount:               paymentCount,
-		NetTotalSat:                netWithKeysendMsat / 1000,
-		NetTotalMsat:               netWithKeysendMsat,
-		RoutedVolumeSat:            routedVolumeMsat / 1000,
-		RoutedVolumeMsat:           routedVolumeMsat,
+		// Filled in by withNetTotal below, so a node without the Magma app gets
+		// the same total as one with it. Leaving it to WithMagmaSales meant the
+		// bottom line depended on which apps happened to be installed.
+		NetTotalSat:      0,
+		NetTotalMsat:     0,
+		RoutedVolumeSat:  routedVolumeMsat / 1000,
+		RoutedVolumeMsat: routedVolumeMsat,
 	}
-	return metrics, nil
+	return metrics.withNetTotal(), nil
 }
 
 func fetchForwardingMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64) (int64, int64, int64, error) {

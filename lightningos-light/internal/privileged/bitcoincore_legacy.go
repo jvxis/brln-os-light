@@ -16,6 +16,17 @@ import (
 	"lightningos-light/internal/appmanifest"
 )
 
+var (
+	errBitcoinLegacyNetworkCutover     = errors.New("legacy Bitcoin Core network cutover failed")
+	errBitcoinLegacyNetworkRemoval     = errors.New("legacy Bitcoin Core network was not removed")
+	errBitcoinLegacyStart              = errors.New("new Bitcoin Core container did not start")
+	errBitcoinLegacyRuntimeUnavailable = errors.New("new Bitcoin Core container is unavailable")
+	errBitcoinLegacyRuntimeIdentity    = errors.New("new Bitcoin Core container did not adopt the verified image")
+	errBitcoinLegacyRPCUnavailable     = errors.New("Bitcoin Core RPC did not become ready")
+	errBitcoinLegacyMainnetUnverified  = errors.New("Bitcoin Core RPC did not confirm mainnet")
+	errBitcoinLegacyEndpoints          = errors.New("Bitcoin Core loopback RPC/ZMQ endpoints did not become ready")
+)
+
 const (
 	bitcoinCoreLegacyRollbackImage      = "lightningos/bitcoin-core-legacy-rollback:0.5.13"
 	legacyBitcoinNetworkInspectFormat   = `{{.Driver}}|{{.Scope}}|{{.Internal}}|{{index .Labels "com.docker.compose.project"}}|{{index .Labels "com.docker.compose.network"}}|{{json .IPAM.Config}}|{{json .Containers}}`
@@ -319,10 +330,33 @@ func (manager *ComposeAppManager) rollbackLegacyBitcoinMigration(ctx context.Con
 			Message: "Bitcoin Core migration failed and automatic rollback could not verify the restored legacy runtime; check local broker logs before taking action.",
 		}
 	}
-	_ = cause
+	reasonCode, reason := bitcoinLegacyMigrationFailureReason(cause)
 	return &bitcoinLegacyMigrationError{
-		Code:    "bitcoin_legacy_migration_rolled_back",
-		Message: "Bitcoin Core migration failed; the legacy runtime was restored automatically and LND was not restarted.",
+		Code:    "bitcoin_legacy_migration_rolled_back_" + reasonCode,
+		Message: "Bitcoin Core migration failed during " + reason + "; the legacy runtime was restored automatically and LND was not restarted.",
+	}
+}
+
+func bitcoinLegacyMigrationFailureReason(cause error) (string, string) {
+	switch {
+	case errors.Is(cause, errBitcoinLegacyNetworkCutover):
+		return "network_cutover", "the Docker network cutover"
+	case errors.Is(cause, errBitcoinLegacyNetworkRemoval):
+		return "network_removal", "the legacy Docker network removal"
+	case errors.Is(cause, errBitcoinLegacyStart):
+		return "start", "the verified container startup"
+	case errors.Is(cause, errBitcoinLegacyRuntimeUnavailable):
+		return "runtime_lookup", "the verified container lookup"
+	case errors.Is(cause, errBitcoinLegacyRuntimeIdentity):
+		return "runtime_identity", "the verified image identity check"
+	case errors.Is(cause, errBitcoinLegacyRPCUnavailable):
+		return "rpc_readiness", "the Bitcoin Core RPC readiness check"
+	case errors.Is(cause, errBitcoinLegacyMainnetUnverified):
+		return "mainnet", "the Bitcoin mainnet verification"
+	case errors.Is(cause, errBitcoinLegacyEndpoints):
+		return "loopback_endpoints", "the local RPC/ZMQ endpoint verification"
+	default:
+		return "verification", "the post-migration verification"
 	}
 }
 
@@ -331,13 +365,13 @@ func (manager *ComposeAppManager) probeBitcoinCoreMainnet(ctx context.Context, c
 		"bitcoin-cli", "-datadir="+appmanifest.BitcoinCoreContainerDataDir,
 		"-conf="+appmanifest.BitcoinCoreContainerConfig, "-rpcwait", "-rpcwaittimeout=60", "getblockchaininfo")
 	if err != nil || len(output) == 0 || len(output) > 64*1024 {
-		return errors.New("Bitcoin Core RPC did not become ready")
+		return errBitcoinLegacyRPCUnavailable
 	}
 	var state struct {
 		Chain string `json:"chain"`
 	}
 	if json.Unmarshal([]byte(output), &state) != nil || state.Chain != "main" {
-		return errors.New("Bitcoin Core RPC did not confirm mainnet")
+		return errBitcoinLegacyMainnetUnverified
 	}
 	return nil
 }
@@ -349,7 +383,7 @@ func (manager *ComposeAppManager) probeMigratedBitcoinCore(ctx context.Context, 
 	for _, port := range []int{8332, 28332, 28333} {
 		connection, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if err != nil {
-			return errors.New("Bitcoin Core loopback RPC/ZMQ endpoints did not become ready")
+			return errBitcoinLegacyEndpoints
 		}
 		_ = connection.Close()
 	}
@@ -359,7 +393,7 @@ func (manager *ComposeAppManager) probeMigratedBitcoinCore(ctx context.Context, 
 func (manager *ComposeAppManager) inspectBitcoinCoreCatalogRuntime(ctx context.Context) (bitcoinCoreRuntime, bool, error) {
 	manifest, _ := appmanifest.ComposeManifestForApp(appmanifest.BitcoinCoreID)
 	output, err := manager.Runner.Run(ctx, dockerPath,
-		"ps", "-a",
+		"ps", "-a", "--no-trunc",
 		"--filter", "label=com.docker.compose.project="+manifest.Project,
 		"--filter", "label=com.docker.compose.service="+manifest.PrimaryService,
 		"--format", "{{.ID}}",

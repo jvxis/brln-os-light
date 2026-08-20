@@ -785,13 +785,13 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			"down", "--remove-orphans", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds),
 		)
 		if _, err := manager.Runner.Run(ctx, commandPath, cutoverArgs...); err != nil {
-			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, errors.New("legacy Bitcoin Core network cutover failed"))
+			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, errBitcoinLegacyNetworkCutover)
 		}
 		remaining, err := manager.Runner.Run(ctx, dockerPath,
 			"network", "ls", "--filter", "name=^"+appmanifest.BitcoinCoreNetwork+"$", "--format", "{{.Name}}",
 		)
 		if err != nil || strings.TrimSpace(remaining) != "" {
-			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, errors.New("legacy Bitcoin Core network was not removed"))
+			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, errBitcoinLegacyNetworkRemoval)
 		}
 	}
 	switch action {
@@ -894,18 +894,18 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	}
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		if legacyBitcoin != nil {
-			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, errors.New("new Bitcoin Core container did not start"))
+			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, errBitcoinLegacyStart)
 		}
 		return errors.New("app lifecycle command failed")
 	}
 	if legacyBitcoin != nil {
 		containerID, lookupErr := manager.catalogRunningContainerID(ctx, manifest)
 		if lookupErr != nil || containerID == "" {
-			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, errors.New("new Bitcoin Core container is unavailable"))
+			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, errBitcoinLegacyRuntimeUnavailable)
 		}
 		currentRuntime, found, inspectErr := manager.inspectBitcoinCoreCatalogRuntime(ctx)
 		if inspectErr != nil || !found || currentRuntime.ContainerID != containerID || currentRuntime.ImageRef != appmanifest.BitcoinCoreImage {
-			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, errors.New("new Bitcoin Core container did not adopt the verified image"))
+			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, errBitcoinLegacyRuntimeIdentity)
 		}
 		probe := manager.BitcoinMigrationProbe
 		if probe == nil {
@@ -1296,6 +1296,7 @@ func (manager *ComposeAppManager) inspectComposeSnapshot(ctx context.Context, ma
 func (manager *ComposeAppManager) catalogRunningContainerID(ctx context.Context, manifest appmanifest.ComposeManifest) (string, error) {
 	output, err := manager.Runner.Run(ctx, dockerPath,
 		"ps",
+		"--no-trunc",
 		"--filter", "label=com.docker.compose.project="+manifest.Project,
 		"--filter", "label=com.docker.compose.service="+manifest.PrimaryService,
 		"--format", "{{.ID}}",

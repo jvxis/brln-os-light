@@ -23,6 +23,7 @@ import (
 	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/privileged"
+	"lightningos-light/internal/reports"
 	"lightningos-light/internal/system"
 )
 
@@ -4411,6 +4412,21 @@ func (s *Server) handleWalletActivity(w http.ResponseWriter, r *http.Request) {
 	}
 	pageItems := items[offset:endIndex]
 
+	// Marks are looked up for the page being shown, in one query, so the list can
+	// render what is already classified without a round trip per row.
+	marks := map[string]string{}
+	if s.db != nil {
+		hashes := make([]string, 0, len(pageItems))
+		for _, item := range pageItems {
+			if hash := strings.TrimSpace(item.PaymentHash); hash != "" {
+				hashes = append(hashes, hash)
+			}
+		}
+		if found, err := reports.ListActivityMarks(ctx, s.db, hashes); err == nil {
+			marks = found
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"range":       rangeKey,
 		"offset":      offset,
@@ -4418,6 +4434,75 @@ func (s *Server) handleWalletActivity(w http.ResponseWriter, r *http.Request) {
 		"has_more":    hasMore,
 		"next_offset": endIndex,
 		"items":       pageItems,
+		"marks":       marks,
+	})
+}
+
+// handleWalletActivityMark records how the operator classifies one payment.
+//
+// The technical shape of a payment does not reveal its purpose: an invoice paid
+// might be a coffee or the purchase of a channel. Only the operator knows, so
+// only the operator decides - and an unclassified payment stays out of the
+// report entirely, which keeps the report a measure of operating performance
+// rather than a wallet statement.
+func (s *Server) handleWalletActivityMark(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, "reports database unavailable")
+		return
+	}
+	var req struct {
+		PaymentHash    string `json:"payment_hash"`
+		Classification string `json:"classification"`
+		AmountSat      int64  `json:"amount_sat"`
+		OccurredAt     string `json:"occurred_at"`
+		Direction      string `json:"direction"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if strings.TrimSpace(req.PaymentHash) == "" {
+		writeError(w, http.StatusBadRequest, "payment_hash required")
+		return
+	}
+	// The direction decides the only classification that can make sense: money
+	// that arrived is revenue or nothing, money that left is cost or nothing.
+	// Enforced here as well as in the UI, so the rule holds for anything that
+	// reaches the endpoint.
+	classification := strings.TrimSpace(req.Classification)
+	switch strings.ToLower(strings.TrimSpace(req.Direction)) {
+	case "in":
+		if classification != "" && classification != reports.MarkRevenue {
+			writeError(w, http.StatusBadRequest, "a payment that arrived can only be marked as revenue")
+			return
+		}
+	case "out":
+		if classification != "" && classification != reports.MarkCost {
+			writeError(w, http.StatusBadRequest, "a payment that left can only be marked as cost")
+			return
+		}
+	}
+
+	occurredAt := time.Now().UTC()
+	if raw := strings.TrimSpace(req.OccurredAt); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "occurred_at must be RFC3339")
+			return
+		}
+		occurredAt = parsed.UTC()
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := reports.SetActivityMark(ctx, s.db, req.PaymentHash, classification,
+		req.AmountSat*1000, occurredAt); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":             true,
+		"payment_hash":   strings.TrimSpace(req.PaymentHash),
+		"classification": classification,
 	})
 }
 

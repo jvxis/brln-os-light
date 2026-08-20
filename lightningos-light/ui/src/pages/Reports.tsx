@@ -194,7 +194,14 @@ const chartGranularityOptions: ChartGranularity[] = ['day', 'week', 'month']
 
 const COLORS = {
   net: '#34d399',
-  keysend: '#84cc16',
+  // Revenue series are tones of one blue and cost series tones of one warm
+  // range, so a stacked bar says revenue-or-cost by colour before the legend
+  // is read. Keysend sent was lime green, which read as revenue.
+  keysend: '#7dd3fc',
+  revenueSales: '#0ea5e9',
+  revenueMarked: '#22d3ee',
+  costKeysendSent: '#fb923c',
+  costOnchain: '#c2410c',
   netNegative: '#f87171',
   revenue: '#38bdf8',
   costRebalance: '#f59e0b',
@@ -961,11 +968,19 @@ export default function Reports() {
     const totalCostValue = rebalanceCostValue + paymentCostValue + keysendSentValue + markedCostValue + onchainCostValue
     const netValue = totalRevenueValue - totalCostValue
     const empty = {
+      forwardRevenue: 0, keysendRevenue: 0, salesRevenue: 0, markedRevenue: 0,
       totalRevenue: 0, rebalanceCost: 0, paymentCost: 0, keysendSent: 0, markedCost: 0,
       onchainCost: 0, netRouting: 0, netRoutingColor: undefined as string | undefined
     }
     return [
-      { name: t('reports.revenue'), ...empty, totalRevenue: totalRevenueValue },
+      {
+        name: t('reports.revenue'),
+        ...empty,
+        forwardRevenue: revenueValue,
+        keysendRevenue: keysendValue,
+        salesRevenue: salesValue,
+        markedRevenue: markedRevenueValue
+      },
       {
         name: t('reports.cost'),
         ...empty,
@@ -1370,13 +1385,22 @@ export default function Reports() {
                       formatter={(value) => formatSats(Number(value))}
                     />
                     <Legend verticalAlign="top" height={24} formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
-                    <Bar dataKey="totalRevenue" stackId="live" name={t('reports.revenue')} fill={COLORS.revenue} radius={[8, 8, 8, 8]} />
+                    {/* Revenue is stacked the way cost is, so every source is
+                        visible and named instead of vanishing into one bar. */}
+                    <Bar dataKey="forwardRevenue" stackId="live" name={t('reports.forwards')} fill={COLORS.revenue} radius={[8, 8, 8, 8]} />
+                    {includeKeysend && (
+                      <Bar dataKey="keysendRevenue" stackId="live" name={t('reports.keysendReceived')} fill={COLORS.keysend} radius={[8, 8, 8, 8]} />
+                    )}
+                    {includeSales && (
+                      <Bar dataKey="salesRevenue" stackId="live" name={t('reports.salesRevenue')} fill={COLORS.revenueSales} radius={[8, 8, 8, 8]} />
+                    )}
+                    <Bar dataKey="markedRevenue" stackId="live" name={t('reports.markedRevenue')} fill={COLORS.revenueMarked} radius={[8, 8, 8, 8]} />
                     <Bar dataKey="rebalanceCost" stackId="live" name={t('reports.rebalances')} fill={COLORS.costRebalance} radius={[8, 8, 8, 8]} />
                     <Bar dataKey="paymentCost" stackId="live" name={t('reports.payments')} fill={COLORS.costPayment} radius={[8, 8, 8, 8]} />
-                    <Bar dataKey="keysendSent" stackId="live" name={t('reports.keysendSent')} fill={COLORS.keysend} radius={[8, 8, 8, 8]} />
+                    <Bar dataKey="keysendSent" stackId="live" name={t('reports.keysendSent')} fill={COLORS.costKeysendSent} radius={[8, 8, 8, 8]} />
                     <Bar dataKey="markedCost" stackId="live" name={t('reports.markedCost')} fill={COLORS.netNegative} radius={[8, 8, 8, 8]} />
                     {includeOnchainCostInCharts && (
-                      <Bar dataKey="onchainCost" stackId="live" name={t('reports.onchainCost')} fill={COLORS.onchain} radius={[8, 8, 8, 8]} />
+                      <Bar dataKey="onchainCost" stackId="live" name={t('reports.onchainCost')} fill={COLORS.costOnchain} radius={[8, 8, 8, 8]} />
                     )}
                     {/* Carries revenue minus cost, so it is the node total - the
                         key name is historical and the label must not repeat it. */}
@@ -1726,13 +1750,20 @@ export default function Reports() {
                   {/* Revenue is one consolidated bar - forwards, keysend, sales
                       and marked payments - against the full cost stack, so the
                       two columns are comparable at a glance. */}
-                  <Bar dataKey="totalRevenue" stackId="revenue" name={t('reports.revenue')} fill={COLORS.revenue} fillOpacity={0.72} radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="revenue" stackId="revenue" name={t('reports.forwards')} fill={COLORS.revenue} fillOpacity={0.72} />
+                  {includeKeysend && (
+                    <Bar dataKey="keysend" stackId="revenue" name={t('reports.keysendReceived')} fill={COLORS.keysend} fillOpacity={0.72} />
+                  )}
+                  {includeSales && (
+                    <Bar dataKey="sales" stackId="revenue" name={t('reports.salesRevenue')} fill={COLORS.revenueSales} fillOpacity={0.72} />
+                  )}
+                  <Bar dataKey="markedRevenue" stackId="revenue" name={t('reports.markedRevenue')} fill={COLORS.revenueMarked} fillOpacity={0.72} radius={[6, 6, 0, 0]} />
                   <Bar dataKey="rebalanceCost" stackId="cost" name={t('reports.rebalances')} fill={COLORS.costRebalance} fillOpacity={0.7} />
                   <Bar dataKey="paymentCost" stackId="cost" name={t('reports.payments')} fill={COLORS.costPayment} fillOpacity={0.7} />
-                  <Bar dataKey="keysendSent" stackId="cost" name={t('reports.keysendSent')} fill={COLORS.keysend} fillOpacity={0.7} />
+                  <Bar dataKey="keysendSent" stackId="cost" name={t('reports.keysendSent')} fill={COLORS.costKeysendSent} fillOpacity={0.7} />
                   <Bar dataKey="markedCost" stackId="cost" name={t('reports.markedCost')} fill={COLORS.netNegative} fillOpacity={0.7} radius={includeOnchainCostInCharts ? [0, 0, 0, 0] : [6, 6, 0, 0]} />
                   {includeOnchainCostInCharts && (
-                    <Bar dataKey="onchainCost" stackId="cost" name={t('reports.onchainCost')} fill={COLORS.onchain} fillOpacity={0.7} radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="onchainCost" stackId="cost" name={t('reports.onchainCost')} fill={COLORS.costOnchain} fillOpacity={0.7} radius={[6, 6, 0, 0]} />
                   )}
                 </BarChart>
               </ResponsiveContainer>

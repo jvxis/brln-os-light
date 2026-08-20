@@ -276,6 +276,10 @@ export default function Wallet() {
   // might be a coffee or the purchase of a channel - so an unmarked payment
   // stays out of the report entirely.
   const [activityMarks, setActivityMarks] = useState<Record<string, string>>({})
+  // Rows the report already counts on its own - a Magma sale invoice, a keysend.
+  // The server decides which, because the rule belongs next to the code that
+  // counts them, and classifying one by hand would add the same sats twice.
+  const [activityAutoCounted, setActivityAutoCounted] = useState<Record<string, string>>({})
   const [markBusy, setMarkBusy] = useState('')
   const [activityError, setActivityError] = useState('')
   const [activityLoading, setActivityLoading] = useState(true)
@@ -431,6 +435,10 @@ export default function Wallet() {
       setActivityItems((prev) => append ? [...prev, ...nextItems] : nextItems)
       const nextMarks = (res?.marks && typeof res.marks === 'object') ? res.marks as Record<string, string> : {}
       setActivityMarks((prev) => append ? { ...prev, ...nextMarks } : nextMarks)
+      const nextAuto = (res?.auto_counted && typeof res.auto_counted === 'object')
+        ? res.auto_counted as Record<string, string>
+        : {}
+      setActivityAutoCounted((prev) => append ? { ...prev, ...nextAuto } : nextAuto)
       setActivityHasMore(Boolean(res?.has_more))
     } catch (err: any) {
       if (!silent || activityItems.length === 0) {
@@ -2557,6 +2565,7 @@ export default function Wallet() {
             const itemKey = item.payment_hash || item.txid || `${item.type || 'activity'}-${item.timestamp || idx}-${idx}`
             const markHash = String(item.payment_hash || '').trim()
             const mark = activityMarks[markHash]
+            const autoCounted = Boolean(activityAutoCounted[markHash])
             // The row itself is a button, so the classification controls cannot
             // live inside it - a button inside a button is invalid and would
             // swallow the click that opens the detail. They sit beside it, and
@@ -2593,7 +2602,10 @@ export default function Wallet() {
                     sense: money that arrived is revenue or nothing, money that
                     left is cost or nothing. Offering both turned an obvious
                     choice into a way to record something impossible. */}
-                {activityIsMarkable(item) && (() => {
+                {/* A row the report counts on its own offers no button - marking it
+                    would double the sats. A mark made before that was true still
+                    shows, so it can be cleared rather than stranded. */}
+                {activityIsMarkable(item) && (!autoCounted || mark) && (() => {
                   const kind = direction === 'in' ? 'revenue' : direction === 'out' ? 'cost' : ''
                   if (!kind) return null
                   const active = mark === kind

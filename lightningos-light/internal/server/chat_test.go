@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +11,61 @@ import (
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/lnrpc"
 )
+
+func TestChatInboundCursorAdvancesOnlyAfterPersistence(t *testing.T) {
+	peerPubkey := "020000000000000000000000000000000000000000000000000000000000000001"
+	msg := ChatMessage{
+		Timestamp:  time.Now().UTC(),
+		PeerPubkey: peerPubkey,
+		Direction:  "in",
+		Message:    "persist before cursor",
+		Status:     "received",
+	}
+
+	t.Run("success", func(t *testing.T) {
+		dir := t.TempDir()
+		service := &ChatService{legacy: newChatFileStore(
+			filepath.Join(dir, "messages.jsonl"),
+			filepath.Join(dir, "cursor.txt"),
+			filepath.Join(dir, "read-state.json"),
+		)}
+		settleIndex := uint64(41)
+		if err := service.persistInboundAndAdvanceCursor(context.Background(), msg, 42, &settleIndex); err != nil {
+			t.Fatal(err)
+		}
+		if settleIndex != 42 || service.legacy.loadCursor() != 42 {
+			t.Fatalf("cursor was not committed after persistence: memory=%d disk=%d", settleIndex, service.legacy.loadCursor())
+		}
+		items, err := service.legacy.list(peerPubkey, 10)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("persisted messages=%d err=%v", len(items), err)
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		dir := t.TempDir()
+		blockedParent := filepath.Join(dir, "not-a-directory")
+		if err := os.WriteFile(blockedParent, []byte("blocked"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cursorPath := filepath.Join(blockedParent, "cursor.txt")
+		service := &ChatService{legacy: newChatFileStore(
+			filepath.Join(blockedParent, "messages.jsonl"),
+			cursorPath,
+			filepath.Join(blockedParent, "read-state.json"),
+		)}
+		settleIndex := uint64(41)
+		if err := service.persistInboundAndAdvanceCursor(context.Background(), msg, 42, &settleIndex); err == nil {
+			t.Fatal("expected persistence failure")
+		}
+		if settleIndex != 41 {
+			t.Fatalf("cursor advanced after failed persistence: %d", settleIndex)
+		}
+		if _, err := os.Stat(cursorPath); !os.IsNotExist(err) {
+			t.Fatalf("cursor file created after failed persistence: %v", err)
+		}
+	})
+}
 
 func TestChatFileReadStatePersistsAcrossInstances(t *testing.T) {
 	dir := t.TempDir()

@@ -1060,6 +1060,10 @@ print_step "Building UI"
 (cd "$project_dir/ui" && "$NPM_BIN" ci && "$NPM_BIN" run build)
 print_ok "UI built"
 
+print_step "Repairing legacy Chat storage permissions"
+bash "$project_dir/scripts/repair-chat-storage-permissions.sh" lightningos lightningos
+print_ok "Chat storage permissions repaired"
+
 publish_ui_tree() {
   local source="$project_dir/ui/dist"
   local target="/opt/lightningos/ui"

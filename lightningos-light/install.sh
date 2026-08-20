@@ -1065,6 +1065,7 @@ fix_permissions() {
   # ownership of apps-data breaks private 0600 daemon files (for example Loop's
   # L402 token store).
   chown lightningos:lightningos /var/lib/lightningos /var/lib/lightningos/apps /var/lib/lightningos/apps-data
+  bash "$REPO_ROOT/scripts/repair-chat-storage-permissions.sh" lightningos lightningos
   chown -R lightningos:lightningos /var/log/lightningos
   print_ok "Permissions updated"
 }

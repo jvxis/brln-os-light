@@ -47,6 +47,10 @@ type ReportSeriesItem = {
   total_fee_cost_with_onchain_sats?: number
   net_routing_profit_sats: number
   net_with_keysend_sats?: number
+  keysend_sent_sats?: number
+  keysend_sent_count?: number
+  total_revenue_sats?: number
+  total_cost_sats?: number
   forward_count: number
   rebalance_count: number
   rebalance_volume_sats?: number
@@ -79,6 +83,10 @@ type ReportMetrics = {
   total_fee_cost_with_onchain_sats?: number
   net_routing_profit_sats: number
   net_with_keysend_sats?: number
+  keysend_sent_sats?: number
+  keysend_sent_count?: number
+  total_revenue_sats?: number
+  total_cost_sats?: number
   forward_count: number
   rebalance_count: number
   rebalance_volume_sats?: number
@@ -242,7 +250,12 @@ export default function Reports() {
   // showing everything the node actually earned and spent.
   const [includeKeysend, setIncludeKeysend] = useState(true)
   const [includeSales, setIncludeSales] = useState(true)
-  const [includePaymentCost, setIncludePaymentCost] = useState(true)
+  // The payment cost used to be optional because it was subtracted from the
+  // routing figure, and excluding it was the only way to see routing alone.
+  // The formula no longer mixes them, so the choice is gone from the cards - but
+  // the charts still read this flag, and pinning it to the default keeps every
+  // series exactly as it renders today.
+  const includePaymentCost = true
   const [movementLive, setMovementLive] = useState<MovementLiveResponse | null>(null)
   const [movementLoading, setMovementLoading] = useState(true)
   const [movementError, setMovementError] = useState('')
@@ -981,6 +994,23 @@ export default function Reports() {
   const liveKeysendReceived = live?.keysend_received_sats ?? 0
   const liveNetWithKeysend = live?.net_with_keysend_sats ?? ((live?.net_routing_profit_sats ?? 0) + liveKeysendReceived)
   const liveSalesRevenue = live?.sales_revenue_sats ?? 0
+  const liveKeysendSent = live?.keysend_sent_sats ?? 0
+  const liveForwardRevenue = live?.forward_fee_revenue_sats ?? 0
+  // Served by the API so the definition of revenue and cost lives in one place.
+  const liveTotalRevenue = live?.total_revenue_sats
+    ?? (liveForwardRevenue + liveKeysendReceived + liveSalesRevenue)
+  const liveTotalCost = live?.total_cost_sats
+    ?? (liveRebalanceCost + livePaymentCost + liveKeysendSent + liveOnchainCost)
+  // Routing asks one question: is the node profitable at forwarding? Only
+  // rebalances belong against it.
+  const liveRoutingNet = liveForwardRevenue - liveRebalanceCost
+  const liveNetTotal = live?.net_total_sats ?? (liveTotalRevenue - liveTotalCost)
+  // Two APYs over two different bases: routing earns on the liquidity sitting in
+  // channels, the node as a whole earns on everything it holds.
+  const liveOutboundBase = live?.lightning_balance_sats ?? null
+  const liveTotalBase = totalBalanceFromPoint(live ?? null)
+  const liveRoutingApy = calculateDisplayApyPct(liveRoutingNet, liveForwardRevenue, 1, liveOutboundBase)
+  const liveTotalApy = calculateDisplayApyPct(liveNetTotal, liveTotalRevenue, 1, liveTotalBase)
   // The toggle drives the historical totals too, so its visibility cannot depend
   // on the live window alone: on a day with no sale the control would vanish
   // while still silently including past sales in the range below.
@@ -1128,64 +1158,97 @@ export default function Reports() {
           {liveError && <p className="text-sm text-brass">{liveError}</p>}
           {!liveLoading && !liveError && live && (
             <div className="flex flex-1 flex-col gap-4">
-              <div className="grid gap-3 sm:grid-cols-4">
+              {/* Three sections instead of four tiles: what came in, what it cost,
+                  and what was left. The old layout put forwards alone under
+                  "Revenue" and the rest under "Other revenue", which made the
+                  two questions - how much did the node earn, and how much did it
+                  keep - both hard to answer at a glance. */}
+              <div className="grid gap-3 lg:grid-cols-3">
                 <div className="rounded-2xl bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.revenue')}</p>
-                  <p className="text-lg font-semibold text-fog">{formatSats(live.forward_fee_revenue_sats)}</p>
-                </div>
-                <div className="rounded-2xl bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.totalCostWithOnchain')}</p>
-                  <p className="text-lg font-semibold text-fog">{formatSats(liveTotalCostWithOnchain)}</p>
-                  <p className="mt-1 text-xs text-fog/60">
-                    {t('reports.offchainCost')} {formatSats(liveOffchainCost)} | {t('reports.onchainCost')}{' '}
-                    {formatSats(liveOnchainCost)}
+                  <p className="text-xs uppercase tracking-wide" style={{ color: COLORS.net }}>
+                    {t('reports.revenue')}
                   </p>
-                  {/* The toggle lives here because it is a cost line, not a net one. */}
-                  <label className="mt-1 flex items-center gap-2 text-xs text-fog/60">
-                    <input
-                      type="checkbox"
-                      checked={includePaymentCost}
-                      onChange={(event) => setIncludePaymentCost(event.target.checked)}
-                    />
-                    {t('reports.includePaymentCost')}: {formatSats(livePaymentCost)}
-                  </label>
-                </div>
-                {/* Keysend and channel sales share one card: both are income the
-                    node earns without routing, and splitting them into separate
-                    tiles crowded the row for two numbers that are usually small. */}
-                <div className="rounded-2xl bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.otherRevenue')}</p>
-                  <p className="text-lg font-semibold" style={{ color: COLORS.keysend }}>
-                    {formatSats(liveOtherRevenue)}
-                  </p>
-                  <div className="mt-1 space-y-1 text-xs text-fog/60">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={includeKeysend}
-                        onChange={(event) => setIncludeKeysend(event.target.checked)}
-                      />
-                      {t('reports.keysendReceived')}: {formatSats(liveKeysendReceived)}
-                    </label>
+                  <div className="mt-2 space-y-1 text-sm text-fog/70">
+                    <div className="flex justify-between gap-3">
+                      <span>{t('reports.forwards')}</span>
+                      <span className="text-fog">{formatSats(liveForwardRevenue)}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span>{t('reports.keysendReceived')}</span>
+                      <span className="text-fog">{formatSats(liveKeysendReceived)}</span>
+                    </div>
                     {hasSalesData && (
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={includeSales}
-                          onChange={(event) => setIncludeSales(event.target.checked)}
-                        />
-                        {t('reports.salesRevenue')}: {formatSats(liveSalesRevenue)} (
-                        {t('reports.salesCount', { count: live.sales_count ?? 0 })})
-                      </label>
+                      <div className="flex justify-between gap-3">
+                        <span>
+                          {t('reports.salesRevenue')} ({t('reports.salesCount', { count: live.sales_count ?? 0 })})
+                        </span>
+                        <span className="text-fog">{formatSats(liveSalesRevenue)}</span>
+                      </div>
                     )}
                   </div>
+                  <div className="mt-2 flex justify-between gap-3 border-t border-white/10 pt-2 text-sm">
+                    <span className="text-fog/60">{t('reports.total')}</span>
+                    <span className="font-semibold" style={{ color: COLORS.net }}>
+                      {formatSats(liveTotalRevenue)}
+                    </span>
+                  </div>
                 </div>
+
                 <div className="rounded-2xl bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.routingNet')}</p>
-                  <p className="text-lg font-semibold text-fog">{formatSats(live.net_routing_profit_sats)}</p>
-                  <p className="text-xs text-fog/60">
-                    {t('reports.netWithExtras')} {formatSats(liveNetWithExtras)}
+                  <p className="text-xs uppercase tracking-wide" style={{ color: COLORS.netNegative }}>
+                    {t('reports.cost')}
                   </p>
+                  <div className="mt-2 space-y-1 text-sm text-fog/70">
+                    <div className="flex justify-between gap-3">
+                      <span>{t('reports.rebalances')}</span>
+                      <span className="text-fog">{formatSats(liveRebalanceCost)}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span>{t('reports.payments')}</span>
+                      <span className="text-fog">{formatSats(livePaymentCost)}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span>{t('reports.keysendSent')}</span>
+                      <span className="text-fog">{formatSats(liveKeysendSent)}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span>{t('reports.onchainCost')}</span>
+                      <span className="text-fog">{formatSats(liveOnchainCost)}</span>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex justify-between gap-3 border-t border-white/10 pt-2 text-sm">
+                    <span className="text-fog/60">{t('reports.total')}</span>
+                    <span className="font-semibold" style={{ color: COLORS.netNegative }}>
+                      {formatSats(liveTotalCost)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Colour follows the sign across the whole line, so a losing
+                    period reads as one at a glance rather than needing the
+                    number to be parsed first. */}
+                <div className="rounded-2xl bg-white/5 p-4">
+                  <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.net')}</p>
+                  <div className="mt-2 space-y-3 text-sm">
+                    <div style={{ color: liveRoutingNet >= 0 ? COLORS.net : COLORS.netNegative }}>
+                      <div className="flex justify-between gap-3">
+                        <span>{t('reports.routingNet')}</span>
+                        <span className="font-semibold">{formatSats(liveRoutingNet)}</span>
+                      </div>
+                      <p className="text-xs opacity-80">
+                        {t('reports.apy')} {formatApyPercent(locale, liveRoutingApy)} · {t('reports.apyOverOutbound')}
+                      </p>
+                    </div>
+                    <div style={{ color: liveNetTotal >= 0 ? COLORS.net : COLORS.netNegative }}>
+                      <div className="flex justify-between gap-3">
+                        <span>{t('reports.total')}</span>
+                        <span className="font-semibold">{formatSats(liveNetTotal)}</span>
+                      </div>
+                      <p className="text-xs opacity-80">
+                        {t('reports.apy')} {formatApyPercent(locale, liveTotalApy)} · {t('reports.apyOverTotal')}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-4 text-sm text-fog/70">

@@ -12,7 +12,7 @@ import {
 import { getLocale } from '../../i18n'
 import { calculateDisplayApyPct, formatApyPercent, totalBalanceFromPoint } from '../../utils/apy'
 import DashboardTitleLink from './DashboardTitleLink'
-import { formatSats, formatSignedSats, metricOffchainCost, metricTotalCost, metricNetWithKeysend } from './formatters'
+import { formatSats, formatSignedSats, metricOffchainCost, metricTotalCost, metricRoutingNet } from './formatters'
 import MetricTile from './MetricTile'
 import type { LiveResponse, ReportRangeResponse, SummaryResponse } from './types'
 
@@ -42,8 +42,8 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
   const periodSeries = Array.isArray(range?.series) ? range.series : []
   const periodDays = summary?.days ?? periodSeries.length
   const periodNet = summary?.totals
-    ? metricNetWithKeysend(summary.totals)
-    : periodSeries.reduce((sum, item) => sum + metricNetWithKeysend(item), 0)
+    ? metricRoutingNet(summary.totals)
+    : periodSeries.reduce((sum, item) => sum + metricRoutingNet(item), 0)
   const periodRevenue = summary?.totals.forward_fee_revenue_sats
     ?? periodSeries.reduce((sum, item) => sum + (item.forward_fee_revenue_sats ?? 0), 0)
   const periodApy = calculateDisplayApyPct(periodNet, periodRevenue, periodDays, totalBalanceFromPoint(live))
@@ -55,7 +55,7 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
         label: new Date(`${item.date}T00:00:00`).toLocaleDateString(locale, { day: '2-digit', month: 'short' }),
         revenue: item.forward_fee_revenue_sats ?? 0,
         cost: metricTotalCost(item),
-        net: metricNetWithKeysend(item),
+        net: metricRoutingNet(item),
       })),
     [locale, range?.series]
   )
@@ -96,9 +96,9 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
         />
         <MetricTile
           label={t('reports.netWithKeysend')}
-          value={`${formatSignedSats(locale, metricNetWithKeysend(live))} sats`}
+          value={`${formatSignedSats(locale, metricRoutingNet(live))} sats`}
           sublabel={t('dashboard.todayWindow')}
-          tone={metricNetWithKeysend(live) >= 0 ? 'ok' : 'danger'}
+          tone={metricRoutingNet(live) >= 0 ? 'ok' : 'danger'}
         />
         <MetricTile
           label={t('reports.routedVolume')}
@@ -174,7 +174,7 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
           <div className="rounded-2xl border border-white/10 bg-ink/35 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.monthNetTitle')}</p>
             <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
-              <p className="text-lg font-semibold">{formatSignedSats(locale, metricNetWithKeysend(summary?.totals))} sats</p>
+              <p className="text-lg font-semibold">{formatSignedSats(locale, metricRoutingNet(summary?.totals))} sats</p>
               {periodApy !== null ? (
                 <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
                   periodApy < 0

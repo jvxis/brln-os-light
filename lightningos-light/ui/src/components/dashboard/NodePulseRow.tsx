@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
 import { calculateDisplayApyPct, formatApyPercent, totalBalanceFromPoint } from '../../utils/apy'
-import { clamp, formatPercent, formatSats, formatSignedSats, metricNetWithKeysend } from './formatters'
+import { clamp, formatPercent, formatSats, formatSignedSats, metricRoutingNet } from './formatters'
 import MetricTile from './MetricTile'
 import StackedRatioBar from './StackedRatioBar'
 import type { LiveResponse, LndStatus, MovementLiveResponse, ReportRangeResponse, SummaryResponse } from './types'
@@ -26,11 +26,11 @@ export default function NodePulseRow({
 
   const sparklineSource = Array.isArray(range?.series) ? [...range.series].sort((a, b) => a.date.localeCompare(b.date)) : []
   const revenueTrend = sparklineSource.map((item) => ({ value: item.forward_fee_revenue_sats ?? 0 }))
-  const netTrend = sparklineSource.map((item) => ({ value: metricNetWithKeysend(item) }))
+  const netTrend = sparklineSource.map((item) => ({ value: metricRoutingNet(item) }))
   const volumeTrend = sparklineSource.map((item) => ({ value: item.routed_volume_sats ?? 0 }))
   const periodNet = summary?.totals
-    ? metricNetWithKeysend(summary.totals)
-    : sparklineSource.reduce((sum, item) => sum + metricNetWithKeysend(item), 0)
+    ? metricRoutingNet(summary.totals)
+    : sparklineSource.reduce((sum, item) => sum + metricRoutingNet(item), 0)
   const periodRevenue = summary?.totals.forward_fee_revenue_sats
     ?? sparklineSource.reduce((sum, item) => sum + (item.forward_fee_revenue_sats ?? 0), 0)
 
@@ -42,7 +42,9 @@ export default function NodePulseRow({
   const movementProgress = clamp(movementPct)
   const movementTone = movementPct >= 75 ? 'ok' : movementPct >= 50 ? 'warn' : 'danger'
   const monthDays = summary?.days ?? sparklineSource.length
-  const periodApy = calculateDisplayApyPct(periodNet, periodRevenue, monthDays, capitalBase)
+  // Routing earns on the liquidity sitting in channels, not on the on-chain
+  // balance, which is idle as far as forwarding is concerned.
+  const periodApy = calculateDisplayApyPct(periodNet, periodRevenue, monthDays, lightningLiquidity > 0 ? lightningLiquidity : capitalBase)
   const periodTrendDetail = monthDays > 0 ? t('dashboard.monthTrendHint', { count: monthDays }) : undefined
   const netTrendDetail = periodTrendDetail
     ? (
@@ -70,10 +72,10 @@ export default function NodePulseRow({
 
       <MetricTile
         label={t('reports.netWithKeysend')}
-        value={`${formatSignedSats(locale, metricNetWithKeysend(live))} sats`}
+        value={`${formatSignedSats(locale, metricRoutingNet(live))} sats`}
         sublabel={t('dashboard.todayWindow')}
         detail={netTrendDetail}
-        tone={metricNetWithKeysend(live) >= 0 ? 'ok' : 'danger'}
+        tone={metricRoutingNet(live) >= 0 ? 'ok' : 'danger'}
         trend={netTrend}
       />
 

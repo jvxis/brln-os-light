@@ -158,6 +158,10 @@ type ChartDataPoint = {
   netRouting: number
   keysend: number
   sales: number
+  markedRevenue: number
+  markedCost: number
+  keysendSent: number
+  totalRevenue: number
   revenue: number
   rebalanceCost: number
   paymentCost: number
@@ -728,6 +732,12 @@ export default function Reports() {
       netRouting: item.net_routing_profit_sats,
       keysend: item.keysend_received_sats ?? 0,
       sales: item.sales_revenue_sats ?? 0,
+      markedRevenue: item.marked_revenue_sats ?? 0,
+      markedCost: item.marked_cost_sats ?? 0,
+      keysendSent: item.keysend_sent_sats ?? 0,
+      totalRevenue: item.total_revenue_sats
+        ?? ((item.forward_fee_revenue_sats ?? 0) + (item.keysend_received_sats ?? 0)
+            + (item.sales_revenue_sats ?? 0) + (item.marked_revenue_sats ?? 0)),
       revenue: item.forward_fee_revenue_sats,
       rebalanceCost: item.rebalance_fee_cost_sats ?? 0,
       paymentCost: item.payment_fee_cost_sats ?? 0,
@@ -753,6 +763,8 @@ export default function Reports() {
   // switched off (routing net already has it subtracted).
   // Spelled out so the chart never claims to show something it does not: the
   // title used to say "routing + keysend" no matter which toggles were on.
+  // The net column is now revenue minus cost in one bar, so the separate
+  // keysend slice it used to carry is gone.
   const netChartTitle = (() => {
     const parts = [t('reports.netPartRouting')]
     if (includeKeysend) parts.push(t('reports.netPartKeysend'))
@@ -761,11 +773,22 @@ export default function Reports() {
     return includePaymentCost ? base : `${base} · ${t('reports.netPartNoPaymentCost')}`
   })()
 
-  const composeNet = (item: { netRouting: number; keysend: number; sales: number; paymentCost: number }) =>
-    item.netRouting +
-    (includeKeysend ? item.keysend : 0) +
-    (includeSales ? item.sales : 0) +
-    (includePaymentCost ? 0 : item.paymentCost)
+  // The net line is every revenue minus every cost, the same definition the
+  // cards use. It used to be routing plus whatever the toggles let through,
+  // which made the chart and the cards answer different questions.
+  const composeNet = (item: {
+    revenue: number; keysend: number; sales: number; markedRevenue: number
+    rebalanceCost: number; paymentCost: number; keysendSent: number; markedCost: number
+    onchainCost: number
+  }) => {
+    const revenue = item.revenue
+      + (includeKeysend ? item.keysend : 0)
+      + (includeSales ? item.sales : 0)
+      + item.markedRevenue
+    const cost = item.rebalanceCost + item.paymentCost + item.keysendSent + item.markedCost
+      + (includeOnchainCostInCharts ? item.onchainCost : 0)
+    return revenue - cost
+  }
 
   const chartData = useMemo<ChartDataPoint[]>(() => {
     if (rawChartData.length === 0) {
@@ -833,7 +856,7 @@ export default function Reports() {
         date: key,
         label: formatRangeLabel(item.startDate, item.endDate, chartGranularity, showYearInChartLabels)
       }))
-  }, [chartGranularity, locale, rawChartData, showYearInChartLabels, includeKeysend, includeSales, includePaymentCost])
+  }, [chartGranularity, locale, rawChartData, showYearInChartLabels, includeKeysend, includeSales, includePaymentCost, includeOnchainCostInCharts])
 
   const cumulativeCostData = useMemo(() => {
     let cumulativeRevenue = 0
@@ -925,23 +948,38 @@ export default function Reports() {
       : 0
     const keysendValue = includeKeysend ? parseChartNumber(live.keysend_received_sats ?? 0) : 0
     const salesValue = includeSales ? parseChartNumber(live.sales_revenue_sats ?? 0) : 0
-    const netRoutingValue =
-      parseChartNumber(live.net_routing_profit_sats ?? 0) +
-      (includePaymentCost ? 0 : parseChartNumber(live.payment_fee_cost_sats ?? 0))
+    const markedRevenueValue = parseChartNumber(live.marked_revenue_sats ?? 0)
+    const keysendSentValue = parseChartNumber(live.keysend_sent_sats ?? 0)
+    const markedCostValue = parseChartNumber(live.marked_cost_sats ?? 0)
+    const onchainCostValue = includeOnchainCostInCharts ? parseChartNumber(live.onchain_fee_cost_sats ?? 0) : 0
+    // One consolidated revenue bar against the full cost stack, matching the
+    // cards. The net column is revenue minus cost, not routing plus extras.
+    const totalRevenueValue = revenueValue + keysendValue + salesValue + markedRevenueValue
+    const totalCostValue = rebalanceCostValue + paymentCostValue + keysendSentValue + markedCostValue + onchainCostValue
+    const netValue = totalRevenueValue - totalCostValue
+    const empty = {
+      totalRevenue: 0, rebalanceCost: 0, paymentCost: 0, keysendSent: 0, markedCost: 0,
+      onchainCost: 0, netRouting: 0, netRoutingColor: undefined as string | undefined
+    }
     return [
-      { name: t('reports.revenue'), revenue: revenueValue, rebalanceCost: 0, paymentCost: 0, netRouting: 0, keysendInNet: 0, netRoutingColor: undefined },
-      { name: t('reports.cost'), revenue: 0, rebalanceCost: rebalanceCostValue, paymentCost: paymentCostValue, netRouting: 0, keysendInNet: 0, netRoutingColor: undefined },
+      { name: t('reports.revenue'), ...empty, totalRevenue: totalRevenueValue },
+      {
+        name: t('reports.cost'),
+        ...empty,
+        rebalanceCost: rebalanceCostValue,
+        paymentCost: paymentCostValue,
+        keysendSent: keysendSentValue,
+        markedCost: markedCostValue,
+        onchainCost: onchainCostValue
+      },
       {
         name: t('reports.net'),
-        revenue: 0,
-        rebalanceCost: 0,
-        paymentCost: 0,
-        keysendInNet: keysendValue + salesValue,
-        netRouting: netRoutingValue,
-        netRoutingColor: netRoutingValue < 0 ? COLORS.netNegative : COLORS.net
+        ...empty,
+        netRouting: netValue,
+        netRoutingColor: netValue < 0 ? COLORS.netNegative : COLORS.net
       }
     ]
-  }, [live, t, includeKeysend, includeSales, includePaymentCost])
+  }, [live, t, includeKeysend, includeSales, includePaymentCost, includeOnchainCostInCharts])
 
   const balancePoints = useMemo(
     () => chartData
@@ -1039,6 +1077,45 @@ export default function Reports() {
     (live?.net_routing_profit_sats ?? 0) +
     liveOtherRevenue +
     (includePaymentCost ? 0 : livePaymentCost)
+  // Totals and averages share the live card's structure, so the same period reads
+  // the same way whether it is the window on the left or the range on the right.
+  // Only lines with a value are listed.
+  const summarySection = (m: any, apy: number | null) => {
+    const forwards = m?.forward_fee_revenue_sats ?? 0
+    const keysendIn = m?.keysend_received_sats ?? 0
+    const sales = m?.sales_revenue_sats ?? 0
+    const markedIn = m?.marked_revenue_sats ?? 0
+    const rebalances = m?.rebalance_fee_cost_sats ?? 0
+    const payments = m?.payment_fee_cost_sats ?? 0
+    const keysendOut = m?.keysend_sent_sats ?? 0
+    const markedOut = m?.marked_cost_sats ?? 0
+    const onchain = m?.onchain_fee_cost_sats ?? 0
+    const revenue = m?.total_revenue_sats ?? (forwards + keysendIn + sales + markedIn)
+    const cost = m?.total_cost_sats ?? (rebalances + payments + keysendOut + markedOut + onchain)
+    const routing = forwards - rebalances
+    const net = m?.net_total_sats ?? (revenue - cost)
+    return {
+      revenueLines: [
+        { key: 'forwards', label: t('reports.forwards'), value: forwards },
+        { key: 'keysend', label: t('reports.keysendReceived'), value: keysendIn },
+        { key: 'sales', label: t('reports.salesRevenue'), value: sales },
+        { key: 'marked', label: t('reports.markedRevenue'), value: markedIn }
+      ].filter((line) => line.value !== 0),
+      costLines: [
+        { key: 'rebalances', label: t('reports.rebalances'), value: rebalances },
+        { key: 'payments', label: t('reports.payments'), value: payments },
+        { key: 'keysendSent', label: t('reports.keysendSent'), value: keysendOut },
+        { key: 'marked', label: t('reports.markedCost'), value: markedOut },
+        { key: 'onchain', label: t('reports.onchainCost'), value: onchain }
+      ].filter((line) => line.value !== 0),
+      revenue,
+      cost,
+      routing,
+      net,
+      apy
+    }
+  }
+
   const summaryTotalsOffchainCost = summary?.totals.offchain_fee_cost_sats ?? summary?.totals.total_fee_cost_sats ?? ((summary?.totals.rebalance_fee_cost_sats ?? 0) + (summary?.totals.payment_fee_cost_sats ?? 0))
   const summaryTotalsOnchainCost = summary?.totals.onchain_fee_cost_sats ?? 0
   const summaryTotalsCostWithOnchain = summary?.totals.total_fee_cost_with_onchain_sats ?? (summaryTotalsOffchainCost + summaryTotalsOnchainCost)
@@ -1290,15 +1367,19 @@ export default function Reports() {
                       formatter={(value) => formatSats(Number(value))}
                     />
                     <Legend verticalAlign="top" height={24} formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
-                    <Bar dataKey="revenue" stackId="live" name={t('reports.revenue')} fill={COLORS.revenue} radius={[8, 8, 8, 8]} />
+                    <Bar dataKey="totalRevenue" stackId="live" name={t('reports.revenue')} fill={COLORS.revenue} radius={[8, 8, 8, 8]} />
                     <Bar dataKey="rebalanceCost" stackId="live" name={t('reports.rebalances')} fill={COLORS.costRebalance} radius={[8, 8, 8, 8]} />
                     <Bar dataKey="paymentCost" stackId="live" name={t('reports.payments')} fill={COLORS.costPayment} radius={[8, 8, 8, 8]} />
+                    <Bar dataKey="keysendSent" stackId="live" name={t('reports.keysendSent')} fill={COLORS.keysend} radius={[8, 8, 8, 8]} />
+                    <Bar dataKey="markedCost" stackId="live" name={t('reports.markedCost')} fill={COLORS.netNegative} radius={[8, 8, 8, 8]} />
+                    {includeOnchainCostInCharts && (
+                      <Bar dataKey="onchainCost" stackId="live" name={t('reports.onchainCost')} fill={COLORS.onchain} radius={[8, 8, 8, 8]} />
+                    )}
                     <Bar dataKey="netRouting" stackId="live" name={t('reports.routingNet')} fill={COLORS.net} radius={[8, 8, 8, 8]}>
                       {liveChartData.map((entry) => (
                         <Cell key={entry.name} fill={entry.netRoutingColor ?? COLORS.net} />
                       ))}
                     </Bar>
-                    <Bar dataKey="keysendInNet" stackId="live" name={t('reports.keysendReceived')} fill={COLORS.keysend} radius={[8, 8, 8, 8]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1387,61 +1468,65 @@ export default function Reports() {
           {seriesError && <p className="text-sm text-brass">{seriesError}</p>}
           {!seriesLoading && !seriesError && summary && (
             <div className="space-y-3 text-sm text-fog/70">
-              <div className="rounded-2xl bg-white/5 px-4 py-3">
-                <p className="text-xs uppercase tracking-wide text-fog/50">{t('reports.totals')}</p>
-                <p className="text-fog">{t('reports.revenue')} {formatSats(summary.totals.forward_fee_revenue_sats)}</p>
-                <p className="text-fog">{t('reports.offchainCost')} {formatSats(summaryTotalsOffchainCost)}</p>
-                <p className="text-fog">{t('reports.onchainCost')} {formatSats(summaryTotalsOnchainCost)}</p>
-                <p className="text-fog">{t('reports.totalCostWithOnchain')} {formatSats(summaryTotalsCostWithOnchain)}</p>
-                <p className="text-fog/80">{t('reports.rebalances')} {formatSats(summary.totals.rebalance_fee_cost_sats ?? 0)}</p>
-                <p className="text-fog/80">{t('reports.payments')} {formatSats(summary.totals.payment_fee_cost_sats ?? 0)}</p>
-                <p style={{ color: COLORS.keysend }}>{t('reports.keysendReceived')} {formatSats(summaryTotalsKeysend)}</p>
-                {summaryTotalsSales > 0 && (
-                  <p className="text-emerald-300">
-                    {t('reports.salesRevenue')} {formatSats(summaryTotalsSales)}
-                    <span className="ml-2 text-xs text-fog/50">
-                      {t('reports.salesCount', { count: summary.totals.sales_count ?? 0 })}
-                    </span>
+              {[
+                { key: 'totals', title: t('reports.totals'), data: summarySection(summary.totals, summaryApy) },
+                { key: 'averages', title: t('reports.averagesPerDay'), data: summarySection(summary.averages, null) }
+              ].map(({ key, title, data }) => (
+                <div key={key} className="rounded-2xl bg-white/5 px-4 py-3">
+                  <p className="text-xs uppercase tracking-wide text-fog/50">{title}</p>
+
+                  <p className="mt-2 text-xs uppercase tracking-wide" style={{ color: COLORS.net }}>
+                    {t('reports.revenue')}
                   </p>
-                )}
-                <p className="text-fog">{t('reports.routingNet')} {formatSats(summary.totals.net_routing_profit_sats)}</p>
-                <p className="text-fog/80">
-                  {t('reports.netWithExtras')} {formatSats(summaryTotalsNetWithKeysend)}
-                  {summaryApy !== null ? (
-                    <span className={`ml-2 whitespace-nowrap ${summaryApy < 0 ? 'text-rose-400' : 'text-emerald-300'}`}>
-                      {t('reports.apy')} {formatApyPercent(locale, summaryApy)}
-                    </span>
-                  ) : null}
-                </p>
-                <p className={summaryTotalsNetWithOnchain < 0 ? 'text-rose-400' : 'text-fog/80'}>
-                  {t('reports.netWithOnchain')} {formatSats(summaryTotalsNetWithOnchain)}
-                  {summaryOnchainApy !== null ? (
-                    <span className={`ml-2 whitespace-nowrap ${summaryOnchainApy < 0 ? 'text-rose-400' : 'text-emerald-300'}`}>
-                      {t('reports.apy')} {formatApyPercent(locale, summaryOnchainApy)}
-                    </span>
-                  ) : null}
-                </p>
-              </div>
-              <div className="rounded-2xl bg-white/5 px-4 py-3">
-                <p className="text-xs uppercase tracking-wide text-fog/50">{t('reports.averagesPerDay')}</p>
-                <p className="text-fog">{t('reports.revenue')} {formatSats(summary.averages.forward_fee_revenue_sats)}</p>
-                <p className="text-fog">{t('reports.offchainCost')} {formatSats(summaryAveragesOffchainCost)}</p>
-                <p className="text-fog">{t('reports.onchainCost')} {formatSats(summaryAveragesOnchainCost)}</p>
-                <p className="text-fog">{t('reports.totalCostWithOnchain')} {formatSats(summaryAveragesCostWithOnchain)}</p>
-                <p className="text-fog/80">{t('reports.rebalances')} {formatSats(summary.averages.rebalance_fee_cost_sats ?? 0)}</p>
-                <p className="text-fog/80">{t('reports.payments')} {formatSats(summary.averages.payment_fee_cost_sats ?? 0)}</p>
-                <p style={{ color: COLORS.keysend }}>{t('reports.keysendReceived')} {formatSats(summary.averages.keysend_received_sats ?? 0)}</p>
-                {(summary.averages.sales_revenue_sats ?? 0) > 0 && (
-                  <p className="text-emerald-300">
-                    {t('reports.salesRevenue')} {formatSats(summary.averages.sales_revenue_sats ?? 0)}
+                  {data.revenueLines.map((line) => (
+                    <p key={line.key} className="flex justify-between gap-3 text-fog/70">
+                      <span>{line.label}</span>
+                      <span className="text-fog">{formatSats(line.value)}</span>
+                    </p>
+                  ))}
+                  <p className="flex justify-between gap-3 border-t border-white/10 pt-1">
+                    <span className="text-fog/60">{t('reports.total')}</span>
+                    <span className="font-semibold" style={{ color: COLORS.net }}>{formatSats(data.revenue)}</span>
                   </p>
-                )}
-                <p className="text-fog">{t('reports.routingNet')} {formatSats(summary.averages.net_routing_profit_sats)}</p>
-                <p className="text-fog/80">{t('reports.netWithExtras')} {formatSats(summaryAveragesNetWithKeysend)}</p>
-                <p className={summaryAveragesNetWithOnchain < 0 ? 'text-rose-400' : 'text-fog/80'}>
-                  {t('reports.netWithOnchain')} {formatSats(summaryAveragesNetWithOnchain)}
-                </p>
-              </div>
+
+                  <p className="mt-3 text-xs uppercase tracking-wide" style={{ color: COLORS.netNegative }}>
+                    {t('reports.cost')}
+                  </p>
+                  {data.costLines.map((line) => (
+                    <p key={line.key} className="flex justify-between gap-3 text-fog/70">
+                      <span>{line.label}</span>
+                      <span className="text-fog">{formatSats(line.value)}</span>
+                    </p>
+                  ))}
+                  <p className="flex justify-between gap-3 border-t border-white/10 pt-1">
+                    <span className="text-fog/60">{t('reports.total')}</span>
+                    <span className="font-semibold" style={{ color: COLORS.netNegative }}>{formatSats(data.cost)}</span>
+                  </p>
+
+                  <p className="mt-3 text-xs uppercase tracking-wide text-fog/50">{t('reports.net')}</p>
+                  <p
+                    className="flex justify-between gap-3"
+                    style={{ color: data.routing >= 0 ? COLORS.net : COLORS.netNegative }}
+                  >
+                    <span>{t('reports.routingNet')}</span>
+                    <span className="font-semibold">{formatSats(data.routing)}</span>
+                  </p>
+                  <p
+                    className="flex justify-between gap-3"
+                    style={{ color: data.net >= 0 ? COLORS.net : COLORS.netNegative }}
+                  >
+                    <span>
+                      {t('reports.total')}
+                      {data.apy !== null ? (
+                        <span className="ml-2 text-xs opacity-80">
+                          {t('reports.apy')} {formatApyPercent(locale, data.apy)}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="font-semibold">{formatSats(data.net)}</span>
+                  </p>
+                </div>
+              ))}
               <div className="rounded-2xl bg-white/5 px-4 py-3">
                 <p className="text-xs uppercase tracking-wide text-fog/50">{t('reports.activity')}</p>
                 <p className="text-fog">{t('reports.forwards')} {formatter.format(summary.totals.forward_count)}</p>
@@ -1627,9 +1712,14 @@ export default function Reports() {
                     formatter={(value) => formatSats(Number(value))}
                     labelFormatter={(value) => String(value)}
                   />
-                  <Bar dataKey="revenue" stackId="revenue" name={t('reports.revenue')} fill={COLORS.revenue} fillOpacity={0.72} radius={[6, 6, 0, 0]} />
+                  {/* Revenue is one consolidated bar - forwards, keysend, sales
+                      and marked payments - against the full cost stack, so the
+                      two columns are comparable at a glance. */}
+                  <Bar dataKey="totalRevenue" stackId="revenue" name={t('reports.revenue')} fill={COLORS.revenue} fillOpacity={0.72} radius={[6, 6, 0, 0]} />
                   <Bar dataKey="rebalanceCost" stackId="cost" name={t('reports.rebalances')} fill={COLORS.costRebalance} fillOpacity={0.7} />
-                  <Bar dataKey="paymentCost" stackId="cost" name={t('reports.payments')} fill={COLORS.costPayment} fillOpacity={0.7} radius={includeOnchainCostInCharts ? [0, 0, 0, 0] : [6, 6, 0, 0]} />
+                  <Bar dataKey="paymentCost" stackId="cost" name={t('reports.payments')} fill={COLORS.costPayment} fillOpacity={0.7} />
+                  <Bar dataKey="keysendSent" stackId="cost" name={t('reports.keysendSent')} fill={COLORS.keysend} fillOpacity={0.7} />
+                  <Bar dataKey="markedCost" stackId="cost" name={t('reports.markedCost')} fill={COLORS.netNegative} fillOpacity={0.7} radius={includeOnchainCostInCharts ? [0, 0, 0, 0] : [6, 6, 0, 0]} />
                   {includeOnchainCostInCharts && (
                     <Bar dataKey="onchainCost" stackId="cost" name={t('reports.onchainCost')} fill={COLORS.onchain} fillOpacity={0.7} radius={[6, 6, 0, 0]} />
                   )}

@@ -69,6 +69,16 @@ const (
 	magmaApprovalGrace  = 80 * time.Minute
 )
 
+// magmaWindowRemaining is how long Amboss is still expected to wait. It floors at
+// zero because a pass running after the window already closed would otherwise
+// announce a negative number of minutes left.
+func magmaWindowRemaining(pendingFor time.Duration) time.Duration {
+	if remaining := magmaApprovalWindow - pendingFor; remaining > 0 {
+		return remaining
+	}
+	return 0
+}
+
 // magmaDecision is the outcome of evaluating one order.
 type magmaDecision struct {
 	Accept bool
@@ -108,7 +118,7 @@ func evaluateMagmaOrder(policy MagmaPolicy, in magmaPolicyInputs) magmaDecision 
 	if !decision.Accept && !decision.Reject && in.PendingFor >= magmaApprovalGrace {
 		return magmaDecision{Reject: true, Reason: fmt.Sprintf(
 			"%s - refusing explicitly, the approval window closes in about %d minutes",
-			decision.Reason, int((magmaApprovalWindow-in.PendingFor)/time.Minute))}
+			decision.Reason, int(magmaWindowRemaining(in.PendingFor)/time.Minute))}
 	}
 	return decision
 }
@@ -410,6 +420,13 @@ order by coalesce(order_created_at, first_seen_at) asc
 			if _, err := s.acceptOrderLocked(ctx, orderID); err != nil {
 				s.appendEvent(ctx, orderID, "auto_error", "warning",
 					fmt.Sprintf("auto accept failed: %v", err), nil)
+				// Retrying is right while there is time: an invoice can be refused
+				// for reasons that pass, on Amboss's side as often as ours. Past the
+				// grace period it stops being a retry and becomes waiting for the
+				// window to shut. The sale is lost either way by then, so take the
+				// one outcome still available - silence costs the same sale AND a
+				// SELLER_FAILED_TO_REACT that stays on the account.
+				s.rejectAfterFailedAccept(ctx, order, inputs.PendingFor, policy, err)
 				return
 			}
 			s.appendEvent(ctx, orderID, "auto_accepted", "info",
@@ -483,6 +500,67 @@ where o.magma_status = 'WAITING_FOR_SELLER_APPROVAL'
 
 // recordDeferral logs a wait only when the reason changed. A 90s poll would
 // otherwise write the same "waiting for funds" line forever.
+// magmaAcceptFailureVerdict is what a failed accept means right now. The
+// judgement is separated from the acting so it can be tested without a node, a
+// database or Amboss - the same reason evaluateMagmaOrder is a pure function.
+type magmaAcceptFailureVerdict int
+
+const (
+	// Keep trying: there is still time for the blocker to clear.
+	magmaAcceptRetry magmaAcceptFailureVerdict = iota
+	// Out of time and auto-rejection is on: refuse explicitly.
+	magmaAcceptRefuse
+	// Out of time but the operator turned auto-rejection off. Nothing to do but
+	// say clearly that a seller failure is now coming.
+	magmaAcceptWarnOnly
+)
+
+// classifyMagmaAcceptFailure decides between retrying and refusing. A zero
+// pendingFor means the order's age is unknown, and that always retries: refusing
+// on a guessed age would burn a sale that had only just arrived.
+func classifyMagmaAcceptFailure(pendingFor time.Duration, autoReject bool) magmaAcceptFailureVerdict {
+	if pendingFor < magmaApprovalGrace {
+		return magmaAcceptRetry
+	}
+	if !autoReject {
+		return magmaAcceptWarnOnly
+	}
+	return magmaAcceptRefuse
+}
+
+// rejectAfterFailedAccept turns a run of failed accepts into an explicit refusal
+// once the approval window is nearly spent. It does nothing while there is still
+// time to succeed, and nothing when the order's age is unknown - refusing on a
+// guessed age would burn a sale that had only just arrived.
+func (s *MagmaService) rejectAfterFailedAccept(
+	ctx context.Context, order MagmaOrder, pendingFor time.Duration,
+	policy MagmaPolicy, cause error,
+) {
+	verdict := classifyMagmaAcceptFailure(pendingFor, policy.AutoRejectDeclined)
+	if verdict == magmaAcceptRetry {
+		return
+	}
+	reason := fmt.Sprintf(
+		"accepting keeps failing (%v) and the approval window closes in about %d minutes",
+		cause, int(magmaWindowRemaining(pendingFor)/time.Minute))
+	if verdict == magmaAcceptWarnOnly {
+		// Auto-rejection is off, so the order is left to lapse. Say plainly that a
+		// failure record is coming instead of filing it as a routine retry, which
+		// is what kept the last one invisible until it was too late.
+		s.recordDeferral(ctx, order.ID, reason+
+			", but auto-reject is off, so Amboss will record a seller failure")
+		return
+	}
+	if _, err := s.rejectOrderLocked(ctx, order.ID); err != nil {
+		s.appendEvent(ctx, order.ID, "auto_error", "warning",
+			fmt.Sprintf("auto reject after a failed accept also failed: %v", err), nil)
+		return
+	}
+	s.appendEvent(ctx, order.ID, "auto_rejected", "info", "auto mode rejected: "+reason, nil)
+	s.notifyTelegram(ctx, order, fmt.Sprintf(
+		"Order %s rejected automatically: %s", order.ID, reason))
+}
+
 func (s *MagmaService) recordDeferral(ctx context.Context, orderID, reason string) {
 	var lastReason string
 	if err := s.db.QueryRow(ctx,

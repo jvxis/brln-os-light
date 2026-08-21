@@ -194,12 +194,13 @@ const chartGranularityOptions: ChartGranularity[] = ['day', 'week', 'month']
 
 const COLORS = {
   net: '#34d399',
-  // Revenue series are tones of one blue and cost series tones of one warm
-  // range, so a stacked bar says revenue-or-cost by colour before the legend
-  // is read. Keysend sent was lime green, which read as revenue.
-  keysend: '#7dd3fc',
-  revenueSales: '#0ea5e9',
-  revenueMarked: '#22d3ee',
+  // Revenue series are cool and cost series warm, so a stacked bar says
+  // revenue-or-cost by colour before the legend is read. The four cool tones are
+  // spread across the range rather than clustered - four neighbouring skies were
+  // indistinguishable at the size that has to work, a legend swatch.
+  keysend: '#a5f3fc',
+  revenueSales: '#0369a1',
+  revenueMarked: '#818cf8',
   costKeysendSent: '#fb923c',
   costOnchain: '#c2410c',
   netNegative: '#f87171',
@@ -1384,7 +1385,7 @@ export default function Reports() {
                       itemStyle={tooltipItemStyle}
                       formatter={(value) => formatSats(Number(value))}
                     />
-                    <Legend verticalAlign="top" height={24} formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
+                    <Legend verticalAlign="top" formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
                     {/* Revenue is stacked the way cost is, so every source is
                         visible and named instead of vanishing into one bar. */}
                     <Bar dataKey="forwardRevenue" stackId="live" name={t('reports.forwards')} fill={COLORS.revenue} radius={[8, 8, 8, 8]} />
@@ -1403,8 +1404,10 @@ export default function Reports() {
                       <Bar dataKey="onchainCost" stackId="live" name={t('reports.onchainCost')} fill={COLORS.costOnchain} radius={[8, 8, 8, 8]} />
                     )}
                     {/* Carries revenue minus cost, so it is the node total - the
-                        key name is historical and the label must not repeat it. */}
-                    <Bar dataKey="netRouting" stackId="live" name={t('reports.netTotalLabel')} fill={COLORS.net} radius={[8, 8, 8, 8]}>
+                        key name is historical. No legend entry: the axis already
+                        labels the column, and a fixed green swatch would contradict
+                        the bar itself, which turns red when the total is negative. */}
+                    <Bar dataKey="netRouting" stackId="live" name={t('reports.netTotalLabel')} legendType="none" fill={COLORS.net} radius={[8, 8, 8, 8]}>
                       {liveChartData.map((entry) => (
                         <Cell key={entry.name} fill={entry.netRoutingColor ?? COLORS.net} />
                       ))}
@@ -1735,7 +1738,7 @@ export default function Reports() {
                   <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                   <XAxis dataKey="label" tick={{ fill: '#cbd5f5', fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: '#cbd5f5', fontSize: 11 }} tickFormatter={formatCompact} axisLine={false} tickLine={false} />
-                  <Legend verticalAlign="top" height={24} formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
+                  <Legend verticalAlign="top" formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
                   {/* The cost stack has five series and most days carry only one
                       or two. Listing the empty ones turns the tooltip into a
                       column of zeroes that hides the number being hovered. */}

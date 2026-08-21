@@ -105,3 +105,25 @@ func TestMagmaBuyerDialRetriesUntilBudgetSpent(t *testing.T) {
 		t.Fatalf("the error should say how hard we tried, got %q", err)
 	}
 }
+
+
+// The check informs, it does not decide. Order 109a4760 was bought by a node we
+// could not see connected, the accept was refused 75 times with a routing error,
+// and the buyer paid in full and took the channel. Reachability turned out not to
+// predict fulfilment, so a failed check must never be able to refuse an order -
+// only to record what it saw.
+func TestMagmaBuyerReachabilityIsAdvisoryNotAGate(t *testing.T) {
+	if magmaReachBudget > 30*time.Second {
+		t.Fatalf("an advisory check must not spend a poll cycle, budget is %s", magmaReachBudget)
+	}
+	addr := "abc.onion:9735"
+	lnd := &magmaReachLND{dialErrs: map[string]error{addr: errors.New("dial timeout")}}
+	s := &MagmaService{lnd: lnd}
+
+	// The unreachable result is reported, and reporting is all it may do: the
+	// caller records an event and carries on to build the invoice.
+	err := s.dialBuyer(context.Background(), "pub", []string{addr}, 120*time.Millisecond)
+	if err == nil {
+		t.Fatal("an unreachable buyer must still be reported so it can be recorded")
+	}
+}

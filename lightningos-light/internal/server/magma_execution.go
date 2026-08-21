@@ -300,12 +300,16 @@ func (s *MagmaService) acceptOrderLocked(ctx context.Context, orderID string) (M
 	}
 
 	// Amboss's own seller flow makes this step 2 of 3, before the invoice is
-	// submitted: "Make sure you can connect to this node". A buyer we cannot
-	// reach is a buyer whose channel we cannot open, so accepting promises a
-	// delivery we cannot make - and the reputation hit for approving and not
-	// opening is worse than the refusal.
+	// submitted: "Make sure you can connect to this node". It is recorded rather
+	// than enforced, and that distinction was paid for: order 109a4760 was bought
+	// by a node with one channel that we could not see connected, the accept was
+	// refused 75 times with a routing error, and the buyer then paid in full. A
+	// gate here would have refused a sale that completed. Unreachable is worth
+	// knowing - the channel open does need the peer - but it does not predict
+	// whether the order can be fulfilled, so it must not decide.
 	if err := s.reachBuyer(ctx, token, live.BuyerPubkey); err != nil {
-		return MagmaOrder{}, err
+		s.appendEvent(ctx, record.OrderID, "buyer_unreachable", "info", fmt.Sprintf(
+			"could not connect to the buyer before accepting: %v", err), nil)
 	}
 
 	// Balance is verified here, not at open time. Accepting is a promise: once the
@@ -726,10 +730,10 @@ func (s *MagmaService) existingChannelFor(ctx context.Context, order MagmaOrder)
 	return "", nil
 }
 
-// magmaReachBudget bounds one reachability attempt. It is deliberately short:
-// the real persistence comes from the poll loop, which repeats this every cycle
-// for the whole approval window, so a single pass never has to be exhaustive.
-const magmaReachBudget = 60 * time.Second
+// magmaReachBudget bounds one reachability attempt. It is short because the
+// result is advisory: nothing is refused on it, so it must not spend a poll
+// cycle being thorough. The poll loop repeats the check every cycle anyway.
+const magmaReachBudget = 25 * time.Second
 
 // connectToBuyer is best effort, exactly as in the production bot: the peer may
 // already be connected, and openchannel can succeed regardless.

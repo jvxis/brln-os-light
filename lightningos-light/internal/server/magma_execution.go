@@ -814,8 +814,8 @@ func (s *MagmaService) reconcileExecution(ctx context.Context, token string) {
 	rows, err := s.db.Query(ctx, `
 select order_id, local_state, funding_txid, channel_point, buyer_pubkey, size_sat
 from magma_orders
-where local_state in ($1,$2,$3)
-`, magmaStateOpening, magmaStateOpenBroadcast, magmaStateConfirming)
+where local_state in ($1,$2,$3,$4)
+`, magmaStateOpening, magmaStateOpenBroadcast, magmaStateConfirming, magmaStateAccepting)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Printf("magma: reconcile query failed: %v", err)
@@ -843,6 +843,33 @@ where local_state in ($1,$2,$3)
 
 	for _, row := range pendingRows {
 		switch row.state {
+		// `accepting` is written before the invoice goes to Amboss, so an order
+		// stranded there was interrupted mid-accept - by a restart, or by a context
+		// that expired before failOrder could put the state back. Nothing else
+		// reads that state, and autoEvaluatePending only queries `observed`, so
+		// without this the order silently leaves the automation for good.
+		case magmaStateAccepting:
+			// Whether the accept landed is Amboss's to answer, never ours to guess:
+			// resetting a successful accept would re-invoice an order that is already
+			// waiting to be funded.
+			live, err := s.liveOrder(ctx, token, row.orderID)
+			if err != nil {
+				continue
+			}
+			switch live.Status {
+			case "WAITING_FOR_SELLER_APPROVAL":
+				// Amboss never got it. Back to observed so the loop can retry, and
+				// so the approval deadline can refuse it if time runs out.
+				_ = s.setLocalState(ctx, row.orderID, magmaStateObserved, "")
+				s.appendEvent(ctx, row.orderID, "recovered", "info",
+					"accept was interrupted and Amboss never received it; back in the queue", nil)
+			case "WAITING_FOR_CHANNEL_OPEN":
+				// It landed after all. Adopt the real state instead of re-accepting.
+				_ = s.setLocalState(ctx, row.orderID, magmaStateAccepted, "")
+				s.appendEvent(ctx, row.orderID, "recovered", "info",
+					"accept had in fact reached Amboss; waiting for the buyer to pay", nil)
+			}
+
 		case magmaStateConfirming:
 			if row.channelPoint == "" {
 				continue

@@ -86,6 +86,28 @@ func TestBuildUpsertDaily(t *testing.T) {
 	if len(args) != placeholders {
 		t.Fatalf("insert lists %d placeholders but passes %d args", placeholders, len(args))
 	}
+	insertPrefix := "insert into reports_daily ("
+	columnsStart := strings.Index(query, insertPrefix)
+	valuesStart := strings.Index(query, ") values (")
+	if columnsStart < 0 || valuesStart < 0 || valuesStart <= columnsStart {
+		t.Fatal("expected reports_daily insert column list")
+	}
+	columnsRaw := query[columnsStart+len(insertPrefix) : valuesStart]
+	columns := strings.Split(columnsRaw, ",")
+	seenColumns := make(map[string]struct{}, len(columns))
+	for _, rawColumn := range columns {
+		column := strings.TrimSpace(rawColumn)
+		if column == "" {
+			t.Fatal("insert contains an empty column")
+		}
+		if _, exists := seenColumns[column]; exists {
+			t.Fatalf("insert contains duplicate column %q", column)
+		}
+		seenColumns[column] = struct{}{}
+	}
+	if len(columns) != len(args) {
+		t.Fatalf("insert lists %d columns but passes %d args", len(columns), len(args))
+	}
 	if !strings.Contains(query, "keysend_sent_sats = excluded.keysend_sent_sats") {
 		t.Fatalf("expected keysend sent on upsert")
 	}

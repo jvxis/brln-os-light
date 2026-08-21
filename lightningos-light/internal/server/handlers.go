@@ -4427,14 +4427,35 @@ func (s *Server) handleWalletActivity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Some rows are already in the report without anyone deciding anything, and
+	// classifying those by hand would add the same sats a second time. The rule
+	// lives here rather than in the UI so it stays next to what actually counts
+	// them: a Magma sale invoice is revenue via magma_orders, and a keysend is
+	// revenue or cost on its own. The value names the reason so the UI can say
+	// why the row is not classifiable.
+	autoCounted := map[string]string{}
+	for _, item := range pageItems {
+		hash := strings.TrimSpace(item.PaymentHash)
+		if hash == "" {
+			continue
+		}
+		switch {
+		case magmaOrderIDFromMemo(item.Memo) != "":
+			autoCounted[hash] = "magma_sale"
+		case item.Keysend:
+			autoCounted[hash] = "keysend"
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"range":       rangeKey,
-		"offset":      offset,
-		"limit":       limit,
-		"has_more":    hasMore,
-		"next_offset": endIndex,
-		"items":       pageItems,
-		"marks":       marks,
+		"range":        rangeKey,
+		"offset":       offset,
+		"limit":        limit,
+		"has_more":     hasMore,
+		"next_offset":  endIndex,
+		"items":        pageItems,
+		"marks":        marks,
+		"auto_counted": autoCounted,
 	})
 }
 

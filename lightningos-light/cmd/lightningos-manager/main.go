@@ -304,10 +304,10 @@ func runReportsBackfill(args []string) {
 	}
 	// A dry run answers one question before anything is overwritten: does the node
 	// still hold the data the stored rows were built from? It compares the inputs
-	// - forwards, rebalances, payments, on-chain - rather than the net, because a
-	// changed formula moves the net on its own. A component that recomputes lower
-	// than what is stored means LND has pruned that period, and recalculating it
-	// would replace a real number with a smaller, wrong one.
+	// - forwards, rebalances, payments, keysends, on-chain - rather than the net,
+	// because a changed formula moves the net on its own. A component that
+	// recomputes lower than what is stored means LND has pruned that period, and
+	// recalculating it would replace a real number with a smaller, wrong one.
 	if *dryRun {
 		stored, err := reports.FetchRange(context.Background(), pool, startDate, endDate)
 		if err != nil {
@@ -341,16 +341,7 @@ func runReportsBackfill(args []string) {
 				logger.Printf("%-12s %-10s %12s %12s %s", label, "-", "(no row)", "-", "nothing stored yet")
 				continue
 			}
-			for _, c := range []struct {
-				name             string
-				stored, computed int64
-			}{
-				{"forwards", old.Metrics.ForwardFeeRevenueSat, fresh.ForwardFeeRevenueSat},
-				{"rebalances", old.Metrics.RebalanceFeeCostSat, fresh.RebalanceFeeCostSat},
-				{"payments", old.Metrics.PaymentFeeCostSat, fresh.PaymentFeeCostSat},
-				{"onchain", old.Metrics.OnchainFeeCostSat, fresh.OnchainFeeCostSat},
-				{"keysend", old.Metrics.KeysendReceivedSat, fresh.KeysendReceivedSat},
-			} {
+			for _, c := range reportsBackfillDryRunComponents(old.Metrics, fresh) {
 				verdict := reports.CompareStoredComponent(c.stored, c.computed)
 				if !verdict.SafeToRecalculate() {
 					suspect++
@@ -390,6 +381,22 @@ func runReportsBackfill(args []string) {
 			row.Metrics.NetRoutingProfitSat,
 			row.Metrics.NetTotalSat,
 		)
+	}
+}
+
+type reportsBackfillDryRunComponent struct {
+	name             string
+	stored, computed int64
+}
+
+func reportsBackfillDryRunComponents(stored, computed reports.Metrics) []reportsBackfillDryRunComponent {
+	return []reportsBackfillDryRunComponent{
+		{"forwards", stored.ForwardFeeRevenueSat, computed.ForwardFeeRevenueSat},
+		{"rebalances", stored.RebalanceFeeCostSat, computed.RebalanceFeeCostSat},
+		{"payments", stored.PaymentFeeCostSat, computed.PaymentFeeCostSat},
+		{"onchain", stored.OnchainFeeCostSat, computed.OnchainFeeCostSat},
+		{"keysend", stored.KeysendReceivedSat, computed.KeysendReceivedSat},
+		{"keysend-sent", stored.KeysendSentSat, computed.KeysendSentSat},
 	}
 }
 

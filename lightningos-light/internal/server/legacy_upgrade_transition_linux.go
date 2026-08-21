@@ -14,7 +14,6 @@ import (
 	"syscall"
 
 	"lightningos-light/internal/config"
-	"lightningos-light/internal/system"
 )
 
 const (
@@ -111,9 +110,7 @@ func startLegacyPrivilegeTransition(ctx context.Context, cfg *config.Config, inf
 }
 
 func legacyTransitionUnitRunning(ctx context.Context) bool {
-	out, _ := system.RunCommand(ctx, "systemctl", "is-active", legacyTransitionUnitName)
-	state := strings.TrimSpace(out)
-	return state == "active" || state == "activating"
+	return transientSystemdUnitRunning(ctx, legacyTransitionUnitName)
 }
 
 func stageLegacyTransitionHelper(content, digest string) (string, error) {

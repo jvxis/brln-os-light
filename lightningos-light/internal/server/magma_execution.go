@@ -327,6 +327,17 @@ update magma_orders set invoice_payment_request=$2, invoice_hash=$3, updated_at=
 		// The invoice stays on the node unpaid and expires on its own; going back
 		// to observed lets the operator retry cleanly.
 		s.failOrder(ctx, record.OrderID, magmaStateObserved, fmt.Sprintf("Amboss rejected the invoice: %v", err))
+		// The plain sentence goes to the operator; the identifying detail goes to
+		// the record, along with what we actually sent. Order 109a4760 produced
+		// the same sentence 75 times and never once said which of the resolver's
+		// failure modes it was, or whether our invoice was the one at fault.
+		s.appendEvent(ctx, record.OrderID, "amboss_error", "info",
+			"Amboss error detail: "+magmaErrorDiagnostic(err),
+			map[string]any{
+				"invoice_sat":  live.RevenueSat,
+				"expiry_sec":   magmaInvoiceExpirySeconds,
+				"invoice_hash": invoice.PaymentHash,
+			})
 		return MagmaOrder{}, err
 	}
 
@@ -757,6 +768,16 @@ func (s *MagmaService) buyerAddresses(ctx context.Context, token, pubkey string)
 		}
 	}
 	return addresses
+}
+
+// magmaErrorDiagnostic returns the fullest description an error carries. Amboss
+// errors know their own code and path; anything else is reported as it is.
+func magmaErrorDiagnostic(err error) string {
+	var apiErr *magmaAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Diagnostic()
+	}
+	return err.Error()
 }
 
 func (s *MagmaService) failOrder(ctx context.Context, orderID, state, message string) {

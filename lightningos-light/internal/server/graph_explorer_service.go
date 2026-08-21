@@ -259,6 +259,7 @@ alter table graph_close_events add column if not exists classified_at timestampt
 alter table graph_close_events add column if not exists classification_error text;
 alter table graph_close_events add column if not exists classification_attempts integer not null default 0;
 create index if not exists graph_close_events_chan_idx on graph_close_events (chan_id, observed_at desc);
+create index if not exists graph_close_events_chan_point_idx on graph_close_events (chan_point) where chan_point is not null;
 create index if not exists graph_close_events_pending_idx on graph_close_events (classified_at, classification_attempts, observed_at desc);
 create index if not exists graph_close_events_close_txid_idx on graph_close_events (close_txid);
 `)
@@ -831,11 +832,45 @@ func upsertGraphChannelsSnapshot(ctx context.Context, tx pgx.Tx, channels []lndc
 	if len(channels) == 0 {
 		return nil
 	}
-	const query = `
+	const createStageQuery = `
+create temporary table graph_channels_snapshot_stage (
+  chan_id bigint primary key,
+  chan_point text,
+  node1_pubkey text,
+  node2_pubkey text,
+  capacity_sat bigint not null,
+  open_block_height integer not null
+) on commit drop
+`
+	if _, err := tx.Exec(ctx, createStageQuery); err != nil {
+		return fmt.Errorf("create graph channel snapshot stage: %w", err)
+	}
+
+	rows := graphChannelSnapshotRows(channels)
+	if len(rows) == 0 {
+		return nil
+	}
+	inserted, err := tx.CopyFrom(
+		ctx,
+		pgx.Identifier{"graph_channels_snapshot_stage"},
+		[]string{"chan_id", "chan_point", "node1_pubkey", "node2_pubkey", "capacity_sat", "open_block_height"},
+		pgx.CopyFromRows(rows),
+	)
+	if err != nil {
+		return fmt.Errorf("stage graph channel snapshot: %w", err)
+	}
+	if inserted != int64(len(rows)) {
+		return fmt.Errorf("stage graph channel snapshot: copied %d of %d rows", inserted, len(rows))
+	}
+
+	const upsertQuery = `
 insert into graph_channels (
   chan_id, chan_point, node1_pubkey, node2_pubkey, capacity_sat, open_block_height,
   status, first_seen_at, last_seen_at, last_indexed_at
-) values ($1,$2,$3,$4,$5,$6,'open',$7,$7,$7)
+) select
+  chan_id, chan_point, node1_pubkey, node2_pubkey, capacity_sat, open_block_height,
+  'open', $1, $1, $1
+from graph_channels_snapshot_stage
 on conflict (chan_id) do update set
   chan_point = excluded.chan_point,
   node1_pubkey = excluded.node1_pubkey,
@@ -844,60 +879,68 @@ on conflict (chan_id) do update set
   open_block_height = excluded.open_block_height,
   last_seen_at = excluded.last_seen_at,
   last_indexed_at = excluded.last_indexed_at,
-  status = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.status else 'open' end,
-  closed_at = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.closed_at else null end,
-  closed_height = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.closed_height else null end,
-  close_source = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.close_source else null end,
-  close_type = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.close_type else null end,
-  close_txid = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.close_txid else null end,
-  close_confidence = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.close_confidence else null end,
-  classified_at = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.classified_at else null end
+  status = case when graph_channels.closed_at is not null and graph_channels.closed_at > $1 then graph_channels.status else 'open' end,
+  closed_at = case when graph_channels.closed_at is not null and graph_channels.closed_at > $1 then graph_channels.closed_at else null end,
+  closed_height = case when graph_channels.closed_at is not null and graph_channels.closed_at > $1 then graph_channels.closed_height else null end,
+  close_source = case when graph_channels.closed_at is not null and graph_channels.closed_at > $1 then graph_channels.close_source else null end,
+  close_type = case when graph_channels.closed_at is not null and graph_channels.closed_at > $1 then graph_channels.close_type else null end,
+  close_txid = case when graph_channels.closed_at is not null and graph_channels.closed_at > $1 then graph_channels.close_txid else null end,
+  close_confidence = case when graph_channels.closed_at is not null and graph_channels.closed_at > $1 then graph_channels.close_confidence else null end,
+  classified_at = case when graph_channels.closed_at is not null and graph_channels.closed_at > $1 then graph_channels.classified_at else null end
 `
+	if _, err := tx.Exec(ctx, upsertQuery, observedAt); err != nil {
+		return fmt.Errorf("upsert staged graph channel snapshot: %w", err)
+	}
+	return cleanupGraphSnapshotCloseEventsForStagedChannels(ctx, tx)
+}
 
-	batch := &pgx.Batch{}
-	queued := 0
+func graphChannelSnapshotRows(channels []lndclient.GraphChannel) [][]any {
+	rows := make([][]any, 0, len(channels))
+	seen := make(map[uint64]struct{}, len(channels))
 	for _, channel := range channels {
 		if channel.ChannelID == 0 {
 			continue
 		}
-		batch.Queue(query,
+		if _, ok := seen[channel.ChannelID]; ok {
+			continue
+		}
+		seen[channel.ChannelID] = struct{}{}
+		rows = append(rows, []any{
 			int64(channel.ChannelID),
 			strings.TrimSpace(channel.ChanPoint),
 			strings.TrimSpace(channel.Node1PubKey),
 			strings.TrimSpace(channel.Node2PubKey),
 			channel.CapacitySat,
 			channelBlockHeight(channel.ChannelID),
-			observedAt,
-			observedAt,
-		)
-		queued++
-		if queued >= graphExplorerBatchSize {
-			if err := executeBatch(ctx, tx, batch, queued); err != nil {
-				return err
-			}
-			batch = &pgx.Batch{}
-			queued = 0
-		}
+		})
 	}
-	if err := executeBatch(ctx, tx, batch, queued); err != nil {
-		return err
-	}
-	return cleanupGraphSnapshotCloseEventsForRecentlyOpenChannels(ctx, tx, observedAt)
+	return rows
 }
 
-func cleanupGraphSnapshotCloseEventsForRecentlyOpenChannels(ctx context.Context, tx pgx.Tx, observedAt time.Time) error {
-	_, err := tx.Exec(ctx, `
-delete from graph_close_events e
-using graph_channels ch
-where ch.status = 'open'
-  and ch.last_seen_at = $1
-  and ((e.chan_id > 0 and e.chan_id = ch.chan_id) or (coalesce(ch.chan_point, '') <> '' and e.chan_point = ch.chan_point))
+func cleanupGraphSnapshotCloseEventsForStagedChannels(ctx context.Context, tx pgx.Tx) error {
+	const snapshotCloseFilter = `
   and (
     e.close_source = 'native+snapshot'
     or e.metadata_json ->> 'source' = 'snapshot_missing'
   )
-`, observedAt)
-	return err
+`
+	if _, err := tx.Exec(ctx, `
+delete from graph_close_events e
+using graph_channels_snapshot_stage snapshot
+where e.chan_id > 0
+  and e.chan_id = snapshot.chan_id
+`+snapshotCloseFilter); err != nil {
+		return fmt.Errorf("clean snapshot close events by channel id: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+delete from graph_close_events e
+using graph_channels_snapshot_stage snapshot
+where coalesce(snapshot.chan_point, '') <> ''
+  and e.chan_point = snapshot.chan_point
+`+snapshotCloseFilter); err != nil {
+		return fmt.Errorf("clean snapshot close events by channel point: %w", err)
+	}
+	return nil
 }
 
 func upsertGraphPoliciesSnapshot(ctx context.Context, tx pgx.Tx, channels []lndclient.GraphChannel, observedAt time.Time, currentPolicies map[graphPolicyKey]graphPolicySnapshot) error {

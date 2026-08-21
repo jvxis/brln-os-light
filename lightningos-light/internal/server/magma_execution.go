@@ -810,7 +810,70 @@ func (s *MagmaService) orderByID(ctx context.Context, orderID string) (MagmaOrde
 // what replaces the lock files the production bot uses: instead of blocking every
 // future order until a file is deleted by hand, each order is picked back up from
 // whatever the node and Amboss actually show.
+// magmaShouldAdoptExternalAccept reports whether an order was accepted somewhere
+// other than here. Amboss saying the buyer has paid while our own record still
+// says we never accepted can only mean the approval happened elsewhere - the web
+// UI, another tool, a hand.
+//
+// The pairing is deliberately narrow. Every other local state is already owned by
+// a recovery path of its own, and adopting from one of those would overwrite real
+// progress with a guess.
+func magmaShouldAdoptExternalAccept(localState, magmaStatus string) bool {
+	return localState == magmaStateObserved && magmaStatus == "WAITING_FOR_CHANNEL_OPEN"
+}
+
+// adoptOrdersAcceptedElsewhere brings those orders back under the app's control.
+//
+// Without this the order is stranded in the worst possible way: the open is
+// blocked because funding requires local state `accepted`, so the app refuses to
+// open a channel the buyer has already paid for. That is
+// SELLER_FAILED_TO_OPEN_CHANNEL, which costs more than the refusal we were trying
+// to avoid, and the only way out was editing the database by hand.
+//
+// No call to Amboss is needed: magma_status was refreshed from SellerOrders in
+// this same sync pass, moments ago, so it is already the live answer.
+func (s *MagmaService) adoptOrdersAcceptedElsewhere(ctx context.Context) {
+	rows, err := s.db.Query(ctx, `
+select order_id, local_state, magma_status from magma_orders
+where local_state=$1 and magma_status='WAITING_FOR_CHANNEL_OPEN'
+`, magmaStateObserved)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("magma: adoption query failed: %v", err)
+		}
+		return
+	}
+	type candidate struct{ orderID, localState, magmaStatus string }
+	candidates := make([]candidate, 0, 4)
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.orderID, &item.localState, &item.magmaStatus); err == nil {
+			candidates = append(candidates, item)
+		}
+	}
+	rows.Close()
+
+	for _, item := range candidates {
+		if !magmaShouldAdoptExternalAccept(item.localState, item.magmaStatus) {
+			continue
+		}
+		if err := s.setLocalState(ctx, item.orderID, magmaStateAccepted, ""); err != nil {
+			if s.logger != nil {
+				s.logger.Printf("magma: could not adopt order %s: %v", item.orderID, err)
+			}
+			continue
+		}
+		s.appendEvent(ctx, item.orderID, "adopted", "info",
+			"Order was approved outside this app and the buyer has paid; "+
+				"taking it over so the channel can be funded", nil)
+	}
+}
+
 func (s *MagmaService) reconcileExecution(ctx context.Context, token string) {
+	// Runs first: an order approved elsewhere has to be owned before any of the
+	// resume paths below can see it.
+	s.adoptOrdersAcceptedElsewhere(ctx)
+
 	rows, err := s.db.Query(ctx, `
 select order_id, local_state, funding_txid, channel_point, buyer_pubkey, size_sat
 from magma_orders

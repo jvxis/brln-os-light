@@ -17,7 +17,7 @@ if [[ ! -r "$ARTIFACT_VERIFY_SCRIPT" ]]; then
 fi
 source "$ARTIFACT_VERIFY_SCRIPT"
 
-LND_VERSION="0.21.1-beta"
+LND_VERSION="0.21.2-beta"
 
 GOTTY_VERSION="1.8.0"
 GOTTY_ARTIFACT="gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"

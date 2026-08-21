@@ -255,7 +255,7 @@ func TestInstallersUseAuthenticatedLNDReleaseHelper(t *testing.T) {
 	}
 	fresh := strings.ReplaceAll(string(freshRaw), "\r\n", "\n")
 	for _, expected := range []string{
-		`LND_VERSION="0.21.1-beta"`,
+		`LND_VERSION="0.21.2-beta"`,
 		`"$LND_UPGRADE_SCRIPT" --version "$LND_VERSION" --install-new`,
 		`Unable to authenticate the installed LND version; refusing replacement`,
 	} {

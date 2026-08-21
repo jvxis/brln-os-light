@@ -144,6 +144,7 @@
     "activityTitle": "Atividade",
     "offersTitle": "Ofertas",
     "offersCount": "{{active}} ativa(s) de {{total}}",
+    "entryCount": "{{count}} registros",
     "offersBody": "O que você anuncia no Magma. A Amboss impõe esses limites, então nenhuma ordem chega fora deles.",
     "offersNone": "Nenhuma oferta ainda.",
     "offerCreate": "Nova oferta",

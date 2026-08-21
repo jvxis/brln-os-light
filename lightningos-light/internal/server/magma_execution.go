@@ -54,6 +54,7 @@ type magmaLND interface {
 	PreviewOpenChannel(ctx context.Context, localFundingSat int64, pushSat int64, satPerVbyte int64) (lndclient.OpenChannelPreview, error)
 	ListPendingChannels(ctx context.Context) ([]lndclient.PendingChannelInfo, error)
 	ListChannels(ctx context.Context) ([]lndclient.ChannelInfo, error)
+	ListPeers(ctx context.Context) ([]lndclient.PeerInfo, error)
 }
 
 // magmaOnchainTxLister is split out because only the P&L needs it; keeping it
@@ -298,6 +299,19 @@ func (s *MagmaService) acceptOrderLocked(ctx context.Context, orderID string) (M
 		return MagmaOrder{}, errors.New("Amboss reported a non-positive invoice amount")
 	}
 
+	// Amboss's own seller flow makes this step 2 of 3, before the invoice is
+	// submitted: "Make sure you can connect to this node". It is recorded rather
+	// than enforced, and that distinction was paid for: order 109a4760 was bought
+	// by a node with one channel that we could not see connected, the accept was
+	// refused 75 times with a routing error, and the buyer then paid in full. A
+	// gate here would have refused a sale that completed. Unreachable is worth
+	// knowing - the channel open does need the peer - but it does not predict
+	// whether the order can be fulfilled, so it must not decide.
+	if err := s.reachBuyer(ctx, token, live.BuyerPubkey); err != nil {
+		s.appendEvent(ctx, record.OrderID, "buyer_unreachable", "info", fmt.Sprintf(
+			"could not connect to the buyer before accepting: %v", err), nil)
+	}
+
 	// Balance is verified here, not at open time. Accepting is a promise: once the
 	// buyer pays the invoice we are committed to funding the channel, and finding
 	// out then that the wallet is short earns a SELLER_FAILED_TO_OPEN_CHANNEL.
@@ -327,6 +341,17 @@ update magma_orders set invoice_payment_request=$2, invoice_hash=$3, updated_at=
 		// The invoice stays on the node unpaid and expires on its own; going back
 		// to observed lets the operator retry cleanly.
 		s.failOrder(ctx, record.OrderID, magmaStateObserved, fmt.Sprintf("Amboss rejected the invoice: %v", err))
+		// The plain sentence goes to the operator; the identifying detail goes to
+		// the record, along with what we actually sent. Order 109a4760 produced
+		// the same sentence 75 times and never once said which of the resolver's
+		// failure modes it was, or whether our invoice was the one at fault.
+		s.appendEvent(ctx, record.OrderID, "amboss_error", "info",
+			"Amboss error detail: "+magmaErrorDiagnostic(err),
+			map[string]any{
+				"invoice_sat":  live.RevenueSat,
+				"expiry_sec":   magmaInvoiceExpirySeconds,
+				"invoice_hash": invoice.PaymentHash,
+			})
 		return MagmaOrder{}, err
 	}
 
@@ -716,21 +741,77 @@ func (s *MagmaService) existingChannelFor(ctx context.Context, order MagmaOrder)
 	return "", nil
 }
 
+// magmaReachBudget bounds one reachability attempt. It is short because the
+// result is advisory: nothing is refused on it, so it must not spend a poll
+// cycle being thorough. The poll loop repeats the check every cycle anyway.
+const magmaReachBudget = 25 * time.Second
+
 // connectToBuyer is best effort, exactly as in the production bot: the peer may
 // already be connected, and openchannel can succeed regardless.
 func (s *MagmaService) connectToBuyer(ctx context.Context, token, pubkey string) {
-	addresses := s.buyerAddresses(ctx, token, pubkey)
-	for _, address := range addresses {
-		connectCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		err := s.lnd.ConnectPeerWithTimeout(connectCtx, pubkey, address, false, 30)
-		cancel()
-		if err == nil {
-			return
-		}
-		if s.logger != nil {
-			s.logger.Printf("magma: connect to %s via %s failed: %v", magmaShortPubkey(pubkey), address, err)
+	_ = s.reachBuyer(ctx, token, pubkey)
+}
+
+// reachBuyer reports whether the buyer's node can be reached, and is the one
+// place that decides it. One failed dial proves nothing: a node may advertise
+// both Tor and clearnet with only one of them working, Tor dials are slow and
+// fail spuriously, and a node can be a few seconds from coming back. So every
+// advertised address is tried, and the whole set is retried until the budget is
+// spent rather than concluding from a single miss.
+//
+// Being already connected counts as reached and is checked first, because
+// ConnectPeer returns an error for a peer that is already there and reading
+// that as unreachable would refuse every buyer we are already talking to.
+func (s *MagmaService) reachBuyer(ctx context.Context, token, pubkey string) error {
+	if peers, err := s.lnd.ListPeers(ctx); err == nil {
+		for _, peer := range peers {
+			if strings.EqualFold(peer.PubKey, pubkey) {
+				return nil
+			}
 		}
 	}
+
+	addresses := s.buyerAddresses(ctx, token, pubkey)
+	if len(addresses) == 0 {
+		return fmt.Errorf("the buyer's node advertises no address we can reach (%s)",
+			magmaShortPubkey(pubkey))
+	}
+
+	return s.dialBuyer(ctx, pubkey, addresses, magmaReachBudget)
+}
+
+// dialBuyer walks every address in turn and keeps walking them until the budget
+// is spent. Split out from reachBuyer so the retry behaviour can be tested
+// without a node or a network: the rule that matters is that no single failed
+// dial is allowed to settle the question.
+func (s *MagmaService) dialBuyer(
+	ctx context.Context, pubkey string, addresses []string, budget time.Duration,
+) error {
+	deadline := time.Now().Add(budget)
+	attempts := 0
+	var lastErr error
+	for time.Now().Before(deadline) {
+		for _, address := range addresses {
+			if time.Now().After(deadline) {
+				break
+			}
+			attempts++
+			connectCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			err := s.lnd.ConnectPeerWithTimeout(connectCtx, pubkey, address, false, 15)
+			cancel()
+			if err == nil {
+				return nil
+			}
+			lastErr = err
+			if s.logger != nil {
+				s.logger.Printf("magma: connect to %s via %s failed: %v",
+					magmaShortPubkey(pubkey), address, err)
+			}
+		}
+	}
+	return fmt.Errorf(
+		"could not connect to the buyer's node after %d attempt(s) across %d address(es): %v",
+		attempts, len(addresses), lastErr)
 }
 
 // buyerAddresses prefers our own gossip and falls back to Amboss, which may know
@@ -757,6 +838,16 @@ func (s *MagmaService) buyerAddresses(ctx context.Context, token, pubkey string)
 		}
 	}
 	return addresses
+}
+
+// magmaErrorDiagnostic returns the fullest description an error carries. Amboss
+// errors know their own code and path; anything else is reported as it is.
+func magmaErrorDiagnostic(err error) string {
+	var apiErr *magmaAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Diagnostic()
+	}
+	return err.Error()
 }
 
 func (s *MagmaService) failOrder(ctx context.Context, orderID, state, message string) {
@@ -810,7 +901,70 @@ func (s *MagmaService) orderByID(ctx context.Context, orderID string) (MagmaOrde
 // what replaces the lock files the production bot uses: instead of blocking every
 // future order until a file is deleted by hand, each order is picked back up from
 // whatever the node and Amboss actually show.
+// magmaShouldAdoptExternalAccept reports whether an order was accepted somewhere
+// other than here. Amboss saying the buyer has paid while our own record still
+// says we never accepted can only mean the approval happened elsewhere - the web
+// UI, another tool, a hand.
+//
+// The pairing is deliberately narrow. Every other local state is already owned by
+// a recovery path of its own, and adopting from one of those would overwrite real
+// progress with a guess.
+func magmaShouldAdoptExternalAccept(localState, magmaStatus string) bool {
+	return localState == magmaStateObserved && magmaStatus == "WAITING_FOR_CHANNEL_OPEN"
+}
+
+// adoptOrdersAcceptedElsewhere brings those orders back under the app's control.
+//
+// Without this the order is stranded in the worst possible way: the open is
+// blocked because funding requires local state `accepted`, so the app refuses to
+// open a channel the buyer has already paid for. That is
+// SELLER_FAILED_TO_OPEN_CHANNEL, which costs more than the refusal we were trying
+// to avoid, and the only way out was editing the database by hand.
+//
+// No call to Amboss is needed: magma_status was refreshed from SellerOrders in
+// this same sync pass, moments ago, so it is already the live answer.
+func (s *MagmaService) adoptOrdersAcceptedElsewhere(ctx context.Context) {
+	rows, err := s.db.Query(ctx, `
+select order_id, local_state, magma_status from magma_orders
+where local_state=$1 and magma_status='WAITING_FOR_CHANNEL_OPEN'
+`, magmaStateObserved)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("magma: adoption query failed: %v", err)
+		}
+		return
+	}
+	type candidate struct{ orderID, localState, magmaStatus string }
+	candidates := make([]candidate, 0, 4)
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.orderID, &item.localState, &item.magmaStatus); err == nil {
+			candidates = append(candidates, item)
+		}
+	}
+	rows.Close()
+
+	for _, item := range candidates {
+		if !magmaShouldAdoptExternalAccept(item.localState, item.magmaStatus) {
+			continue
+		}
+		if err := s.setLocalState(ctx, item.orderID, magmaStateAccepted, ""); err != nil {
+			if s.logger != nil {
+				s.logger.Printf("magma: could not adopt order %s: %v", item.orderID, err)
+			}
+			continue
+		}
+		s.appendEvent(ctx, item.orderID, "adopted", "info",
+			"Order was approved outside this app and the buyer has paid; "+
+				"taking it over so the channel can be funded", nil)
+	}
+}
+
 func (s *MagmaService) reconcileExecution(ctx context.Context, token string) {
+	// Runs first: an order approved elsewhere has to be owned before any of the
+	// resume paths below can see it.
+	s.adoptOrdersAcceptedElsewhere(ctx)
+
 	rows, err := s.db.Query(ctx, `
 select order_id, local_state, funding_txid, channel_point, buyer_pubkey, size_sat
 from magma_orders

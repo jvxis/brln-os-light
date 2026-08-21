@@ -26,13 +26,78 @@ var errMagmaUnauthorized = errors.New("Amboss rejected the API token (401)")
 // magmaAPIError carries the messages Amboss returns inside a 200 response.
 // Amboss reports business failures as HTTP 200 with a populated errors[] array,
 // so status-code-only checks read those failures as success.
-type magmaAPIError struct{ Messages []string }
+// magmaAPIError carries what Amboss actually returned. Messages is what a human
+// reads; Details is the part that used to be thrown away.
+//
+// A GraphQL error is a message plus a `path` naming the field that failed and an
+// `extensions` object that normally carries a machine-readable `code`. Keeping
+// only the message cost real time: "Unable to find a route to this destination"
+// repeated 75 times says nothing about whether the resolver crashed, rejected
+// the input, or genuinely probed and failed - and those need different answers.
+type magmaAPIError struct {
+	Messages []string
+	Details  []magmaAPIErrorDetail
+}
+
+// magmaAPIErrorDetail is one GraphQL error with the parts that identify it.
+type magmaAPIErrorDetail struct {
+	Message string `json:"message"`
+	Path    string `json:"path,omitempty"`
+	Code    string `json:"code,omitempty"`
+}
 
 func (e *magmaAPIError) Error() string {
 	if len(e.Messages) == 0 {
 		return "Amboss returned an unspecified error"
 	}
 	return strings.Join(e.Messages, "; ")
+}
+
+// Diagnostic is the full error for logs and order events. It stays off Error()
+// so the UI and Telegram keep the plain sentence, while the record that gets
+// investigated later keeps the code that identifies the failure.
+func (e *magmaAPIError) Diagnostic() string {
+	parts := make([]string, 0, len(e.Details))
+	for _, detail := range e.Details {
+		text := detail.Message
+		if detail.Code != "" {
+			text += " [code=" + detail.Code + "]"
+		}
+		if detail.Path != "" {
+			text += " [path=" + detail.Path + "]"
+		}
+		parts = append(parts, text)
+	}
+	if len(parts) == 0 {
+		return e.Error()
+	}
+	return strings.Join(parts, "; ")
+}
+
+// magmaJoinJSONPath renders a GraphQL error path, whose elements are field names
+// or list indices, in the familiar dotted form.
+func magmaJoinJSONPath(path []json.RawMessage) string {
+	parts := make([]string, 0, len(path))
+	for _, item := range path {
+		if value := magmaUnquoteJSON(item); value != "" {
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, ".")
+}
+
+// magmaUnquoteJSON returns a JSON string's contents, or the raw token for
+// anything else, so a numeric code or list index survives instead of being lost.
+func magmaUnquoteJSON(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return strings.TrimSpace(text)
+	}
+	return trimmed
 }
 
 // magmaNumber decodes Amboss numeric fields. The API is inconsistent by design:
@@ -294,6 +359,13 @@ func (c *magmaAmbossClient) do(ctx context.Context, token, query string, variabl
 		Data   json.RawMessage `json:"data"`
 		Errors []struct {
 			Message string `json:"message"`
+			// Path elements are strings or ints and extensions vary by server, so
+			// both are decoded loosely rather than assuming a shape Amboss never
+			// promised.
+			Path       []json.RawMessage `json:"path"`
+			Extensions struct {
+				Code json.RawMessage `json:"code"`
+			} `json:"extensions"`
 		} `json:"errors"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
@@ -301,16 +373,22 @@ func (c *magmaAmbossClient) do(ctx context.Context, token, query string, variabl
 	}
 	if len(envelope.Errors) > 0 {
 		messages := make([]string, 0, len(envelope.Errors))
+		details := make([]magmaAPIErrorDetail, 0, len(envelope.Errors))
 		for _, item := range envelope.Errors {
 			message := strings.TrimSpace(item.Message)
 			if message != "" {
 				messages = append(messages, message)
 			}
+			details = append(details, magmaAPIErrorDetail{
+				Message: message,
+				Path:    magmaJoinJSONPath(item.Path),
+				Code:    magmaUnquoteJSON(item.Extensions.Code),
+			})
 		}
 		if magmaMessagesIndicateAuthFailure(messages) {
 			return errMagmaUnauthorized
 		}
-		return &magmaAPIError{Messages: messages}
+		return &magmaAPIError{Messages: messages, Details: details}
 	}
 	if out == nil {
 		return nil

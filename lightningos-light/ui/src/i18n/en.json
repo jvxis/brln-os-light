@@ -144,6 +144,7 @@
     "activityTitle": "Activity",
     "offersTitle": "Offers",
     "offersCount": "{{active}} active of {{total}}",
+    "entryCount": "{{count}} entries",
     "offersBody": "What you advertise on Magma. Amboss enforces these bounds, so no order can arrive outside them.",
     "offersNone": "No offers yet.",
     "offerCreate": "New offer",

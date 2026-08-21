@@ -131,6 +131,11 @@ export default function MagmaSales() {
   const [offerOpen, setOfferOpen] = useState(false)
   const [offerDraft, setOfferDraft] = useState<MagmaOffer | null>(null)
   const [offersOpen, setOffersOpen] = useState(false)
+  // Both timelines open closed. They are the tallest cards on the page and the
+  // operator reads them on purpose, not in passing; the collapsed line carries
+  // the newest entry so nothing has to be opened just to check for movement.
+  const [activityOpen, setActivityOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   const load = () => {
     getMagmaOverview()
@@ -725,12 +730,107 @@ export default function MagmaSales() {
         </section>
       )}
 
+      {/* Auto mode decides between page loads, and a deferral reason is cleared by
+          the next transition. Without this timeline the operator opens the app and
+          sees only the current state, with no record of how it got there. */}
+      {events.length > 0 && (
+        <section className="section-card space-y-3">
+          <div>
+            <button
+              className="flex items-center gap-2 text-base font-semibold text-fog hover:text-glow"
+              onClick={() => setActivityOpen(!activityOpen)}
+            >
+              <span className={`transition-transform ${activityOpen ? 'rotate-90' : ''}`}>›</span>
+              {t('magma.activityTitle')}
+              <span className="text-xs font-normal text-fog/50">
+                {t('magma.entryCount', { count: events.length })}
+              </span>
+            </button>
+            <p className="mt-1 text-sm text-fog/60">{t('magma.activityBody')}</p>
+          </div>
+          {/* Collapsed still shows the newest line: the point of the card is
+              noticing that something happened, which a bare header cannot do. */}
+          {!activityOpen && events[0] && (
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs">
+              <span className="whitespace-nowrap font-mono text-fog/45">
+                {formatDateTime(events[0].created_at, locale)}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-fog/70">{events[0].message}</span>
+            </div>
+          )}
+          <div
+            className={`max-h-[24rem] space-y-1 overflow-y-auto pr-1 [scrollbar-gutter:stable] ${
+              activityOpen ? '' : 'hidden'
+            }`}
+          >
+            {events.map((event) => (
+              <div
+                key={event.id}
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-white/5 py-1.5 text-sm last:border-0"
+              >
+                <span className="whitespace-nowrap font-mono text-xs text-fog/45">
+                  {formatDateTime(event.created_at, locale)}
+                </span>
+                <span
+                  className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                    event.level === 'error'
+                      ? 'bg-rose-500/20 text-rose-200'
+                      : event.level === 'warning'
+                        ? 'bg-amber-500/20 text-amber-200'
+                        : 'bg-white/10 text-fog/60'
+                  }`}
+                >
+                  {event.kind}
+                </span>
+                <span className="min-w-0 flex-1 text-fog/80">{event.message}</span>
+                <button
+                  className="whitespace-nowrap font-mono text-xs text-fog/40 hover:text-fog/70"
+                  onClick={() => setExpanded(event.order_id)}
+                  title={event.order_id}
+                >
+                  {event.order_id.slice(0, 8)}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="section-card space-y-3">
-        <h3 className="text-base font-semibold text-fog">{t('magma.orders')}</h3>
+        <div>
+          <button
+            className="flex items-center gap-2 text-base font-semibold text-fog hover:text-glow"
+            onClick={() => setHistoryOpen(!historyOpen)}
+          >
+            <span className={`transition-transform ${historyOpen ? 'rotate-90' : ''}`}>›</span>
+            {t('magma.orders')}
+            <span className="text-xs font-normal text-fog/50">
+              {t('magma.entryCount', { count: orders.length })}
+            </span>
+          </button>
+        </div>
+        {!historyOpen && orders[0] && (
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs">
+            <span className="whitespace-nowrap font-mono text-fog/45">
+              {formatDateTime(orders[0].created_at, locale)}
+            </span>
+            <span className={`whitespace-nowrap rounded-full px-2 py-0.5 ${statusStyle(orders[0].status)}`}>
+              {orders[0].status}
+            </span>
+            <span className="whitespace-nowrap text-fog/70">
+              {formatSats(orders[0].size_sat, locale)} sat
+            </span>
+            <span className="min-w-0 flex-1 truncate text-fog/50">{orders[0].buyer_alias || ''}</span>
+          </div>
+        )}
         {orders.length === 0 ? (
           <p className="text-sm text-fog/60">{t('magma.noOrders')}</p>
         ) : (
-          <div className="max-h-[32rem] overflow-x-auto overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]">
+          <div
+            className={`max-h-[32rem] overflow-x-auto overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] ${
+              historyOpen ? '' : 'hidden'
+            }`}
+          >
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="sticky top-0 z-10 bg-slate text-xs uppercase tracking-wide text-fog/50 shadow-[0_1px_0_rgba(255,255,255,.08)]">
                 <tr>
@@ -816,48 +916,6 @@ export default function MagmaSales() {
         />
       )}
 
-      {/* Auto mode decides between page loads, and a deferral reason is cleared by
-          the next transition. Without this timeline the operator opens the app and
-          sees only the current state, with no record of how it got there. */}
-      {events.length > 0 && (
-        <section className="section-card space-y-3">
-          <div>
-            <h3 className="text-base font-semibold text-fog">{t('magma.activityTitle')}</h3>
-            <p className="text-sm text-fog/60">{t('magma.activityBody')}</p>
-          </div>
-          <div className="max-h-[24rem] space-y-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
-            {events.map((event) => (
-              <div
-                key={event.id}
-                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-white/5 py-1.5 text-sm last:border-0"
-              >
-                <span className="whitespace-nowrap font-mono text-xs text-fog/45">
-                  {formatDateTime(event.created_at, locale)}
-                </span>
-                <span
-                  className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
-                    event.level === 'error'
-                      ? 'bg-rose-500/20 text-rose-200'
-                      : event.level === 'warning'
-                        ? 'bg-amber-500/20 text-amber-200'
-                        : 'bg-white/10 text-fog/60'
-                  }`}
-                >
-                  {event.kind}
-                </span>
-                <span className="min-w-0 flex-1 text-fog/80">{event.message}</span>
-                <button
-                  className="whitespace-nowrap font-mono text-xs text-fog/40 hover:text-fog/70"
-                  onClick={() => setExpanded(event.order_id)}
-                  title={event.order_id}
-                >
-                  {event.order_id.slice(0, 8)}
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
 
       {/* Historical repair. Kept out of the way because it is a one-off: sales
           closed before this app existed carry no settle date, so their revenue is

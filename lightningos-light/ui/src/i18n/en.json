@@ -2340,6 +2340,7 @@
     "balancesSubtitle": "Changes by period",
     "basedOnDays": "Based on {{count}} stored day(s).",
     "cost": "Cost",
+    "costs": "Costs",
     "cumulativeRevenueCosts": "Cumulative revenue and costs",
     "daily": "Daily",
     "dailyMovementGoal": "Daily movement goal",

@@ -2340,6 +2340,7 @@
     "balancesSubtitle": "Variações por período",
     "basedOnDays": "Baseado em {{count}} dia(s) armazenado(s).",
     "cost": "Custo",
+    "costs": "Despesas",
     "cumulativeRevenueCosts": "Receita e custos acumulados",
     "daily": "Diário",
     "dailyMovementGoal": "Meta de movimento diário",

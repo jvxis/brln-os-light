@@ -61,8 +61,8 @@ func TestChatInboundCursorAdvancesOnlyAfterPersistence(t *testing.T) {
 		if settleIndex != 41 {
 			t.Fatalf("cursor advanced after failed persistence: %d", settleIndex)
 		}
-		if _, err := os.Stat(cursorPath); !os.IsNotExist(err) {
-			t.Fatalf("cursor file created after failed persistence: %v", err)
+		if _, err := os.Stat(cursorPath); err == nil {
+			t.Fatal("cursor file was created after failed persistence")
 		}
 	})
 }

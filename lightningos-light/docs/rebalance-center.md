@@ -100,8 +100,9 @@ dois quando ativada. Centraliza o scoring multi-fator e o orçamento diário.
 
 **Modos:**
 
-- `sovereign_shadow`: **avalia** mas não cria jobs. Telemetria pura, custo zero.
-  Usado para baseline antes de habilitar live.
+- `sovereign_shadow`: **avalia** mas não cria jobs, não cai no rules-auto, não
+  enfileira guaranteed slots e não aplica mudanças do AutoTarget. Telemetria
+  pura, custo zero. Usado para baseline antes de habilitar live.
 - `sovereign_live`: executa os candidatos selecionados.
 - `rules_auto`: desliga sovereign; volta aos loops Auto + Manual Restart
   separados.
@@ -487,6 +488,9 @@ Canal aparece mas não é selecionado:
 - Use `live` quando: configuração estabilizada, métricas saudáveis
 - Transição: rode 6-12h em shadow, compare expected_profit médio e candidate
   count com expectativa antes de flipar para live
+- A receita realizada usa atribuição FIFO por canal de destino: cada forward
+  consome primeiro o lote de liquidez paga elegível mais antigo e não pode ser
+  contado em dois jobs com janelas sobrepostas
 
 ## 12. Histórico de mudanças relevantes
 

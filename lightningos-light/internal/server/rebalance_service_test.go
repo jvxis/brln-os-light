@@ -3681,24 +3681,6 @@ func TestApplySovereignRiskAdjustedScoresUsesRealizedEconomics(t *testing.T) {
 	}
 }
 
-func TestAttributedForwardEconomicsCapsForwardProfitToSentAmount(t *testing.T) {
-	amount, fee, net := attributedForwardEconomics(100_000, 50, 1_000_000, 500)
-	if amount != 100_000 {
-		t.Fatalf("expected attributed amount capped to sent sats, got %d", amount)
-	}
-	if fee != 50 {
-		t.Fatalf("expected proportional attributed fee, got %d", fee)
-	}
-	if net != 0 {
-		t.Fatalf("expected capped net to pay back cost exactly, got %d", net)
-	}
-
-	amount, fee, net = attributedForwardEconomics(0, 0, 1_000_000, 500)
-	if amount != 0 || fee != 0 || net != 0 {
-		t.Fatalf("expected failed no-send job to have no attributed economics, got amount=%d fee=%d net=%d", amount, fee, net)
-	}
-}
-
 func TestExecuteSovereignAutopilotSkipsUnsoldPaidLiquidityAndContinues(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()

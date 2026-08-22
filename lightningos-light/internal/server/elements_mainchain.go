@@ -55,13 +55,17 @@ func (s *Server) handleElementsMainchainPost(w http.ResponseWriter, r *http.Requ
 	}
 
 	paths := elementsAppPaths()
-	if !fileExists(paths.ElementsdPath) {
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+	state, err := elementsBrokerStatus(ctx, paths)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Elements status is unavailable")
+		return
+	}
+	if !state.Installed {
 		writeError(w, http.StatusBadRequest, "Elements is not installed")
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-	defer cancel()
 
 	if source == "local" {
 		if _, err := resolveElementsLocalMainchainConfig(ctx); err != nil {

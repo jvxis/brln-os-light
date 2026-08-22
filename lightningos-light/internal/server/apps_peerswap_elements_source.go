@@ -484,15 +484,11 @@ func peerswapSourceWallet(source peerswapElementsSource) string {
 }
 
 func peerswapLocalElementsReady(ctx context.Context) (bool, string) {
-	paths := elementsAppPaths()
-	if !fileExists(paths.ElementsdPath) {
-		return false, "not_installed"
-	}
-	status, err := elementsServiceStatus(ctx)
+	state, err := elementsBrokerStatus(ctx, elementsAppPaths())
 	if err != nil {
 		return false, "unknown"
 	}
-	return status == "running", status
+	return state.Installed && state.Status == "running", state.Status
 }
 
 func testPeerswapElementsSource(ctx context.Context, source peerswapElementsSource) (string, error) {

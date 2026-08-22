@@ -60,7 +60,7 @@ type peerswapElementsSourceRequest struct {
 
 type peerswapElementsSourceResponse struct {
 	Configured  bool   `json:"configured"`
-	Mode        string `json:"mode"`
+	Mode        string `json:"mode,omitempty"`
 	URL         string `json:"url,omitempty"`
 	User        string `json:"user,omitempty"`
 	Wallet      string `json:"wallet,omitempty"`
@@ -100,10 +100,15 @@ func (s *Server) handlePeerswapElementsSourceGet(w http.ResponseWriter, r *http.
 		return
 	}
 	localReady, localStatus := peerswapLocalElementsReady(r.Context())
-	if !configured {
-		source = peerswapElementsSource{Mode: peerswapElementsModeLocal, Wallet: peerswapElementsWallet}
-	} else if completed, _, err := s.completePeerswapElementsSource(r.Context(), source); err == nil {
-		source = completed
+	if configured {
+		if completed, _, err := s.completePeerswapElementsSource(r.Context(), source); err == nil {
+			source = completed
+		}
+	} else {
+		// An absent policy is not a local policy. Keep the source fields empty so
+		// clients can distinguish "not configured" from the explicitly selected
+		// store-managed Elements service.
+		source = peerswapElementsSource{}
 	}
 	handled, brokerState, statusErr := system.PeerSwapStatusWithBroker(r.Context())
 	if !handled {
@@ -114,18 +119,32 @@ func (s *Server) handlePeerswapElementsSourceGet(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, statusErr.Error())
 		return
 	}
+	resp := newPeerswapElementsSourceResponse(
+		source,
+		configured,
+		localReady,
+		localStatus,
+		brokerState.Installed,
+		brokerState.Status == "running",
+	)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func newPeerswapElementsSourceResponse(source peerswapElementsSource, configured, localReady bool, localStatus string, installed, running bool) peerswapElementsSourceResponse {
 	resp := peerswapElementsSourceResponse{
 		Configured:  configured,
-		Mode:        source.Mode,
-		URL:         source.URL,
-		User:        source.User,
-		Wallet:      peerswapSourceWallet(source),
 		LocalReady:  localReady,
 		LocalStatus: localStatus,
-		Installed:   brokerState.Installed,
-		Running:     brokerState.Status == "running",
+		Installed:   installed,
+		Running:     running,
 	}
-	writeJSON(w, http.StatusOK, resp)
+	if configured {
+		resp.Mode = source.Mode
+		resp.URL = source.URL
+		resp.User = source.User
+		resp.Wallet = peerswapSourceWallet(source)
+	}
+	return resp
 }
 
 func (s *Server) handlePeerswapElementsSourceTest(w http.ResponseWriter, r *http.Request) {

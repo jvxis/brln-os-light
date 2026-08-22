@@ -953,7 +953,9 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
         setAppUpgradeLogs(formatJournalLogLines(lines, locale))
         const completed = lines.some((line) => line.includes('App upgrade complete'))
         const errorLine = [...lines].reverse().find((line) =>
-          line.includes('[ERROR]') || line.toLowerCase().includes('failed')
+          line.includes('[ERROR]') ||
+          line.includes('lightningos-app-upgrade.service: Main process exited') ||
+          line.includes('lightningos-app-upgrade.service: Failed with result')
         )
         if (completed) {
           setAppUpgradeComplete(true)

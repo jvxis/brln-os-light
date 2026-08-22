@@ -753,8 +753,19 @@ export const markChatRead = (peerPubkey: string) =>
 export const sendChatMessage = (payload: { peer_pubkey: string; message: string; amount_sat?: number }) =>
   request('/api/chat/send', { method: 'POST', body: JSON.stringify(payload) })
 
-export const getNotifications = (limit = 200) =>
-  request(`/api/notifications?limit=${limit}`)
+export type NotificationQuery = {
+  limit?: number
+  range?: '7d' | '1m' | '3m' | '6m' | '1y' | 'all'
+  type?: 'all' | 'onchain' | 'lightning' | 'keysend' | 'channel' | 'forward' | 'rebalance' | 'security'
+  outcome?: 'all' | 'completed' | 'failed' | 'pending'
+  hide_failed_outgoing?: boolean
+  cursor?: string
+}
+
+export const getNotifications = (params: NotificationQuery | number = {}) => {
+  const query = typeof params === 'number' ? { limit: params } : params
+  return request(`/api/notifications${buildQuery(query)}`)
+}
 
 export const getAuditEvents = (params?: {
   limit?: number

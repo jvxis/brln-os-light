@@ -65,7 +65,7 @@ The installer provisions everything needed on a clean Ubuntu box:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort enabled) + i2pd enabled by default
 - Go 1.24.12 and the latest Node.js major (falls back to Node.js 20.x if resolution fails)
-- LND binaries (default `v0.21.1-beta`)
+- LND binaries (default `v0.21.2-beta`)
 - LightningOS Manager binary (compiled locally)
 - UI build (compiled locally)
 - systemd services and config templates
@@ -197,7 +197,7 @@ sudo /opt/lightningos/manager/lightningos-manager auth recovery new
 - Manual on-chain sends to an external address require a fresh password confirmation. Internal automations and succession flows are not blocked by this extra confirmation.
 
 Notes:
-- You can override LND URL with `LND_URL=...` or version with `LND_VERSION=...`.
+- Fresh installs use the LND version pinned and authenticated by each LightningOS release. Later official LND releases can be installed from the LND Upgrade page in the UI.
 - The installer will generate a Postgres role and update `LND_PG_DSN` in `/etc/lightningos/secrets.env`.
 - The UI version label comes from `ui/public/version.txt`.
 - PostgreSQL uses the PGDG repository by default. Set `POSTGRES_VERSION=18` (or another major) to override.

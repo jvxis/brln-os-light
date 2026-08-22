@@ -2,12 +2,8 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
-
-	"lightningos-light/internal/system"
 )
 
 type elementsStatus struct {
@@ -29,21 +25,6 @@ type elementsStatus struct {
 	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
 }
 
-type elementsChainInfo struct {
-	Chain                string  `json:"chain"`
-	Blocks               int64   `json:"blocks"`
-	Headers              int64   `json:"headers"`
-	VerificationProgress float64 `json:"verificationprogress"`
-	InitialBlockDownload bool    `json:"initialblockdownload"`
-	SizeOnDisk           int64   `json:"size_on_disk"`
-}
-
-type elementsNetworkInfo struct {
-	Version     int    `json:"version"`
-	Subversion  string `json:"subversion"`
-	Connections int    `json:"connections"`
-}
-
 func (s *Server) handleElementsStatus(w http.ResponseWriter, r *http.Request) {
 	paths := elementsAppPaths()
 	resp := elementsStatus{
@@ -52,14 +33,22 @@ func (s *Server) handleElementsStatus(w http.ResponseWriter, r *http.Request) {
 		DataDir:   paths.DataDir,
 	}
 	resp.MainchainSource = readElementsMainchainSource(paths)
-	if !fileExists(paths.ElementsdPath) {
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-	resp.Installed = true
 
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
+	state, err := elementsBrokerStatus(ctx, paths)
+	if err != nil {
+		resp.Status = "unknown"
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	resp.Installed = state.Installed
+	resp.Status = state.Status
+	resp.DataDir = state.DataDir
+	if !state.Installed {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 
 	if raw, err := readElementsConfig(ctx, paths); err == nil {
 		host, port := parseElementsMainchainConfig(raw)
@@ -76,64 +65,27 @@ func (s *Server) handleElementsStatus(w http.ResponseWriter, r *http.Request) {
 		resp.MainchainRPCPort = defaultElementsMainchainPort(resp.MainchainSource, s.cfg)
 	}
 
-	status, err := elementsServiceStatus(ctx)
-	if err != nil {
-		resp.Status = "unknown"
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-	resp.Status = status
-	if status != "running" {
+	if state.Status != "running" {
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
-	chainInfo, networkInfo, err := fetchElementsInfo(ctx, paths)
-	if err != nil {
+	if !state.RPCOK {
 		resp.RPCOk = false
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
 	resp.RPCOk = true
-	resp.Chain = chainInfo.Chain
-	resp.Blocks = chainInfo.Blocks
-	resp.Headers = chainInfo.Headers
-	resp.VerificationProgress = chainInfo.VerificationProgress
-	resp.InitialBlockDownload = chainInfo.InitialBlockDownload
-	resp.SizeOnDisk = chainInfo.SizeOnDisk
-	resp.Version = networkInfo.Version
-	resp.Subversion = networkInfo.Subversion
-	resp.Peers = networkInfo.Connections
+	resp.Chain = state.Chain
+	resp.Blocks = state.Blocks
+	resp.Headers = state.Headers
+	resp.VerificationProgress = state.VerificationProgress
+	resp.InitialBlockDownload = state.InitialBlockDownload
+	resp.SizeOnDisk = state.SizeOnDisk
+	resp.Version = state.Version
+	resp.Subversion = state.Subversion
+	resp.Peers = state.Peers
 
 	writeJSON(w, http.StatusOK, resp)
-}
-
-func fetchElementsInfo(ctx context.Context, paths elementsPaths) (elementsChainInfo, elementsNetworkInfo, error) {
-	if handled, raw, err := system.ElementsStatusWithBroker(ctx, paths.DataDir); handled {
-		if err != nil {
-			return elementsChainInfo{}, elementsNetworkInfo{}, err
-		}
-		var state struct {
-			RPCOK                bool    `json:"rpc_ok"`
-			Chain                string  `json:"chain"`
-			Blocks               int64   `json:"blocks"`
-			Headers              int64   `json:"headers"`
-			VerificationProgress float64 `json:"verification_progress"`
-			InitialBlockDownload bool    `json:"initial_block_download"`
-			Peers                int     `json:"peers"`
-			Version              int     `json:"version"`
-			Subversion           string  `json:"subversion"`
-			SizeOnDisk           int64   `json:"size_on_disk"`
-		}
-		if err := json.Unmarshal([]byte(raw), &state); err != nil || !state.RPCOK {
-			return elementsChainInfo{}, elementsNetworkInfo{}, errors.New("Elements RPC unavailable")
-		}
-		return elementsChainInfo{
-			Chain: state.Chain, Blocks: state.Blocks, Headers: state.Headers,
-			VerificationProgress: state.VerificationProgress, InitialBlockDownload: state.InitialBlockDownload,
-			SizeOnDisk: state.SizeOnDisk,
-		}, elementsNetworkInfo{Version: state.Version, Subversion: state.Subversion, Connections: state.Peers}, nil
-	}
-	return elementsChainInfo{}, elementsNetworkInfo{}, errors.New("Elements status requires privileged broker enforce mode")
 }

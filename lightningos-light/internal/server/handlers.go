@@ -1526,8 +1526,23 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("log read failed: %v", err))
 		return
 	}
+	if service == appUpgradeUnitName {
+		out = filterExpectedAppUpgradeJournalLines(out)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"service": service, "lines": sanitizeLogLines(out)})
+}
+
+func filterExpectedAppUpgradeJournalLines(lines []string) []string {
+	const collectedTransientUnitDiagnostic = "lightningos-app-upgrade.service: Failed to open /run/systemd/transient/lightningos-app-upgrade.service: No such file or directory"
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.Contains(line, collectedTransientUnitDiagnostic) {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return filtered
 }
 
 func isBitcoinLogService(service string) bool {

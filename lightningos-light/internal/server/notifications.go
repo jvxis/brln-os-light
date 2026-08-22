@@ -90,6 +90,27 @@ type Notification struct {
 	Memo              string    `json:"memo,omitempty"`
 }
 
+type notificationListCursor struct {
+	OccurredAt time.Time
+	ID         int64
+}
+
+type notificationListOptions struct {
+	Limit              int
+	Range              string
+	Type               string
+	Outcome            string
+	HideFailedOutgoing bool
+	Start              time.Time
+	Cursor             *notificationListCursor
+}
+
+type notificationListPage struct {
+	Items      []Notification
+	HasMore    bool
+	NextCursor string
+}
+
 type paymentRouteAttemptRecord struct {
 	PaymentHash        string
 	PaymentIndex       int64
@@ -593,7 +614,10 @@ alter table notifications add column if not exists rebal_source_pubkey text;
 alter table notifications add column if not exists rebal_target_pubkey text;
 
 create index if not exists notifications_occurred_at_idx on notifications (occurred_at desc);
+create index if not exists notifications_occurred_id_idx on notifications (occurred_at desc, id desc);
 create index if not exists notifications_type_idx on notifications (type);
+create index if not exists notifications_type_occurred_id_idx on notifications (type, occurred_at desc, id desc);
+create index if not exists notifications_status_occurred_id_idx on notifications (upper(status), occurred_at desc, id desc);
 create index if not exists notifications_payment_hash_idx on notifications (payment_hash);
 create index if not exists notifications_chan_out_idx on notifications (chan_id_out, occurred_at desc);
 create index if not exists notifications_chan_in_idx on notifications (chan_id_in, occurred_at desc);
@@ -927,37 +951,195 @@ func (n *Notifier) runTelegramActivityMirrorLoop() {
 	}
 }
 
-func (n *Notifier) list(ctx context.Context, limit int) ([]Notification, error) {
+func (n *Notifier) list(ctx context.Context, opts notificationListOptions) (notificationListPage, error) {
 	if n.db == nil {
-		return nil, errors.New("notifications disabled")
+		return notificationListPage{}, errors.New("notifications disabled")
 	}
-	if limit <= 0 {
-		limit = 200
+	if opts.Limit <= 0 {
+		opts.Limit = 200
 	}
-	if limit > 1000 {
-		limit = 1000
+	if opts.Limit > 1000 {
+		opts.Limit = 1000
 	}
 
-	rows, err := n.db.Query(ctx, `
+	conditions := []string{`
+not (
+  n.type <> 'rebalance'
+  and nullif(n.payment_hash, '') is not null
+  and exists (
+    select 1 from notifications r
+    where r.type = 'rebalance' and r.payment_hash = n.payment_hash
+  )
+)`}
+	args := make([]any, 0, 8)
+	addArg := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args))
+	}
+	if !opts.Start.IsZero() {
+		conditions = append(conditions, "n.occurred_at >= "+addArg(opts.Start))
+	}
+	if opts.Type != "" && opts.Type != "all" {
+		conditions = append(conditions, "n.type = "+addArg(opts.Type))
+	}
+	if statuses := notificationOutcomeStatuses(opts.Outcome); len(statuses) > 0 {
+		conditions = append(conditions, "upper(n.status) = any("+addArg(statuses)+"::text[])")
+	}
+	if opts.HideFailedOutgoing {
+		conditions = append(conditions, "not (n.type = 'lightning' and n.direction = 'out' and upper(n.status) = any("+addArg(notificationOutcomeStatuses("failed"))+"::text[]))")
+	}
+	if opts.Cursor != nil {
+		timeArg := addArg(opts.Cursor.OccurredAt)
+		idArg := addArg(opts.Cursor.ID)
+		conditions = append(conditions, fmt.Sprintf("(n.occurred_at, n.id) < (%s, %s)", timeArg, idArg))
+	}
+	fetchLimit := opts.Limit + 1
+	limitArg := addArg(fetchLimit)
+	query := fmt.Sprintf(`
 select id, occurred_at, type, action, direction, status, amount_sat, fee_sat, fee_msat,
   peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo
-from notifications
-order by occurred_at desc, id desc
-limit $1`, limit)
+from notifications n
+where %s
+order by n.occurred_at desc, n.id desc
+limit %s`, strings.Join(conditions, " and "), limitArg)
+
+	rows, err := n.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return notificationListPage{}, err
 	}
 	defer rows.Close()
 
-	var items []Notification
+	items := make([]Notification, 0, fetchLimit)
 	for rows.Next() {
 		evt, err := scanNotification(rows)
 		if err != nil {
-			return nil, err
+			return notificationListPage{}, err
 		}
 		items = append(items, evt)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return notificationListPage{}, err
+	}
+
+	page := notificationListPage{Items: items}
+	if len(page.Items) > opts.Limit {
+		page.HasMore = true
+		page.Items = page.Items[:opts.Limit]
+	}
+	if page.HasMore && len(page.Items) > 0 {
+		last := page.Items[len(page.Items)-1]
+		page.NextCursor = encodeNotificationListCursor(last.OccurredAt, last.ID)
+	}
+	return page, nil
+}
+
+func notificationOutcomeStatuses(outcome string) []string {
+	switch strings.ToLower(strings.TrimSpace(outcome)) {
+	case "completed":
+		return []string{"SUCCEEDED", "SETTLED", "CONFIRMED", "OPENED", "CLOSED", "SENT", "RECEIVED", "COMPLETED", "SUCCESS"}
+	case "failed":
+		return []string{"FAILED", "ERROR"}
+	case "pending":
+		return []string{"PENDING", "IN_FLIGHT", "OPENING", "CLOSING", "FORCE_CLOSING", "WAITING_CLOSE"}
+	default:
+		return nil
+	}
+}
+
+func encodeNotificationListCursor(occurredAt time.Time, id int64) string {
+	return fmt.Sprintf("%d:%d", occurredAt.UnixMicro(), id)
+}
+
+func parseNotificationListCursor(raw string) (*notificationListCursor, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ":")
+	if len(parts) != 2 {
+		return nil, errors.New("invalid notification cursor")
+	}
+	micros, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || micros <= 0 {
+		return nil, errors.New("invalid notification cursor")
+	}
+	id, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || id <= 0 {
+		return nil, errors.New("invalid notification cursor")
+	}
+	return &notificationListCursor{OccurredAt: time.UnixMicro(micros).UTC(), ID: id}, nil
+}
+
+func parseNotificationListOptions(values url.Values, now time.Time) (notificationListOptions, error) {
+	opts := notificationListOptions{
+		Limit:   200,
+		Range:   "all",
+		Type:    "all",
+		Outcome: "all",
+	}
+
+	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 1000 {
+			return notificationListOptions{}, errors.New("limit must be between 1 and 1000")
+		}
+		opts.Limit = limit
+	}
+
+	if raw := strings.ToLower(strings.TrimSpace(values.Get("range"))); raw != "" {
+		if raw == "1a" {
+			raw = "1y"
+		}
+		opts.Range = raw
+		switch raw {
+		case "7d":
+			opts.Start = now.UTC().AddDate(0, 0, -7)
+		case "1m":
+			opts.Start = now.UTC().AddDate(0, -1, 0)
+		case "3m":
+			opts.Start = now.UTC().AddDate(0, -3, 0)
+		case "6m":
+			opts.Start = now.UTC().AddDate(0, -6, 0)
+		case "1y":
+			opts.Start = now.UTC().AddDate(-1, 0, 0)
+		case "all":
+		default:
+			return notificationListOptions{}, errors.New("range must be one of 7d, 1m, 3m, 6m, 1y, or all")
+		}
+	}
+
+	if raw := strings.ToLower(strings.TrimSpace(values.Get("type"))); raw != "" {
+		switch raw {
+		case "all", "onchain", "lightning", "keysend", "channel", "forward", "rebalance", "security":
+			opts.Type = raw
+		default:
+			return notificationListOptions{}, errors.New("invalid notification type")
+		}
+	}
+
+	if raw := strings.ToLower(strings.TrimSpace(values.Get("outcome"))); raw != "" {
+		switch raw {
+		case "all", "completed", "failed", "pending":
+			opts.Outcome = raw
+		default:
+			return notificationListOptions{}, errors.New("invalid notification outcome")
+		}
+	}
+
+	if raw := strings.TrimSpace(values.Get("hide_failed_outgoing")); raw != "" {
+		hide, err := strconv.ParseBool(raw)
+		if err != nil {
+			return notificationListOptions{}, errors.New("hide_failed_outgoing must be true or false")
+		}
+		opts.HideFailedOutgoing = hide
+	}
+
+	cursor, err := parseNotificationListCursor(values.Get("cursor"))
+	if err != nil {
+		return notificationListOptions{}, err
+	}
+	opts.Cursor = cursor
+	return opts, nil
 }
 
 func (n *Notifier) getCursor(ctx context.Context, key string) (string, error) {
@@ -3532,24 +3714,31 @@ func (s *Server) handleNotificationsList(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	limit := 200
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil {
-			limit = parsed
-		}
+	opts, err := parseNotificationListOptions(r.URL.Query(), time.Now())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	items, err := s.notifier.list(ctx, limit)
+	page, err := s.notifier.list(ctx, opts)
 	if err != nil {
 		s.logger.Printf("notifications: list failed: %v", err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to load notifications: %v", err))
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":                page.Items,
+		"has_more":             page.HasMore,
+		"next_cursor":          page.NextCursor,
+		"range":                opts.Range,
+		"type":                 opts.Type,
+		"outcome":              opts.Outcome,
+		"hide_failed_outgoing": opts.HideFailedOutgoing,
+	})
 }
 
 func (s *Server) handleNotificationsStream(w http.ResponseWriter, r *http.Request) {

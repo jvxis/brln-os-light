@@ -60,7 +60,7 @@ O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort habilitado) + i2pd habilitado por padrão
 - Go 1.24.12 e a major mais recente do Node.js (fallback para Node.js 20.x se a detecção falhar)
-- Binários do LND (padrão `v0.21.1-beta`)
+- Binários do LND (padrão `v0.21.2-beta`)
 - Binário do LightningOS Manager (compilado localmente)
 - Build da UI (compilada localmente)
 - Serviços systemd e templates de configuração
@@ -194,7 +194,7 @@ sudo /opt/lightningos/manager/lightningos-manager auth recovery new
 - Envios manuais on-chain para endereço externo exigem uma nova confirmação de senha. As automações internas e os fluxos de sucessão não são bloqueados por essa confirmação extra.
 
 Notas:
-- Você pode sobrescrever a URL do LND com `LND_URL=...` ou a versão com `LND_VERSION=...`.
+- Instalações novas usam a versão do LND fixada e autenticada por cada release do LightningOS. Releases oficiais posteriores do LND podem ser instaladas pela página de Upgrade do LND na interface.
 - O instalador gera uma role no Postgres e atualiza `LND_PG_DSN` em `/etc/lightningos/secrets.env`.
 - O rótulo de versão da UI vem de `ui/public/version.txt`.
 - PostgreSQL usa o repositório PGDG por padrão. Defina `POSTGRES_VERSION=18` (ou outra major) para sobrescrever.

@@ -2254,6 +2254,27 @@
     "feeLabel": "Fee {{fee}}",
     "memoLabel": "Memo {{memo}}",
     "linesOption": "{{count}} linhas",
+    "hideFailedOutgoing": "Ocultar pagamentos Lightning de saída com falha",
+    "loadMore": "Carregar mais",
+    "loadingMore": "Carregando mais...",
+    "loadMoreFailed": "Falha ao carregar mais notificações.",
+    "moreFilters": "Filtros",
+    "period": "Período do histórico",
+    "resetFilters": "Limpar filtros",
+    "range": {
+      "7d": "7D",
+      "1m": "1M",
+      "3m": "3M",
+      "6m": "6M",
+      "1y": "1A"
+    },
+    "outcome": {
+      "label": "Resultado",
+      "all": "Todos",
+      "completed": "Concluídos",
+      "failed": "Falharam",
+      "pending": "Pendentes"
+    },
     "filter": {
       "channels": "Canais",
       "forwards": "Forwards",
@@ -2340,6 +2361,7 @@
     "balancesSubtitle": "Variações por período",
     "basedOnDays": "Baseado em {{count}} dia(s) armazenado(s).",
     "cost": "Custo",
+    "costs": "Despesas",
     "cumulativeRevenueCosts": "Receita e custos acumulados",
     "daily": "Diário",
     "dailyMovementGoal": "Meta de movimento diário",

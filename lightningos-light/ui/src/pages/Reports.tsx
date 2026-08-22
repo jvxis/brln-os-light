@@ -983,7 +983,7 @@ export default function Reports() {
         markedRevenue: markedRevenueValue
       },
       {
-        name: t('reports.cost'),
+        name: t('reports.costs'),
         ...empty,
         rebalanceCost: rebalanceCostValue,
         paymentCost: paymentCostValue,
@@ -1383,6 +1383,10 @@ export default function Reports() {
                       contentStyle={tooltipContentStyle}
                       labelStyle={tooltipLabelStyle}
                       itemStyle={tooltipItemStyle}
+                      labelFormatter={(label, payload) => {
+                        const category = payload?.[0]?.payload?.name
+                        return typeof category === 'string' && category.trim() ? category : String(label ?? '')
+                      }}
                       formatter={(value) => formatSats(Number(value))}
                     />
                     <Legend verticalAlign="top" formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />

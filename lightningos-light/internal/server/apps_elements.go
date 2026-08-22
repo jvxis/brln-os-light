@@ -58,6 +58,22 @@ type elementsConfigValues struct {
 	MainchainPass string
 }
 
+type elementsBrokerState struct {
+	Installed            bool    `json:"installed"`
+	Status               string  `json:"status"`
+	DataDir              string  `json:"data_dir"`
+	RPCOK                bool    `json:"rpc_ok"`
+	Chain                string  `json:"chain,omitempty"`
+	Blocks               int64   `json:"blocks,omitempty"`
+	Headers              int64   `json:"headers,omitempty"`
+	VerificationProgress float64 `json:"verification_progress,omitempty"`
+	InitialBlockDownload bool    `json:"initial_block_download,omitempty"`
+	Peers                int     `json:"peers,omitempty"`
+	Version              int     `json:"version,omitempty"`
+	Subversion           string  `json:"subversion,omitempty"`
+	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
+}
+
 type elementsInstallOptions struct {
 	DataDir      string `json:"data_dir"`
 	StorageMount string `json:"storage_mount"`
@@ -83,17 +99,13 @@ func (a elementsApp) Definition() appDefinition {
 func (a elementsApp) Info(ctx context.Context) (appInfo, error) {
 	def := a.Definition()
 	info := newAppInfo(def)
-	paths := elementsAppPaths()
-	if !fileExists(paths.ElementsdPath) {
-		return info, nil
-	}
-	info.Installed = true
-	status, err := elementsServiceStatus(ctx)
+	state, err := elementsBrokerStatus(ctx, elementsAppPaths())
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
 	}
-	info.Status = status
+	info.Installed = state.Installed
+	info.Status = state.Status
 	return info, nil
 }
 
@@ -227,7 +239,11 @@ func (s *Server) installElementsWithOptions(ctx context.Context, opts elementsIn
 			return err
 		}
 		currentPaths := elementsAppPaths()
-		if fileExists(currentPaths.ElementsdPath) && normalized != currentPaths.DataDir {
+		state, err := elementsBrokerStatus(ctx, currentPaths)
+		if err != nil {
+			return err
+		}
+		if state.Installed && normalized != currentPaths.DataDir {
 			return errors.New("Elements data directory cannot be changed after installation")
 		}
 		if normalized == elementsDefaultDataDir {
@@ -282,7 +298,11 @@ func resolveElementsInstallDataDir(ctx context.Context, opts elementsInstallOpti
 
 func (s *Server) startElements(ctx context.Context) error {
 	paths := elementsAppPaths()
-	if !fileExists(paths.ElementsdPath) {
+	state, err := elementsBrokerStatus(ctx, paths)
+	if err != nil {
+		return err
+	}
+	if !state.Installed {
 		return errors.New("Elements is not installed")
 	}
 	handled, err := s.prepareElementsWithBroker(ctx, paths)
@@ -300,7 +320,11 @@ func (s *Server) startElements(ctx context.Context) error {
 
 func (s *Server) stopElements(ctx context.Context) error {
 	paths := elementsAppPaths()
-	if !fileExists(paths.ElementsdPath) {
+	state, err := elementsBrokerStatus(ctx, paths)
+	if err != nil {
+		return err
+	}
+	if !state.Installed {
 		return errors.New("Elements is not installed")
 	}
 	if handled, err := system.ElementsLifecycleWithBroker(ctx, paths.DataDir, "stop"); handled {
@@ -785,19 +809,25 @@ func parseElementsMainchainConfig(raw string) (string, int) {
 	return host, port
 }
 
-func elementsServiceStatus(ctx context.Context) (string, error) {
-	paths := elementsAppPaths()
-	if handled, raw, err := system.ElementsStatusWithBroker(ctx, paths.DataDir); handled {
-		if err != nil {
-			return "unknown", err
-		}
-		var state struct {
-			Status string `json:"status"`
-		}
-		if err := json.Unmarshal([]byte(raw), &state); err != nil {
-			return "unknown", errors.New("invalid Elements broker status")
-		}
-		return state.Status, nil
+func elementsBrokerStatus(ctx context.Context, paths elementsPaths) (elementsBrokerState, error) {
+	handled, raw, err := system.ElementsStatusWithBroker(ctx, paths.DataDir)
+	if !handled {
+		return elementsBrokerState{}, errors.New("Elements status requires privileged broker enforce mode")
 	}
-	return "unknown", errors.New("Elements status requires privileged broker enforce mode")
+	if err != nil {
+		return elementsBrokerState{}, err
+	}
+	var state elementsBrokerState
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		return elementsBrokerState{}, errors.New("invalid Elements broker status")
+	}
+	if !state.Installed {
+		state.Status = "not_installed"
+	} else if strings.TrimSpace(state.Status) == "" {
+		state.Status = "unknown"
+	}
+	if strings.TrimSpace(state.DataDir) == "" {
+		state.DataDir = paths.DataDir
+	}
+	return state, nil
 }

@@ -200,9 +200,38 @@ func appUpgradeRunning(ctx context.Context) bool {
 	if legacyTransitionUnitRunning(ctx) {
 		return true
 	}
-	out, _ := system.RunCommand(ctx, "systemctl", "is-active", appUpgradeUnitName)
-	state := strings.TrimSpace(out)
-	return state == "active" || state == "activating"
+	return transientSystemdUnitRunning(ctx, appUpgradeUnitName)
+}
+
+func transientSystemdUnitRunning(ctx context.Context, unit string) bool {
+	out, err := system.RunCommand(ctx, "systemctl", transientSystemdUnitListArgs(unit)...)
+	if err != nil {
+		return false
+	}
+	return transientSystemdUnitListed(out, unit)
+}
+
+func transientSystemdUnitListArgs(unit string) []string {
+	return []string{
+		"list-units",
+		"--type=service",
+		"--state=active,activating,reloading,deactivating",
+		"--no-legend",
+		"--no-pager",
+		"--plain",
+		unit + ".service",
+	}
+}
+
+func transientSystemdUnitListed(output, unit string) bool {
+	wanted := unit + ".service"
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeAppVersion(value string) string {

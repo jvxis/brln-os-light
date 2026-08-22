@@ -126,7 +126,10 @@ Keep `sovereign_live` off unless all are true over at least 24h, preferably 7d:
   through the API remains possible and must be separated from shadow telemetry.
 - `sovereign_exploration_slot_pct` can bypass empirical-history gates. When the
   candidate set is small, the scarcity rule may mark many candidates as
-  exploration, allowing route-dead targets into live execution.
+  exploration, allowing route-dead targets into live execution. This is an
+  intentional discovery mechanism: exploration jobs are persisted and visible
+  through `exploration_slot`, while five consecutive failed exploration jobs in
+  24h apply a 12h target burnout that survives Manager restarts.
 - `sovereign_target_source_quarantine_hours`,
   `fresh_paid_liquidity_lock_enabled`, and `source_min_payback_progress` are the
   direct protections that stop a recently rebalanced channel from immediately

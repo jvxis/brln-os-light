@@ -5052,6 +5052,7 @@
         "autopilotForwardFeePpm": "Fee média forwards 7d",
         "autopilotForwardFee": "{{fee}} em {{amount}} vendidos",
         "autopilotRealized7d": "Realizado autopilot 7d: {{net}} · sell-through {{sellthrough}}",
+        "autopilotExplorationRealized7d": "Exploração 7d ({{jobs}} jobs): {{moved}} movidos · líquido {{net}} · sell-through {{sellthrough}}",
         "successAttempts24h": "Tentativas com sucesso: {{value}}",
         "successAmount24h": "Movido em sucessos: {{value}}",
         "successAvgAmount24h": "Tamanho médio de sucesso: {{value}}",
@@ -5565,6 +5566,7 @@
       "title": "Histórico recente",
       "last24h": "Últimas 24h",
       "details": "Detalhes",
+      "explorationSlot": "exploração",
       "source": {
         "auto": "auto",
         "manual": "manual"

@@ -17,6 +17,7 @@ type rebalanceAttributionLot struct {
 	CompletedAt     time.Time
 	SentSat         int64
 	FeePaidSat      int64
+	ExplorationSlot bool
 }
 
 type rebalanceAttributionForward struct {
@@ -167,14 +168,15 @@ select
   coalesce(j.trigger_reason, ''),
   j.completed_at,
   coalesce(sum(a.amount_sat) filter (where a.status='succeeded'), 0) as sent_sat,
-  coalesce(sum(a.fee_paid_sat) filter (where a.status='succeeded'), 0) as fee_paid_sat
+  coalesce(sum(a.fee_paid_sat) filter (where a.status='succeeded'), 0) as fee_paid_sat,
+  j.exploration_slot
 from rebalance_jobs j
 left join rebalance_attempts a on a.job_id = j.id
 where j.completed_at is not null
   and j.completed_at >= $1
   and j.status in ('succeeded','partial','failed')
   and (cardinality($2::bigint[]) = 0 or j.target_channel_id = any($2::bigint[]))
-group by j.id, j.target_channel_id, j.status, j.reason, j.trigger_reason, j.completed_at
+group by j.id, j.target_channel_id, j.status, j.reason, j.trigger_reason, j.completed_at, j.exploration_slot
 order by j.completed_at, j.id
 `, since, ids)
 	if err != nil {
@@ -194,6 +196,7 @@ order by j.completed_at, j.id
 			&lot.CompletedAt,
 			&lot.SentSat,
 			&lot.FeePaidSat,
+			&lot.ExplorationSlot,
 		); err != nil {
 			rows.Close()
 			return nil, nil, err

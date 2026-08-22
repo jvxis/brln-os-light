@@ -550,8 +550,15 @@ kept as design history and include per-item status notes.
 
 ### R5 — Exploration burnout (track & stop)
 
-**Current status (2026-06-20): done.** The service tracks exploration burnout
-and tests cover the behavior. Keep this section as historical context.
+**Current status (2026-08-22): done and persisted.** The service marks
+exploration jobs in `rebalance_jobs`, restores the 24h failure streak after a
+Manager restart, and exposes the marker in queue/history telemetry. A success
+starts a fresh streak, so five later failures can still trigger the 12h burnout.
+The overview also separates 7d exploration volume, cost, attributed revenue,
+net, and sell-through from the total Sovereign result. This classification only
+fills after deploying the persisted marker; older jobs cannot be backfilled.
+Tests cover both live and restart-recovery behavior. Keep this section as
+historical context.
 
 **Esforço:** ~30 min de código + testes
 **Risco:** baixo
@@ -582,7 +589,7 @@ if stats.Attempts >= 5 && stats.Failures == stats.Attempts {
 
 - ✅ Para de queimar slots em canais comprovadamente quebrados
 - ✅ Outros canais ganham as oportunidades de exploração
-- ⚠️ Mais state pra manter (DB ou em memória)
+- ✅ Estado persistido no DB e recuperado após restart
 - ⚠️ Canais que se recuperam após o burnout só voltam após 12h
 
 ---

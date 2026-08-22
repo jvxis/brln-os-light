@@ -526,6 +526,15 @@ type RebalanceOverview struct {
 	SovereignSellThroughSlow7d          float64                       `json:"sovereign_sellthrough_slow_7d"`
 	SovereignSellThroughWindowHours     int                           `json:"sovereign_sellthrough_window_hours"`
 	SovereignSellThroughSlowWindowHours int                           `json:"sovereign_sellthrough_slow_window_hours"`
+	SovExploreJobs7d                    int64                         `json:"sovereign_exploration_jobs_7d"`
+	SovExploreRebalanceAmount7dSat      int64                         `json:"sovereign_exploration_rebalance_amount_7d_sat"`
+	SovExploreRebalanceCost7dSat        int64                         `json:"sovereign_exploration_rebalance_cost_7d_sat"`
+	SovExploreForwardAmount7dSat        int64                         `json:"sovereign_exploration_forward_amount_7d_sat"`
+	SovExploreForwardFee7dSat           int64                         `json:"sovereign_exploration_forward_fee_7d_sat"`
+	SovExploreRealizedNet7dSat          int64                         `json:"sovereign_exploration_realized_net_7d_sat"`
+	SovExploreSellThrough7d             float64                       `json:"sovereign_exploration_sellthrough_7d"`
+	SovExploreRealizedNetSlow7dSat      int64                         `json:"sovereign_exploration_realized_net_slow_7d_sat"`
+	SovExploreSellThroughSlow7d         float64                       `json:"sovereign_exploration_sellthrough_slow_7d"`
 	Jobs24h                             int64                         `json:"jobs_24h"`
 	SuccessJobs24h                      int64                         `json:"success_jobs_24h"`
 	JobSuccessRate24h                   float64                       `json:"job_success_rate_24h"`
@@ -1144,6 +1153,7 @@ type RebalanceJob struct {
 	SovereignExpectedProfitSat    int64   `json:"sovereign_expected_profit_sat,omitempty"`
 	SovereignBudgetCostSat        int64   `json:"sovereign_budget_cost_sat,omitempty"`
 	SovereignScore                int64   `json:"sovereign_score,omitempty"`
+	ExplorationSlot               bool    `json:"exploration_slot,omitempty"`
 	ActualSentSat                 int64   `json:"actual_sent_sat,omitempty"`
 	ActualRebalanceFeeSat         int64   `json:"actual_rebalance_fee_sat,omitempty"`
 	Forward1hCount                int64   `json:"forward_1h_count,omitempty"`
@@ -1332,6 +1342,7 @@ type rebalanceJobEconomics struct {
 	ExpectedProfitSat int64
 	BudgetCostSat     int64
 	Score             int64
+	ExplorationSlot   bool
 }
 
 type recentTargetCooldownWindows struct {
@@ -1369,6 +1380,7 @@ type rebalanceAttemptTelemetry24h struct {
 }
 
 type rebalanceAutopilotEconomics7d struct {
+	JobCount           int64
 	RebalanceAmountSat int64
 	RebalanceCostSat   int64
 	RebalanceCostPpm   int64
@@ -1388,6 +1400,11 @@ type rebalanceAutopilotEconomics7d struct {
 	// Janelas usadas (vindas da config/UI), pra label dos indicadores.
 	AttributionWindowHours int
 	SlowSellerWindowHours  int
+}
+
+type rebalanceAutopilotEconomicsBreakdown7d struct {
+	Total       rebalanceAutopilotEconomics7d
+	Exploration rebalanceAutopilotEconomics7d
 }
 
 type mppShadowShard struct {
@@ -1552,11 +1569,10 @@ type RebalanceService struct {
 	chCacheData    []lndclient.ChannelInfo
 	chCacheFetchAt time.Time
 
-	// R5 — Exploration burnout (in-memory): tracks recent exploration
-	// attempts per target channel so chronically failing targets stop
-	// burning exploration slots cycle after cycle. State is volatile; on
-	// process restart the system starts fresh, which is acceptable (the
-	// worst case is a known-bad target being tried once more).
+	// R5 — Exploration burnout: the in-memory cache gives immediate updates
+	// while persisted exploration job outcomes restore the 24h window after a
+	// process restart. Chronically failing targets temporarily stop consuming
+	// exploration slots cycle after cycle.
 	explorationStatsMu sync.Mutex
 	explorationStats   map[uint64]*explorationStat
 	explorationJobs    map[int64]uint64 // jobID → channelID (only set for exploration-marked jobs)
@@ -1570,6 +1586,12 @@ type explorationStat struct {
 	AttemptsWindow []time.Time
 	FailuresWindow []time.Time
 	BurnedUntil    time.Time
+}
+
+type explorationOutcome struct {
+	ChannelID  uint64
+	Succeeded  bool
+	FinishedAt time.Time
 }
 
 func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *RebalanceService {
@@ -4175,8 +4197,9 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 	// ExplorationSlot mark so we stop burning cycles on dead-end channels.
 	candidates := plan.Candidates
 	if cfg.SovereignExplorationSlotPct > 0 && maxJobs > 1 {
+		persistedBurnout := s.loadPersistedExplorationBurnoutTargets(ctx, scanAt)
 		burnoutFn := func(channelID uint64) bool {
-			return s.isInExplorationBurnout(channelID, scanAt)
+			return persistedBurnout[channelID] || s.isInExplorationBurnout(channelID, scanAt)
 		}
 		// Targets that already reached the structural cooldown threshold must
 		// not receive the exploration mark — otherwise the M3 scarcity bypass
@@ -4385,18 +4408,14 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					ExpectedProfitSat: decision.ExpectedProfitSat,
 					BudgetCostSat:     decision.BudgetCostSat,
 					Score:             decision.Score,
+					ExplorationSlot:   target.ExplorationSlot,
 				}
-				jobID, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, false, economics, operatorRebalanceOverrides{})
+				_, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, false, economics, operatorRebalanceOverrides{})
 				if err != nil {
 					decision.Reason = autoStartErrorReason(err)
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
-				}
-				// R5: mark exploration-slot jobs so finishJob can record the
-				// outcome to update burnout state.
-				if target.ExplorationSlot {
-					s.markExplorationJob(jobID, target.Channel.ChannelID)
 				}
 				s.mu.Lock()
 				s.lastAutoByTarget[target.Channel.ChannelID] = scanAt
@@ -5288,6 +5307,12 @@ func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source 
 			TargetChannelID: targetChannelID,
 		}
 		s.mu.Unlock()
+	}
+	// Register the exploration outcome tracker before starting the goroutine.
+	// The old call site marked the job after runJob had already started, so a
+	// fast skip/failure could finish before the marker existed.
+	if economics.ExplorationSlot {
+		s.markExplorationJob(jobID, targetChannelID)
 	}
 
 	go s.runJob(jobID, targetChannelID, amount, targetPct, source, reason, overrides)
@@ -9454,7 +9479,7 @@ where id=$1`, jobID, status, nullableString(reason), completedAt)
 	// against the target channel so the burnout window updates. Partials and
 	// full successes both count as "successful" exploration — they moved
 	// liquidity, which is the whole point.
-	if channelID, ok := s.takeExplorationJob(jobID); ok {
+	if channelID, ok := s.takeExplorationJob(ctx, jobID); ok {
 		succeeded := status == "succeeded" || status == "partial"
 		s.recordExplorationOutcome(channelID, succeeded, completedAt)
 	}
@@ -10864,6 +10889,97 @@ func (s *RebalanceService) isInExplorationBurnout(channelID uint64, now time.Tim
 	return now.Before(stat.BurnedUntil)
 }
 
+func explorationBurnoutTargetsFromOutcomes(outcomes []explorationOutcome, now time.Time) map[uint64]bool {
+	result := map[uint64]bool{}
+	if len(outcomes) == 0 {
+		return result
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	ordered := append([]explorationOutcome(nil), outcomes...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if !ordered[i].FinishedAt.Equal(ordered[j].FinishedAt) {
+			return ordered[i].FinishedAt.Before(ordered[j].FinishedAt)
+		}
+		return ordered[i].ChannelID < ordered[j].ChannelID
+	})
+	stats := map[uint64]*explorationStat{}
+	cutoff := now.Add(-sovereignExplorationBurnoutWindow)
+	for _, outcome := range ordered {
+		if outcome.ChannelID == 0 || outcome.FinishedAt.IsZero() || outcome.FinishedAt.Before(cutoff) || outcome.FinishedAt.After(now) {
+			continue
+		}
+		stat := stats[outcome.ChannelID]
+		if stat == nil {
+			stat = &explorationStat{}
+			stats[outcome.ChannelID] = stat
+		}
+		stat.AttemptsWindow = trimTimeWindow(stat.AttemptsWindow, outcome.FinishedAt.Add(-sovereignExplorationBurnoutWindow))
+		stat.FailuresWindow = trimTimeWindow(stat.FailuresWindow, outcome.FinishedAt.Add(-sovereignExplorationBurnoutWindow))
+		if outcome.Succeeded {
+			stat.AttemptsWindow = nil
+			stat.FailuresWindow = nil
+			stat.BurnedUntil = time.Time{}
+			continue
+		}
+		stat.AttemptsWindow = append(stat.AttemptsWindow, outcome.FinishedAt)
+		stat.FailuresWindow = append(stat.FailuresWindow, outcome.FinishedAt)
+		if len(stat.FailuresWindow) >= sovereignExplorationBurnoutMinAttempts && len(stat.FailuresWindow) == len(stat.AttemptsWindow) {
+			stat.BurnedUntil = outcome.FinishedAt.Add(sovereignExplorationBurnoutDuration)
+		}
+	}
+	for channelID, stat := range stats {
+		if stat != nil && !stat.BurnedUntil.IsZero() && now.Before(stat.BurnedUntil) {
+			result[channelID] = true
+		}
+	}
+	return result
+}
+
+func (s *RebalanceService) loadPersistedExplorationBurnoutTargets(ctx context.Context, now time.Time) map[uint64]bool {
+	if s == nil || s.db == nil {
+		return map[uint64]bool{}
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	rows, err := s.db.Query(ctx, `
+select target_channel_id, status, completed_at
+from rebalance_jobs
+where exploration_slot=true
+  and completed_at is not null
+  and completed_at >= $1
+  and completed_at <= $2
+order by completed_at, id
+`, now.Add(-sovereignExplorationBurnoutWindow), now)
+	if err != nil {
+		return map[uint64]bool{}
+	}
+	defer rows.Close()
+	outcomes := make([]explorationOutcome, 0)
+	for rows.Next() {
+		var channelID int64
+		var status string
+		var finishedAt time.Time
+		if err := rows.Scan(&channelID, &status, &finishedAt); err != nil {
+			return map[uint64]bool{}
+		}
+		if channelID <= 0 {
+			continue
+		}
+		outcomes = append(outcomes, explorationOutcome{
+			ChannelID:  uint64(channelID),
+			Succeeded:  status == "succeeded" || status == "partial",
+			FinishedAt: finishedAt,
+		})
+	}
+	if rows.Err() != nil {
+		return map[uint64]bool{}
+	}
+	return explorationBurnoutTargetsFromOutcomes(outcomes, now)
+}
+
 // recordExplorationOutcome updates the in-memory exploration window for a
 // target channel after one of its exploration-marked jobs finished. When
 // `succeeded` is true, the failure window is cleared and any active burnout
@@ -10893,8 +11009,10 @@ func (s *RebalanceService) recordExplorationOutcome(channelID uint64, succeeded 
 	stat.FailuresWindow = trimTimeWindow(stat.FailuresWindow, cutoff)
 	stat.AttemptsWindow = append(stat.AttemptsWindow, now)
 	if succeeded {
-		// Any success in the window clears the failure streak and lifts the
-		// active burnout — the channel has demonstrated viability.
+		// A success starts a new failure streak and lifts active burnout. Clear
+		// both windows so five later failures can still trigger burnout instead
+		// of being masked by an earlier success for the rest of the 24h window.
+		stat.AttemptsWindow = nil
 		stat.FailuresWindow = nil
 		stat.BurnedUntil = time.Time{}
 		return
@@ -10928,18 +11046,34 @@ func (s *RebalanceService) markExplorationJob(jobID int64, channelID uint64) {
 }
 
 // takeExplorationJob looks up and removes the jobID from the exploration
-// tracking map. Returns the channelID and whether the job was exploration.
-func (s *RebalanceService) takeExplorationJob(jobID int64) (uint64, bool) {
+// tracking map. The persisted flag is the fallback for process restarts and
+// for any completion that raced with volatile tracking.
+func (s *RebalanceService) takeExplorationJob(ctx context.Context, jobID int64) (uint64, bool) {
 	if s == nil || jobID == 0 {
 		return 0, false
 	}
 	s.explorationStatsMu.Lock()
-	defer s.explorationStatsMu.Unlock()
 	channelID, ok := s.explorationJobs[jobID]
 	if ok {
 		delete(s.explorationJobs, jobID)
 	}
-	return channelID, ok
+	s.explorationStatsMu.Unlock()
+	if ok {
+		return channelID, true
+	}
+	if s.db == nil {
+		return 0, false
+	}
+	var persistedChannelID int64
+	err := s.db.QueryRow(ctx, `
+select target_channel_id
+from rebalance_jobs
+where id=$1 and exploration_slot=true
+`, jobID).Scan(&persistedChannelID)
+	if err != nil || persistedChannelID <= 0 {
+		return 0, false
+	}
+	return uint64(persistedChannelID), true
 }
 
 // trimTimeWindow drops timestamps older than cutoff from a sorted-ish slice.
@@ -12369,7 +12503,8 @@ create table if not exists rebalance_jobs (
   sovereign_estimated_cost_sat bigint not null default 0,
   sovereign_expected_profit_sat bigint not null default 0,
   sovereign_budget_cost_sat bigint not null default 0,
-  sovereign_score bigint not null default 0
+  sovereign_score bigint not null default 0,
+  exploration_slot boolean not null default false
 );
 
 alter table if exists rebalance_jobs
@@ -12386,6 +12521,11 @@ alter table if exists rebalance_jobs
   add column if not exists sovereign_budget_cost_sat bigint not null default 0;
 alter table if exists rebalance_jobs
   add column if not exists sovereign_score bigint not null default 0;
+alter table if exists rebalance_jobs
+  add column if not exists exploration_slot boolean not null default false;
+create index if not exists rebalance_jobs_exploration_completed_idx
+  on rebalance_jobs (completed_at, target_channel_id)
+  where exploration_slot=true;
 -- Backfill: jobs com reason='delegated-fast-path' são por definição sucessos via fast-path,
 -- então marcamos retroativamente para que o telemetry não subconte (idempotente).
 update rebalance_jobs set fast_path_attempted=true where reason='delegated-fast-path' and not fast_path_attempted;
@@ -14207,11 +14347,13 @@ func (s *RebalanceService) insertJob(ctx context.Context, target *lndclient.Chan
 	err := s.db.QueryRow(ctx, `
 insert into rebalance_jobs (
   source, status, trigger_reason, reason, target_channel_id, target_channel_point, target_outbound_pct, target_amount_sat, config_snapshot,
-  sovereign_expected_gain_sat, sovereign_estimated_cost_sat, sovereign_expected_profit_sat, sovereign_budget_cost_sat, sovereign_score
-) values ($1,'queued',$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+  sovereign_expected_gain_sat, sovereign_estimated_cost_sat, sovereign_expected_profit_sat, sovereign_budget_cost_sat, sovereign_score,
+  exploration_slot
+) values ($1,'queued',$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
  returning id
 `, source, nullableString(reason), int64(target.ChannelID), target.ChannelPoint, targetPct, amount, nil,
-		economics.ExpectedGainSat, economics.EstimatedCostSat, economics.ExpectedProfitSat, economics.BudgetCostSat, economics.Score).Scan(&jobID)
+		economics.ExpectedGainSat, economics.EstimatedCostSat, economics.ExpectedProfitSat, economics.BudgetCostSat, economics.Score,
+		economics.ExplorationSlot).Scan(&jobID)
 	return jobID, err
 }
 
@@ -14416,9 +14558,9 @@ select
 	}, nil
 }
 
-func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Context, cfg RebalanceConfig) (rebalanceAutopilotEconomics7d, error) {
+func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Context, cfg RebalanceConfig) (rebalanceAutopilotEconomicsBreakdown7d, error) {
 	if s.db == nil {
-		return rebalanceAutopilotEconomics7d{}, nil
+		return rebalanceAutopilotEconomicsBreakdown7d{}, nil
 	}
 	// Duas janelas, ambas vindas da config (UI): attribution_window mede a
 	// venda "rápida" (velocidade) e slow_seller_window mede a realização
@@ -14429,8 +14571,16 @@ func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Contex
 	slowHours := sovereignSlowSellerWindowHoursForConfig(cfg)
 	snapshot, err := s.loadSovereignAttributionSnapshot(ctx, cfg)
 	if err != nil {
-		return rebalanceAutopilotEconomics7d{}, err
+		return rebalanceAutopilotEconomicsBreakdown7d{}, err
 	}
+	return rebalanceAutopilotEconomicsBreakdown7d{
+		Total:       sovereignAutopilotEconomicsFromSnapshot(snapshot, attributionHours, slowHours, false),
+		Exploration: sovereignAutopilotEconomicsFromSnapshot(snapshot, attributionHours, slowHours, true),
+	}, nil
+}
+
+func sovereignAutopilotEconomicsFromSnapshot(snapshot sovereignAttributionSnapshot, attributionHours, slowHours int, explorationOnly bool) rebalanceAutopilotEconomics7d {
+	var jobCount int64
 	var sentSat int64
 	var costSat int64
 	var forwardSat int64
@@ -14441,6 +14591,10 @@ func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Contex
 		if lot.TriggerReason != rebalanceSovereignReason || lot.CompletedAt.Before(snapshot.MetricSince) {
 			continue
 		}
+		if explorationOnly && !lot.ExplorationSlot {
+			continue
+		}
+		jobCount++
 		sentSat += lot.SentSat
 		costSat += lot.FeePaidSat
 		fast := snapshot.Fast[lot.JobID]
@@ -14453,6 +14607,7 @@ func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Contex
 	forwardFeeSat := forwardFeeMsat / 1000
 	forwardSlowFeeSat := forwardSlowFeeMsat / 1000
 	result := rebalanceAutopilotEconomics7d{
+		JobCount:               jobCount,
 		RebalanceAmountSat:     sentSat,
 		RebalanceCostSat:       costSat,
 		RebalanceCostPpm:       satToPpm(costSat, sentSat),
@@ -14471,7 +14626,7 @@ func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Contex
 		result.SellThrough = float64(forwardSat) / float64(sentSat)
 		result.SellThroughSlow = float64(forwardSlowSat) / float64(sentSat)
 	}
-	return result, nil
+	return result
 }
 
 const (
@@ -14858,7 +15013,7 @@ where type='rebalance' and occurred_at >= now() - interval '1 day'
 	paybackProgress := 0.0
 	paybackProgressRebalanced := 0.0
 	attemptTelemetry := rebalanceAttemptTelemetry24h{}
-	sovereignEconomics7d := rebalanceAutopilotEconomics7d{}
+	sovereignEconomics7d := rebalanceAutopilotEconomicsBreakdown7d{}
 	mppShadowTelemetry := mppShadowTelemetry24h{}
 	mppStructuralAbortJobs := int64(0)
 	topFailureReasons30m := []RebalanceReasonStat{}
@@ -15052,20 +15207,29 @@ where report_date >= current_date - interval '6 days'
 		JobsWithoutAttempt7d:                jobsWithoutAttemptCount,
 		JobsWithoutAttemptRate7d:            jobsWithoutAttemptRate,
 		ROI7d:                               roi,
-		SovereignRebalanceAmount7dSat:       sovereignEconomics7d.RebalanceAmountSat,
-		SovereignRebalanceCost7dSat:         sovereignEconomics7d.RebalanceCostSat,
-		SovereignRebalanceCost7dPpm:         sovereignEconomics7d.RebalanceCostPpm,
-		SovereignForwardAmount7dSat:         sovereignEconomics7d.ForwardAmountSat,
-		SovereignForwardFee7dSat:            sovereignEconomics7d.ForwardFeeSat,
-		SovereignForwardFee7dPpm:            sovereignEconomics7d.ForwardFeePpm,
-		SovereignRealizedNet7dSat:           sovereignEconomics7d.RealizedNetSat,
-		SovereignSellThrough7d:              sovereignEconomics7d.SellThrough,
-		SovereignForwardAmountSlow7dSat:     sovereignEconomics7d.ForwardAmountSlowSat,
-		SovereignForwardFeeSlow7dSat:        sovereignEconomics7d.ForwardFeeSlowSat,
-		SovereignRealizedNetSlow7dSat:       sovereignEconomics7d.RealizedNetSlowSat,
-		SovereignSellThroughSlow7d:          sovereignEconomics7d.SellThroughSlow,
-		SovereignSellThroughWindowHours:     sovereignEconomics7d.AttributionWindowHours,
-		SovereignSellThroughSlowWindowHours: sovereignEconomics7d.SlowSellerWindowHours,
+		SovereignRebalanceAmount7dSat:       sovereignEconomics7d.Total.RebalanceAmountSat,
+		SovereignRebalanceCost7dSat:         sovereignEconomics7d.Total.RebalanceCostSat,
+		SovereignRebalanceCost7dPpm:         sovereignEconomics7d.Total.RebalanceCostPpm,
+		SovereignForwardAmount7dSat:         sovereignEconomics7d.Total.ForwardAmountSat,
+		SovereignForwardFee7dSat:            sovereignEconomics7d.Total.ForwardFeeSat,
+		SovereignForwardFee7dPpm:            sovereignEconomics7d.Total.ForwardFeePpm,
+		SovereignRealizedNet7dSat:           sovereignEconomics7d.Total.RealizedNetSat,
+		SovereignSellThrough7d:              sovereignEconomics7d.Total.SellThrough,
+		SovereignForwardAmountSlow7dSat:     sovereignEconomics7d.Total.ForwardAmountSlowSat,
+		SovereignForwardFeeSlow7dSat:        sovereignEconomics7d.Total.ForwardFeeSlowSat,
+		SovereignRealizedNetSlow7dSat:       sovereignEconomics7d.Total.RealizedNetSlowSat,
+		SovereignSellThroughSlow7d:          sovereignEconomics7d.Total.SellThroughSlow,
+		SovereignSellThroughWindowHours:     sovereignEconomics7d.Total.AttributionWindowHours,
+		SovereignSellThroughSlowWindowHours: sovereignEconomics7d.Total.SlowSellerWindowHours,
+		SovExploreJobs7d:                    sovereignEconomics7d.Exploration.JobCount,
+		SovExploreRebalanceAmount7dSat:      sovereignEconomics7d.Exploration.RebalanceAmountSat,
+		SovExploreRebalanceCost7dSat:        sovereignEconomics7d.Exploration.RebalanceCostSat,
+		SovExploreForwardAmount7dSat:        sovereignEconomics7d.Exploration.ForwardAmountSat,
+		SovExploreForwardFee7dSat:           sovereignEconomics7d.Exploration.ForwardFeeSat,
+		SovExploreRealizedNet7dSat:          sovereignEconomics7d.Exploration.RealizedNetSat,
+		SovExploreSellThrough7d:             sovereignEconomics7d.Exploration.SellThrough,
+		SovExploreRealizedNetSlow7dSat:      sovereignEconomics7d.Exploration.RealizedNetSlowSat,
+		SovExploreSellThroughSlow7d:         sovereignEconomics7d.Exploration.SellThroughSlow,
 		Jobs24h:                             jobs24h,
 		SuccessJobs24h:                      successJobs24h,
 		JobSuccessRate24h:                   jobSuccessRate24h,
@@ -15332,7 +15496,7 @@ func (s *RebalanceService) Queue(ctx context.Context) ([]RebalanceJob, []Rebalan
 	}
 	rows, err := s.db.Query(ctx, `
 select id, created_at, completed_at, source, status, trigger_reason, reason, target_channel_id,
-  target_channel_point, target_outbound_pct, target_amount_sat
+  target_channel_point, target_outbound_pct, target_amount_sat, exploration_slot
 from rebalance_jobs
 where status in ('running','queued')
    or completed_at >= now() - ($1::int * interval '1 second')
@@ -15350,7 +15514,7 @@ order by created_at desc
 		var reason pgtype.Text
 		var targetChannelID int64
 		if err := rows.Scan(&job.ID, &created, &completed, &job.Source, &job.Status, &triggerReason, &reason, &targetChannelID,
-			&job.TargetChannelPoint, &job.TargetOutboundPct, &job.TargetAmountSat); err != nil {
+			&job.TargetChannelPoint, &job.TargetOutboundPct, &job.TargetAmountSat, &job.ExplorationSlot); err != nil {
 			return jobs, attempts, err
 		}
 		job.CreatedAt = created.UTC().Format(time.RFC3339)
@@ -15510,7 +15674,7 @@ func (s *RebalanceService) History(ctx context.Context, limit int) ([]RebalanceJ
 select id, created_at, completed_at, source, status, trigger_reason, reason, target_channel_id,
   target_channel_point, target_outbound_pct, target_amount_sat,
   sovereign_expected_gain_sat, sovereign_estimated_cost_sat, sovereign_expected_profit_sat,
-  sovereign_budget_cost_sat, sovereign_score
+  sovereign_budget_cost_sat, sovereign_score, exploration_slot
 from rebalance_jobs
 where status in ('succeeded','failed','cancelled','partial','skipped')
   and completed_at >= now() - interval '1 day'
@@ -15535,7 +15699,7 @@ order by created_at desc`
 		if err := rows.Scan(&job.ID, &created, &completed, &job.Source, &job.Status, &triggerReason, &reason, &targetChannelID,
 			&job.TargetChannelPoint, &job.TargetOutboundPct, &job.TargetAmountSat,
 			&job.SovereignExpectedGainSat, &job.SovereignEstimatedCostSat, &job.SovereignExpectedProfitSat,
-			&job.SovereignBudgetCostSat, &job.SovereignScore); err != nil {
+			&job.SovereignBudgetCostSat, &job.SovereignScore, &job.ExplorationSlot); err != nil {
 			return jobs, attempts, err
 		}
 		job.CreatedAt = created.UTC().Format(time.RFC3339)

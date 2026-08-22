@@ -1100,19 +1100,86 @@ func TestMarkAndTakeExplorationJob(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	svc.markExplorationJob(123, 456)
 
-	channelID, ok := svc.takeExplorationJob(123)
+	channelID, ok := svc.takeExplorationJob(context.Background(), 123)
 	if !ok || channelID != 456 {
 		t.Fatalf("expected (456, true), got (%d, %v)", channelID, ok)
 	}
 	// Second take returns false.
-	_, ok = svc.takeExplorationJob(123)
+	_, ok = svc.takeExplorationJob(context.Background(), 123)
 	if ok {
 		t.Fatalf("expected take to be one-shot")
 	}
 	// Non-existent job returns false.
-	_, ok = svc.takeExplorationJob(999)
+	_, ok = svc.takeExplorationJob(context.Background(), 999)
 	if ok {
 		t.Fatalf("expected unmarked job to return false")
+	}
+}
+
+func TestExplorationBurnoutCanRecurAfterSuccess(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	const channelID uint64 = 77
+	base := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
+	svc.recordExplorationOutcome(channelID, true, base)
+	for i := 1; i <= sovereignExplorationBurnoutMinAttempts; i++ {
+		svc.recordExplorationOutcome(channelID, false, base.Add(time.Duration(i)*time.Minute))
+	}
+	if !svc.isInExplorationBurnout(channelID, base.Add(10*time.Minute)) {
+		t.Fatal("five failures after a success must start a fresh burnout window")
+	}
+}
+
+func TestExplorationBurnoutTargetsFromPersistedOutcomes(t *testing.T) {
+	const channelID uint64 = 88
+	base := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
+	outcomes := []explorationOutcome{{ChannelID: channelID, Succeeded: true, FinishedAt: base}}
+	for i := 1; i <= sovereignExplorationBurnoutMinAttempts; i++ {
+		outcomes = append(outcomes, explorationOutcome{
+			ChannelID:  channelID,
+			Succeeded:  false,
+			FinishedAt: base.Add(time.Duration(i) * time.Minute),
+		})
+	}
+	got := explorationBurnoutTargetsFromOutcomes(outcomes, base.Add(10*time.Minute))
+	if !got[channelID] {
+		t.Fatal("persisted failures after the last success must restore burnout after restart")
+	}
+	got = explorationBurnoutTargetsFromOutcomes(outcomes, base.Add(sovereignExplorationBurnoutDuration+time.Hour))
+	if got[channelID] {
+		t.Fatal("persisted burnout must expire after its configured duration")
+	}
+}
+
+func TestSovereignExplorationEconomicsAreSeparatedFromTotal(t *testing.T) {
+	base := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
+	snapshot := sovereignAttributionSnapshot{
+		MetricSince: base.Add(-time.Hour),
+		Lots: []rebalanceAttributionLot{
+			{JobID: 1, TriggerReason: rebalanceSovereignReason, CompletedAt: base, SentSat: 100_000, FeePaidSat: 100},
+			{JobID: 2, TriggerReason: rebalanceSovereignReason, CompletedAt: base, SentSat: 50_000, FeePaidSat: 80, ExplorationSlot: true},
+		},
+		Fast: map[int64]rebalanceAttributionResult{
+			1: {ForwardAmountSat: 80_000, ForwardFeeMsat: 200_000},
+			2: {ForwardAmountSat: 10_000, ForwardFeeMsat: 40_000},
+		},
+		Slow: map[int64]rebalanceAttributionResult{
+			1: {ForwardAmountSat: 90_000, ForwardFeeMsat: 240_000},
+			2: {ForwardAmountSat: 25_000, ForwardFeeMsat: 100_000},
+		},
+	}
+	total := sovereignAutopilotEconomicsFromSnapshot(snapshot, 72, 168, false)
+	exploration := sovereignAutopilotEconomicsFromSnapshot(snapshot, 72, 168, true)
+	if total.JobCount != 2 || total.RebalanceAmountSat != 150_000 || total.RealizedNetSat != 60 {
+		t.Fatalf("unexpected total economics: %+v", total)
+	}
+	if exploration.JobCount != 1 || exploration.RebalanceAmountSat != 50_000 || exploration.RebalanceCostSat != 80 {
+		t.Fatalf("unexpected exploration economics: %+v", exploration)
+	}
+	if exploration.ForwardAmountSat != 10_000 || exploration.RealizedNetSat != -40 || exploration.SellThrough != 0.2 {
+		t.Fatalf("unexpected exploration realized economics: %+v", exploration)
+	}
+	if exploration.RealizedNetSlowSat != 20 || exploration.SellThroughSlow != 0.5 {
+		t.Fatalf("unexpected exploration slow economics: %+v", exploration)
 	}
 }
 

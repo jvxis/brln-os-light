@@ -2254,6 +2254,27 @@
     "feeLabel": "Fee {{fee}}",
     "memoLabel": "Memo {{memo}}",
     "linesOption": "{{count}} lines",
+    "hideFailedOutgoing": "Hide failed outgoing Lightning payments",
+    "loadMore": "Load more",
+    "loadingMore": "Loading more...",
+    "loadMoreFailed": "Failed to load more notifications.",
+    "moreFilters": "Filters",
+    "period": "History period",
+    "resetFilters": "Reset filters",
+    "range": {
+      "7d": "7D",
+      "1m": "1M",
+      "3m": "3M",
+      "6m": "6M",
+      "1y": "1Y"
+    },
+    "outcome": {
+      "label": "Result",
+      "all": "All",
+      "completed": "Completed",
+      "failed": "Failed",
+      "pending": "Pending"
+    },
     "filter": {
       "channels": "Channels",
       "forwards": "Forwards",

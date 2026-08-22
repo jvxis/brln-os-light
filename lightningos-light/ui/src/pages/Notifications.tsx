@@ -24,6 +24,54 @@ type Notification = {
   memo?: string
 }
 
+type NotificationTypeFilter = 'all' | 'onchain' | 'lightning' | 'keysend' | 'channel' | 'forward' | 'rebalance' | 'security'
+type NotificationRange = '7d' | '1m' | '3m' | '6m' | '1y'
+type NotificationOutcome = 'all' | 'completed' | 'failed' | 'pending'
+
+const notificationPageSize = 200
+const hideFailedOutgoingStorageKey = 'lightningos.notifications.hideFailedOutgoing'
+const failedStatuses = new Set(['FAILED', 'ERROR'])
+const pendingStatuses = new Set(['PENDING', 'IN_FLIGHT', 'OPENING', 'CLOSING', 'FORCE_CLOSING', 'WAITING_CLOSE'])
+const completedStatuses = new Set(['SUCCEEDED', 'SETTLED', 'CONFIRMED', 'OPENED', 'CLOSED', 'SENT', 'RECEIVED', 'COMPLETED', 'SUCCESS'])
+
+const notificationRangeStart = (range: NotificationRange) => {
+  const start = new Date()
+  if (range === '7d') start.setDate(start.getDate() - 7)
+  if (range === '1m') start.setMonth(start.getMonth() - 1)
+  if (range === '3m') start.setMonth(start.getMonth() - 3)
+  if (range === '6m') start.setMonth(start.getMonth() - 6)
+  if (range === '1y') start.setFullYear(start.getFullYear() - 1)
+  return start
+}
+
+const notificationMatchesOutcome = (item: Notification, outcome: NotificationOutcome) => {
+  if (outcome === 'all') return true
+  const status = String(item.status || '').toUpperCase()
+  if (outcome === 'failed') return failedStatuses.has(status)
+  if (outcome === 'pending') return pendingStatuses.has(status)
+  return completedStatuses.has(status)
+}
+
+const notificationMatchesFilters = (
+  item: Notification,
+  range: NotificationRange,
+  type: NotificationTypeFilter,
+  outcome: NotificationOutcome,
+  hideFailedOutgoing: boolean,
+) => {
+  const occurredAt = new Date(item.occurred_at)
+  if (Number.isNaN(occurredAt.getTime()) || occurredAt < notificationRangeStart(range)) return false
+  if (type !== 'all' && item.type !== type) return false
+  if (!notificationMatchesOutcome(item, outcome)) return false
+  if (
+    hideFailedOutgoing
+    && item.type === 'lightning'
+    && item.direction === 'out'
+    && failedStatuses.has(String(item.status || '').toUpperCase())
+  ) return false
+  return true
+}
+
 type TelegramNotificationConfig = {
   chat_id?: string
   bot_token_set?: boolean
@@ -92,7 +140,6 @@ const mempoolTxLink = (txid?: string) => {
 export default function Notifications() {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
-  const limitOptions = [200, 500, 1000]
 
   const formatTimestamp = (value: string) => {
     if (!value) return t('common.unknownTime')
@@ -164,9 +211,22 @@ export default function Notifications() {
   const [status, setStatus] = useState(t('notifications.loading'))
   const [streamState, setStreamState] = useState<'idle' | 'waiting' | 'reconnecting' | 'error'>('idle')
   const streamErrors = useRef(0)
-  const [filter, setFilter] = useState<'all' | 'onchain' | 'lightning' | 'keysend' | 'channel' | 'forward' | 'rebalance' | 'security'>('all')
-  const [limit, setLimit] = useState(200)
-  const limitRef = useRef(limit)
+  const [filter, setFilter] = useState<NotificationTypeFilter>('all')
+  const [range, setRange] = useState<NotificationRange>('7d')
+  const [outcome, setOutcome] = useState<NotificationOutcome>('all')
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [hideFailedOutgoing, setHideFailedOutgoing] = useState(() => {
+    try {
+      return window.localStorage.getItem(hideFailedOutgoingStorageKey) === 'true'
+    } catch {
+      return false
+    }
+  })
+  const [hasMore, setHasMore] = useState(false)
+  const [nextCursor, setNextCursor] = useState('')
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [loadMoreStatus, setLoadMoreStatus] = useState('')
+  const activeFiltersRef = useRef({ range, filter, outcome, hideFailedOutgoing })
   const [telegramConfig, setTelegramConfig] = useState<TelegramNotificationConfig | null>(null)
   const [telegramToken, setTelegramToken] = useState('')
   const [telegramChatId, setTelegramChatId] = useState('')
@@ -183,28 +243,78 @@ export default function Notifications() {
   const [telegramOpen, setTelegramOpen] = useState(false)
 
   useEffect(() => {
-    limitRef.current = limit
-  }, [limit])
+    activeFiltersRef.current = { range, filter, outcome, hideFailedOutgoing }
+  }, [filter, outcome, hideFailedOutgoing, range])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(hideFailedOutgoingStorageKey, String(hideFailedOutgoing))
+    } catch {
+      // Local preference persistence is best effort.
+    }
+  }, [hideFailedOutgoing])
 
   useEffect(() => {
     let mounted = true
     const load = async () => {
       setStatus(t('notifications.loading'))
+      setLoadMoreStatus('')
       try {
-        const res = await getNotifications(limit)
+        const res = await getNotifications({
+          limit: notificationPageSize,
+          range,
+          type: filter,
+          outcome,
+          hide_failed_outgoing: hideFailedOutgoing,
+        })
         if (!mounted) return
         setItems(Array.isArray(res?.items) ? res.items : [])
+        setHasMore(Boolean(res?.has_more))
+        setNextCursor(typeof res?.next_cursor === 'string' ? res.next_cursor : '')
         setStatus('')
       } catch (err: any) {
         if (!mounted) return
         setStatus(err?.message || t('notifications.unavailable'))
+        setHasMore(false)
+        setNextCursor('')
       }
     }
     load()
     return () => {
       mounted = false
     }
-  }, [limit])
+  }, [filter, hideFailedOutgoing, outcome, range, t])
+
+  const loadMore = async () => {
+    if (loadingMore || !hasMore || !nextCursor) return
+    setLoadingMore(true)
+    setLoadMoreStatus('')
+    try {
+      const res = await getNotifications({
+        limit: notificationPageSize,
+        range,
+        type: filter,
+        outcome,
+        hide_failed_outgoing: hideFailedOutgoing,
+        cursor: nextCursor,
+      })
+      const moreItems: Notification[] = Array.isArray(res?.items) ? res.items : []
+      setItems((prev) => {
+        const byID = new Map(prev.map((item) => [item.id, item]))
+        moreItems.forEach((item) => byID.set(item.id, item))
+        return Array.from(byID.values()).sort((a, b) => {
+          const timeDiff = new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime()
+          return timeDiff || b.id - a.id
+        })
+      })
+      setHasMore(Boolean(res?.has_more))
+      setNextCursor(typeof res?.next_cursor === 'string' ? res.next_cursor : '')
+    } catch (err: any) {
+      setLoadMoreStatus(err?.message || t('notifications.loadMoreFailed'))
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   useEffect(() => {
     let mounted = true
@@ -246,9 +356,25 @@ export default function Notifications() {
         streamErrors.current = 0
         setStreamState('idle')
         setItems((prev) => {
-          const next = [payload, ...prev.filter((item) => item.id !== payload.id)]
+          const currentFilters = activeFiltersRef.current
+          let next = prev.filter((item) => item.id !== payload.id)
+          if (payload.type === 'rebalance' && payload.payment_hash) {
+            next = next.filter((item) => item.type === 'rebalance' || item.payment_hash !== payload.payment_hash)
+          }
+          const rebalanceAlreadyRecorded = payload.type !== 'rebalance'
+            && payload.payment_hash
+            && next.some((item) => item.type === 'rebalance' && item.payment_hash === payload.payment_hash)
+          if (!rebalanceAlreadyRecorded && notificationMatchesFilters(
+            payload,
+            currentFilters.range,
+            currentFilters.filter,
+            currentFilters.outcome,
+            currentFilters.hideFailedOutgoing,
+          )) {
+            next = [payload, ...next]
+          }
           next.sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
-          return next.slice(0, limitRef.current)
+          return next.slice(0, Math.max(notificationPageSize, prev.length))
         })
       } catch {
         // ignore malformed payloads
@@ -267,20 +393,14 @@ export default function Notifications() {
     }
   }, [])
 
-  const rebalanceHashes = useMemo(() => {
-    return new Set(items.filter((item) => item.type === 'rebalance' && item.payment_hash).map((item) => item.payment_hash))
-  }, [items])
-
   const filtered = useMemo(() => {
-    const base = filter === 'all'
-      ? items
-      : items.filter((item) => item.type === filter)
-    return base.filter((item) => {
+    const rebalanceHashes = new Set(items.filter((item) => item.type === 'rebalance' && item.payment_hash).map((item) => item.payment_hash))
+    return items.filter((item) => {
       if (item.type === 'rebalance') return true
       if (!item.payment_hash) return true
       return !rebalanceHashes.has(item.payment_hash)
     })
-  }, [filter, items, rebalanceHashes])
+  }, [items])
 
   const telegramEnabled = Boolean(telegramConfig?.bot_token_set && telegramConfig?.chat_id)
 
@@ -445,21 +565,6 @@ export default function Notifications() {
           <div>
             <h2 className="text-2xl font-semibold">{t('notifications.title')}</h2>
             <p className="text-fog/60">{t('notifications.subtitle')}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <button className={filter === 'all' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('all')}>{t('common.all')}</button>
-            <button className={filter === 'onchain' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('onchain')}>{t('notifications.filter.onchain')}</button>
-            <button className={filter === 'lightning' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('lightning')}>{t('notifications.filter.lightning')}</button>
-            <button className={filter === 'keysend' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('keysend')}>{t('notifications.filter.keysend')}</button>
-            <button className={filter === 'channel' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('channel')}>{t('notifications.filter.channels')}</button>
-            <button className={filter === 'forward' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('forward')}>{t('notifications.filter.forwards')}</button>
-            <button className={filter === 'rebalance' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('rebalance')}>{t('notifications.filter.rebalance')}</button>
-            <button className={filter === 'security' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('security')}>{t('notifications.filter.security')}</button>
-            <select className="btn-secondary text-xs" value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
-              {limitOptions.map((value) => (
-                <option key={value} value={value}>{t('notifications.linesOption', { count: value })}</option>
-              ))}
-            </select>
           </div>
         </div>
       </div>
@@ -651,7 +756,68 @@ export default function Notifications() {
       </div>
 
       <div className="section-card">
-        <h3 className="text-lg font-semibold">{t('notifications.recentActivity')}</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold">{t('notifications.recentActivity')}</h3>
+          <div className="flex flex-wrap items-center gap-1 text-xs" aria-label={t('notifications.period')}>
+            {(['7d', '1m', '3m', '6m', '1y'] as NotificationRange[]).map((value) => (
+              <button
+                key={value}
+                className={range === value ? 'btn-primary' : 'btn-secondary'}
+                type="button"
+                onClick={() => setRange(value)}
+              >
+                {t(`notifications.range.${value}`)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+          <button className={filter === 'all' ? 'btn-primary' : 'btn-secondary'} type="button" onClick={() => setFilter('all')}>{t('common.all')}</button>
+          <button className={filter === 'onchain' ? 'btn-primary' : 'btn-secondary'} type="button" onClick={() => setFilter('onchain')}>{t('notifications.filter.onchain')}</button>
+          <button className={filter === 'lightning' ? 'btn-primary' : 'btn-secondary'} type="button" onClick={() => setFilter('lightning')}>{t('notifications.filter.lightning')}</button>
+          <button className={filter === 'keysend' ? 'btn-primary' : 'btn-secondary'} type="button" onClick={() => setFilter('keysend')}>{t('notifications.filter.keysend')}</button>
+          <button className={filter === 'channel' ? 'btn-primary' : 'btn-secondary'} type="button" onClick={() => setFilter('channel')}>{t('notifications.filter.channels')}</button>
+          <button className={filter === 'forward' ? 'btn-primary' : 'btn-secondary'} type="button" onClick={() => setFilter('forward')}>{t('notifications.filter.forwards')}</button>
+          <button className={filter === 'rebalance' ? 'btn-primary' : 'btn-secondary'} type="button" onClick={() => setFilter('rebalance')}>{t('notifications.filter.rebalance')}</button>
+          <button className={filter === 'security' ? 'btn-primary' : 'btn-secondary'} type="button" onClick={() => setFilter('security')}>{t('notifications.filter.security')}</button>
+          <button className="btn-secondary" type="button" onClick={() => setFiltersOpen((prev) => !prev)}>
+            {t('notifications.moreFilters')}
+            {(outcome !== 'all' || hideFailedOutgoing) ? ' *' : ''}
+          </button>
+        </div>
+        {filtersOpen && (
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-ink/50 p-3 text-xs">
+            <span className="text-fog/60">{t('notifications.outcome.label')}</span>
+            {(['all', 'completed', 'failed', 'pending'] as NotificationOutcome[]).map((value) => (
+              <button
+                key={value}
+                className={outcome === value ? 'btn-primary' : 'btn-secondary'}
+                type="button"
+                onClick={() => setOutcome(value)}
+              >
+                {t(`notifications.outcome.${value}`)}
+              </button>
+            ))}
+            <label className="ml-0 flex cursor-pointer items-center gap-2 text-fog sm:ml-2">
+              <input
+                type="checkbox"
+                checked={hideFailedOutgoing}
+                onChange={(event) => setHideFailedOutgoing(event.target.checked)}
+              />
+              {t('notifications.hideFailedOutgoing')}
+            </label>
+            <button
+              className="btn-secondary sm:ml-auto"
+              type="button"
+              onClick={() => {
+                setOutcome('all')
+                setHideFailedOutgoing(false)
+              }}
+            >
+              {t('notifications.resetFilters')}
+            </button>
+          </div>
+        )}
         {status && <p className="mt-4 text-sm text-fog/60">{status}</p>}
         {!status && streamState === 'reconnecting' && (
           <p className="mt-2 text-sm text-brass">{t('notifications.reconnecting')}</p>
@@ -808,6 +974,14 @@ export default function Notifications() {
             </div>
           </div>
         )}
+        {!status && hasMore && (
+          <div className="mt-4 flex justify-center">
+            <button className="btn-secondary" type="button" onClick={() => void loadMore()} disabled={loadingMore}>
+              {loadingMore ? t('notifications.loadingMore') : t('notifications.loadMore')}
+            </button>
+          </div>
+        )}
+        {loadMoreStatus && <p className="mt-2 text-center text-sm text-brass">{loadMoreStatus}</p>}
       </div>
     </section>
   )

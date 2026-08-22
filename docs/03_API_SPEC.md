@@ -712,8 +712,15 @@ GET /api/apps/{id}/admin-password
 
 ## Notifications
 
-GET /api/notifications?limit=200
-- Returns stored notifications.
+GET /api/notifications?limit=200&range=7d&type=all&outcome=all&hide_failed_outgoing=false&cursor=...
+- Returns stored notifications ordered by `occurred_at DESC, id DESC`.
+- Optional `range`: `7d`, `1m`, `3m`, `6m`, `1y`, or `all`. When omitted, `all` preserves compatibility with older clients.
+- Optional `type`: `all`, `onchain`, `lightning`, `keysend`, `channel`, `forward`, `rebalance`, or `security`.
+- Optional `outcome`: `all`, `completed`, `failed`, or `pending` (normalized from the stored service status).
+- Optional `hide_failed_outgoing=true` excludes only failed outgoing Lightning payments.
+- `limit` must be between 1 and 1000. When `has_more` is true, pass `next_cursor` unchanged to fetch the next page.
+- Rebalance notifications supersede their duplicate Lightning payment entry before filters and limits are applied.
+- Response: `{ "items": [...], "has_more": bool, "next_cursor": string, "range": string, "type": string, "outcome": string, "hide_failed_outgoing": bool }`.
 
 GET /api/notifications/stream
 - Server Sent Events stream.

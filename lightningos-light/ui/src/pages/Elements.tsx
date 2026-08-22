@@ -32,7 +32,7 @@ type ElementsMainchain = {
 
 type PeerswapElementsSource = {
   configured: boolean
-  mode: 'remote' | 'local'
+  mode?: 'remote' | 'local'
   url?: string
   user?: string
   wallet?: string
@@ -118,6 +118,7 @@ export default function Elements() {
 
   const progress = useMemo(() => formatPercent(status?.verification_progress), [status?.verification_progress])
   const syncing = Boolean(status?.initial_block_download)
+  const statusKnown = status !== null
   const installed = Boolean(status?.installed)
   const rpcReady = Boolean(status?.status === 'running' && status?.rpc_ok)
   const statusClass = statusStyles[status?.status || 'unknown'] || statusStyles.unknown
@@ -142,13 +143,26 @@ export default function Elements() {
   const mainchainRPC = mainchainHost ? `${mainchainHost}${mainchainPort ? `:${mainchainPort}` : ''}` : '-'
   const localReady = Boolean(mainchain?.local_ready)
   const canToggleMainchain = mainchainSource === 'local' || localReady
-  const peerswapSourceMode = peerswapSource?.mode || 'local'
-  const peerswapSourceLabel = peerswapSourceMode === 'remote' ? t('common.remote') : t('common.local')
-  const peerswapSourceDetail = peerswapSourceMode === 'remote'
-    ? `${peerswapSource?.url || '-'}${peerswapSource?.user ? ` · ${peerswapSource.user}` : ''}`
-    : t('elements.peerswapLocalSource')
+  const peerswapSourceKnown = peerswapSource !== null
+  const peerswapSourceConfigured = peerswapSourceKnown && Boolean(peerswapSource?.configured)
+  const peerswapSourceMode = peerswapSourceConfigured ? peerswapSource?.mode : undefined
+  const peerswapSourceLabel = !peerswapSourceKnown
+    ? t('common.unknown')
+    : !peerswapSourceConfigured
+      ? t('elements.peerswapUnconfiguredLabel')
+      : peerswapSourceMode === 'remote'
+        ? t('elements.peerswapExternalLabel')
+        : t('elements.peerswapLocalLabel')
+  const peerswapSourceDetail = !peerswapSourceKnown
+    ? '-'
+    : !peerswapSourceConfigured
+      ? t('elements.peerswapUnconfiguredSource')
+      : peerswapSourceMode === 'remote'
+        ? `${peerswapSource?.url || '-'}${peerswapSource?.user ? ` · ${peerswapSource.user}` : ''}`
+        : t('elements.peerswapLocalSource')
   const peerswapLocalReady = Boolean(peerswapSource?.local_ready)
-  const peerswapCanUseLocal = peerswapSourceMode === 'local' || peerswapLocalReady
+  const peerswapInstalled = Boolean(peerswapSource?.installed)
+  const peerswapCanUseLocal = peerswapLocalReady && peerswapSourceMode !== 'local'
 
   const handleToggleMainchain = async () => {
     if (!mainchain || mainchainBusy || !canToggleMainchain) return
@@ -169,8 +183,8 @@ export default function Elements() {
   }
 
   const openPeerswapRemoteConfig = () => {
-    setPeerswapRemoteUrl(peerswapSource?.mode === 'remote' && peerswapSource.url ? peerswapSource.url : peerswapDefaultRemoteUrl)
-    setPeerswapRemoteUser(peerswapSource?.mode === 'remote' && peerswapSource.user ? peerswapSource.user : '')
+    setPeerswapRemoteUrl(peerswapSource?.configured && peerswapSource.mode === 'remote' && peerswapSource.url ? peerswapSource.url : peerswapDefaultRemoteUrl)
+    setPeerswapRemoteUser(peerswapSource?.configured && peerswapSource.mode === 'remote' && peerswapSource.user ? peerswapSource.user : '')
     setPeerswapRemotePassword('')
     setPeerswapSourceMessage('')
     setPeerswapRemoteOpen(true)
@@ -247,7 +261,7 @@ export default function Elements() {
         {message && <p className="text-sm text-brass">{message}</p>}
       </div>
 
-      {!installed && (
+      {statusKnown && !installed && (
         <div className="section-card space-y-3">
           <h3 className="text-lg font-semibold">{t('elements.notInstalledTitle')}</h3>
           <p className="text-fog/60">{t('elements.notInstalledBody')}</p>
@@ -277,23 +291,26 @@ export default function Elements() {
           </div>
           <div className="flex items-center justify-between gap-4">
             <span>{t('elements.peerswapInstalled')}</span>
-            <span className="text-fog">{peerswapSource?.installed ? t('common.yes') : t('common.no')}</span>
+            <span className="text-fog">{!peerswapSourceKnown ? t('common.unknown') : peerswapInstalled ? t('common.yes') : t('common.no')}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
             <span>{t('elements.peerswapService')}</span>
-            <span className="text-fog">{peerswapSource?.running ? t('common.running') : t('common.stopped')}</span>
+            <span className="text-fog">{!peerswapSourceKnown ? t('common.unknown') : !peerswapInstalled ? t('common.notInstalled') : peerswapSource?.running ? t('common.running') : t('common.stopped')}</span>
           </div>
         </div>
 
-        {peerswapSourceMode === 'remote' && peerswapLocalReady && (
+        {peerswapSourceKnown && !peerswapSourceConfigured && (
+          <p className="text-xs text-amber-300/80">{t('elements.peerswapUnconfiguredHint')}</p>
+        )}
+        {peerswapSourceConfigured && peerswapSourceMode === 'remote' && peerswapLocalReady && (
           <p className="text-xs text-amber-300/80">{t('elements.peerswapRemoteWithLocalReady')}</p>
         )}
-        {peerswapSourceMode === 'local' && !peerswapLocalReady && (
+        {peerswapSourceConfigured && peerswapSourceMode === 'local' && !peerswapLocalReady && (
           <p className="text-xs text-amber-300/80">{t('elements.peerswapLocalMissing')}</p>
         )}
 
         <div className="flex flex-wrap items-center gap-3">
-          <button className="btn-secondary" type="button" disabled={peerswapSourceBusy} onClick={handlePeerswapTestCurrent}>
+          <button className="btn-secondary" type="button" disabled={peerswapSourceBusy || !peerswapSourceKnown || !peerswapSourceConfigured} onClick={handlePeerswapTestCurrent}>
             {peerswapSourceBusy ? t('elements.peerswapTesting') : t('elements.peerswapTestCurrent')}
           </button>
           <button className="btn-secondary" type="button" disabled={peerswapSourceBusy || !peerswapCanUseLocal} onClick={handlePeerswapUseLocal}>

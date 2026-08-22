@@ -526,6 +526,15 @@ type RebalanceOverview struct {
 	SovereignSellThroughSlow7d          float64                       `json:"sovereign_sellthrough_slow_7d"`
 	SovereignSellThroughWindowHours     int                           `json:"sovereign_sellthrough_window_hours"`
 	SovereignSellThroughSlowWindowHours int                           `json:"sovereign_sellthrough_slow_window_hours"`
+	SovExploreJobs7d                    int64                         `json:"sovereign_exploration_jobs_7d"`
+	SovExploreRebalanceAmount7dSat      int64                         `json:"sovereign_exploration_rebalance_amount_7d_sat"`
+	SovExploreRebalanceCost7dSat        int64                         `json:"sovereign_exploration_rebalance_cost_7d_sat"`
+	SovExploreForwardAmount7dSat        int64                         `json:"sovereign_exploration_forward_amount_7d_sat"`
+	SovExploreForwardFee7dSat           int64                         `json:"sovereign_exploration_forward_fee_7d_sat"`
+	SovExploreRealizedNet7dSat          int64                         `json:"sovereign_exploration_realized_net_7d_sat"`
+	SovExploreSellThrough7d             float64                       `json:"sovereign_exploration_sellthrough_7d"`
+	SovExploreRealizedNetSlow7dSat      int64                         `json:"sovereign_exploration_realized_net_slow_7d_sat"`
+	SovExploreSellThroughSlow7d         float64                       `json:"sovereign_exploration_sellthrough_slow_7d"`
 	Jobs24h                             int64                         `json:"jobs_24h"`
 	SuccessJobs24h                      int64                         `json:"success_jobs_24h"`
 	JobSuccessRate24h                   float64                       `json:"job_success_rate_24h"`
@@ -1144,6 +1153,7 @@ type RebalanceJob struct {
 	SovereignExpectedProfitSat    int64   `json:"sovereign_expected_profit_sat,omitempty"`
 	SovereignBudgetCostSat        int64   `json:"sovereign_budget_cost_sat,omitempty"`
 	SovereignScore                int64   `json:"sovereign_score,omitempty"`
+	ExplorationSlot               bool    `json:"exploration_slot,omitempty"`
 	ActualSentSat                 int64   `json:"actual_sent_sat,omitempty"`
 	ActualRebalanceFeeSat         int64   `json:"actual_rebalance_fee_sat,omitempty"`
 	Forward1hCount                int64   `json:"forward_1h_count,omitempty"`
@@ -1332,6 +1342,7 @@ type rebalanceJobEconomics struct {
 	ExpectedProfitSat int64
 	BudgetCostSat     int64
 	Score             int64
+	ExplorationSlot   bool
 }
 
 type recentTargetCooldownWindows struct {
@@ -1369,6 +1380,7 @@ type rebalanceAttemptTelemetry24h struct {
 }
 
 type rebalanceAutopilotEconomics7d struct {
+	JobCount           int64
 	RebalanceAmountSat int64
 	RebalanceCostSat   int64
 	RebalanceCostPpm   int64
@@ -1388,6 +1400,11 @@ type rebalanceAutopilotEconomics7d struct {
 	// Janelas usadas (vindas da config/UI), pra label dos indicadores.
 	AttributionWindowHours int
 	SlowSellerWindowHours  int
+}
+
+type rebalanceAutopilotEconomicsBreakdown7d struct {
+	Total       rebalanceAutopilotEconomics7d
+	Exploration rebalanceAutopilotEconomics7d
 }
 
 type mppShadowShard struct {
@@ -1552,11 +1569,10 @@ type RebalanceService struct {
 	chCacheData    []lndclient.ChannelInfo
 	chCacheFetchAt time.Time
 
-	// R5 — Exploration burnout (in-memory): tracks recent exploration
-	// attempts per target channel so chronically failing targets stop
-	// burning exploration slots cycle after cycle. State is volatile; on
-	// process restart the system starts fresh, which is acceptable (the
-	// worst case is a known-bad target being tried once more).
+	// R5 — Exploration burnout: the in-memory cache gives immediate updates
+	// while persisted exploration job outcomes restore the 24h window after a
+	// process restart. Chronically failing targets temporarily stop consuming
+	// exploration slots cycle after cycle.
 	explorationStatsMu sync.Mutex
 	explorationStats   map[uint64]*explorationStat
 	explorationJobs    map[int64]uint64 // jobID → channelID (only set for exploration-marked jobs)
@@ -1570,6 +1586,12 @@ type explorationStat struct {
 	AttemptsWindow []time.Time
 	FailuresWindow []time.Time
 	BurnedUntil    time.Time
+}
+
+type explorationOutcome struct {
+	ChannelID  uint64
+	Succeeded  bool
+	FinishedAt time.Time
 }
 
 func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *RebalanceService {
@@ -2477,6 +2499,14 @@ func normalizeRatioConfig(value float64, fallback float64, max float64) float64 
 func isSovereignSchedulerMode(mode string) bool {
 	mode = normalizeRebalanceSchedulerMode(mode)
 	return mode == rebalanceSchedulerModeSovereignShadow || mode == rebalanceSchedulerModeSovereignLive
+}
+
+func shouldQueueGuaranteedRebalanceSlot(mode string) bool {
+	return normalizeRebalanceSchedulerMode(mode) != rebalanceSchedulerModeSovereignShadow
+}
+
+func shouldEvaluateAutoTarget(mode string) bool {
+	return normalizeRebalanceSchedulerMode(mode) == rebalanceSchedulerModeSovereignLive
 }
 
 func freshPaidLiquidityLockDuration(cfg RebalanceConfig) time.Duration {
@@ -3523,8 +3553,9 @@ func (s *RebalanceService) runManualRestartWatch() {
 	if !cfg.AutoEnabled || !cfg.ManualRestartWatch {
 		return
 	}
-	if normalizeRebalanceSchedulerMode(cfg.SchedulerMode) == rebalanceSchedulerModeSovereignLive {
-		s.recordManualRestartWatch(time.Now(), 0, map[string]int{"sovereign_live": 1})
+	schedulerMode := normalizeRebalanceSchedulerMode(cfg.SchedulerMode)
+	if isSovereignSchedulerMode(schedulerMode) {
+		s.recordManualRestartWatch(time.Now(), 0, map[string]int{schedulerMode: 1})
 		return
 	}
 	if s.lnd == nil {
@@ -3716,11 +3747,15 @@ func (s *RebalanceService) runAutoScan() {
 		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		snapshots = append(snapshots, snapshot)
 	}
-	guaranteedSlot = s.queueGuaranteedRebalanceSlot(ctx, cfg, snapshots, settings, lastAutoByTarget, lastGuaranteedByTarget, scanAt)
-	if guaranteedSlot.Queued {
-		queuedCount = 1
-	}
 	schedulerMode := normalizeRebalanceSchedulerMode(cfg.SchedulerMode)
+	// Shadow mode is a pure dry run: guaranteed slots and AutoTarget both
+	// mutate state, so neither may run while only observing sovereign choices.
+	if shouldQueueGuaranteedRebalanceSlot(schedulerMode) {
+		guaranteedSlot = s.queueGuaranteedRebalanceSlot(ctx, cfg, snapshots, settings, lastAutoByTarget, lastGuaranteedByTarget, scanAt)
+		if guaranteedSlot.Queued {
+			queuedCount = 1
+		}
+	}
 	if isSovereignSchedulerMode(schedulerMode) {
 		sovereignTargetIDs := make([]uint64, 0, len(snapshots))
 		includeManualRestartTargets := cfg.SovereignCandidateScope == rebalanceSovereignScopeAutoAndManualRestart
@@ -3762,7 +3797,7 @@ func (s *RebalanceService) runAutoScan() {
 		// raise the target of the strong sellers among them (supply-limited by
 		// construction) and lower channels that stopped selling. Reuses the
 		// snapshots, pair stats and structural cooldowns already loaded above.
-		if cfg.AutoTargetEnabled {
+		if cfg.AutoTargetEnabled && shouldEvaluateAutoTarget(schedulerMode) {
 			s.evaluateAutoTarget(ctx, cfg, scanAt, snapshots, settings, sovereignPlan.Candidates, sovereignPairStats, sovereignStructuralCooldowns)
 		}
 		reservedSlots := 0
@@ -3773,16 +3808,18 @@ func (s *RebalanceService) runAutoScan() {
 		sovereignResult = includeGuaranteedRebalanceSlot(sovereignResult, guaranteedSlot)
 		s.recordRebalanceIntentEffects(ctx, sovereignPlan, cfg, scanAt, schedulerMode, sovereignResult.Decisions)
 		s.recordSovereignAutopilot(ctx, scanAt, schedulerMode, sovereignResult)
+		scanStatus = sovereignResult.Status
+		scanDetail = sovereignResult.Detail
+		scanCandidates = sovereignResult.Candidates
+		scanRemainingBudget = sovereignResult.BudgetRemainingSat
+		scanReasons = copyReasonCounts(sovereignResult.SkipReasons)
+		topScore = sovereignPlan.TopScore
 		if schedulerMode == rebalanceSchedulerModeSovereignLive {
-			scanStatus = sovereignResult.Status
-			scanDetail = sovereignResult.Detail
-			scanCandidates = sovereignResult.Candidates
-			scanRemainingBudget = sovereignResult.BudgetRemainingSat
-			scanReasons = copyReasonCounts(sovereignResult.SkipReasons)
-			topScore = sovereignPlan.TopScore
 			queuedCount = sovereignResult.Selected
-			return
+		} else {
+			queuedCount = 0
 		}
+		return
 	}
 	candidatePlan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
 		Channels:                      snapshots,
@@ -4160,8 +4197,9 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 	// ExplorationSlot mark so we stop burning cycles on dead-end channels.
 	candidates := plan.Candidates
 	if cfg.SovereignExplorationSlotPct > 0 && maxJobs > 1 {
+		persistedBurnout := s.loadPersistedExplorationBurnoutTargets(ctx, scanAt)
 		burnoutFn := func(channelID uint64) bool {
-			return s.isInExplorationBurnout(channelID, scanAt)
+			return persistedBurnout[channelID] || s.isInExplorationBurnout(channelID, scanAt)
 		}
 		// Targets that already reached the structural cooldown threshold must
 		// not receive the exploration mark — otherwise the M3 scarcity bypass
@@ -4370,18 +4408,14 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					ExpectedProfitSat: decision.ExpectedProfitSat,
 					BudgetCostSat:     decision.BudgetCostSat,
 					Score:             decision.Score,
+					ExplorationSlot:   target.ExplorationSlot,
 				}
-				jobID, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, false, economics, operatorRebalanceOverrides{})
+				_, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, false, economics, operatorRebalanceOverrides{})
 				if err != nil {
 					decision.Reason = autoStartErrorReason(err)
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
-				}
-				// R5: mark exploration-slot jobs so finishJob can record the
-				// outcome to update burnout state.
-				if target.ExplorationSlot {
-					s.markExplorationJob(jobID, target.Channel.ChannelID)
 				}
 				s.mu.Lock()
 				s.lastAutoByTarget[target.Channel.ChannelID] = scanAt
@@ -5273,6 +5307,12 @@ func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source 
 			TargetChannelID: targetChannelID,
 		}
 		s.mu.Unlock()
+	}
+	// Register the exploration outcome tracker before starting the goroutine.
+	// The old call site marked the job after runJob had already started, so a
+	// fast skip/failure could finish before the marker existed.
+	if economics.ExplorationSlot {
+		s.markExplorationJob(jobID, targetChannelID)
 	}
 
 	go s.runJob(jobID, targetChannelID, amount, targetPct, source, reason, overrides)
@@ -8517,192 +8557,79 @@ func (s *RebalanceService) loadRecentSovereignTargetStats(ctx context.Context, c
 		recentWindow = slowWindow
 	}
 	since := now.Add(-recentWindow)
-	rows, err := s.db.Query(ctx, `
-with recent_jobs as (
-  select id, target_channel_id, status, reason, completed_at
-  from rebalance_jobs
-  where target_channel_id = any($1::bigint[])
-    and completed_at is not null
-    and completed_at >= $2
-    and status in ('succeeded','partial','failed')
-),
-attempt_totals as (
-  select
-    r.id,
-    coalesce(sum(a.amount_sat) filter (where a.status='succeeded'), 0) as sent_sat,
-    coalesce(sum(a.fee_paid_sat) filter (where a.status='succeeded'), 0) as fee_paid_sat
-  from recent_jobs r
-  left join rebalance_attempts a on a.job_id = r.id
-  group by r.id
-),
-forward_totals as (
-  select
-    r.id,
-    coalesce(sum(n.amount_sat) filter (where n.occurred_at < r.completed_at + interval '24 hours'), 0) as forward_24h_amount_sat,
-    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < r.completed_at + interval '24 hours'), 0)::bigint as forward_24h_fee_msat,
-    coalesce(sum(n.amount_sat) filter (where n.occurred_at < r.completed_at + ($3::int * interval '1 hour')), 0) as forward_window_amount_sat,
-    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < r.completed_at + ($3::int * interval '1 hour')), 0)::bigint as forward_window_fee_msat,
-    coalesce(sum(n.amount_sat), 0) as forward_slow_amount_sat,
-    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end), 0)::bigint as forward_slow_fee_msat
-  from recent_jobs r
-  left join notifications n on n.type='forward'
-    and n.channel_id = r.target_channel_id
-    and n.occurred_at >= r.completed_at
-    and n.occurred_at < r.completed_at + ($4::int * interval '1 hour')
-  group by r.id
-),
-job_raw as (
-  select
-    r.target_channel_id,
-    r.status,
-    r.reason,
-    r.completed_at,
-    coalesce(a.sent_sat, 0) as sent_sat,
-    coalesce(a.fee_paid_sat, 0) as fee_paid_sat,
-    coalesce(f.forward_24h_amount_sat, 0) as forward_24h_amount_sat,
-    coalesce(f.forward_24h_fee_msat, 0) as forward_24h_fee_msat,
-    coalesce(f.forward_window_amount_sat, 0) as forward_window_amount_sat,
-    coalesce(f.forward_window_fee_msat, 0) as forward_window_fee_msat,
-    coalesce(f.forward_slow_amount_sat, 0) as forward_slow_amount_sat,
-    coalesce(f.forward_slow_fee_msat, 0) as forward_slow_fee_msat
-  from recent_jobs r
-  left join attempt_totals a on a.id = r.id
-  left join forward_totals f on f.id = r.id
-),
-job_economics as (
-  select
-    target_channel_id,
-    status,
-    reason,
-    completed_at,
-    sent_sat,
-    fee_paid_sat,
-    case
-      when sent_sat <= 0 or forward_24h_amount_sat <= 0 then 0
-      when forward_24h_amount_sat > sent_sat then sent_sat
-      else forward_24h_amount_sat
-    end as attributed_forward_24h_sat,
-    case
-      when sent_sat <= 0 or forward_24h_amount_sat <= 0 or forward_24h_fee_msat <= 0 then 0
-      when forward_24h_amount_sat > sent_sat then (forward_24h_fee_msat * sent_sat) / forward_24h_amount_sat
-      else forward_24h_fee_msat
-    end as attributed_forward_24h_fee_msat,
-    case
-      when sent_sat <= 0 or forward_window_amount_sat <= 0 then 0
-      when forward_window_amount_sat > sent_sat then sent_sat
-      else forward_window_amount_sat
-    end as attributed_forward_window_sat,
-    case
-      when sent_sat <= 0 or forward_window_amount_sat <= 0 or forward_window_fee_msat <= 0 then 0
-      when forward_window_amount_sat > sent_sat then (forward_window_fee_msat * sent_sat) / forward_window_amount_sat
-      else forward_window_fee_msat
-    end as attributed_forward_window_fee_msat,
-    case
-      when sent_sat <= 0 or forward_slow_amount_sat <= 0 then 0
-      when forward_slow_amount_sat > sent_sat then sent_sat
-      else forward_slow_amount_sat
-    end as attributed_forward_slow_sat,
-    case
-      when sent_sat <= 0 or forward_slow_amount_sat <= 0 or forward_slow_fee_msat <= 0 then 0
-      when forward_slow_amount_sat > sent_sat then (forward_slow_fee_msat * sent_sat) / forward_slow_amount_sat
-      else forward_slow_fee_msat
-    end as attributed_forward_slow_fee_msat
-  from job_raw
-)
-select
-  target_channel_id,
-  count(*) filter (where status in ('succeeded','partial','failed')) as jobs,
-  count(*) filter (where status in ('succeeded','partial')) as success_jobs,
-  count(*) filter (where status='failed') as failed_jobs,
-  count(*) filter (where status='failed' and reason='all sources failed') as all_sources_failed_jobs,
-  max(completed_at) filter (where status in ('succeeded','partial')) as last_success_at,
-  max(completed_at) filter (where status='failed') as last_fail_at,
-  count(*) filter (where sent_sat > 0) as sent_jobs,
-  coalesce(sum(sent_sat), 0) as sent_sat,
-  coalesce(sum(fee_paid_sat), 0) as fee_paid_sat,
-  coalesce(sum(attributed_forward_24h_sat), 0) as attributed_forward_24h_sat,
-  coalesce(sum(attributed_forward_24h_fee_msat), 0)::bigint as attributed_forward_24h_fee_msat,
-  coalesce(sum(attributed_forward_window_sat), 0) as attributed_forward_window_sat,
-  coalesce(sum(attributed_forward_window_fee_msat), 0)::bigint as attributed_forward_window_fee_msat,
-  coalesce(sum(attributed_forward_slow_sat), 0) as attributed_forward_slow_sat,
-  coalesce(sum(attributed_forward_slow_fee_msat), 0)::bigint as attributed_forward_slow_fee_msat
-from job_economics
-group by target_channel_id
-`, ids, since, attributionHours, slowHours)
+	attributionWindow := time.Duration(attributionHours) * time.Hour
+	contextWindow := slowWindow
+	if attributionWindow > contextWindow {
+		contextWindow = attributionWindow
+	}
+	if 24*time.Hour > contextWindow {
+		contextWindow = 24 * time.Hour
+	}
+	lots, forwards, err := s.loadRebalanceAttributionInputs(ctx, since.Add(-contextWindow), targetIDs)
 	if err != nil {
 		return summaries
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var targetID int64
-		var attempts int64
-		var successes int64
-		var failures int64
-		var allSourcesFailed int64
-		var lastSuccess pgtype.Timestamptz
-		var lastFail pgtype.Timestamptz
-		var sentJobs int64
-		var sentSat int64
-		var feePaidSat int64
-		var forward24hSat int64
-		var forward24hFeeMsat int64
-		var forwardWindowSat int64
-		var forwardWindowFeeMsat int64
-		var forwardSlowSat int64
-		var forwardSlowFeeMsat int64
-		if err := rows.Scan(
-			&targetID,
-			&attempts,
-			&successes,
-			&failures,
-			&allSourcesFailed,
-			&lastSuccess,
-			&lastFail,
-			&sentJobs,
-			&sentSat,
-			&feePaidSat,
-			&forward24hSat,
-			&forward24hFeeMsat,
-			&forwardWindowSat,
-			&forwardWindowFeeMsat,
-			&forwardSlowSat,
-			&forwardSlowFeeMsat,
-		); err != nil {
-			return summaries
-		}
-		if targetID <= 0 {
+	attributed24h := attributeRebalanceForwardsFIFO(lots, forwards, 24*time.Hour)
+	attributedWindow := attributeRebalanceForwardsFIFO(lots, forwards, attributionWindow)
+	attributedSlow := attributeRebalanceForwardsFIFO(lots, forwards, slowWindow)
+	type targetFeeTotals struct {
+		forward24hMsat    int64
+		forwardWindowMsat int64
+		forwardSlowMsat   int64
+	}
+	feeTotals := map[uint64]targetFeeTotals{}
+	for _, lot := range lots {
+		if lot.CompletedAt.Before(since) {
 			continue
 		}
-		key := uint64(targetID)
-		stat := summaries[key]
-		stat.TargetChannelID = key
+		stat, ok := summaries[lot.TargetChannelID]
+		if !ok {
+			continue
+		}
 		stat.RecentStatsLoaded = true
-		stat.RecentAttempts = int(attempts)
-		stat.RecentSuccesses = int(successes)
-		stat.RecentFailures = int(failures)
-		stat.RecentAllSourcesFailed = int(allSourcesFailed)
-		stat.RecentSentJobs = int(sentJobs)
-		stat.RecentSentSat = sentSat
-		stat.RecentRebalanceFeeSat = feePaidSat
-		stat.RecentForward24hAmountSat = forward24hSat
-		forward24hFeeSat := forward24hFeeMsat / 1000
-		stat.RecentForward24hFeeSat = forward24hFeeSat
-		stat.RecentRealizedNet24hSat = forward24hFeeSat - feePaidSat
-		stat.RecentForwardAmountSat = forwardWindowSat
-		forwardWindowFeeSat := forwardWindowFeeMsat / 1000
-		stat.RecentForwardFeeSat = forwardWindowFeeSat
-		stat.RecentRealizedNetSat = forwardWindowFeeSat - feePaidSat
-		stat.RecentForwardSlowAmountSat = forwardSlowSat
-		forwardSlowFeeSat := forwardSlowFeeMsat / 1000
-		stat.RecentForwardSlowFeeSat = forwardSlowFeeSat
-		stat.RecentRealizedNetSlowSat = forwardSlowFeeSat - feePaidSat
-		if lastSuccess.Valid {
-			stat.RecentLastSuccessAt = lastSuccess.Time
+		stat.RecentAttempts++
+		switch lot.Status {
+		case "succeeded", "partial":
+			stat.RecentSuccesses++
+			if stat.RecentLastSuccessAt.IsZero() || lot.CompletedAt.After(stat.RecentLastSuccessAt) {
+				stat.RecentLastSuccessAt = lot.CompletedAt
+			}
+		case "failed":
+			stat.RecentFailures++
+			if lot.Reason == "all sources failed" {
+				stat.RecentAllSourcesFailed++
+			}
+			if stat.RecentLastFailAt.IsZero() || lot.CompletedAt.After(stat.RecentLastFailAt) {
+				stat.RecentLastFailAt = lot.CompletedAt
+			}
 		}
-		if lastFail.Valid {
-			stat.RecentLastFailAt = lastFail.Time
+		if lot.SentSat > 0 {
+			stat.RecentSentJobs++
 		}
-		summaries[key] = stat
+		stat.RecentSentSat += lot.SentSat
+		stat.RecentRebalanceFeeSat += lot.FeePaidSat
+		attr24h := attributed24h[lot.JobID]
+		attrWindow := attributedWindow[lot.JobID]
+		attrSlow := attributedSlow[lot.JobID]
+		stat.RecentForward24hAmountSat += attr24h.ForwardAmountSat
+		stat.RecentForwardAmountSat += attrWindow.ForwardAmountSat
+		stat.RecentForwardSlowAmountSat += attrSlow.ForwardAmountSat
+		fees := feeTotals[lot.TargetChannelID]
+		fees.forward24hMsat += attr24h.ForwardFeeMsat
+		fees.forwardWindowMsat += attrWindow.ForwardFeeMsat
+		fees.forwardSlowMsat += attrSlow.ForwardFeeMsat
+		feeTotals[lot.TargetChannelID] = fees
+		summaries[lot.TargetChannelID] = stat
+	}
+	for targetID, stat := range summaries {
+		fees := feeTotals[targetID]
+		stat.RecentForward24hFeeSat = fees.forward24hMsat / 1000
+		stat.RecentRealizedNet24hSat = stat.RecentForward24hFeeSat - stat.RecentRebalanceFeeSat
+		stat.RecentForwardFeeSat = fees.forwardWindowMsat / 1000
+		stat.RecentRealizedNetSat = stat.RecentForwardFeeSat - stat.RecentRebalanceFeeSat
+		stat.RecentForwardSlowFeeSat = fees.forwardSlowMsat / 1000
+		stat.RecentRealizedNetSlowSat = stat.RecentForwardSlowFeeSat - stat.RecentRebalanceFeeSat
+		summaries[targetID] = stat
 	}
 	return summaries
 }
@@ -9552,7 +9479,7 @@ where id=$1`, jobID, status, nullableString(reason), completedAt)
 	// against the target channel so the burnout window updates. Partials and
 	// full successes both count as "successful" exploration — they moved
 	// liquidity, which is the whole point.
-	if channelID, ok := s.takeExplorationJob(jobID); ok {
+	if channelID, ok := s.takeExplorationJob(ctx, jobID); ok {
 		succeeded := status == "succeeded" || status == "partial"
 		s.recordExplorationOutcome(channelID, succeeded, completedAt)
 	}
@@ -10962,6 +10889,97 @@ func (s *RebalanceService) isInExplorationBurnout(channelID uint64, now time.Tim
 	return now.Before(stat.BurnedUntil)
 }
 
+func explorationBurnoutTargetsFromOutcomes(outcomes []explorationOutcome, now time.Time) map[uint64]bool {
+	result := map[uint64]bool{}
+	if len(outcomes) == 0 {
+		return result
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	ordered := append([]explorationOutcome(nil), outcomes...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if !ordered[i].FinishedAt.Equal(ordered[j].FinishedAt) {
+			return ordered[i].FinishedAt.Before(ordered[j].FinishedAt)
+		}
+		return ordered[i].ChannelID < ordered[j].ChannelID
+	})
+	stats := map[uint64]*explorationStat{}
+	cutoff := now.Add(-sovereignExplorationBurnoutWindow)
+	for _, outcome := range ordered {
+		if outcome.ChannelID == 0 || outcome.FinishedAt.IsZero() || outcome.FinishedAt.Before(cutoff) || outcome.FinishedAt.After(now) {
+			continue
+		}
+		stat := stats[outcome.ChannelID]
+		if stat == nil {
+			stat = &explorationStat{}
+			stats[outcome.ChannelID] = stat
+		}
+		stat.AttemptsWindow = trimTimeWindow(stat.AttemptsWindow, outcome.FinishedAt.Add(-sovereignExplorationBurnoutWindow))
+		stat.FailuresWindow = trimTimeWindow(stat.FailuresWindow, outcome.FinishedAt.Add(-sovereignExplorationBurnoutWindow))
+		if outcome.Succeeded {
+			stat.AttemptsWindow = nil
+			stat.FailuresWindow = nil
+			stat.BurnedUntil = time.Time{}
+			continue
+		}
+		stat.AttemptsWindow = append(stat.AttemptsWindow, outcome.FinishedAt)
+		stat.FailuresWindow = append(stat.FailuresWindow, outcome.FinishedAt)
+		if len(stat.FailuresWindow) >= sovereignExplorationBurnoutMinAttempts && len(stat.FailuresWindow) == len(stat.AttemptsWindow) {
+			stat.BurnedUntil = outcome.FinishedAt.Add(sovereignExplorationBurnoutDuration)
+		}
+	}
+	for channelID, stat := range stats {
+		if stat != nil && !stat.BurnedUntil.IsZero() && now.Before(stat.BurnedUntil) {
+			result[channelID] = true
+		}
+	}
+	return result
+}
+
+func (s *RebalanceService) loadPersistedExplorationBurnoutTargets(ctx context.Context, now time.Time) map[uint64]bool {
+	if s == nil || s.db == nil {
+		return map[uint64]bool{}
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	rows, err := s.db.Query(ctx, `
+select target_channel_id, status, completed_at
+from rebalance_jobs
+where exploration_slot=true
+  and completed_at is not null
+  and completed_at >= $1
+  and completed_at <= $2
+order by completed_at, id
+`, now.Add(-sovereignExplorationBurnoutWindow), now)
+	if err != nil {
+		return map[uint64]bool{}
+	}
+	defer rows.Close()
+	outcomes := make([]explorationOutcome, 0)
+	for rows.Next() {
+		var channelID int64
+		var status string
+		var finishedAt time.Time
+		if err := rows.Scan(&channelID, &status, &finishedAt); err != nil {
+			return map[uint64]bool{}
+		}
+		if channelID <= 0 {
+			continue
+		}
+		outcomes = append(outcomes, explorationOutcome{
+			ChannelID:  uint64(channelID),
+			Succeeded:  status == "succeeded" || status == "partial",
+			FinishedAt: finishedAt,
+		})
+	}
+	if rows.Err() != nil {
+		return map[uint64]bool{}
+	}
+	return explorationBurnoutTargetsFromOutcomes(outcomes, now)
+}
+
 // recordExplorationOutcome updates the in-memory exploration window for a
 // target channel after one of its exploration-marked jobs finished. When
 // `succeeded` is true, the failure window is cleared and any active burnout
@@ -10991,8 +11009,10 @@ func (s *RebalanceService) recordExplorationOutcome(channelID uint64, succeeded 
 	stat.FailuresWindow = trimTimeWindow(stat.FailuresWindow, cutoff)
 	stat.AttemptsWindow = append(stat.AttemptsWindow, now)
 	if succeeded {
-		// Any success in the window clears the failure streak and lifts the
-		// active burnout — the channel has demonstrated viability.
+		// A success starts a new failure streak and lifts active burnout. Clear
+		// both windows so five later failures can still trigger burnout instead
+		// of being masked by an earlier success for the rest of the 24h window.
+		stat.AttemptsWindow = nil
 		stat.FailuresWindow = nil
 		stat.BurnedUntil = time.Time{}
 		return
@@ -11026,18 +11046,34 @@ func (s *RebalanceService) markExplorationJob(jobID int64, channelID uint64) {
 }
 
 // takeExplorationJob looks up and removes the jobID from the exploration
-// tracking map. Returns the channelID and whether the job was exploration.
-func (s *RebalanceService) takeExplorationJob(jobID int64) (uint64, bool) {
+// tracking map. The persisted flag is the fallback for process restarts and
+// for any completion that raced with volatile tracking.
+func (s *RebalanceService) takeExplorationJob(ctx context.Context, jobID int64) (uint64, bool) {
 	if s == nil || jobID == 0 {
 		return 0, false
 	}
 	s.explorationStatsMu.Lock()
-	defer s.explorationStatsMu.Unlock()
 	channelID, ok := s.explorationJobs[jobID]
 	if ok {
 		delete(s.explorationJobs, jobID)
 	}
-	return channelID, ok
+	s.explorationStatsMu.Unlock()
+	if ok {
+		return channelID, true
+	}
+	if s.db == nil {
+		return 0, false
+	}
+	var persistedChannelID int64
+	err := s.db.QueryRow(ctx, `
+select target_channel_id
+from rebalance_jobs
+where id=$1 and exploration_slot=true
+`, jobID).Scan(&persistedChannelID)
+	if err != nil || persistedChannelID <= 0 {
+		return 0, false
+	}
+	return uint64(persistedChannelID), true
 }
 
 // trimTimeWindow drops timestamps older than cutoff from a sorted-ish slice.
@@ -12467,7 +12503,8 @@ create table if not exists rebalance_jobs (
   sovereign_estimated_cost_sat bigint not null default 0,
   sovereign_expected_profit_sat bigint not null default 0,
   sovereign_budget_cost_sat bigint not null default 0,
-  sovereign_score bigint not null default 0
+  sovereign_score bigint not null default 0,
+  exploration_slot boolean not null default false
 );
 
 alter table if exists rebalance_jobs
@@ -12484,6 +12521,11 @@ alter table if exists rebalance_jobs
   add column if not exists sovereign_budget_cost_sat bigint not null default 0;
 alter table if exists rebalance_jobs
   add column if not exists sovereign_score bigint not null default 0;
+alter table if exists rebalance_jobs
+  add column if not exists exploration_slot boolean not null default false;
+create index if not exists rebalance_jobs_exploration_completed_idx
+  on rebalance_jobs (completed_at, target_channel_id)
+  where exploration_slot=true;
 -- Backfill: jobs com reason='delegated-fast-path' são por definição sucessos via fast-path,
 -- então marcamos retroativamente para que o telemetry não subconte (idempotente).
 update rebalance_jobs set fast_path_attempted=true where reason='delegated-fast-path' and not fast_path_attempted;
@@ -14305,11 +14347,13 @@ func (s *RebalanceService) insertJob(ctx context.Context, target *lndclient.Chan
 	err := s.db.QueryRow(ctx, `
 insert into rebalance_jobs (
   source, status, trigger_reason, reason, target_channel_id, target_channel_point, target_outbound_pct, target_amount_sat, config_snapshot,
-  sovereign_expected_gain_sat, sovereign_estimated_cost_sat, sovereign_expected_profit_sat, sovereign_budget_cost_sat, sovereign_score
-) values ($1,'queued',$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+  sovereign_expected_gain_sat, sovereign_estimated_cost_sat, sovereign_expected_profit_sat, sovereign_budget_cost_sat, sovereign_score,
+  exploration_slot
+) values ($1,'queued',$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
  returning id
 `, source, nullableString(reason), int64(target.ChannelID), target.ChannelPoint, targetPct, amount, nil,
-		economics.ExpectedGainSat, economics.EstimatedCostSat, economics.ExpectedProfitSat, economics.BudgetCostSat, economics.Score).Scan(&jobID)
+		economics.ExpectedGainSat, economics.EstimatedCostSat, economics.ExpectedProfitSat, economics.BudgetCostSat, economics.Score,
+		economics.ExplorationSlot).Scan(&jobID)
 	return jobID, err
 }
 
@@ -14514,16 +14558,10 @@ select
 	}, nil
 }
 
-func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Context, cfg RebalanceConfig) (rebalanceAutopilotEconomics7d, error) {
+func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Context, cfg RebalanceConfig) (rebalanceAutopilotEconomicsBreakdown7d, error) {
 	if s.db == nil {
-		return rebalanceAutopilotEconomics7d{}, nil
+		return rebalanceAutopilotEconomicsBreakdown7d{}, nil
 	}
-	var sentSat int64
-	var costSat int64
-	var forwardSat int64
-	var forwardFeeMsat int64
-	var forwardSlowSat int64
-	var forwardSlowFeeMsat int64
 	// Duas janelas, ambas vindas da config (UI): attribution_window mede a
 	// venda "rápida" (velocidade) e slow_seller_window mede a realização
 	// incluindo slow movers. O denominador (rebalance 7d) é o mesmo; muda só
@@ -14531,89 +14569,45 @@ func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Contex
 	// garante slow_seller >= attribution.
 	attributionHours := sovereignAttributionWindowHoursForConfig(cfg)
 	slowHours := sovereignSlowSellerWindowHoursForConfig(cfg)
-	err := s.db.QueryRow(ctx, `
-with jobs as (
-  select id, target_channel_id, completed_at
-  from rebalance_jobs
-  where trigger_reason = $1
-    and completed_at is not null
-    and completed_at >= now() - interval '7 days'
-),
-attempt_totals as (
-  select
-    j.id,
-    coalesce(sum(a.amount_sat) filter (where a.status='succeeded'), 0) as sent_sat,
-    coalesce(sum(a.fee_paid_sat) filter (where a.status='succeeded'), 0) as fee_paid_sat
-  from jobs j
-  left join rebalance_attempts a on a.job_id = j.id
-  group by j.id
-),
-forward_totals as (
-  select
-    j.id,
-    coalesce(sum(n.amount_sat) filter (where n.occurred_at < j.completed_at + ($2::int * interval '1 hour')), 0) as forward_amount_sat,
-    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < j.completed_at + ($2::int * interval '1 hour')), 0)::bigint as forward_fee_msat,
-    coalesce(sum(n.amount_sat) filter (where n.occurred_at < j.completed_at + ($3::int * interval '1 hour')), 0) as forward_slow_amount_sat,
-    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < j.completed_at + ($3::int * interval '1 hour')), 0)::bigint as forward_slow_fee_msat
-  from jobs j
-  left join notifications n on n.type='forward'
-    and n.channel_id = j.target_channel_id
-    and n.occurred_at >= j.completed_at
-  group by j.id
-),
-job_raw as (
-  select
-    coalesce(a.sent_sat, 0) as sent_sat,
-    coalesce(a.fee_paid_sat, 0) as fee_paid_sat,
-    coalesce(f.forward_amount_sat, 0) as forward_amount_sat,
-    coalesce(f.forward_fee_msat, 0) as forward_fee_msat,
-    coalesce(f.forward_slow_amount_sat, 0) as forward_slow_amount_sat,
-    coalesce(f.forward_slow_fee_msat, 0) as forward_slow_fee_msat
-  from jobs j
-  left join attempt_totals a on a.id = j.id
-  left join forward_totals f on f.id = j.id
-),
-job_economics as (
-  select
-    sent_sat,
-    fee_paid_sat,
-    case
-      when sent_sat <= 0 or forward_amount_sat <= 0 then 0
-      when forward_amount_sat > sent_sat then sent_sat
-      else forward_amount_sat
-    end as attributed_forward_sat,
-    case
-      when sent_sat <= 0 or forward_amount_sat <= 0 or forward_fee_msat <= 0 then 0
-      when forward_amount_sat > sent_sat then (forward_fee_msat * sent_sat) / forward_amount_sat
-      else forward_fee_msat
-    end as attributed_forward_fee_msat,
-    case
-      when sent_sat <= 0 or forward_slow_amount_sat <= 0 then 0
-      when forward_slow_amount_sat > sent_sat then sent_sat
-      else forward_slow_amount_sat
-    end as attributed_forward_slow_sat,
-    case
-      when sent_sat <= 0 or forward_slow_amount_sat <= 0 or forward_slow_fee_msat <= 0 then 0
-      when forward_slow_amount_sat > sent_sat then (forward_slow_fee_msat * sent_sat) / forward_slow_amount_sat
-      else forward_slow_fee_msat
-    end as attributed_forward_slow_fee_msat
-  from job_raw
-)
-select
-  coalesce(sum(sent_sat), 0) as sent_sat,
-  coalesce(sum(fee_paid_sat), 0) as cost_sat,
-  coalesce(sum(attributed_forward_sat), 0) as forward_sat,
-  coalesce(sum(attributed_forward_fee_msat), 0)::bigint as forward_fee_msat,
-  coalesce(sum(attributed_forward_slow_sat), 0) as forward_slow_sat,
-  coalesce(sum(attributed_forward_slow_fee_msat), 0)::bigint as forward_slow_fee_msat
-from job_economics
-`, rebalanceSovereignReason, attributionHours, slowHours).Scan(&sentSat, &costSat, &forwardSat, &forwardFeeMsat, &forwardSlowSat, &forwardSlowFeeMsat)
+	snapshot, err := s.loadSovereignAttributionSnapshot(ctx, cfg)
 	if err != nil {
-		return rebalanceAutopilotEconomics7d{}, err
+		return rebalanceAutopilotEconomicsBreakdown7d{}, err
+	}
+	return rebalanceAutopilotEconomicsBreakdown7d{
+		Total:       sovereignAutopilotEconomicsFromSnapshot(snapshot, attributionHours, slowHours, false),
+		Exploration: sovereignAutopilotEconomicsFromSnapshot(snapshot, attributionHours, slowHours, true),
+	}, nil
+}
+
+func sovereignAutopilotEconomicsFromSnapshot(snapshot sovereignAttributionSnapshot, attributionHours, slowHours int, explorationOnly bool) rebalanceAutopilotEconomics7d {
+	var jobCount int64
+	var sentSat int64
+	var costSat int64
+	var forwardSat int64
+	var forwardFeeMsat int64
+	var forwardSlowSat int64
+	var forwardSlowFeeMsat int64
+	for _, lot := range snapshot.Lots {
+		if lot.TriggerReason != rebalanceSovereignReason || lot.CompletedAt.Before(snapshot.MetricSince) {
+			continue
+		}
+		if explorationOnly && !lot.ExplorationSlot {
+			continue
+		}
+		jobCount++
+		sentSat += lot.SentSat
+		costSat += lot.FeePaidSat
+		fast := snapshot.Fast[lot.JobID]
+		forwardSat += fast.ForwardAmountSat
+		forwardFeeMsat += fast.ForwardFeeMsat
+		slow := snapshot.Slow[lot.JobID]
+		forwardSlowSat += slow.ForwardAmountSat
+		forwardSlowFeeMsat += slow.ForwardFeeMsat
 	}
 	forwardFeeSat := forwardFeeMsat / 1000
 	forwardSlowFeeSat := forwardSlowFeeMsat / 1000
 	result := rebalanceAutopilotEconomics7d{
+		JobCount:               jobCount,
 		RebalanceAmountSat:     sentSat,
 		RebalanceCostSat:       costSat,
 		RebalanceCostPpm:       satToPpm(costSat, sentSat),
@@ -14632,7 +14626,7 @@ from job_economics
 		result.SellThrough = float64(forwardSat) / float64(sentSat)
 		result.SellThroughSlow = float64(forwardSlowSat) / float64(sentSat)
 	}
-	return result, nil
+	return result
 }
 
 const (
@@ -15019,7 +15013,7 @@ where type='rebalance' and occurred_at >= now() - interval '1 day'
 	paybackProgress := 0.0
 	paybackProgressRebalanced := 0.0
 	attemptTelemetry := rebalanceAttemptTelemetry24h{}
-	sovereignEconomics7d := rebalanceAutopilotEconomics7d{}
+	sovereignEconomics7d := rebalanceAutopilotEconomicsBreakdown7d{}
 	mppShadowTelemetry := mppShadowTelemetry24h{}
 	mppStructuralAbortJobs := int64(0)
 	topFailureReasons30m := []RebalanceReasonStat{}
@@ -15213,20 +15207,29 @@ where report_date >= current_date - interval '6 days'
 		JobsWithoutAttempt7d:                jobsWithoutAttemptCount,
 		JobsWithoutAttemptRate7d:            jobsWithoutAttemptRate,
 		ROI7d:                               roi,
-		SovereignRebalanceAmount7dSat:       sovereignEconomics7d.RebalanceAmountSat,
-		SovereignRebalanceCost7dSat:         sovereignEconomics7d.RebalanceCostSat,
-		SovereignRebalanceCost7dPpm:         sovereignEconomics7d.RebalanceCostPpm,
-		SovereignForwardAmount7dSat:         sovereignEconomics7d.ForwardAmountSat,
-		SovereignForwardFee7dSat:            sovereignEconomics7d.ForwardFeeSat,
-		SovereignForwardFee7dPpm:            sovereignEconomics7d.ForwardFeePpm,
-		SovereignRealizedNet7dSat:           sovereignEconomics7d.RealizedNetSat,
-		SovereignSellThrough7d:              sovereignEconomics7d.SellThrough,
-		SovereignForwardAmountSlow7dSat:     sovereignEconomics7d.ForwardAmountSlowSat,
-		SovereignForwardFeeSlow7dSat:        sovereignEconomics7d.ForwardFeeSlowSat,
-		SovereignRealizedNetSlow7dSat:       sovereignEconomics7d.RealizedNetSlowSat,
-		SovereignSellThroughSlow7d:          sovereignEconomics7d.SellThroughSlow,
-		SovereignSellThroughWindowHours:     sovereignEconomics7d.AttributionWindowHours,
-		SovereignSellThroughSlowWindowHours: sovereignEconomics7d.SlowSellerWindowHours,
+		SovereignRebalanceAmount7dSat:       sovereignEconomics7d.Total.RebalanceAmountSat,
+		SovereignRebalanceCost7dSat:         sovereignEconomics7d.Total.RebalanceCostSat,
+		SovereignRebalanceCost7dPpm:         sovereignEconomics7d.Total.RebalanceCostPpm,
+		SovereignForwardAmount7dSat:         sovereignEconomics7d.Total.ForwardAmountSat,
+		SovereignForwardFee7dSat:            sovereignEconomics7d.Total.ForwardFeeSat,
+		SovereignForwardFee7dPpm:            sovereignEconomics7d.Total.ForwardFeePpm,
+		SovereignRealizedNet7dSat:           sovereignEconomics7d.Total.RealizedNetSat,
+		SovereignSellThrough7d:              sovereignEconomics7d.Total.SellThrough,
+		SovereignForwardAmountSlow7dSat:     sovereignEconomics7d.Total.ForwardAmountSlowSat,
+		SovereignForwardFeeSlow7dSat:        sovereignEconomics7d.Total.ForwardFeeSlowSat,
+		SovereignRealizedNetSlow7dSat:       sovereignEconomics7d.Total.RealizedNetSlowSat,
+		SovereignSellThroughSlow7d:          sovereignEconomics7d.Total.SellThroughSlow,
+		SovereignSellThroughWindowHours:     sovereignEconomics7d.Total.AttributionWindowHours,
+		SovereignSellThroughSlowWindowHours: sovereignEconomics7d.Total.SlowSellerWindowHours,
+		SovExploreJobs7d:                    sovereignEconomics7d.Exploration.JobCount,
+		SovExploreRebalanceAmount7dSat:      sovereignEconomics7d.Exploration.RebalanceAmountSat,
+		SovExploreRebalanceCost7dSat:        sovereignEconomics7d.Exploration.RebalanceCostSat,
+		SovExploreForwardAmount7dSat:        sovereignEconomics7d.Exploration.ForwardAmountSat,
+		SovExploreForwardFee7dSat:           sovereignEconomics7d.Exploration.ForwardFeeSat,
+		SovExploreRealizedNet7dSat:          sovereignEconomics7d.Exploration.RealizedNetSat,
+		SovExploreSellThrough7d:             sovereignEconomics7d.Exploration.SellThrough,
+		SovExploreRealizedNetSlow7dSat:      sovereignEconomics7d.Exploration.RealizedNetSlowSat,
+		SovExploreSellThroughSlow7d:         sovereignEconomics7d.Exploration.SellThroughSlow,
 		Jobs24h:                             jobs24h,
 		SuccessJobs24h:                      successJobs24h,
 		JobSuccessRate24h:                   jobSuccessRate24h,
@@ -15493,7 +15496,7 @@ func (s *RebalanceService) Queue(ctx context.Context) ([]RebalanceJob, []Rebalan
 	}
 	rows, err := s.db.Query(ctx, `
 select id, created_at, completed_at, source, status, trigger_reason, reason, target_channel_id,
-  target_channel_point, target_outbound_pct, target_amount_sat
+  target_channel_point, target_outbound_pct, target_amount_sat, exploration_slot
 from rebalance_jobs
 where status in ('running','queued')
    or completed_at >= now() - ($1::int * interval '1 second')
@@ -15511,7 +15514,7 @@ order by created_at desc
 		var reason pgtype.Text
 		var targetChannelID int64
 		if err := rows.Scan(&job.ID, &created, &completed, &job.Source, &job.Status, &triggerReason, &reason, &targetChannelID,
-			&job.TargetChannelPoint, &job.TargetOutboundPct, &job.TargetAmountSat); err != nil {
+			&job.TargetChannelPoint, &job.TargetOutboundPct, &job.TargetAmountSat, &job.ExplorationSlot); err != nil {
 			return jobs, attempts, err
 		}
 		job.CreatedAt = created.UTC().Format(time.RFC3339)
@@ -15671,7 +15674,7 @@ func (s *RebalanceService) History(ctx context.Context, limit int) ([]RebalanceJ
 select id, created_at, completed_at, source, status, trigger_reason, reason, target_channel_id,
   target_channel_point, target_outbound_pct, target_amount_sat,
   sovereign_expected_gain_sat, sovereign_estimated_cost_sat, sovereign_expected_profit_sat,
-  sovereign_budget_cost_sat, sovereign_score
+  sovereign_budget_cost_sat, sovereign_score, exploration_slot
 from rebalance_jobs
 where status in ('succeeded','failed','cancelled','partial','skipped')
   and completed_at >= now() - interval '1 day'
@@ -15696,7 +15699,7 @@ order by created_at desc`
 		if err := rows.Scan(&job.ID, &created, &completed, &job.Source, &job.Status, &triggerReason, &reason, &targetChannelID,
 			&job.TargetChannelPoint, &job.TargetOutboundPct, &job.TargetAmountSat,
 			&job.SovereignExpectedGainSat, &job.SovereignEstimatedCostSat, &job.SovereignExpectedProfitSat,
-			&job.SovereignBudgetCostSat, &job.SovereignScore); err != nil {
+			&job.SovereignBudgetCostSat, &job.SovereignScore, &job.ExplorationSlot); err != nil {
 			return jobs, attempts, err
 		}
 		job.CreatedAt = created.UTC().Format(time.RFC3339)
@@ -15866,46 +15869,46 @@ group by j.id
 		jobs[idx].Forward24hCount = forward24hCount
 		jobs[idx].Forward24hAmountSat = forward24hAmount
 		jobs[idx].Forward24hFeeSat = fee24hMsat / 1000
-		job := &jobs[idx]
-		job.AttributedForward1hAmountSat, job.AttributedForward1hFeeSat, job.RealizedNet1hSat = attributedForwardEconomics(
-			job.ActualSentSat,
-			job.ActualRebalanceFeeSat,
-			job.Forward1hAmountSat,
-			job.Forward1hFeeSat,
-		)
-		job.AttributedForward6hAmountSat, job.AttributedForward6hFeeSat, job.RealizedNet6hSat = attributedForwardEconomics(
-			job.ActualSentSat,
-			job.ActualRebalanceFeeSat,
-			job.Forward6hAmountSat,
-			job.Forward6hFeeSat,
-		)
-		job.AttributedForward24hAmountSat, job.AttributedForward24hFeeSat, job.RealizedNet24hSat = attributedForwardEconomics(
-			job.ActualSentSat,
-			job.ActualRebalanceFeeSat,
-			job.Forward24hAmountSat,
-			job.Forward24hFeeSat,
-		)
+	}
+
+	var earliestCompleted time.Time
+	targetIDs := make([]uint64, 0, len(jobs))
+	for _, job := range jobs {
+		completedAt, err := time.Parse(time.RFC3339, job.CompletedAt)
+		if err != nil {
+			continue
+		}
+		if earliestCompleted.IsZero() || completedAt.Before(earliestCompleted) {
+			earliestCompleted = completedAt
+		}
+		targetIDs = append(targetIDs, job.TargetChannelID)
+	}
+	if earliestCompleted.IsZero() {
+		return jobs
+	}
+	lots, forwards, err := s.loadRebalanceAttributionInputs(ctx, earliestCompleted.Add(-24*time.Hour), targetIDs)
+	if err != nil {
+		return jobs
+	}
+	attributed1h := attributeRebalanceForwardsFIFO(lots, forwards, time.Hour)
+	attributed6h := attributeRebalanceForwardsFIFO(lots, forwards, 6*time.Hour)
+	attributed24h := attributeRebalanceForwardsFIFO(lots, forwards, 24*time.Hour)
+	for i := range jobs {
+		job := &jobs[i]
+		attr1h := attributed1h[job.ID]
+		job.AttributedForward1hAmountSat = attr1h.ForwardAmountSat
+		job.AttributedForward1hFeeSat = attr1h.ForwardFeeMsat / 1000
+		job.RealizedNet1hSat = job.AttributedForward1hFeeSat - job.ActualRebalanceFeeSat
+		attr6h := attributed6h[job.ID]
+		job.AttributedForward6hAmountSat = attr6h.ForwardAmountSat
+		job.AttributedForward6hFeeSat = attr6h.ForwardFeeMsat / 1000
+		job.RealizedNet6hSat = job.AttributedForward6hFeeSat - job.ActualRebalanceFeeSat
+		attr24h := attributed24h[job.ID]
+		job.AttributedForward24hAmountSat = attr24h.ForwardAmountSat
+		job.AttributedForward24hFeeSat = attr24h.ForwardFeeMsat / 1000
+		job.RealizedNet24hSat = job.AttributedForward24hFeeSat - job.ActualRebalanceFeeSat
 	}
 	return jobs
-}
-
-func attributedForwardEconomics(sentSat int64, feePaidSat int64, forwardAmountSat int64, forwardFeeSat int64) (int64, int64, int64) {
-	if sentSat <= 0 {
-		return 0, 0, 0
-	}
-	if forwardAmountSat <= 0 || forwardFeeSat <= 0 {
-		return 0, 0, -feePaidSat
-	}
-	attributedAmountSat := forwardAmountSat
-	attributedFeeSat := forwardFeeSat
-	if forwardAmountSat > sentSat {
-		attributedAmountSat = sentSat
-		attributedFeeSat = (forwardFeeSat * sentSat) / forwardAmountSat
-	}
-	if attributedFeeSat < 0 {
-		attributedFeeSat = 0
-	}
-	return attributedAmountSat, attributedFeeSat, attributedFeeSat - feePaidSat
 }
 
 func (s *RebalanceService) SetChannelTarget(ctx context.Context, channelID uint64, channelPoint string, targetPct float64) error {

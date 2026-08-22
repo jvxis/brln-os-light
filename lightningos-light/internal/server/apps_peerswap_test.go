@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -232,6 +233,51 @@ func TestNormalizePeerswapRemoteSourceDoesNotRequireLNDIdentity(t *testing.T) {
 	}
 	if source.Wallet != "" {
 		t.Fatalf("remote connectivity validation must not derive an LND wallet, got %q", source.Wallet)
+	}
+}
+
+func TestPeerswapElementsSourceResponseDistinguishesUnconfiguredFromLocal(t *testing.T) {
+	unconfigured := newPeerswapElementsSourceResponse(
+		peerswapElementsSource{Mode: peerswapElementsModeLocal, Wallet: peerswapElementsWallet},
+		false,
+		false,
+		"not_installed",
+		false,
+		false,
+	)
+	if unconfigured.Configured || unconfigured.Mode != "" || unconfigured.URL != "" || unconfigured.User != "" || unconfigured.Wallet != "" {
+		t.Fatalf("unconfigured source leaked a default local policy: %#v", unconfigured)
+	}
+	raw, err := json.Marshal(unconfigured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"mode"`) || strings.Contains(string(raw), `"wallet"`) {
+		t.Fatalf("unconfigured API response advertised a source: %s", raw)
+	}
+
+	local := newPeerswapElementsSourceResponse(
+		peerswapElementsSource{Mode: peerswapElementsModeLocal, Wallet: peerswapElementsWallet},
+		true,
+		true,
+		"running",
+		true,
+		true,
+	)
+	if !local.Configured || local.Mode != peerswapElementsModeLocal || local.Wallet != peerswapElementsWallet || !local.LocalReady || !local.Installed || !local.Running {
+		t.Fatalf("configured local source was not preserved: %#v", local)
+	}
+
+	external := newPeerswapElementsSourceResponse(
+		peerswapElementsSource{Mode: peerswapElementsModeRemote, URL: "http://127.0.0.1:7041", User: "rpc", Wallet: "peerswap_node"},
+		true,
+		false,
+		"not_installed",
+		true,
+		false,
+	)
+	if !external.Configured || external.Mode != peerswapElementsModeRemote || external.URL != "http://127.0.0.1:7041" || external.User != "rpc" || external.Wallet != "peerswap_node" {
+		t.Fatalf("externally managed source on the same host was not preserved: %#v", external)
 	}
 }
 

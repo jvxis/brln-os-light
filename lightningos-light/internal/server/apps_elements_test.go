@@ -68,7 +68,7 @@ func TestElementsInfoUsesBrokerAsAuthoritativeInstallationState(t *testing.T) {
 	if !info.Installed || info.Status != "running" {
 		t.Fatalf("expected broker-installed running Elements, got %+v", info)
 	}
-	if client.statusCalls != 1 || client.statusDataDir != elementsDefaultDataDir {
+	if client.statusCalls != 1 || client.statusDataDir != elementsAppPaths().DataDir {
 		t.Fatalf("unexpected broker status request: calls=%d data_dir=%q", client.statusCalls, client.statusDataDir)
 	}
 }
@@ -137,7 +137,7 @@ func TestStopElementsUsesBrokerInstallationState(t *testing.T) {
 	if err := (&Server{}).stopElements(context.Background()); err != nil {
 		t.Fatalf("stopElements returned error: %v", err)
 	}
-	if client.lifecycleCalls != 1 || client.lifecycleAction != "stop" || client.lifecycleDataDir != elementsDefaultDataDir {
+	if client.lifecycleCalls != 1 || client.lifecycleAction != "stop" || client.lifecycleDataDir != elementsAppPaths().DataDir {
 		t.Fatalf("unexpected lifecycle request: calls=%d action=%q data_dir=%q", client.lifecycleCalls, client.lifecycleAction, client.lifecycleDataDir)
 	}
 }

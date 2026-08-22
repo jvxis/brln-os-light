@@ -770,6 +770,14 @@ POST /api/rebalance/channel/guaranteed
 - `channel_id_str` is used to preserve uint64 precision in browser clients and is validated against `channel_point`.
 - At most one eligible pool member is queued per automatic scan before the selected scheduler. The job bypasses score and strategic/history gates, but retains the automatic budget, fee cap, channel-busy, target-deficit, and route/source safety checks.
 
+GET /api/rebalance/history
+- Returns completed jobs and attempts from the last 24 hours.
+- Sovereign jobs include their planned economics and realized forwarding attribution. Jobs selected through the adaptive exploration path expose `exploration_slot: true`; the field is omitted for regular jobs.
+
+GET /api/rebalance/overview
+- Includes separate 7-day exploration counters and realized economics under the `sovereign_exploration_*_7d` fields, so exploration can be compared with total Sovereign performance.
+- Exploration attribution starts when the persisted marker is deployed; jobs created by older versions cannot be classified retroactively.
+
 ## Terminal
 
 GET /api/terminal/status

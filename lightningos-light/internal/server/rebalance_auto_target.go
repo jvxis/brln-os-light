@@ -344,82 +344,34 @@ func (s *RebalanceService) loadChannelSellThrough7d(ctx context.Context, cfg Reb
 	if s.db == nil {
 		return out, 0
 	}
-	attributionHours := sovereignAttributionWindowHoursForConfig(cfg)
-	rows, err := s.db.Query(ctx, `
-with jobs as (
-  select id, target_channel_id, completed_at
-  from rebalance_jobs
-  where trigger_reason = $1
-    and completed_at is not null
-    and completed_at >= now() - interval '7 days'
-),
-attempt_totals as (
-  select j.id,
-    coalesce(sum(a.amount_sat) filter (where a.status='succeeded'), 0) as sent_sat
-  from jobs j
-  left join rebalance_attempts a on a.job_id = j.id
-  group by j.id
-),
-forward_totals as (
-  select j.id,
-    coalesce(sum(n.amount_sat) filter (where n.occurred_at < j.completed_at + ($2::int * interval '1 hour')), 0) as forward_amount_sat,
-    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < j.completed_at + ($2::int * interval '1 hour')), 0)::bigint as forward_fee_msat
-  from jobs j
-  left join notifications n on n.type='forward'
-    and n.channel_id = j.target_channel_id
-    and n.occurred_at >= j.completed_at
-  group by j.id
-),
-job_raw as (
-  select j.target_channel_id,
-    coalesce(a.sent_sat, 0) as sent_sat,
-    coalesce(f.forward_amount_sat, 0) as forward_amount_sat,
-    coalesce(f.forward_fee_msat, 0) as forward_fee_msat
-  from jobs j
-  left join attempt_totals a on a.id = j.id
-  left join forward_totals f on f.id = j.id
-),
-job_economics as (
-  select target_channel_id,
-    sent_sat,
-    case
-      when sent_sat <= 0 or forward_amount_sat <= 0 then 0
-      when forward_amount_sat > sent_sat then sent_sat
-      else forward_amount_sat
-    end as attributed_forward_sat,
-    case
-      when sent_sat <= 0 or forward_amount_sat <= 0 or forward_fee_msat <= 0 then 0
-      when forward_amount_sat > sent_sat then (forward_fee_msat * sent_sat) / forward_amount_sat
-      else forward_fee_msat
-    end as attributed_forward_fee_msat
-  from job_raw
-)
-select target_channel_id,
-  coalesce(sum(sent_sat), 0) as sent_sat,
-  coalesce(sum(attributed_forward_sat), 0) as forward_sat,
-  coalesce(sum(attributed_forward_fee_msat), 0)::bigint as forward_fee_msat
-from job_economics
-group by target_channel_id`, rebalanceSovereignReason, attributionHours)
+	snapshot, err := s.loadSovereignAttributionSnapshot(ctx, cfg)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Printf("auto-target sell-through load failed: %v", err)
 		}
 		return out, 0
 	}
-	defer rows.Close()
+	feeByTargetMsat := map[uint64]int64{}
 	var totalSent, totalForward int64
-	for rows.Next() {
-		var chID, sent, fwd, fwdFeeMsat int64
-		if err := rows.Scan(&chID, &sent, &fwd, &fwdFeeMsat); err != nil {
-			return out, 0
+	for _, lot := range snapshot.Lots {
+		if lot.TriggerReason != rebalanceSovereignReason || lot.CompletedAt.Before(snapshot.MetricSince) {
+			continue
 		}
-		st := channelSellThrough{SentSat: sent, ForwardSat: fwd, ForwardFeeSat: fwdFeeMsat / 1000}
-		if sent > 0 {
-			st.SellThrough = float64(fwd) / float64(sent)
+		attributed := snapshot.Fast[lot.JobID]
+		stat := out[lot.TargetChannelID]
+		stat.SentSat += lot.SentSat
+		stat.ForwardSat += attributed.ForwardAmountSat
+		feeByTargetMsat[lot.TargetChannelID] += attributed.ForwardFeeMsat
+		out[lot.TargetChannelID] = stat
+		totalSent += lot.SentSat
+		totalForward += attributed.ForwardAmountSat
+	}
+	for targetID, stat := range out {
+		stat.ForwardFeeSat = feeByTargetMsat[targetID] / 1000
+		if stat.SentSat > 0 {
+			stat.SellThrough = float64(stat.ForwardSat) / float64(stat.SentSat)
 		}
-		out[uint64(chID)] = st
-		totalSent += sent
-		totalForward += fwd
+		out[targetID] = stat
 	}
 	node := 0.0
 	if totalSent > 0 {

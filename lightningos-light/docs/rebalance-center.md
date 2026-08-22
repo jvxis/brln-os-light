@@ -100,8 +100,9 @@ dois quando ativada. Centraliza o scoring multi-fator e o orçamento diário.
 
 **Modos:**
 
-- `sovereign_shadow`: **avalia** mas não cria jobs. Telemetria pura, custo zero.
-  Usado para baseline antes de habilitar live.
+- `sovereign_shadow`: **avalia** mas não cria jobs, não cai no rules-auto, não
+  enfileira guaranteed slots e não aplica mudanças do AutoTarget. Telemetria
+  pura, custo zero. Usado para baseline antes de habilitar live.
 - `sovereign_live`: executa os candidatos selecionados.
 - `rules_auto`: desliga sovereign; volta aos loops Auto + Manual Restart
   separados.
@@ -487,6 +488,9 @@ Canal aparece mas não é selecionado:
 - Use `live` quando: configuração estabilizada, métricas saudáveis
 - Transição: rode 6-12h em shadow, compare expected_profit médio e candidate
   count com expectativa antes de flipar para live
+- A receita realizada usa atribuição FIFO por canal de destino: cada forward
+  consome primeiro o lote de liquidez paga elegível mais antigo e não pode ser
+  contado em dois jobs com janelas sobrepostas
 
 ## 12. Histórico de mudanças relevantes
 
@@ -546,8 +550,15 @@ kept as design history and include per-item status notes.
 
 ### R5 — Exploration burnout (track & stop)
 
-**Current status (2026-06-20): done.** The service tracks exploration burnout
-and tests cover the behavior. Keep this section as historical context.
+**Current status (2026-08-22): done and persisted.** The service marks
+exploration jobs in `rebalance_jobs`, restores the 24h failure streak after a
+Manager restart, and exposes the marker in queue/history telemetry. A success
+starts a fresh streak, so five later failures can still trigger the 12h burnout.
+The overview also separates 7d exploration volume, cost, attributed revenue,
+net, and sell-through from the total Sovereign result. This classification only
+fills after deploying the persisted marker; older jobs cannot be backfilled.
+Tests cover both live and restart-recovery behavior. Keep this section as
+historical context.
 
 **Esforço:** ~30 min de código + testes
 **Risco:** baixo
@@ -578,7 +589,7 @@ if stats.Attempts >= 5 && stats.Failures == stats.Attempts {
 
 - ✅ Para de queimar slots em canais comprovadamente quebrados
 - ✅ Outros canais ganham as oportunidades de exploração
-- ⚠️ Mais state pra manter (DB ou em memória)
+- ✅ Estado persistido no DB e recuperado após restart
 - ⚠️ Canais que se recuperam após o burnout só voltam após 12h
 
 ---

@@ -2042,6 +2042,14 @@ export default function RebalanceCenter() {
                 sellthrough: formatPct((overview.sovereign_sellthrough_7d ?? 0) * 100)
               })}
             </p>
+            <p className="text-xs text-violet-200/75">
+              {t('rebalanceCenter.overview.autopilotExplorationRealized7d', {
+                jobs: formatter.format(overview.sovereign_exploration_jobs_7d ?? 0),
+                moved: formatSats(overview.sovereign_exploration_rebalance_amount_7d_sat ?? 0),
+                net: formatSats(overview.sovereign_exploration_realized_net_7d_sat ?? 0),
+                sellthrough: formatPct((overview.sovereign_exploration_sellthrough_7d ?? 0) * 100)
+              })}
+            </p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div className="rounded-xl border border-white/10 bg-white/5 p-2.5 space-y-1">
                 <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.paybackGroupRebalanced')}</p>
@@ -4568,6 +4576,11 @@ export default function RebalanceCenter() {
                         : job.source === 'manual'
                           ? t('rebalanceCenter.history.source.manual')
                           : job.source}{' '}
+                      {job.exploration_slot && (
+                        <span className="rounded-full border border-violet-300/30 bg-violet-300/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-violet-200">
+                          {t('rebalanceCenter.history.explorationSlot')}
+                        </span>
+                      )}{' '}
                       <span className="text-xs text-fog/50">
                          · {formatTimestamp(job.completed_at || job.created_at)}
                       </span>

@@ -240,6 +240,15 @@ export type RebalanceOverview = {
   sovereign_sellthrough_slow_7d?: number
   sovereign_sellthrough_window_hours?: number
   sovereign_sellthrough_slow_window_hours?: number
+  sovereign_exploration_jobs_7d?: number
+  sovereign_exploration_rebalance_amount_7d_sat?: number
+  sovereign_exploration_rebalance_cost_7d_sat?: number
+  sovereign_exploration_forward_amount_7d_sat?: number
+  sovereign_exploration_forward_fee_7d_sat?: number
+  sovereign_exploration_realized_net_7d_sat?: number
+  sovereign_exploration_sellthrough_7d?: number
+  sovereign_exploration_realized_net_slow_7d_sat?: number
+  sovereign_exploration_sellthrough_slow_7d?: number
   jobs_24h?: number
   success_jobs_24h?: number
   job_success_rate_24h?: number
@@ -420,6 +429,7 @@ export type RebalanceJob = {
   sovereign_expected_profit_sat?: number
   sovereign_budget_cost_sat?: number
   sovereign_score?: number
+  exploration_slot?: boolean
   actual_sent_sat?: number
   actual_rebalance_fee_sat?: number
   forward_1h_count?: number

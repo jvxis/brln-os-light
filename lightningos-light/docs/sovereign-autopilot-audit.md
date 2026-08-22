@@ -41,9 +41,9 @@ production.
 ### 1. Mode Split
 
 Check the "Mode Split" section first. `sovereign_shadow` records decisions but
-does not execute sovereign jobs. In this codebase, shadow mode still lets the
-normal rules-auto scan run afterward, so actual movement may still happen from
-non-sovereign `auto` jobs.
+does not execute jobs, queue the guaranteed slot, run the rules-auto fallback,
+or apply AutoTarget changes. It is a pure dry run; manual API-triggered jobs are
+outside the scheduler-mode guarantee.
 
 If the last 24h mixes `sovereign_live` and `sovereign_shadow`, split conclusions:
 
@@ -82,7 +82,9 @@ Use the overview and "Sovereign Live Execution" sections:
 
 Positive expected profit in `sovereign_history` is not enough. The live audit is
 passed only when attributed forward fees exceed paid rebalance fees over the
-chosen attribution window.
+chosen attribution window. Forward attribution is FIFO per target channel:
+each forward consumes the oldest eligible paid-liquidity lot and is counted at
+most once, even when multiple jobs have overlapping attribution windows.
 
 ### 4. Source Objective
 
@@ -120,12 +122,14 @@ Keep `sovereign_live` off unless all are true over at least 24h, preferably 7d:
 
 ## Current Design Risks To Watch
 
-- Shadow mode still allows rules-auto execution after recording sovereign
-  decisions. This is useful for comparison, but confusing if shadow is expected
-  to mean "no rebalance execution at all".
+- Shadow mode intentionally blocks all scheduler mutations. A manual job started
+  through the API remains possible and must be separated from shadow telemetry.
 - `sovereign_exploration_slot_pct` can bypass empirical-history gates. When the
   candidate set is small, the scarcity rule may mark many candidates as
-  exploration, allowing route-dead targets into live execution.
+  exploration, allowing route-dead targets into live execution. This is an
+  intentional discovery mechanism: exploration jobs are persisted and visible
+  through `exploration_slot`, while five consecutive failed exploration jobs in
+  24h apply a 12h target burnout that survives Manager restarts.
 - `sovereign_target_source_quarantine_hours`,
   `fresh_paid_liquidity_lock_enabled`, and `source_min_payback_progress` are the
   direct protections that stop a recently rebalanced channel from immediately

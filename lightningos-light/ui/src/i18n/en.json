@@ -5052,6 +5052,7 @@
         "autopilotForwardFeePpm": "Autopilot forward fee 7d",
         "autopilotForwardFee": "{{fee}} over {{amount}} sold",
         "autopilotRealized7d": "Autopilot realized 7d: {{net}} · sell-through {{sellthrough}}",
+        "autopilotExplorationRealized7d": "Exploration 7d ({{jobs}} jobs): {{moved}} moved · {{net}} net · {{sellthrough}} sell-through",
         "successAttempts24h": "Success attempts: {{value}}",
         "successAmount24h": "Moved on success: {{value}}",
         "successAvgAmount24h": "Avg success size: {{value}}",
@@ -5565,6 +5566,7 @@
       "title": "Recent History",
       "last24h": "Last 24h",
       "details": "Details",
+      "explorationSlot": "exploration",
       "source": {
         "auto": "auto",
         "manual": "manual"

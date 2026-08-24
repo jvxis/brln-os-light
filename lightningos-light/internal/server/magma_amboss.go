@@ -14,7 +14,13 @@ import (
 )
 
 const (
-	magmaAmbossURL     = "https://api.amboss.space/graphql"
+	magmaAmbossURL = "https://api.amboss.space/graphql"
+	// The seller mutations are moving here. Amboss confirmed the flat
+	// api.amboss.space schema is being deprecated in favour of this namespaced
+	// one, and sellerAcceptOrder on the old endpoint is already returning
+	// INTERNAL_SERVER_ERROR - 66 refusals on a single order in one morning,
+	// while the same invoice submitted through the new endpoint's UI succeeded.
+	magmaMarketURL     = "https://magma.amboss.tech/graphql"
 	magmaAmbossTimeout = 25 * time.Second
 )
 
@@ -313,17 +319,34 @@ type MagmaMarketSummary struct {
 
 type magmaAmbossClient struct {
 	endpoint string
-	http     *http.Client
+	// marketEndpoint is the replacement API. Both are held because the migration
+	// is partial on purpose: only the call that is actually broken moves, so a
+	// problem on the new endpoint cannot take working operations down with it.
+	marketEndpoint string
+	http           *http.Client
 }
 
 func newMagmaAmbossClient() *magmaAmbossClient {
 	return &magmaAmbossClient{
-		endpoint: magmaAmbossURL,
-		http:     &http.Client{Timeout: magmaAmbossTimeout},
+		endpoint:       magmaAmbossURL,
+		marketEndpoint: magmaMarketURL,
+		http:           &http.Client{Timeout: magmaAmbossTimeout},
 	}
 }
 
 func (c *magmaAmbossClient) do(ctx context.Context, token, query string, variables map[string]any, out any) error {
+	return c.doAt(ctx, c.endpoint, token, query, variables, out)
+}
+
+// doMarket talks to the replacement API. Same credential - the token from the
+// Amboss dashboard authenticates against both, which was verified before any of
+// this was written - and the same error handling, so a failure there is reported
+// with the code and path exactly as one from the old endpoint is.
+func (c *magmaAmbossClient) doMarket(ctx context.Context, token, query string, variables map[string]any, out any) error {
+	return c.doAt(ctx, c.marketEndpoint, token, query, variables, out)
+}
+
+func (c *magmaAmbossClient) doAt(ctx context.Context, endpoint, token, query string, variables map[string]any, out any) error {
 	if strings.TrimSpace(token) == "" {
 		return errors.New("Amboss API token is not configured")
 	}
@@ -335,7 +358,7 @@ func (c *magmaAmbossClient) do(ctx context.Context, token, query string, variabl
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -518,8 +541,14 @@ func (c *magmaAmbossClient) SellerOrders(ctx context.Context, token string) ([]M
 // has been running these against the live API, so the variable names below are
 // deliberately verbatim rather than tidied up.
 const (
+	// Deprecated. Kept only so the fallback below has something to call.
 	magmaAcceptOrderMutation = `mutation AcceptOrder($sellerAcceptOrderId: String!, $request: String!) {
   sellerAcceptOrder(id: $sellerAcceptOrderId, request: $request)
+}`
+	// The replacement. The new schema is namespaced rather than flat, and the
+	// arguments arrive in an input object instead of positionally.
+	magmaMarketAcceptOrderMutation = `mutation AcceptOrder($input: SellerAcceptOrdersInput!) {
+  market { order { seller { accept(input: $input) { success } } } }
 }`
 	magmaRejectOrderMutation = `mutation RejectOrder($sellerRejectOrderId: String!) {
   sellerRejectOrder(id: $sellerRejectOrderId)
@@ -540,16 +569,48 @@ func (c *magmaAmbossClient) AcceptOrder(ctx context.Context, token, orderID, pay
 	if paymentRequest == "" {
 		return errors.New("payment request required")
 	}
-	var result struct {
-		SellerAcceptOrder any `json:"sellerAcceptOrder"`
+	var market struct {
+		Market struct {
+			Order struct {
+				Seller struct {
+					Accept struct {
+						Success bool `json:"success"`
+					} `json:"accept"`
+				} `json:"seller"`
+			} `json:"order"`
+		} `json:"market"`
 	}
-	if err := c.do(ctx, token, magmaAcceptOrderMutation, map[string]any{
-		"sellerAcceptOrderId": orderID,
-		"request":             paymentRequest,
-	}, &result); err != nil {
+	err := c.doMarket(ctx, token, magmaMarketAcceptOrderMutation, map[string]any{
+		"input": map[string]any{"order_id": orderID, "payment_request": paymentRequest},
+	}, &market)
+	if err == nil {
+		if !market.Market.Order.Seller.Accept.Success {
+			return fmt.Errorf("Amboss did not accept the invoice for order %s", orderID)
+		}
+		return nil
+	}
+	// A bad credential is the one failure the old endpoint cannot rescue, and
+	// retrying it there would just spend the token against a second host.
+	if errors.Is(err, errMagmaUnauthorized) {
 		return err
 	}
-	if !magmaMutationSucceeded(result.SellerAcceptOrder) {
+
+	// Fall back to the deprecated endpoint. The new one is the right target, but
+	// it has no track record here yet, and an accept that never lands costs a
+	// sale and a SELLER_FAILED_TO_REACT. Two chances at it is worth one extra
+	// request.
+	var legacy struct {
+		SellerAcceptOrder any `json:"sellerAcceptOrder"`
+	}
+	if legacyErr := c.do(ctx, token, magmaAcceptOrderMutation, map[string]any{
+		"sellerAcceptOrderId": orderID,
+		"request":             paymentRequest,
+	}, &legacy); legacyErr != nil {
+		// Report the new endpoint's error: it is the one that matters now, and
+		// the deprecated endpoint's failure is expected rather than diagnostic.
+		return err
+	}
+	if !magmaMutationSucceeded(legacy.SellerAcceptOrder) {
 		return fmt.Errorf("Amboss did not accept the invoice for order %s", orderID)
 	}
 	return nil

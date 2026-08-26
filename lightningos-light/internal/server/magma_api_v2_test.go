@@ -147,3 +147,131 @@ func TestMagmaAcceptTreatsSuccessFalseAsRefusal(t *testing.T) {
 		t.Fatal("success:false must be reported as a refusal")
 	}
 }
+
+
+// Reject moves too. It is what the approval deadline calls when an accept keeps
+// failing, so leaving it on an endpoint Amboss says is no longer maintained
+// would put the protection against SELLER_FAILED_TO_REACT on the same footing
+// as the call that already broke.
+func TestMagmaRejectUsesTheMarketEndpoint(t *testing.T) {
+	var gotQuery, gotInput string
+	legacyHits := 0
+	client := magmaTwoEndpointClient(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Query     string         `json:"query"`
+				Variables map[string]any `json:"variables"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			gotQuery = req.Query
+			raw, _ := json.Marshal(req.Variables["input"])
+			gotInput = string(raw)
+			magmaJSON(w, `{"data":{"market":{"order":{"seller":{"reject":{"success":true}}}}}}`)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			legacyHits++
+			magmaJSON(w, `{"data":{"sellerRejectOrder":true}}`)
+		})
+
+	if err := client.RejectOrder(context.Background(), "tok", "order-r"); err != nil {
+		t.Fatalf("reject should succeed: %v", err)
+	}
+	if !strings.Contains(gotQuery, "reject(input:") {
+		t.Fatalf("expected the namespaced reject, got %q", gotQuery)
+	}
+	if !strings.Contains(gotInput, `"order_id":"order-r"`) {
+		t.Fatalf("input object is wrong: %s", gotInput)
+	}
+	if legacyHits != 0 {
+		t.Fatalf("must not touch the deprecated endpoint when the new one works, got %d", legacyHits)
+	}
+}
+
+// The channel point keeps its shape. Amboss documents tx_id as TXID:OUTPUT_INDEX
+// and states the format is unchanged from the legacy field - and submitting an
+// invalid channel is the one mistake in this integration their own UI warns
+// costs reputation heavily, so the format is pinned by a test rather than left
+// to whoever edits this next.
+func TestMagmaAddTransactionSendsTheOutpointUnchanged(t *testing.T) {
+	const point = "0a5411a6a356b1531f36c7055f49d18100d227f7996f0566ecf429a6881b0c63:0"
+	var gotQuery, gotInput string
+	client := magmaTwoEndpointClient(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Query     string         `json:"query"`
+				Variables map[string]any `json:"variables"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			gotQuery = req.Query
+			raw, _ := json.Marshal(req.Variables["input"])
+			gotInput = string(raw)
+			magmaJSON(w, `{"data":{"market":{"order":{"seller":{"add_transaction":{"success":true}}}}}}`)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			t.Error("the new endpoint answered, so there is nothing to fall back to")
+			magmaJSON(w, `{"data":{"sellerAddTransaction":true}}`)
+		})
+
+	if err := client.AddTransaction(context.Background(), "tok", "order-t", point); err != nil {
+		t.Fatalf("add_transaction should succeed: %v", err)
+	}
+	if !strings.Contains(gotQuery, "add_transaction(input:") {
+		t.Fatalf("expected the namespaced mutation, got %q", gotQuery)
+	}
+	if !strings.Contains(gotInput, `"tx_id":"`+point+`"`) {
+		t.Fatalf("the outpoint index must survive intact, got %s", gotInput)
+	}
+}
+
+// A channel point without its output index never reaches either endpoint. The
+// guard predates this migration and has to keep holding: the new field name
+// says tx_id, which invites dropping the index.
+func TestMagmaAddTransactionStillRejectsABareTxid(t *testing.T) {
+	client := magmaTwoEndpointClient(t,
+		func(w http.ResponseWriter, r *http.Request) { t.Error("must not reach the network") },
+		func(w http.ResponseWriter, r *http.Request) { t.Error("must not reach the network") })
+
+	err := client.AddTransaction(context.Background(), "tok", "order-t",
+		"0a5411a6a356b1531f36c7055f49d18100d227f7996f0566ecf429a6881b0c63")
+	if err == nil {
+		t.Fatal("a txid with no output index must be refused before it is sent")
+	}
+}
+
+// Both new calls inherit the fallback, so a broken replacement endpoint cannot
+// strand a rejection or a channel confirmation.
+func TestMagmaRejectAndAddTransactionFallBack(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		legacy string
+		run    func(*magmaAmbossClient) error
+	}{
+		{"reject", `{"data":{"sellerRejectOrder":true}}`,
+			func(c *magmaAmbossClient) error {
+				return c.RejectOrder(context.Background(), "tok", "o")
+			}},
+		{"add_transaction", `{"data":{"sellerAddTransaction":true}}`,
+			func(c *magmaAmbossClient) error {
+				return c.AddTransaction(context.Background(), "tok", "o",
+					"0a5411a6a356b1531f36c7055f49d18100d227f7996f0566ecf429a6881b0c63:0")
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := 0
+			client := magmaTwoEndpointClient(t,
+				func(w http.ResponseWriter, r *http.Request) {
+					magmaJSON(w, `{"errors":[{"message":"boom","extensions":{"code":"INTERNAL_SERVER_ERROR"}}]}`)
+				},
+				func(w http.ResponseWriter, r *http.Request) {
+					hits++
+					magmaJSON(w, tc.legacy)
+				})
+			if err := tc.run(client); err != nil {
+				t.Fatalf("the fallback should have carried it: %v", err)
+			}
+			if hits != 1 {
+				t.Fatalf("expected one fallback call, got %d", hits)
+			}
+		})
+	}
+}

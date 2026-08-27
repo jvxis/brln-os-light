@@ -44,6 +44,9 @@ type appInfo struct {
 	SecurityNotices         []string          `json:"security_notices,omitempty"`
 	Operation               *appOperationInfo `json:"operation,omitempty"`
 	LegacyMigrationRequired bool              `json:"legacy_migration_required,omitempty"`
+	AvailableVersion        string            `json:"available_version,omitempty"`
+	InstalledVersion        string            `json:"installed_version,omitempty"`
+	UpdateAvailable         bool              `json:"update_available,omitempty"`
 }
 
 type appOperationInfo struct {

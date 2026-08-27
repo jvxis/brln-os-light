@@ -976,6 +976,29 @@ export default function AppStore() {
                 </div>
               </div>
 
+              {app.available_version && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-fog/65">
+                  {app.installed && (
+                    <span>
+                      {t('appStore.installedVersion')}: <strong className="font-mono font-medium text-fog/90">{app.installed_version || t('appStore.unknownVersion')}</strong>
+                    </span>
+                  )}
+                  <span>
+                    {t('appStore.availableVersion')}: <strong className="font-mono font-medium text-fog/90">{app.available_version}</strong>
+                  </span>
+                  {app.installed && app.update_available && (
+                    <span className="rounded-full border border-amber-400/35 bg-amber-500/15 px-2 py-0.5 font-semibold uppercase tracking-wide text-amber-200">
+                      {t('appStore.updateAvailable')}
+                    </span>
+                  )}
+                  {app.installed && app.installed_version && !app.update_available && (
+                    <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 font-semibold uppercase tracking-wide text-emerald-200">
+                      {t('appStore.upToDate')}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {operationAction && !isResetting && (
                 <div className="rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-4 py-3" role="status" aria-live="polite">
                   <div className="flex items-center justify-between gap-3 text-sm">

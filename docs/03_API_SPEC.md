@@ -587,6 +587,7 @@ POST /api/lnops/succession/simulate
 
 GET /api/apps
 - Returns app list with status.
+- Third-party catalog apps, except PeerSwap, may include `available_version`, `installed_version`, and `update_available`. The available release is synchronized to PostgreSQL when the manager starts. The installed release changes only after an existing install or start action succeeds; legacy installations remain with an omitted/unknown `installed_version` until that happens. Version persistence is informational and cannot fail or trigger an app lifecycle operation.
 - A historical App Store Bitcoin container is returned as installed with `legacy_migration_required=true`; ordinary lifecycle controls must be replaced by the explicit safe-migration flow.
 - While a lifecycle action is active, the affected app includes `operation` with `action`, UTC `started_at`, and an optional truthful `stage` for instrumented workflows.
 - Apps that currently receive privileged direct LND access include `security_notices=["elevated_lnd_access"]`. `lndg` additionally reports `lnd_data_directory_read`. These values are informational disclosures and do not alter lifecycle behavior.

@@ -1198,6 +1198,9 @@ export type AppStoreInfo = {
   security_notices?: string[]
   operation?: AppOperationInfo
   legacy_migration_required?: boolean
+  available_version?: string
+  installed_version?: string
+  update_available?: boolean
 }
 
 export const getApps = (): Promise<AppStoreInfo[]> => request('/api/apps')

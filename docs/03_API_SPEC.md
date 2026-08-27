@@ -752,6 +752,11 @@ POST /api/reports/reconciliation
 
 ## Rebalance channel automation
 
+GET /api/rebalance/channels
+- Returns live channel balances, local/peer policies, targets, eligibility and recent economics.
+- Economic diagnostics include `initiator`, `peer_policy_known`, `effective_econ_ratio`, `fee_budget_ppm`, `economic_fee_floor_ppm`, `economic_required_cost_ppm`, `economic_reference_amount_sat`, `economic_floor_reason`, and `economic_blocked_reason`.
+- For remote-opened channels that need paid refill, `economic_fee_floor_ppm` is the minimum outbound rate whose proportional budget can cover the peer's amount-normalized policy. Fresh total rebalance cost takes precedence when it is higher.
+
 POST /api/rebalance/run/preview
 - Resolves the effective amount and fee cap for an operator-triggered Manual Rebal In without creating a job.
 - Body: `{"channel_point":"txid:index","target_outbound_pct":10,"amount_sat":10000,"fee_limit_ppm":1200}`.

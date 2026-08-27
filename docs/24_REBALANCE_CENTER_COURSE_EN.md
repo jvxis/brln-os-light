@@ -12,7 +12,7 @@ A channel becomes a **target** when it needs to receive local liquidity. The bas
 target_outbound_pct - local_pct = deficit
 ```
 
-If the deficit exceeds `deadband_pct`, the channel is active, and `outgoing_fee_ppm > peer_fee_ppm`, it can be a manual target. To become an automatic target, it also needs to pass economic filters: cost gate, ROI, profit guardrail, cooldowns, and budget.
+If the deficit exceeds `deadband_pct`, the channel is active, and the effective route budget covers at least the peer's effective cost, it can be a manual target. To become an automatic target, it also needs to pass economic filters: cost gate, ROI, profit guardrail, cooldowns, and budget.
 
 A channel becomes a **source** when it has local liquidity above `source_min_local_pct`, is not excluded as a source, and is not protected by payback. The system tries not to use a channel as a source while that channel is still in the red from a previous rebalance.
 
@@ -45,8 +45,8 @@ For an objective comparison, use `/api/rebalance/metrics/baseline?days=1` after 
 In the channel row, read these fields in this order:
 
 1. `local_pct / remote_pct`: if local is too low, the channel may need local inbound.
-2. `outgoing ppm - peer ppm = spread`: positive spread is the economic base.
-3. `effective spread`: spread multiplied by the econ ratio.
+2. `fee_budget_ppm`: the effective maximum cost allowed for the route.
+3. `economic_fee_floor_ppm`: the minimum outbound fee that keeps this budget able to pay the peer/known cost.
 4. `target_outbound_pct`: how much local liquidity you want to keep.
 5. `local liquidity to add`: required amount.
 6. `payback`: whether previous rebalances are still unpaid.
@@ -76,9 +76,9 @@ Start conservatively:
 
 ## 7. Economic Parameters
 
-- `econ_ratio`: default 0.6. Defines how much of the economic advantage you are willing to spend on fees. Raising it lets more routes pass and increases cost; lowering it makes selection stricter.
+- `econ_ratio`: default 0.6. Defines how much of the outbound fee may be spent on the total rebalance cost. With a peer at 500 ppm and a 0.75 ratio, the outbound fee must be at least 667 ppm. Raising it lets more routes pass and increases cost; lowering it makes selection stricter.
 - `econ_ratio_override` per channel: use it for strategic channels without weakening the global setting.
-- `bypass cost gate`: use only per channel. It skips the `effective spread > expected cost` filter, but ROI/profit still protect the job afterward.
+- `bypass cost gate`: use only per channel. It skips the `effective budget >= expected total cost` filter, but ROI/profit still protect the job afterward.
 - `roi_min`: default 1.1. If there are many `roi_guardrail` skips, the system is saying the target still does not pay enough.
 - `rebalance_cost_floor_ppm`: default 250 ppm. This is the minimum expected cost when there is no history.
 - `gain_model_version`: v1 uses historical revenue; v2 uses effective spread and velocity. Enable v2 when you want to prioritize real demand.

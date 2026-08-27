@@ -409,9 +409,9 @@ type AutofeeRefreshItem struct {
 	// MagmaCapped marks a target the Magma commitment pulled down, so the preview
 	// and the log show the fee that will actually be written, not the one the
 	// reference asked for.
-	MagmaCapped bool `json:"magma_capped,omitempty"`
-	Reason                 string `json:"reason,omitempty"`
-	Error                  string `json:"error,omitempty"`
+	MagmaCapped bool   `json:"magma_capped,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 type AutofeeRefreshResult struct {
@@ -4331,7 +4331,7 @@ func selectProtectFeeFloorIntent(intents []AutomationIntent, minConfidence float
 }
 
 func applyProtectFeeFloorIntent(localPpm, finalPpm int, apply bool, intents []AutomationIntent, cfg AutomationIntentConfig, minPpm, maxPpm int) (int, bool, *AutomationIntent, bool) {
-	if !apply || finalPpm >= localPpm || normalizeAutomationIntentMode(cfg.Mode) == automationIntentModeOff {
+	if normalizeAutomationIntentMode(cfg.Mode) == automationIntentModeOff {
 		return finalPpm, apply, nil, false
 	}
 	intent := selectProtectFeeFloorIntent(intents, cfg.MinConfidence)
@@ -4339,9 +4339,6 @@ func applyProtectFeeFloorIntent(localPpm, finalPpm int, apply bool, intents []Au
 		return finalPpm, apply, nil, false
 	}
 	adjusted := clampInt(int(intent.FeeFloorPPM), minPpm, maxPpm)
-	if adjusted > localPpm {
-		adjusted = localPpm
-	}
 	if cfg.Mode == automationIntentModeShadow {
 		return adjusted, apply, intent, true
 	}
@@ -11480,10 +11477,15 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	var appliedAutomationIntent *AutomationIntent
 	intentShadow := false
+	intentHardRaise := false
 	intentEffectBefore := finalPpm
 	intentEffectAfter := finalPpm
+	intentMaxPpm := e.cfg.MaxPpm
+	if _, magmaMaxPpm, capped := magmaClampChannelFees(ch.ChannelID, ch.ChannelPoint, 0, int64(intentMaxPpm)); capped && magmaMaxPpm < int64(intentMaxPpm) {
+		intentMaxPpm = int(magmaMaxPpm)
+	}
 	if adjustedPpm, adjustedApply, intent, shadow := applyProtectFeeFloorIntent(
-		localPpm, finalPpm, apply, e.automationIntents[ch.ChannelID], e.automationIntentConfig, e.cfg.MinPpm, e.cfg.MaxPpm,
+		localPpm, finalPpm, apply, e.automationIntents[ch.ChannelID], e.automationIntentConfig, e.cfg.MinPpm, intentMaxPpm,
 	); intent != nil {
 		intentEffectBefore = finalPpm
 		intentEffectAfter = adjustedPpm
@@ -11493,19 +11495,25 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		} else {
 			finalPpm = adjustedPpm
 			apply = adjustedApply
+			intentHardRaise = finalPpm > localPpm
 			tags = appendAutofeeTagOnce(tags, "intent-protect-fee-floor")
+			if int64(intentMaxPpm) < intent.FeeFloorPPM {
+				tags = appendAutofeeTagOnce(tags, "intent-protect-fee-contract-cap")
+			}
 		}
 		intentCopy := *intent
 		appliedAutomationIntent = &intentCopy
 	}
-	if apply && finalPpm != localPpm {
+	if apply && finalPpm != localPpm && !intentHardRaise {
 		if churnTags := shouldHoldForAutofeeChurn(e.profile, e.recentChanges[ch.ChannelID], localPpm, finalPpm, recentRebalanceCount, htlcLiquidityHot); len(churnTags) > 0 {
 			apply = false
 			tags = append(tags, churnTags...)
 		}
 	}
 	if apply && finalPpm != localPpm && shouldHoldAutofeeForRebalanceSettling(rebalanceTouch, e.now, autofeeRebalanceSettlingWindow) {
-		if recentRebalanceHardFloorApplied && finalPpm > localPpm {
+		if intentHardRaise {
+			tags = appendAutofeeTagOnce(tags, "intent-protect-fee-settling-bypass")
+		} else if recentRebalanceHardFloorApplied && finalPpm > localPpm {
 			tags = appendAutofeeTagOnce(tags, "rebal-recent-settling-bypass")
 		} else if shouldBypassAutofeeSettlingForDrainedFailedRebalanceUp(
 			outRatio,

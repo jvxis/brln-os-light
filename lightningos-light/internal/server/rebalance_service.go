@@ -1076,6 +1076,15 @@ type RebalanceChannel struct {
 	PeerFeeRatePpm             int64    `json:"peer_fee_rate_ppm"`
 	PeerBaseMsat               int64    `json:"peer_base_msat"`
 	SpreadPpm                  int64    `json:"spread_ppm"`
+	Initiator                  bool     `json:"initiator"`
+	PeerPolicyKnown            bool     `json:"peer_policy_known"`
+	EffectiveEconRatio         float64  `json:"effective_econ_ratio"`
+	FeeBudgetPpm               int64    `json:"fee_budget_ppm"`
+	EconomicFeeFloorPpm        int64    `json:"economic_fee_floor_ppm"`
+	EconomicRequiredCostPpm    int64    `json:"economic_required_cost_ppm"`
+	EconomicReferenceAmountSat int64    `json:"economic_reference_amount_sat"`
+	EconomicFloorReason        string   `json:"economic_floor_reason,omitempty"`
+	EconomicBlockedReason      string   `json:"economic_blocked_reason,omitempty"`
 	TargetOutboundPct          float64  `json:"target_outbound_pct"`
 	TargetAmountSat            int64    `json:"target_amount_sat"`
 	AutoEnabled                bool     `json:"auto_enabled"`
@@ -3452,8 +3461,124 @@ func effectiveConfigForTarget(cfg RebalanceConfig, setting channelSetting) Rebal
 	return effective
 }
 
-func passesAutoTargetCostGate(setting channelSetting, expectedCostPpm int64, effectiveSpreadPpm int64) bool {
-	return setting.AutoBypassCostGate || expectedCostPpm <= 0 || effectiveSpreadPpm > expectedCostPpm
+type rebalanceEconomicEnvelope struct {
+	EffectiveEconRatio float64
+	ReferenceAmountSat int64
+	PeerCostPpm        int64
+	RequiredCostPpm    int64
+	FeeBudgetPpm       int64
+	FeeFloorPpm        int64
+	FloorReason        string
+	BlockedReason      string
+}
+
+func effectivePolicyPpm(ratePpm, baseMsat, amountSat int64) int64 {
+	if amountSat <= 0 {
+		if ratePpm > 0 {
+			return ratePpm
+		}
+		return 0
+	}
+	basePpm := int64(0)
+	if baseMsat > 0 {
+		basePpm = (baseMsat*1000 + amountSat - 1) / amountSat
+	}
+	if ratePpm < 0 {
+		ratePpm = 0
+	}
+	return ratePpm + basePpm
+}
+
+func deriveRebalanceEconomicEnvelope(
+	cfg RebalanceConfig,
+	setting channelSetting,
+	initiator bool,
+	active bool,
+	parked bool,
+	peerPolicyKnown bool,
+	localPct float64,
+	targetPct float64,
+	outgoingFeePpm int64,
+	outgoingBaseMsat int64,
+	peerFeePpm int64,
+	peerBaseMsat int64,
+	rebalanceCostPpm int64,
+) rebalanceEconomicEnvelope {
+	feeCfg := effectiveConfigForTarget(cfg, setting)
+	referenceAmountSat := effectiveMinExecuteSat(feeCfg)
+	if referenceAmountSat <= 0 {
+		referenceAmountSat = effectiveStartAmountSat(feeCfg)
+	}
+	if referenceAmountSat <= 0 {
+		referenceAmountSat = 1
+	}
+
+	envelope := rebalanceEconomicEnvelope{
+		EffectiveEconRatio: feeCfg.EconRatio,
+		ReferenceAmountSat: referenceAmountSat,
+	}
+	if peerPolicyKnown {
+		envelope.PeerCostPpm = effectivePolicyPpm(peerFeePpm, peerBaseMsat, referenceAmountSat)
+	}
+	policy := lndclient.ChannelPolicySnapshot{FeeRatePpm: outgoingFeePpm, BaseFeeMsat: outgoingBaseMsat}
+	if feeMsat, err := calcFeeLimitMsat(referenceAmountSat*1000, policy, nil, feeCfg); err == nil {
+		envelope.FeeBudgetPpm = feeMsatToPpm(feeMsat, referenceAmountSat)
+	}
+
+	needsRefill := active && !parked && targetPct-localPct > cfg.DeadbandPct
+	paidCostKnown := rebalanceCostPpm > 0
+	remoteInboundColdStart := !initiator && needsRefill && (setting.AutoEnabled || setting.ManualRestartEnabled)
+	if !paidCostKnown && !remoteInboundColdStart {
+		return envelope
+	}
+	if remoteInboundColdStart && !peerPolicyKnown && !paidCostKnown {
+		envelope.BlockedReason = "peer_policy_unavailable"
+		return envelope
+	}
+
+	envelope.RequiredCostPpm = envelope.PeerCostPpm
+	if rebalanceCostPpm > envelope.RequiredCostPpm {
+		envelope.RequiredCostPpm = rebalanceCostPpm
+	}
+	if envelope.RequiredCostPpm <= 0 {
+		return envelope
+	}
+	if paidCostKnown && envelope.RequiredCostPpm == rebalanceCostPpm {
+		envelope.FloorReason = "rebalance_cost_budget"
+	} else {
+		envelope.FloorReason = "peer_fee_budget"
+	}
+
+	// A fixed fee limit is independent of our advertised fee, so raising the
+	// AutoFee target cannot repair an insufficient route budget.
+	if feeCfg.FeeLimitPpm > 0 {
+		if feeCfg.FeeLimitPpm < envelope.RequiredCostPpm {
+			envelope.BlockedReason = "fixed_fee_budget_below_cost"
+		}
+		return envelope
+	}
+	if feeCfg.EconRatio <= 0 {
+		envelope.BlockedReason = "invalid_econ_ratio"
+		return envelope
+	}
+	if feeCfg.EconRatioMaxPpm > 0 && feeCfg.EconRatioMaxPpm < envelope.RequiredCostPpm {
+		envelope.BlockedReason = "econ_ratio_cap_below_cost"
+		return envelope
+	}
+
+	// Solve ratio * (our rate + amount-normalized base fee) >= required cost.
+	// math.Ceil keeps the advertised fee on the feasible side of the boundary.
+	ourBasePpm := effectivePolicyPpm(0, outgoingBaseMsat, referenceAmountSat)
+	floor := int64(math.Ceil(float64(envelope.RequiredCostPpm)/feeCfg.EconRatio - float64(ourBasePpm)))
+	if floor < 0 {
+		floor = 0
+	}
+	envelope.FeeFloorPpm = floor
+	return envelope
+}
+
+func passesAutoTargetCostGate(setting channelSetting, expectedCostPpm int64, feeBudgetPpm int64) bool {
+	return setting.AutoBypassCostGate || expectedCostPpm <= 0 || feeBudgetPpm >= expectedCostPpm
 }
 
 func (s *RebalanceService) reconcileNewChannelDefaults(ctx context.Context, channels []lndclient.ChannelInfo, settings map[uint64]channelSetting, exclusions map[uint64]bool) {
@@ -3701,7 +3826,7 @@ func (s *RebalanceService) runAutoScan() {
 	}()
 
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
-	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
+	costByChannel, costByChannelErr := s.fetchChannelRebalanceCost7d(ctx)
 	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 	autofeeAdjustments := s.fetchRecentAutofeeAdjustments(ctx, scanAt, time.Duration(cfg.AutofeeSettlingWindowSec)*time.Second)
 	intentCfg := defaultAutomationIntentConfig()
@@ -3746,6 +3871,11 @@ func (s *RebalanceService) runAutoScan() {
 		setting := settings[ch.ChannelID]
 		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		snapshots = append(snapshots, snapshot)
+	}
+	if costByChannelErr == nil && intentCfg.Mode != automationIntentModeOff {
+		if err := s.syncEconomicFeeFloorIntents(ctx, cfg, snapshots, scanAt, intentCfg); err != nil && s.logger != nil {
+			s.logger.Printf("rebalance economic fee floor intent sync failed: %v", err)
+		}
 	}
 	schedulerMode := normalizeRebalanceSchedulerMode(cfg.SchedulerMode)
 	// Shadow mode is a pure dry run: guaranteed slots and AutoTarget both
@@ -9496,6 +9626,83 @@ where id=$1`, jobID, status, nullableString(reason), completedAt)
 	}
 }
 
+func (s *RebalanceService) syncEconomicFeeFloorIntents(ctx context.Context, cfg RebalanceConfig, channels []RebalanceChannel, scanAt time.Time, intentCfg AutomationIntentConfig) error {
+	if s == nil || s.automationIntents == nil || normalizeAutomationIntentMode(intentCfg.Mode) == automationIntentModeOff {
+		return nil
+	}
+	if scanAt.IsZero() {
+		scanAt = time.Now().UTC()
+	}
+	ttl := time.Duration(intentCfg.ProtectFeeFloorTTLSec) * time.Second
+	if ttl <= 0 {
+		ttl = 6 * time.Hour
+	}
+	runID := fmt.Sprintf("rebalance-scan-%d", scanAt.UnixNano())
+	desired := make([]AutomationIntent, 0)
+	for _, channel := range channels {
+		if !channel.Active || channel.ChannelID == 0 {
+			continue
+		}
+		reasonCode := "rebalance_peer_fee_budget"
+		confidence := 0.92
+		feeFloorPpm := channel.EconomicFeeFloorPpm
+		if channel.EconomicFloorReason == "rebalance_cost_budget" {
+			reasonCode = "rebalance_cost_budget"
+			confidence = 0.95
+		}
+		if channel.EconomicBlockedReason == "peer_policy_unavailable" {
+			// A missing policy must never be interpreted as a zero-cost peer. Hold
+			// the current advertised fee until a fresh policy can replace it.
+			reasonCode = "rebalance_peer_policy_unavailable_hold"
+			confidence = 0.85
+			feeFloorPpm = channel.OutgoingFeePpm
+		} else if channel.EconomicBlockedReason != "" {
+			continue
+		}
+		if feeFloorPpm <= 0 {
+			continue
+		}
+		if confidence < intentCfg.MinConfidence {
+			continue
+		}
+		desired = append(desired, AutomationIntent{
+			ChannelID:       channel.ChannelID,
+			ChannelPoint:    channel.ChannelPoint,
+			Producer:        automationIntentProducerRebalance,
+			Consumer:        automationIntentProducerAutofee,
+			Kind:            automationIntentKindProtectFeeFloor,
+			Confidence:      confidence,
+			ReasonCode:      reasonCode,
+			FeeFloorPPM:     feeFloorPpm,
+			SourceRunID:     runID,
+			ProducerProfile: cfg.Profile,
+			ExpiresAt:       scanAt.Add(ttl),
+			Evidence: map[string]any{
+				"initiator":               channel.Initiator,
+				"current_outgoing_ppm":    channel.OutgoingFeePpm,
+				"peer_fee_rate_ppm":       channel.PeerFeeRatePpm,
+				"peer_base_msat":          channel.PeerBaseMsat,
+				"peer_effective_cost_ppm": effectivePolicyPpm(channel.PeerFeeRatePpm, channel.PeerBaseMsat, channel.EconomicReferenceAmountSat),
+				"rebalance_cost_7d_ppm":   channel.RebalanceCost7dPpm,
+				"required_cost_ppm":       channel.EconomicRequiredCostPpm,
+				"economic_fee_floor_ppm":  feeFloorPpm,
+				"effective_econ_ratio":    channel.EffectiveEconRatio,
+				"reference_amount_sat":    channel.EconomicReferenceAmountSat,
+				"current_fee_below_floor": channel.OutgoingFeePpm < channel.EconomicFeeFloorPpm,
+				"economic_floor_reason":   channel.EconomicFloorReason,
+			},
+		})
+	}
+	return s.automationIntents.SyncProducerKind(ctx,
+		automationIntentProducerRebalance,
+		automationIntentProducerAutofee,
+		automationIntentKindProtectFeeFloor,
+		runID,
+		scanAt,
+		desired,
+	)
+}
+
 func (s *RebalanceService) publishProtectFeeFloorIntent(jobID int64, status string, completedAt time.Time) {
 	if s == nil || s.db == nil || s.automationIntents == nil || jobID <= 0 {
 		return
@@ -9541,6 +9748,15 @@ group by j.target_channel_id, j.target_channel_point, j.source, j.target_amount_
 		ttl = 6 * time.Hour
 	}
 	rebalanceCfg, _ := s.GetConfig(ctx)
+	effectiveEconRatio := rebalanceCfg.EconRatio
+	if settings, settingsErr := s.loadChannelSettings(ctx); settingsErr == nil {
+		feeCfg := effectiveConfigForTarget(rebalanceCfg, settings[uint64(channelID)])
+		effectiveEconRatio = feeCfg.EconRatio
+	}
+	feeFloorPPM := costPPM
+	if rebalanceCfg.FeeLimitPpm <= 0 && effectiveEconRatio > 0 {
+		feeFloorPPM = int64(math.Ceil(float64(costPPM) / effectiveEconRatio))
+	}
 	nodeCalibration := RebalanceNodeCalibration{NodeClass: "unknown", LiquidityClass: "balanced"}
 	if channels, channelsErr := s.listChannelsCached(ctx); channelsErr == nil {
 		nodeCalibration = classifyRebalanceNode(channels)
@@ -9553,7 +9769,7 @@ group by j.target_channel_id, j.target_channel_point, j.source, j.target_amount_
 		Kind:                   automationIntentKindProtectFeeFloor,
 		Confidence:             confidence,
 		ReasonCode:             "rebalance_paid_liquidity",
-		FeeFloorPPM:            costPPM,
+		FeeFloorPPM:            feeFloorPPM,
 		SourceRunID:            fmt.Sprintf("job-%d", jobID),
 		SourceJobID:            jobID,
 		ProducerProfile:        rebalanceCfg.Profile,
@@ -9561,13 +9777,15 @@ group by j.target_channel_id, j.target_channel_point, j.source, j.target_amount_
 		ProducerLiquidityClass: nodeCalibration.LiquidityClass,
 		ExpiresAt:              completedAt.Add(ttl),
 		Evidence: map[string]any{
-			"job_status":        status,
-			"job_source":        source,
-			"moved_sat":         movedSat,
-			"fee_paid_sat":      feePaidSat,
-			"cost_ppm":          costPPM,
-			"target_amount_sat": targetAmountSat,
-			"node_local_ratio":  nodeCalibration.LocalRatio,
+			"job_status":             status,
+			"job_source":             source,
+			"moved_sat":              movedSat,
+			"fee_paid_sat":           feePaidSat,
+			"cost_ppm":               costPPM,
+			"economic_fee_floor_ppm": feeFloorPPM,
+			"effective_econ_ratio":   effectiveEconRatio,
+			"target_amount_sat":      targetAmountSat,
+			"node_local_ratio":       nodeCalibration.LocalRatio,
 		},
 	}
 	if err := s.automationIntents.UpsertIntent(ctx, intent, completedAt); err != nil && s.logger != nil {
@@ -9809,11 +10027,13 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	outgoingBaseMsat := int64(0)
 	peerFeeRate := int64(0)
 	peerBaseMsat := int64(0)
+	peerPolicyKnown := false
 	if ch.FeeRatePpm != nil {
 		outgoingFee = *ch.FeeRatePpm
 	}
 	policies, err := s.lnd.GetChannelPolicies(ctx, ch.ChannelID)
 	if err == nil {
+		peerPolicyKnown = true
 		outgoingFee = policies.Local.FeeRatePpm
 		outgoingBaseMsat = policies.Local.BaseFeeMsat
 		peerFeeRate = policies.Remote.FeeRatePpm
@@ -9852,22 +10072,14 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	}
 	timeToPaybackHours, timeToPaybackValid := estimateTimeToPaybackHours(paidRevenue, paidCost, revenue7dSat)
 
-	// Wave 1.4: per-channel econ ratio (defaults to global cfg.EconRatio).
-	effectiveEconRatio := cfg.EconRatio
-	if !setting.UseDefaultEconRatio && setting.EconRatioOverrideSet {
-		effectiveEconRatio = setting.EconRatioOverride
-	}
-	if effectiveEconRatio <= 0 {
-		effectiveEconRatio = cfg.EconRatio
-	}
 	expectedCostPpm := cost7d.FeePpm
 	if expectedCostPpm <= 0 {
 		expectedCostPpm = cfg.RebalanceCostFloorPpm
 	}
-	effectiveSpreadPpm := int64(0)
-	if spread > 0 && effectiveEconRatio > 0 {
-		effectiveSpreadPpm = int64(float64(spread) * effectiveEconRatio)
-	}
+	economicEnvelope := deriveRebalanceEconomicEnvelope(
+		cfg, setting, ch.Initiator, ch.Active, parked, peerPolicyKnown,
+		localPct, target, outgoingFee, outgoingBaseMsat, peerFeeRate, peerBaseMsat, cost7d.FeePpm,
+	)
 
 	eligibleTarget := false
 	deficitPct := target - localPct
@@ -9877,14 +10089,15 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	// economic filter and the ROI guardrail — those are auto/auto-restart
 	// only — so the UI should not disable the "Manual Rebal In" button just
 	// because EligibleAsTarget is false.
-	eligibleManualTarget := ch.Active && !parked && deficitPct > cfg.DeadbandPct && outgoingFee > peerFeeRate
+	pricingFeasible := peerPolicyKnown && economicEnvelope.FeeBudgetPpm >= economicEnvelope.PeerCostPpm
+	eligibleManualTarget := ch.Active && !parked && deficitPct > cfg.DeadbandPct && pricingFeasible
 	if eligibleManualTarget {
-		// Wave 1.4: require effective spread to clear the expected rebalance
+		// Require the actual route budget to clear the expected total rebalance
 		// cost (historical 7d ppm, or cfg.RebalanceCostFloorPpm fallback).
 		// auto_bypass_cost_gate is a per-channel operator override for cases
 		// where explicit strategy should win over this conservative gate. It
 		// does not bypass ROI/profit guardrails later in the auto scan.
-		if passesAutoTargetCostGate(setting, expectedCostPpm, effectiveSpreadPpm) {
+		if passesAutoTargetCostGate(setting, expectedCostPpm, economicEnvelope.FeeBudgetPpm) {
 			eligibleTarget = true
 		}
 	}
@@ -9987,6 +10200,15 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		PeerFeeRatePpm:             peerFeeRate,
 		PeerBaseMsat:               peerBaseMsat,
 		SpreadPpm:                  spread,
+		Initiator:                  ch.Initiator,
+		PeerPolicyKnown:            peerPolicyKnown,
+		EffectiveEconRatio:         economicEnvelope.EffectiveEconRatio,
+		FeeBudgetPpm:               economicEnvelope.FeeBudgetPpm,
+		EconomicFeeFloorPpm:        economicEnvelope.FeeFloorPpm,
+		EconomicRequiredCostPpm:    economicEnvelope.RequiredCostPpm,
+		EconomicReferenceAmountSat: economicEnvelope.ReferenceAmountSat,
+		EconomicFloorReason:        economicEnvelope.FloorReason,
+		EconomicBlockedReason:      economicEnvelope.BlockedReason,
 		TargetOutboundPct:          target,
 		TargetAmountSat:            targetAmount,
 		AutoEnabled:                setting.AutoEnabled,

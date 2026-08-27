@@ -5448,7 +5448,7 @@
       "criticalMinSources": "Mínimo de fontes elegíveis para evitar modo crítico.",
       "criticalMinAvailable": "Mínimo de liquidez total para evitar modo crítico.",
       "criticalCycles": "Número de ciclos críticos antes de liberar.",
-      "rebalanceCostFloorPpm": "Custo ppm assumido quando o canal não tem histórico recente de rebal. Um canal só vira alvo se (spread × econ ratio) > este piso.",
+      "rebalanceCostFloorPpm": "Custo ppm assumido quando o canal não tem histórico recente de rebal. Um canal só vira alvo se o budget efetivo da rota cobrir este piso.",
       "sourceMinPaybackProgress": "Payback mínimo de vida (receita de forward / custo de rebal) para o canal ser elegível como source. Padrão 0.95 — canais precisam estar próximos ou acima do break-even antes de serem drenados de novo. Coloque 0 para desativar. Coloque 1.0 para exigir break-even estrito. Canais com custo histórico irrelevante (abaixo de 500 sat) ignoram este filtro, então canais novos continuam elegíveis.",
       "missionControlReinforce": "A cada rebalance bem-sucedido, envia entradas positivas para cada par da rota ao Mission Control do LND. Ajuda o LND a aprender caminhos bons mais rápido e recuperar de envenenamento do MC. Desativado por padrão; ative se seu nó tem erros 'no path' crônicos apesar de rotas conhecidas funcionarem.",
       "delegatedFastPath": "Antes de iterar source-por-source, tenta uma única chamada SendPaymentV2 com TODAS as sources elegíveis e MPP ligado, deixando o pathfinder e o Mission Control nativos do LND escolherem rota e fragmentação. Em sucesso, finaliza o job e pula o loop tradicional. Em falha, cai no loop legado normalmente. Recomendado em ambientes onde aparecem muitos 'no path' apesar de existirem sources viáveis.",
@@ -5478,6 +5478,8 @@
       "fees": "Fees (out / peer rate)",
       "feeOut": "Out {{value}} ppm",
       "feePeer": "Peer {{value}} ppm",
+      "economicFloor": "Piso econ {{value}} ppm · budget {{budget}} ppm",
+      "economicBlocked": "Budget econômico bloqueado",
       "target": "Alvo outbound",
       "protected": "Protegido",
       "actions": "Ações",
@@ -5535,7 +5537,7 @@
       "targetOutbound": "Percentual de outbound desejado após o rebalance.",
       "econRatio": "Ratio econômico por canal em formato decimal (0.01 a 0.99).",
       "useDefaultEconRatio": "Usa o ratio econômico global das configurações de Rebalance.",
-      "autoBypassCostGate": "Permite que o auto scan e o auto-restart manual considerem este canal como target mesmo quando spread × econ ratio não supera o custo recente de rebalance. ROI, lucro, orçamento, cooldown e guardrails de source continuam valendo. Desativado por padrão; use apenas quando o operador quer explicitamente repor liquidez neste canal.",
+      "autoBypassCostGate": "Permite que o auto scan e o auto-restart manual considerem este canal como target mesmo quando o budget efetivo da rota não cobre o custo recente de rebalance. ROI, lucro, orçamento, cooldown e guardrails de source continuam valendo. Desativado por padrão; use apenas quando o operador quer explicitamente repor liquidez neste canal.",
       "autoBypassCostGateConviction": "Redundante aqui: o Modo convicção está ligado, então este canal manual restart já ignora o cost gate (e o ROI). Este toggle só importa para canais Auto ou quando o Modo convicção está desligado.",
       "save": "Salvar target outbound, ratio econômico e override do gate de custo.",
       "rebalanceIn": "Iniciar rebalance manual para aumentar liquidez local (outbound).",
@@ -5932,13 +5934,13 @@
       "title": "O que está acontecendo com {{alias}}?",
       "kinds": {
         "refill_target": "O AutoFee detectou que este canal está drenado e publicou um pedido para o Rebalance considerar a reposição da liquidez outbound.",
-        "protect_fee_floor": "Um rebalance recente bem-sucedido criou um piso temporário de proteção de custo para o AutoFee não reduzir imediatamente a fee deste canal abaixo da base de custo recuperada. Aumentos de fee continuam permitidos."
+        "protect_fee_floor": "O Rebalance calculou um piso econômico temporário usando a policy do peer, o custo real conhecido e o econ ratio efetivo. O AutoFee pode elevar uma fee abaixo do piso ou impedir que ela seja reduzida através dele."
       },
       "refillInfluenced": "Na avaliação mais recente conhecida, o score do Rebalance mudou de {{before}} para {{after}} sats. {{reason}}",
       "waitingRebalanceScan": "O sinal está pronto, mas ainda não existe um snapshot de decisões do Rebalance após o restart do manager. O próximo scan mostrará se ele altera o ranking.",
       "refillNotChanged": "O sinal estava disponível, mas não produziu uma alteração mensurável no ranking. {{reason}}",
-      "floorInfluenced": "O AutoFee consumiu a proteção ao avaliar uma redução da fee: {{before}} → {{after}} ppm.",
-      "waitingAutofeeDecision": "O piso está ativo, mas o AutoFee ainda não registrou uma decisão de redução que precisasse dessa proteção.",
+      "floorInfluenced": "O AutoFee consumiu a proteção econômica ao avaliar a fee: {{before}} → {{after}} ppm.",
+      "waitingAutofeeDecision": "O piso está ativo, mas o AutoFee ainda não registrou uma decisão que precisasse dessa proteção.",
       "stillSubjectToGates": "O candidato ainda precisa passar pelos gates de lucro, ROI, orçamento, cooldown, fontes e concorrência.",
       "noMeasurableDelta": "O multiplicador ajustado pela confiança pode ter arredondado para o mesmo score, ou o candidato permaneceu fora do conjunto de decisões aplicável.",
       "modes": {

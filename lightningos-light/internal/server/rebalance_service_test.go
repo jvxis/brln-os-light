@@ -1827,22 +1827,72 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	}
 }
 
-func TestAutoTargetCostGateRequiresSpreadAboveExpectedCost(t *testing.T) {
+func TestAutoTargetCostGateRequiresRouteBudgetAtExpectedCost(t *testing.T) {
 	if passesAutoTargetCostGate(channelSetting{}, 131, 88) {
-		t.Fatalf("expected cost gate to block when effective spread is below expected cost")
+		t.Fatalf("expected cost gate to block when route budget is below expected cost")
 	}
-	if !passesAutoTargetCostGate(channelSetting{}, 131, 132) {
-		t.Fatalf("expected cost gate to pass when effective spread is above expected cost")
+	if !passesAutoTargetCostGate(channelSetting{}, 131, 131) {
+		t.Fatalf("expected cost gate to pass when route budget covers expected cost")
 	}
 	if !passesAutoTargetCostGate(channelSetting{}, 0, 0) {
 		t.Fatalf("expected zero expected cost to pass")
 	}
 }
 
-func TestAutoTargetCostGateBypassAllowsBelowCostSpread(t *testing.T) {
+func TestAutoTargetCostGateBypassAllowsBelowCostBudget(t *testing.T) {
 	setting := channelSetting{AutoBypassCostGate: true}
 	if !passesAutoTargetCostGate(setting, 131, 88) {
-		t.Fatalf("expected auto cost gate bypass to allow below-cost effective spread")
+		t.Fatalf("expected auto cost gate bypass to allow a below-cost route budget")
+	}
+}
+
+func TestDeriveRebalanceEconomicEnvelope(t *testing.T) {
+	baseCfg := RebalanceConfig{
+		DeadbandPct:     3,
+		EconRatio:       0.75,
+		MinAmountSat:    50_000,
+		MinSplitEnabled: true,
+		MinExecuteSat:   10_000,
+	}
+	baseSetting := channelSetting{AutoEnabled: true, UseDefaultEconRatio: true}
+
+	tests := []struct {
+		name             string
+		cfg              RebalanceConfig
+		setting          channelSetting
+		initiator        bool
+		policyKnown      bool
+		outgoingBaseMsat int64
+		peerRatePpm      int64
+		peerBaseMsat     int64
+		costPpm          int64
+		wantPeerPpm      int64
+		wantRequiredPpm  int64
+		wantFloorPpm     int64
+		wantBlocked      string
+	}{
+		{name: "new outbound remains seed driven", cfg: baseCfg, setting: baseSetting, initiator: true, policyKnown: true, peerRatePpm: 500, wantPeerPpm: 500},
+		{name: "new inbound peer 500 at ratio 075", cfg: baseCfg, setting: baseSetting, policyKnown: true, peerRatePpm: 500, wantPeerPpm: 500, wantRequiredPpm: 500, wantFloorPpm: 667},
+		{name: "peer base fee uses minimum shard", cfg: baseCfg, setting: baseSetting, policyKnown: true, peerRatePpm: 725, peerBaseMsat: 1000, wantPeerPpm: 825, wantRequiredPpm: 825, wantFloorPpm: 1100},
+		{name: "current peer dominates stale lower cost", cfg: baseCfg, setting: baseSetting, policyKnown: true, peerRatePpm: 553, costPpm: 332, wantPeerPpm: 553, wantRequiredPpm: 553, wantFloorPpm: 738},
+		{name: "observed total cost dominates peer", cfg: baseCfg, setting: baseSetting, initiator: true, policyKnown: true, peerRatePpm: 100, costPpm: 900, wantPeerPpm: 100, wantRequiredPpm: 900, wantFloorPpm: 1200},
+		{name: "our base fee contributes to revenue", cfg: baseCfg, setting: baseSetting, policyKnown: true, outgoingBaseMsat: 1000, peerRatePpm: 500, wantPeerPpm: 500, wantRequiredPpm: 500, wantFloorPpm: 567},
+		{name: "missing peer policy blocks cold inbound", cfg: baseCfg, setting: baseSetting, wantBlocked: "peer_policy_unavailable"},
+		{name: "fixed route budget cannot be repaired by advertised fee", cfg: func() RebalanceConfig { c := baseCfg; c.FeeLimitPpm = 400; return c }(), setting: baseSetting, policyKnown: true, peerRatePpm: 500, wantPeerPpm: 500, wantRequiredPpm: 500, wantBlocked: "fixed_fee_budget_below_cost"},
+		{name: "proportional cap below peer cost is blocked", cfg: func() RebalanceConfig { c := baseCfg; c.EconRatioMaxPpm = 600; return c }(), setting: baseSetting, policyKnown: true, peerRatePpm: 725, wantPeerPpm: 725, wantRequiredPpm: 725, wantBlocked: "econ_ratio_cap_below_cost"},
+		{name: "per channel ratio override", cfg: baseCfg, setting: channelSetting{AutoEnabled: true, UseDefaultEconRatio: false, EconRatioOverrideSet: true, EconRatioOverride: 0.5}, policyKnown: true, peerRatePpm: 500, wantPeerPpm: 500, wantRequiredPpm: 500, wantFloorPpm: 1000},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := deriveRebalanceEconomicEnvelope(
+				test.cfg, test.setting, test.initiator, true, false, test.policyKnown,
+				0, 10, 500, test.outgoingBaseMsat, test.peerRatePpm, test.peerBaseMsat, test.costPpm,
+			)
+			if got.PeerCostPpm != test.wantPeerPpm || got.RequiredCostPpm != test.wantRequiredPpm || got.FeeFloorPpm != test.wantFloorPpm || got.BlockedReason != test.wantBlocked {
+				t.Fatalf("unexpected envelope: got=%+v want peer=%d required=%d floor=%d blocked=%q", got, test.wantPeerPpm, test.wantRequiredPpm, test.wantFloorPpm, test.wantBlocked)
+			}
+		})
 	}
 }
 

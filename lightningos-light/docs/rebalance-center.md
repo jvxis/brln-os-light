@@ -53,8 +53,9 @@ lucrativos a cada ciclo de scan.
 
 **Filtros aplicados:**
 
-- `Active && deficit > deadband && outFee > peerFee`
-- **Cost gate 1.4:** `(outFee − peerFee) × econ_ratio > expectedCost`
+- `Active && deficit > deadband && routeBudget >= peerEffectiveCost`
+- **Cost gate:** `routeBudget >= expectedTotalCost`, where proportional
+  `routeBudget = outgoingPolicy × econ_ratio`
 - ROI guardrail: `roi >= roi_min`
 - Profit guardrail: `gain >= cost` (suprimido se `roi_min < 1`)
 - Cooldowns recentes de falhas estruturais
@@ -165,8 +166,8 @@ A ordem importa porque cada um é **eliminação imediata** (`continue`):
 
 | # | Filtro | Critério | Skip reason |
 |---|---|---|---|
-| 1 | EligibleAsTarget | `Active && deficit > deadband && outFee > peerFee` | (não exposto) |
-| 2 | Cost gate 1.4 | `(outFee − peerFee) × econ_ratio > expectedCost` | (não exposto) |
+| 1 | EligibleAsTarget | `Active && deficit > deadband && routeBudget >= peerEffectiveCost` | `economic_blocked_reason` |
+| 2 | Cost gate | `routeBudget >= expectedTotalCost` | `fee_budget_ppm` |
 | 3 | Target cooldown | `shouldCooldownTargetRecentFailures` | `target_cooldown` |
 | 4 | Below min execute | `targetAmount < minExecuteSat` | `below_execute_min` |
 | 5 | ROI guardrail | `ROI < roi_min` (se `roiValid`) | `roi_guardrail` |
@@ -411,7 +412,7 @@ Cleanup loops não geram jobs — apenas manutenção de dados.
 - `setting.ManualRestartEnabled` — canal entra no pool manual_restart
   *(exclusivos — só um pode estar ligado por canal)*
 - `setting.TargetOutboundPct` — % de outbound desejado (default 30)
-- `setting.UseDefaultEconRatio` / `EconRatioOverride` — multiplicador no spread
+- `setting.UseDefaultEconRatio` / `EconRatioOverride` — fração da policy outbound disponível como budget de rota
 - `setting.AutoBypassCostGate` — bypassa cost gate per canal
 
 ### 10.4 Budget & guardrails
@@ -450,7 +451,7 @@ Canal não aparece como candidato:
 
 1. **Verifique `EligibleAsTarget`** via channel ranking — se false, ver
    `active`, `deficit`, `outFee > peerFee`
-2. **Cost gate**: compare `(outFee − peerFee) × econ_ratio` com `rebal_ppm_7d`
+2. **Cost gate**: compare o `fee_budget_ppm` efetivo com o custo total `rebal_ppm_7d`
    - Se gate falha mas matemática parece OK, considere `auto_bypass_cost_gate`
 3. **ROI guardrail**: ROI = gain/cost. Veja `expected_roi` em
    sovereign-history → decisions
@@ -844,12 +845,14 @@ empurrando sources antigas de volta ao pool.
 
 ### R8 — AutoFee ↔ Rebalance interlock bidirecional
 
-**Current status (2026-07-14): MVP implemented, phase 2 open.** Timing-based
+**Current status (2026-08-27): economic floor enforcement implemented, phase 2 open.** Timing-based
 settling remains as a fallback. The shared layer now supports persisted,
 expiring `refill_target` and `protect_fee_floor` intents with
 `off`/`shadow`/`enforce` rollout modes. Both Rules Auto and Sovereign consume the
 same target intent after eligibility/economic gates and before final ordering.
-Source preference and explicit upward fee-pressure intents remain phase-2 work.
+Rebalance now publishes amount-aware fee floors before the first paid refill and
+after observed costs; AutoFee can enforce them upward or downward. Source
+preference remains phase-2 work.
 Operational control and intent history live in the dedicated **Automation
 Interlock** page; Rebalance Center keeps only a contextual mode/count summary.
 

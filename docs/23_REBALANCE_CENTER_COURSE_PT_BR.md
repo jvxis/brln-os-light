@@ -12,7 +12,7 @@ Um canal vira **target** quando precisa receber liquidez local. O cálculo bási
 target_outbound_pct - local_pct = deficit
 ```
 
-Se o déficit passa o `deadband_pct`, o canal é ativo e `outgoing_fee_ppm > peer_fee_ppm`, ele pode ser target manual. Para virar target automático, ainda precisa passar por filtros econômicos: cost gate, ROI, profit guardrail, cooldowns e orçamento.
+Se o déficit passa o `deadband_pct`, o canal é ativo e o budget efetivo da rota cobre ao menos o custo efetivo do peer, ele pode ser target manual. Para virar target automático, ainda precisa passar por filtros econômicos: cost gate, ROI, profit guardrail, cooldowns e orçamento.
 
 Um canal vira **source** quando tem liquidez local acima de `source_min_local_pct`, não está excluído como source e não está protegido por payback. O sistema tenta não usar como source um canal que ainda está no vermelho por rebalance anterior.
 
@@ -45,8 +45,8 @@ Para comparação objetiva, use `/api/rebalance/metrics/baseline?days=1` após 2
 Na linha do canal, observe nesta ordem:
 
 1. `local_pct / remote_pct`: se local está muito baixo, pode precisar de inbound local.
-2. `outgoing ppm - peer ppm = spread`: spread positivo é a base econômica.
-3. `spread efetivo`: spread multiplicado pelo econ ratio.
+2. `fee_budget_ppm`: custo máximo efetivo permitido para a rota.
+3. `economic_fee_floor_ppm`: menor fee outbound que mantém esse budget capaz de pagar o peer/custo conhecido.
 4. `target_outbound_pct`: quanto local você quer manter.
 5. `local liquidity to add`: amount necessário.
 6. `payback`: se ainda não pagou rebalances anteriores.
@@ -76,9 +76,9 @@ Comece conservador:
 
 ## 7. Parâmetros Econômicos
 
-- `econ_ratio`: default 0.6. Define quanto da vantagem econômica você aceita gastar em fee. Subir deixa passar mais rotas e aumenta custo; baixar fica mais seletivo.
+- `econ_ratio`: default 0.6. Define quanto da fee outbound você aceita gastar no custo total do rebalance. Com peer a 500 ppm e ratio 0,75, a fee outbound precisa ser pelo menos 667 ppm. Subir deixa passar mais rotas e aumenta custo; baixar fica mais seletivo.
 - `econ_ratio_override` por canal: use para canais estratégicos sem enfraquecer o global.
-- `bypass cost gate`: use só por canal. Ele ignora o filtro `spread efetivo > custo esperado`, mas ROI/profit continuam protegendo depois.
+- `bypass cost gate`: use só por canal. Ele ignora o filtro `budget efetivo >= custo total esperado`, mas ROI/profit continuam protegendo depois.
 - `roi_min`: default 1.1. Se há muitos `roi_guardrail`, o sistema está dizendo que o alvo ainda não compensa.
 - `rebalance_cost_floor_ppm`: default 250 ppm. É o custo esperado mínimo quando não há histórico.
 - `gain_model_version`: v1 usa receita histórica; v2 usa spread efetivo e velocidade. Ative v2 quando quiser priorizar demanda real.

@@ -569,7 +569,7 @@ Movement settings (drawer in the Autofee card):
 - `Step cap override (%)`: maximum fee change allowed per run. Higher = more movement per round; lower = smoother behavior.
 - `Discovery down cap override (%)`: extra down-step cap used in discovery-like scenarios. Higher = faster unlock/down moves.
 - `Stall relax gap trigger (%)`: minimum gap between current fee and target before stall-relax softens the floor. Lower = relaxes earlier; higher = protects floors longer.
-- `Inbound discount max ratio (%)`: maximum inbound discount as a share of the applied outbound fee. Higher = more aggressive inbound pricing for sink-like channels.
+- `Inbound discount max ratio (%)`: maximum inbound discount as a share of the applied outbound fee (5-100%; blank uses the profile). Higher = more aggressive inbound pricing for sink-like channels.
 - `Inbound discount reach out ratio (%)`: maximum effective out-ratio still eligible for passive inbound discount. Higher = broader reach.
 - `Inbound discount min retained spread (%)`: minimum retained spread above the cost anchor when applying inbound discount. Higher = stronger profit protection.
 - `Low-flow floor factor override (%)`: multiplier applied to the floor when outbound flow is low. Higher = keeps fees higher; lower = allows lower floors.

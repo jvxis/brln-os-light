@@ -3764,7 +3764,7 @@
     "autofeeMovementHintStepCap": "Mudança máxima de fee por rodada. Maior = mais movimento por execução; menor = ajuste mais suave.",
     "autofeeMovementHintDiscoveryDownCap": "Cap extra de queda em cenários de discovery. Maior = destrava/abaixa mais rápido.",
     "autofeeMovementHintStallRelaxGap": "Gap mínimo entre a fee atual e o alvo para o stall-relax suavizar o piso. Menor = relaxa antes; maior = preserva o piso por mais tempo.",
-    "autofeeMovementHintInboundDiscountMaxRatio": "Desconto inbound máximo como fração da fee outbound aplicada. Maior = pricing inbound mais agressivo.",
+    "autofeeMovementHintInboundDiscountMaxRatio": "Desconto inbound máximo como fração da fee outbound aplicada (override de 5% a 100%; vazio usa o perfil). Maior = pricing inbound mais agressivo.",
     "autofeeMovementHintInboundDiscountReachOutRatio": "Maior out ratio ainda elegível para desconto inbound. Maior = mais canais sink podem receber desconto.",
     "autofeeMovementHintInboundDiscountMinRetainedSpread": "Fração mínima da fee outbound mantida acima da âncora de custo após o desconto. Maior = margem mais protegida; menor = desconto inbound mais forte.",
     "autofeeMovementHintLowFlowFloor": "Multiplicador do piso quando o fluxo de saída está baixo. Maior = mantém taxas mais altas; menor = permite pisos mais baixos.",

@@ -292,6 +292,12 @@ func TestEvaluateChannelNormalizesExtremeCurrentInboundPolicy(t *testing.T) {
 	if st.LastInboundDiscount != 450 {
 		t.Fatalf("expected state inbound discount to be normalized, got %d", st.LastInboundDiscount)
 	}
+	if st.InboundStaleRounds != 1 {
+		t.Fatalf("expected first ineligible grace round to be persisted, got %d", st.InboundStaleRounds)
+	}
+	if !goldenHasAnyTag(decision.Tags, "inbound-normalize") || !goldenHasAnyTag(decision.Tags, "inbound-grace") {
+		t.Fatalf("expected inbound lifecycle tags, got %v", decision.Tags)
+	}
 }
 
 func TestEvaluateChannelGolden_OrganicRefillCapsRevfloor(t *testing.T) {

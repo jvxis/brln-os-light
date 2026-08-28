@@ -87,13 +87,6 @@ GET /api/bitcoin
 GET /api/bitcoin/active
 - Returns active source (remote or local) with status.
 
-GET /api/bitcoin/bip110
-- Informational BIP 110 monitor. Calculates bit-4 signaling from the active `bitcoind`, fetches `https://bip110monitor.com/api`, and compares both sources at the same sampled height when possible.
-- `fork_score` reports actual branch advancement from the scheduled common block using the non-enforcing tip from `https://mempool.space/api/blocks/tip/height` and the enforcing tip from `https://mempool.guide/api/blocks/tip/height`. If either branch tip is unavailable, the score remains unavailable instead of inventing a zero.
-- Zero signaling is returned as an explicit `0` score. `risk_level` reflects the active backend's operational exposure: standard Bitcoin Core is reported as low risk while sources agree, instead of treating low proposal signaling as high node risk.
-- Returns the scheduled phase and milestones, internal and public samples, comparison status, and an informational risk level.
-- Never changes the Bitcoin backend, LND configuration, channel state, or service state.
-
 GET /api/bitcoin/source
 - Returns {"source":"remote"|"local"}.
 

@@ -4851,7 +4851,7 @@ export default function LightningOps() {
       const stepCapOverride = parsePercentOverride(autofeeStepCapOverride, 1, 30)
       const discoveryStepCapDownOverride = parsePercentOverride(autofeeDiscoveryStepCapDownOverride, 1, 40)
       const stallFloorRelaxGapFracOverride = parsePercentOverride(autofeeStallFloorRelaxGapFracOverride, 1, 80)
-      const inboundDiscountMaxRatioOverride = parsePercentOverride(autofeeInboundDiscountMaxRatioOverride, 50, 100)
+      const inboundDiscountMaxRatioOverride = parsePercentOverride(autofeeInboundDiscountMaxRatioOverride, 5, 100)
       const inboundDiscountReachOutRatioOverride = parsePercentOverride(autofeeInboundDiscountReachOutRatioOverride, 5, 50)
       const inboundDiscountMinRetainedSpreadFracOverride = parsePercentOverride(autofeeInboundDiscountMinRetainedSpreadFracOverride, 1, 50)
       const outrateFloorFactorLowOverride = parsePercentOverride(autofeeOutrateFloorFactorLowOverride, 50, 100)

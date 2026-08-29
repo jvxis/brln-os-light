@@ -112,6 +112,9 @@ Notas:
 - `new-inbound`: canal identificado como inbound novo.
 - `bootstrap`: fase de bootstrap de fee para canal novo.
 - `inb-<n>`: desconto inbound aplicado (`n` ppm).
+- `inbound-grace`: um desconto existente foi mantido temporariamente depois que o canal deixou de ser elegivel.
+- `inbound-decay`: o desconto inelegivel esta sendo reduzido ate zero depois do periodo de carencia.
+- `inbound-normalize`: o desconto foi limitado imediatamente pela proporcao de seguranca da fee outbound atual.
 
 ## Market refill
 - `market-refill`: canal sendo precificado no modo global `Market refill`.

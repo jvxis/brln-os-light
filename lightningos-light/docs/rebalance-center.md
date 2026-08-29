@@ -1,7 +1,7 @@
 # Rebalance Center — Guia operacional + Backlog
 
-**Versão atual em produção:** 0.4.4-Beta
-**Última revisão:** 2026-05-26
+**Versão-base auditada:** 0.5.22-Beta
+**Última revisão:** 2026-08-29
 
 Documento consolidado em duas partes:
 
@@ -532,18 +532,19 @@ Ordenados por **quick wins primeiro**, depois valor estratégico, depois esforç
 
 ## Resumo executivo
 
-Audit date: 2026-06-20.
+Audit date: 2026-08-29.
 
-Use this table as the source of truth for Parte II. Older sections below are
-kept as design history and include per-item status notes.
+Open GitHub issues are the source of truth for active work;
+`../../docs/19_BACKLOG.md` is the repository-wide index. This table is the
+Rebalance-specific projection. Older sections below are kept as design history
+and may describe the state at their original audit date.
 
 | Status | ID | Item | Notes |
 |---|---|---|---|
-| Open | R0 | AutoTarget - autopilot calibrando `target_outbound_pct` | No `auto_target_*` config, loop, history, or UI found. |
-| Partial | R4 | Source rotation deterministica | Cooldown probes exist; watcher pre-check, batched pair stats, and pair-cache telemetry still open. |
-| Partial | R7 | UI polish | Per-channel controls and profiles exist; cost-gate eligibility tags/hierarchy still incomplete. |
-| Partial | R8 | AutoFee <-> Rebalance intent interlock | MVP shared intent layer and dedicated Automation Interlock UI are implemented; source preference and explicit upward fee pressure remain open. |
-| Done | R1, R2, R3, R5, R6, R9 | Implemented or superseded | Keep sections below as historical context. |
+| Partial | R4 | Source rotation deterministica | Tracked by [issue #110](https://github.com/jvxis/brln-os-light/issues/110). Cooldown probes exist; watcher pre-check, batched pair stats, and pair-cache telemetry still open. |
+| Partial | R7 | UI polish | Tracked by [issue #112](https://github.com/jvxis/brln-os-light/issues/112). Per-channel controls and profiles exist; cost-gate eligibility tags/hierarchy still incomplete. |
+| Partial | R8 | AutoFee <-> Rebalance intent interlock | Tracked by [issue #109](https://github.com/jvxis/brln-os-light/issues/109). MVP shared intent layer and dedicated Automation Interlock UI are implemented; source preference and explicit upward fee pressure remain open. |
+| Done | R0, R1, R2, R3, R5, R6, R9 | Implemented or superseded | Keep sections below as historical context. |
 
 ---
 
@@ -761,8 +762,10 @@ maxShardsPerSource = ceil(plannedShards × 0.4)
 
 ### R0 — AutoTarget (autopilot calibrando `target_outbound_pct`) ⭐
 
-**Current status (2026-06-20): open.** No `auto_target_*` config, loop, history
-table, API, or UI was found.
+**Current status (2026-08-29): done.** AutoTarget is implemented with opt-in
+config, per-channel management, persisted history, API, UI, capacity/budget
+guards, and sell-through calibration relative to the node baseline. Keep this
+section as historical design context.
 
 **Esforço:** ~3 dias
 **Risco:** médio (mexe em parâmetro per-channel que afeta deficit/eligibility)
@@ -944,15 +947,14 @@ Em sessão futura:
 Antes de implementar qualquer item, abrir o código atual e validar que
 file:line citados ainda batem — esta doc é snapshot do estado 0.4.4-Beta.
 
-**Ordem sugerida de execucao apos audit 2026-06-20:**
+**Ordem sugerida de execução após audit 2026-08-29:**
 
 ```
-R0 AutoTarget
-  -> R8 intent interlock
+R8 phase-2 source preference / explicit upward fee pressure
   -> R4 deterministic source rotation / pair-cache telemetry
   -> R7 remaining UI polish
 ```
 
-R1, R2, R3, R5, R6, and R9 are no longer active backlog items. Before starting
-any remaining item, re-check the code paths and production symptoms that
-motivated it.
+R0, R1, R2, R3, R5, R6, and R9 are no longer active backlog items. Before
+starting any remaining item, re-check the code paths and production symptoms
+that motivated it.

@@ -2,93 +2,108 @@
 
 ## Status
 
-Audit date: 2026-07-07.
+Audit date: 2026-08-29.
 
-This file used to mix active backlog items with implemented design notes. Treat
-the "Active Backlog" list below as the source of truth. Status labels are based
-on a repository audit, not only on the age of the design notes. Implemented
-sections are kept only as historical design context.
+Planning baseline: `0.5.22-Beta` on `main`; `0.5.23-Beta` integration is in
+progress.
 
-## Active Backlog
+Open GitHub issues are the single source of truth for active product backlog.
+This file is a curated index plus design archive: it explains how the live
+issues relate to the longer plans below, but it does not replace issue state,
+labels, discussion, or closure decisions.
 
-Current product backlog, after checking the repository against the docs:
+Backlog rules:
 
-1. **Implemented 2026-07-09** - `AutoTarget` adaptive `target_outbound_pct`.
-   Opt-in (`auto_target_enabled`, default OFF) evaluation that runs inside the
-   autopilot cycle (`runAutoScan`, not a separate loop) over the round's selected
-   candidates: it raises the target of channels selling fast and viably
-   (supply-limited by construction) and lowers channels that stopped selling.
-   Capacity-aware (absolute `auto_target_max_local_sat` cap) and budget-aware
-   (per-cycle UP throttle), max 50%. Decisions persist to
-   `rebalance_auto_target_history`; per-channel opt-out via `auto_target_managed`.
-   Config + activity UI in Rebalance Center; endpoint
-   `GET /api/rebalance/auto-target/history`.
-2. **Implemented 2026-07-09** - `Autofee` dynamic liquidity state. Autofee now
-   derives per-channel `liquidity_state`, includes it in structured results and
-   outcomes, and exposes it as badges in Fee Center and Channel Ranking.
-3. **Implemented 2026-07-08** - Channel `parking mode`. The code now persists
-   `parked`/`automation_mode`, review metadata, fixed fee metadata, and excludes
-   parked channels from Autofee/Rebalance automation.
-4. **Partial** - Ranking-driven per-channel automation actions. Ranking
-   recommendations are computed, persisted, and rendered. The ranking detail
-   panel now has a one-click parking/unparking action; standalone one-click
-   remove-from-rebalance/remove-from-Autofee actions remain open.
-5. **Partial (MVP implemented 2026-07-14)** - `AutoFee` <-> `Rebalance` intent
-   interlock. The shared layer now persists profile-aware, expiring intents and
-   supports `off`/`shadow`/`enforce`: AutoFee publishes `refill_target` for
-   drained eligible channels, both Rules Auto and Sovereign consume it without
-   bypassing existing gates, and successful rebalances publish a directional
-   `protect_fee_floor` consumed by AutoFee. Rebalance also refreshes this intent
-   prospectively for remote-opened channels below target, using the peer policy,
-   real cost history and effective per-channel econ ratio. AutoFee can enforce
-   the floor upward or downward; settling windows remain as fallback.
-   A dedicated Automation Interlock page exposes rollout mode, profiles,
-   calibration provenance, active intents, bounded tuning, and event history.
-   Source preference and explicit rebalance-to-AutoFee upward-pressure intents
-   remain phase-2 work.
-6. **Partial** - `Graph Explorer` optional external refill. Schema/status fields
-   for refill exist, including Amboss-token availability, but no refill worker,
-   operator config API, or UI control was found.
-7. **Open** - `Graph Close Classifier` high-confidence remote `penalty_close`
-   inference. The core classifier handles LND/local and bitcoind mutual/force
-   classification, but no high-confidence remote penalty-close heuristic was
-   found.
-8. **Open** - Wallet Flow lineage export as SVG/PNG. Lineage mode exists, but
-   no SVG/PNG export control or serialization flow was found.
-9. **Partial** - Rebalance source-rotation/pair-cache telemetry polish. Pair
-   stats, route-hop display, and cooldown-probe cache bypass exist; watcher
-   pre-check extraction, full batched pair-cache lookup for that path, and
-   `pair_cache_skip_*` recovery telemetry remain open.
-10. **Open** - `Succession` multisig inheritance vault. Existing succession
-    covers proof-of-life and external-address retirement only; no vault service,
-    dedicated Succession page, descriptor import, or vault endpoints were found.
-11. **Open** - `Boltz Client` Lightning-to-on-chain reverse swaps with explicit
-    fee preview. No Boltz app handler, swap service, routes, API helpers, or UI
-    page were found.
-12. **Open (separate repo)** - `BRLN Lightning edge node` (Taproot Assets over
-    Lightning / Fase 2). The on-chain `tapd` App Store app (Camada 1) is
-    implemented in this repo; distributing/spending the BRLN asset over Lightning
-    needs `litd` integrated + an edge node (RFQ, price oracle, redemption to
-    sats) and is a separate project. Tracked in section 13.
-13. **Implemented 2026-07-16 (pending production validation)** - `BTCPay
-    Server` App Store app. `apps_btcpay.go` deploys btcpayserver + nbxplorer +
-    postgres via own compose, reusing the existing Bitcoin source (app network
-    join / host.docker.internal / remote host) through NBXplorer and the
-    native LND via `type=lnd-rest` with a dedicated baked macaroon (never
-    admin). Install-time RPC + P2P probes. Integration study in section 14.
-14. **Evaluate (research only, 2026-07-21)** - `Wavelength` v0.1 as a future
-    optional Ark/Lightning wallet or replacement for the existing Bark Wallet.
-    It does not improve channel management, routing, Autofee, or Rebalance.
-    The preferred future shape is a native `waved` sidecar connected to the
-    existing LND with a dedicated scoped macaroon, not the browser WASM SDK in
-    the main SPA. Do not ship on mainnet yet; see section 15.
-15. **Implemented in 0.5.11-Beta (pending runtime validation)** - Localized
-    upgrade-log timestamps. App, LND, and Tor upgrade logs now request an
-    unambiguous ISO timestamp with year and UTC offset from `journalctl`, then
-    render it using the browser locale and timezone instead of the legacy
-    English `Mon DD HH:mm:ss` prefix.
+- an open GitHub issue is live product backlog;
+- an open pull request is release integration work and is tracked separately;
+- a documented proposal without an open issue is not a release commitment;
+- implementation and runtime validation are tracked separately;
+- work owned by another repository is listed separately;
+- completed items stay out of the active list even when their design section is
+  retained below;
+- target versions are recorded only when an issue, pull request, milestone, or
+  maintainer decision assigns one.
 
-## Implemented Since Last Audit
+## GitHub Backlog Index
+
+### In progress for 0.5.23-Beta
+
+| Work | State on 2026-08-29 | Completion gate |
+|---|---|---|
+| [PR #107](https://github.com/jvxis/brln-os-light/pull/107) - report a stopped local Bitcoin app accurately | Open, mergeable, required checks passing | Review and integrate into `main` |
+| [PR #108](https://github.com/jvxis/brln-os-light/pull/108) - explain AutoFee economic floors and split Automation Interlock impact metrics | Open and stacked on PR #107 | Run/confirm checks after its base is integrated, review, and integrate |
+
+These pull requests are release integration work, not unstarted product
+proposals. Remove them from this table when they are merged or superseded.
+
+### Confirmed product work
+
+Items in this table have an open issue or an implemented MVP with a precisely
+documented remaining slice. Ordering is the recommended execution order, not a
+promise that every item ships in `0.5.23-Beta`.
+
+| Order | Work | Current boundary | Remaining completion gate | Tracking |
+|---|---|---|---|---|
+| 1 | Mempool indexing profiles and storage requirements | New installs use the closed lightweight default `MEMPOOL_INDEXING_BLOCKS_AMOUNT=8` | Add lightweight/full-history selection, SSD/space warnings, real preparation progress, timeout-safe status, bounded RPC concurrency/backoff, broker validation, persistence, tests, and operator docs | [Issue #65](https://github.com/jvxis/brln-os-light/issues/65) |
+| 2 | AutoFee <-> Rebalance intent interlock, phase 2 | Persisted `refill_target` and `protect_fee_floor` intents, rollout modes, economic floor enforcement, provenance, history, and dedicated UI are implemented | Add source preference and an explicit Rebalance-to-AutoFee upward-pressure intent without bypassing economic or safety gates | [Issue #109](https://github.com/jvxis/brln-os-light/issues/109) |
+| 3 | Rebalance deterministic source rotation and pair-cache recovery telemetry | Pair stats, route-hop visibility, cooldown probes, and recent-failure cache bypass exist | Extract the watcher pre-check, batch pair-stat lookup for that path, and expose `pair_cache_skip_*` recovery telemetry | [Issue #110](https://github.com/jvxis/brln-os-light/issues/110) |
+| 4 | Ranking-driven per-channel automation actions | Recommendations and one-click parking/unparking exist | Add independent one-click remove-from-Rebalance and remove-from-AutoFee actions; irreversible actions remain manual | [Issue #111](https://github.com/jvxis/brln-os-light/issues/111) |
+| 5 | Rebalance UI polish | Profiles and per-channel controls exist | Clarify the per-channel control hierarchy, expose cost-gate eligibility, and decide whether operator presets justify permanent UI/config complexity | [Issue #112](https://github.com/jvxis/brln-os-light/issues/112) |
+| 6 | Graph Explorer optional external refill | Refill schema/status fields and Amboss-token availability exist | Add opt-in worker, operator config API, provenance, tests, and UI controls while preserving fully native operation | [Issue #113](https://github.com/jvxis/brln-os-light/issues/113) |
+| 7 | Graph Close Classifier remote `penalty_close` | LND/local and Bitcoin mutual/force classification are implemented | Add a high-confidence remote penalty heuristic with a safe downgrade to `force_close` or `unknown` | [Issue #114](https://github.com/jvxis/brln-os-light/issues/114) |
+| 8 | Wallet Flow lineage export | Lineage visualization exists | Add safe SVG/PNG serialization and download controls | [Issue #115](https://github.com/jvxis/brln-os-light/issues/115) |
+
+### Validation and technical follow-ups
+
+These items do not require a new product architecture, but they are not closed
+until their stated validation or migration gate is complete.
+
+| Work | Remaining gate | Tracking |
+|---|---|---|
+| Bark Wallet Beta validation | Validate the Docker lifecycle on real Linux `amd64` and `arm64`, including persistence, authentication, backup/recovery guidance, and uninstall safety | [Issue #116](https://github.com/jvxis/brln-os-light/issues/116) |
+| Delegated fast-path/LNDG parity calibration | Run a controlled seven-day comparison, use the evidence to reconsider conservative gates, and decide whether low effectiveness should trigger an operator suggestion | [Issue #117](https://github.com/jvxis/brln-os-light/issues/117) |
+| Optional terminal packaging | Move terminal provisioning out of the base installers into a native App Store entry using typed broker operations; preserve the constrained host-service model | [Issue #118](https://github.com/jvxis/brln-os-light/issues/118) |
+
+### Uncommitted strategic proposals
+
+These are design or research candidates, not approved release work. Apply the
+product-value and security gates in their plans before opening implementation
+work.
+
+| Proposal | Boundary | Tracking |
+|---|---|---|
+| Succession multisig inheritance vault | Large security-sensitive MVP: dedicated Succession UI, descriptor-backed 2-of-3 watch-only vault, Bitcoin Core import/monitoring, and retirement destination integration; no private-key custody or PSBT spending in the MVP | [Section 11](#11-succession-multisig-inheritance-vault) |
+| Boltz Client Lightning-to-on-chain reverse swaps | New app/service/API/UI surface with explicit fee preview, reauthentication, bounded swap lifecycle, and recovery behavior | [Section 12](#12-boltz-client-lightning-to-on-chain-reverse-swaps) |
+| Wavelength evaluation | Research only; do not enable on mainnet until upstream stability, scoped LND credentials, backup/recovery, stuck-swap handling, and Bark coexistence/replacement decisions pass | [Section 15](#15-evaluate-wavelength-as-an-optional-arklightning-wallet) |
+
+### Work owned outside this repository
+
+| Work | Boundary | Tracking |
+|---|---|---|
+| BRLN Lightning edge node | Taproot Assets over Lightning requires integrated `litd` plus an edge node for RFQ, pricing, and redemption. The on-chain `tapd` App Store layer in this repository is already implemented | [Section 13](#13-brln-lightning-edge-node-taproot-assets-over-lightning) |
+
+## Closed Or Historical Work
+
+The following items are not active backlog and should not be reopened solely
+because an older design/status paragraph still describes them as pending:
+
+- AutoTarget adaptive `target_outbound_pct`, including persisted history and
+  per-channel management;
+- Autofee dynamic liquidity state and channel parking mode;
+- the AutoFee/Rebalance intent MVP and economic fee-floor enforcement; only the
+  explicit phase-2 slice above remains active;
+- BTCPay Server implementation and its accepted LND/runtime compatibility gate;
+- localized upgrade-log timestamps delivered in `0.5.11-Beta`;
+- Magma phases 0 through 4;
+- privilege-hardening phases 0 through 5 and GitHub issues #32, #34, #35, #36,
+  #37, and #39;
+- the structural Autofee and phantom-job backlogs, which are retained as
+  historical references and explicitly marked closed.
+
+## Implemented Reference Snapshot
+
+Historical implementation detail retained for audit context. The list below is
+not active backlog.
 
 - `AutoTarget` adaptive `target_outbound_pct` (autopilot). New
   `internal/server/rebalance_auto_target.go` (`decideAutoTargetAdjustment` pure
@@ -446,7 +461,8 @@ Possible follow-ups after MVP:
 
 ## 11. Succession Multisig Inheritance Vault
 
-**Current status (2026-07-07): open.** Existing succession code covers
+**Current status (2026-08-29): documented strategic proposal; no open issue and
+not approved as active release work.** Existing succession code covers
 proof-of-life scheduling, simulation, live reauth, Telegram guardrails, and
 external-address node-retirement transfer. No descriptor-backed vault service,
 dedicated Succession page, watch-only wallet import, or vault destination
@@ -792,7 +808,8 @@ MVP is complete when:
 
 ## 12. Boltz Client Lightning-To-On-Chain Reverse Swaps
 
-**Current status (2026-07-07): open.** No Boltz Client App Store handler,
+**Current status (2026-08-29): documented strategic proposal; no open issue and
+not approved as active release work.** No Boltz Client App Store handler,
 `boltzd` management, swap service, reverse-swap API routes, frontend API helpers,
 or native Swap Out page were found.
 
@@ -1109,11 +1126,12 @@ Backend verification:
 
 ## 13. BRLN Lightning Edge Node (Taproot Assets over Lightning)
 
-**Current status (2026-07-03): open — separate repository.** Camada 1 (the
-standalone on-chain `tapd` App Store app) is implemented and in active on-chain
-testing in this repo (`apps_tapd.go`, `apps_tapd_handlers.go`, the Taproot
-Assets page). This section tracks Fase 2 (Camada 2): moving the BRLN asset over
-Lightning. It will be built in a **separate repository**, not brln-os-light.
+**Current status (2026-08-29): external project proposal; no active issue in
+this repository.** Camada 1 (the standalone on-chain `tapd` App Store app) is
+implemented and in active on-chain testing in this repo (`apps_tapd.go`,
+`apps_tapd_handlers.go`, the Taproot Assets page). This section tracks Fase 2
+(Camada 2): moving the BRLN asset over Lightning. It belongs in a **separate
+repository**, not brln-os-light.
 
 ### Source
 
@@ -2116,11 +2134,11 @@ Each milestone should be:
 
 Do not combine multiple milestone behaviors into a single opaque patch.
 
-## Active Detailed Proposals
+## Detailed Proposal Archive
 
-The sections below include active, partially active, and recently implemented
-details. Older implemented sections above are retained only for historical
-context.
+The sections below include historical design for work now tracked by GitHub
+issues, uncommitted proposals, and recently implemented features. Their status
+text does not override the GitHub Backlog Index at the top of this file.
 
 ## 1. Autofee Dynamic Liquidity State
 
@@ -2797,4 +2815,5 @@ Prefer:
 
 ## Notes
 
-This file is intended to remain the single backlog document for these pending proposals.
+GitHub issues remain the operational backlog. This file preserves design
+context and a curated index without duplicating issue state.

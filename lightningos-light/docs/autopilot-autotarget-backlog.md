@@ -1,8 +1,13 @@
 # Autopilot — AutoTarget (target_outbound_pct adaptativo)
 
 **Snapshot:** 2026-05-22, version 0.4.3-Beta
-**Status audit:** 2026-06-20 - open; no `auto_target_*` implementation found.
-**IMPLEMENTADO 2026-07-09.** Ver `internal/server/rebalance_auto_target.go`.
+
+**Status audit:** 2026-08-29 - implemented; no longer active backlog.
+
+**Implemented 2026-07-09.** See `internal/server/rebalance_auto_target.go`.
+Active product work is tracked in GitHub issues and indexed by
+`../../docs/19_BACKLOG.md`; the design below is retained as implementation
+history.
 
 ## v2 (2026-07-10) — dirigido por sell-through, calibrado ao nó
 

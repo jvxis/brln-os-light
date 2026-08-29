@@ -38,7 +38,10 @@ Current product backlog, after checking the repository against the docs:
    supports `off`/`shadow`/`enforce`: AutoFee publishes `refill_target` for
    drained eligible channels, both Rules Auto and Sovereign consume it without
    bypassing existing gates, and successful rebalances publish a directional
-   `protect_fee_floor` consumed by AutoFee. Settling windows remain as fallback.
+   `protect_fee_floor` consumed by AutoFee. Rebalance also refreshes this intent
+   prospectively for remote-opened channels below target, using the peer policy,
+   real cost history and effective per-channel econ ratio. AutoFee can enforce
+   the floor upward or downward; settling windows remain as fallback.
    A dedicated Automation Interlock page exposes rollout mode, profiles,
    calibration provenance, active intents, bounded tuning, and event history.
    Source preference and explicit rebalance-to-AutoFee upward-pressure intents

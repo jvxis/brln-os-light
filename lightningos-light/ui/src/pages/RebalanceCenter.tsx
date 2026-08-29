@@ -4001,6 +4001,14 @@ export default function RebalanceCenter() {
                     <div>{t('rebalanceCenter.channels.feeOut', { value: ch.outgoing_fee_ppm })}</div>
                     <div>{t('rebalanceCenter.channels.feePeer', { value: ch.peer_fee_rate_ppm })}</div>
                     <div className="text-fog/50">{t('rebalanceCenter.channels.spread', { value: ch.spread_ppm })}</div>
+                    {ch.economic_fee_floor_ppm > 0 && (
+                      <div className={ch.outgoing_fee_ppm < ch.economic_fee_floor_ppm ? 'text-amber-300' : 'text-emerald-300/80'}>
+                        {t('rebalanceCenter.channels.economicFloor', { value: ch.economic_fee_floor_ppm, budget: ch.fee_budget_ppm })}
+                      </div>
+                    )}
+                    {ch.economic_blocked_reason && (
+                      <div className="text-rose-300" title={ch.economic_blocked_reason}>{t('rebalanceCenter.channels.economicBlocked')}</div>
+                    )}
                   </div>
                 </div>
 
@@ -4282,6 +4290,14 @@ export default function RebalanceCenter() {
                       {t('rebalanceCenter.channels.feePeer', { value: ch.peer_fee_rate_ppm })}
                     </div>
                     <div className="text-xs text-fog/50">{t('rebalanceCenter.channels.spread', { value: ch.spread_ppm })}</div>
+                    {ch.economic_fee_floor_ppm > 0 && (
+                      <div className={`text-xs ${ch.outgoing_fee_ppm < ch.economic_fee_floor_ppm ? 'text-amber-300' : 'text-emerald-300/80'}`}>
+                        {t('rebalanceCenter.channels.economicFloor', { value: ch.economic_fee_floor_ppm, budget: ch.fee_budget_ppm })}
+                      </div>
+                    )}
+                    {ch.economic_blocked_reason && (
+                      <div className="text-xs text-rose-300" title={ch.economic_blocked_reason}>{t('rebalanceCenter.channels.economicBlocked')}</div>
+                    )}
                   </td>
                   <td className="py-3 pl-4">
                     <div className="flex items-center gap-2">

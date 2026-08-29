@@ -165,30 +165,53 @@ func (s *Server) bitcoinLocalStatus(ctx context.Context) (bitcoinLocalStatus, er
 	}
 	resp.Installed = true
 	resp.Source = "app"
+	return bitcoinLocalManagedStatus(ctx, resp), nil
+}
+
+func bitcoinLocalManagedStatus(ctx context.Context, resp bitcoinLocalStatus) bitcoinLocalStatus {
+	if handled, lifecycleStatus, _, _, inspectErr := system.InspectAppWithBroker(ctx, bitcoinCoreAppID); handled {
+		if inspectErr != nil {
+			resp.Status = "unknown"
+			resp.RPCOk = false
+			return resp
+		}
+		switch lifecycleStatus {
+		case "running":
+			resp.Status = "running"
+		case "stopped":
+			resp.Status = "stopped"
+			resp.RPCOk = false
+			return resp
+		default:
+			resp.Status = "unknown"
+			resp.RPCOk = false
+			return resp
+		}
+	}
 
 	if brokerRaw, handled, brokerErr := system.ReadBitcoinCoreStatusWithBroker(ctx); handled {
 		resp.Status = "running"
 		if brokerErr != nil {
 			resp.Status = "unknown"
 			resp.RPCOk = false
-			return resp, nil
+			return resp
 		}
 		brokerStatus, err := parseBitcoinCoreBrokerStatus(brokerRaw)
 		if err != nil {
 			resp.Status = "unknown"
 			resp.RPCOk = false
-			return resp, nil
+			return resp
 		}
 		brokerStatus.Installed = resp.Installed
 		brokerStatus.Status = resp.Status
 		brokerStatus.Source = resp.Source
 		brokerStatus.DataDir = resp.DataDir
-		return brokerStatus, nil
+		return brokerStatus
 	}
 
 	resp.Status = "unknown"
 	resp.RPCOk = false
-	return resp, nil
+	return resp
 }
 
 func (s *Server) handleBitcoinLocalConfigGet(w http.ResponseWriter, r *http.Request) {

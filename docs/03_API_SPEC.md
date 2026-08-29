@@ -473,6 +473,11 @@ GET /api/lnops/automation-intents?active=true&consumer=rebalance&kind=refill_tar
 - Lists current intents and their producer profile/node calibration provenance.
 - Includes `channel_id_str` so clients can preserve the full unsigned Lightning channel ID without JavaScript number rounding.
 - Supported kinds in the MVP are `refill_target` and `protect_fee_floor`.
+- `protect_fee_floor` evidence exposes the peer fee rate, amount-normalized peer and local base fees,
+  effective peer/required costs, econ ratio, reference amount, and calculated floor.
+- AutoFee result channel items influenced by that intent include an `economic_floor` object with the
+  same machine-readable breakdown plus a compact `formula` used by the UI, persisted result line,
+  and Telegram summary. This is decision provenance only and does not change the floor calculation.
 
 GET /api/lnops/automation-intents/history?limit=200
 - Lists publish, resolve, and apply events without credentials or payment secrets.

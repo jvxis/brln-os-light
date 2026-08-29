@@ -193,64 +193,6 @@ export type BitcoinStatus = {
   size_on_disk?: number
 }
 
-export type BIP110SourceStatus = {
-  available: boolean
-  source: string
-  tip?: number
-  sampled_tip?: number
-  best_block_hash?: string
-  chainwork?: string
-  subversion?: string
-  enforces_bip110?: boolean
-  period_num?: number
-  period_start?: number
-  period_end?: number
-  total_blocks?: number
-  signaling_count?: number
-  pct?: number
-  synced?: boolean
-  updated_at?: string
-  error?: string
-}
-
-export type BIP110MonitorStatus = {
-  informational_only: boolean
-  risk_level: 'low' | 'normal' | 'watch' | 'elevated' | 'high' | 'unknown'
-  phase: string
-  checked_at: string
-  signal_bit: number
-  threshold_count: number
-  threshold_pct: number
-  mandatory_start_height: number
-  lock_in_height: number
-  activation_height: number
-  forced_lock_in_height: number
-  forced_activation_height: number
-  blocks_to_mandatory: number
-  internal: BIP110SourceStatus
-  public: BIP110SourceStatus
-  comparison: {
-    comparable: boolean
-    matches: boolean
-    status: 'matched' | 'tip_mismatch' | 'signal_mismatch' | 'unavailable'
-    same_period: boolean
-    tip_delta?: number
-    signaling_count_delta?: number
-    pct_delta?: number
-  }
-  fork_score?: {
-    available: boolean
-    split_height: number
-    non_enforcing_tip?: number
-    enforcing_tip?: number
-    non_enforcing_blocks: number
-    enforcing_blocks: number
-    non_enforcing_source: string
-    enforcing_source: string
-    error?: string
-  }
-}
-
 export type BitcoinMarketPrice = {
   currency: string
   value?: number

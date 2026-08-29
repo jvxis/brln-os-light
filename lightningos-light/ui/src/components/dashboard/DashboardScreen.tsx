@@ -6,7 +6,6 @@ import {
   getAppUpgradeStatus,
   getAutofeeStatus,
   getBitcoinActive,
-  getBIP110Monitor,
   getBitcoinMarket,
   getCloseManagerStatus,
   getDisk,
@@ -38,7 +37,6 @@ import {
 import { getLocale } from '../../i18n'
 import { formatJournalLogLine, formatJournalLogLines } from '../../utils/journalLogs'
 import AutomationRiskGrid from './AutomationRiskGrid'
-import BIP110MonitorCard from './BIP110MonitorCard'
 import CoreHealthGrid from './CoreHealthGrid'
 import NodePulseRow from './NodePulseRow'
 import OperationsOverview from './OperationsOverview'
@@ -73,7 +71,6 @@ import type {
   SystemStats,
   TorPeerCheckerStatus,
   BitcoinStatus,
-  BIP110MonitorStatus,
 } from './types'
 
 type AppUpgradeStatus = {
@@ -96,7 +93,6 @@ type LoadState = 'loading' | 'ok' | 'unavailable'
 const LND_RESTART_POLL_INTERVAL_MS = 5000
 const LND_RESTART_TIMEOUT_MS = 2 * 60 * 60 * 1000
 const MARKET_REFRESH_INTERVAL_MS = 5 * 60 * 1000
-const BIP110_REFRESH_INTERVAL_MS = 2 * 60 * 1000
 const APP_UPGRADE_MARKER_KEY = 'lightningos.app-upgrade.pending.v1'
 const APP_UPGRADE_MARKER_MAX_AGE_MS = 48 * 60 * 60 * 1000
 
@@ -210,8 +206,6 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const [system, setSystem] = useState<SystemStats | null>(null)
   const [disk, setDisk] = useState<DiskSmart[]>([])
   const [bitcoin, setBitcoin] = useState<BitcoinStatus | null>(null)
-  const [bip110Status, setBIP110Status] = useState<BIP110MonitorStatus | null>(null)
-  const [bip110Loading, setBIP110Loading] = useState(true)
   const [bitcoinMarket, setBitcoinMarket] = useState<BitcoinMarketStatus | null>(null)
   const [postgres, setPostgres] = useState<PostgresStatus | null>(null)
   const [lnd, setLnd] = useState<LndStatus | null>(null)
@@ -401,29 +395,6 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
 
     load()
     const timer = setInterval(load, 30000)
-    return () => {
-      mounted = false
-      clearInterval(timer)
-    }
-  }, [])
-
-  useEffect(() => {
-    let mounted = true
-    const load = async () => {
-      try {
-        const data = await getBIP110Monitor()
-        if (!mounted) return
-        setBIP110Status((data ?? null) as BIP110MonitorStatus | null)
-      } catch {
-        if (!mounted) return
-        setBIP110Status(null)
-      } finally {
-        if (mounted) setBIP110Loading(false)
-      }
-    }
-
-    load()
-    const timer = setInterval(load, BIP110_REFRESH_INTERVAL_MS)
     return () => {
       mounted = false
       clearInterval(timer)
@@ -1118,8 +1089,6 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
         movement={movementLive}
         lnd={lnd}
       />
-
-      <BIP110MonitorCard status={bip110Status} bitcoin={bitcoin} loading={bip110Loading} />
 
       <CoreHealthGrid
         lnd={lnd}

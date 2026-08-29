@@ -112,6 +112,9 @@ Notes:
 - `new-inbound`: recently opened inbound channel detected.
 - `bootstrap`: bootstrap phase for new channel pricing.
 - `inb-<n>`: inbound discount applied (`n` ppm).
+- `inbound-grace`: an existing discount was retained temporarily after the channel stopped qualifying.
+- `inbound-decay`: an ineligible discount is being reduced toward zero after its grace period.
+- `inbound-normalize`: the discount was capped immediately to the current outbound-fee safety ratio.
 
 ## Market refill
 - `market-refill`: channel is being priced under the global `Market refill` mode.

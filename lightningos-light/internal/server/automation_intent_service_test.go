@@ -76,7 +76,7 @@ func TestApplyRefillTargetIntentsHonorsModeProfileAndConfidence(t *testing.T) {
 	}
 }
 
-func TestApplyProtectFeeFloorIntentIsDirectional(t *testing.T) {
+func TestApplyProtectFeeFloorIntentEnforcesUpwardAndDownwardFloor(t *testing.T) {
 	intent := AutomationIntent{ID: 7, Kind: automationIntentKindProtectFeeFloor, Confidence: 0.9, FeeFloorPPM: 400}
 	cfg := AutomationIntentConfig{Mode: automationIntentModeEnforce, MinConfidence: 0.7}
 
@@ -85,12 +85,20 @@ func TestApplyProtectFeeFloorIntentIsDirectional(t *testing.T) {
 		t.Fatalf("expected downward decision capped at 400: ppm=%d apply=%v selected=%v shadow=%v", ppm, apply, selected, shadow)
 	}
 	ppm, apply, selected, _ = applyProtectFeeFloorIntent(350, 300, true, []AutomationIntent{intent}, cfg, 1, 2000)
-	if ppm != 350 || apply || selected == nil {
-		t.Fatalf("floor above local fee should hold current fee: ppm=%d apply=%v selected=%v", ppm, apply, selected)
+	if ppm != 400 || !apply || selected == nil {
+		t.Fatalf("floor above local fee should raise current fee: ppm=%d apply=%v selected=%v", ppm, apply, selected)
 	}
 	ppm, apply, selected, _ = applyProtectFeeFloorIntent(300, 450, true, []AutomationIntent{intent}, cfg, 1, 2000)
 	if ppm != 450 || !apply || selected != nil {
 		t.Fatalf("upward decision must remain untouched: ppm=%d apply=%v selected=%v", ppm, apply, selected)
+	}
+	ppm, apply, selected, _ = applyProtectFeeFloorIntent(350, 350, false, []AutomationIntent{intent}, cfg, 1, 2000)
+	if ppm != 400 || !apply || selected == nil {
+		t.Fatalf("floor must repair a held decision below the economic minimum: ppm=%d apply=%v selected=%v", ppm, apply, selected)
+	}
+	ppm, apply, selected, _ = applyProtectFeeFloorIntent(350, 300, true, []AutomationIntent{intent}, cfg, 1, 375)
+	if ppm != 375 || !apply || selected == nil {
+		t.Fatalf("external fee ceiling must clamp the floor: ppm=%d apply=%v selected=%v", ppm, apply, selected)
 	}
 
 	cfg.Mode = automationIntentModeShadow

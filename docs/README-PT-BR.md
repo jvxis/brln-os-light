@@ -566,7 +566,7 @@ Configuracoes de movimento (gaveta no card do Autofee):
 - `Step cap override (%)`: mudanca maxima permitida por rodada. Maior = mais movimento por execucao; menor = comportamento mais suave.
 - `Discovery down cap override (%)`: cap extra de queda em cenarios de discovery. Maior = destrava e abaixa mais rapido.
 - `Stall relax gap trigger (%)`: gap minimo entre fee atual e alvo antes do stall-relax suavizar o piso. Menor = relaxa antes; maior = preserva o piso por mais tempo.
-- `Inbound discount max ratio (%)`: desconto inbound maximo como fracao da fee outbound aplicada. Maior = pricing inbound mais agressivo em canais tipo sink.
+- `Inbound discount max ratio (%)`: desconto inbound maximo como fracao da fee outbound aplicada (5-100%; vazio usa o perfil). Maior = pricing inbound mais agressivo em canais tipo sink.
 - `Inbound discount reach out ratio (%)`: out ratio efetivo maximo ainda elegivel para discount inbound passivo. Maior = alcance maior.
 - `Inbound discount min retained spread (%)`: spread minimo que precisa sobrar acima da ancora de custo. Maior = mais protecao de lucro.
 - `Low-flow floor factor override (%)`: multiplicador aplicado ao piso quando o fluxo de saida esta baixo. Maior = mantem fees mais altas; menor = permite pisos mais baixos.

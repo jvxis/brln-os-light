@@ -14,7 +14,13 @@ import (
 )
 
 const (
-	magmaAmbossURL     = "https://api.amboss.space/graphql"
+	magmaAmbossURL = "https://api.amboss.space/graphql"
+	// The seller mutations are moving here. Amboss confirmed the flat
+	// api.amboss.space schema is being deprecated in favour of this namespaced
+	// one, and sellerAcceptOrder on the old endpoint is already returning
+	// INTERNAL_SERVER_ERROR - 66 refusals on a single order in one morning,
+	// while the same invoice submitted through the new endpoint's UI succeeded.
+	magmaMarketURL     = "https://magma.amboss.tech/graphql"
 	magmaAmbossTimeout = 25 * time.Second
 )
 
@@ -313,17 +319,34 @@ type MagmaMarketSummary struct {
 
 type magmaAmbossClient struct {
 	endpoint string
-	http     *http.Client
+	// marketEndpoint is the replacement API. Both are held because the migration
+	// is partial on purpose: only the call that is actually broken moves, so a
+	// problem on the new endpoint cannot take working operations down with it.
+	marketEndpoint string
+	http           *http.Client
 }
 
 func newMagmaAmbossClient() *magmaAmbossClient {
 	return &magmaAmbossClient{
-		endpoint: magmaAmbossURL,
-		http:     &http.Client{Timeout: magmaAmbossTimeout},
+		endpoint:       magmaAmbossURL,
+		marketEndpoint: magmaMarketURL,
+		http:           &http.Client{Timeout: magmaAmbossTimeout},
 	}
 }
 
 func (c *magmaAmbossClient) do(ctx context.Context, token, query string, variables map[string]any, out any) error {
+	return c.doAt(ctx, c.endpoint, token, query, variables, out)
+}
+
+// doMarket talks to the replacement API. Same credential - the token from the
+// Amboss dashboard authenticates against both, which was verified before any of
+// this was written - and the same error handling, so a failure there is reported
+// with the code and path exactly as one from the old endpoint is.
+func (c *magmaAmbossClient) doMarket(ctx context.Context, token, query string, variables map[string]any, out any) error {
+	return c.doAt(ctx, c.marketEndpoint, token, query, variables, out)
+}
+
+func (c *magmaAmbossClient) doAt(ctx context.Context, endpoint, token, query string, variables map[string]any, out any) error {
 	if strings.TrimSpace(token) == "" {
 		return errors.New("Amboss API token is not configured")
 	}
@@ -335,7 +358,7 @@ func (c *magmaAmbossClient) do(ctx context.Context, token, query string, variabl
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -518,8 +541,24 @@ func (c *magmaAmbossClient) SellerOrders(ctx context.Context, token string) ([]M
 // has been running these against the live API, so the variable names below are
 // deliberately verbatim rather than tidied up.
 const (
+	// Deprecated. Kept only so the fallback below has something to call.
 	magmaAcceptOrderMutation = `mutation AcceptOrder($sellerAcceptOrderId: String!, $request: String!) {
   sellerAcceptOrder(id: $sellerAcceptOrderId, request: $request)
+}`
+	// The replacement. The new schema is namespaced rather than flat, and the
+	// arguments arrive in an input object instead of positionally.
+	magmaMarketAcceptOrderMutation = `mutation AcceptOrder($input: SellerAcceptOrdersInput!) {
+  market { order { seller { accept(input: $input) { success } } } }
+}`
+	magmaMarketRejectOrderMutation = `mutation RejectOrder($input: SellerRejectOrdersInput!) {
+  market { order { seller { reject(input: $input) { success } } } }
+}`
+	// tx_id keeps the legacy format. Amboss documents it as TXID:OUTPUT_INDEX
+	// and states "the field is named tx_id but the format is unchanged", which
+	// is the one detail worth having in writing: submitting a channel point the
+	// wrong way is the failure their own UI warns costs reputation heavily.
+	magmaMarketAddTransactionMutation = `mutation AddTransaction($input: SellerAddTransactionInput!) {
+  market { order { seller { add_transaction(input: $input) { success } } } }
 }`
 	magmaRejectOrderMutation = `mutation RejectOrder($sellerRejectOrderId: String!) {
   sellerRejectOrder(id: $sellerRejectOrderId)
@@ -528,6 +567,58 @@ const (
   sellerAddTransaction(id: $sellerAddTransactionId, transaction: $transaction)
 }`
 )
+
+// sellerCall runs a seller mutation against the replacement endpoint and, only
+// when that endpoint itself failed, retries it against the deprecated one.
+//
+// The two failure modes have to stay apart. An endpoint that errors might work
+// elsewhere; an endpoint that answers cleanly and says no will say no anywhere,
+// and retrying that would turn one refusal into two requests and the same
+// outcome. So each call reports (accepted, err): err is the endpoint failing,
+// accepted=false is the endpoint answering.
+//
+// A rejected credential never falls back either - the old endpoint cannot
+// rescue a bad token, and trying would spend it against a second host.
+func (c *magmaAmbossClient) sellerCall(
+	market func() (bool, error), legacy func() (bool, error), refused error,
+) error {
+	accepted, err := market()
+	if err == nil {
+		if !accepted {
+			return refused
+		}
+		return nil
+	}
+	if errors.Is(err, errMagmaUnauthorized) {
+		return err
+	}
+	accepted, legacyErr := legacy()
+	if legacyErr != nil {
+		// Report the replacement's error: it is the one that matters now, and
+		// the deprecated endpoint failing is expected rather than diagnostic.
+		return err
+	}
+	if !accepted {
+		return refused
+	}
+	return nil
+}
+
+// magmaMarketSuccess is the shape every seller mutation on the new endpoint
+// returns, under the namespace that names the operation.
+type magmaMarketSuccess struct {
+	Market struct {
+		Order struct {
+			Seller map[string]struct {
+				Success bool `json:"success"`
+			} `json:"seller"`
+		} `json:"order"`
+	} `json:"market"`
+}
+
+func (m magmaMarketSuccess) ok(operation string) bool {
+	return m.Market.Order.Seller[operation].Success
+}
 
 // AcceptOrder hands Amboss the bolt11 invoice the buyer must pay. The mutation
 // argument is named "request" and it takes the payment request, not the hash.
@@ -540,19 +631,26 @@ func (c *magmaAmbossClient) AcceptOrder(ctx context.Context, token, orderID, pay
 	if paymentRequest == "" {
 		return errors.New("payment request required")
 	}
-	var result struct {
-		SellerAcceptOrder any `json:"sellerAcceptOrder"`
-	}
-	if err := c.do(ctx, token, magmaAcceptOrderMutation, map[string]any{
-		"sellerAcceptOrderId": orderID,
-		"request":             paymentRequest,
-	}, &result); err != nil {
-		return err
-	}
-	if !magmaMutationSucceeded(result.SellerAcceptOrder) {
-		return fmt.Errorf("Amboss did not accept the invoice for order %s", orderID)
-	}
-	return nil
+	refused := fmt.Errorf("Amboss did not accept the invoice for order %s", orderID)
+	return c.sellerCall(
+		func() (bool, error) {
+			var out magmaMarketSuccess
+			err := c.doMarket(ctx, token, magmaMarketAcceptOrderMutation, map[string]any{
+				"input": map[string]any{"order_id": orderID, "payment_request": paymentRequest},
+			}, &out)
+			return out.ok("accept"), err
+		},
+		func() (bool, error) {
+			var out struct {
+				SellerAcceptOrder any `json:"sellerAcceptOrder"`
+			}
+			err := c.do(ctx, token, magmaAcceptOrderMutation, map[string]any{
+				"sellerAcceptOrderId": orderID,
+				"request":             paymentRequest,
+			}, &out)
+			return magmaMutationSucceeded(out.SellerAcceptOrder), err
+		},
+		refused)
 }
 
 // RejectOrder declines an order explicitly. Letting an unwanted order lapse is
@@ -562,18 +660,25 @@ func (c *magmaAmbossClient) RejectOrder(ctx context.Context, token, orderID stri
 	if orderID == "" {
 		return errors.New("order id required")
 	}
-	var result struct {
-		SellerRejectOrder any `json:"sellerRejectOrder"`
-	}
-	if err := c.do(ctx, token, magmaRejectOrderMutation, map[string]any{
-		"sellerRejectOrderId": orderID,
-	}, &result); err != nil {
-		return err
-	}
-	if !magmaMutationSucceeded(result.SellerRejectOrder) {
-		return fmt.Errorf("Amboss did not register the rejection of order %s", orderID)
-	}
-	return nil
+	refused := fmt.Errorf("Amboss did not register the rejection of order %s", orderID)
+	return c.sellerCall(
+		func() (bool, error) {
+			var out magmaMarketSuccess
+			err := c.doMarket(ctx, token, magmaMarketRejectOrderMutation, map[string]any{
+				"input": map[string]any{"order_id": orderID},
+			}, &out)
+			return out.ok("reject"), err
+		},
+		func() (bool, error) {
+			var out struct {
+				SellerRejectOrder any `json:"sellerRejectOrder"`
+			}
+			err := c.do(ctx, token, magmaRejectOrderMutation, map[string]any{
+				"sellerRejectOrderId": orderID,
+			}, &out)
+			return magmaMutationSucceeded(out.SellerRejectOrder), err
+		},
+		refused)
 }
 
 // AddTransaction confirms the funding outpoint. It takes the full channel point
@@ -587,19 +692,26 @@ func (c *magmaAmbossClient) AddTransaction(ctx context.Context, token, orderID, 
 	if !magmaLooksLikeChannelPoint(channelPoint) {
 		return fmt.Errorf("channel point must be txid:vout, got %q", channelPoint)
 	}
-	var result struct {
-		SellerAddTransaction any `json:"sellerAddTransaction"`
-	}
-	if err := c.do(ctx, token, magmaAddTransactionMutation, map[string]any{
-		"sellerAddTransactionId": orderID,
-		"transaction":            channelPoint,
-	}, &result); err != nil {
-		return err
-	}
-	if !magmaMutationSucceeded(result.SellerAddTransaction) {
-		return fmt.Errorf("Amboss did not register the channel point for order %s", orderID)
-	}
-	return nil
+	refused := fmt.Errorf("Amboss did not register the channel point for order %s", orderID)
+	return c.sellerCall(
+		func() (bool, error) {
+			var out magmaMarketSuccess
+			err := c.doMarket(ctx, token, magmaMarketAddTransactionMutation, map[string]any{
+				"input": map[string]any{"order_id": orderID, "tx_id": channelPoint},
+			}, &out)
+			return out.ok("add_transaction"), err
+		},
+		func() (bool, error) {
+			var out struct {
+				SellerAddTransaction any `json:"sellerAddTransaction"`
+			}
+			err := c.do(ctx, token, magmaAddTransactionMutation, map[string]any{
+				"sellerAddTransactionId": orderID,
+				"transaction":            channelPoint,
+			}, &out)
+			return magmaMutationSucceeded(out.SellerAddTransaction), err
+		},
+		refused)
 }
 
 // magmaMutationSucceeded reads the scalar these mutations return. Amboss answers

@@ -229,6 +229,9 @@ const (
 	classificationRouterBiasAbsMax      = 0.25
 	classificationLabelSwitchMinDelta   = 0.07
 	defaultInboundDiscountMaxRatio      = 0.90
+	inboundDiscountGraceRounds          = 2
+	inboundDiscountDecayFraction        = 0.25
+	inboundDiscountDecayMinPpm          = 25
 )
 
 func normalizeRebalCostMode(value string) string {
@@ -409,9 +412,9 @@ type AutofeeRefreshItem struct {
 	// MagmaCapped marks a target the Magma commitment pulled down, so the preview
 	// and the log show the fee that will actually be written, not the one the
 	// reference asked for.
-	MagmaCapped bool `json:"magma_capped,omitempty"`
-	Reason                 string `json:"reason,omitempty"`
-	Error                  string `json:"error,omitempty"`
+	MagmaCapped bool   `json:"magma_capped,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 type AutofeeRefreshResult struct {
@@ -1324,6 +1327,7 @@ create table if not exists autofee_state (
   channel_id bigint primary key,
   last_ppm integer,
   last_inbound_discount_ppm integer,
+  inbound_ineligible_rounds integer not null default 0,
   last_seed_ppm integer,
   seed_shock_pending_ppm integer,
   seed_shock_rounds integer not null default 0,
@@ -1449,6 +1453,7 @@ alter table autofee_state add column if not exists last_idle_refresh_source text
 alter table autofee_state add column if not exists seed_shock_pending_ppm integer;
 alter table autofee_state add column if not exists seed_shock_rounds integer not null default 0;
 alter table autofee_state add column if not exists seed_shock_dir text;
+alter table autofee_state add column if not exists inbound_ineligible_rounds integer not null default 0;
 alter table autofee_logs add column if not exists payload jsonb;
 alter table autofee_outcomes add column if not exists liquidity_state text;
 `)
@@ -1771,11 +1776,7 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	} else if current.StallFloorRelaxGapFracOverride > 0 {
 		current.StallFloorRelaxGapFracOverride = clampFloat(current.StallFloorRelaxGapFracOverride, 0.01, 0.80)
 	}
-	if current.InboundDiscountMaxRatioOverride < 0 {
-		current.InboundDiscountMaxRatioOverride = 0
-	} else if current.InboundDiscountMaxRatioOverride > 0 {
-		current.InboundDiscountMaxRatioOverride = clampFloat(current.InboundDiscountMaxRatioOverride, 0.50, 1.00)
-	}
+	current.InboundDiscountMaxRatioOverride = normalizeInboundDiscountMaxRatioOverride(current.InboundDiscountMaxRatioOverride)
 	if current.InboundDiscountReachOutRatioOverride < 0 {
 		current.InboundDiscountReachOutRatioOverride = 0
 	} else if current.InboundDiscountReachOutRatioOverride > 0 {
@@ -3085,6 +3086,7 @@ type autofeeChannelState struct {
 	ChannelID           uint64
 	LastPpm             int
 	LastInboundDiscount int
+	InboundStaleRounds  int
 	LastSeed            int
 	SeedShockPendingPpm int
 	SeedShockRounds     int
@@ -3276,6 +3278,13 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 	if err != nil {
 		return result, err
 	}
+	states := map[uint64]*autofeeChannelState{}
+	if includeInbound {
+		states, err = engine.loadState(ctx)
+		if err != nil {
+			return result, err
+		}
+	}
 
 	forwardStats7d, err := engine.fetchForwardStats(ctx, 7)
 	if err != nil {
@@ -3424,9 +3433,14 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 		item.CurrentInboundDiscount = currentInboundDiscountFromPolicy(policy)
 		item.TargetInboundDiscount = item.CurrentInboundDiscount
 		if includeInbound {
+			classLabel := ""
+			if state := states[ch.ChannelID]; state != nil {
+				classLabel = state.ClassLabel
+			}
 			if targetInboundDiscount, inboundSource, applyInbound := selectAutofeeRefreshInboundDiscount(
 				cfg,
 				engine.profile,
+				classLabel,
 				rawOutRatio,
 				effectiveOutRatio,
 				forwardStats1d[ch.ChannelID],
@@ -4331,7 +4345,7 @@ func selectProtectFeeFloorIntent(intents []AutomationIntent, minConfidence float
 }
 
 func applyProtectFeeFloorIntent(localPpm, finalPpm int, apply bool, intents []AutomationIntent, cfg AutomationIntentConfig, minPpm, maxPpm int) (int, bool, *AutomationIntent, bool) {
-	if !apply || finalPpm >= localPpm || normalizeAutomationIntentMode(cfg.Mode) == automationIntentModeOff {
+	if normalizeAutomationIntentMode(cfg.Mode) == automationIntentModeOff {
 		return finalPpm, apply, nil, false
 	}
 	intent := selectProtectFeeFloorIntent(intents, cfg.MinConfidence)
@@ -4339,9 +4353,6 @@ func applyProtectFeeFloorIntent(localPpm, finalPpm int, apply bool, intents []Au
 		return finalPpm, apply, nil, false
 	}
 	adjusted := clampInt(int(intent.FeeFloorPPM), minPpm, maxPpm)
-	if adjusted > localPpm {
-		adjusted = localPpm
-	}
 	if cfg.Mode == automationIntentModeShadow {
 		return adjusted, apply, intent, true
 	}
@@ -5193,6 +5204,13 @@ func inboundDiscountMaxRatioFromConfig(cfg AutofeeConfig) float64 {
 	return defaultInboundDiscountMaxRatio
 }
 
+func normalizeInboundDiscountMaxRatioOverride(value float64) float64 {
+	if value <= 0 {
+		return 0
+	}
+	return clampFloat(value, 0.05, 1.00)
+}
+
 func maxInboundDiscountForAppliedPpm(appliedPpm int, maxRatio float64) int {
 	if appliedPpm <= 0 {
 		return 0
@@ -5216,6 +5234,35 @@ func normalizeStaleInboundDiscount(currentDiscount int, appliedPpm int, maxRatio
 		return capDiscount, true
 	}
 	return currentDiscount, false
+}
+
+func advanceBalancedInboundDiscountLifecycle(candidateDiscount int, previousDiscount int, appliedPpm int, maxRatio float64, previousIneligibleRounds int) (int, int, []string) {
+	if candidateDiscount > 0 {
+		return candidateDiscount, 0, nil
+	}
+
+	previousDiscount = absInt(previousDiscount)
+	if previousDiscount <= 0 {
+		return 0, 0, nil
+	}
+
+	ineligibleRounds := maxInt(0, previousIneligibleRounds) + 1
+	targetDiscount := previousDiscount
+	tags := make([]string, 0, 2)
+	if normalizedDiscount, normalized := normalizeStaleInboundDiscount(targetDiscount, appliedPpm, maxRatio); normalized {
+		targetDiscount = normalizedDiscount
+		tags = append(tags, "inbound-normalize")
+	}
+	if targetDiscount <= 0 {
+		return 0, ineligibleRounds, tags
+	}
+	if ineligibleRounds <= inboundDiscountGraceRounds {
+		return targetDiscount, ineligibleRounds, append(tags, "inbound-grace")
+	}
+
+	decayPpm := maxInt(inboundDiscountDecayMinPpm, int(math.Ceil(float64(targetDiscount)*inboundDiscountDecayFraction)))
+	targetDiscount = maxInt(0, targetDiscount-decayPpm)
+	return targetDiscount, ineligibleRounds, append(tags, "inbound-decay")
 }
 
 func selectAutofeeRefreshReference(capacitySat int64, forward7d forwardStat, forward21d forwardStat, rebal7d rebalStat, rebal21d rebalStat, rebalMarkupFrac float64) (int, int, string, bool) {
@@ -5569,7 +5616,7 @@ func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.
 	return d
 }
 
-func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfile, rawOutRatio float64, effectiveOutRatio float64, forward1d forwardStat, forward7d forwardStat, capacitySat int64, baseCostPpm int, appliedPpm int) (int, string, bool) {
+func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfile, classLabel string, rawOutRatio float64, effectiveOutRatio float64, forward1d forwardStat, forward7d forwardStat, capacitySat int64, baseCostPpm int, appliedPpm int) (int, string, bool) {
 	if appliedPpm <= 0 || baseCostPpm <= 0 {
 		return 0, "", false
 	}
@@ -5621,7 +5668,7 @@ func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfi
 		marginPpm7d := outPpm7d - int(math.Ceil(float64(baseCostPpm)*1.10))
 		discount, source := computeBalancedInboundDiscount(
 			true,
-			"sink",
+			classLabel,
 			rawOutRatio,
 			fwdCount,
 			marginPpm7d,
@@ -8135,7 +8182,7 @@ select channel_id, last_ppm, last_inbound_discount_ppm, last_seed_ppm, last_outr
   last_ts, last_dir, low_streak, stalled_rounds, baseline_fwd7d, class_label, class_conf, bias_ema,
   first_seen_ts, ss_active, ss_ok_since, ss_bad_since, explorer_state,
   apply_error_streak, last_apply_error, apply_error_alerted,
-  seed_shock_pending_ppm, seed_shock_rounds, seed_shock_dir
+  seed_shock_pending_ppm, seed_shock_rounds, seed_shock_dir, inbound_ineligible_rounds
 from autofee_state
 `)
 	if err != nil {
@@ -8175,11 +8222,12 @@ from autofee_state
 		var applyErrorStreak int
 		var lastApplyError pgtype.Text
 		var applyErrorAlerted bool
+		var inboundIneligibleRounds int
 		if err := rows.Scan(&channelID, &lastPpm, &lastInb, &lastSeed, &lastOut, &lastOutTs, &lastRebal, &lastRebalTs,
 			&lastIdleRefreshTs, &lastIdleRefreshPpm, &lastIdleRefreshSource, &lastTs, &lastDir,
 			&lowStreak, &stalledRounds, &baseline, &classLabel, &classConf, &biasEma, &firstSeen, &ssActive, &ssOkSince, &ssBadSince, &explorerRaw,
 			&applyErrorStreak, &lastApplyError, &applyErrorAlerted,
-			&seedShockPending, &seedShockRounds, &seedShockDir); err != nil {
+			&seedShockPending, &seedShockRounds, &seedShockDir, &inboundIneligibleRounds); err != nil {
 			return items, err
 		}
 		st.ApplyErrorStreak = applyErrorStreak
@@ -8187,6 +8235,7 @@ from autofee_state
 			st.LastApplyError = lastApplyError.String
 		}
 		st.ApplyErrorAlerted = applyErrorAlerted
+		st.InboundStaleRounds = inboundIneligibleRounds
 		st.ChannelID = uint64(channelID)
 		if lastPpm.Valid {
 			st.LastPpm = int(lastPpm.Int32)
@@ -8332,8 +8381,8 @@ insert into autofee_state (
   last_ts, last_dir, low_streak, stalled_rounds, baseline_fwd7d, class_label, class_conf, bias_ema,
   first_seen_ts, ss_active, ss_ok_since, ss_bad_since, explorer_state,
   apply_error_streak, last_apply_error, apply_error_alerted,
-  seed_shock_pending_ppm, seed_shock_rounds, seed_shock_dir
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+  seed_shock_pending_ppm, seed_shock_rounds, seed_shock_dir, inbound_ineligible_rounds
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
 `+
 		`on conflict (channel_id) do update set
   last_ppm=excluded.last_ppm,
@@ -8364,7 +8413,8 @@ insert into autofee_state (
   explorer_state=excluded.explorer_state,
   apply_error_streak=excluded.apply_error_streak,
   last_apply_error=excluded.last_apply_error,
-  apply_error_alerted=excluded.apply_error_alerted
+  apply_error_alerted=excluded.apply_error_alerted,
+  inbound_ineligible_rounds=excluded.inbound_ineligible_rounds
 `, int64(st.ChannelID), nullableInt(int64(st.LastPpm)), nullableInt(int64(st.LastInboundDiscount)),
 		nullableInt(int64(st.LastSeed)), nullableInt(int64(st.LastOutrate)), nullableTime(st.LastOutrateTs),
 		nullableInt(int64(st.LastRebalCost)), nullableTime(st.LastRebalCostTs), nullableTime(st.LastIdleRefreshTs),
@@ -8374,6 +8424,7 @@ insert into autofee_state (
 		nullableTime(st.SuperSourceOkSince), nullableTime(st.SuperSourceBadSince), rawExplorer,
 		st.ApplyErrorStreak, nullableString(st.LastApplyError), st.ApplyErrorAlerted,
 		nullableInt(int64(st.SeedShockPendingPpm)), st.SeedShockRounds, nullableString(st.SeedShockDir),
+		st.InboundStaleRounds,
 	)
 }
 
@@ -11480,10 +11531,15 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	var appliedAutomationIntent *AutomationIntent
 	intentShadow := false
+	intentHardRaise := false
 	intentEffectBefore := finalPpm
 	intentEffectAfter := finalPpm
+	intentMaxPpm := e.cfg.MaxPpm
+	if _, magmaMaxPpm, capped := magmaClampChannelFees(ch.ChannelID, ch.ChannelPoint, 0, int64(intentMaxPpm)); capped && magmaMaxPpm < int64(intentMaxPpm) {
+		intentMaxPpm = int(magmaMaxPpm)
+	}
 	if adjustedPpm, adjustedApply, intent, shadow := applyProtectFeeFloorIntent(
-		localPpm, finalPpm, apply, e.automationIntents[ch.ChannelID], e.automationIntentConfig, e.cfg.MinPpm, e.cfg.MaxPpm,
+		localPpm, finalPpm, apply, e.automationIntents[ch.ChannelID], e.automationIntentConfig, e.cfg.MinPpm, intentMaxPpm,
 	); intent != nil {
 		intentEffectBefore = finalPpm
 		intentEffectAfter = adjustedPpm
@@ -11493,19 +11549,25 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		} else {
 			finalPpm = adjustedPpm
 			apply = adjustedApply
+			intentHardRaise = finalPpm > localPpm
 			tags = appendAutofeeTagOnce(tags, "intent-protect-fee-floor")
+			if int64(intentMaxPpm) < intent.FeeFloorPPM {
+				tags = appendAutofeeTagOnce(tags, "intent-protect-fee-contract-cap")
+			}
 		}
 		intentCopy := *intent
 		appliedAutomationIntent = &intentCopy
 	}
-	if apply && finalPpm != localPpm {
+	if apply && finalPpm != localPpm && !intentHardRaise {
 		if churnTags := shouldHoldForAutofeeChurn(e.profile, e.recentChanges[ch.ChannelID], localPpm, finalPpm, recentRebalanceCount, htlcLiquidityHot); len(churnTags) > 0 {
 			apply = false
 			tags = append(tags, churnTags...)
 		}
 	}
 	if apply && finalPpm != localPpm && shouldHoldAutofeeForRebalanceSettling(rebalanceTouch, e.now, autofeeRebalanceSettlingWindow) {
-		if recentRebalanceHardFloorApplied && finalPpm > localPpm {
+		if intentHardRaise {
+			tags = appendAutofeeTagOnce(tags, "intent-protect-fee-settling-bypass")
+		} else if recentRebalanceHardFloorApplied && finalPpm > localPpm {
 			tags = appendAutofeeTagOnce(tags, "rebal-recent-settling-bypass")
 		} else if shouldBypassAutofeeSettlingForDrainedFailedRebalanceUp(
 			outRatio,
@@ -11592,12 +11654,21 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = appendAutofeeTagOnce(tags, "inbound-balanced")
 		}
 	}
-	if normalizeAutofeeOperationMode(e.cfg.OperationMode) != autofeeOperationModeMarketRefill && e.cfg.InboundPassiveEnabled && inboundDiscount <= 0 {
-		if normalizedInboundDiscount, normalized := normalizeStaleInboundDiscount(prevInboundDiscount, appliedPpm, inboundDiscountMaxRatio); normalized {
-			inboundDiscount = normalizedInboundDiscount
-			tags = appendAutofeeTagOnce(tags, "inbound-normalize")
-		} else {
-			inboundDiscount = prevInboundDiscount
+	if normalizeAutofeeOperationMode(e.cfg.OperationMode) == autofeeOperationModeMarketRefill {
+		st.InboundStaleRounds = 0
+	} else if !e.cfg.InboundPassiveEnabled {
+		st.InboundStaleRounds = 0
+	} else {
+		var lifecycleTags []string
+		inboundDiscount, st.InboundStaleRounds, lifecycleTags = advanceBalancedInboundDiscountLifecycle(
+			inboundDiscount,
+			prevInboundDiscount,
+			appliedPpm,
+			inboundDiscountMaxRatio,
+			st.InboundStaleRounds,
+		)
+		for _, lifecycleTag := range lifecycleTags {
+			tags = appendAutofeeTagOnce(tags, lifecycleTag)
 		}
 	}
 	inboundChanged := inboundDiscount != prevInboundDiscount

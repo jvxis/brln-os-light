@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -901,6 +902,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedEligible(t *testing.T) {
 	discount, source, apply := selectAutofeeRefreshInboundDiscount(
 		cfg,
 		profile,
+		"sink",
 		0.08,
 		0.08,
 		forwardStat{},
@@ -923,6 +925,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedPreservesIneligible(t *testi
 	discount, source, apply := selectAutofeeRefreshInboundDiscount(
 		cfg,
 		profile,
+		"sink",
 		0.30,
 		0.30,
 		forwardStat{},
@@ -942,6 +945,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedLowSampleRecreatesTarget(t *
 	discount, source, apply := selectAutofeeRefreshInboundDiscount(
 		cfg,
 		profile,
+		"sink",
 		0.08,
 		0.08,
 		forwardStat{},
@@ -975,6 +979,74 @@ func TestNormalizeStaleInboundDiscountCapsExtremeDiscount(t *testing.T) {
 	}
 }
 
+func TestNormalizeInboundDiscountMaxRatioOverride(t *testing.T) {
+	tests := []struct {
+		value float64
+		want  float64
+	}{
+		{value: -0.20, want: 0},
+		{value: 0, want: 0},
+		{value: 0.01, want: 0.05},
+		{value: 0.25, want: 0.25},
+		{value: 1.50, want: 1.00},
+	}
+	for _, tt := range tests {
+		if got := normalizeInboundDiscountMaxRatioOverride(tt.value); got != tt.want {
+			t.Fatalf("normalizeInboundDiscountMaxRatioOverride(%v)=%v, want %v", tt.value, got, tt.want)
+		}
+	}
+}
+
+func TestAdvanceBalancedInboundDiscountLifecycle(t *testing.T) {
+	tests := []struct {
+		name           string
+		candidate      int
+		previous       int
+		applied        int
+		maxRatio       float64
+		previousRounds int
+		wantDiscount   int
+		wantRounds     int
+		wantTags       []string
+	}{
+		{name: "eligible resets lifecycle", candidate: 400, previous: 600, applied: 1000, maxRatio: 0.90, previousRounds: 8, wantDiscount: 400, wantRounds: 0},
+		{name: "first grace round preserves", previous: 600, applied: 1000, maxRatio: 0.90, wantDiscount: 600, wantRounds: 1, wantTags: []string{"inbound-grace"}},
+		{name: "grace still enforces current cap", previous: 1000, applied: 500, maxRatio: 0.90, previousRounds: 1, wantDiscount: 450, wantRounds: 2, wantTags: []string{"inbound-normalize", "inbound-grace"}},
+		{name: "decays after grace", previous: 600, applied: 1000, maxRatio: 0.90, previousRounds: 2, wantDiscount: 450, wantRounds: 3, wantTags: []string{"inbound-decay"}},
+		{name: "minimum decrement reaches zero", previous: 20, applied: 1000, maxRatio: 0.90, previousRounds: 5, wantDiscount: 0, wantRounds: 6, wantTags: []string{"inbound-decay"}},
+		{name: "no prior discount resets lifecycle", previous: 0, applied: 1000, maxRatio: 0.90, previousRounds: 5, wantDiscount: 0, wantRounds: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			discount, rounds, tags := advanceBalancedInboundDiscountLifecycle(tt.candidate, tt.previous, tt.applied, tt.maxRatio, tt.previousRounds)
+			if discount != tt.wantDiscount || rounds != tt.wantRounds || !reflect.DeepEqual(tags, tt.wantTags) {
+				t.Fatalf("got discount=%d rounds=%d tags=%v, want discount=%d rounds=%d tags=%v", discount, rounds, tags, tt.wantDiscount, tt.wantRounds, tt.wantTags)
+			}
+		})
+	}
+}
+
+func TestSelectAutofeeRefreshInboundDiscountRejectsNonSink(t *testing.T) {
+	cfg := AutofeeConfig{InboundPassiveEnabled: true}
+	profile := autofeeProfiles["moderate"]
+	discount, source, apply := selectAutofeeRefreshInboundDiscount(
+		cfg,
+		profile,
+		"router",
+		0.08,
+		0.08,
+		forwardStat{},
+		forwardStat{FeeMsat: 1_000_000, AmtMsat: 1_000_000_000, Count: 6},
+		5_000_000,
+		500,
+		1000,
+	)
+	if apply || source != "" || discount != 0 {
+		t.Fatalf("expected non-sink refresh to preserve inbound policy, apply=%v source=%q discount=%d", apply, source, discount)
+	}
+}
+
 func TestInboundFeeUpdateForDiscountClearsStaleDiscount(t *testing.T) {
 	enabled, rate := inboundFeeUpdateForDiscount(10_000, 0)
 	if !enabled || rate != 0 {
@@ -998,6 +1070,7 @@ func TestSelectAutofeeRefreshInboundDiscountMarketRefillApplies(t *testing.T) {
 	discount, source, apply := selectAutofeeRefreshInboundDiscount(
 		cfg,
 		profile,
+		"sink",
 		0.08,
 		0.08,
 		forwardStat{Count: 1},

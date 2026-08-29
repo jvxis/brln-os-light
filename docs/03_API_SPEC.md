@@ -87,13 +87,6 @@ GET /api/bitcoin
 GET /api/bitcoin/active
 - Returns active source (remote or local) with status.
 
-GET /api/bitcoin/bip110
-- Informational BIP 110 monitor. Calculates bit-4 signaling from the active `bitcoind`, fetches `https://bip110monitor.com/api`, and compares both sources at the same sampled height when possible.
-- `fork_score` reports actual branch advancement from the scheduled common block using the non-enforcing tip from `https://mempool.space/api/blocks/tip/height` and the enforcing tip from `https://mempool.guide/api/blocks/tip/height`. If either branch tip is unavailable, the score remains unavailable instead of inventing a zero.
-- Zero signaling is returned as an explicit `0` score. `risk_level` reflects the active backend's operational exposure: standard Bitcoin Core is reported as low risk while sources agree, instead of treating low proposal signaling as high node risk.
-- Returns the scheduled phase and milestones, internal and public samples, comparison status, and an informational risk level.
-- Never changes the Bitcoin backend, LND configuration, channel state, or service state.
-
 GET /api/bitcoin/source
 - Returns {"source":"remote"|"local"}.
 
@@ -587,6 +580,7 @@ POST /api/lnops/succession/simulate
 
 GET /api/apps
 - Returns app list with status.
+- Third-party catalog apps, except PeerSwap, may include `available_version`, `installed_version`, and `update_available`. The available release is synchronized to PostgreSQL when the manager starts. The installed release changes only after an existing install or start action succeeds; legacy installations remain with an omitted/unknown `installed_version` until that happens. Version persistence is informational and cannot fail or trigger an app lifecycle operation.
 - A historical App Store Bitcoin container is returned as installed with `legacy_migration_required=true`; ordinary lifecycle controls must be replaced by the explicit safe-migration flow.
 - While a lifecycle action is active, the affected app includes `operation` with `action`, UTC `started_at`, and an optional truthful `stage` for instrumented workflows.
 - Apps that currently receive privileged direct LND access include `security_notices=["elevated_lnd_access"]`. `lndg` additionally reports `lnd_data_directory_read`. These values are informational disclosures and do not alter lifecycle behavior.
@@ -751,6 +745,11 @@ POST /api/reports/reconciliation
 - Reads LND history and updates only the reports database; it does not restart LND or Bitcoin.
 
 ## Rebalance channel automation
+
+GET /api/rebalance/channels
+- Returns live channel balances, local/peer policies, targets, eligibility and recent economics.
+- Economic diagnostics include `initiator`, `peer_policy_known`, `effective_econ_ratio`, `fee_budget_ppm`, `economic_fee_floor_ppm`, `economic_required_cost_ppm`, `economic_reference_amount_sat`, `economic_floor_reason`, and `economic_blocked_reason`.
+- For remote-opened channels that need paid refill, `economic_fee_floor_ppm` is the minimum outbound rate whose proportional budget can cover the peer's amount-normalized policy. Fresh total rebalance cost takes precedence when it is higher.
 
 POST /api/rebalance/run/preview
 - Resolves the effective amount and fee cap for an operator-triggered Manual Rebal In without creating a job.

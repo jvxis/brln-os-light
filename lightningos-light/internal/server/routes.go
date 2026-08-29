@@ -44,7 +44,6 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/postgres/maintenance/compact-graph-history", s.handleDBMaintenanceCompactGraphHistoryPost)
 	r.Get("/api/bitcoin", s.handleBitcoin)
 	r.Get("/api/bitcoin/active", s.handleBitcoinActive)
-	r.Get("/api/bitcoin/bip110", s.handleBIP110Monitor)
 	r.Get("/api/bitcoin/source", s.handleBitcoinSourceGet)
 	r.Post("/api/bitcoin/source", s.handleBitcoinSourcePost)
 	r.Get("/api/bitcoin/market", s.handleBitcoinMarket)

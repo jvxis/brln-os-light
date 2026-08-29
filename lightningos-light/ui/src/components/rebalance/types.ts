@@ -375,6 +375,15 @@ export type RebalanceChannel = {
   peer_fee_rate_ppm: number
   peer_base_msat: number
   spread_ppm: number
+  initiator: boolean
+  peer_policy_known: boolean
+  effective_econ_ratio: number
+  fee_budget_ppm: number
+  economic_fee_floor_ppm: number
+  economic_required_cost_ppm: number
+  economic_reference_amount_sat: number
+  economic_floor_reason?: string
+  economic_blocked_reason?: string
   target_outbound_pct: number
   target_amount_sat: number
   auto_enabled: boolean

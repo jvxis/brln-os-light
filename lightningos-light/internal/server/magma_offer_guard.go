@@ -80,6 +80,36 @@ func (s *MagmaService) loadOfferStates(ctx context.Context) map[string]MagmaOffe
 // magmaOfferRemaining is what an offer still has to sell. Amboss leaves
 // total_size untouched as orders land, so the outstanding promise is the total
 // minus what its orders already locked.
+// magmaOfferSmallestOrder is the smallest order an offer can still attract, and
+// therefore the capital it has to be able to honour. An offer with 4,236 sat
+// left to sell but a 1,000,000 sat minimum channel does not need 4,236 sat in
+// the wallet - the only order it can produce is a million, or none at all.
+//
+// Measuring the wallet against what is left to sell was the original mistake:
+// the last sliver of an offer always fits, so an offer sold down to nothing
+// looked affordable right up to the point where it could not be honoured.
+func magmaOfferSmallestOrder(offer MagmaOffer) int64 {
+	remaining := magmaOfferRemaining(offer)
+	if offer.MinSizeSat > 0 && offer.MinSizeSat > remaining {
+		return offer.MinSizeSat
+	}
+	return remaining
+}
+
+// magmaOfferIsUnfulfillable reports an offer that can no longer produce a valid
+// order at all - it has less left to sell than the smallest channel it
+// advertises. That is already detected and marked blocking for the UI, so this
+// reuses the same judgement rather than restating it: showing a red dot while
+// leaving the offer on the market is the worst of both.
+func magmaOfferIsUnfulfillable(offer MagmaOffer, policy MagmaPolicy) bool {
+	for _, conflict := range magmaOfferConflicts(offer, policy) {
+		if conflict.Blocking {
+			return true
+		}
+	}
+	return false
+}
+
 func magmaOfferRemaining(offer MagmaOffer) int64 {
 	remaining := offer.RemainingSat
 	if remaining <= 0 && offer.SoldSat == 0 {
@@ -157,8 +187,12 @@ func (s *MagmaService) syncOfferBalanceGuard(ctx context.Context, token string) 
 		return enabled[i].ID < enabled[j].ID
 	})
 	for _, offer := range enabled {
-		remaining := magmaOfferRemaining(offer)
-		if remaining <= budget {
+		remaining := magmaOfferSmallestOrder(offer)
+		// An offer that cannot produce a valid order comes down whatever the
+		// balance is: keeping it up sells nothing and, if Amboss lets an order
+		// through against it anyway, sells something we cannot fund.
+		unfulfillable := magmaOfferIsUnfulfillable(offer, policy)
+		if !unfulfillable && remaining <= budget {
 			budget -= remaining
 			continue
 		}

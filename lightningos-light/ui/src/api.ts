@@ -206,7 +206,6 @@ export const runPostgresGraphHistoryCompact = () =>
   request('/api/postgres/maintenance/compact-graph-history', { method: 'POST', body: JSON.stringify({}) })
 export const getBitcoin = () => request('/api/bitcoin')
 export const getBitcoinActive = () => request('/api/bitcoin/active')
-export const getBIP110Monitor = () => request('/api/bitcoin/bip110')
 export const getBitcoinSource = () => request('/api/bitcoin/source')
 export const setBitcoinSource = (payload: { source: 'local' | 'remote'; allow_unsynced?: boolean; confirm_bitcoin_restart?: boolean }) =>
   request('/api/bitcoin/source', { method: 'POST', body: JSON.stringify(payload) })
@@ -1198,6 +1197,9 @@ export type AppStoreInfo = {
   security_notices?: string[]
   operation?: AppOperationInfo
   legacy_migration_required?: boolean
+  available_version?: string
+  installed_version?: string
+  update_available?: boolean
 }
 
 export const getApps = (): Promise<AppStoreInfo[]> => request('/api/apps')

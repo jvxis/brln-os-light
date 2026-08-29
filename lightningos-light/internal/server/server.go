@@ -102,6 +102,10 @@ type Server struct {
 	uiPreferencesMu             sync.Mutex
 	uiPreferences               *UIPreferencesService
 	uiPreferencesErr            string
+	appVersionsInitAt           time.Time
+	appVersionsMu               sync.Mutex
+	appVersions                 appVersionRepository
+	appVersionsErr              string
 	channelRankingInitAt        time.Time
 	channelRankingMu            sync.Mutex
 	channelRanking              *ChannelRankingService
@@ -168,7 +172,6 @@ type Server struct {
 	lndGraphProgressMu          sync.Mutex
 	lndGraphProgressCache       lndGraphProgressCache
 	lndGraphProgressRefreshing  bool
-	bip110Monitor               *bip110MonitorService
 }
 
 func New(cfg *config.Config, logger *log.Logger) *Server {
@@ -190,7 +193,6 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 	srv.chat = NewChatService(srv.lnd, logger)
 	srv.amboss = NewAmbossHealthChecker(srv.lnd, logger)
 	srv.chanHealer = NewChanStatusHealer(srv.lnd, logger)
-	srv.bip110Monitor = newBIP110MonitorService(srv)
 	return srv
 }
 
@@ -207,6 +209,7 @@ func (s *Server) Run() error {
 	s.startLegacyPrivilegeTransitionReconciler()
 	s.startAppUpgradeChecker()
 	s.initNotifications()
+	s.initAppVersions()
 	s.initAuditLog()
 	s.initSpendingGuard()
 	s.startSpendingGuardReconciler()

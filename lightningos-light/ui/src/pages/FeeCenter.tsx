@@ -820,7 +820,7 @@ export default function FeeCenter() {
         step_cap_override: parsePercentOverride(stepCapOverride, 1, 30),
         discovery_step_cap_down_override: parsePercentOverride(discoveryStepCapDownOverride, 1, 40),
         stall_floor_relax_gap_frac_override: parsePercentOverride(stallFloorRelaxGapFracOverride, 1, 80),
-        inbound_discount_max_ratio_override: parsePercentOverride(inboundDiscountMaxRatioOverride, 50, 100),
+        inbound_discount_max_ratio_override: parsePercentOverride(inboundDiscountMaxRatioOverride, 5, 100),
         inbound_discount_reach_out_ratio_override: parsePercentOverride(inboundDiscountReachOutRatioOverride, 5, 50),
         inbound_discount_min_retained_spread_frac_override: parsePercentOverride(inboundDiscountMinRetainedSpreadFracOverride, 1, 50),
         outrate_floor_factor_low_override: parsePercentOverride(outrateFloorFactorLowOverride, 50, 100),

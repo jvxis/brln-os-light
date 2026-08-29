@@ -483,6 +483,9 @@ GET /api/lnops/automation-intents/history?limit=200
 - Lists publish, resolve, and apply events without credentials or payment secrets.
 - Events also include the exact `channel_id_str` representation.
 - An `applied` event means the intent influenced a consumer decision (for example, a score or fee-floor calculation); it does not by itself mean a rebalance job was queued or completed.
+- AutoFee `protect_fee_floor` apply events include `run_id`, `mode`, `shadow`, `dry_run`,
+  `decision_apply`, and the before/after ppm targets in metadata. Clients can group the latest
+  decision round without interpreting it as confirmation that LND published the policy.
 - Returns `{ "ok": true, "policy": ... }`.
 
 POST /api/lnops/peer/notes

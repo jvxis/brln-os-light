@@ -3951,12 +3951,15 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		}
 		if decision.AutomationIntent != nil && e.svc.automationIntents != nil {
 			_ = e.svc.automationIntents.RecordApplied(ctx, *decision.AutomationIntent, map[string]any{
-				"mode":       e.automationIntentConfig.Mode,
-				"shadow":     decision.IntentShadow,
-				"ppm_before": decision.IntentEffectBefore,
-				"ppm_after":  decision.IntentEffectAfter,
-				"profile":    e.profile.Name,
-				"node_class": e.calib.NodeClass,
+				"run_id":         runID,
+				"mode":           e.automationIntentConfig.Mode,
+				"shadow":         decision.IntentShadow,
+				"dry_run":        dryRun,
+				"decision_apply": decision.Apply,
+				"ppm_before":     decision.IntentEffectBefore,
+				"ppm_after":      decision.IntentEffectAfter,
+				"profile":        e.profile.Name,
+				"node_class":     e.calib.NodeClass,
 			}, e.now)
 		}
 		if decision.SuperSourceActive {

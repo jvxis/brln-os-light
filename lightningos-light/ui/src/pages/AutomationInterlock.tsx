@@ -354,6 +354,27 @@ export default function AutomationInterlock() {
   const impactStatus = hasLiveDecisionSnapshot
     ? rebalance?.last_scan_status || rebalance?.sovereign_last_mode || t('common.unknown')
     : hasPersistedEffectSnapshot ? t('automationInterlock.persistedImpact') : t('automationInterlock.snapshotUnavailable')
+  const floorEffectEvents = history.filter((event) =>
+    event.event_type === 'applied' &&
+    event.kind === 'protect_fee_floor' &&
+    event.consumer === 'autofee' &&
+    metadataNumber(event.metadata, 'ppm_before') != null &&
+    metadataNumber(event.metadata, 'ppm_after') != null
+  )
+  const latestFloorEffectAt = floorEffectEvents[0]?.occurred_at
+  const latestFloorRunID = metadataString(floorEffectEvents[0]?.metadata, 'run_id')
+  const latestFloorEffectEvents = latestFloorRunID
+    ? floorEffectEvents.filter((event) => metadataString(event.metadata, 'run_id') === latestFloorRunID)
+    : latestFloorEffectAt
+      ? floorEffectEvents.filter((event) => event.occurred_at === latestFloorEffectAt)
+      : []
+  const hasFloorImpactSnapshot = latestFloorEffectEvents.length > 0
+  const floorImpactSimulated = hasFloorImpactSnapshot && latestFloorEffectEvents.every((event) =>
+    metadataBoolean(event.metadata, 'shadow') === true || metadataBoolean(event.metadata, 'dry_run') === true
+  )
+  const floorTargetChanges = latestFloorEffectEvents.filter((event) =>
+    metadataNumber(event.metadata, 'ppm_before') !== metadataNumber(event.metadata, 'ppm_after')
+  ).length
   const effectByIntentID = new Map<number, AutomationIntentEvent>()
   scoreEffectEvents.forEach((event) => {
     if (event.intent_id && !effectByIntentID.has(event.intent_id)) effectByIntentID.set(event.intent_id, event)
@@ -436,77 +457,160 @@ export default function AutomationInterlock() {
         </div>
       )}
 
-      <section className="overflow-hidden rounded-3xl border border-cyan-300/15 bg-gradient-to-br from-cyan-400/[0.08] via-ink/80 to-emerald-400/[0.05] p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 text-cyan-100">
-              <SignalIcon />
-              <h3 className="text-lg font-semibold">{t('automationInterlock.lastScanImpact')}</h3>
-            </div>
-            <p className="mt-1 text-sm text-fog/60">
-              {t('automationInterlock.lastScanMeta', {
-                date: formatDate(impactDate),
-                status: impactStatus
-              })}
-            </p>
+      <section className="overflow-hidden rounded-3xl border border-cyan-300/15 bg-gradient-to-br from-cyan-400/[0.08] via-ink/80 to-amber-400/[0.05] p-5 sm:p-6">
+        <div>
+          <div className="flex items-center gap-2 text-cyan-100">
+            <SignalIcon />
+            <h3 className="text-lg font-semibold">{t('automationInterlock.directionalImpact')}</h3>
           </div>
-          <span className={`rounded-full border px-3 py-1 text-xs ${hasImpactSnapshot && Number(impactSelected || 0) > 0 ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/30 bg-amber-400/10 text-amber-100'}`}>
-            {!hasImpactSnapshot
-              ? t('automationInterlock.awaitingScan')
-              : Number(impactSelected || 0) > 0 ? t('automationInterlock.executionAffected') : t('automationInterlock.noExecutionAffected')}
-          </span>
+          <p className="mt-1 max-w-4xl text-sm text-fog/60">{t('automationInterlock.directionalImpactHint')}</p>
         </div>
 
-        <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-stretch">
-          <ImpactStage
-            icon={<SignalIcon />}
-            value={intents.length}
-            label={t('automationInterlock.signalsAvailable')}
-            hint={t('automationInterlock.signalsAvailableHint')}
-            tone="border-cyan-400/25 bg-cyan-400/[0.07] text-cyan-100"
-          />
-          <Arrow />
-          <ImpactStage
-            icon={<ScoreIcon />}
-            value={hasImpactSnapshot ? impactInfluenced : '—'}
-            label={impactSimulated ? t('automationInterlock.scoresSimulated') : t('automationInterlock.scoresChanged')}
-            hint={hasImpactSnapshot
-              ? t('automationInterlock.scoresChangedHint', { delta: integerFormatter.format(totalScoreDelta) })
-              : t('automationInterlock.awaitingScanHint')}
-            tone="border-violet-400/25 bg-violet-400/[0.07] text-violet-100"
-          />
-          <Arrow />
-          <ImpactStage
-            icon={<QueueIcon />}
-            value={hasImpactSnapshot && impactSelected != null ? impactSelected : '—'}
-            label={t('automationInterlock.selectedAfterGates')}
-            hint={t('automationInterlock.selectedAfterGatesHint')}
-            tone="border-emerald-400/25 bg-emerald-400/[0.07] text-emerald-100"
-          />
-        </div>
-
-        <div className="mt-4 flex items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-4">
-          <ShieldIcon className="mt-0.5 h-5 w-5 shrink-0 text-amber-200" />
-          <div>
-            <div className="text-sm font-medium text-fog">
-              {hasImpactSnapshot
-                ? t('automationInterlock.impactSummary', {
-                    active: intents.length,
-                    influenced: impactInfluenced,
-                    selected: impactSelected == null ? '—' : impactSelected
-                  })
-                : t('automationInterlock.impactUnavailableSummary', { active: intents.length })}
+        <div className="mt-5 grid gap-5 2xl:grid-cols-2">
+          <article className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.035] p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-cyan-100">
+                  <SignalIcon className="h-4 w-4" />
+                  <h4 className="font-semibold">{t('automationInterlock.autofeeToRebalanceImpact')}</h4>
+                </div>
+                <p className="mt-1 text-xs text-fog/55">
+                  {t('automationInterlock.lastScanMeta', {
+                    date: formatDate(impactDate),
+                    status: impactStatus
+                  })}
+                </p>
+              </div>
+              <span className={`rounded-full border px-3 py-1 text-xs ${hasImpactSnapshot && Number(impactSelected || 0) > 0 ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/30 bg-amber-400/10 text-amber-100'}`}>
+                {!hasImpactSnapshot
+                  ? t('automationInterlock.awaitingScan')
+                  : Number(impactSelected || 0) > 0
+                    ? t('automationInterlock.rebalanceJobsSelected', { count: impactSelected })
+                    : t('automationInterlock.noRebalanceJobSelected')}
+              </span>
             </div>
-            <p className="mt-1 text-xs leading-relaxed text-fog/55">
-              {!hasImpactSnapshot
-                ? t('automationInterlock.impactUnavailableHint')
-                : impactSelected == null
-                  ? t('automationInterlock.persistedSelectionUnknown')
-                  : impactSelected === 0
-                    ? t('automationInterlock.guardrailsHeld')
-                    : t('automationInterlock.guardrailsSelected', { count: impactSelected })}
-            </p>
-          </div>
+
+            <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-stretch">
+              <ImpactStage
+                icon={<SignalIcon />}
+                value={refillIntents.length}
+                label={t('automationInterlock.refillSignalsAvailable')}
+                hint={t('automationInterlock.refillSignalsAvailableHint')}
+                tone="border-cyan-400/25 bg-cyan-400/[0.07] text-cyan-100"
+              />
+              <Arrow />
+              <ImpactStage
+                icon={<ScoreIcon />}
+                value={hasImpactSnapshot ? impactInfluenced : '—'}
+                label={impactSimulated ? t('automationInterlock.scoresSimulated') : t('automationInterlock.scoresChanged')}
+                hint={hasImpactSnapshot
+                  ? t('automationInterlock.scoresChangedHint', { delta: integerFormatter.format(totalScoreDelta) })
+                  : t('automationInterlock.awaitingScanHint')}
+                tone="border-violet-400/25 bg-violet-400/[0.07] text-violet-100"
+              />
+              <Arrow />
+              <ImpactStage
+                icon={<QueueIcon />}
+                value={hasImpactSnapshot && impactSelected != null ? impactSelected : '—'}
+                label={t('automationInterlock.rebalanceJobsAfterGates')}
+                hint={t('automationInterlock.selectedAfterGatesHint')}
+                tone="border-emerald-400/25 bg-emerald-400/[0.07] text-emerald-100"
+              />
+            </div>
+
+            <div className="mt-4 flex items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-4">
+              <ShieldIcon className="mt-0.5 h-5 w-5 shrink-0 text-cyan-200" />
+              <div>
+                <div className="text-sm font-medium text-fog">
+                  {hasImpactSnapshot
+                    ? t('automationInterlock.rebalanceImpactSummary', {
+                        active: refillIntents.length,
+                        influenced: impactInfluenced,
+                        selected: impactSelected == null ? '—' : impactSelected
+                      })
+                    : t('automationInterlock.rebalanceImpactUnavailableSummary', { active: refillIntents.length })}
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-fog/55">
+                  {!hasImpactSnapshot
+                    ? t('automationInterlock.impactUnavailableHint')
+                    : impactSelected == null
+                      ? t('automationInterlock.persistedSelectionUnknown')
+                      : impactSelected === 0
+                        ? t('automationInterlock.guardrailsHeld')
+                        : t('automationInterlock.guardrailsSelected', { count: impactSelected })}
+                </p>
+              </div>
+            </div>
+          </article>
+
+          <article className="rounded-2xl border border-amber-400/20 bg-amber-400/[0.035] p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-amber-100">
+                  <ShieldIcon className="h-4 w-4" />
+                  <h4 className="font-semibold">{t('automationInterlock.rebalanceToAutofeeImpact')}</h4>
+                </div>
+                <p className="mt-1 text-xs text-fog/55">
+                  {t('automationInterlock.lastFloorDecisionMeta', { date: formatDate(latestFloorEffectAt) })}
+                </p>
+              </div>
+              <span className={`rounded-full border px-3 py-1 text-xs ${hasFloorImpactSnapshot ? 'border-violet-400/30 bg-violet-400/10 text-violet-100' : 'border-amber-400/30 bg-amber-400/10 text-amber-100'}`}>
+                {hasFloorImpactSnapshot
+                  ? floorImpactSimulated
+                    ? t('automationInterlock.autofeeDecisionsSimulated', { count: latestFloorEffectEvents.length })
+                    : t('automationInterlock.autofeeDecisionsInfluenced', { count: latestFloorEffectEvents.length })
+                  : t('automationInterlock.awaitingAutofeeDecision')}
+              </span>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-stretch">
+              <ImpactStage
+                icon={<ShieldIcon />}
+                value={floorIntents.length}
+                label={t('automationInterlock.activeFeeFloors')}
+                hint={t('automationInterlock.activeFeeFloorsHint')}
+                tone="border-amber-400/25 bg-amber-400/[0.07] text-amber-100"
+              />
+              <Arrow />
+              <ImpactStage
+                icon={<ScoreIcon />}
+                value={hasFloorImpactSnapshot ? latestFloorEffectEvents.length : '—'}
+                label={floorImpactSimulated ? t('automationInterlock.autofeeDecisionsSimulatedLabel') : t('automationInterlock.autofeeDecisionsInfluencedLabel')}
+                hint={t('automationInterlock.autofeeDecisionsInfluencedHint')}
+                tone="border-violet-400/25 bg-violet-400/[0.07] text-violet-100"
+              />
+              <Arrow />
+              <ImpactStage
+                icon={<QueueIcon />}
+                value={hasFloorImpactSnapshot ? floorTargetChanges : '—'}
+                label={floorImpactSimulated ? t('automationInterlock.feeTargetsSimulated') : t('automationInterlock.feeTargetsAdjusted')}
+                hint={t('automationInterlock.feeTargetsAdjustedHint')}
+                tone="border-emerald-400/25 bg-emerald-400/[0.07] text-emerald-100"
+              />
+            </div>
+
+            <div className="mt-4 flex items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-4">
+              <ShieldIcon className="mt-0.5 h-5 w-5 shrink-0 text-amber-200" />
+              <div>
+                <div className="text-sm font-medium text-fog">
+                  {hasFloorImpactSnapshot
+                    ? t('automationInterlock.autofeeImpactSummary', {
+                        active: floorIntents.length,
+                        influenced: latestFloorEffectEvents.length,
+                        adjusted: floorTargetChanges
+                      })
+                    : t('automationInterlock.autofeeImpactUnavailableSummary', { active: floorIntents.length })}
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-fog/55">
+                  {hasFloorImpactSnapshot
+                    ? floorImpactSimulated
+                      ? t('automationInterlock.autofeeImpactShadowHint')
+                      : t('automationInterlock.autofeeImpactDecisionHint')
+                    : t('automationInterlock.autofeeImpactUnavailableHint')}
+                </p>
+              </div>
+            </div>
+          </article>
         </div>
       </section>
 
@@ -602,6 +706,7 @@ export default function AutomationInterlock() {
                 const decision = decisionForIntent(intent)
                 const persistedEffect = effectByIntentID.get(intent.id)
                 const appliedEffect = appliedByIntentID.get(intent.id)
+                const floorEffect = intent.kind === 'protect_fee_floor' ? appliedEffect : undefined
                 const outRatio = Math.max(0, Math.min(1, Number(intent.evidence?.out_ratio || 0)))
                 const localPpm = Number(intent.evidence?.local_ppm)
                 const targetPpm = Number(intent.evidence?.target_ppm)
@@ -611,7 +716,7 @@ export default function AutomationInterlock() {
                 const effectReason = decision?.reason || metadataString(persistedEffect?.metadata, 'reason')
                 const floorBefore = metadataNumber(appliedEffect?.metadata, 'ppm_before')
                 const floorAfter = metadataNumber(appliedEffect?.metadata, 'ppm_after')
-                const intentInfluenced = scoreChanged || (intent.kind === 'protect_fee_floor' && Boolean(appliedEffect))
+                const intentInfluenced = scoreChanged || Boolean(floorEffect)
                 const stateExplanation = intent.kind === 'refill_target'
                   ? scoreChanged
                     ? t('automationInterlock.intentHelp.refillInfluenced', {
@@ -624,7 +729,7 @@ export default function AutomationInterlock() {
                       : t('automationInterlock.intentHelp.refillNotChanged', {
                           reason: effectReason ? reasonLabel(effectReason) : t('automationInterlock.intentHelp.noMeasurableDelta')
                         })
-                  : appliedEffect
+                  : floorEffect
                     ? t('automationInterlock.intentHelp.floorInfluenced', {
                         before: floorBefore == null ? t('common.na') : integerFormatter.format(floorBefore),
                         after: floorAfter == null ? t('common.na') : integerFormatter.format(floorAfter)
@@ -691,12 +796,19 @@ export default function AutomationInterlock() {
                       <div>{t('automationInterlock.calibration', { node: intent.producer_node_class || t('common.unknown'), liquidity: intent.producer_liquidity_class || t('common.unknown') })}</div>
                     </div>
 
-                    <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${scoreChanged ? 'border-violet-400/20 bg-violet-400/[0.07] text-violet-100' : 'border-white/5 bg-white/[0.02] text-fog/55'}`}>
+                    <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${intentInfluenced ? 'border-violet-400/20 bg-violet-400/[0.07] text-violet-100' : 'border-white/5 bg-white/[0.02] text-fog/55'}`}>
                       {scoreChanged ? (
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <span>{t('automationInterlock.scoreEffect')}</span>
                           <span className="font-semibold">
                             {integerFormatter.format(scoreBefore)} → {integerFormatter.format(scoreAfter)} sats
+                          </span>
+                        </div>
+                      ) : floorEffect ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span>{metadataBoolean(floorEffect.metadata, 'shadow') || metadataBoolean(floorEffect.metadata, 'dry_run') ? t('automationInterlock.feeTargetSimulatedEffect') : t('automationInterlock.feeTargetEffect')}</span>
+                          <span className="font-semibold">
+                            {floorBefore == null ? t('common.na') : integerFormatter.format(floorBefore)} → {floorAfter == null ? t('common.na') : integerFormatter.format(floorAfter)} ppm
                           </span>
                         </div>
                       ) : (
@@ -732,6 +844,9 @@ export default function AutomationInterlock() {
               {history.map((event) => {
                 const before = metadataNumber(event.metadata, 'score_before') ?? metadataNumber(event.metadata, 'ppm_before')
                 const after = metadataNumber(event.metadata, 'score_after') ?? metadataNumber(event.metadata, 'ppm_after')
+                const eventLabel = event.event_type === 'applied'
+                  ? t(`automationInterlock.appliedEvents.${event.kind}`, { defaultValue: t('automationInterlock.events.applied') })
+                  : t(`automationInterlock.events.${event.event_type}`, { defaultValue: event.event_type })
                 return (
                   <div key={event.id} className="relative grid gap-2 py-3 pl-7 text-xs sm:grid-cols-[10rem_1fr_auto] sm:items-center">
                     <span className={`absolute left-0 top-[1.1rem] h-4 w-4 rounded-full border-4 border-ink ${event.event_type === 'applied' ? 'bg-violet-300' : event.event_type === 'resolved' ? 'bg-fog/40' : 'bg-cyan-300'}`} />
@@ -739,7 +854,7 @@ export default function AutomationInterlock() {
                     <div className="min-w-0">
                       <div className="truncate text-fog/75">
                         <span className="font-medium text-fog">{aliasForEvent(event)}</span>
-                        {' · '}{t(`automationInterlock.events.${event.event_type}`, { defaultValue: event.event_type })}
+                        {' · '}{eventLabel}
                         {' · '}{t(`automationInterlock.kinds.${event.kind}`)}
                       </div>
                       <div className="mt-0.5 text-[10px] text-fog/35">

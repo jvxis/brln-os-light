@@ -170,6 +170,11 @@ func writeAppOperationError(w http.ResponseWriter, status int, err error) {
 	writeError(w, status, err.Error())
 }
 
+func (s *Server) writeSuccessfulAppInstallOrStart(w http.ResponseWriter, r *http.Request, appID string) {
+	s.recordAppliedAppVersion(r.Context(), appID)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func cloneAppInfos(apps []appInfo) []appInfo {
 	cloned := append([]appInfo(nil), apps...)
 	for index := range cloned {
@@ -220,6 +225,7 @@ func (s *Server) buildAppList(ctx context.Context) ([]appInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	s.addAppVersions(ctx, resp)
 	return resp, nil
 }
 
@@ -318,7 +324,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.invalidateBitcoinStatusCaches()
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
 		return
 	}
 	if appID == elementsAppID {
@@ -333,7 +339,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			writeAppOperationError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
 		return
 	}
 	if appID == peerswapAppID {
@@ -367,7 +373,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			writeAppOperationError(w, status, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
 		return
 	}
 	if appID == mempoolAppID {
@@ -382,7 +388,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			writeAppOperationError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
 		return
 	}
 	if appID == fedimintGatewayAppID {
@@ -401,7 +407,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 			writeAppOperationError(w, status, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
 		return
 	}
 	appContext := r.Context()
@@ -415,7 +421,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 	if appID == "bitcoincore" {
 		s.invalidateBitcoinStatusCaches()
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	s.writeSuccessfulAppInstallOrStart(w, r, appID)
 }
 
 func (s *Server) handleAppUninstall(w http.ResponseWriter, r *http.Request) {
@@ -514,7 +520,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.invalidateBitcoinStatusCaches()
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
 		return
 	}
 	if appID == electrsAppID {
@@ -533,7 +539,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 			writeAppOperationError(w, status, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
 		return
 	}
 	if appID == mempoolAppID {
@@ -548,7 +554,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 			writeAppOperationError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
 		return
 	}
 	if appID == fedimintGatewayAppID {
@@ -567,7 +573,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 			writeAppOperationError(w, status, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
 		return
 	}
 	appContext := r.Context()
@@ -581,7 +587,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	if appID == "bitcoincore" {
 		s.invalidateBitcoinStatusCaches()
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	s.writeSuccessfulAppInstallOrStart(w, r, appID)
 }
 
 func (s *Server) handleAppStop(w http.ResponseWriter, r *http.Request) {

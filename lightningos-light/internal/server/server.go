@@ -102,6 +102,10 @@ type Server struct {
 	uiPreferencesMu             sync.Mutex
 	uiPreferences               *UIPreferencesService
 	uiPreferencesErr            string
+	appVersionsInitAt           time.Time
+	appVersionsMu               sync.Mutex
+	appVersions                 appVersionRepository
+	appVersionsErr              string
 	channelRankingInitAt        time.Time
 	channelRankingMu            sync.Mutex
 	channelRanking              *ChannelRankingService
@@ -207,6 +211,7 @@ func (s *Server) Run() error {
 	s.startLegacyPrivilegeTransitionReconciler()
 	s.startAppUpgradeChecker()
 	s.initNotifications()
+	s.initAppVersions()
 	s.initAuditLog()
 	s.initSpendingGuard()
 	s.startSpendingGuardReconciler()

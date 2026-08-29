@@ -1223,6 +1223,11 @@
     "copyLndgPassword": "Copiar senha admin do LNDg",
     "defaultAccess": "Acesso padrão: {{access}}",
     "defaultPort": "Porta padrão: {{port}}",
+    "installedVersion": "Versão instalada",
+    "availableVersion": "Versão disponível",
+    "unknownVersion": "Desconhecida",
+    "updateAvailable": "Atualização disponível",
+    "upToDate": "Atualizado",
     "filters": {
       "all": "Todos",
       "installed": "Instalados",

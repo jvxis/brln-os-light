@@ -3916,6 +3916,17 @@ export default function LightningOps() {
     if (targetID === LIGHTNING_TOOLS_SECTION_ID || LIGHTNING_TOOL_SECTION_IDS.has(targetID)) {
       setLightningToolsOpen(true)
     }
+    const targetChannelPoint = pendingScrollChannelRef.current
+    if (targetChannelPoint && targetID === CLOSE_CHANNEL_SECTION_ID) {
+      setClosePoint(targetChannelPoint)
+      setCloseForce(false)
+      pendingScrollChannelRef.current = ''
+    }
+    if (targetChannelPoint && targetID === UPDATE_FEES_SECTION_ID) {
+      setFeeScopeAll(false)
+      setFeeChannelPoint(targetChannelPoint)
+      pendingScrollChannelRef.current = ''
+    }
     window.setTimeout(() => {
       const target = document.getElementById(targetID)
       if (!target) return

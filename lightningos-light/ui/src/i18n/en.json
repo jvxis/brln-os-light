@@ -5531,6 +5531,7 @@
   "channelRanking": {
     "title": "Channel Ranking",
     "subtitle": "Rank open channels by score, recommended state, and operational signals.",
+    "refactoredSubtitle": "Turn the economic ranking into an operational plan while preserving metrics, history, and manual decisions.",
     "lastSync": "Last sync: {{value}}",
     "refreshing": "Refreshing...",
     "loading": "Loading channel ranking...",
@@ -5551,6 +5552,82 @@
     "summaryTrendStable": "Stable: {{count}}",
     "summaryTrendWorsening": "Worsening: {{count}}",
     "summaryOpportunityTitle": "Top Opportunities",
+    "views": {
+      "plan": "Action plan",
+      "channels": "All channels"
+    },
+    "filters": {
+      "showAdvanced": "Advanced filters",
+      "hideAdvanced": "Hide filters"
+    },
+    "table": {
+      "channel": "Channel",
+      "decision": "Decision",
+      "liquidity": "Liquidity",
+      "economics": "Economics",
+      "flow": "7d flow",
+      "score": "Score"
+    },
+    "detailTabs": {
+      "summary": "Summary",
+      "economics": "Economics",
+      "flow": "Flow",
+      "automation": "Automation",
+      "history": "History",
+      "peer": "Peer"
+    },
+    "plan": {
+      "productiveCapital": "Productive capital",
+      "growthActions": "Refill or expand",
+      "protectedCapital": "Protected capital",
+      "parkedCapital": "Parked: {{value}}",
+      "recoverableCapital": "Eligible local capital",
+      "afterCoopClose": "Available only after the close confirms",
+      "magmaUnavailable": "The Magma state could not be verified. Suggested closes remain blocked until validation returns.",
+      "rankingBadge": "Ranking: {{value}}",
+      "policyBadge": "Policy: {{value}}",
+      "constraintBadge": "Constraint: {{value}}",
+      "actionBadge": "Action: {{value}}",
+      "observation": "Observation: {{current}}/{{required}} days",
+      "magmaCommitment": "Magma commitment with {{buyer}} · blocks remaining: {{blocks}}",
+      "inspect": "View details",
+      "constraintsTitle": "Effective constraints",
+      "blocked": "Blocked",
+      "reviewDue": "Manual review scheduled for {{value}}. The channel will not be released automatically.",
+      "actions": {
+        "refill": "Refill",
+        "reprice": "Review fees",
+        "expand": "Expand",
+        "maintain": "Maintain",
+        "observe": "Observe",
+        "rotate": "Rotate capital",
+        "parked": "Manual control · Parked",
+        "protected": "Protected"
+      },
+      "actionHints": {
+        "refill": "Productive channels that are short on local liquidity.",
+        "reprice": "Channels whose current recommendation calls for fee positioning or AutoFee bound review.",
+        "expand": "Efficient channels that may justify additional capacity.",
+        "maintain": "Healthy channels with no urgent operational action.",
+        "observe": "Channels that still need time or additional evidence.",
+        "rotate": "Economically weak channels with complete observation and no contractual constraints.",
+        "parked": "An operator decision; ranking continues as advisory evidence only.",
+        "protected": "Channels with an active Magma commitment or unavailable contractual validation."
+      },
+      "primaryActions": {
+        "manual_rebalance": "Open Rebalance Center",
+        "review_fees": "Open Fee Center",
+        "review_expansion": "Review in Lightning Ops",
+        "prepare_coop_close": "Prepare close"
+      },
+      "blockers": {
+        "observation_7d": "Initial 7-day observation is incomplete",
+        "observation_30d": "30-day observation is incomplete",
+        "magma_active": "Active Magma commitment",
+        "magma_state_unavailable": "Magma state unavailable",
+        "parked": "Channel is Parked"
+      }
+    },
     "states": {
       "expand": "Expand",
       "maintain": "Maintain",
@@ -5616,6 +5693,9 @@
     "liquidityStateLabel": "Liquidity state: {{value}}",
     "autofeeOutRatioEffective": "Autofee effective out: {{value}}",
     "liquidityStateAt": "Liquidity state at: {{value}}",
+    "classLabel": "Operational class: {{value}}",
+    "channelId": "Channel ID: {{value}}",
+    "peerPubkey": "Peer pubkey: {{value}}",
     "pendingHtlcCount": "Pending HTLCs: {{value}}",
     "inactiveDuration": "Inactive for: {{value}}",
     "peerStabilityScore30d": "Peer stability 30d: {{value}}",
@@ -5668,8 +5748,11 @@
     "automationParkedAt": "Parked at {{value}}",
     "automationParkAction": "Park channel",
     "automationUnparkAction": "Unpark",
+    "automationRestoreAction": "Unpark and restore settings",
+    "automationParkConfirm": "Park this channel? AutoFee, automatic rebalance, manual restart, and source usage will be disabled.",
     "automationParkedSaved": "Channel parked.",
     "automationUnparkedSaved": "Channel unparked. Automations remain disabled until re-enabled explicitly.",
+    "automationRestoredSaved": "Channel unparked and its previous settings were restored.",
     "automationUpdateFailed": "Failed to update automation policy.",
     "automationInvalidFixedFee": "Fixed fee ppm must be zero or greater.",
     "automationModes": {

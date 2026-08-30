@@ -219,9 +219,12 @@ export default function BitcoinLocal() {
 
   const source = status?.source || (status?.installed ? 'app' : 'none')
   const managedByApp = source === 'app'
+  const managedAppRunning = managedByApp && status?.status === 'running'
   const externalDetected = source === 'external'
-  const showDetails = managedByApp || externalDetected
-  const showNotInstalled = !managedByApp && !externalDetected
+  const showDetails = managedAppRunning || externalDetected
+  const showStopped = managedByApp && status?.status === 'stopped'
+  const showUnavailable = managedByApp && status?.status !== 'running' && status?.status !== 'stopped'
+  const showNotInstalled = status !== null && !managedByApp && !externalDetected
   const progress = useMemo(() => formatPercent(status?.verification_progress), [status?.verification_progress])
   const progressDisplay = progress === null ? t('common.unknown') : `${progress}%`
   const statusClass = statusStyles[status?.status || 'unknown'] || statusStyles.unknown
@@ -390,6 +393,22 @@ export default function BitcoinLocal() {
         <div className="section-card space-y-3">
           <h3 className="text-lg font-semibold">{t('bitcoinLocal.notInstalledTitle')}</h3>
           <p className="text-fog/60">{t('bitcoinLocal.notInstalledBody')}</p>
+          <a className="btn-primary inline-flex items-center" href="#apps">{t('bitcoinLocal.openAppStore')}</a>
+        </div>
+      )}
+
+      {showStopped && (
+        <div className="section-card space-y-3">
+          <h3 className="text-lg font-semibold">{t('bitcoinLocal.stoppedTitle')}</h3>
+          <p className="text-fog/60">{t('bitcoinLocal.stoppedBody')}</p>
+          <a className="btn-primary inline-flex items-center" href="#apps">{t('bitcoinLocal.openAppStore')}</a>
+        </div>
+      )}
+
+      {showUnavailable && (
+        <div className="section-card space-y-3">
+          <h3 className="text-lg font-semibold">{t('bitcoinLocal.unavailableTitle')}</h3>
+          <p className="text-fog/60">{t('bitcoinLocal.unavailableBody')}</p>
           <a className="btn-primary inline-flex items-center" href="#apps">{t('bitcoinLocal.openAppStore')}</a>
         </div>
       )}

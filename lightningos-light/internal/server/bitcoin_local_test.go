@@ -22,6 +22,71 @@ type bitcoinConfigTestClient struct {
 	err             error
 }
 
+type bitcoinLocalStatusTestClient struct {
+	*cpuMinerPrivilegedClient
+	bitcoinStatusCalls int
+	bitcoinStatusJSON  string
+	bitcoinStatusErr   error
+}
+
+func (client *bitcoinLocalStatusTestClient) BitcoinCoreStatus(context.Context) (string, error) {
+	client.bitcoinStatusCalls++
+	return client.bitcoinStatusJSON, client.bitcoinStatusErr
+}
+
+func TestBitcoinLocalManagedStatusStopsBeforeRPCTelemetry(t *testing.T) {
+	client := &bitcoinLocalStatusTestClient{
+		cpuMinerPrivilegedClient: &cpuMinerPrivilegedClient{
+			mode:          "enforce",
+			inspectStatus: "stopped",
+		},
+	}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	status := bitcoinLocalManagedStatus(context.Background(), bitcoinLocalStatus{
+		Installed: true,
+		Status:    "unknown",
+		Source:    "app",
+		DataDir:   "/data/bitcoin",
+	})
+
+	if status.Status != "stopped" || status.RPCOk {
+		t.Fatalf("stopped app reported as %+v", status)
+	}
+	if client.inspectCalls != 1 || client.inspectAppID != bitcoinCoreAppID {
+		t.Fatalf("unexpected lifecycle inspection: %#v", client.cpuMinerPrivilegedClient)
+	}
+	if client.bitcoinStatusCalls != 0 {
+		t.Fatalf("stopped app reached RPC telemetry %d times", client.bitcoinStatusCalls)
+	}
+}
+
+func TestBitcoinLocalManagedStatusReadsTelemetryOnlyWhenRunning(t *testing.T) {
+	client := &bitcoinLocalStatusTestClient{
+		cpuMinerPrivilegedClient: &cpuMinerPrivilegedClient{
+			mode:          "enforce",
+			inspectStatus: "running",
+		},
+		bitcoinStatusJSON: `{"chain":"main","blocks":954700,"headers":954700,"verification_progress":1,"initial_block_download":false,"best_block_hash":"0000000000000000000000000000000000000000000000000000000000000000","pruned":false}`,
+	}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+
+	status := bitcoinLocalManagedStatus(context.Background(), bitcoinLocalStatus{
+		Installed: true,
+		Source:    "app",
+		DataDir:   "/data/bitcoin",
+	})
+
+	if status.Status != "running" || !status.RPCOk || status.Blocks != 954700 {
+		t.Fatalf("running app telemetry reported as %+v", status)
+	}
+	if client.inspectCalls != 1 || client.bitcoinStatusCalls != 1 {
+		t.Fatalf("unexpected broker calls: inspect=%d status=%d", client.inspectCalls, client.bitcoinStatusCalls)
+	}
+}
+
 func (client *bitcoinConfigTestClient) EnsureBitcoinCoreConfig(_ context.Context, dataDir string, content string, generateRPCAuth bool, dryRun bool) (string, error) {
 	client.generateRPCAuth = generateRPCAuth
 	client.recordConfig("ensure", dataDir, content, dryRun)

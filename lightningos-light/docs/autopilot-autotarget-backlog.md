@@ -5,9 +5,8 @@
 **Status audit:** 2026-08-29 - implemented; no longer active backlog.
 
 **Implemented 2026-07-09.** See `internal/server/rebalance_auto_target.go`.
-Active product work is tracked in GitHub issues and indexed by
-`../../docs/19_BACKLOG.md`; the design below is retained as implementation
-history.
+Active product work is tracked exclusively in GitHub issues; the design below
+is retained only as implementation history.
 
 ## v2 (2026-07-10) — dirigido por sell-through, calibrado ao nó
 

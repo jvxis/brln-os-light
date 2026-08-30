@@ -21,7 +21,7 @@ import (
 // over RPC + P2P (no ZMQ, no txindex, pruned OK) and BTCPay consumes NBXplorer.
 // The official btcpayserver-docker stack is intentionally NOT used here — it
 // ships its own bitcoind + LND. This compose reuses the node's existing
-// Bitcoin source and the native LND over REST (see docs/19_BACKLOG.md §14).
+// Bitcoin source and the native LND over REST.
 const (
 	btcpayAppID            = appmanifest.BTCPayID
 	btcpayImage            = appmanifest.BTCPayServerImage

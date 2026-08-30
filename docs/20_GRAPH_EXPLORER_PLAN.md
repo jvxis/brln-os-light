@@ -1010,4 +1010,4 @@ Related existing project design references:
 
 - `docs/18_CHANNEL_RANKING_PLAN.md`
 - `docs/17_CLOSE_RECOVERY_MANAGER_PLAN.md`
-- `docs/19_BACKLOG.md`
+- [GitHub issue #113 — optional external refill](https://github.com/jvxis/brln-os-light/issues/113)

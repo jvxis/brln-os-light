@@ -7470,10 +7470,12 @@ func shouldHoldSeedDrivenUpOnFullChannel(marketRefillMode bool, rawOutRatio floa
 	return strings.TrimSpace(baseCostSrc) == "seed"
 }
 
-func isStaleNoFlowAdvisoryFloorSource(src string) bool {
+func isStaleNoFlowAdvisoryFloorSource(src string, baseSrc string) bool {
 	switch strings.TrimSpace(src) {
 	case "seed", "seed-sink", "seed-soft", "seed-synthetic", "seed-goodliq-hold", "seed-hold", "no-signal":
 		return true
+	case "outrate":
+		return strings.TrimSpace(baseSrc) == "outrate-mem"
 	default:
 		return false
 	}
@@ -7485,6 +7487,7 @@ func relaxStaleNoFlowAdvisoryFloor(
 	targetPpm int,
 	floorPpm int,
 	floorSrc string,
+	floorBaseSrc string,
 	meta outRatioNormalizationMeta,
 	goodOutRatio float64,
 	noFlow1d bool,
@@ -7516,7 +7519,7 @@ func relaxStaleNoFlowAdvisoryFloor(
 		newInboundBootstrap {
 		return floorPpm, floorSrc, nil
 	}
-	if !isStaleNoFlowAdvisoryFloorSource(floorSrc) {
+	if !isStaleNoFlowAdvisoryFloorSource(floorSrc, floorBaseSrc) {
 		return floorPpm, floorSrc, nil
 	}
 	if bootstrapHours <= 0 {
@@ -11198,6 +11201,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		target,
 		floor,
 		floorSrc,
+		floorBaseSrc,
 		outNormMeta,
 		goodOutRatio,
 		noFlow1d,

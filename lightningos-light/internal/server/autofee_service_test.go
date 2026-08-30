@@ -1820,6 +1820,7 @@ func TestRelaxStaleNoFlowAdvisoryFloorUsesEffectiveLiquidity(t *testing.T) {
 		583,
 		607,
 		"seed-synthetic",
+		"seed",
 		meta,
 		0.20,
 		true,
@@ -1846,6 +1847,7 @@ func TestRelaxStaleNoFlowAdvisoryFloorUsesEffectiveLiquidity(t *testing.T) {
 		583,
 		607,
 		"seed-synthetic",
+		"seed",
 		meta,
 		0.20,
 		true,
@@ -1880,6 +1882,7 @@ func TestRelaxStaleNoFlowAdvisoryFloorSmallOutnormIsSlower(t *testing.T) {
 		620,
 		645,
 		"seed-synthetic",
+		"seed",
 		meta,
 		0.20,
 		true,
@@ -1906,6 +1909,7 @@ func TestRelaxStaleNoFlowAdvisoryFloorSmallOutnormIsSlower(t *testing.T) {
 		620,
 		645,
 		"seed-synthetic",
+		"seed",
 		meta,
 		0.20,
 		true,
@@ -1935,6 +1939,7 @@ func TestRelaxStaleNoFlowAdvisoryFloorKeepsHardCostFloor(t *testing.T) {
 		820,
 		1000,
 		"rebal-recent",
+		"rebal-recent",
 		meta,
 		0.20,
 		true,
@@ -1953,6 +1958,68 @@ func TestRelaxStaleNoFlowAdvisoryFloorKeepsHardCostFloor(t *testing.T) {
 	)
 	if len(tags) > 0 || floor != 1000 || src != "rebal-recent" {
 		t.Fatalf("hard recent rebalance floor must not relax: floor=%d src=%s tags=%v", floor, src, tags)
+	}
+}
+
+func TestRelaxStaleNoFlowAdvisoryFloorAllowsOutrateMemory(t *testing.T) {
+	meta := outRatioNormalizationMeta{
+		Raw:          0.99,
+		Effective:    0.39,
+		CapRel:       0.28,
+		OutlierSmall: true,
+	}
+	floor, src, tags := relaxStaleNoFlowAdvisoryFloor(
+		false,
+		804,
+		237,
+		885,
+		"outrate",
+		"outrate-mem",
+		meta,
+		0.20,
+		true,
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+		false,
+		false,
+		30*24,
+		defaultBootstrapHours,
+		135,
+		10,
+	)
+	if floor != 772 || src != "stale-noflow" || !containsTag(tags, "stale-noflow-down") || !containsTag(tags, "advisory-floor-relax") {
+		t.Fatalf("expected stale outrate memory to relax conservatively: floor=%d src=%s tags=%v", floor, src, tags)
+	}
+
+	floor, src, tags = relaxStaleNoFlowAdvisoryFloor(
+		false,
+		804,
+		237,
+		885,
+		"outrate",
+		"outrate",
+		meta,
+		0.20,
+		true,
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+		false,
+		false,
+		30*24,
+		defaultBootstrapHours,
+		135,
+		10,
+	)
+	if floor != 885 || src != "outrate" || len(tags) != 0 {
+		t.Fatalf("current outrate floor must remain protected: floor=%d src=%s tags=%v", floor, src, tags)
 	}
 }
 

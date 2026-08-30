@@ -431,6 +431,8 @@ export const recomputeGraphExplorer = () =>
 export const getLnClosedChannels = () => request('/api/lnops/closed-channels')
 export const getChannelRankings = (params?: { limit?: number; state?: string }) =>
   request(`/api/lnops/channel-ranking${buildQuery(params)}`)
+export const getChannelCapitalPlan = () =>
+  request('/api/lnops/channel-ranking/plan')
 export const getChannelRanking = (channelPoint: string) =>
   request(`/api/lnops/channel-ranking/${encodeURIComponent(channelPoint)}`)
 export const recomputeChannelRankings = () =>

@@ -461,6 +461,20 @@ POST /api/lnops/autofee/refresh
 - Refreshes reference fees globally or for the channel identified by `channel_point`, `channel_id`, or `channel_id_str`.
 - Records completed refreshes in an `autofee.refresh` audit event with the authenticated session, client IP, scope, target, dry-run/inbound parameters, outcome, and aggregate counts. Channel-not-found and service execution failures record a bounded error code without persisting the underlying error text.
 
+### Channel Ranking and capital plan
+
+GET /api/lnops/channel-ranking
+- Returns the persisted economic ranking. The existing score, state, reasons, recommendations, 7d/30d economics, liquidity, HTLC and automation fields remain the source of truth.
+
+GET /api/lnops/channel-ranking/plan
+- Returns a read-only operational view over the current ranking. Each entry keeps the original ranking item under `channel` and adds `action`, `priority`, `eligible`, observation progress, blockers, recoverable local balance and an optional primary action link.
+- `parked` is treated as an operator policy, not an economic classification. Parked channels continue to carry their ranking evidence but are not eligible for plan execution.
+- Active Magma commitments produce `protected` entries and never enter early-close rotation. If Magma state cannot be verified, close candidates fail closed with `magma_state_unavailable`.
+- `recoverable_local_sat` uses local balance, not total channel capacity, and is only operationally available after a cooperative close confirms.
+
+POST /api/lnops/channel-ranking/recompute
+- Refreshes the existing ranking engine. The capital plan does not recalculate or replace ranking scores.
+
 ### AutoFee/Rebalance automation intents
 
 GET /api/lnops/automation-intents/config
@@ -526,6 +540,7 @@ Body:
   "confirm_password": "optional fresh admin confirmation"
 }
 - Cooperative/force closes and manual pending-open or close-recovery fee bumps require recent `lightning_funds` reauthentication when login protection is enabled.
+- Cooperative close is rejected while the channel has an active Magma commitment. Force close remains an explicit emergency path and is never recommended by the capital plan.
 
 POST /api/lnops/channel/fees
 Body:

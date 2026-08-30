@@ -3238,6 +3238,19 @@ func (s *Server) handleLNCloseChannel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "channel_point required")
 		return
 	}
+	if !req.Force {
+		checkCtx, checkCancel := context.WithTimeout(r.Context(), 5*time.Second)
+		commitment, commitmentErr := s.activeMagmaCommitmentForChannel(checkCtx, req.ChannelPoint)
+		checkCancel()
+		if commitmentErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "failed to verify Magma commitment; channel close was not submitted")
+			return
+		}
+		if commitment != nil {
+			writeError(w, http.StatusConflict, "channel has an active Magma commitment and cannot be cooperatively closed yet")
+			return
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

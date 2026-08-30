@@ -441,6 +441,22 @@ type autofeeRefreshOptions struct {
 	SuppressTelegram      bool
 }
 
+type autofeeEconomicFloorDetail struct {
+	Reason                string  `json:"reason,omitempty"`
+	PeerFeeRatePpm        int64   `json:"peer_fee_rate_ppm,omitempty"`
+	PeerBaseEffectivePpm  int64   `json:"peer_base_effective_ppm,omitempty"`
+	PeerEffectiveCostPpm  int64   `json:"peer_effective_cost_ppm,omitempty"`
+	RebalanceCostPpm      int64   `json:"rebalance_cost_ppm,omitempty"`
+	RequiredCostPpm       int64   `json:"required_cost_ppm,omitempty"`
+	EffectiveEconRatio    float64 `json:"effective_econ_ratio,omitempty"`
+	OurBaseEffectivePpm   int64   `json:"our_base_effective_ppm,omitempty"`
+	ReferenceAmountSat    int64   `json:"reference_amount_sat,omitempty"`
+	CalculatedFeeFloorPpm int64   `json:"calculated_fee_floor_ppm,omitempty"`
+	EffectiveFeeFloorPpm  int64   `json:"effective_fee_floor_ppm,omitempty"`
+	Shadow                bool    `json:"shadow,omitempty"`
+	Formula               string  `json:"formula,omitempty"`
+}
+
 type autofeeLogItem struct {
 	Kind                     string   `json:"kind"`
 	Category                 string   `json:"category,omitempty"`
@@ -568,6 +584,7 @@ type autofeeLogItem struct {
 	HoursSinceLastChange     float64  `json:"hours_since_last_change,omitempty"`
 	TargetGapPpm             int      `json:"target_gap_ppm,omitempty"`
 	TargetGapPct             float64  `json:"target_gap_pct,omitempty"`
+	EconomicFloor            any      `json:"economic_floor,omitempty"`
 	ReferencePpm             int      `json:"reference_ppm,omitempty"`
 	RefreshSource            string   `json:"refresh_source,omitempty"`
 	CurrentInboundDiscount   int      `json:"current_inbound_discount"`
@@ -3934,12 +3951,15 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		}
 		if decision.AutomationIntent != nil && e.svc.automationIntents != nil {
 			_ = e.svc.automationIntents.RecordApplied(ctx, *decision.AutomationIntent, map[string]any{
-				"mode":       e.automationIntentConfig.Mode,
-				"shadow":     decision.IntentShadow,
-				"ppm_before": decision.IntentEffectBefore,
-				"ppm_after":  decision.IntentEffectAfter,
-				"profile":    e.profile.Name,
-				"node_class": e.calib.NodeClass,
+				"run_id":         runID,
+				"mode":           e.automationIntentConfig.Mode,
+				"shadow":         decision.IntentShadow,
+				"dry_run":        dryRun,
+				"decision_apply": decision.Apply,
+				"ppm_before":     decision.IntentEffectBefore,
+				"ppm_after":      decision.IntentEffectAfter,
+				"profile":        e.profile.Name,
+				"node_class":     e.calib.NodeClass,
 			}, e.now)
 		}
 		if decision.SuperSourceActive {
@@ -7450,10 +7470,12 @@ func shouldHoldSeedDrivenUpOnFullChannel(marketRefillMode bool, rawOutRatio floa
 	return strings.TrimSpace(baseCostSrc) == "seed"
 }
 
-func isStaleNoFlowAdvisoryFloorSource(src string) bool {
+func isStaleNoFlowAdvisoryFloorSource(src string, baseSrc string) bool {
 	switch strings.TrimSpace(src) {
 	case "seed", "seed-sink", "seed-soft", "seed-synthetic", "seed-goodliq-hold", "seed-hold", "no-signal":
 		return true
+	case "outrate":
+		return strings.TrimSpace(baseSrc) == "outrate-mem"
 	default:
 		return false
 	}
@@ -7465,6 +7487,7 @@ func relaxStaleNoFlowAdvisoryFloor(
 	targetPpm int,
 	floorPpm int,
 	floorSrc string,
+	floorBaseSrc string,
 	meta outRatioNormalizationMeta,
 	goodOutRatio float64,
 	noFlow1d bool,
@@ -7496,7 +7519,7 @@ func relaxStaleNoFlowAdvisoryFloor(
 		newInboundBootstrap {
 		return floorPpm, floorSrc, nil
 	}
-	if !isStaleNoFlowAdvisoryFloorSource(floorSrc) {
+	if !isStaleNoFlowAdvisoryFloorSource(floorSrc, floorBaseSrc) {
 		return floorPpm, floorSrc, nil
 	}
 	if bootstrapHours <= 0 {
@@ -8653,6 +8676,143 @@ func formatAutofeeOutrateSegment(d *decision) string {
 	return fmt.Sprintf("out_ppm7d≈%d | out_ref≈%d(%s)", maxInt(0, d.OutPpm7dRaw), d.OutPpm7d, source)
 }
 
+func automationIntentEvidenceNumber(evidence map[string]any, key string) (float64, bool) {
+	if len(evidence) == 0 {
+		return 0, false
+	}
+	value, ok := evidence[key]
+	if !ok || value == nil {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int8:
+		return float64(typed), true
+	case int16:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case uint:
+		return float64(typed), true
+	case uint8:
+		return float64(typed), true
+	case uint16:
+		return float64(typed), true
+	case uint32:
+		return float64(typed), true
+	case uint64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func automationIntentEvidenceInt64(evidence map[string]any, key string) (int64, bool) {
+	value, ok := automationIntentEvidenceNumber(evidence, key)
+	if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, false
+	}
+	return int64(math.Round(value)), true
+}
+
+func economicFloorDetailForIntent(intent *AutomationIntent, effectivePpm int, shadow bool) *autofeeEconomicFloorDetail {
+	if intent == nil || intent.Kind != automationIntentKindProtectFeeFloor {
+		return nil
+	}
+	evidence := intent.Evidence
+	detail := &autofeeEconomicFloorDetail{
+		Reason:                strings.TrimSpace(intent.ReasonCode),
+		CalculatedFeeFloorPpm: intent.FeeFloorPPM,
+		EffectiveFeeFloorPpm:  int64(maxInt(0, effectivePpm)),
+		Shadow:                shadow,
+	}
+	detail.PeerFeeRatePpm, _ = automationIntentEvidenceInt64(evidence, "peer_fee_rate_ppm")
+	detail.PeerBaseEffectivePpm, _ = automationIntentEvidenceInt64(evidence, "peer_base_effective_ppm")
+	detail.PeerEffectiveCostPpm, _ = automationIntentEvidenceInt64(evidence, "peer_effective_cost_ppm")
+	detail.RebalanceCostPpm, _ = automationIntentEvidenceInt64(evidence, "rebalance_cost_7d_ppm")
+	if detail.RebalanceCostPpm <= 0 {
+		detail.RebalanceCostPpm, _ = automationIntentEvidenceInt64(evidence, "cost_ppm")
+	}
+	detail.RequiredCostPpm, _ = automationIntentEvidenceInt64(evidence, "required_cost_ppm")
+	detail.EffectiveEconRatio, _ = automationIntentEvidenceNumber(evidence, "effective_econ_ratio")
+	detail.OurBaseEffectivePpm, _ = automationIntentEvidenceInt64(evidence, "outgoing_base_effective_ppm")
+	detail.ReferenceAmountSat, _ = automationIntentEvidenceInt64(evidence, "reference_amount_sat")
+
+	if detail.PeerBaseEffectivePpm <= 0 && detail.PeerEffectiveCostPpm > detail.PeerFeeRatePpm {
+		detail.PeerBaseEffectivePpm = detail.PeerEffectiveCostPpm - detail.PeerFeeRatePpm
+	}
+	if detail.PeerEffectiveCostPpm <= 0 && detail.PeerFeeRatePpm+detail.PeerBaseEffectivePpm > 0 {
+		detail.PeerEffectiveCostPpm = detail.PeerFeeRatePpm + detail.PeerBaseEffectivePpm
+	}
+	if detail.RequiredCostPpm <= 0 {
+		detail.RequiredCostPpm = maxInt64(detail.PeerEffectiveCostPpm, detail.RebalanceCostPpm)
+	}
+	if detail.OurBaseEffectivePpm <= 0 && detail.RequiredCostPpm > 0 && detail.EffectiveEconRatio > 0 && detail.CalculatedFeeFloorPpm > 0 {
+		// Older persisted intents predate the explicit local-base evidence. The
+		// economic envelope solves ceil(required/ratio - our_base), so the
+		// integer base can be reconstructed without changing the decision.
+		detail.OurBaseEffectivePpm = int64(math.Ceil(float64(detail.RequiredCostPpm)/detail.EffectiveEconRatio)) - detail.CalculatedFeeFloorPpm
+		if detail.OurBaseEffectivePpm < 0 {
+			detail.OurBaseEffectivePpm = 0
+		}
+	}
+
+	switch detail.Reason {
+	case "rebalance_peer_policy_unavailable_hold":
+		detail.Formula = fmt.Sprintf("econ_floor hold=%d ppm (peer policy unavailable)", detail.CalculatedFeeFloorPpm)
+	case "rebalance_paid_liquidity":
+		if detail.RebalanceCostPpm > 0 && detail.EffectiveEconRatio > 0 {
+			detail.Formula = fmt.Sprintf("econ_floor paid=%d / econ=%.2f => %d ppm", detail.RebalanceCostPpm, detail.EffectiveEconRatio, detail.CalculatedFeeFloorPpm)
+		}
+	default:
+		if detail.RequiredCostPpm > 0 && detail.EffectiveEconRatio > 0 {
+			costSource := fmt.Sprintf("required=%d", detail.RequiredCostPpm)
+			if detail.PeerEffectiveCostPpm > 0 && detail.RebalanceCostPpm > 0 {
+				costSource = fmt.Sprintf("required=max(peer=%d,rebal=%d)=%d", detail.PeerEffectiveCostPpm, detail.RebalanceCostPpm, detail.RequiredCostPpm)
+			} else if detail.PeerEffectiveCostPpm > 0 {
+				costSource = fmt.Sprintf("peer=%d+peer_base=%d=>%d", detail.PeerFeeRatePpm, detail.PeerBaseEffectivePpm, detail.PeerEffectiveCostPpm)
+			} else if detail.RebalanceCostPpm > 0 {
+				costSource = fmt.Sprintf("rebal=%d", detail.RebalanceCostPpm)
+			}
+			detail.Formula = fmt.Sprintf("econ_floor %s / econ=%.2f - our_base=%d => %d ppm", costSource, detail.EffectiveEconRatio, detail.OurBaseEffectivePpm, detail.CalculatedFeeFloorPpm)
+			if detail.ReferenceAmountSat > 0 {
+				detail.Formula += fmt.Sprintf(" @%d sat", detail.ReferenceAmountSat)
+			}
+		}
+	}
+	if detail.Formula == "" {
+		detail.Formula = fmt.Sprintf("econ_floor=%d ppm", detail.CalculatedFeeFloorPpm)
+	}
+	if detail.EffectiveFeeFloorPpm > 0 && detail.EffectiveFeeFloorPpm != detail.CalculatedFeeFloorPpm {
+		detail.Formula += fmt.Sprintf("; effective=%d ppm (cap)", detail.EffectiveFeeFloorPpm)
+	}
+	return detail
+}
+
+func formatAutofeeEconomicFloorSegment(d *decision) string {
+	if d == nil {
+		return ""
+	}
+	detail := economicFloorDetailForIntent(d.AutomationIntent, d.IntentEffectAfter, d.IntentShadow)
+	if detail == nil {
+		return ""
+	}
+	return detail.Formula
+}
+
 func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, string) {
 	if d == nil {
 		return "", "kept"
@@ -8750,6 +8910,9 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 		d.RevShare,
 		tagLine,
 	)
+	if economicFloor := formatAutofeeEconomicFloorSegment(d); economicFloor != "" {
+		line += " | " + economicFloor
+	}
 	if d.PrevInboundDiscount != d.InboundDiscount {
 		line = line + fmt.Sprintf(" | ↘️ inb %d→%d", d.PrevInboundDiscount, d.InboundDiscount)
 	} else if d.InboundDiscount > 0 {
@@ -8855,6 +9018,7 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		HoursSinceLastChange:    d.HoursSinceLastChange,
 		TargetGapPpm:            d.TargetGapPpm,
 		TargetGapPct:            d.TargetGapPct,
+		EconomicFloor:           economicFloorDetailForIntent(d.AutomationIntent, d.IntentEffectAfter, d.IntentShadow),
 	}
 	if err != nil {
 		payload.Error = err.Error()
@@ -9253,6 +9417,9 @@ func buildTelegramAutofeeChangedChannelLineFull(d *decision) string {
 		d.RevShare,
 		tagLine,
 	)
+	if economicFloor := formatAutofeeEconomicFloorSegment(d); economicFloor != "" {
+		line += " | " + economicFloor
+	}
 	if d.NewInbound {
 		line += fmt.Sprintf(" | NEW inbound %.1fh", d.ChannelAgeHours)
 	}
@@ -11034,6 +11201,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		target,
 		floor,
 		floorSrc,
+		floorBaseSrc,
 		outNormMeta,
 		goodOutRatio,
 		noFlow1d,

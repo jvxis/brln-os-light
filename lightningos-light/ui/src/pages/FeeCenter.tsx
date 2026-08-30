@@ -90,6 +90,22 @@ type AutofeeChannelSetting = {
   enabled?: boolean
 }
 
+type AutofeeEconomicFloorDetail = {
+  reason?: string
+  peer_fee_rate_ppm?: number
+  peer_base_effective_ppm?: number
+  peer_effective_cost_ppm?: number
+  rebalance_cost_ppm?: number
+  required_cost_ppm?: number
+  effective_econ_ratio?: number
+  our_base_effective_ppm?: number
+  reference_amount_sat?: number
+  calculated_fee_floor_ppm?: number
+  effective_fee_floor_ppm?: number
+  shadow?: boolean
+  formula?: string
+}
+
 type AutofeeResultItem = {
   kind?: string
   category?: string
@@ -135,6 +151,7 @@ type AutofeeResultItem = {
   target?: number
   target_raw?: number
   target_final?: number
+  economic_floor?: AutofeeEconomicFloorDetail
   out_ratio?: number
   out_ppm7d?: number
   rebal_ppm7d?: number
@@ -360,6 +377,7 @@ export default function FeeCenter() {
   const [channelSettings, setChannelSettings] = useState<Record<string, boolean>>({})
   const [resultItems, setResultItems] = useState<AutofeeResultItem[]>([])
   const [resultLines, setResultLines] = useState<string[]>([])
+  const [latestCalibration, setLatestCalibration] = useState<AutofeeResultItem | null>(null)
   const [pageStatus, setPageStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
@@ -472,6 +490,7 @@ export default function FeeCenter() {
       const payload = resultsRes.value as any
       setResultItems(Array.isArray(payload?.items) ? payload.items : [])
       setResultLines(Array.isArray(payload?.lines) ? payload.lines : [])
+      setLatestCalibration(payload?.latest_calibration?.kind === 'calib' ? payload.latest_calibration : null)
     }
     if (channelsRes.status === 'fulfilled') {
       const payload = channelsRes.value as any
@@ -512,7 +531,7 @@ export default function FeeCenter() {
   const latestRun = runs[0]
   const latestSummary = latestRun?.summary
   const latestSeed = latestRun?.seed
-  const latestCalib = latestRun?.calib
+  const latestCalib = latestCalibration || runs.find((run) => run.calib)?.calib
   const latestChanged = useMemo(
     () => (latestRun?.channels || []).filter((item) => item.category === 'changed'),
     [latestRun]
@@ -871,6 +890,7 @@ export default function FeeCenter() {
     const payload = await getAutofeeResults(params) as any
     setResultLines(Array.isArray(payload?.lines) ? payload.lines : [])
     setResultItems(Array.isArray(payload?.items) ? payload.items : [])
+    setLatestCalibration(payload?.latest_calibration?.kind === 'calib' ? payload.latest_calibration : null)
   }
 
   const handleRun = async (dryRun: boolean) => {
@@ -1037,6 +1057,9 @@ export default function FeeCenter() {
                       <span>{t('feeCenter.policy.floor')}: {formatPpm(item.floor)}</span>
                       <span>{t('feeCenter.policy.seed')}: {formatPpm(item.seed)}</span>
                     </div>
+                    {item.economic_floor?.formula ? (
+                      <p className="text-[11px] text-amber-100/75 [overflow-wrap:anywhere]">{item.economic_floor.formula}</p>
+                    ) : null}
                   </>
                 )}
                 {item.liquidity_state ? (

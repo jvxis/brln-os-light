@@ -451,6 +451,30 @@ Body:
 - Parking a channel disables Autofee for that channel, disables rebalance auto and manual restart, and excludes the channel as a rebalance source.
 - Unparking with `restore_previous=false` keeps Autofee and rebalance automations disabled until the operator explicitly enables them again.
 
+### AutoFee results and refresh auditing
+
+GET /api/lnops/autofee/results?runs=4
+- Returns the selected structured run `items` and rendered `lines`.
+- Also returns `latest_calibration`, containing the most recent structured node calibration from the complete AutoFee history, or `null` when no calibration has been recorded. This field is independent of the selected run window so channel reference refreshes do not hide the last valid node calibration.
+
+POST /api/lnops/autofee/refresh
+- Refreshes reference fees globally or for the channel identified by `channel_point`, `channel_id`, or `channel_id_str`.
+- Records completed refreshes in an `autofee.refresh` audit event with the authenticated session, client IP, scope, target, dry-run/inbound parameters, outcome, and aggregate counts. Channel-not-found and service execution failures record a bounded error code without persisting the underlying error text.
+
+### Channel Ranking and capital plan
+
+GET /api/lnops/channel-ranking
+- Returns the persisted economic ranking. The existing score, state, reasons, recommendations, 7d/30d economics, liquidity, HTLC and automation fields remain the source of truth.
+
+GET /api/lnops/channel-ranking/plan
+- Returns a read-only operational view over the current ranking. Each entry keeps the original ranking item under `channel` and adds `action`, `priority`, `eligible`, observation progress, blockers, recoverable local balance and an optional primary action link.
+- `parked` is treated as an operator policy, not an economic classification. Parked channels continue to carry their ranking evidence but are not eligible for plan execution.
+- Active Magma commitments produce `protected` entries and never enter early-close rotation. If Magma state cannot be verified, close candidates fail closed with `magma_state_unavailable`.
+- `recoverable_local_sat` uses local balance, not total channel capacity, and is only operationally available after a cooperative close confirms.
+
+POST /api/lnops/channel-ranking/recompute
+- Refreshes the existing ranking engine. The capital plan does not recalculate or replace ranking scores.
+
 ### AutoFee/Rebalance automation intents
 
 GET /api/lnops/automation-intents/config
@@ -473,11 +497,19 @@ GET /api/lnops/automation-intents?active=true&consumer=rebalance&kind=refill_tar
 - Lists current intents and their producer profile/node calibration provenance.
 - Includes `channel_id_str` so clients can preserve the full unsigned Lightning channel ID without JavaScript number rounding.
 - Supported kinds in the MVP are `refill_target` and `protect_fee_floor`.
+- `protect_fee_floor` evidence exposes the peer fee rate, amount-normalized peer and local base fees,
+  effective peer/required costs, econ ratio, reference amount, and calculated floor.
+- AutoFee result channel items influenced by that intent include an `economic_floor` object with the
+  same machine-readable breakdown plus a compact `formula` used by the UI, persisted result line,
+  and Telegram summary. This is decision provenance only and does not change the floor calculation.
 
 GET /api/lnops/automation-intents/history?limit=200
 - Lists publish, resolve, and apply events without credentials or payment secrets.
 - Events also include the exact `channel_id_str` representation.
 - An `applied` event means the intent influenced a consumer decision (for example, a score or fee-floor calculation); it does not by itself mean a rebalance job was queued or completed.
+- AutoFee `protect_fee_floor` apply events include `run_id`, `mode`, `shadow`, `dry_run`,
+  `decision_apply`, and the before/after ppm targets in metadata. Clients can group the latest
+  decision round without interpreting it as confirmation that LND published the policy.
 - Returns `{ "ok": true, "policy": ... }`.
 
 POST /api/lnops/peer/notes
@@ -508,6 +540,7 @@ Body:
   "confirm_password": "optional fresh admin confirmation"
 }
 - Cooperative/force closes and manual pending-open or close-recovery fee bumps require recent `lightning_funds` reauthentication when login protection is enabled.
+- Cooperative close is rejected while the channel has an active Magma commitment. Force close remains an explicit emergency path and is never recommended by the capital plan.
 
 POST /api/lnops/channel/fees
 Body:

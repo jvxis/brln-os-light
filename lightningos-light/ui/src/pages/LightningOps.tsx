@@ -580,6 +580,22 @@ type AutofeeChannelSetting = {
   enabled: boolean
 }
 
+type AutofeeEconomicFloorDetail = {
+  reason?: string
+  peer_fee_rate_ppm?: number
+  peer_base_effective_ppm?: number
+  peer_effective_cost_ppm?: number
+  rebalance_cost_ppm?: number
+  required_cost_ppm?: number
+  effective_econ_ratio?: number
+  our_base_effective_ppm?: number
+  reference_amount_sat?: number
+  calculated_fee_floor_ppm?: number
+  effective_fee_floor_ppm?: number
+  shadow?: boolean
+  formula?: string
+}
+
 type AutofeeResultItem = {
   kind: string
   category?: string
@@ -699,6 +715,7 @@ type AutofeeResultItem = {
   hours_since_last_change?: number
   target_gap_ppm?: number
   target_gap_pct?: number
+  economic_floor?: AutofeeEconomicFloorDetail
   reference_ppm?: number
   refresh_source?: string
 }
@@ -2585,6 +2602,9 @@ export default function LightningOps() {
     const targetFinal = item.target_final ?? item.new_ppm ?? targetRaw
     const targetLabel = targetFinal !== targetRaw ? `${targetRaw}→${targetFinal}` : `${targetRaw}`
     let baseLine = `${prefix} ${alias}: ${action}${deltaStr} | ${t('lightningOps.autofeeResultsLabelTarget')} ${targetLabel} | ${t('lightningOps.autofeeResultsLabelOutRatio')} ${outRatio.toFixed(2)} | ${t('lightningOps.autofeeResultsLabelOutPpm7d')}≈${outPpm7d} | ${t('lightningOps.autofeeResultsLabelRebalPpm7d')}≈${rebalPpm7d} | ${t('lightningOps.autofeeResultsLabelSeed')}≈${seed} | ${t('lightningOps.autofeeResultsLabelFloor')}≥${floor}${floorSrc} | ${t('lightningOps.autofeeResultsLabelMargin')}≈${margin} | ${t('lightningOps.autofeeResultsLabelRevShare')}≈${revShare.toFixed(2)} | ${tagLine}`
+    if (item.economic_floor?.formula) {
+      baseLine += ` | ${item.economic_floor.formula}`
+    }
     if (item.new_inbound) {
       const age = typeof item.channel_age_hours === 'number' ? item.channel_age_hours : 0
       baseLine += ` | NEW inbound ${age.toFixed(1)}h`
@@ -3915,6 +3935,17 @@ export default function LightningOps() {
     }
     if (targetID === LIGHTNING_TOOLS_SECTION_ID || LIGHTNING_TOOL_SECTION_IDS.has(targetID)) {
       setLightningToolsOpen(true)
+    }
+    const targetChannelPoint = pendingScrollChannelRef.current
+    if (targetChannelPoint && targetID === CLOSE_CHANNEL_SECTION_ID) {
+      setClosePoint(targetChannelPoint)
+      setCloseForce(false)
+      pendingScrollChannelRef.current = ''
+    }
+    if (targetChannelPoint && targetID === UPDATE_FEES_SECTION_ID) {
+      setFeeScopeAll(false)
+      setFeeChannelPoint(targetChannelPoint)
+      pendingScrollChannelRef.current = ''
     }
     window.setTimeout(() => {
       const target = document.getElementById(targetID)

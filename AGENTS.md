@@ -270,6 +270,7 @@ GET    /api/lnops/autofee/results
 GET    /api/lnops/autofee/outcomes
 POST   /api/lnops/autofee/outcomes/measure
 GET    /api/lnops/channel-ranking
+GET    /api/lnops/channel-ranking/plan
 POST   /api/lnops/channel-ranking/recompute
 GET    /api/lnops/channel-ranking/open-candidates
 POST   /api/lnops/channel-ranking/open-candidates/recompute

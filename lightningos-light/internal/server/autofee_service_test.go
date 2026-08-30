@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"reflect"
@@ -2874,6 +2875,110 @@ func TestBuildAutofeeChannelLogEntryIncludesCostBasisAndProfit(t *testing.T) {
 	}
 	if !strings.Contains(formatAutofeeTags(d), "profit-pos-neg-soft") {
 		t.Fatalf("expected formatted softening tag, got %q", formatAutofeeTags(d))
+	}
+}
+
+func TestEconomicFloorDetailExplainsPeerBudgetFormula(t *testing.T) {
+	intent := &AutomationIntent{
+		Kind:        automationIntentKindProtectFeeFloor,
+		ReasonCode:  "rebalance_peer_fee_budget",
+		FeeFloorPPM: 934,
+		Evidence: map[string]any{
+			"peer_fee_rate_ppm":           int64(600),
+			"peer_base_effective_ppm":     float64(100),
+			"peer_effective_cost_ppm":     json.Number("700"),
+			"required_cost_ppm":           "700",
+			"effective_econ_ratio":        0.75,
+			"outgoing_base_effective_ppm": int64(0),
+			"reference_amount_sat":        int64(10_000),
+		},
+	}
+
+	detail := economicFloorDetailForIntent(intent, 934, false)
+	if detail == nil {
+		t.Fatal("expected economic floor detail")
+	}
+	want := "econ_floor peer=600+peer_base=100=>700 / econ=0.75 - our_base=0 => 934 ppm @10000 sat"
+	if detail.Formula != want {
+		t.Fatalf("unexpected formula: got %q want %q", detail.Formula, want)
+	}
+	if detail.PeerFeeRatePpm != 600 || detail.PeerBaseEffectivePpm != 100 || detail.PeerEffectiveCostPpm != 700 {
+		t.Fatalf("unexpected peer breakdown: %+v", detail)
+	}
+	if detail.RequiredCostPpm != 700 || detail.EffectiveEconRatio != 0.75 || detail.ReferenceAmountSat != 10_000 {
+		t.Fatalf("unexpected economic inputs: %+v", detail)
+	}
+}
+
+func TestEconomicFloorDetailReconstructsLegacyLocalBaseAndShowsCap(t *testing.T) {
+	intent := &AutomationIntent{
+		Kind:        automationIntentKindProtectFeeFloor,
+		ReasonCode:  "rebalance_cost_budget",
+		FeeFloorPPM: 1047,
+		Evidence: map[string]any{
+			"peer_fee_rate_ppm":       float64(600),
+			"peer_effective_cost_ppm": float64(700),
+			"rebalance_cost_7d_ppm":   float64(800),
+			"required_cost_ppm":       float64(800),
+			"effective_econ_ratio":    float64(0.75),
+			"reference_amount_sat":    float64(10_000),
+		},
+	}
+
+	detail := economicFloorDetailForIntent(intent, 1_000, false)
+	if detail == nil {
+		t.Fatal("expected economic floor detail")
+	}
+	if detail.OurBaseEffectivePpm != 20 {
+		t.Fatalf("expected legacy local base reconstruction, got %+v", detail)
+	}
+	want := "econ_floor required=max(peer=700,rebal=800)=800 / econ=0.75 - our_base=20 => 1047 ppm @10000 sat; effective=1000 ppm (cap)"
+	if detail.Formula != want {
+		t.Fatalf("unexpected capped formula: got %q want %q", detail.Formula, want)
+	}
+}
+
+func TestAutofeeEconomicFloorFormulaReachesStoredAndTelegramLines(t *testing.T) {
+	d := &decision{
+		Alias:       "ARCFLOWEX",
+		ChannelID:   42,
+		LocalPpm:    196,
+		NewPpm:      934,
+		Target:      196,
+		TargetRaw:   196,
+		TargetFinal: 934,
+		Apply:       true,
+		AutomationIntent: &AutomationIntent{
+			Kind:        automationIntentKindProtectFeeFloor,
+			ReasonCode:  "rebalance_peer_fee_budget",
+			FeeFloorPPM: 934,
+			Evidence: map[string]any{
+				"peer_fee_rate_ppm":       600,
+				"peer_base_effective_ppm": 100,
+				"peer_effective_cost_ppm": 700,
+				"required_cost_ppm":       700,
+				"effective_econ_ratio":    0.75,
+				"reference_amount_sat":    10_000,
+			},
+		},
+		IntentEffectAfter: 934,
+	}
+
+	entry := buildAutofeeChannelLogEntry(d, "changed", false, nil)
+	if entry.Payload == nil || entry.Payload.EconomicFloor == nil {
+		t.Fatalf("expected structured economic floor payload: %+v", entry.Payload)
+	}
+	detail, ok := entry.Payload.EconomicFloor.(*autofeeEconomicFloorDetail)
+	if !ok {
+		t.Fatalf("unexpected economic floor payload type: %T", entry.Payload.EconomicFloor)
+	}
+	formula := detail.Formula
+	if formula == "" || !strings.Contains(entry.Line, formula) {
+		t.Fatalf("expected stored result line to include formula %q, got %q", formula, entry.Line)
+	}
+	telegram := buildTelegramAutofeeChangedChannelLineFull(d)
+	if !strings.Contains(telegram, formula) {
+		t.Fatalf("expected Telegram line to include formula %q, got %q", formula, telegram)
 	}
 }
 

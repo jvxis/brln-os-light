@@ -288,6 +288,14 @@ func (s *Server) handleAutofeeRefresh(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
+	auditTarget, auditScope := autofeeRefreshAuditTarget(req.ChannelPoint, channelID)
+	auditMetadata := map[string]any{
+		"scope":           auditScope,
+		"dry_run":         req.DryRun,
+		"include_inbound": req.IncludeInbound,
+		"channel_point":   strings.TrimSpace(req.ChannelPoint),
+		"channel_id_str":  autofeeRefreshAuditChannelID(channelID),
+	}
 
 	var result AutofeeRefreshResult
 	var err error
@@ -297,14 +305,44 @@ func (s *Server) handleAutofeeRefresh(w http.ResponseWriter, r *http.Request) {
 		result, err = svc.RefreshReferenceFees(ctx, req.DryRun, req.IncludeInbound)
 	}
 	if err != nil {
+		auditMetadata["status"] = "error"
 		if errors.Is(err, errAutofeeRefreshChannelNotFound) {
+			auditMetadata["error_code"] = "channel_not_found"
+			s.recordAuditEvent(r, "autofee.refresh", auditTarget, auditMetadata)
 			writeError(w, http.StatusNotFound, "channel not found")
 			return
 		}
+		auditMetadata["error_code"] = "refresh_failed"
+		s.recordAuditEvent(r, "autofee.refresh", auditTarget, auditMetadata)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	auditMetadata["status"] = auditStatusFromResult(result.Total, result.Errors)
+	auditMetadata["total"] = result.Total
+	auditMetadata["updated"] = result.Updated
+	auditMetadata["inbound_updated"] = result.InboundUpdated
+	auditMetadata["same"] = result.Same
+	auditMetadata["skipped"] = result.Skipped
+	auditMetadata["errors"] = result.Errors
+	s.recordAuditEvent(r, "autofee.refresh", auditTarget, auditMetadata)
 	writeJSON(w, http.StatusOK, result)
+}
+
+func autofeeRefreshAuditTarget(channelPoint string, channelID uint64) (string, string) {
+	if channelPoint = strings.TrimSpace(channelPoint); channelPoint != "" {
+		return channelPoint, "channel"
+	}
+	if channelID != 0 {
+		return strconv.FormatUint(channelID, 10), "channel"
+	}
+	return "all", "all"
+}
+
+func autofeeRefreshAuditChannelID(channelID uint64) string {
+	if channelID == 0 {
+		return ""
+	}
+	return strconv.FormatUint(channelID, 10)
 }
 
 func (s *Server) handleAutofeeStatus(w http.ResponseWriter, r *http.Request) {
@@ -451,7 +489,45 @@ limit $1
 		}
 		items = append(items, item)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"lines": out, "items": items})
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rows.Close()
+
+	latestCalibration, err := s.readLatestAutofeeCalibration(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"lines":              out,
+		"items":              items,
+		"latest_calibration": latestCalibration,
+	})
+}
+
+func (s *Server) readLatestAutofeeCalibration(ctx context.Context) (map[string]any, error) {
+	var raw []byte
+	err := s.db.QueryRow(ctx, `
+select payload
+from autofee_logs
+where payload->>'kind' = 'calib'
+order by occurred_at desc, id desc
+limit 1
+`).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var item map[string]any
+	if err := json.Unmarshal(raw, &item); err != nil {
+		return nil, err
+	}
+	return item, nil
 }
 
 func parseAutofeeLimit(raw string) int {

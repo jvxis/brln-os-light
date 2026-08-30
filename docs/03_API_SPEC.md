@@ -451,6 +451,16 @@ Body:
 - Parking a channel disables Autofee for that channel, disables rebalance auto and manual restart, and excludes the channel as a rebalance source.
 - Unparking with `restore_previous=false` keeps Autofee and rebalance automations disabled until the operator explicitly enables them again.
 
+### AutoFee results and refresh auditing
+
+GET /api/lnops/autofee/results?runs=4
+- Returns the selected structured run `items` and rendered `lines`.
+- Also returns `latest_calibration`, containing the most recent structured node calibration from the complete AutoFee history, or `null` when no calibration has been recorded. This field is independent of the selected run window so channel reference refreshes do not hide the last valid node calibration.
+
+POST /api/lnops/autofee/refresh
+- Refreshes reference fees globally or for the channel identified by `channel_point`, `channel_id`, or `channel_id_str`.
+- Records completed refreshes in an `autofee.refresh` audit event with the authenticated session, client IP, scope, target, dry-run/inbound parameters, outcome, and aggregate counts. Channel-not-found and service execution failures record a bounded error code without persisting the underlying error text.
+
 ### AutoFee/Rebalance automation intents
 
 GET /api/lnops/automation-intents/config

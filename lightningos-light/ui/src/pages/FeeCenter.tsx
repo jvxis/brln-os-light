@@ -90,6 +90,22 @@ type AutofeeChannelSetting = {
   enabled?: boolean
 }
 
+type AutofeeEconomicFloorDetail = {
+  reason?: string
+  peer_fee_rate_ppm?: number
+  peer_base_effective_ppm?: number
+  peer_effective_cost_ppm?: number
+  rebalance_cost_ppm?: number
+  required_cost_ppm?: number
+  effective_econ_ratio?: number
+  our_base_effective_ppm?: number
+  reference_amount_sat?: number
+  calculated_fee_floor_ppm?: number
+  effective_fee_floor_ppm?: number
+  shadow?: boolean
+  formula?: string
+}
+
 type AutofeeResultItem = {
   kind?: string
   category?: string
@@ -135,6 +151,7 @@ type AutofeeResultItem = {
   target?: number
   target_raw?: number
   target_final?: number
+  economic_floor?: AutofeeEconomicFloorDetail
   out_ratio?: number
   out_ppm7d?: number
   rebal_ppm7d?: number
@@ -1037,6 +1054,9 @@ export default function FeeCenter() {
                       <span>{t('feeCenter.policy.floor')}: {formatPpm(item.floor)}</span>
                       <span>{t('feeCenter.policy.seed')}: {formatPpm(item.seed)}</span>
                     </div>
+                    {item.economic_floor?.formula ? (
+                      <p className="text-[11px] text-amber-100/75 [overflow-wrap:anywhere]">{item.economic_floor.formula}</p>
+                    ) : null}
                   </>
                 )}
                 {item.liquidity_state ? (

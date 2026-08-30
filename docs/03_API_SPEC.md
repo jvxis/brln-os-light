@@ -473,11 +473,19 @@ GET /api/lnops/automation-intents?active=true&consumer=rebalance&kind=refill_tar
 - Lists current intents and their producer profile/node calibration provenance.
 - Includes `channel_id_str` so clients can preserve the full unsigned Lightning channel ID without JavaScript number rounding.
 - Supported kinds in the MVP are `refill_target` and `protect_fee_floor`.
+- `protect_fee_floor` evidence exposes the peer fee rate, amount-normalized peer and local base fees,
+  effective peer/required costs, econ ratio, reference amount, and calculated floor.
+- AutoFee result channel items influenced by that intent include an `economic_floor` object with the
+  same machine-readable breakdown plus a compact `formula` used by the UI, persisted result line,
+  and Telegram summary. This is decision provenance only and does not change the floor calculation.
 
 GET /api/lnops/automation-intents/history?limit=200
 - Lists publish, resolve, and apply events without credentials or payment secrets.
 - Events also include the exact `channel_id_str` representation.
 - An `applied` event means the intent influenced a consumer decision (for example, a score or fee-floor calculation); it does not by itself mean a rebalance job was queued or completed.
+- AutoFee `protect_fee_floor` apply events include `run_id`, `mode`, `shadow`, `dry_run`,
+  `decision_apply`, and the before/after ppm targets in metadata. Clients can group the latest
+  decision round without interpreting it as confirmation that LND published the policy.
 - Returns `{ "ok": true, "policy": ... }`.
 
 POST /api/lnops/peer/notes

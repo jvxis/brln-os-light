@@ -257,6 +257,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/automation-intents", s.handleAutomationIntentsGet)
 		r.Get("/automation-intents/history", s.handleAutomationIntentHistoryGet)
 		r.Get("/channel-ranking", s.handleChannelRankingGet)
+		r.Get("/channel-ranking/plan", s.handleChannelCapitalPlanGet)
 		r.Post("/channel-ranking/recompute", s.handleChannelRankingRecomputePost)
 		r.Get("/channel-ranking/open-candidates", s.handleChannelOpenCandidatesGet)
 		r.Post("/channel-ranking/open-candidates/recompute", s.handleChannelOpenCandidatesRecomputePost)

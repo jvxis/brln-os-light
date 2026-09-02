@@ -604,7 +604,7 @@ update magma_orders set local_state=$2, funding_txid=$3, updated_at=now() where 
 
 	// Best effort inline; the poller finishes the job if the outpoint is not
 	// visible yet, which is normal rather than an error.
-	if err := s.confirmChannelPoint(ctx, token, record.OrderID, fundingTxid); err != nil && s.logger != nil {
+	if err := s.confirmChannelPointInline(ctx, token, record.OrderID, fundingTxid); err != nil && s.logger != nil {
 		s.logger.Printf("magma: order %s awaiting channel point: %v", record.OrderID, err)
 	}
 	return s.orderByID(ctx, record.OrderID)
@@ -613,7 +613,35 @@ update magma_orders set local_state=$2, funding_txid=$3, updated_at=now() where 
 // confirmChannelPoint resolves the funding txid to a full outpoint and reports it
 // to Amboss. The vout is read from the node rather than assumed: real orders
 // carry both :0 and :1.
+// confirmChannelPointInline is the attempt made moments after the broadcast. It
+// never raises an alert, whatever Amboss answers: two seconds is not enough time
+// for a transaction to reach them, so a failure here carries no information
+// about the sale. The reconciliation retries it, and that one may alert.
+func (s *MagmaService) confirmChannelPointInline(ctx context.Context, token, orderID, fundingTxid string) error {
+	return s.confirmChannelPointMode(ctx, token, orderID, fundingTxid, false)
+}
+
 func (s *MagmaService) confirmChannelPoint(ctx context.Context, token, orderID, fundingTxid string) error {
+	return s.confirmChannelPointMode(ctx, token, orderID, fundingTxid, true)
+}
+
+// magmaConfirmShouldAlert decides whether a failed confirmation is worth the
+// operator's attention.
+//
+// Two rules, and the first one is what matters. An inline attempt runs seconds
+// after the broadcast and is expected to fail, so it never alerts - the alert
+// then cannot be reintroduced by Amboss rewording an error, which is exactly
+// how it appeared: "Error finding transaction in the mempool" is a wording the
+// propagation check had never seen, so a routine wait was reported as a
+// failure and then quietly fixed 93 seconds later by the retry.
+func magmaConfirmShouldAlert(inline bool, err error) bool {
+	if err == nil || inline {
+		return false
+	}
+	return !magmaErrorIsPropagationRace(err)
+}
+
+func (s *MagmaService) confirmChannelPointMode(ctx context.Context, token, orderID, fundingTxid string, mayAlert bool) error {
 	channelPoint, err := s.findChannelPoint(ctx, fundingTxid)
 	if err != nil {
 		return err
@@ -631,7 +659,7 @@ update magma_orders set local_state=$2, channel_point=$3, updated_at=now() where
 		// yet and answers that the output does not exist. That is propagation, not
 		// a wrong outpoint: the reconciliation retries and it lands within a cycle
 		// or two. Alerting on it trains the operator to ignore real alerts.
-		if magmaErrorIsPropagationRace(err) {
+		if !magmaConfirmShouldAlert(!mayAlert, err) {
 			s.appendEvent(ctx, orderID, "confirm_pending", "info", fmt.Sprintf(
 				"Amboss has not seen funding transaction %s yet; retrying", fundingTxid), nil)
 			return err
@@ -700,7 +728,10 @@ func magmaErrorIsPropagationRace(err error) bool {
 	lowered := strings.ToLower(err.Error())
 	return strings.Contains(lowered, "not found in transaction") ||
 		strings.Contains(lowered, "transaction not found") ||
-		strings.Contains(lowered, "output not found")
+		strings.Contains(lowered, "output not found") ||
+		// Amboss's fourth wording for the same thing, seen 2026-09-02:
+		// "Error finding transaction in the mempool".
+		strings.Contains(lowered, "finding transaction")
 }
 
 // magmaTxidFromPoint returns the transaction id from either a bare txid or a

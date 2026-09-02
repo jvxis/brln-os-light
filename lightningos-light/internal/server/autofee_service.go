@@ -5494,6 +5494,10 @@ func removeAutofeeTags(tags []string, drop map[string]bool) []string {
 }
 
 func applyAutofeeIdleRefreshDecision(d *decision, now time.Time, targetPpm int, referencePpm int, source string) {
+	applyAutofeeIdleRefreshDecisionWithFloor(d, now, targetPpm, referencePpm, source, false)
+}
+
+func applyAutofeeIdleRefreshDecisionWithFloor(d *decision, now time.Time, targetPpm int, referencePpm int, source string, protectFloor bool) {
 	if d == nil || targetPpm <= 0 {
 		return
 	}
@@ -5502,15 +5506,22 @@ func applyAutofeeIdleRefreshDecision(d *decision, now time.Time, targetPpm int, 
 		referencePpm = targetPpm
 	}
 	d.Tags = removeAutofeeTags(d.Tags, map[string]bool{
-		"autofee_settling": true,
-		"cooldown":         true,
-		"cooldown-profit":  true,
-		"floor-lock":       true,
-		"hold-small":       true,
-		"same-ppm":         true,
-		"stepcap":          true,
-		"stepcap-lock":     true,
+		"autofee_settling":                true,
+		"cooldown":                        true,
+		"cooldown-profit":                 true,
+		"floor-lock":                      true,
+		"hold-small":                      true,
+		"same-ppm":                        true,
+		"stepcap":                         true,
+		"stepcap-lock":                    true,
+		"intent-protect-fee-floor":        true,
+		"intent-protect-fee-shadow":       true,
+		"intent-protect-fee-contract-cap": true,
 	})
+	d.AutomationIntent = nil
+	d.IntentShadow = false
+	d.IntentEffectBefore = 0
+	d.IntentEffectAfter = 0
 	d.Tags = appendAutofeeTagOnce(d.Tags, "idle-refresh")
 	if source != "" {
 		d.Tags = appendAutofeeTagOnce(d.Tags, "idle-refresh:"+source)
@@ -5531,7 +5542,10 @@ func applyAutofeeIdleRefreshDecision(d *decision, now time.Time, targetPpm int, 
 
 	outboundChanged := targetPpm != d.LocalPpm
 	inboundChanged := d.InboundDiscount != d.PrevInboundDiscount
-	smallDeltaHeld := shouldHoldAutofeeSmallDelta(d.LocalPpm, targetPpm)
+	// An enforced interlock floor is a safety/economic constraint, not a
+	// discretionary fee adjustment. It must not be neutralized by the regular
+	// small-delta hold after idle refresh has selected a lower stale reference.
+	smallDeltaHeld := !protectFloor && shouldHoldAutofeeSmallDelta(d.LocalPpm, targetPpm)
 	if smallDeltaHeld {
 		d.TargetFinal = d.LocalPpm
 		d.NewPpm = d.LocalPpm
@@ -5573,6 +5587,16 @@ func applyAutofeeIdleRefreshDecision(d *decision, now time.Time, targetPpm int, 
 	} else if d.Target == d.LocalPpm {
 		st.StalledRounds = 0
 	}
+}
+
+func resolveAutofeeIdleRefreshIntent(localPpm, refreshTargetPpm int, intents []AutomationIntent, cfg AutomationIntentConfig, minPpm, maxPpm int) (int, *AutomationIntent, bool) {
+	adjustedPpm, _, intent, shadow := applyProtectFeeFloorIntent(
+		localPpm, refreshTargetPpm, refreshTargetPpm != localPpm, intents, cfg, minPpm, maxPpm,
+	)
+	if intent == nil || shadow {
+		return refreshTargetPpm, intent, shadow
+	}
+	return adjustedPpm, intent, false
 }
 
 func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.ChannelInfo, d *decision, forward7d forwardStat, forward21d forwardStat, inbound7d inboundStat, rebalMovement7d rebalStat, rebal7d rebalStat, rebal21d rebalStat) *decision {
@@ -5629,10 +5653,51 @@ func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.
 		source = adjustedSource
 	}
 	targetPpm = clampInt(targetPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
-	if shouldSkipAutofeeIdleRefreshRepeat(d.State, e.now, d.LocalPpm, targetPpm) {
+	refreshTargetPpm := targetPpm
+	intentMaxPpm := e.cfg.MaxPpm
+	if _, magmaMaxPpm, capped := magmaClampChannelFees(ch.ChannelID, ch.ChannelPoint, 0, int64(intentMaxPpm)); capped && magmaMaxPpm < int64(intentMaxPpm) {
+		intentMaxPpm = int(magmaMaxPpm)
+	}
+	effectiveTargetPpm, intent, intentShadow := resolveAutofeeIdleRefreshIntent(
+		d.LocalPpm,
+		refreshTargetPpm,
+		e.automationIntents[ch.ChannelID],
+		e.automationIntentConfig,
+		e.cfg.MinPpm,
+		intentMaxPpm,
+	)
+	if shouldSkipAutofeeIdleRefreshRepeat(d.State, e.now, d.LocalPpm, effectiveTargetPpm) {
 		return d
 	}
-	applyAutofeeIdleRefreshDecision(d, e.now, targetPpm, referencePpm, source)
+	protectFloor := intent != nil && !intentShadow && effectiveTargetPpm != refreshTargetPpm
+	applyAutofeeIdleRefreshDecisionWithFloor(d, e.now, effectiveTargetPpm, referencePpm, source, protectFloor)
+	if intent != nil {
+		// Keep the idle-refresh reference visible as the raw target while making
+		// the interlock-adjusted value explicit as the final target. This mirrors
+		// the normal autofee decision telemetry and makes the prevented decrease
+		// auditable in stored results and notifications.
+		d.Target = refreshTargetPpm
+		d.TargetRaw = refreshTargetPpm
+		d.TargetGapPpm = refreshTargetPpm - d.LocalPpm
+		d.TargetGapPct = calcTargetGapPct(d.LocalPpm, refreshTargetPpm)
+		d.IntentEffectBefore = refreshTargetPpm
+		d.IntentEffectAfter = clampInt(int(intent.FeeFloorPPM), e.cfg.MinPpm, intentMaxPpm)
+		d.IntentShadow = intentShadow
+		intentCopy := *intent
+		d.AutomationIntent = &intentCopy
+		if intentShadow {
+			d.Tags = appendAutofeeTagOnce(d.Tags, "idle-refresh-intent-shadow")
+			d.Tags = appendAutofeeTagOnce(d.Tags, "intent-protect-fee-shadow")
+		} else {
+			d.TargetFinal = effectiveTargetPpm
+			d.NewPpm = effectiveTargetPpm
+			d.Tags = appendAutofeeTagOnce(d.Tags, "idle-refresh-intent-floor")
+			d.Tags = appendAutofeeTagOnce(d.Tags, "intent-protect-fee-floor")
+			if int64(intentMaxPpm) < intent.FeeFloorPPM {
+				d.Tags = appendAutofeeTagOnce(d.Tags, "intent-protect-fee-contract-cap")
+			}
+		}
+	}
 	return d
 }
 

@@ -526,7 +526,9 @@ type RebalanceOverview struct {
 	SovereignSellThroughSlow7d          float64                       `json:"sovereign_sellthrough_slow_7d"`
 	SovereignSellThroughWindowHours     int                           `json:"sovereign_sellthrough_window_hours"`
 	SovereignSellThroughSlowWindowHours int                           `json:"sovereign_sellthrough_slow_window_hours"`
+	SovereignJobs7d                     int64                         `json:"sovereign_jobs_7d"`
 	SovExploreJobs7d                    int64                         `json:"sovereign_exploration_jobs_7d"`
+	SovExploreShare7d                   float64                       `json:"sovereign_exploration_share_7d"`
 	SovExploreRebalanceAmount7dSat      int64                         `json:"sovereign_exploration_rebalance_amount_7d_sat"`
 	SovExploreRebalanceCost7dSat        int64                         `json:"sovereign_exploration_rebalance_cost_7d_sat"`
 	SovExploreForwardAmount7dSat        int64                         `json:"sovereign_exploration_forward_amount_7d_sat"`
@@ -11323,14 +11325,11 @@ func trimTimeWindow(window []time.Time, cutoff time.Time) []time.Time {
 // them gate bypass on empirical-history filters (structural_cooldown,
 // low_success, route_dead, paid_liquidity_unsold, budget_efficiency_hard).
 //
-// Scarcity rule: when the non-probe candidate count is at most twice maxJobs,
-// all candidates are marked as ExplorationSlot=true. The 2× multiplier
-// captures the practical regime where there are "many" candidates on paper
-// but most are blocked by empirical-history gates (structural_cooldown,
-// route_dead, low_success) — without the bypass, only random tail picks
-// would explore, missing high-score blocked candidates at the head. The
-// position order is preserved so the score-based ranking still drives which
-// jobs run within the maxJobs cap.
+// The configured percentage is a hard per-cycle ceiling, including when the
+// candidate pool is scarce. This prevents a small pool from silently turning a
+// 20% exploration setting into 100% exploration. At least one non-probe stays
+// unmarked so a candidate that passes the normal economic/history gates can
+// always compete on exploitation merit.
 //
 // Burnout filter: candidates for which `burnoutFn(channelID) == true` are
 // kept in the candidate list (so the score ranking is unaffected) but never
@@ -11378,33 +11377,10 @@ func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, 
 	// excludeFromExploration: targets that must NOT receive the exploration
 	// mark. Two cases, both meaning "let the hard guard act on its own merit":
 	//   - R5 burnout: chronically-failing exploration target.
-	//   - Structural cooldown threshold reached (>= 20 fails / 24h): without
-	//     this, the M3 scarcity bypass below would mark a structurally-dead
-	//     target as exploration and let it skip target_structural_cooldown
-	//     forever (observed in prod 2026-05-31 with flashsats: 28 failures,
-	//     never cooled down because the small candidate pool triggered M3 and
-	//     the occasional partial kept resetting R5). Excluding it here makes
-	//     the structural cooldown bite normally.
+	//   - Structural cooldown threshold reached (>= 20 fails / 24h): excluding
+	//     it keeps a structurally-dead target from skipping the hard guard.
 	excludeFromExploration := func(c rebalanceTarget) bool {
 		return burnoutFn(c.Channel.ChannelID) || structuralFn(c)
-	}
-	// Scarcity bypass: when there are at most 2× maxJobs real candidates, the
-	// batch is small enough that empirical-history gates would veto too many
-	// top-ranked picks (kappa/CLB-style: high score, blocked by historical
-	// failures). Mark every non-probe as exploration so the ranking — not the
-	// gates — drives which jobs run within the maxJobs cap. Burned-out and
-	// structurally-dead targets stay in the list but skip the mark — they only
-	// proceed on own merit, ending the cycle-burn pattern.
-	if nonProbeCount <= maxJobs*2 {
-		out := make([]rebalanceTarget, 0, len(candidates))
-		out = append(out, candidates[:probeCount]...)
-		for _, c := range candidates[probeCount:] {
-			if !excludeFromExploration(c) {
-				c.ExplorationSlot = true
-			}
-			out = append(out, c)
-		}
-		return out
 	}
 	// Cap slots so at least one non-probe remains as deterministic top pick.
 	if slots >= nonProbeCount {
@@ -15324,6 +15300,10 @@ where report_date >= current_date - interval '6 days'
 	if economics, err := s.fetchSovereignAutopilotEconomics7d(ctx, cfg); err == nil {
 		sovereignEconomics7d = economics
 	}
+	sovereignExplorationShare7d := 0.0
+	if sovereignEconomics7d.Total.JobCount > 0 {
+		sovereignExplorationShare7d = float64(sovereignEconomics7d.Exploration.JobCount) / float64(sovereignEconomics7d.Total.JobCount)
+	}
 	fastPath := s.fetchFastPathTelemetry24h(ctx)
 	fastPathHitRate24h := 0.0
 	if fastPath.Attempts > 0 {
@@ -15446,7 +15426,9 @@ where report_date >= current_date - interval '6 days'
 		SovereignSellThroughSlow7d:          sovereignEconomics7d.Total.SellThroughSlow,
 		SovereignSellThroughWindowHours:     sovereignEconomics7d.Total.AttributionWindowHours,
 		SovereignSellThroughSlowWindowHours: sovereignEconomics7d.Total.SlowSellerWindowHours,
+		SovereignJobs7d:                     sovereignEconomics7d.Total.JobCount,
 		SovExploreJobs7d:                    sovereignEconomics7d.Exploration.JobCount,
+		SovExploreShare7d:                   sovereignExplorationShare7d,
 		SovExploreRebalanceAmount7dSat:      sovereignEconomics7d.Exploration.RebalanceAmountSat,
 		SovExploreRebalanceCost7dSat:        sovereignEconomics7d.Exploration.RebalanceCostSat,
 		SovExploreForwardAmount7dSat:        sovereignEconomics7d.Exploration.ForwardAmountSat,

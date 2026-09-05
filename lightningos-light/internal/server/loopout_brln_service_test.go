@@ -1,10 +1,15 @@
 package server
 
 import (
+	"fmt"
 	"testing"
 
 	"lightningos-light/internal/lndclient"
 )
+
+type loopOutBRLNTestRowFunc func(...any) error
+
+func (fn loopOutBRLNTestRowFunc) Scan(dest ...any) error { return fn(dest...) }
 
 func TestLoopOutBRLNPartsNeverOvershoot(t *testing.T) {
 	parts, last := loopOutBRLNParts(250_001, 100_000)
@@ -60,6 +65,87 @@ func TestLoopOutBRLNCandidatesHonorManualSelection(t *testing.T) {
 	candidates := loopOutBRLNCandidates(channels, map[uint64]struct{}{2: {}}, 100_000, 0, 60)
 	if len(candidates) != 1 || candidates[0].channel.ChannelID != 2 {
 		t.Fatalf("unexpected candidates: %#v", candidates)
+	}
+}
+
+func TestLoopOutBRLNChooseCandidateKeepsSuccessfulSource(t *testing.T) {
+	candidates := []loopOutBRLNCandidate{
+		{channel: lndclient.ChannelInfo{ChannelID: 1}},
+		{channel: lndclient.ChannelInfo{ChannelID: 2}},
+		{channel: lndclient.ChannelInfo{ChannelID: 3}},
+	}
+	candidate, ok := loopOutBRLNChooseCandidate(candidates, nil, "2")
+	if !ok || candidate.channel.ChannelID != 2 {
+		t.Fatalf("candidate=%d ok=%t, want sticky channel 2", candidate.channel.ChannelID, ok)
+	}
+}
+
+func TestLoopOutBRLNChooseCandidateAdvancesAfterFailure(t *testing.T) {
+	candidates := []loopOutBRLNCandidate{
+		{channel: lndclient.ChannelInfo{ChannelID: 1}},
+		{channel: lndclient.ChannelInfo{ChannelID: 2}},
+		{channel: lndclient.ChannelInfo{ChannelID: 3}},
+	}
+	candidate, ok := loopOutBRLNChooseCandidate(candidates, map[uint64]struct{}{2: {}}, "2")
+	if !ok || candidate.channel.ChannelID != 3 {
+		t.Fatalf("candidate=%d ok=%t, want channel 3 after channel 2 failed", candidate.channel.ChannelID, ok)
+	}
+	candidate, ok = loopOutBRLNChooseCandidate(candidates, map[uint64]struct{}{2: {}, 3: {}}, "3")
+	if !ok || candidate.channel.ChannelID != 1 {
+		t.Fatalf("candidate=%d ok=%t, want wrapped channel 1", candidate.channel.ChannelID, ok)
+	}
+	if _, ok := loopOutBRLNChooseCandidate(candidates, map[uint64]struct{}{1: {}, 2: {}, 3: {}}, "3"); ok {
+		t.Fatal("expected no candidate after every source failed in this round")
+	}
+}
+
+func TestLoopOutBRLNChooseCandidateLeavesIneligibleCursor(t *testing.T) {
+	// Candidate generation has already removed inactive channels and channels
+	// below the liquidity/fee floor. If the cursor is absent, selection safely
+	// falls back to the best remaining candidate.
+	candidates := []loopOutBRLNCandidate{
+		{channel: lndclient.ChannelInfo{ChannelID: 1}},
+		{channel: lndclient.ChannelInfo{ChannelID: 3}},
+	}
+	candidate, ok := loopOutBRLNChooseCandidate(candidates, nil, "2")
+	if !ok || candidate.channel.ChannelID != 1 {
+		t.Fatalf("candidate=%d ok=%t, want best eligible channel 1", candidate.channel.ChannelID, ok)
+	}
+}
+
+func TestLoopOutBRLNChooseCandidateKeepsCursorAfterFeeRefresh(t *testing.T) {
+	// Editing max_fee_ppm rebuilds the candidate list on the next tick but does
+	// not change the persisted source cursor. The current source remains sticky
+	// whenever it still satisfies the refreshed fee and liquidity guardrails.
+	candidatesAfterFeeChange := []loopOutBRLNCandidate{
+		{channel: lndclient.ChannelInfo{ChannelID: 1}},
+		{channel: lndclient.ChannelInfo{ChannelID: 2}},
+	}
+	candidate, ok := loopOutBRLNChooseCandidate(candidatesAfterFeeChange, nil, "2")
+	if !ok || candidate.channel.ChannelID != 2 {
+		t.Fatalf("candidate=%d ok=%t, want cursor channel 2 after fee refresh", candidate.channel.ChannelID, ok)
+	}
+}
+
+func TestScanLoopOutBRLNJobRestoresSourceCursor(t *testing.T) {
+	row := loopOutBRLNTestRowFunc(func(dest ...any) error {
+		if len(dest) != 24 {
+			return fmt.Errorf("scan destination count=%d, want 24", len(dest))
+		}
+		*dest[0].(*int64) = 7
+		*dest[9].(*[]byte) = []byte(`["11","22"]`)
+		*dest[17].(*string) = "22"
+		return nil
+	})
+	job, err := scanLoopOutBRLNJob(row)
+	if err != nil {
+		t.Fatalf("scan job: %v", err)
+	}
+	if job.ID != 7 || job.SourceCursorChannelID != "22" {
+		t.Fatalf("job id/cursor=%d/%q, want 7/22", job.ID, job.SourceCursorChannelID)
+	}
+	if len(job.SelectedChannelIDs) != 2 || job.SelectedChannelIDs[1] != "22" {
+		t.Fatalf("selected ids=%#v, want persisted channel list", job.SelectedChannelIDs)
 	}
 }
 

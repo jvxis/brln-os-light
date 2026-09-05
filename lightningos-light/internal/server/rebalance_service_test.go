@@ -795,9 +795,7 @@ func TestInjectSovereignExplorationSlotsDisabled(t *testing.T) {
 }
 
 func TestInjectSovereignExplorationSlotsMovesLowScore(t *testing.T) {
-	// Use 15 candidates with maxJobs=5 so nonProbeCount (15) > 2*maxJobs (10)
-	// and the scarcity branch does NOT fire — this isolates the random-tail
-	// exploration behavior.
+	// Use 15 candidates to exercise the random-tail exploration behavior.
 	candidates := make([]rebalanceTarget, 15)
 	for i := range candidates {
 		candidates[i].Score = int64(150 - i*10) // 150,140,...,10
@@ -833,8 +831,6 @@ func TestInjectSovereignExplorationSlotsMovesLowScore(t *testing.T) {
 }
 
 func TestInjectSovereignExplorationSlotsPreservesProbes(t *testing.T) {
-	// Use enough candidates that scarcity does not fire (nonProbeCount > 2*maxJobs).
-	// 1 probe + 14 non-probes = 15 total. maxJobs=5, 2*5=10. 14 > 10 → normal path.
 	candidates := []rebalanceTarget{
 		{Score: -1, CooldownProbe: true, Channel: RebalanceChannel{ChannelID: 99}},
 		{Score: 140}, {Score: 130}, {Score: 120}, {Score: 110},
@@ -847,44 +843,36 @@ func TestInjectSovereignExplorationSlotsPreservesProbes(t *testing.T) {
 	}
 }
 
-// Scarcity bypass: when nonProbeCount <= 2*maxJobs the batch is small enough
-// that empirical-history gates would veto too many top-ranked picks (high
-// score candidates blocked by historical failures). Mark every candidate
-// as exploration so the score ranking — not the gates — drives selection.
-// This is the fix for the "16 candidates, 0 selected" scenario where kappa
-// and CLB (positive profit, ROI > 1) sat at the head ranking but were
-// blocked by target_structural_cooldown; only random tail picks were
-// becoming exploration and missing them entirely.
-func TestInjectSovereignExplorationSlotsMarksWithin2xMaxJobs(t *testing.T) {
+// A scarce pool must still respect the configured slot percentage.
+func TestInjectSovereignExplorationSlotsCapsScarcePool(t *testing.T) {
 	candidates := make([]rebalanceTarget, 6)
 	for i := range candidates {
 		candidates[i].Score = int64(100 - i*10)
 		candidates[i].Channel.ChannelID = uint64(i + 1)
 	}
-	// maxJobs=8, len=6 (below 2*maxJobs=16). Scarcity bypass → all marked.
+	// maxJobs=8, len=6, pct=15 => one exploration slot even though every
+	// candidate would fit in the cycle.
 	out := injectSovereignExplorationSlots(candidates, 8, 15, nil, nil)
 	if len(out) != len(candidates) {
 		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
 	}
-	for i, c := range out {
-		if !c.ExplorationSlot {
-			t.Fatalf("expected all candidates marked under scarcity, got unmarked at %d (score=%d)", i, c.Score)
+	marked := 0
+	for _, c := range out {
+		if c.ExplorationSlot {
+			marked++
 		}
 	}
-	// Score order is preserved (no random shuffle when all are explored).
-	for i := 0; i < len(out)-1; i++ {
-		if out[i].Score < out[i+1].Score {
-			t.Fatalf("score order disturbed at %d: %d -> %d", i, out[i].Score, out[i+1].Score)
-		}
+	if marked != 1 {
+		t.Fatalf("expected exactly 1 exploration mark in scarce pool, got %d", marked)
+	}
+	if out[0].ExplorationSlot {
+		t.Fatalf("highest-ranked candidate must remain an exploitation candidate")
 	}
 }
 
-// Production-shape regression: 16 candidates, maxJobs=8, pct=30.
-// Old threshold (<= maxJobs) wouldn't fire (16 > 8) and only ~2 random tail
-// candidates would be marked. New threshold (<= 2*maxJobs) fires (16 <= 16)
-// and all 16 get the exploration mark so kappa/CLB-style top picks blocked
-// by empirical gates are no longer silently vetoed.
-func TestInjectSovereignExplorationSlotsMarksAtScarcityBoundary(t *testing.T) {
+// Production-shape regression: 16 candidates, maxJobs=8, pct=30 must reserve
+// exactly two exploration positions, not promote the full candidate pool.
+func TestInjectSovereignExplorationSlotsCapsFormerScarcityBoundary(t *testing.T) {
 	candidates := make([]rebalanceTarget, 16)
 	for i := range candidates {
 		candidates[i].Score = int64(1000 - i*10)
@@ -900,27 +888,26 @@ func TestInjectSovereignExplorationSlotsMarksAtScarcityBoundary(t *testing.T) {
 			marked++
 		}
 	}
-	if marked != 16 {
-		t.Fatalf("expected all 16 candidates marked at scarcity boundary, got %d", marked)
+	if marked != 2 {
+		t.Fatalf("expected configured 2 exploration slots at former scarcity boundary, got %d", marked)
 	}
-	// Score order preserved.
-	for i := 0; i < len(out)-1; i++ {
-		if out[i].Score < out[i+1].Score {
-			t.Fatalf("score order disturbed at %d: %d -> %d", i, out[i].Score, out[i+1].Score)
+	for i := 0; i < 6; i++ {
+		if out[i].ExplorationSlot {
+			t.Fatalf("top exploitation candidate at %d was marked as exploration", i)
 		}
 	}
 }
 
-// Scarcity bypass must still respect cooldown probe entries (CooldownProbe
-// targets are a distinct mechanism and never receive the exploration mark).
-func TestInjectSovereignExplorationSlotsScarcityKeepsProbesUnmarked(t *testing.T) {
+// Cooldown probes are a distinct mechanism and never receive the exploration
+// mark or consume the one normal candidate preserved by the exploration cap.
+func TestInjectSovereignExplorationSlotsScarcePoolKeepsProbeAndNormalCandidate(t *testing.T) {
 	candidates := []rebalanceTarget{
 		{Score: -1, CooldownProbe: true, Channel: RebalanceChannel{ChannelID: 99}},
 		{Score: 100, Channel: RebalanceChannel{ChannelID: 1}},
 		{Score: 80, Channel: RebalanceChannel{ChannelID: 2}},
 	}
-	// maxJobs=5, nonProbeCount=2, len=3. Scarcity branch triggers because
-	// 2 <= 5; probe stays first and unmarked, two non-probes get marked.
+	// The probe stays first and unmarked; one non-probe stays normal and the
+	// other receives the single configured exploration slot.
 	out := injectSovereignExplorationSlots(candidates, 5, 20, nil, nil)
 	if len(out) != 3 {
 		t.Fatalf("length mismatch: %d vs 3", len(out))
@@ -928,17 +915,13 @@ func TestInjectSovereignExplorationSlotsScarcityKeepsProbesUnmarked(t *testing.T
 	if !out[0].CooldownProbe || out[0].ExplorationSlot {
 		t.Fatalf("probe must stay first and unmarked, got probe=%v explore=%v", out[0].CooldownProbe, out[0].ExplorationSlot)
 	}
-	for i := 1; i < len(out); i++ {
-		if !out[i].ExplorationSlot {
-			t.Fatalf("non-probe at %d must be marked under scarcity", i)
-		}
+	if out[1].ExplorationSlot || !out[2].ExplorationSlot {
+		t.Fatalf("expected one normal and one exploration candidate, got %+v", out)
 	}
 }
 
-// Regression guard: when nonProbeCount > 2*maxJobs the scarcity bypass must
-// NOT trigger — only the configured pct slots get marked, top entries stay
-// deterministic, and the random tail behavior is unchanged.
-func TestInjectSovereignExplorationSlotsScarcityNotTriggeredAboveBoundary(t *testing.T) {
+// Larger pools use the same configured cap and deterministic top positions.
+func TestInjectSovereignExplorationSlotsUsesConfiguredSlotsInLargePool(t *testing.T) {
 	candidates := make([]rebalanceTarget, 12)
 	for i := range candidates {
 		candidates[i].Score = int64(150 - i*10)
@@ -964,9 +947,9 @@ func TestInjectSovereignExplorationSlotsScarcityNotTriggeredAboveBoundary(t *tes
 }
 
 // R5 — burnoutFn must prevent burned-out channels from receiving the
-// ExplorationSlot mark, even in the scarcity branch. The channel stays in
+// ExplorationSlot mark, even in a scarce pool. The channel stays in
 // the candidate list (so it can compete on score) but loses the gate bypass.
-func TestInjectSovereignExplorationSlotsBurnoutFiltersScarcity(t *testing.T) {
+func TestInjectSovereignExplorationSlotsBurnoutFiltersScarcePool(t *testing.T) {
 	candidates := []rebalanceTarget{
 		{Score: 100, Channel: RebalanceChannel{ChannelID: 1}}, // healthy
 		{Score: 90, Channel: RebalanceChannel{ChannelID: 2}},  // burned
@@ -975,25 +958,21 @@ func TestInjectSovereignExplorationSlotsBurnoutFiltersScarcity(t *testing.T) {
 	}
 	burned := map[uint64]bool{2: true, 4: true}
 	burnoutFn := func(channelID uint64) bool { return burned[channelID] }
-	// maxJobs=5, nonProbeCount=4 ≤ 10 → scarcity branch. Burned channels
-	// (2, 4) should NOT get ExplorationSlot.
+	// The only tail candidate is burned, so the draw produces no exploration
+	// mark instead of expanding beyond the configured slot budget.
 	out := injectSovereignExplorationSlots(candidates, 5, 20, burnoutFn, nil)
 	if len(out) != 4 {
 		t.Fatalf("expected 4 candidates returned, got %d", len(out))
 	}
 	for _, c := range out {
-		expectMark := !burned[c.Channel.ChannelID]
-		if c.ExplorationSlot != expectMark {
-			t.Fatalf("channel=%d expected mark=%v got=%v", c.Channel.ChannelID, expectMark, c.ExplorationSlot)
+		if c.ExplorationSlot {
+			t.Fatalf("burnout-filtered scarce pool must not add a replacement mark, channel=%d", c.Channel.ChannelID)
 		}
 	}
 }
 
-// 2026-05-31 fix — structuralFn must prevent targets at the structural
-// cooldown threshold from receiving the ExplorationSlot mark in the scarcity
-// branch. Without it, the M3 scarcity bypass lets a structurally-dead target
-// (flashsats: 28 failures) skip target_structural_cooldown forever.
-func TestInjectSovereignExplorationSlotsStructuralFiltersScarcity(t *testing.T) {
+// Structural cooldown must prevent a dead target from receiving the bypass.
+func TestInjectSovereignExplorationSlotsStructuralFiltersScarcePool(t *testing.T) {
 	candidates := []rebalanceTarget{
 		{Score: 100, Channel: RebalanceChannel{ChannelID: 1}}, // healthy
 		{Score: 90, Channel: RebalanceChannel{ChannelID: 2}},  // structurally dead
@@ -1001,22 +980,23 @@ func TestInjectSovereignExplorationSlotsStructuralFiltersScarcity(t *testing.T) 
 	}
 	structuralDead := map[uint64]bool{2: true}
 	structuralFn := func(c rebalanceTarget) bool { return structuralDead[c.Channel.ChannelID] }
-	// maxJobs=5, nonProbeCount=3 ≤ 10 → scarcity branch. Channel 2 (structural)
-	// must NOT get ExplorationSlot so target_structural_cooldown can bite it.
+	// Channel 2 must stay unmarked so target_structural_cooldown can bite it.
 	out := injectSovereignExplorationSlots(candidates, 5, 20, nil, structuralFn)
 	if len(out) != 3 {
 		t.Fatalf("expected 3 candidates returned, got %d", len(out))
 	}
 	for _, c := range out {
-		expectMark := !structuralDead[c.Channel.ChannelID]
-		if c.ExplorationSlot != expectMark {
-			t.Fatalf("channel=%d expected mark=%v got=%v", c.Channel.ChannelID, expectMark, c.ExplorationSlot)
+		if c.Channel.ChannelID == 2 && c.ExplorationSlot {
+			t.Fatalf("structurally dead channel received exploration bypass")
 		}
+	}
+	if !out[2].ExplorationSlot {
+		t.Fatalf("expected healthy tail candidate to receive exploration slot: %+v", out)
 	}
 }
 
-// R5 — when nonProbeCount > 2*maxJobs (no scarcity), burned channels in the
-// tail pool are excluded from the random-pick exploration draw.
+// R5 — burned channels in the tail pool are excluded from the random-pick
+// exploration draw.
 func TestInjectSovereignExplorationSlotsBurnoutFiltersTailDraw(t *testing.T) {
 	candidates := make([]rebalanceTarget, 12)
 	for i := range candidates {

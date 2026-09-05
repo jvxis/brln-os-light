@@ -759,10 +759,13 @@ func TestApplyAutofeeIdleRefreshDecisionHardSetsAndBypassesSkips(t *testing.T) {
 		FloorSrc:            "rebal",
 		FloorBasePpm:        1000,
 		FloorBaseSrc:        "rebal",
-		Tags:                []string{"cooldown", "hold-small", "same-ppm", "stepcap", "neg-margin"},
+		Tags:                []string{"cooldown", "hold-small", "same-ppm", "stepcap", "neg-margin", "intent-protect-fee-floor"},
 		State:               st,
 		InboundDiscount:     0,
 		PrevInboundDiscount: 0,
+		AutomationIntent:    &AutomationIntent{Kind: automationIntentKindProtectFeeFloor, FeeFloorPPM: 1150},
+		IntentEffectBefore:  1100,
+		IntentEffectAfter:   1150,
 	}
 
 	applyAutofeeIdleRefreshDecision(d, now, 650, 600, "rebalppm21d+10%")
@@ -783,6 +786,9 @@ func TestApplyAutofeeIdleRefreshDecisionHardSetsAndBypassesSkips(t *testing.T) {
 	}
 	if !containsTag(d.Tags, "idle-refresh") || !containsTag(d.Tags, "idle-refresh:rebalppm21d+10%") || !containsTag(d.Tags, "neg-margin") {
 		t.Fatalf("unexpected tags after idle refresh: %v", d.Tags)
+	}
+	if d.AutomationIntent != nil || containsTag(d.Tags, "intent-protect-fee-floor") || d.IntentEffectBefore != 0 || d.IntentEffectAfter != 0 {
+		t.Fatalf("idle refresh must clear stale intent telemetry before reevaluation: %+v", d)
 	}
 	if !st.LastTs.Equal(now) || st.LastDir != "down" || st.StalledRounds != 0 || st.LastPpm != 650 {
 		t.Fatalf("unexpected state after idle refresh: %+v", st)
@@ -881,6 +887,54 @@ func TestApplyAutofeeIdleRefreshDecisionHoldsSmallDelta(t *testing.T) {
 	}
 	if st.LastPpm != 528 || !st.LastTs.Equal(lastChange) || st.LastDir != "up" || st.StalledRounds != 3 {
 		t.Fatalf("small-delta idle refresh should not mutate outbound apply state: %+v", st)
+	}
+}
+
+func TestResolveAutofeeIdleRefreshIntentEnforcesFloor(t *testing.T) {
+	intent := AutomationIntent{
+		Kind:        automationIntentKindProtectFeeFloor,
+		Confidence:  0.95,
+		FeeFloorPPM: 1250,
+	}
+	cfg := AutomationIntentConfig{
+		Mode:          automationIntentModeEnforce,
+		MinConfidence: 0.70,
+	}
+
+	target, selected, shadow := resolveAutofeeIdleRefreshIntent(1250, 213, []AutomationIntent{intent}, cfg, 1, 5000)
+	if target != 1250 || selected == nil || shadow {
+		t.Fatalf("expected enforced 1250 ppm floor, got target=%d intent=%+v shadow=%v", target, selected, shadow)
+	}
+
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	st := &autofeeChannelState{LastPpm: 1248, LastTs: now.Add(-time.Hour)}
+	d := &decision{LocalPpm: 1248, State: st}
+	applyAutofeeIdleRefreshDecisionWithFloor(d, now, target, 213, "seed:native", true)
+	if !d.Apply || d.NewPpm != 1250 || d.TargetFinal != 1250 || st.LastPpm != 1250 {
+		t.Fatalf("enforced floor must bypass the small-delta hold: decision=%+v state=%+v", d, st)
+	}
+}
+
+func TestResolveAutofeeIdleRefreshIntentHonorsShadowAndCap(t *testing.T) {
+	intent := AutomationIntent{
+		Kind:        automationIntentKindProtectFeeFloor,
+		Confidence:  0.95,
+		FeeFloorPPM: 1250,
+	}
+	cfg := AutomationIntentConfig{
+		Mode:          automationIntentModeShadow,
+		MinConfidence: 0.70,
+	}
+
+	target, selected, shadow := resolveAutofeeIdleRefreshIntent(900, 213, []AutomationIntent{intent}, cfg, 1, 1000)
+	if target != 213 || selected == nil || !shadow {
+		t.Fatalf("shadow mode must preserve idle target while exposing intent: target=%d intent=%+v shadow=%v", target, selected, shadow)
+	}
+
+	cfg.Mode = automationIntentModeEnforce
+	target, selected, shadow = resolveAutofeeIdleRefreshIntent(900, 213, []AutomationIntent{intent}, cfg, 1, 1000)
+	if target != 1000 || selected == nil || shadow {
+		t.Fatalf("enforced intent must honor the channel fee cap: target=%d intent=%+v shadow=%v", target, selected, shadow)
 	}
 }
 

@@ -124,6 +124,7 @@ type LoopOutBRLNJob struct {
 	FeeSat                 int64      `json:"fee_sat"`
 	AttemptCount           int        `json:"attempt_count"`
 	RetryRound             int        `json:"retry_round"`
+	SourceCursorChannelID  string     `json:"-"`
 	LastError              string     `json:"last_error,omitempty"`
 	NextAttemptAt          time.Time  `json:"next_attempt_at"`
 	CreatedAt              time.Time  `json:"created_at"`
@@ -232,6 +233,7 @@ create table if not exists loopout_brln_jobs (
   fee_sat bigint not null default 0,
   attempt_count integer not null default 0,
   retry_round integer not null default 0,
+  source_cursor_channel_id text not null default '',
   last_error text not null default '',
   next_attempt_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
@@ -243,6 +245,8 @@ alter table loopout_brln_jobs
   add column if not exists suppress_failed_telegram boolean not null default false;
 alter table loopout_brln_jobs
   add column if not exists strike_return_enabled boolean not null default false;
+alter table loopout_brln_jobs
+  add column if not exists source_cursor_channel_id text not null default '';
 
 create table if not exists loopout_brln_payments (
   id bigserial primary key,
@@ -492,6 +496,42 @@ func loopOutBRLNCandidates(channels []lndclient.ChannelInfo, selected map[uint64
 	return out
 }
 
+// loopOutBRLNChooseCandidate preserves the source cursor used by the original
+// Loop Out script: a successful source remains first choice for the next
+// tranche while it is eligible. A failed source is already present in
+// attempted, so selection advances from that source to the next eligible one
+// and wraps only after reaching the end of the ordered candidates.
+func loopOutBRLNChooseCandidate(candidates []loopOutBRLNCandidate, attempted map[uint64]struct{}, cursorRaw string) (loopOutBRLNCandidate, bool) {
+	if len(candidates) == 0 {
+		return loopOutBRLNCandidate{}, false
+	}
+	cursor, err := strconv.ParseUint(strings.TrimSpace(cursorRaw), 10, 64)
+	if err == nil && cursor > 0 {
+		cursorIndex := -1
+		for i, candidate := range candidates {
+			if candidate.channel.ChannelID == cursor {
+				cursorIndex = i
+				break
+			}
+		}
+		if cursorIndex >= 0 {
+			for offset := 0; offset < len(candidates); offset++ {
+				candidate := candidates[(cursorIndex+offset)%len(candidates)]
+				if _, seen := attempted[candidate.channel.ChannelID]; !seen {
+					return candidate, true
+				}
+			}
+			return loopOutBRLNCandidate{}, false
+		}
+	}
+	for _, candidate := range candidates {
+		if _, seen := attempted[candidate.channel.ChannelID]; !seen {
+			return candidate, true
+		}
+	}
+	return loopOutBRLNCandidate{}, false
+}
+
 func (s *LoopOutBRLNService) Preview(ctx context.Context, raw LoopOutBRLNRequest) (LoopOutBRLNPreview, error) {
 	req, err := normalizeLoopOutBRLNRequest(raw)
 	if err != nil {
@@ -644,7 +684,7 @@ func (s *LoopOutBRLNService) activeJob(ctx context.Context) (LoopOutBRLNJob, err
 	return scanLoopOutBRLNJob(s.db.QueryRow(ctx, `
 select id,lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
  min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,strike_return_enabled,status,sent_sat,fee_sat,attempt_count,retry_round,
- last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
+ source_cursor_channel_id,last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
 from loopout_brln_jobs where status = any($1) order by id desc limit 1`, loopOutBRLNActiveStatuses))
 }
 
@@ -655,7 +695,7 @@ func (s *LoopOutBRLNService) GetJob(ctx context.Context, id int64) (LoopOutBRLNJ
 	return scanLoopOutBRLNJob(s.db.QueryRow(ctx, `
 select id,lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
  min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,strike_return_enabled,status,sent_sat,fee_sat,attempt_count,retry_round,
- last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
+ source_cursor_channel_id,last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
 from loopout_brln_jobs where id=$1`, id))
 }
 
@@ -667,7 +707,7 @@ func scanLoopOutBRLNJob(row loopOutBRLNRow) (LoopOutBRLNJob, error) {
 	err := row.Scan(&job.ID, &job.LightningAddress, &job.TotalSat, &job.TrancheSat, &job.IntervalSeconds,
 		&job.TimeoutSeconds, &job.MaxFeePPM, &job.MinLocalPercent, &job.Comment, &selectedRaw,
 		&job.SuppressFailedTelegram, &job.StrikeReturnEnabled, &job.Status,
-		&job.SentSat, &job.FeeSat, &job.AttemptCount, &job.RetryRound, &job.LastError, &job.NextAttemptAt,
+		&job.SentSat, &job.FeeSat, &job.AttemptCount, &job.RetryRound, &job.SourceCursorChannelID, &job.LastError, &job.NextAttemptAt,
 		&job.CreatedAt, &job.UpdatedAt, &job.StartedAt, &job.CompletedAt)
 	if err != nil {
 		return job, err
@@ -683,7 +723,7 @@ func (s *LoopOutBRLNService) ListJobs(ctx context.Context, limit int) ([]LoopOut
 	rows, err := s.db.Query(ctx, `
 select id,lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
  min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,strike_return_enabled,status,sent_sat,fee_sat,attempt_count,retry_round,
- last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
+ source_cursor_channel_id,last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
 from loopout_brln_jobs order by id desc limit $1`, limit)
 	if err != nil {
 		return nil, err
@@ -976,7 +1016,7 @@ func (s *LoopOutBRLNService) nextDueJob(ctx context.Context) (LoopOutBRLNJob, er
 	return scanLoopOutBRLNJob(s.db.QueryRow(ctx, `
 select id,lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
  min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,strike_return_enabled,status,sent_sat,fee_sat,attempt_count,retry_round,
- last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
+ source_cursor_channel_id,last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
 from loopout_brln_jobs
 where status in ('running','waiting_liquidity','pause_requested','cancel_requested')
   and (next_attempt_at <= now() or status in ('pause_requested','cancel_requested'))
@@ -1052,18 +1092,12 @@ func (s *LoopOutBRLNService) executeNextAttempt(ctx context.Context, job LoopOut
 	if err != nil {
 		return err
 	}
-	available := candidates[:0]
-	for _, candidate := range candidates {
-		if _, seen := attempted[candidate.channel.ChannelID]; !seen {
-			available = append(available, candidate)
-		}
-	}
-	if len(available) == 0 {
+	candidate, ok := loopOutBRLNChooseCandidate(candidates, attempted, job.SourceCursorChannelID)
+	if !ok {
 		newRound := len(candidates) > 0 && len(attempted) > 0
 		reason := "No eligible channel can send the next tranche while preserving the liquidity floor"
 		return s.waitForLiquidity(ctx, job, reason, newRound)
 	}
-	candidate := available[0]
 	resolveCtx, resolveCancel := context.WithTimeout(ctx, 30*time.Second)
 	invoice, err := resolveLightningAddress(resolveCtx, job.LightningAddress, amount, job.Comment)
 	resolveCancel()
@@ -1214,7 +1248,8 @@ values ($1,$2,$3,$4,$5,'resolving',$6,$7,$8) returning id`, job.ID, sequence, jo
 	if err != nil {
 		return LoopOutBRLNPayment{}, err
 	}
-	if _, err := tx.Exec(ctx, `update loopout_brln_jobs set status='running',last_error='',updated_at=now() where id=$1`, job.ID); err != nil {
+	if _, err := tx.Exec(ctx, `update loopout_brln_jobs set status='running',source_cursor_channel_id=$2,last_error='',updated_at=now() where id=$1`,
+		job.ID, strconv.FormatUint(candidate.channel.ChannelID, 10)); err != nil {
 		return LoopOutBRLNPayment{}, err
 	}
 	if err := insertLoopOutBRLNEvent(ctx, tx, job.ID, "payment_started", "info", "Payment attempt started", map[string]any{
@@ -1259,7 +1294,7 @@ func (s *LoopOutBRLNService) finalizeSuccess(ctx context.Context, job LoopOutBRL
 	current, err := scanLoopOutBRLNJob(tx.QueryRow(ctx, `
 select id,lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
  min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,strike_return_enabled,status,sent_sat,fee_sat,attempt_count,retry_round,
- last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
+ source_cursor_channel_id,last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
 from loopout_brln_jobs where id=$1 for update`, job.ID))
 	if err != nil {
 		return err

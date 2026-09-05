@@ -807,7 +807,7 @@ GET /api/rebalance/history
 - Sovereign jobs include their planned economics and realized forwarding attribution. Jobs selected through the adaptive exploration path expose `exploration_slot: true`; the field is omitted for regular jobs.
 
 GET /api/rebalance/overview
-- Includes separate 7-day exploration counters and realized economics under the `sovereign_exploration_*_7d` fields, so exploration can be compared with total Sovereign performance.
+- Includes separate 7-day exploration counters and realized economics under the `sovereign_exploration_*_7d` fields. `sovereign_jobs_7d` and `sovereign_exploration_share_7d` expose the actual completed-job mix so operators can compare the effective exploration share with the configured per-cycle slot percentage.
 - Exploration attribution starts when the persisted marker is deployed; jobs created by older versions cannot be classified retroactively.
 
 ## Terminal

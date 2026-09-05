@@ -2045,6 +2045,9 @@ export default function RebalanceCenter() {
             <p className="text-xs text-violet-200/75">
               {t('rebalanceCenter.overview.autopilotExplorationRealized7d', {
                 jobs: formatter.format(overview.sovereign_exploration_jobs_7d ?? 0),
+                total: formatter.format(overview.sovereign_jobs_7d ?? 0),
+                share: formatPct((overview.sovereign_exploration_share_7d ?? 0) * 100),
+                configured: formatPct(config?.sovereign_exploration_slot_pct ?? 0),
                 moved: formatSats(overview.sovereign_exploration_rebalance_amount_7d_sat ?? 0),
                 net: formatSats(overview.sovereign_exploration_realized_net_7d_sat ?? 0),
                 sellthrough: formatPct((overview.sovereign_exploration_sellthrough_7d ?? 0) * 100)

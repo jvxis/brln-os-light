@@ -2217,6 +2217,7 @@
       "lightning": "Lightning",
       "onchain": "On-chain",
       "rebalance": "Rebalance",
+      "rebalance-sources": "Rebalance sources",
       "security": "Security"
     },
     "liveUpdatesUnavailable": "Live updates unavailable.",
@@ -2681,7 +2682,11 @@
     "ackSeed": "I wrote down the 24 words and understand they cannot be recovered.",
     "confirmPassword": "Confirm password",
     "confirmSeed": "Confirm that you wrote down the seed.",
-    "createNew": "Create new",
+    "walletModeLabel": "Choose how to set up your wallet",
+    "newWallet": "New wallet",
+    "existingWallet": "Existing wallet",
+    "newWalletDescription": "Next, generate a new 24-word seed using the button below.",
+    "existingWalletDescription": "Enter the 24 words from your existing wallet in the field below.",
     "enterWalletPassword": "Enter wallet password.",
     "finishMessage": "Setup complete. Jump to your dashboard.",
     "generateSeed": "Generate seed",
@@ -5597,9 +5602,14 @@
       "inspect": "View details",
       "constraintsTitle": "Effective constraints",
       "blocked": "Blocked",
+      "automationReady": "Autopilot ready: the live Rebalance target is eligible and in automation scope.",
+      "automationAdvisory": "Strategic refill recommendation; Autopilot cannot act on it right now.",
+      "refillTarget": "Live deficit: {{amount}} to reach {{pct}} outbound",
+      "activeIntent": "Automation Intent is actively prioritizing this target.",
       "reviewDue": "Manual review scheduled for {{value}}. The channel will not be released automatically.",
       "actions": {
         "refill": "Refill",
+        "recycle_source": "Recycle source liquidity",
         "reprice": "Review fees",
         "expand": "Expand",
         "maintain": "Maintain",
@@ -5610,6 +5620,7 @@
       },
       "actionHints": {
         "refill": "Productive channels that are short on local liquidity.",
+        "recycle_source": "Source reservoirs with useful assisted flow but too much idle local liquidity. Reuse them before considering capital rotation.",
         "reprice": "Channels whose current recommendation calls for fee positioning or AutoFee bound review.",
         "expand": "Efficient channels that may justify additional capacity.",
         "maintain": "Healthy channels with no urgent operational action.",
@@ -5620,6 +5631,7 @@
       },
       "primaryActions": {
         "manual_rebalance": "Open Rebalance Center",
+        "review_source_liquidity": "Review as Rebalance source",
         "review_fees": "Open Fee Center",
         "review_expansion": "Review in Lightning Ops",
         "prepare_coop_close": "Prepare close"
@@ -5629,7 +5641,11 @@
         "observation_30d": "30-day observation is incomplete",
         "magma_active": "Active Magma commitment",
         "magma_state_unavailable": "Magma state unavailable",
-        "parked": "Channel is Parked"
+        "parked": "Channel is Parked",
+        "rebalance_state_unavailable": "Live Rebalance state unavailable",
+        "rebalance_not_automated": "Channel is outside the automatic Rebalance scope",
+        "target_satisfied": "Live target is already satisfied",
+        "rebalance_target_ineligible": "Current Rebalance economic or liquidity rules make the target ineligible"
       }
     },
     "states": {
@@ -5781,6 +5797,7 @@
       "no_economic_movement_30d": "No economic movement in 30 days",
       "rebalance_only_30d": "Only 30d movement was rebalance",
       "assisted_revenue_support": "Channel is relevant as a forward entry path",
+      "source_liquidity_underused": "Useful source role, but local capital turnover is low",
       "capital_efficiency_high": "High capital efficiency",
       "capital_efficiency_low": "Low capital efficiency"
     },
@@ -5798,6 +5815,7 @@
       "observe_30d_before_close": "Observe until weakness persists for 30 days before closing",
       "review_fee_positioning": "Review fee positioning and liquidity shape",
       "review_inbound_assist_role": "Review the channel's role as a forward entry path",
+      "recycle_source_liquidity": "Prioritize recycling this channel's local liquidity as a Rebalance source",
       "keep_channel_under_observation": "Keep channel under observation",
       "stop_nonessential_rebalances": "Stop non-essential rebalances",
       "reduce_rebalance_dependence": "Reduce rebalance dependence on this channel",
@@ -5930,7 +5948,7 @@
       "enforce": "Applies admitted intents after each consumer's own eligibility and safety gates."
     },
     "autofeeToRebalance": "AutoFee → Rebalance",
-    "autofeeToRebalanceHint": "Drained-channel evidence can prioritize an eligible refill target in Rules Auto and Autopilot.",
+    "autofeeToRebalanceHint": "A live outbound deficit with low/drained or productive-channel evidence can prioritize an eligible refill target in Rules Auto and Autopilot.",
     "rebalanceToAutofee": "Rebalance → AutoFee",
     "rebalanceToAutofeeHint": "A successful refill can protect its cost basis from an immediate downward fee move.",
     "profile": "User profile",
@@ -5976,7 +5994,7 @@
     "intentHelp": {
       "title": "What is happening with {{alias}}?",
       "kinds": {
-        "refill_target": "AutoFee detected that this channel is drained and published a request for Rebalance to consider replenishing its outbound liquidity.",
+        "refill_target": "AutoFee confirmed a live outbound deficit and published a request for Rebalance to consider replenishing this channel.",
         "protect_fee_floor": "Rebalance calculated a temporary economic floor from the peer policy, known actual cost, and effective econ ratio. AutoFee can raise a fee below the floor or prevent a reduction through it."
       },
       "refillInfluenced": "In the latest known evaluation, the Rebalance score changed from {{before}} to {{after}} sats. {{reason}}",

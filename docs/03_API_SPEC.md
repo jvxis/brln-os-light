@@ -465,9 +465,12 @@ POST /api/lnops/autofee/refresh
 
 GET /api/lnops/channel-ranking
 - Returns the persisted economic ranking. The existing score, state, reasons, recommendations, 7d/30d economics, liquidity, HTLC and automation fields remain the source of truth.
+- Assisted revenue still contributes to the score, but a mature channel holding at least 70% local liquidity receives a bounded capital-turnover penalty when its useful source role moves too little volume for the capital retained. The reason is exposed as `source_liquidity_underused`; this is advisory and never triggers an automatic close.
 
 GET /api/lnops/channel-ranking/plan
 - Returns a read-only operational view over the current ranking. Each entry keeps the original ranking item under `channel` and adds `action`, `priority`, `eligible`, observation progress, blockers, recoverable local balance and an optional primary action link.
+- Refill entries also expose the live Rebalance deficit (`target_outbound_pct`, `target_amount_sat`), `automation_ready`, `automation_blockers`, and `active_refill_intent`. Strategic recommendation and current automatic executability are intentionally separate.
+- `recycle_source` identifies a high-local-liquidity source reservoir with meaningful assisted flow but little direct outbound flow. It recommends using the liquidity as a Rebalance source before considering rotation; it never closes a channel automatically.
 - `parked` is treated as an operator policy, not an economic classification. Parked channels continue to carry their ranking evidence but are not eligible for plan execution.
 - Active Magma commitments produce `protected` entries and never enter early-close rotation. If Magma state cannot be verified, close candidates fail closed with `magma_state_unavailable`.
 - `recoverable_local_sat` uses local balance, not total channel capacity, and is only operationally available after a cooperative close confirms.
@@ -497,6 +500,8 @@ GET /api/lnops/automation-intents?active=true&consumer=rebalance&kind=refill_tar
 - Lists current intents and their producer profile/node calibration provenance.
 - Includes `channel_id_str` so clients can preserve the full unsigned Lightning channel ID without JavaScript number rounding.
 - Supported kinds in the MVP are `refill_target` and `protect_fee_floor`.
+- `refill_target` requires a live, eligible Rebalance deficit in automation scope. AutoFee may publish it for `low`, `drained`, or `extreme-drained` liquidity and for productive channels below their configured outbound target.
+- In `enforce` mode, an admitted refill intent receives an operational priority lane among candidates with the same outbound urgency. It never bypasses ROI, profit, budget, cooldown, busy-channel, or source safety gates. AutoFee settling may neutralize the score boost but cannot invert it below the pre-settling score.
 - `protect_fee_floor` evidence exposes the peer fee rate, amount-normalized peer and local base fees,
   effective peer/required costs, econ ratio, reference amount, and calculated floor.
 - AutoFee result channel items influenced by that intent include an `economic_floor` object with the
@@ -772,6 +777,7 @@ GET /api/reports/live
 
 GET /api/reports/reconciliation
 - Returns missing complete local dates plus reconciliation progress and the last error, if any.
+- Missing dates start at the first persisted daily report. An empty report history returns no missing dates; days before that first report are never treated as gaps.
 
 POST /api/reports/reconciliation
 - Starts an idempotent asynchronous rebuild of missing daily reports. Returns HTTP 202 while work starts, or HTTP 409 when already running.
@@ -805,6 +811,7 @@ POST /api/rebalance/channel/guaranteed
 GET /api/rebalance/history
 - Returns completed jobs and attempts from the last 24 hours.
 - Sovereign jobs include their planned economics and realized forwarding attribution. Jobs selected through the adaptive exploration path expose `exploration_slot: true`; the field is omitted for regular jobs.
+- Source routeability is also learned across targets: a source with at least 12 consecutive failed attempts spanning at least four different targets in six hours is quarantined for six hours. It becomes eligible for a recovery probe after the quarantine expires, and any success resets the failure pressure.
 
 GET /api/rebalance/overview
 - Includes separate 7-day exploration counters and realized economics under the `sovereign_exploration_*_7d` fields. `sovereign_jobs_7d` and `sovereign_exploration_share_7d` expose the actual completed-job mix so operators can compare the effective exploration share with the configured per-cycle slot percentage.

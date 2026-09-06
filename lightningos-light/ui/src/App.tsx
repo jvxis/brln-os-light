@@ -588,7 +588,7 @@ export default function App() {
             onLogout={authState.enabled ? handleLogout : undefined}
           />
           <main className="app-content px-6 pb-16 pt-6 lg:px-12">
-            <ReportsReconciliationNotice />
+            {wizardHidden && current.key !== 'wizard' && <ReportsReconciliationNotice />}
             {current.element}
           </main>
         </div>

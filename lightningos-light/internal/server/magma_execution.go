@@ -55,6 +55,7 @@ type magmaLND interface {
 	ListPendingChannels(ctx context.Context) ([]lndclient.PendingChannelInfo, error)
 	ListChannels(ctx context.Context) ([]lndclient.ChannelInfo, error)
 	ListPeers(ctx context.Context) ([]lndclient.PeerInfo, error)
+	ListLeases(ctx context.Context) (map[string]lndclient.LeaseInfo, error)
 }
 
 // magmaOnchainTxLister is split out because only the P&L needs it; keeping it
@@ -76,6 +77,7 @@ type magmaExecutionRecord struct {
 	SizeSat        int64
 	RevenueSat     int64
 	MagmaStatus    string
+	PaymentStatus  string
 	LocalState     string
 	PaymentRequest string
 	InvoiceHash    string
@@ -88,13 +90,14 @@ type magmaExecutionRecord struct {
 func (s *MagmaService) execRecord(ctx context.Context, orderID string) (magmaExecutionRecord, error) {
 	var record magmaExecutionRecord
 	err := s.db.QueryRow(ctx, `
-select order_id, buyer_pubkey, size_sat, revenue_sat, magma_status, local_state,
-       invoice_payment_request, invoice_hash, funding_txid, channel_point,
+select order_id, buyer_pubkey, size_sat, revenue_sat, magma_status, payment_status,
+       local_state, invoice_payment_request, invoice_hash, funding_txid, channel_point,
        attempt_count, last_error
 from magma_orders where order_id=$1
 `, strings.TrimSpace(orderID)).Scan(
 		&record.OrderID, &record.BuyerPubkey, &record.SizeSat, &record.RevenueSat,
-		&record.MagmaStatus, &record.LocalState, &record.PaymentRequest, &record.InvoiceHash,
+		&record.MagmaStatus, &record.PaymentStatus, &record.LocalState,
+		&record.PaymentRequest, &record.InvoiceHash,
 		&record.FundingTxid, &record.ChannelPoint, &record.AttemptCount, &record.LastError,
 	)
 	if err != nil {
@@ -231,6 +234,29 @@ where local_state = any($1) and not (magma_status = any($2))
 		capacity.AvailableSat = 0
 	}
 	return capacity, nil
+}
+
+// lockedFundsNote describes funds held by a lease, or nothing at all. It never
+// fails the preview: this is an explanation, and an explanation that cannot be
+// fetched simply is not appended.
+func (s *MagmaService) lockedFundsNote(ctx context.Context) string {
+	if s.lnd == nil {
+		return ""
+	}
+	leases, err := s.lnd.ListLeases(ctx)
+	if err != nil || len(leases) == 0 {
+		return ""
+	}
+	var locked int64
+	for _, lease := range leases {
+		locked += int64(lease.Value)
+	}
+	if locked <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		" (%s sat is locked by %d leased utxo(s) and cannot be spent until the lease expires)",
+		formatInt(locked), len(leases))
 }
 
 // ensureCapacityFor refuses an order the wallet cannot honour once every already
@@ -462,9 +488,16 @@ func (s *MagmaService) OpenChannelPreview(ctx context.Context, orderID string, s
 		preview.SpendableSat = estimate.SpendableSat
 		preview.EnoughFunds = estimate.EnoughFunds
 		if !estimate.EnoughFunds {
+			// Say where the rest of the money is. LND's ListUnspent omits leased
+			// outputs, so a wallet holding 1.7M can be reported as holding 209k
+			// with nothing on screen to explain the gap - which is exactly how
+			// issue #131 was read as a phantom balance bug. The lease is real and
+			// the funds are genuinely unspendable until it lapses; the failure was
+			// only ever in not saying so.
 			preview.Blockers = append(preview.Blockers, fmt.Sprintf(
-				"not enough confirmed on-chain balance: need %s sat, have %s sat",
-				formatInt(estimate.TotalDebitSat), formatInt(estimate.SpendableSat)))
+				"not enough confirmed on-chain balance: need %s sat, have %s sat%s",
+				formatInt(estimate.TotalDebitSat), formatInt(estimate.SpendableSat),
+				s.lockedFundsNote(ctx)))
 		}
 	} else {
 		preview.Warnings = append(preview.Warnings, fmt.Sprintf("could not estimate the on-chain cost: %v", err))
@@ -482,7 +515,17 @@ func (s *MagmaService) OpenChannelPreview(ctx context.Context, orderID string, s
 		}
 	}
 
-	if record.LocalState != magmaStateAccepted {
+	// `needs_attention` means an open failed, not that the debt went away. The
+	// buyer has paid and the channel is still owed, so refusing to fund it closes
+	// the only door left - which is what forced a database edit on order 8ea03637
+	// while the operator watched the deadline run.
+	//
+	// The reconciliation is what makes this safe: it asks the node first and puts
+	// the order back in line only when nothing was funded, so an open that
+	// broadcast before erroring is adopted rather than repeated.
+	fundable := record.LocalState == magmaStateAccepted ||
+		(record.LocalState == magmaStateNeedsAttention && record.PaymentStatus == magmaPaymentSuccessful)
+	if !fundable {
 		preview.Blockers = append(preview.Blockers, fmt.Sprintf(
 			"order is in local state %s; only an accepted-and-paid order can be funded", record.LocalState))
 	}
@@ -561,7 +604,16 @@ func (s *MagmaService) openChannelForOrderLocked(ctx context.Context, orderID st
 			"a channel to this buyer already exists at %s; refresh to reconcile instead of opening another", existing)
 	}
 
-	s.connectToBuyer(ctx, token, live.BuyerPubkey)
+	// Opening to a peer we are not connected to fails at the node with "peer
+	// disconnected", and that failure is expensive: the buyer has already paid,
+	// so the order lands in a state that owes a channel. Order 8ea03637 was
+	// accepted while the peer answered and dropped in the 96 seconds before the
+	// open. Reaching it first turns a failed open into a wait.
+	if err := s.reachBuyer(ctx, token, live.BuyerPubkey); err != nil {
+		s.appendEvent(ctx, record.OrderID, "auto_deferred", "info", fmt.Sprintf(
+			"waiting for the buyer's node to come back before opening: %v", err), nil)
+		return MagmaOrder{}, fmt.Errorf("the buyer's node is not reachable: %w", err)
+	}
 
 	// Write-ahead. From here on a crash must never look like "nothing happened".
 	if _, err := s.db.Exec(ctx, `
@@ -991,10 +1043,312 @@ where local_state=$1 and magma_status='WAITING_FOR_CHANNEL_OPEN'
 	}
 }
 
+// magmaOpenRetryFallback bounds retrying when Amboss's deadline is unknown.
+// Deliberately generous: the observed window for opening after payment is about
+// two days, and the cost of stopping early - an unopened channel that was paid
+// for - is far worse than the cost of trying for longer than needed.
+const magmaOpenRetryFallback = 24 * time.Hour
+
+// magmaShouldKeepTryingToOpen reports whether a paid order still has time.
+//
+// The deadline comes from Amboss when we have it. When we do not, a missing
+// deadline means "unknown", never "expired": abandoning a paid order because a
+// field was absent is the one outcome this whole path exists to prevent.
+func magmaShouldKeepTryingToOpen(deadline *time.Time, firstSeen time.Time, now time.Time) bool {
+	if deadline != nil {
+		return now.Before(*deadline)
+	}
+	return now.Before(firstSeen.Add(magmaOpenRetryFallback))
+}
+
+// retryPaidOrdersThatFailedToOpen puts a paid order back in line after a failed
+// open, for as long as Amboss still allows it.
+//
+// The buyer has paid and we owe a channel: from that moment giving up costs a
+// SELLER_FAILED_TO_OPEN_CHANNEL, so the only acceptable reason to stop is that
+// the window closed. Order 8ea03637 hit "peer disconnected" once, landed in
+// needs_attention, and stayed there - nothing retried it, and the funding guard
+// refuses that state, so even the manual button was closed. It took an UPDATE by
+// hand 23 minutes later.
+//
+// Nothing about this lives in memory. The work is re-derived from the database
+// every cycle, so a node that was off for hours - a restart, an upgrade, a power
+// cut - resumes on its own the moment it comes back, which is precisely when a
+// paid order most needs someone to still be trying.
+//
+// `needs_attention` exists because an open can broadcast before its error
+// surfaces, and returning to `accepted` blindly could fund the same channel
+// twice. So the node is asked first: a channel that already exists is adopted
+// rather than reopened, and only an order with nothing funded goes back in line.
+func (s *MagmaService) retryPaidOrdersThatFailedToOpen(ctx context.Context) {
+	rows, err := s.db.Query(ctx, `
+select order_id, buyer_pubkey, size_sat, timeout_at, first_seen_at, attempt_count
+from magma_orders
+where local_state = $1
+  and magma_status = 'WAITING_FOR_CHANNEL_OPEN'
+  and payment_status = $2
+  and not (magma_status = any($3))
+`, magmaStateNeedsAttention, magmaPaymentSuccessful, magmaTerminalStatusList())
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("magma: paid-retry query failed: %v", err)
+		}
+		return
+	}
+	type stuck struct {
+		orderID     string
+		buyerPubkey string
+		sizeSat     int64
+		deadline    *time.Time
+		firstSeen   time.Time
+		attempts    int
+	}
+	items := make([]stuck, 0, 4)
+	for rows.Next() {
+		var item stuck
+		if err := rows.Scan(&item.orderID, &item.buyerPubkey, &item.sizeSat,
+			&item.deadline, &item.firstSeen, &item.attempts); err == nil {
+			items = append(items, item)
+		}
+	}
+	rows.Close()
+
+	now := time.Now().UTC()
+	for _, item := range items {
+		point, err := s.existingChannelFor(ctx, MagmaOrder{
+			BuyerPubkey: item.buyerPubkey,
+			SizeSat:     item.sizeSat,
+		})
+		if err != nil {
+			continue
+		}
+		if point != "" {
+			// The open did land. Adopt it instead of retrying, which is the whole
+			// reason this checks before releasing the order.
+			if _, err := s.db.Exec(ctx, `
+update magma_orders
+set local_state=$2, channel_point=$3, funding_txid=$4, last_error='', updated_at=now()
+where order_id=$1
+`, item.orderID, magmaStateConfirming, point, magmaTxidFromPoint(point)); err == nil {
+				s.appendEvent(ctx, item.orderID, "recovered", "info", fmt.Sprintf(
+					"the failed open had in fact broadcast; adopting channel %s", point), nil)
+			}
+			continue
+		}
+		if !magmaShouldKeepTryingToOpen(item.deadline, item.firstSeen, now) {
+			continue
+		}
+		if _, err := s.db.Exec(ctx, `
+update magma_orders set local_state=$2, updated_at=now() where order_id=$1
+`, item.orderID, magmaStateAccepted); err != nil {
+			continue
+		}
+		s.appendEvent(ctx, item.orderID, "retrying", "info", fmt.Sprintf(
+			"nothing was funded by the failed open, and the buyer has paid; "+
+				"queued to try again (attempt %d so far)", item.attempts), nil)
+	}
+}
+
+const (
+	// magmaOpenAlertGrace holds the first alert back. A peer that drops for a
+	// minute is normal and resolves itself; saying so immediately would train the
+	// operator to ignore the message that matters.
+	magmaOpenAlertGrace = 8 * time.Minute
+	// magmaOpenAlertInterval repeats it while the channel is still owed. Amboss
+	// nudges the seller on roughly this cadence for the same reason: something
+	// pending for hours has to stay visible without becoming noise.
+	magmaOpenAlertInterval = 30 * time.Minute
+)
+
+// alertOnPaidOrdersStillWaitingToOpen tells the operator when a paid order is
+// not turning into a channel.
+//
+// The automation retries on its own and usually wins, so most of this stays
+// silent by design. But after payment the operator is the last line of defence -
+// they can open by hand, reach the buyer, or talk to Amboss - and nothing told
+// them anything: the deferral is recorded at info level and never left the
+// database. Worse, that silence replaced a warning that used to fire on the
+// first failed open, so retrying harder had quietly traded loud-and-useless for
+// quiet-and-invisible.
+//
+// The cadence lives in the database, not in memory, so a restart neither repeats
+// the backlog nor resets the clock on an order that has waited for hours.
+func (s *MagmaService) alertOnPaidOrdersStillWaitingToOpen(ctx context.Context) {
+	rows, err := s.db.Query(ctx, `
+select order_id, buyer_pubkey, size_sat, revenue_sat, timeout_at, open_alert_at,
+       open_expiry_notified, coalesce(revenue_settled_at, first_seen_at)
+from magma_orders
+where local_state = any($1)
+  and magma_status = 'WAITING_FOR_CHANNEL_OPEN'
+  and payment_status = $2
+`, []string{magmaStateAccepted, magmaStateNeedsAttention}, magmaPaymentSuccessful)
+	if err != nil {
+		return
+	}
+	type waiting struct {
+		orderID        string
+		buyerPubkey    string
+		sizeSat        int64
+		revenueSat     int64
+		deadline       *time.Time
+		lastAlert      *time.Time
+		expiryNotified bool
+		owedSince      time.Time
+	}
+	items := make([]waiting, 0, 4)
+	for rows.Next() {
+		var item waiting
+		if err := rows.Scan(&item.orderID, &item.buyerPubkey, &item.sizeSat, &item.revenueSat,
+			&item.deadline, &item.lastAlert, &item.expiryNotified, &item.owedSince); err == nil {
+			items = append(items, item)
+		}
+	}
+	rows.Close()
+
+	now := time.Now().UTC()
+	for _, item := range items {
+		if item.deadline != nil && now.After(*item.deadline) {
+			if item.expiryNotified {
+				continue
+			}
+			s.appendEvent(ctx, item.orderID, "open_window_closed", "error", fmt.Sprintf(
+				"the window to open this paid channel has closed; %s sat to %s was never delivered",
+				formatInt(item.sizeSat), magmaShortPubkey(item.buyerPubkey)), nil)
+			s.notifyTelegram(ctx, MagmaOrder{ID: item.orderID}, fmt.Sprintf(`Order %s: the window to open this channel has CLOSED.
+The buyer paid %s sat and the %s sat channel to %s was never opened.
+Amboss will record a seller failure for this order.`,
+				item.orderID, formatInt(item.revenueSat), formatInt(item.sizeSat),
+				magmaShortPubkey(item.buyerPubkey)))
+			_, _ = s.db.Exec(ctx,
+				`update magma_orders set open_expiry_notified=true, updated_at=now() where order_id=$1`,
+				item.orderID)
+			continue
+		}
+		if now.Sub(item.owedSince) < magmaOpenAlertGrace {
+			continue
+		}
+		if item.lastAlert != nil && now.Sub(*item.lastAlert) < magmaOpenAlertInterval {
+			continue
+		}
+		left := "an unknown amount of time"
+		if item.deadline != nil {
+			left = fmt.Sprintf("%d minutes", int(item.deadline.Sub(now)/time.Minute))
+		}
+		s.notifyTelegram(ctx, MagmaOrder{ID: item.orderID}, fmt.Sprintf(`Order %s: the buyer has paid and the %s sat channel to %s is still not open.
+Waiting %d minutes so far, %s left to open it.
+Retrying automatically; opening it by hand also resolves the order.`,
+			item.orderID, formatInt(item.sizeSat), magmaShortPubkey(item.buyerPubkey),
+			int(now.Sub(item.owedSince)/time.Minute), left))
+		_, _ = s.db.Exec(ctx,
+			`update magma_orders set open_alert_at=now(), updated_at=now() where order_id=$1`,
+			item.orderID)
+	}
+}
+
+// magmaStatusMeansChannelIsOut reports the statuses where Amboss has seen the
+// funding transaction. Past that point the sale is no longer waiting on us to
+// spend anything, so it must stop reserving wallet balance.
+//
+// Deliberately not the terminal list: these are successes in flight, and a
+// successful order is exactly the one the terminal list is built to keep. The
+// question here is different - not "is this order over" but "has the money
+// already left".
+func magmaStatusMeansChannelIsOut(status string) bool {
+	switch status {
+	case "SELLER_SENT_TRANSACTION", "SELLER_OPENED_CHANNEL", "VALID_CHANNEL_OPENING",
+		"WAITING_FOR_ON_CHAIN_CONFIRMATION", "ON_CHAIN_CONFIRMATION",
+		"CHANNEL_MONITORING_FINISHED":
+		return true
+	}
+	return false
+}
+
+// adoptOrdersOpenedElsewhere finishes an order whose channel was opened outside
+// this app.
+//
+// Reported as issue #131: auto-open declined, the operator opened the channel by
+// hand, Amboss saw it and moved the order to VALID_CHANNEL_OPENING - and the
+// local state stayed `accepted`. `accepted` is one of the states that reserves
+// wallet balance against a channel still owed, so the app went on holding
+// 500,000 sat for a channel that was already open, and said so on screen. The
+// only way out was editing the database by hand.
+//
+// The channel is looked up on the node rather than assumed from the status:
+// Amboss can only tell us a channel exists, not which one, and writing a channel
+// point we did not verify is how an order ends up pointing at the wrong funding
+// transaction.
+func (s *MagmaService) adoptOrdersOpenedElsewhere(ctx context.Context) {
+	rows, err := s.db.Query(ctx, `
+select order_id, magma_status, buyer_pubkey, size_sat
+from magma_orders
+where local_state = $1 and not (magma_status = any($2))
+`, magmaStateAccepted, magmaTerminalStatusList())
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("magma: opened-elsewhere query failed: %v", err)
+		}
+		return
+	}
+	type candidate struct {
+		orderID     string
+		magmaStatus string
+		buyerPubkey string
+		sizeSat     int64
+	}
+	candidates := make([]candidate, 0, 4)
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.orderID, &item.magmaStatus, &item.buyerPubkey, &item.sizeSat); err == nil {
+			candidates = append(candidates, item)
+		}
+	}
+	rows.Close()
+
+	for _, item := range candidates {
+		if !magmaStatusMeansChannelIsOut(item.magmaStatus) {
+			continue
+		}
+		point, err := s.existingChannelFor(ctx, MagmaOrder{
+			BuyerPubkey: item.buyerPubkey,
+			SizeSat:     item.sizeSat,
+		})
+		if err != nil || point == "" {
+			// Amboss says the channel is out and the node cannot show it. Say so
+			// rather than guessing: the balance stays reserved, which is the safe
+			// direction, and the operator has something to act on.
+			s.appendEvent(ctx, item.orderID, "needs_attention", "warning", fmt.Sprintf(
+				"Amboss reports %s but no channel of %s sat to %s is on this node; "+
+					"the order still reserves that balance until it can be matched",
+				item.magmaStatus, formatInt(item.sizeSat), magmaShortPubkey(item.buyerPubkey)), nil)
+			continue
+		}
+		if _, err := s.db.Exec(ctx, `
+update magma_orders
+set local_state=$2, channel_point=$3, funding_txid=$4, last_error='', updated_at=now()
+where order_id=$1
+`, item.orderID, magmaStateConfirmed, point, magmaTxidFromPoint(point)); err != nil {
+			if s.logger != nil {
+				s.logger.Printf("magma: could not finish order %s opened elsewhere: %v", item.orderID, err)
+			}
+			continue
+		}
+		s.appendEvent(ctx, item.orderID, "adopted", "info", fmt.Sprintf(
+			"Channel %s was opened outside this app and Amboss has seen it; "+
+				"the order no longer reserves balance", point), nil)
+	}
+}
+
 func (s *MagmaService) reconcileExecution(ctx context.Context, token string) {
 	// Runs first: an order approved elsewhere has to be owned before any of the
 	// resume paths below can see it.
 	s.adoptOrdersAcceptedElsewhere(ctx)
+	// And the mirror of it: an order this app accepted whose channel was then
+	// opened by hand. Runs before the resume paths for the same reason.
+	s.adoptOrdersOpenedElsewhere(ctx)
+	// And orders whose open failed. Runs before the resume paths so a rescued
+	// order is funded in the same cycle rather than waiting for the next.
+	s.retryPaidOrdersThatFailedToOpen(ctx)
+	s.alertOnPaidOrdersStillWaitingToOpen(ctx)
 
 	rows, err := s.db.Query(ctx, `
 select order_id, local_state, funding_txid, channel_point, buyer_pubkey, size_sat

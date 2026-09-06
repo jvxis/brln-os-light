@@ -119,7 +119,7 @@ func TestDeriveRefillTargetIntentUsesAutofeeCalibrationAndRebalanceEligibility(t
 			RefillScoreMultiplier: 1.2, MinConfidence: 0.7,
 		},
 		rebalanceRuntime: map[uint64]autofeeRebalanceRuntimeSnapshot{
-			42: {AutoEnabled: true, EligibleAsTarget: true, ROIEstimate: 1.4, ROIEstimateValid: true},
+			42: {AutoEnabled: true, EligibleAsTarget: true, TargetAmountSat: 500_000, TargetOutboundPct: 20, LocalBalancePct: 1, ROIEstimate: 1.4, ROIEstimateValid: true},
 		},
 	}
 	channel := lndclient.ChannelInfo{ChannelID: 42, ChannelPoint: "tx:0", Active: true}
@@ -138,5 +138,27 @@ func TestDeriveRefillTargetIntentUsesAutofeeCalibrationAndRebalanceEligibility(t
 	engine.rebalanceRuntime[42] = autofeeRebalanceRuntimeSnapshot{AutoEnabled: true, EligibleAsTarget: false}
 	if _, ok := engine.deriveRefillTargetIntent(channel, decision, "run-2"); ok {
 		t.Fatal("intent must not bypass rebalance eligibility")
+	}
+}
+
+func TestDeriveRefillTargetIntentUsesLiveDeficitForLowLiquidity(t *testing.T) {
+	engine := &autofeeEngine{
+		now:                    time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC),
+		automationIntentConfig: AutomationIntentConfig{Mode: automationIntentModeEnforce, MinConfidence: .8, RefillTargetTTLSec: 3600},
+		rebalanceRuntime: map[uint64]autofeeRebalanceRuntimeSnapshot{
+			7: {AutoEnabled: true, EligibleAsTarget: true, TargetAmountSat: 300_000, TargetOutboundPct: 20, LocalBalancePct: 9},
+		},
+	}
+	channel := lndclient.ChannelInfo{ChannelID: 7, ChannelPoint: "low:0"}
+	intent, ok := engine.deriveRefillTargetIntent(channel, &decision{LiquidityState: autofeeLiquidityStateLow}, "run-low")
+	if !ok || intent.ReasonCode != "autofee_low_outbound_target" {
+		t.Fatalf("expected low-liquidity intent, got ok=%v intent=%+v", ok, intent)
+	}
+
+	runtime := engine.rebalanceRuntime[7]
+	runtime.TargetAmountSat = 0
+	engine.rebalanceRuntime[7] = runtime
+	if _, ok := engine.deriveRefillTargetIntent(channel, &decision{LiquidityState: autofeeLiquidityStateExtremeDrained}, "run-full"); ok {
+		t.Fatal("target without a live deficit must not publish a refill intent")
 	}
 }

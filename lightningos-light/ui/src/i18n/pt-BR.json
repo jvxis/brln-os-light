@@ -2217,6 +2217,7 @@
       "lightning": "Lightning",
       "onchain": "On-chain",
       "rebalance": "Rebalance",
+      "rebalance-sources": "Sources do Rebalance",
       "security": "Segurança"
     },
     "liveUpdatesUnavailable": "Atualizações ao vivo indisponíveis.",
@@ -2681,7 +2682,11 @@
     "ackSeed": "Anotei as 24 palavras e entendo que não podem ser recuperadas.",
     "confirmPassword": "Confirmar senha",
     "confirmSeed": "Confirme que você anotou a seed.",
-    "createNew": "Criar novo",
+    "walletModeLabel": "Escolha como configurar sua carteira",
+    "newWallet": "Nova carteira",
+    "existingWallet": "Carteira existente",
+    "newWalletDescription": "A seguir, gere uma nova seed de 24 palavras usando o botão abaixo.",
+    "existingWalletDescription": "Informe as 24 palavras da sua carteira existente no campo abaixo.",
     "enterWalletPassword": "Informe a senha da carteira.",
     "finishMessage": "Configuração concluída. Vá ao seu painel.",
     "generateSeed": "Gerar seed",
@@ -5597,9 +5602,14 @@
       "inspect": "Ver detalhes",
       "constraintsTitle": "Restrições efetivas",
       "blocked": "Bloqueado",
+      "automationReady": "Autopilot pronto: o alvo atual do Rebalance está elegível e dentro do escopo automático.",
+      "automationAdvisory": "Recomendação estratégica de refill; o Autopilot não pode executá-la neste momento.",
+      "refillTarget": "Déficit atual: {{amount}} para chegar a {{pct}} outbound",
+      "activeIntent": "O Automation Intent está priorizando ativamente este alvo.",
       "reviewDue": "Revisão manual programada para {{value}}. O canal não será liberado automaticamente.",
       "actions": {
         "refill": "Reabastecer",
+        "recycle_source": "Reciclar liquidez source",
         "reprice": "Revisar fees",
         "expand": "Expandir",
         "maintain": "Manter",
@@ -5610,6 +5620,7 @@
       },
       "actionHints": {
         "refill": "Canais produtivos com falta de liquidez local.",
+        "recycle_source": "Reservatórios source com fluxo assistido útil, mas liquidez local ociosa em excesso. Reutilize antes de considerar rotação de capital.",
         "reprice": "Canais cuja recomendação atual pede revisão de posicionamento ou limites do AutoFee.",
         "expand": "Canais eficientes que podem justificar mais capacidade.",
         "maintain": "Canais saudáveis sem ação operacional urgente.",
@@ -5620,6 +5631,7 @@
       },
       "primaryActions": {
         "manual_rebalance": "Abrir Rebalance Center",
+        "review_source_liquidity": "Revisar como source no Rebalance",
         "review_fees": "Abrir Fee Center",
         "review_expansion": "Revisar no Lightning Ops",
         "prepare_coop_close": "Preparar fechamento"
@@ -5629,7 +5641,11 @@
         "observation_30d": "Observação de 30 dias incompleta",
         "magma_active": "Compromisso Magma ativo",
         "magma_state_unavailable": "Estado do Magma indisponível",
-        "parked": "Canal em Parked"
+        "parked": "Canal em Parked",
+        "rebalance_state_unavailable": "Estado atual do Rebalance indisponível",
+        "rebalance_not_automated": "Canal fora do escopo automático do Rebalance",
+        "target_satisfied": "O alvo atual já está satisfeito",
+        "rebalance_target_ineligible": "As regras econômicas ou de liquidez atuais tornam o target inelegível"
       }
     },
     "states": {
@@ -5781,6 +5797,7 @@
       "no_economic_movement_30d": "Sem movimento econômico em 30 dias",
       "rebalance_only_30d": "Único movimento em 30 dias foi rebalance",
       "assisted_revenue_support": "Canal relevante como entrada de forwards",
+      "source_liquidity_underused": "Papel source útil, mas com baixo giro do capital local",
       "capital_efficiency_high": "Boa eficiência de capital",
       "capital_efficiency_low": "Eficiência de capital baixa"
     },
@@ -5798,6 +5815,7 @@
       "observe_30d_before_close": "Observar até a fraqueza persistir por 30 dias antes de fechar",
       "review_fee_positioning": "Revisar posicionamento de fee e liquidez",
       "review_inbound_assist_role": "Validar papel do canal como entrada de forwards",
+      "recycle_source_liquidity": "Priorizar a reciclagem da liquidez local deste canal como source de Rebalance",
       "keep_channel_under_observation": "Manter canal sob observação",
       "stop_nonessential_rebalances": "Parar rebalances não essenciais",
       "reduce_rebalance_dependence": "Reduzir dependência de rebalance neste canal",
@@ -5930,7 +5948,7 @@
       "enforce": "Aplica intents admitidos depois dos gates de elegibilidade e segurança do consumidor."
     },
     "autofeeToRebalance": "AutoFee → Rebalance",
-    "autofeeToRebalanceHint": "Evidência de canal drenado pode priorizar um alvo elegível de refill no Rules Auto e no Autopilot.",
+    "autofeeToRebalanceHint": "Um déficit outbound atual, com evidência de liquidez baixa/drenada ou canal produtivo, pode priorizar um target elegível no Rules Auto e no Autopilot.",
     "rebalanceToAutofee": "Rebalance → AutoFee",
     "rebalanceToAutofeeHint": "Um refill bem-sucedido pode proteger sua base de custo contra uma redução imediata da fee.",
     "profile": "Perfil do usuário",
@@ -5976,7 +5994,7 @@
     "intentHelp": {
       "title": "O que está acontecendo com {{alias}}?",
       "kinds": {
-        "refill_target": "O AutoFee detectou que este canal está drenado e publicou um pedido para o Rebalance considerar a reposição da liquidez outbound.",
+        "refill_target": "O AutoFee confirmou um déficit outbound atual e publicou um pedido para o Rebalance considerar a reposição deste canal.",
         "protect_fee_floor": "O Rebalance calculou um piso econômico temporário usando a policy do peer, o custo real conhecido e o econ ratio efetivo. O AutoFee pode elevar uma fee abaixo do piso ou impedir que ela seja reduzida através dele."
       },
       "refillInfluenced": "Na avaliação mais recente conhecida, o score do Rebalance mudou de {{before}} para {{after}} sats. {{reason}}",

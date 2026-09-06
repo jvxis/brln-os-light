@@ -15,6 +15,7 @@ type Props = {
 const actionOrder: ChannelCapitalPlanItem['action'][] = [
   'rotate',
   'refill',
+  'recycle_source',
   'reprice',
   'expand',
   'maintain',
@@ -29,6 +30,8 @@ const actionClass = (action: ChannelCapitalPlanItem['action']) => {
       return 'border-rose-400/35 bg-rose-500/10 text-rose-100'
     case 'refill':
       return 'border-cyan-400/35 bg-cyan-500/10 text-cyan-100'
+    case 'recycle_source':
+      return 'border-teal-400/35 bg-teal-500/10 text-teal-100'
     case 'reprice':
       return 'border-violet-400/35 bg-violet-500/10 text-violet-100'
     case 'expand':
@@ -135,10 +138,30 @@ export default function ChannelCapitalPlanPanel({ items, summary, magmaStateKnow
                     </div>
                   )}
 
+                  {planItem.action === 'refill' && (
+                    <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${planItem.automation_ready ? 'border-emerald-300/25 bg-emerald-950/20 text-emerald-100/85' : 'border-amber-300/25 bg-amber-950/20 text-amber-100/85'}`}>
+                      <div>{t(planItem.automation_ready ? 'channelRanking.plan.automationReady' : 'channelRanking.plan.automationAdvisory')}</div>
+                      {(planItem.target_amount_sat || 0) > 0 && (
+                        <div className="mt-1 opacity-75">{t('channelRanking.plan.refillTarget', { amount: format.sats(planItem.target_amount_sat), pct: format.pct(planItem.target_outbound_pct) })}</div>
+                      )}
+                      {planItem.active_refill_intent && <div className="mt-1 opacity-75">{t('channelRanking.plan.activeIntent')}</div>}
+                    </div>
+                  )}
+
                   {(planItem.blockers || []).length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-2">
                       {planItem.blockers!.map((blocker) => (
                         <span key={blocker} className="rounded-full border border-current/20 px-2 py-0.5 text-[11px] opacity-80">
+                          {t(`channelRanking.plan.blockers.${blocker}` as any, { defaultValue: blocker })}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {(planItem.automation_blockers || []).length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {planItem.automation_blockers!.map((blocker) => (
+                        <span key={blocker} className="rounded-full border border-amber-200/20 px-2 py-0.5 text-[11px] text-amber-100/80">
                           {t(`channelRanking.plan.blockers.${blocker}` as any, { defaultValue: blocker })}
                         </span>
                       ))}

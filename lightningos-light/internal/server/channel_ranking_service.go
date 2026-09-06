@@ -1019,7 +1019,13 @@ func buildChannelRankingItem(
 	score7d = applyIdle7dPenalty(score7d, noEconomicMovement7d)
 	score7d = applyRebalanceNoPaybackPenalty(score7d, rebalanceNoPayback)
 	score7d = applyIdle30dPenalty(score7d, noEconomicMovement30d || rebalanceOnly30d)
+	if full7dObservation {
+		score7d = applySourceReservoirCapitalPenalty(score7d, capacity, localPct, forward7d, assisted7d, 7)
+	}
 	score30d := computeChannelRankingScore(ch, capacity, localPct, effectiveForward30d, rebal30d, effectiveProfitSat30d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
+	if full30dObservation {
+		score30d = applySourceReservoirCapitalPenalty(score30d, capacity, localPct, forward30d, assisted30d, 30)
+	}
 	trendDirection, trendDelta := computeChannelRankingTrend(score7d, score30d)
 	state, reasons, recommendations := classifyChannelRanking(
 		ch,
@@ -1189,6 +1195,32 @@ func applyIdle30dPenalty(score int, weakIdleSignal bool) int {
 		return score
 	}
 	return clampInt(score-channelRankingIdle30dPenalty, 0, channelRankingIdle30dScoreCap)
+}
+
+func applySourceReservoirCapitalPenalty(score int, capacity int64, localPct float64, direct channelTrafficStat, assisted channelTrafficStat, days int) int {
+	if capacity <= 0 || localPct < 70 || days <= 0 {
+		return score
+	}
+	minimumAssisted := rankingMaxInt64(100_000, capacity/100) * int64(days) / 7
+	if assisted.AmountSat < minimumAssisted || direct.AmountSat*4 > assisted.AmountSat {
+		return score
+	}
+	localCapital := float64(capacity) * localPct / 100
+	if localCapital <= 0 {
+		return score
+	}
+	effectiveVolume := float64(direct.AmountSat) + float64(assisted.AmountSat)*channelRankingAssistedRevenueWeight
+	weeklyTurnover := (effectiveVolume / localCapital) * (7 / float64(days))
+	penalty := 0
+	switch {
+	case weeklyTurnover < 0.025:
+		penalty = 20
+	case weeklyTurnover < 0.05:
+		penalty = 14
+	case weeklyTurnover < 0.10:
+		penalty = 8
+	}
+	return clampInt(score-penalty, 0, 100)
 }
 
 func appendUniqueRecommendation(list []ChannelRankingRecommendation, candidate ChannelRankingRecommendation) []ChannelRankingRecommendation {
@@ -1398,6 +1430,9 @@ func classifyChannelRanking(
 	if rebalanceDependenceScore >= 65 {
 		reasons = append(reasons, ChannelRankingReason{Code: "rebalance_dependence_high"})
 	}
+	if full7dObservation && applySourceReservoirCapitalPenalty(100, capacity, localPct, forward7d, assisted7d, 7) < 100 {
+		reasons = append(reasons, ChannelRankingReason{Code: "source_liquidity_underused"})
+	}
 	if capacity > 0 {
 		netPpm := (float64(effectiveProfitSat7d) / float64(capacity)) * 1_000_000
 		if netPpm >= 75 {
@@ -1498,6 +1533,9 @@ func classifyChannelRanking(
 		if len(recommendations) == 0 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "keep_channel_under_observation", TargetModule: "lightning-ops"})
 		}
+	}
+	if full7dObservation && applySourceReservoirCapitalPenalty(100, capacity, localPct, forward7d, assisted7d, 7) < 100 {
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "recycle_source_liquidity", TargetModule: "rebalance-sources"})
 	}
 
 	if len(reasons) > 5 {

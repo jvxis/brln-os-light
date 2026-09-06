@@ -8,6 +8,21 @@ import (
 	"lightningos-light/internal/lndclient"
 )
 
+func TestSourceReservoirCapitalPenaltyUsesWeeklyCapitalTurnover(t *testing.T) {
+	direct := channelTrafficStat{}
+	assisted := channelTrafficStat{AmountSat: 766_506, FeeSat: 1_062}
+	if got := applySourceReservoirCapitalPenalty(61, 22_000_000, 81.5, direct, assisted, 7); got != 41 {
+		t.Fatalf("expected low-turnover source score 61->41, got %d", got)
+	}
+	productive := channelTrafficStat{AmountSat: 5_000_000, FeeSat: 2_000}
+	if got := applySourceReservoirCapitalPenalty(61, 22_000_000, 81.5, direct, productive, 7); got != 61 {
+		t.Fatalf("productive source reservoir must keep its score, got %d", got)
+	}
+	if got := applySourceReservoirCapitalPenalty(61, 22_000_000, 50, direct, assisted, 7); got != 61 {
+		t.Fatalf("balanced channel must not receive source-reservoir penalty, got %d", got)
+	}
+}
+
 func TestClassifyChannelRankingKeepsStrong30dChannelUnderMonitor(t *testing.T) {
 	ch := lndclient.ChannelInfo{
 		Active:           true,

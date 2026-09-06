@@ -140,7 +140,7 @@ export type ChannelCapitalPlanAction = {
 
 export type ChannelCapitalPlanItem = {
   channel: ChannelRankingItem
-  action: 'refill' | 'reprice' | 'expand' | 'maintain' | 'observe' | 'rotate' | 'parked' | 'protected'
+  action: 'refill' | 'recycle_source' | 'reprice' | 'expand' | 'maintain' | 'observe' | 'rotate' | 'parked' | 'protected'
   priority: number
   eligible: boolean
   blockers?: string[]
@@ -149,6 +149,11 @@ export type ChannelCapitalPlanItem = {
   recoverable_local_sat: number
   primary_action?: ChannelCapitalPlanAction
   magma_commitment?: MagmaChannelCommitment
+  automation_ready: boolean
+  automation_blockers?: string[]
+  target_outbound_pct?: number
+  target_amount_sat?: number
+  active_refill_intent?: boolean
 }
 
 export type ChannelCapitalPlanSummary = {

@@ -22,6 +22,8 @@ export const moduleHash = (item: ChannelRankingItem, targetModule?: string) => {
   switch (String(targetModule || '').trim()) {
     case 'rebalance':
       return paramsHash('rebalance-center', { channel_point: item.channel_point })
+    case 'rebalance-sources':
+      return paramsHash('rebalance-center', {})
     case 'autofee':
       return paramsHash('fee-center', { channel_point: item.channel_point })
     case 'close-manager':

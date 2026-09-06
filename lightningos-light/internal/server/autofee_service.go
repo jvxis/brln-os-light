@@ -2778,6 +2778,9 @@ type autofeeRebalanceRuntimeSnapshot struct {
 	AutoEnabled          bool
 	ManualRestartEnabled bool
 	EligibleAsTarget     bool
+	TargetOutboundPct    float64
+	TargetAmountSat      int64
+	LocalBalancePct      float64
 	PaybackProgress      float64
 	ROIEstimate          float64
 	ROIEstimateValid     bool
@@ -3766,6 +3769,9 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 					AutoEnabled:          item.AutoEnabled,
 					ManualRestartEnabled: item.ManualRestartEnabled,
 					EligibleAsTarget:     item.EligibleAsTarget,
+					TargetOutboundPct:    item.TargetOutboundPct,
+					TargetAmountSat:      item.TargetAmountSat,
+					LocalBalancePct:      item.LocalPct,
 					PaybackProgress:      item.PaybackProgress,
 					ROIEstimate:          item.ROIEstimate,
 					ROIEstimateValid:     item.ROIEstimateValid,
@@ -4383,20 +4389,36 @@ func (e *autofeeEngine) deriveRefillTargetIntent(ch lndclient.ChannelInfo, d *de
 	if d == nil || ch.ChannelID == 0 || e.automationIntentConfig.Mode == automationIntentModeOff {
 		return AutomationIntent{}, false
 	}
-	state := strings.ToLower(strings.TrimSpace(d.LiquidityState))
-	if state != "drained" && state != "extreme-drained" {
-		return AutomationIntent{}, false
-	}
 	runtime, ok := e.rebalanceRuntime[ch.ChannelID]
-	if !ok || !runtime.EligibleAsTarget || (!runtime.AutoEnabled && !runtime.ManualRestartEnabled) {
+	if !ok || !runtime.EligibleAsTarget || runtime.TargetAmountSat <= 0 || (!runtime.AutoEnabled && !runtime.ManualRestartEnabled) {
 		return AutomationIntent{}, false
 	}
-	confidence := 0.78
-	if state == "extreme-drained" {
-		confidence = 0.90
+	state := strings.ToLower(strings.TrimSpace(d.LiquidityState))
+	reasonCode := ""
+	confidence := 0.0
+	switch state {
+	case autofeeLiquidityStateExtremeDrained:
+		reasonCode, confidence = "autofee_extreme_drained_target", 0.92
+	case autofeeLiquidityStateDrained:
+		reasonCode, confidence = "autofee_drained_target", 0.86
+	case autofeeLiquidityStateLow:
+		reasonCode, confidence = "autofee_low_outbound_target", 0.80
+	default:
+		// The effective AutoFee liquidity class may be normalized by channel
+		// size. Preserve a productive target signal when Rebalance confirms a
+		// real deficit and the channel has recent revenue.
+		if runtime.LocalBalancePct < runtime.TargetOutboundPct && runtime.Revenue7dSat > 0 {
+			reasonCode, confidence = "autofee_productive_refill_target", 0.75
+		}
+	}
+	if reasonCode == "" {
+		return AutomationIntent{}, false
 	}
 	if d.FwdCount > 0 {
 		confidence += 0.05
+	}
+	if runtime.TargetOutboundPct > 0 && runtime.LocalBalancePct < runtime.TargetOutboundPct/2 {
+		confidence += 0.03
 	}
 	if d.NewPpm > d.LocalPpm || d.Target > d.LocalPpm {
 		confidence += 0.05
@@ -4410,10 +4432,6 @@ func (e *autofeeEngine) deriveRefillTargetIntent(ch lndclient.ChannelInfo, d *de
 	ttl := time.Duration(e.automationIntentConfig.RefillTargetTTLSec) * time.Second
 	if ttl <= 0 {
 		ttl = 6 * time.Hour
-	}
-	reasonCode := "autofee_drained_target"
-	if state == "extreme-drained" {
-		reasonCode = "autofee_extreme_drained_target"
 	}
 	return AutomationIntent{
 		ChannelID:              ch.ChannelID,
@@ -4439,6 +4457,10 @@ func (e *autofeeEngine) deriveRefillTargetIntent(ch lndclient.ChannelInfo, d *de
 			"forward_count":       d.FwdCount,
 			"rebalance_roi":       runtime.ROIEstimate,
 			"rebalance_roi_valid": runtime.ROIEstimateValid,
+			"target_outbound_pct": runtime.TargetOutboundPct,
+			"target_amount_sat":   runtime.TargetAmountSat,
+			"local_balance_pct":   runtime.LocalBalancePct,
+			"revenue_7d_sat":      runtime.Revenue7dSat,
 		},
 	}, true
 }

@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestBuildChannelCapitalPlanUsesRankingWithoutChangingIt(t *testing.T) {
 	channel := ChannelRankingItem{
@@ -96,5 +99,63 @@ func TestBuildChannelCapitalPlanRequiresInitialObservation(t *testing.T) {
 	}
 	if len(item.Blockers) != 1 || item.Blockers[0] != "observation_7d" {
 		t.Fatalf("unexpected blockers: %#v", item.Blockers)
+	}
+}
+
+func TestBuildChannelCapitalPlanRecognizesUsefulSourceReservoir(t *testing.T) {
+	channel := ChannelRankingItem{
+		ChannelPoint:            "source:0",
+		State:                   "maintain",
+		Score:                   61,
+		CapacitySat:             22_000_000,
+		LocalBalanceSat:         18_000_000,
+		LocalBalancePct:         81.8,
+		ForwardAmt7dSat:         0,
+		AssistedForwardAmt7dSat: 766_506,
+		PeerSampleCount30d:      channelRankingFull30dObservationSamples,
+	}
+	item := buildChannelCapitalPlan([]ChannelRankingItem{channel}, nil, true).Items[0]
+	if item.Action != channelCapitalActionRecycle || !item.Eligible {
+		t.Fatalf("expected source recycle recommendation, got action=%q eligible=%v", item.Action, item.Eligible)
+	}
+	if item.PrimaryAction == nil || item.PrimaryAction.Code != "review_source_liquidity" {
+		t.Fatalf("unexpected primary action: %#v", item.PrimaryAction)
+	}
+}
+
+func TestChannelCapitalPlanIgnoresStaleAutofeeDrainState(t *testing.T) {
+	computedAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	stateAt := computedAt.Add(-24 * time.Hour)
+	channel := ChannelRankingItem{
+		State: "maintain", CapacitySat: 5_000_000, LocalBalancePct: 60,
+		LiquidityState: autofeeLiquidityStateDrained, LiquidityStateAt: &stateAt,
+		ComputedAt: computedAt, PeerSampleCount30d: channelRankingFull30dObservationSamples,
+	}
+	if item := buildChannelCapitalPlanItem(channel); item.Action == channelCapitalActionRefill {
+		t.Fatalf("stale liquidity state produced refill: %#v", item)
+	}
+}
+
+func TestEnrichChannelCapitalPlanSeparatesRecommendationFromAutomationReadiness(t *testing.T) {
+	plan := ChannelCapitalPlan{Items: []ChannelCapitalPlanItem{{
+		Channel: ChannelRankingItem{ChannelID: 42, ChannelPoint: "target:0"},
+		Action:  channelCapitalActionRefill,
+	}}}
+	intent := AutomationIntent{ChannelID: 42, Kind: automationIntentKindRefillTarget, Confidence: .9}
+	enrichChannelCapitalPlanAutomation(&plan, []RebalanceChannel{{
+		ChannelID: 42, ChannelPoint: "target:0", AutoEnabled: true, EligibleAsTarget: true,
+		TargetOutboundPct: 20, TargetAmountSat: 500_000,
+	}}, map[uint64][]AutomationIntent{42: {intent}})
+	item := plan.Items[0]
+	if !item.AutomationReady || !item.ActiveRefillIntent || item.TargetAmountSat != 500_000 {
+		t.Fatalf("expected actionable refill metadata, got %#v", item)
+	}
+
+	plan.Items[0].AutomationBlockers = nil
+	enrichChannelCapitalPlanAutomation(&plan, []RebalanceChannel{{
+		ChannelID: 42, ChannelPoint: "target:0", AutoEnabled: true, EligibleAsTarget: false,
+	}}, nil)
+	if plan.Items[0].AutomationReady || len(plan.Items[0].AutomationBlockers) == 0 {
+		t.Fatalf("strategic recommendation must expose automation blockers: %#v", plan.Items[0])
 	}
 }

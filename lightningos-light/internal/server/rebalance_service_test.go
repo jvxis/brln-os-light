@@ -19,6 +19,55 @@ func ptrBool(v bool) *bool    { return &v }
 func ptrFloat64(v float64) *float64 {
 	return &v
 }
+
+func TestRefillIntentPrioritySurvivesAutofeeSettling(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	candidates := []rebalanceTarget{{Channel: RebalanceChannel{ChannelID: 42}, Score: 100}}
+	baseline := captureRebalanceTargetScores(candidates)
+	if got := applyAutofeeSettlingPenalty(candidates, map[uint64]time.Time{42: now}, RebalanceConfig{
+		AutofeeSettlingWindowSec: 3600, AutofeeSettlingMultiplier: .75,
+	}, now); got != 1 || candidates[0].Score != 75 {
+		t.Fatalf("expected settling score 75, got count=%d score=%d", got, candidates[0].Score)
+	}
+	intent := AutomationIntent{ChannelID: 42, Kind: automationIntentKindRefillTarget, Confidence: 1}
+	applyRefillTargetIntents(candidates, map[uint64][]AutomationIntent{42: {intent}}, AutomationIntentConfig{
+		Mode: automationIntentModeEnforce, RefillScoreMultiplier: 1.2, MinConfidence: .8,
+	}, rebalanceProfileBalanced)
+	if got := preserveRefillIntentPriority(candidates, baseline); got != 1 || candidates[0].Score != 100 || candidates[0].IntentScoreAfter != 100 {
+		t.Fatalf("refill intent was inverted by settling: restored=%d candidate=%+v", got, candidates[0])
+	}
+}
+
+func TestSortRebalanceTargetsGivesEnforcedIntentOperationalPriority(t *testing.T) {
+	candidates := []rebalanceTarget{
+		{Channel: RebalanceChannel{ChannelID: 1}, Score: 100},
+		{Channel: RebalanceChannel{ChannelID: 2}, Score: 80, IntentApplied: true},
+	}
+	sortRebalanceTargets(candidates, 100, true, 30)
+	if candidates[0].Channel.ChannelID != 2 {
+		t.Fatalf("expected intent-bearing target first, got order=%d,%d", candidates[0].Channel.ChannelID, candidates[1].Channel.ChannelID)
+	}
+}
+
+func TestBroadSourceFailureQuarantineRequiresMultipleTargetsAndRecovers(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	stat := recentCooldownStat{
+		Attempts: 12, Failures: 12, DistinctTargets: 4,
+		LastAttemptAt: now.Add(-time.Hour), LastFailureAt: now.Add(-time.Hour),
+	}
+	if !shouldQuarantineBroadSourceFailures(stat, now) {
+		t.Fatal("expected broadly failing source to enter routeability quarantine")
+	}
+	stat.DistinctTargets = 1
+	if shouldQuarantineBroadSourceFailures(stat, now) {
+		t.Fatal("single-target failures belong to pair learning, not global source quarantine")
+	}
+	stat.DistinctTargets = 4
+	stat.LastFailureAt = now.Add(-sourceRouteabilityTTL - time.Minute)
+	if shouldQuarantineBroadSourceFailures(stat, now) {
+		t.Fatal("source must receive a recovery probe after quarantine expires")
+	}
+}
 func ptrString(v string) *string { return &v }
 
 func TestBuildOperatorRebalancePreviewDefaultsAndOverrides(t *testing.T) {

@@ -29,6 +29,17 @@ func (s *Server) handleChannelCapitalPlanGet(w http.ResponseWriter, r *http.Requ
 
 	commitments, magmaStateKnown := s.channelCapitalPlanCommitments(ctx)
 	plan := buildChannelCapitalPlan(items, commitments, magmaStateKnown)
+	if s.rebalance != nil {
+		if channels, channelErr := s.rebalance.Channels(ctx); channelErr == nil {
+			activeIntents := map[uint64][]AutomationIntent{}
+			if s.automationIntents != nil {
+				if loaded, intentErr := s.automationIntents.ActiveForConsumer(ctx, automationIntentProducerRebalance, time.Now()); intentErr == nil {
+					activeIntents = loaded
+				}
+			}
+			enrichChannelCapitalPlanAutomation(&plan, channels, activeIntents)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"available":         status.Available,
 		"last_sync_at":      status.LastSyncAt,

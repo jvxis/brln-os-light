@@ -3,10 +3,12 @@ package server
 import (
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
 	channelCapitalActionRefill    = "refill"
+	channelCapitalActionRecycle   = "recycle_source"
 	channelCapitalActionReprice   = "reprice"
 	channelCapitalActionExpand    = "expand"
 	channelCapitalActionMaintain  = "maintain"
@@ -32,6 +34,11 @@ type ChannelCapitalPlanItem struct {
 	RecoverableLocalSat int64                     `json:"recoverable_local_sat"`
 	PrimaryAction       *ChannelCapitalPlanAction `json:"primary_action,omitempty"`
 	MagmaCommitment     *MagmaChannelCommitment   `json:"magma_commitment,omitempty"`
+	AutomationReady     bool                      `json:"automation_ready"`
+	AutomationBlockers  []string                  `json:"automation_blockers,omitempty"`
+	TargetOutboundPct   float64                   `json:"target_outbound_pct,omitempty"`
+	TargetAmountSat     int64                     `json:"target_amount_sat,omitempty"`
+	ActiveRefillIntent  bool                      `json:"active_refill_intent,omitempty"`
 }
 
 type ChannelCapitalPlanSummary struct {
@@ -88,7 +95,7 @@ func buildChannelCapitalPlan(items []ChannelRankingItem, commitments []MagmaChan
 		item.Priority = channelCapitalPlanPriority(item)
 		plan.Summary.ActionCounts[item.Action]++
 		switch item.Action {
-		case channelCapitalActionExpand, channelCapitalActionMaintain, channelCapitalActionRefill, channelCapitalActionReprice:
+		case channelCapitalActionExpand, channelCapitalActionMaintain, channelCapitalActionRefill, channelCapitalActionRecycle, channelCapitalActionReprice:
 			plan.Summary.ProductiveCapitalSat += rankingMaxInt64(0, channel.CapacitySat)
 		case channelCapitalActionProtected:
 			plan.Summary.ProtectedCapitalSat += rankingMaxInt64(0, channel.CapacitySat)
@@ -146,6 +153,9 @@ func buildChannelCapitalPlanItem(channel ChannelRankingItem) ChannelCapitalPlanI
 		if channelCapitalPlanNeedsRefill(channel) {
 			item.Action = channelCapitalActionRefill
 			item.PrimaryAction = &ChannelCapitalPlanAction{Code: "manual_rebalance", TargetModule: "rebalance"}
+		} else if channelCapitalPlanNeedsSourceRecycle(channel) {
+			item.Action = channelCapitalActionRecycle
+			item.PrimaryAction = &ChannelCapitalPlanAction{Code: "review_source_liquidity", TargetModule: "rebalance-sources"}
 		} else if channelCapitalPlanNeedsReprice(channel) {
 			item.Action = channelCapitalActionReprice
 			item.PrimaryAction = &ChannelCapitalPlanAction{Code: "review_fees", TargetModule: "autofee"}
@@ -161,7 +171,10 @@ func buildChannelCapitalPlanItem(channel ChannelRankingItem) ChannelCapitalPlanI
 			item.Blockers = append(item.Blockers, "observation_30d")
 		}
 	case "monitor":
-		if channelCapitalPlanNeedsReprice(channel) {
+		if channelCapitalPlanNeedsSourceRecycle(channel) {
+			item.Action = channelCapitalActionRecycle
+			item.PrimaryAction = &ChannelCapitalPlanAction{Code: "review_source_liquidity", TargetModule: "rebalance-sources"}
+		} else if channelCapitalPlanNeedsReprice(channel) {
 			item.Action = channelCapitalActionReprice
 			item.PrimaryAction = &ChannelCapitalPlanAction{Code: "review_fees", TargetModule: "autofee"}
 		} else {
@@ -173,8 +186,65 @@ func buildChannelCapitalPlanItem(channel ChannelRankingItem) ChannelCapitalPlanI
 
 func channelCapitalPlanNeedsRefill(channel ChannelRankingItem) bool {
 	state := strings.TrimSpace(strings.ToLower(channel.LiquidityState))
-	return state == autofeeLiquidityStateDrained || state == autofeeLiquidityStateExtremeDrained ||
+	stateFresh := true
+	if channel.LiquidityStateAt != nil && !channel.LiquidityStateAt.IsZero() {
+		reference := channel.ComputedAt
+		if reference.IsZero() {
+			reference = time.Now()
+		}
+		stateFresh = !channel.LiquidityStateAt.Before(reference.Add(-12 * time.Hour))
+	}
+	return (stateFresh && (state == autofeeLiquidityStateDrained || state == autofeeLiquidityStateExtremeDrained)) ||
 		(channel.LocalBalancePct < 25 && channel.ProfitFee7dSat > 0)
+}
+
+// A source reservoir can look deceptively healthy in the economic score: it
+// assists other channels and has no rebalance cost, while most of its capital
+// remains local. Surface the operational role without ever turning the
+// recommendation into an automatic close.
+func channelCapitalPlanNeedsSourceRecycle(channel ChannelRankingItem) bool {
+	return applySourceReservoirCapitalPenalty(100, channel.CapacitySat, channel.LocalBalancePct,
+		channelTrafficStat{AmountSat: channel.ForwardAmt7dSat, FeeSat: channel.ForwardFee7dSat},
+		channelTrafficStat{AmountSat: channel.AssistedForwardAmt7dSat, FeeSat: channel.AssistedForwardFee7dSat}, 7) < 100
+}
+
+func enrichChannelCapitalPlanAutomation(plan *ChannelCapitalPlan, channels []RebalanceChannel, intents map[uint64][]AutomationIntent) {
+	if plan == nil {
+		return
+	}
+	byID := make(map[uint64]RebalanceChannel, len(channels))
+	byPoint := make(map[string]RebalanceChannel, len(channels))
+	for _, channel := range channels {
+		byID[channel.ChannelID] = channel
+		byPoint[strings.ToLower(strings.TrimSpace(channel.ChannelPoint))] = channel
+	}
+	for i := range plan.Items {
+		item := &plan.Items[i]
+		if item.Action != channelCapitalActionRefill {
+			continue
+		}
+		channel, ok := byID[uint64(item.Channel.ChannelID)]
+		if !ok {
+			channel, ok = byPoint[strings.ToLower(strings.TrimSpace(item.Channel.ChannelPoint))]
+		}
+		if !ok {
+			item.AutomationBlockers = append(item.AutomationBlockers, "rebalance_state_unavailable")
+			continue
+		}
+		item.TargetOutboundPct = channel.TargetOutboundPct
+		item.TargetAmountSat = channel.TargetAmountSat
+		if !channel.AutoEnabled && !channel.ManualRestartEnabled {
+			item.AutomationBlockers = append(item.AutomationBlockers, "rebalance_not_automated")
+		}
+		if channel.TargetAmountSat <= 0 {
+			item.AutomationBlockers = append(item.AutomationBlockers, "target_satisfied")
+		}
+		if !channel.EligibleAsTarget {
+			item.AutomationBlockers = append(item.AutomationBlockers, "rebalance_target_ineligible")
+		}
+		item.AutomationReady = len(item.AutomationBlockers) == 0
+		item.ActiveRefillIntent = selectRefillTargetIntent(intents[channel.ChannelID], 0) != nil
+	}
 }
 
 func channelCapitalPlanNeedsReprice(channel ChannelRankingItem) bool {
@@ -197,6 +267,8 @@ func channelCapitalPlanPriority(item ChannelCapitalPlanItem) int {
 		return 100
 	case channelCapitalActionRefill:
 		return 500 + score
+	case channelCapitalActionRecycle:
+		return 450 + score
 	case channelCapitalActionExpand:
 		return 400 + score
 	case channelCapitalActionReprice:

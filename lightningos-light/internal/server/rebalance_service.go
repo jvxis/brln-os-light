@@ -73,6 +73,10 @@ const (
 	targetDistinctSourceCooldownWindow  = rebalanceMaxCooldown
 	sourceCooldownMinAttempts           = 25
 	sourceCooldownMaxSuccess            = 1
+	sourceRouteabilityWindow            = 6 * time.Hour
+	sourceRouteabilityTTL               = 6 * time.Hour
+	sourceRouteabilityMinAttempts       = 12
+	sourceRouteabilityMinTargets        = 4
 	targetCooldownMinAttempts           = 25
 	targetCooldownMaxSuccess            = 0
 	targetNoAttemptCooldownMinFailures  = 3
@@ -1325,6 +1329,7 @@ type recentCooldownStat struct {
 	Failures        int
 	Successes       int
 	DistinctSources int
+	DistinctTargets int
 	LastAttemptAt   time.Time
 	LastFailureAt   time.Time
 	LastSuccessAt   time.Time
@@ -3298,6 +3303,23 @@ func shouldCooldownDistinctSourceFailures(stat recentCooldownStat, minSources in
 	return now.Sub(lastFailureAt) <= recentCooldownTTL
 }
 
+func shouldQuarantineBroadSourceFailures(stat recentCooldownStat, now time.Time) bool {
+	if stat.Attempts < sourceRouteabilityMinAttempts || stat.Failures < sourceRouteabilityMinAttempts || stat.DistinctTargets < sourceRouteabilityMinTargets {
+		return false
+	}
+	lastFailureAt := stat.LastFailureAt
+	if lastFailureAt.IsZero() {
+		lastFailureAt = stat.LastAttemptAt
+	}
+	if lastFailureAt.IsZero() || (!stat.LastSuccessAt.IsZero() && !stat.LastSuccessAt.Before(lastFailureAt)) {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return now.Sub(lastFailureAt) <= sourceRouteabilityTTL
+}
+
 func shouldCooldownTargetRecentFailures(attemptStat recentCooldownStat, noAttemptStat recentCooldownStat, failedStat recentCooldownStat, distinctSourceStat recentCooldownStat, now time.Time) bool {
 	if shouldCooldownRecentFailures(attemptStat, targetCooldownMinAttempts, targetCooldownMaxSuccess, now) {
 		return true
@@ -5055,11 +5077,13 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			}
 		}
 	}
-	applyRefillTargetIntents(plan.Candidates, input.AutomationIntents, input.AutomationIntentConfig, input.Cfg.Profile)
+	preSettlingScores := captureRebalanceTargetScores(plan.Candidates)
 	plan.AutofeeDampened = applyAutofeeSettlingPenalty(plan.Candidates, input.AutofeeRecentAdjustments, input.Cfg, input.ScanAt)
 	if plan.AutofeeDampened > 0 {
 		noteSkip("autofee_settling_target") // observability counter; candidate still queued
 	}
+	applyRefillTargetIntents(plan.Candidates, input.AutomationIntents, input.AutomationIntentConfig, input.Cfg.Profile)
+	preserveRefillIntentPriority(plan.Candidates, preSettlingScores)
 	plan.TopScore = 0
 	plan.TopScoreSet = false
 	for _, candidate := range plan.Candidates {
@@ -5112,6 +5136,13 @@ func sortRebalanceTargets(candidates []rebalanceTarget, topScore int64, topScore
 		bUrgency := sovereignOutboundUrgency(b.Channel)
 		if aUrgency != bUrgency {
 			return aUrgency > bUrgency
+		}
+		// An enforced refill intent is an operational priority lane, not an
+		// exemption from ROI, profit, budget, cooldown, or source gates. Sort it
+		// ahead of comparable candidates so Automation Intent can affect which
+		// job gets the limited slot even when scores are close.
+		if a.IntentApplied != b.IntentApplied {
+			return a.IntentApplied
 		}
 		aBucket := inTopBucket(a.Score)
 		bBucket := inTopBucket(b.Score)
@@ -6104,11 +6135,13 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	sources := filterSources(channelSnapshots, targetChannelID)
 	if useRecentFailureCache {
 		sourceCooldowns := s.loadRecentSourceCooldowns(ctx, time.Now().Add(-recentCooldownWindow))
-		if len(sourceCooldowns) > 0 {
+		sourceRouteability := s.loadSourceRouteabilityCooldowns(ctx, time.Now().Add(-sourceRouteabilityWindow))
+		if len(sourceCooldowns) > 0 || len(sourceRouteability) > 0 {
 			filteredSources := make([]RebalanceChannel, 0, len(sources))
 			now := time.Now()
 			for _, source := range sources {
-				if shouldCooldownRecentFailures(sourceCooldowns[source.ChannelID], sourceCooldownMinAttempts, sourceCooldownMaxSuccess, now) {
+				if shouldCooldownRecentFailures(sourceCooldowns[source.ChannelID], sourceCooldownMinAttempts, sourceCooldownMaxSuccess, now) ||
+					shouldQuarantineBroadSourceFailures(sourceRouteability[source.ChannelID], now) {
 					continue
 				}
 				filteredSources = append(filteredSources, source)
@@ -8935,6 +8968,67 @@ group by source_channel_id
 			stat.LastSuccessAt = lastSuccess.Time
 		}
 		stats[uint64(channelID)] = stat
+	}
+	return stats
+}
+
+func (s *RebalanceService) loadSourceRouteabilityCooldowns(ctx context.Context, since time.Time) map[uint64]recentCooldownStat {
+	stats := map[uint64]recentCooldownStat{}
+	if s == nil || s.db == nil {
+		return stats
+	}
+	rows, err := s.db.Query(ctx, `
+with events as (
+  select a.source_channel_id, j.target_channel_id, a.status,
+    coalesce(a.finished_at, a.started_at) as occurred_at
+  from rebalance_attempts a
+  join rebalance_jobs j on j.id=a.job_id
+  where coalesce(a.finished_at, a.started_at) >= $1
+),
+last_success as (
+  select source_channel_id, max(occurred_at) as last_success_at
+  from events where status='succeeded' group by source_channel_id
+),
+pressure as (
+  select e.*, ls.last_success_at from events e
+  left join last_success ls using (source_channel_id)
+  where ls.last_success_at is null or e.occurred_at > ls.last_success_at
+)
+select source_channel_id,
+  count(*) as attempts,
+  coalesce(sum(case when status='succeeded' then 1 else 0 end), 0) as successes,
+  coalesce(sum(case when status<>'succeeded' then 1 else 0 end), 0) as failures,
+  count(distinct target_channel_id) as distinct_targets,
+  max(occurred_at) as last_attempt_at,
+  max(case when status<>'succeeded' then occurred_at else null end) as last_failure_at,
+  max(last_success_at) as last_success_at
+from pressure group by source_channel_id
+`, since)
+	if err != nil {
+		return stats
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var stat recentCooldownStat
+		var lastAttempt, lastFailure, lastSuccess pgtype.Timestamptz
+		if err := rows.Scan(&channelID, &stat.Attempts, &stat.Successes, &stat.Failures, &stat.DistinctTargets, &lastAttempt, &lastFailure, &lastSuccess); err != nil {
+			return stats
+		}
+		if channelID <= 0 {
+			continue
+		}
+		stat.ChannelID = uint64(channelID)
+		if lastAttempt.Valid {
+			stat.LastAttemptAt = lastAttempt.Time
+		}
+		if lastFailure.Valid {
+			stat.LastFailureAt = lastFailure.Time
+		}
+		if lastSuccess.Valid {
+			stat.LastSuccessAt = lastSuccess.Time
+		}
+		stats[stat.ChannelID] = stat
 	}
 	return stats
 }
@@ -12006,6 +12100,39 @@ func applyRefillTargetIntents(candidates []rebalanceTarget, intents map[uint64][
 		applied++
 	}
 	return applied
+}
+
+func captureRebalanceTargetScores(candidates []rebalanceTarget) map[uint64]int64 {
+	scores := make(map[uint64]int64, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.CooldownProbe || candidate.Channel.ChannelID == 0 {
+			continue
+		}
+		scores[candidate.Channel.ChannelID] = candidate.Score
+	}
+	return scores
+}
+
+// AutoFee settling protects the system from reacting twice to the same fee
+// movement. An explicit, admitted refill intent describes a distinct liquidity
+// need, so settling may neutralize its boost but must not invert it into a score
+// below the pre-settling baseline.
+func preserveRefillIntentPriority(candidates []rebalanceTarget, baselines map[uint64]int64) int {
+	restored := 0
+	for i := range candidates {
+		candidate := &candidates[i]
+		if !candidate.IntentApplied || candidate.AutomationIntent == nil {
+			continue
+		}
+		baseline, ok := baselines[candidate.Channel.ChannelID]
+		if !ok || candidate.Score >= baseline {
+			continue
+		}
+		candidate.Score = baseline
+		candidate.IntentScoreAfter = baseline
+		restored++
+	}
+	return restored
 }
 
 func (s *RebalanceService) recordRebalanceIntentEffects(ctx context.Context, plan rebalanceAutoScanCandidatePlan, cfg RebalanceConfig, scanAt time.Time, decisionPath string, decisions []RebalanceSovereignDecision) {

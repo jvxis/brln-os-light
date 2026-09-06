@@ -103,6 +103,50 @@ type magmaPolicyInputs struct {
 	// the creation time is unknown, which disables the deadline rather than
 	// guessing an age and refusing something that just arrived.
 	PendingFor time.Duration
+	// Deadline is Amboss's own instant for this order, when they publish one.
+	// Everything below used to run on an estimate: the grace period was derived
+	// from a single order that lapsed 2h04m after creation. A real deadline
+	// replaces the guess; a missing one keeps it.
+	Deadline *time.Time
+	// BuyerUnreachable is set when the buyer's node did not answer. Phrased so the
+	// zero value is the harmless one: a caller that never learned the answer must
+	// not silently block every sale.
+	//
+	// It defers rather than refuses. An unreachable buyer has been observed paying
+	// in full, so it predicts nothing on its own - but LND will not open a channel
+	// to a peer that is not connected, so accepting while it is down promises a
+	// delivery on a connection we do not have. Deferring costs nothing while there
+	// is still window left, and the deadline turns it into a refusal if it lasts.
+	BuyerUnreachable bool
+}
+
+// magmaTimeLeft is how long this order still has. It prefers Amboss's own
+// deadline and falls back to the observed window, so an order is never judged by
+// an estimate when the real number is available.
+func magmaTimeLeft(in magmaPolicyInputs, now time.Time) (time.Duration, bool) {
+	if in.Deadline != nil {
+		return in.Deadline.Sub(now), true
+	}
+	if in.PendingFor <= 0 {
+		// Age unknown, so no deadline can be applied without inventing one.
+		return 0, false
+	}
+	return magmaApprovalWindow - in.PendingFor, true
+}
+
+// magmaShouldRefuseNow reports whether the window has closed far enough that an
+// explicit refusal is the only thing still worth doing.
+//
+// The order matters: refusing early throws away a sale that might still land,
+// and refusing late is not refusing at all - the lapse is recorded against the
+// account as SELLER_FAILED_TO_REACT. So the refusal happens with time to spare,
+// deliberately before the deadline rather than at it.
+func magmaShouldRefuseNow(in magmaPolicyInputs, now time.Time) bool {
+	left, known := magmaTimeLeft(in, now)
+	if !known {
+		return false
+	}
+	return left <= magmaApprovalWindow-magmaApprovalGrace
 }
 
 // evaluateMagmaOrder splits refusals into permanent and temporary on purpose.
@@ -115,10 +159,14 @@ func evaluateMagmaOrder(policy MagmaPolicy, in magmaPolicyInputs) magmaDecision 
 	// A deferral is a bet that the blocker clears before Amboss loses patience.
 	// Past the grace period that bet is lost, and the only thing left to choose is
 	// whether the order ends as our explicit "no" or as a failure record.
-	if !decision.Accept && !decision.Reject && in.PendingFor >= magmaApprovalGrace {
+	if !decision.Accept && !decision.Reject && magmaShouldRefuseNow(in, time.Now()) {
+		left, _ := magmaTimeLeft(in, time.Now())
+		if left < 0 {
+			left = 0
+		}
 		return magmaDecision{Reject: true, Reason: fmt.Sprintf(
 			"%s - refusing explicitly, the approval window closes in about %d minutes",
-			decision.Reason, int(magmaWindowRemaining(in.PendingFor)/time.Minute))}
+			decision.Reason, int(left/time.Minute))}
 	}
 	return decision
 }
@@ -181,6 +229,15 @@ func evaluateMagmaOrderTerms(policy MagmaPolicy, in magmaPolicyInputs) magmaDeci
 	}
 
 	// --- Temporary: the terms are fine, we are not ready. Defer, never reject. ---
+
+	// Checked here and not earlier: an order whose terms are unacceptable is
+	// refused on those terms whatever the peer is doing. Deferring it instead
+	// would spend the window waiting for a node whose order we were never going
+	// to take.
+	if in.BuyerUnreachable {
+		return magmaDecision{Reason: "the buyer's node is not answering, and LND cannot open " +
+			"a channel to a peer that is not connected; waiting for it to return"}
+	}
 	if !in.OnchainReachable {
 		return magmaDecision{Reason: "waiting: could not read the on-chain balance"}
 	}
@@ -366,6 +423,31 @@ order by coalesce(order_created_at, first_seen_at) asc limit 1
 	return true
 }
 
+// orderDeadlines reads the deadlines Amboss published for these orders. A
+// missing entry means no deadline is known, which leaves the estimate in place
+// rather than inventing one.
+func (s *MagmaService) orderDeadlines(ctx context.Context, orderIDs []string) map[string]time.Time {
+	deadlines := make(map[string]time.Time, len(orderIDs))
+	if len(orderIDs) == 0 {
+		return deadlines
+	}
+	rows, err := s.db.Query(ctx,
+		`select order_id, timeout_at from magma_orders where order_id = any($1) and timeout_at is not null`,
+		orderIDs)
+	if err != nil {
+		return deadlines
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var when time.Time
+		if err := rows.Scan(&id, &when); err == nil {
+			deadlines[id] = when.UTC()
+		}
+	}
+	return deadlines
+}
+
 // autoEvaluatePending runs the policy over orders waiting for our approval.
 func (s *MagmaService) autoEvaluatePending(ctx context.Context, token string, policy MagmaPolicy) {
 	rows, err := s.db.Query(ctx, `
@@ -392,6 +474,7 @@ order by coalesce(order_created_at, first_seen_at) asc
 	concurrent, _ := s.concurrentOpens(ctx)
 	ordersToday, sizeToday, _ := s.dailyUsage(ctx)
 
+	deadlines := s.orderDeadlines(ctx, pending)
 	for _, orderID := range pending {
 		order, err := s.orderByID(ctx, orderID)
 		if err != nil {
@@ -405,6 +488,13 @@ order by coalesce(order_created_at, first_seen_at) asc
 			OrdersToday:      ordersToday,
 			SizeToday:        sizeToday,
 			OnchainReachable: capErr == nil,
+			// Reaching the buyer is attempted once per pass. It is cheap when the
+			// peer is already connected - a peer list, no dial - and when it is
+			// not, this is exactly the retry that keeps the sale alive.
+			BuyerUnreachable: s.reachBuyer(ctx, token, order.BuyerPubkey) != nil,
+		}
+		if when, ok := deadlines[orderID]; ok {
+			inputs.Deadline = &when
 		}
 		if order.CreatedAt != nil {
 			inputs.PendingFor = time.Since(*order.CreatedAt)

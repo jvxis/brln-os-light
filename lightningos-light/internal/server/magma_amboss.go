@@ -550,6 +550,17 @@ const (
 	magmaMarketAcceptOrderMutation = `mutation AcceptOrder($input: SellerAcceptOrdersInput!) {
   market { order { seller { accept(input: $input) { success } } } }
 }`
+	// The deadline lives only on the replacement endpoint. OrderType.timeout on
+	// api.amboss.space is an empty string on every order, including live ones,
+	// while MarketOrder.timeout carries an absolute UTC instant - and goes null
+	// once the order settles. Amboss's own UI counts down against it.
+	//
+	// This is fetched separately rather than by migrating the whole order query,
+	// because the replacement order type drops fields we still use and nothing
+	// about a deadline requires paying that cost today.
+	magmaMarketOrderTimeoutsQuery = `query SellerOrderTimeouts($page: PageInput!) {
+  user { market { orders { sales(page: $page) { total list { id timeout } } } } }
+}`
 	magmaMarketRejectOrderMutation = `mutation RejectOrder($input: SellerRejectOrdersInput!) {
   market { order { seller { reject(input: $input) { success } } } }
 }`
@@ -651,6 +662,58 @@ func (c *magmaAmbossClient) AcceptOrder(ctx context.Context, token, orderID, pay
 			return magmaMutationSucceeded(out.SellerAcceptOrder), err
 		},
 		refused)
+}
+
+// magmaOrderTimeoutPageSize follows the example in Amboss's own migration guide.
+// Both PageInput fields are required - offset is Float! and omitting it is a
+// validation error, not a default - so both are always sent.
+const magmaOrderTimeoutPageSize = 50
+
+// OrderTimeouts returns the deadline Amboss holds for each live order.
+//
+// Orders that have settled report a null timeout and are simply absent from the
+// result: a missing entry means "no deadline to honour", never "the deadline is
+// now". Reading it the other way would abandon orders that are perfectly fine.
+func (c *magmaAmbossClient) OrderTimeouts(ctx context.Context, token string) (map[string]time.Time, error) {
+	deadlines := make(map[string]time.Time, 8)
+	for offset := 0; ; offset += magmaOrderTimeoutPageSize {
+		var result struct {
+			User struct {
+				Market struct {
+					Orders struct {
+						Sales struct {
+							Total int `json:"total"`
+							List  []struct {
+								ID      string `json:"id"`
+								Timeout string `json:"timeout"`
+							} `json:"list"`
+						} `json:"sales"`
+					} `json:"orders"`
+				} `json:"market"`
+			} `json:"user"`
+		}
+		if err := c.doMarket(ctx, token, magmaMarketOrderTimeoutsQuery, map[string]any{
+			"page": map[string]any{"limit": magmaOrderTimeoutPageSize, "offset": offset},
+		}, &result); err != nil {
+			return nil, err
+		}
+		list := result.User.Market.Orders.Sales.List
+		for _, item := range list {
+			id := strings.TrimSpace(item.ID)
+			raw := strings.TrimSpace(item.Timeout)
+			if id == "" || raw == "" {
+				continue
+			}
+			when, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				continue
+			}
+			deadlines[id] = when.UTC()
+		}
+		if len(list) < magmaOrderTimeoutPageSize || offset+len(list) >= result.User.Market.Orders.Sales.Total {
+			return deadlines, nil
+		}
+	}
 }
 
 // RejectOrder declines an order explicitly. Letting an unwanted order lapse is

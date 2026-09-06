@@ -1149,6 +1149,102 @@ update magma_orders set local_state=$2, updated_at=now() where order_id=$1
 	}
 }
 
+const (
+	// magmaOpenAlertGrace holds the first alert back. A peer that drops for a
+	// minute is normal and resolves itself; saying so immediately would train the
+	// operator to ignore the message that matters.
+	magmaOpenAlertGrace = 8 * time.Minute
+	// magmaOpenAlertInterval repeats it while the channel is still owed. Amboss
+	// nudges the seller on roughly this cadence for the same reason: something
+	// pending for hours has to stay visible without becoming noise.
+	magmaOpenAlertInterval = 30 * time.Minute
+)
+
+// alertOnPaidOrdersStillWaitingToOpen tells the operator when a paid order is
+// not turning into a channel.
+//
+// The automation retries on its own and usually wins, so most of this stays
+// silent by design. But after payment the operator is the last line of defence -
+// they can open by hand, reach the buyer, or talk to Amboss - and nothing told
+// them anything: the deferral is recorded at info level and never left the
+// database. Worse, that silence replaced a warning that used to fire on the
+// first failed open, so retrying harder had quietly traded loud-and-useless for
+// quiet-and-invisible.
+//
+// The cadence lives in the database, not in memory, so a restart neither repeats
+// the backlog nor resets the clock on an order that has waited for hours.
+func (s *MagmaService) alertOnPaidOrdersStillWaitingToOpen(ctx context.Context) {
+	rows, err := s.db.Query(ctx, `
+select order_id, buyer_pubkey, size_sat, revenue_sat, timeout_at, open_alert_at,
+       open_expiry_notified, coalesce(revenue_settled_at, first_seen_at)
+from magma_orders
+where local_state = any($1)
+  and magma_status = 'WAITING_FOR_CHANNEL_OPEN'
+  and payment_status = $2
+`, []string{magmaStateAccepted, magmaStateNeedsAttention}, magmaPaymentSuccessful)
+	if err != nil {
+		return
+	}
+	type waiting struct {
+		orderID        string
+		buyerPubkey    string
+		sizeSat        int64
+		revenueSat     int64
+		deadline       *time.Time
+		lastAlert      *time.Time
+		expiryNotified bool
+		owedSince      time.Time
+	}
+	items := make([]waiting, 0, 4)
+	for rows.Next() {
+		var item waiting
+		if err := rows.Scan(&item.orderID, &item.buyerPubkey, &item.sizeSat, &item.revenueSat,
+			&item.deadline, &item.lastAlert, &item.expiryNotified, &item.owedSince); err == nil {
+			items = append(items, item)
+		}
+	}
+	rows.Close()
+
+	now := time.Now().UTC()
+	for _, item := range items {
+		if item.deadline != nil && now.After(*item.deadline) {
+			if item.expiryNotified {
+				continue
+			}
+			s.appendEvent(ctx, item.orderID, "open_window_closed", "error", fmt.Sprintf(
+				"the window to open this paid channel has closed; %s sat to %s was never delivered",
+				formatInt(item.sizeSat), magmaShortPubkey(item.buyerPubkey)), nil)
+			s.notifyTelegram(ctx, MagmaOrder{ID: item.orderID}, fmt.Sprintf(`Order %s: the window to open this channel has CLOSED.
+The buyer paid %s sat and the %s sat channel to %s was never opened.
+Amboss will record a seller failure for this order.`,
+				item.orderID, formatInt(item.revenueSat), formatInt(item.sizeSat),
+				magmaShortPubkey(item.buyerPubkey)))
+			_, _ = s.db.Exec(ctx,
+				`update magma_orders set open_expiry_notified=true, updated_at=now() where order_id=$1`,
+				item.orderID)
+			continue
+		}
+		if now.Sub(item.owedSince) < magmaOpenAlertGrace {
+			continue
+		}
+		if item.lastAlert != nil && now.Sub(*item.lastAlert) < magmaOpenAlertInterval {
+			continue
+		}
+		left := "an unknown amount of time"
+		if item.deadline != nil {
+			left = fmt.Sprintf("%d minutes", int(item.deadline.Sub(now)/time.Minute))
+		}
+		s.notifyTelegram(ctx, MagmaOrder{ID: item.orderID}, fmt.Sprintf(`Order %s: the buyer has paid and the %s sat channel to %s is still not open.
+Waiting %d minutes so far, %s left to open it.
+Retrying automatically; opening it by hand also resolves the order.`,
+			item.orderID, formatInt(item.sizeSat), magmaShortPubkey(item.buyerPubkey),
+			int(now.Sub(item.owedSince)/time.Minute), left))
+		_, _ = s.db.Exec(ctx,
+			`update magma_orders set open_alert_at=now(), updated_at=now() where order_id=$1`,
+			item.orderID)
+	}
+}
+
 // magmaStatusMeansChannelIsOut reports the statuses where Amboss has seen the
 // funding transaction. Past that point the sale is no longer waiting on us to
 // spend anything, so it must stop reserving wallet balance.
@@ -1252,6 +1348,7 @@ func (s *MagmaService) reconcileExecution(ctx context.Context, token string) {
 	// And orders whose open failed. Runs before the resume paths so a rescued
 	// order is funded in the same cycle rather than waiting for the next.
 	s.retryPaidOrdersThatFailedToOpen(ctx)
+	s.alertOnPaidOrdersStillWaitingToOpen(ctx)
 
 	rows, err := s.db.Query(ctx, `
 select order_id, local_state, funding_txid, channel_point, buyer_pubkey, size_sat

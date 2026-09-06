@@ -244,7 +244,13 @@ alter table magma_orders
   -- Amboss's own deadline for the order, read from the replacement endpoint.
   -- Null means no deadline is being tracked, never "expired": a settled order
   -- reports none, and so does a fetch that failed.
-  add column if not exists timeout_at timestamptz;
+  add column if not exists timeout_at timestamptz,
+  -- When the operator was last told this paid order still has no channel, and
+  -- whether the final "the window closed" warning already went out. Persisted
+  -- rather than held in memory so a restart neither repeats the whole history
+  -- nor silently resets the clock.
+  add column if not exists open_alert_at timestamptz,
+  add column if not exists open_expiry_notified boolean not null default false;
 
 create table if not exists magma_offer_state (
   offer_id text primary key,

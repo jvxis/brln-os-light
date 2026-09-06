@@ -55,6 +55,7 @@ type magmaLND interface {
 	ListPendingChannels(ctx context.Context) ([]lndclient.PendingChannelInfo, error)
 	ListChannels(ctx context.Context) ([]lndclient.ChannelInfo, error)
 	ListPeers(ctx context.Context) ([]lndclient.PeerInfo, error)
+	ListLeases(ctx context.Context) (map[string]lndclient.LeaseInfo, error)
 }
 
 // magmaOnchainTxLister is split out because only the P&L needs it; keeping it
@@ -231,6 +232,29 @@ where local_state = any($1) and not (magma_status = any($2))
 		capacity.AvailableSat = 0
 	}
 	return capacity, nil
+}
+
+// lockedFundsNote describes funds held by a lease, or nothing at all. It never
+// fails the preview: this is an explanation, and an explanation that cannot be
+// fetched simply is not appended.
+func (s *MagmaService) lockedFundsNote(ctx context.Context) string {
+	if s.lnd == nil {
+		return ""
+	}
+	leases, err := s.lnd.ListLeases(ctx)
+	if err != nil || len(leases) == 0 {
+		return ""
+	}
+	var locked int64
+	for _, lease := range leases {
+		locked += int64(lease.Value)
+	}
+	if locked <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		" (%s sat is locked by %d leased utxo(s) and cannot be spent until the lease expires)",
+		formatInt(locked), len(leases))
 }
 
 // ensureCapacityFor refuses an order the wallet cannot honour once every already
@@ -462,9 +486,16 @@ func (s *MagmaService) OpenChannelPreview(ctx context.Context, orderID string, s
 		preview.SpendableSat = estimate.SpendableSat
 		preview.EnoughFunds = estimate.EnoughFunds
 		if !estimate.EnoughFunds {
+			// Say where the rest of the money is. LND's ListUnspent omits leased
+			// outputs, so a wallet holding 1.7M can be reported as holding 209k
+			// with nothing on screen to explain the gap - which is exactly how
+			// issue #131 was read as a phantom balance bug. The lease is real and
+			// the funds are genuinely unspendable until it lapses; the failure was
+			// only ever in not saying so.
 			preview.Blockers = append(preview.Blockers, fmt.Sprintf(
-				"not enough confirmed on-chain balance: need %s sat, have %s sat",
-				formatInt(estimate.TotalDebitSat), formatInt(estimate.SpendableSat)))
+				"not enough confirmed on-chain balance: need %s sat, have %s sat%s",
+				formatInt(estimate.TotalDebitSat), formatInt(estimate.SpendableSat),
+				s.lockedFundsNote(ctx)))
 		}
 	} else {
 		preview.Warnings = append(preview.Warnings, fmt.Sprintf("could not estimate the on-chain cost: %v", err))
@@ -991,10 +1022,106 @@ where local_state=$1 and magma_status='WAITING_FOR_CHANNEL_OPEN'
 	}
 }
 
+// magmaStatusMeansChannelIsOut reports the statuses where Amboss has seen the
+// funding transaction. Past that point the sale is no longer waiting on us to
+// spend anything, so it must stop reserving wallet balance.
+//
+// Deliberately not the terminal list: these are successes in flight, and a
+// successful order is exactly the one the terminal list is built to keep. The
+// question here is different - not "is this order over" but "has the money
+// already left".
+func magmaStatusMeansChannelIsOut(status string) bool {
+	switch status {
+	case "SELLER_SENT_TRANSACTION", "SELLER_OPENED_CHANNEL", "VALID_CHANNEL_OPENING",
+		"WAITING_FOR_ON_CHAIN_CONFIRMATION", "ON_CHAIN_CONFIRMATION",
+		"CHANNEL_MONITORING_FINISHED":
+		return true
+	}
+	return false
+}
+
+// adoptOrdersOpenedElsewhere finishes an order whose channel was opened outside
+// this app.
+//
+// Reported as issue #131: auto-open declined, the operator opened the channel by
+// hand, Amboss saw it and moved the order to VALID_CHANNEL_OPENING - and the
+// local state stayed `accepted`. `accepted` is one of the states that reserves
+// wallet balance against a channel still owed, so the app went on holding
+// 500,000 sat for a channel that was already open, and said so on screen. The
+// only way out was editing the database by hand.
+//
+// The channel is looked up on the node rather than assumed from the status:
+// Amboss can only tell us a channel exists, not which one, and writing a channel
+// point we did not verify is how an order ends up pointing at the wrong funding
+// transaction.
+func (s *MagmaService) adoptOrdersOpenedElsewhere(ctx context.Context) {
+	rows, err := s.db.Query(ctx, `
+select order_id, magma_status, buyer_pubkey, size_sat
+from magma_orders
+where local_state = $1 and not (magma_status = any($2))
+`, magmaStateAccepted, magmaTerminalStatusList())
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("magma: opened-elsewhere query failed: %v", err)
+		}
+		return
+	}
+	type candidate struct {
+		orderID     string
+		magmaStatus string
+		buyerPubkey string
+		sizeSat     int64
+	}
+	candidates := make([]candidate, 0, 4)
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.orderID, &item.magmaStatus, &item.buyerPubkey, &item.sizeSat); err == nil {
+			candidates = append(candidates, item)
+		}
+	}
+	rows.Close()
+
+	for _, item := range candidates {
+		if !magmaStatusMeansChannelIsOut(item.magmaStatus) {
+			continue
+		}
+		point, err := s.existingChannelFor(ctx, MagmaOrder{
+			BuyerPubkey: item.buyerPubkey,
+			SizeSat:     item.sizeSat,
+		})
+		if err != nil || point == "" {
+			// Amboss says the channel is out and the node cannot show it. Say so
+			// rather than guessing: the balance stays reserved, which is the safe
+			// direction, and the operator has something to act on.
+			s.appendEvent(ctx, item.orderID, "needs_attention", "warning", fmt.Sprintf(
+				"Amboss reports %s but no channel of %s sat to %s is on this node; "+
+					"the order still reserves that balance until it can be matched",
+				item.magmaStatus, formatInt(item.sizeSat), magmaShortPubkey(item.buyerPubkey)), nil)
+			continue
+		}
+		if _, err := s.db.Exec(ctx, `
+update magma_orders
+set local_state=$2, channel_point=$3, funding_txid=$4, last_error='', updated_at=now()
+where order_id=$1
+`, item.orderID, magmaStateConfirmed, point, magmaTxidFromPoint(point)); err != nil {
+			if s.logger != nil {
+				s.logger.Printf("magma: could not finish order %s opened elsewhere: %v", item.orderID, err)
+			}
+			continue
+		}
+		s.appendEvent(ctx, item.orderID, "adopted", "info", fmt.Sprintf(
+			"Channel %s was opened outside this app and Amboss has seen it; "+
+				"the order no longer reserves balance", point), nil)
+	}
+}
+
 func (s *MagmaService) reconcileExecution(ctx context.Context, token string) {
 	// Runs first: an order approved elsewhere has to be owned before any of the
 	// resume paths below can see it.
 	s.adoptOrdersAcceptedElsewhere(ctx)
+	// And the mirror of it: an order this app accepted whose channel was then
+	// opened by hand. Runs before the resume paths for the same reason.
+	s.adoptOrdersOpenedElsewhere(ctx)
 
 	rows, err := s.db.Query(ctx, `
 select order_id, local_state, funding_txid, channel_point, buyer_pubkey, size_sat

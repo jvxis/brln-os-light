@@ -50,6 +50,9 @@ func (f *magmaReachLND) PreviewOpenChannel(context.Context, int64, int64, int64)
 func (f *magmaReachLND) ListPendingChannels(context.Context) ([]lndclient.PendingChannelInfo, error) {
 	return nil, nil
 }
+func (f *magmaReachLND) ListLeases(context.Context) (map[string]lndclient.LeaseInfo, error) {
+	return nil, nil
+}
 func (f *magmaReachLND) ListChannels(context.Context) ([]lndclient.ChannelInfo, error) {
 	return nil, nil
 }

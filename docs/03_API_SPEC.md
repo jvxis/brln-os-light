@@ -777,6 +777,7 @@ GET /api/reports/live
 
 GET /api/reports/reconciliation
 - Returns missing complete local dates plus reconciliation progress and the last error, if any.
+- Missing dates start at the first persisted daily report. An empty report history returns no missing dates; days before that first report are never treated as gaps.
 
 POST /api/reports/reconciliation
 - Starts an idempotent asynchronous rebuild of missing daily reports. Returns HTTP 202 while work starts, or HTTP 409 when already running.

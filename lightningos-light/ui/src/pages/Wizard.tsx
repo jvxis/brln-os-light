@@ -530,10 +530,35 @@ export default function Wizard() {
       {step === 2 && (
         <div className="section-card space-y-4">
           <h3 className="text-lg font-semibold">{t('wizard.step2Title')}</h3>
-          <div className="flex gap-3">
-            <button className={walletMode === 'create' ? 'btn-primary' : 'btn-secondary'} onClick={() => setWalletMode('create')}>{t('wizard.createNew')}</button>
-            <button className={walletMode === 'import' ? 'btn-primary' : 'btn-secondary'} onClick={() => setWalletMode('import')}>{t('wizard.importExisting')}</button>
-          </div>
+          <fieldset>
+            <legend className="mb-3 text-sm text-fog/70">{t('wizard.walletModeLabel')}</legend>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {(['create', 'import'] as const).map((mode) => (
+                <label
+                  key={mode}
+                  className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition focus-within:ring-2 focus-within:ring-glow/60 ${
+                    walletMode === mode ? 'border-glow bg-glow/10' : 'border-white/15 hover:border-glow/50'
+                  }`}
+                >
+                  <input
+                    className="mt-1 h-4 w-4 shrink-0 accent-glow"
+                    type="radio"
+                    name="wallet-mode"
+                    value={mode}
+                    checked={walletMode === mode}
+                    onChange={() => setWalletMode(mode)}
+                    aria-describedby={`wallet-mode-${mode}-description`}
+                  />
+                  <span>
+                    <span className="block font-semibold">{t(mode === 'create' ? 'wizard.newWallet' : 'wizard.existingWallet')}</span>
+                    <span id={`wallet-mode-${mode}-description`} className="mt-1 block text-sm text-fog/65">
+                      {t(mode === 'create' ? 'wizard.newWalletDescription' : 'wizard.existingWalletDescription')}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <div className="grid gap-4 lg:grid-cols-2">
             <input className="input-field" placeholder={t('wizard.walletPassword')} type="password" value={walletPassword} onChange={(e) => setWalletPassword(e.target.value)} />
             <input className="input-field" placeholder={t('wizard.confirmPassword')} type="password" value={walletPasswordConfirm} onChange={(e) => setWalletPasswordConfirm(e.target.value)} />

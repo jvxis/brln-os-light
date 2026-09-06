@@ -205,7 +205,7 @@ func (s *MagmaService) syncOfferBalanceGuard(ctx context.Context, token string) 
 		}
 		s.markOfferAutoDisabled(ctx, offer.ID, availableSat, required)
 		s.notifyOfferGuard(ctx, offer, "disabled", remaining, policy.MinOnchainReserve,
-			required, availableSat)
+			required, availableSat, unfulfillable)
 	}
 
 	// Restore in a fixed order so the same balance always brings back the same
@@ -242,7 +242,7 @@ func (s *MagmaService) syncOfferBalanceGuard(ctx context.Context, token string) 
 		budget -= remaining
 		s.clearOfferAutoDisable(ctx, offer.ID)
 		s.notifyOfferGuard(ctx, offer, "enabled", remaining, policy.MinOnchainReserve,
-			remaining+policy.MinOnchainReserve, availableSat)
+			remaining+policy.MinOnchainReserve, availableSat, false)
 	}
 }
 
@@ -277,22 +277,48 @@ func magmaOfferHasBlockingConflict(conflicts []MagmaOfferConflict) bool {
 	return false
 }
 
+// magmaOfferDisableReason explains why an offer is coming down, in the terms
+// that decided it.
+//
+// The guard said "the on-chain balance no longer covers it" for every disable.
+// Once it also began taking down offers that cannot produce a valid order, that
+// sentence started appearing beside numbers contradicting it: an offer with
+// 135,910 sat left and a 1,000,000 sat minimum, reported as unaffordable
+// against 3,727,500 sat of free balance. The decision was right and the
+// explanation was wrong, which is worse than none - it sends the operator
+// hunting a balance problem that does not exist.
+func magmaOfferDisableReason(offer MagmaOffer, unfulfillable bool) string {
+	if !unfulfillable {
+		return fmt.Sprintf(
+			"Offer disabled automatically: the on-chain balance no longer covers the %s sat it needs",
+			formatInt(magmaOfferSmallestOrder(offer)))
+	}
+	return fmt.Sprintf(
+		"Offer disabled automatically: only %s sat left to sell, below the %s sat smallest channel it "+
+			"advertises, so it can no longer produce a valid order",
+		formatInt(magmaOfferRemaining(offer)), formatInt(offer.MinSizeSat))
+}
+
 func (s *MagmaService) notifyOfferGuard(ctx context.Context, offer MagmaOffer, action string,
-	remaining, reserve, required, available int64) {
+	remaining, reserve, required, available int64, unfulfillable bool) {
 	var header string
 	if action == "disabled" {
-		header = fmt.Sprintf(
-			"Offer disabled automatically: the on-chain balance no longer covers the %s sat it still has to sell",
-			formatInt(remaining))
+		header = magmaOfferDisableReason(offer, unfulfillable)
 	} else {
 		header = "Offer re-enabled automatically: the on-chain balance covers it again"
 	}
-	body := fmt.Sprintf("%s\nOffer remaining: %s sat\nPolicy reserve: %s sat\nRequired: %s sat\nAvailable: %s sat",
-		header, formatInt(remaining), formatInt(reserve), formatInt(required), formatInt(available))
+	// The figures below describe the balance test. An exhausted offer was not
+	// decided by it, and printing them there recreates the contradiction the
+	// header was just fixed to avoid.
+	body := header
+	if !unfulfillable || action != "disabled" {
+		body = fmt.Sprintf("%s\nOffer needs: %s sat\nPolicy reserve: %s sat\nRequired: %s sat\nAvailable: %s sat",
+			header, formatInt(remaining), formatInt(reserve), formatInt(required), formatInt(available))
+	}
 
 	if s.logger != nil {
-		s.logger.Printf("magma: offer %s %s automatically (remaining=%d required=%d available=%d)",
-			offer.ID, action, remaining, required, available)
+		s.logger.Printf("magma: offer %s %s automatically (remaining=%d required=%d available=%d unfulfillable=%t)",
+			offer.ID, action, remaining, required, available, unfulfillable)
 	}
 	// Offers have no order to hang an event on, so this goes straight to Telegram.
 	s.notifyTelegram(ctx, MagmaOrder{}, body)

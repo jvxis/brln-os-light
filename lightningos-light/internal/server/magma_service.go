@@ -240,7 +240,17 @@ alter table magma_orders
   add column if not exists fee_guard_applied boolean not null default false,
   add column if not exists revenue_settled_at timestamptz,
   add column if not exists onchain_fee_sat bigint,
-  add column if not exists buyer_alias text;
+  add column if not exists buyer_alias text,
+  -- Amboss's own deadline for the order, read from the replacement endpoint.
+  -- Null means no deadline is being tracked, never "expired": a settled order
+  -- reports none, and so does a fetch that failed.
+  add column if not exists timeout_at timestamptz,
+  -- When the operator was last told this paid order still has no channel, and
+  -- whether the final "the window closed" warning already went out. Persisted
+  -- rather than held in memory so a restart neither repeats the whole history
+  -- nor silently resets the clock.
+  add column if not exists open_alert_at timestamptz,
+  add column if not exists open_expiry_notified boolean not null default false;
 
 create table if not exists magma_offer_state (
   offer_id text primary key,
@@ -566,6 +576,10 @@ func (s *MagmaService) syncLocked(ctx context.Context) error {
 		return err
 	}
 	s.noteOrderFetch(summary.PendingSellerOrders)
+	// Best effort and deliberately not fatal: the deadline sharpens decisions
+	// that already have conservative fallbacks, so failing to read it must never
+	// stop a sync that is otherwise fine.
+	s.syncOrderTimeouts(ctx, token)
 
 	settings, err := s.Settings(ctx)
 	if err != nil {
@@ -824,6 +838,33 @@ where order_id=$1 and revenue_settled_at is null
 		}
 	}
 	return nil
+}
+
+// syncOrderTimeouts records Amboss's deadline for each live order.
+//
+// Every decision that used to guess at a window can now read one. The approval
+// grace period was calibrated on a single order that expired 2h04m after it was
+// created - one sample, turned into a constant. A channel that must be opened
+// after payment has a window of about two days, which nothing in this app knew.
+//
+// A deadline is only ever written, never cleared here: Amboss reports null once
+// an order settles, and treating that as "no longer has a deadline" would be
+// harmless while treating it as "the deadline passed" would not.
+func (s *MagmaService) syncOrderTimeouts(ctx context.Context, token string) {
+	deadlines, err := s.amboss.OrderTimeouts(ctx, token)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("magma: could not read order deadlines: %v", err)
+		}
+		return
+	}
+	for orderID, when := range deadlines {
+		if _, err := s.db.Exec(ctx,
+			`update magma_orders set timeout_at=$2 where order_id=$1 and timeout_at is distinct from $2`,
+			orderID, when); err != nil && s.logger != nil {
+			s.logger.Printf("magma: could not record the deadline of order %s: %v", orderID, err)
+		}
+	}
 }
 
 func magmaOrderEventFor(order MagmaOrder, isNew bool, previousStatus string) (string, string, string) {

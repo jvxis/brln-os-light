@@ -34,6 +34,7 @@ import NodeRetirement from './pages/NodeRetirement'
 import TaprootAssets from './pages/TaprootAssets'
 import LightningLoop from './pages/LightningLoop'
 import LoopOutBRLN from './pages/LoopOutBRLN'
+import OPReturn from './pages/OPReturn'
 import MagmaSales from './pages/MagmaSales'
 import {
   getAuthState,
@@ -226,6 +227,9 @@ export default function App() {
       ? [{ key: 'pay-boleto', label: t('nav.payBoleto'), element: <PayBoleto />, group: 'apps' as const }]
       : []
     const installedAppRoutes = [
+      ...(installedAppIDs.has('opreturn')
+        ? [{ key: 'opreturn', label: 'Bitcoin OP_RETURN', element: <OPReturn />, group: 'apps' as const }]
+        : []),
       ...(installedAppIDs.has('tapd')
         ? [{ key: 'taproot-assets', label: t('nav.taprootAssets'), element: <TaprootAssets />, group: 'apps' as const }]
         : []),

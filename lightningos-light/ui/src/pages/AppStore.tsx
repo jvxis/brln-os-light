@@ -19,6 +19,7 @@ import btcpayIcon from '../assets/apps/btcpay.svg'
 import loopIcon from '../assets/apps/lightning-loop.svg'
 import loopOutBRLNIcon from '../assets/apps/loopout-brln.png'
 import magmaSalesIcon from '../assets/apps/magma-sales.svg'
+import opreturnIcon from '../assets/apps/opreturn.svg'
 import CpuMinerStats from '../components/CpuMinerStats'
 import SensitiveActionModal from '../components/SensitiveActionModal'
 
@@ -68,6 +69,7 @@ type CatalogStorageDialog = {
 }
 
 const iconMap: Record<string, string> = {
+  opreturn: opreturnIcon,
   lndg: lndgIcon,
   bitcoincore: bitcoincoreIcon,
   elements: elementsIcon,
@@ -90,6 +92,7 @@ const iconMap: Record<string, string> = {
 }
 
 const internalRoutes: Record<string, string> = {
+  opreturn: 'opreturn',
   bitcoincore: 'bitcoin-local',
   elements: 'elements',
   fswap: 'pay-boleto',

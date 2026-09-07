@@ -845,3 +845,74 @@ POST   /api/chat/send
 ```
 
 `POST /api/chat/read` marks the latest inbound message for one `peer_pubkey` as read. The read timestamp is persisted on the node and returned as `last_read_at` by the inbox, so unread state is shared across browsers. Existing browser-local state is migrated by the UI when possible.
+
+## Bitcoin OP_RETURN (optional native app)
+
+App ID: `opreturn`. The standard App Store install/start/stop/uninstall endpoints
+persist `installed` and `enabled` in PostgreSQL. Installation enables the app;
+navigation follows `installed`, including while stopped. Uninstallation hides
+the page and preserves publication history. No container, daemon, broker action,
+Core wallet, or external LND credential disclosure is involved.
+
+All five endpoints require an authenticated session with login protection
+enabled and the app both installed and running. Mutations use the normal CSRF
+and same-origin checks. Production funding requires a synchronized, unlocked
+Bitcoin **mainnet** LND wallet and confirmed spendable UTXOs, regardless of
+whether its backend is managed Core, native Core, or remote Core.
+
+```text
+GET  /api/apps/opreturn/status
+POST /api/apps/opreturn/preview
+POST /api/apps/opreturn/publish
+GET  /api/apps/opreturn/records
+GET  /api/apps/opreturn/records/{id}
+```
+
+- Status: `{installed:true, enabled:true, ready:boolean, max_bytes:80, max_sat_per_vbyte:1000}`.
+- Preview body: `{text:string, sat_per_vbyte:integer}`. Accepts 1–80 encoded UTF-8
+  bytes of printable text, rejects controls/NUL, and bounds fee rates to 1–1000
+  sat/vB. Constructs exactly one canonical, zero-sat `OP_RETURN` output, funds
+  through WalletKit, inspects inputs/change, and releases every returned lease
+  with a fresh cleanup context before responding. No transaction is published.
+- Preview response: `{preview_id, expires_at, max_fee_sat, text, payload_hex,
+  byte_count, selected_input_count, selected_input_sat, estimated_vbytes,
+  sat_per_vbyte, fee_sat, total_debit_sat}`. `max_fee_sat` is exactly the displayed
+  fee; debit is the fee because all other value returns to wallet change.
+  Preview expires after three minutes, is bound to the authenticated session,
+  payload hash and fee rate, and is replaced by a new preview from that session.
+- Before publishing, call `POST /api/auth/reauth` with
+  `{password:string, scope:"opreturn_publish"}`. Publish body:
+  `{preview_id:string, idempotency_key:string, confirm_publication:true}`.
+  Idempotency keys must contain 16–128 bytes. A preview can fund a publication
+  only once. Reusing the same session/key/preview returns its existing record;
+  rebinding a key is rejected. Fresh reauthentication is required on retries too.
+- Publish rebuilds/funds, rejects any fee above the approved maximum, finalizes
+  through WalletKit, verifies the complete transaction skeleton, durably stores
+  the deterministic TXID, then publishes through LND. Labels contain only the
+  `lightningos:opreturn:` prefix and record ID. Pre-broadcast failures release
+  leases. Funding/preview conflicts return 409, missing reauth 403, unavailable
+  app 503, and missing login 401.
+- Publish/detail return `{id, quote, state, txid, confirmations, block_height,
+  created_at}`, where `quote` contains the preview transaction fields (without
+  its capability/expiry). List returns the latest 100 such records. States:
+  `preparing`, `unknown`, `broadcast`, `confirmed`, `failed`. HTTP 202 may return
+  the known transaction snapshot if the final persistence read is unavailable.
+  Always inspect `state`; HTTP success alone does not imply confirmation.
+- One publication can be in flight for the entire app. A durable `unknown`
+  outcome blocks replacements across sessions/restarts. GET/history and a
+  bounded 30-second in-process worker reconcile the known TXID; neither
+  rebroadcasts nor funds a replacement. An unresolved TXID requires operator
+  investigation, not a new idempotency key. Preparations interrupted before
+  the durable TXID barrier become failed after three minutes; consumed previews
+  remain consumed. WalletKit's lease expiry also bounds locks after process death.
+- Audit events cover preview, publish attempt, broadcast success/failure and
+  confirmation. Metadata contains payload hash, byte count, TXID, fee and result,
+  never plaintext. Text is stored locally in PostgreSQL preview/history records;
+  expired unused previews are pruned. Confirmation tracking continues after
+  uninstall, but app routes remain inaccessible until reinstalled and running.
+
+Broadcast content enters the blockchain only when a miner confirms the
+transaction. Confirmed data is public, permanent and cannot be edited/deleted.
+The UI explicitly confirms this and the fee, shows exact text/hex, supports
+economy/normal/fast/manual fee selection, and only links TXIDs to a running
+locally installed Mempool; it never sends TXID lookups to a public explorer.

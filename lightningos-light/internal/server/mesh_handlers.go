@@ -32,6 +32,7 @@ type meshPending struct {
 	Expires     time.Time   `json:"expires"`
 }
 type meshProposal struct {
+	Owner   string
 	Funded  *lndclient.MeshFundedTransaction
 	Raw     []byte
 	Peer    uint32
@@ -39,6 +40,7 @@ type meshProposal struct {
 	Session string
 }
 type meshAPIRequest struct {
+	Owner      string `json:"-"`
 	Action     string `json:"action"`
 	Device     string `json:"device"`
 	Mode       string `json:"mode"`
@@ -156,7 +158,13 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid request")
 		return
 	}
-	// Every policy change and spending action uses its own fresh reauth scope.
+	session, authenticated := authSessionFromContext(r.Context())
+	if !authenticated {
+		writeError(w, 401, "authentication required")
+		return
+	}
+	req.Owner = session.ID
+	// Policy changes and spending actions require fresh LOS Mesh reauthentication.
 	if req.Action != "preview" && req.Action != "invoice" && req.Action != "request" && req.Action != "cancel" {
 		if !s.requireSensitiveReauth(w, r, authScopeMesh, req.Password, "mesh_reauth_required", "confirm your password for LOS Mesh") {
 			return
@@ -240,7 +248,7 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err = m.pay(ctx, req)
 	case "cancel":
-		err = m.cancel(ctx, req.ID)
+		err = m.cancel(ctx, req.ID, req.Owner)
 	default:
 		err = errors.New("unknown LOS Mesh action")
 	}
@@ -335,7 +343,7 @@ func (m *meshService) preview(ctx context.Context, req meshAPIRequest) (any, err
 		return nil, errors.New("cancel or wait for existing previews to expire")
 	}
 	var result any
-	proposal := &meshProposal{Peer: req.Node, Expires: time.Now().Add(2 * time.Minute)}
+	proposal := &meshProposal{Owner: req.Owner, Peer: req.Node, Expires: time.Now().Add(2 * time.Minute)}
 	if req.Raw != "" {
 		raw, err := hex.DecodeString(strings.TrimSpace(req.Raw))
 		if err != nil {
@@ -368,7 +376,7 @@ func (m *meshService) preview(ctx context.Context, req meshAPIRequest) (any, err
 }
 func (m *meshService) approveSend(ctx context.Context, req meshAPIRequest) (any, error) {
 	p := m.proposals[req.ID]
-	if p == nil || time.Now().After(p.Expires) {
+	if p == nil || p.Owner == "" || p.Owner != req.Owner || time.Now().After(p.Expires) {
 		return nil, errors.New("preview expired; review a new transaction")
 	}
 	if _, _, err := m.radioPeer(ctx, p.Peer); err != nil {
@@ -540,8 +548,11 @@ func (m *meshService) pay(ctx context.Context, req meshAPIRequest) (any, error) 
 	m.server.recordWalletActivity(p.Hash)
 	return map[string]string{"state": state, "payment_hash": p.Hash}, nil
 }
-func (m *meshService) cancel(ctx context.Context, id string) error {
+func (m *meshService) cancel(ctx context.Context, id, owner string) error {
 	if p := m.proposals[id]; p != nil {
+		if p.Owner != owner {
+			return errors.New("preview belongs to another session")
+		}
 		m.wallet.ReleaseMeshTransaction(ctx, p.Funded)
 		delete(m.proposals, id)
 		return nil

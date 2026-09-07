@@ -164,7 +164,7 @@ func TestMeshInvoiceArrivalCannotSpend(t *testing.T) {
 	if _, err := m.pay(ctx, meshAPIRequest{ID: sessionID(packets[0]), Amount: 11, MaxFee: 1}); err == nil || w.paid != 0 {
 		t.Fatal("changed amount accepted")
 	}
-	if err := m.cancel(ctx, sessionID(packets[0])); err != nil || len(m.pending) != 0 {
+	if err := m.cancel(ctx, sessionID(packets[0]), ""); err != nil || len(m.pending) != 0 {
 		t.Fatal("cancel did not remove invoice")
 	}
 }
@@ -204,5 +204,19 @@ func TestMeshRequestValidation(t *testing.T) {
 		if _, err := m.decodeInvoice(context.Background(), invoice); err == nil {
 			t.Fatal("invalid invoice accepted")
 		}
+	}
+}
+
+func TestMeshPreviewCannotBeUsedAcrossLoginSessions(t *testing.T) {
+	wallet := &meshTestWallet{}
+	m := &meshService{wallet: wallet, proposals: map[string]*meshProposal{"token": {Owner: "owner", Expires: time.Now().Add(time.Minute)}}}
+	if _, err := m.approveSend(context.Background(), meshAPIRequest{ID: "token", Owner: "other"}); err == nil {
+		t.Fatal("foreign preview approved")
+	}
+	if err := m.cancel(context.Background(), "token", "other"); err == nil {
+		t.Fatal("foreign preview cancelled")
+	}
+	if wallet.signed != 0 || wallet.published != 0 {
+		t.Fatal("foreign session spent funds")
 	}
 }

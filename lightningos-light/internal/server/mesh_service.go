@@ -216,7 +216,7 @@ func (m *meshService) tick(ctx context.Context) {
 			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET state='expired' WHERE id=$1 AND state='awaiting_approval'", id)
 		}
 	}
-	_, err := m.db.Exec(ctx, `DELETE FROM los_mesh_sessions WHERE created < now()-interval '30 days'; DELETE FROM los_mesh_payments WHERE created < now()-interval '30 days'; DELETE FROM los_mesh_publications WHERE created < now()-interval '30 days'; UPDATE los_mesh_sessions SET state='expired' WHERE expires<now() AND state IN ('receiving','sending','awaiting_result')`)
+	_, err := m.db.Exec(ctx, `DELETE FROM los_mesh_sessions WHERE created < now()-interval '30 days'; DELETE FROM los_mesh_payments WHERE created < now()-interval '30 days'; DELETE FROM los_mesh_publications WHERE created < now()-interval '30 days'; UPDATE los_mesh_sessions SET state='expired' WHERE expires<now() AND state IN ('receiving','sending','awaiting_result','awaiting_approval')`)
 	if err != nil {
 		return
 	}

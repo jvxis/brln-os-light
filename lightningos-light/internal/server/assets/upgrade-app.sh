@@ -588,6 +588,8 @@ prepare_privilege_cutover() {
   capture_optional_file "/opt/lightningos/manager/lightningos-manager" "$state_root" "lightningos-manager"
   capture_optional_file "/opt/lightningos/manager/.build_stamp" "$state_root" "manager-build-stamp"
   capture_optional_file "$PRIVILEGED_BROKER" "$state_root" "lightningos-privileged"
+  capture_optional_file /usr/local/libexec/lightningos-mesh "$state_root" lightningos-mesh
+  : > "$state_root/mesh-snapshot"
   capture_optional_file "$PRIVILEGED_TMPFILES_CONFIG" "$state_root" "lightningos-privileged.conf"
   capture_optional_file "/etc/systemd/system/lightningos-privileged.socket" "$state_root" "lightningos-privileged.socket"
   capture_optional_file "/etc/systemd/system/lightningos-privileged@.service" "$state_root" "lightningos-privileged@.service"
@@ -1053,6 +1055,7 @@ print_ok "Manager built"
 
 print_step "Building privileged broker"
 (cd "$project_dir" && env $go_env GOFLAGS="-mod=mod -buildvcs=false" "$GO_BIN" build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
+(cd "$project_dir" && env $go_env GOFLAGS="-mod=mod -buildvcs=false" "$GO_BIN" build -o dist/lightningos-mesh ./cmd/lightningos-mesh)
 print_ok "Privileged broker built"
 
 print_step "Building UI"
@@ -1091,7 +1094,7 @@ ensure_native_app_identities
 print_ok "Native application identities ready"
 
 print_step "Installing manager and socket-activated privileged broker"
-for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos /run/lightningos-privileged "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
+for broker_path in /usr/local/libexec/lightningos-mesh /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos /run/lightningos-privileged "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
   [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"
 done
 for template in \
@@ -1106,6 +1109,7 @@ done
 "$INSTALL_BIN" -o root -g root -m 0644 "$project_dir/templates/lightningos-privileged.tmpfiles.conf" "$PRIVILEGED_TMPFILES_CONFIG"
 /usr/bin/systemd-tmpfiles --create "$PRIVILEGED_TMPFILES_CONFIG"
 "$INSTALL_BIN" -o root -g root -m 0755 "$project_dir/dist/lightningos-privileged" "$PRIVILEGED_BROKER"
+"$INSTALL_BIN" -o root -g root -m 0755 "$project_dir/dist/lightningos-mesh" /usr/local/libexec/lightningos-mesh
 "$INSTALL_BIN" -o root -g root -m 0644 "$project_dir/templates/systemd/lightningos-privileged.socket" /etc/systemd/system/lightningos-privileged.socket
 "$INSTALL_BIN" -o root -g root -m 0644 "$project_dir/templates/systemd/lightningos-privileged@.service" /etc/systemd/system/lightningos-privileged@.service
 broker_response="$(printf '%s\n' '{"version":1,"request_id":"upgrade_self_test","operation":"self_test","params":{}}' | env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$PRIVILEGED_BROKER")"

@@ -50,6 +50,7 @@ const (
 	authScopeNodeRetirement     = "node_retirement_control"
 	authScopeSuccessionLive     = "succession_live_control"
 	authScopeLoopSwap           = "loop_swap"
+	authScopeMesh               = "los_mesh"
 	authScopeLoopOutBRLN        = "loopout_brln"
 	authScopeTerminalCredential = "terminal_credential"
 	authScopeTerminalControl    = "terminal_control"
@@ -525,7 +526,7 @@ func (a *AuthService) reauth(sessionID string, password string, scope string) (t
 
 func authScopeValid(scope string) bool {
 	switch strings.TrimSpace(scope) {
-	case authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeBarkSeedReveal:
+	case authScopeMesh, authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeBarkSeedReveal:
 		return true
 	default:
 		return false

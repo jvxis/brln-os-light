@@ -845,3 +845,31 @@ POST   /api/chat/send
 ```
 
 `POST /api/chat/read` marks the latest inbound message for one `peer_pubkey` as read. The read timestamp is persisted on the node and returned as `last_read_at` by the inbox, so unread state is shared across browsers. Existing browser-local state is migrated by the UI when possible.
+# LOS Mesh API
+
+`GET /api/apps/los-mesh/status` returns `app` (installed/status/device/devices),
+`radio` (state/node/protocol/SNR/RSSI/last_receive/dropped), operation `mode`, paired
+contact metadata, recent session metadata and pending local payment approvals.
+Pairing keys, raw transactions and complete invoices are never returned by status.
+Login protection must be enabled; ordinary authentication/CSRF rules apply.
+
+`POST /api/apps/los-mesh/action` accepts a strict JSON object up to 40,000 bytes:
+
+| `action` | Parameters and behavior |
+|---|---|
+| `install` | `device` stable USB path, `mode` (`send`, `relay`, `both`), `confirm`, `confirm_password`; broker provisions service and validates serial identity |
+| `mode` | `mode`, `confirm`, `confirm_password`; change relay/send policy |
+| `peer` | `node` uint32, `name`, `key` 64 hex characters, `allow_relay`, `confirm`, `confirm_password`; save secret locally and authenticate pairing |
+| `remove_peer` | `node`, `confirm`, `confirm_password`; revoke trust and remove pending requests |
+| `preview` | `node` and either `raw_tx` hex or `address`, `amount_sat`, `sat_per_vbyte`; returns `{id, expires, preview}`; unsigned funded proposal expires after two minutes |
+| `send` | Preview `id`, `confirm`, `confirm_password`; sign approved PSBT if needed, then queue binary transmission without local publication |
+| `invoice` | `node` and either `invoice` BOLT11 or `amount_sat`, optional `memo`; create/validate invoice and send to contact |
+| `request` | `node`, mainnet `address`, `amount_sat`, optional `memo`; transmit a payment request |
+| `pay` | Pending request `id`, exact `amount_sat`, `max_fee_sat`, `confirm`, `confirm_password`; local spending guard plus LND payment, followed by authenticated radio result |
+| `cancel` | Preview/session `id`; release unsigned proposal or stop transfer/pending approval; a delivered signature cannot be revoked |
+
+Mutating policy/spending actions use reauthentication scope `los_mesh`. On-chain
+and Lightning outcomes can be uncertain and are not automatically retried. App
+start/stop/uninstall use the existing `/api/apps/{id}/...` lifecycle with ID
+`los-mesh`; initial installation uses the mesh action because a selected USB
+device is mandatory. See [LOS_MESH.md](LOS_MESH.md) for limits and protocol.

@@ -29,6 +29,8 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/tls/info", s.handleTLSAccessInfo)
 	r.Get("/api/tls/ca", s.handleTLSCADownload)
 	r.Get("/api/tls/windows", s.handleTLSWindowsInstallerDownload)
+	r.Get("/api/apps/los-mesh/status", s.handleMeshStatus)
+	r.Post("/api/apps/los-mesh/action", s.handleMeshAction)
 	r.Get("/api/health", s.handleHealth)
 	r.Get("/api/system-check", s.handleSystemCheck)
 	r.Get("/api/security/manager-exposure", s.handleManagerExposureGet)

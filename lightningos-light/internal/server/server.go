@@ -23,6 +23,8 @@ import (
 )
 
 type Server struct {
+	meshMu                      sync.Mutex
+	mesh                        *meshService
 	cfg                         *config.Config
 	logger                      *log.Logger
 	shutdownCtx                 context.Context
@@ -222,6 +224,7 @@ func (s *Server) Run() error {
 	s.initDepix()
 	s.initLoopOutBRLN()
 	s.initMagma()
+	_, _ = s.meshService()
 	s.initAutofee()
 	s.initShortcuts()
 	s.initUIPreferences()

@@ -109,6 +109,9 @@ restore_or_remove "30-privilege-hardening.conf" "$DROPIN_PATH"
 restore_or_remove "lightningos-manager" "$MANAGER_BIN"
 restore_or_remove "manager-build-stamp" "$BUILD_STAMP"
 restore_or_remove "lightningos-privileged" "$BROKER_BIN"
+if [[ -f "$STATE_ROOT/mesh-snapshot" && ! -L "$STATE_ROOT/mesh-snapshot" ]]; then
+  restore_or_remove "lightningos-mesh" /usr/local/libexec/lightningos-mesh
+fi
 restore_or_remove "lightningos-privileged.conf" "$TMPFILES_PATH"
 restore_or_remove "lightningos-privileged.socket" "$SOCKET_UNIT"
 restore_or_remove "lightningos-privileged@.service" "$BROKER_UNIT"

@@ -1070,6 +1070,17 @@ func ValidateRequest(request Request) error {
 		if err := decodeStrict(request.Params, &params); err != nil {
 			return fmt.Errorf("invalid bitcoin.consumer-network.ensure params: %w", err)
 		}
+	case OperationMesh:
+		var params MeshParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return err
+		}
+		if err := validateMeshParams(params); err != nil {
+			return err
+		}
+		if request.DryRun && params.Action == "status" {
+			return errors.New("dry_run is not valid for mesh status")
+		}
 	case OperationLoopStatus, OperationLoopRemove, OperationLoopPermissionsEnsure, OperationLoopClientMaterialEnsure:
 		if request.DryRun && request.Operation == OperationLoopStatus {
 			return errors.New("dry_run is not valid for app.loop.status")

@@ -1,5 +1,19 @@
 const base = ''
 
+export type MeshPeer = { node: number; name: string; paired: boolean; allow_relay: boolean; fingerprint: string }
+export type MeshPending = { id: string; peer: number; kind: string; address?: string; amount_sat: number; payment_hash?: string; destination?: string; memo?: string; expires: string }
+export type MeshStatus = {
+  app: { installed: boolean; status: string; device: string; devices: string[] }
+  radio: { state: string; node: number; device: string; last_receive: string; dropped: number; snr: number; rssi: number; protocol: number }
+  mode: 'send' | 'relay' | 'both'; peers: MeshPeer[]; pending: MeshPending[]
+  history: { id: string; peer: number; direction: string; state: string; txid: string; received: number; total: number; created: string }[]
+  protocol_version: number
+}
+export type MeshAction = { action: 'install' | 'mode' | 'peer' | 'remove_peer' | 'preview' | 'send' | 'invoice' | 'request' | 'pay' | 'cancel'; device?: string; mode?: string; node?: number; name?: string; key?: string; allow_relay?: boolean; id?: string; raw_tx?: string; address?: string; amount_sat?: number; sat_per_vbyte?: number; invoice?: string; memo?: string; max_fee_sat?: number; confirm?: boolean; confirm_password?: string }
+export type MeshPreview = { id: string; expires: string; preview: { txid?: string; bytes?: number; chunks?: number; outputs?: { address: string; sats: number }[]; address?: string; recipient_amount_sat?: number; fee_sat?: number; change_sat?: number; total_debit_sat?: number; selected_input_count?: number } }
+export const getMeshStatus = (): Promise<MeshStatus> => request('/api/apps/los-mesh/status')
+export const meshAction = <T = { ok?: boolean; id?: string; state?: string }>(payload: MeshAction): Promise<T> => request('/api/apps/los-mesh/action', { method: 'POST', body: JSON.stringify(payload) })
+
 let csrfToken = ''
 let lndStatusInFlight: Promise<any> | null = null
 let lndStatusCached: any = null

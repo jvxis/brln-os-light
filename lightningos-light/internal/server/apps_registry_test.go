@@ -105,6 +105,7 @@ func TestConfiguredAppsHaveExplicitRuntimeSecurityClass(t *testing.T) {
 
 		"elements": {class: "native", reason: "fixed privileged-broker systemd lifecycle and selectable managed storage"},
 		"peerswap": {class: "native", reason: "fixed privileged-broker systemd lifecycle with local or external Elements compatibility"},
+		"los-mesh": {class: "native", reason: "dedicated unprivileged serial bridge with typed broker lifecycle and SO_PEERCRED authenticated Unix socket"},
 		"loop":     {class: "native", reason: "fixed privileged-broker systemd lifecycle and dedicated LND credential"},
 
 		"depixbuy":     {class: "manager", reason: "manager-integrated feature without a separately privileged runtime"},

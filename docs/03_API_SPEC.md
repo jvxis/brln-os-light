@@ -914,5 +914,8 @@ GET  /api/apps/opreturn/records/{id}
 Broadcast content enters the blockchain only when a miner confirms the
 transaction. Confirmed data is public, permanent and cannot be edited/deleted.
 The UI explicitly confirms this and the fee, shows exact text/hex, supports
-economy/normal/fast/manual fee selection, and only links TXIDs to a running
-locally installed Mempool; it never sends TXID lookups to a public explorer.
+economy/normal/fast/manual fee selection, and makes each TXID a clickable link.
+Links prefer a running locally installed Mempool, with an explicitly labeled
+`mempool.space (external)` fallback. Explorer navigation happens only on click,
+in a new tab without a referrer; the app does not fetch external TXID lookups
+automatically. The separate copy-TXID action remains available.

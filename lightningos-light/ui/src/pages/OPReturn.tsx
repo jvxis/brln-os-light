@@ -21,6 +21,8 @@ export default function OPReturn() {
   const [password, setPassword] = useState('')
   const [modal, setModal] = useState(false)
   const [explorer, setExplorer] = useState('')
+  const explorerURL = explorer || 'https://mempool.space/'
+  const explorerLabel = explorer ? 'Mempool local' : label('mempool.space (external)', 'mempool.space (externo)')
   const [now, setNow] = useState(Date.now())
   const inFlight = useRef(false)
   const pendingKey = useRef('')
@@ -108,9 +110,13 @@ export default function OPReturn() {
       {records.map(record => <article key={record.id} className="space-y-2 rounded-xl border border-white/10 p-4">
         <p>{stateLabel(record.state)}</p><pre className="whitespace-pre-wrap break-all">{record.quote.text}</pre>
         <p className="text-sm text-fog/70">{record.quote.fee_sat} sats · {record.confirmations} {label('confirmations', 'confirmações')} · {label('Block', 'Bloco')} {record.block_height || '—'} · {new Date(record.created_at).toLocaleString()}</p>
-        {record.txid && <div className="space-y-2"><code className="block break-all text-xs">{record.txid}</code><button className="btn-secondary" onClick={() => void navigator.clipboard.writeText(record.txid).then(() => setNotice(label('TXID copied.', 'TXID copiado.'))).catch(() => setError(label('Could not copy TXID.', 'Não foi possível copiar o TXID.')))}>{label('Copy TXID', 'Copiar TXID')}</button>{explorer && <a className="ml-3 underline" href={`${explorer}tx/${encodeURIComponent(record.txid)}`} target="_blank" rel="noreferrer">Mempool local</a>}</div>}
+        {record.txid && <div className="space-y-2">
+          <a className="block break-all text-xs underline underline-offset-4" href={`${explorerURL}tx/${encodeURIComponent(record.txid)}`} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" title={label(`Track transaction on ${explorerLabel}`, `Acompanhar transação em ${explorerLabel}`)}><code>{record.txid}</code></a>
+          <p className="text-xs text-fog/60">{explorerLabel}</p>
+          <button className="btn-secondary" onClick={() => void navigator.clipboard.writeText(record.txid).then(() => setNotice(label('TXID copied.', 'TXID copiado.'))).catch(() => setError(label('Could not copy TXID.', 'Não foi possível copiar o TXID.')))}>{label('Copy TXID', 'Copiar TXID')}</button>
+        </div>}
       </article>)}
-      <p className="text-xs text-fog/60">{label('Uninstalling preserves local history. Explorer links are shown only for your running local Mempool.', 'A desinstalação preserva o histórico local. Links de consulta aparecem apenas para seu Mempool local em execução.')}</p>
+      <p className="text-xs text-fog/60">{label('Uninstalling preserves local history. TXID links open your local Mempool when available, or mempool.space, only when clicked.', 'A desinstalação preserva o histórico local. Os links de TXID abrem seu Mempool local quando disponível, ou o mempool.space, somente ao clicar.')}</p>
     </section>
     <SensitiveActionModal open={modal} title={label('Publish irreversible public data', 'Publicar dados públicos irreversíveis')} description={warning} password={password} busy={busy} error={error} confirmLabel={label('Publish transaction', 'Publicar transação')} onPasswordChange={setPassword} onConfirm={publish} onClose={() => { setModal(false); setPassword('') }} />
   </div>

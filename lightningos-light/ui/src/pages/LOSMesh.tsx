@@ -12,7 +12,7 @@ export default function LOSMesh() {
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [device, setDevice] = useState('')
-  const [mode, setMode] = useState('send')
+  const [mode, setMode] = useState('')
   const [peer, setPeer] = useState('')
   const [nodeID, setNodeID] = useState('')
   const [name, setName] = useState('')
@@ -41,6 +41,7 @@ export default function LOSMesh() {
     try {
       const response = await meshAction<T>({ ...payload, confirm_password: password })
       setPassword(''); setConfirm(false); await refresh()
+      if (payload.action === 'mode' || payload.action === 'install') setMode('')
       setNotice(text('Solicitação registrada. Acompanhe o estado abaixo.', 'Request recorded. Follow its status below.'))
       if (payload.action === 'install') window.dispatchEvent(new CustomEvent('apps:changed', { detail: { id: 'los-mesh' } }))
       return response
@@ -60,6 +61,12 @@ export default function LOSMesh() {
     awaiting_approval: text('Recebida — aguarda aprovação local', 'Received — awaiting local approval'), paid: text('Pagamento confirmado pelo LND', 'Payment confirmed by LND'), payment_unknown: text('Resultado incerto — consulte a carteira', 'Uncertain result — check wallet activity')
   }
   const connected = status?.radio.state === 'running' || status?.radio.state === 'awaiting_pairing'
+  const selectedMode = mode || status?.mode || 'send'
+  const selectedDevice = device || status?.app.device || ''
+  const modeChanged = Boolean(status?.app.installed && selectedMode !== status.mode)
+  const deviceChanged = Boolean(status?.app.installed && selectedDevice !== status.app.device)
+  const deviceAvailable = Boolean(selectedDevice && status?.app.devices.includes(selectedDevice))
+  const modeNames: Record<string, string> = { send: text('Somente envio', 'Send only'), relay: text('Somente relay', 'Relay only'), both: text('Bidirecional', 'Bidirectional') }
   const canSend = connected && status?.mode !== 'relay' && Boolean(peer)
   const input = 'input-field w-full'
   const paired = status?.peers.filter(p => p.paired) || []
@@ -80,13 +87,24 @@ export default function LOSMesh() {
     <div className="section-card space-y-4">
       <h3 className="text-lg font-semibold">{text('Rádio e operação', 'Radio and operation')}</h3>
       <div className="grid gap-4 md:grid-cols-2">
-        {label(text('Dispositivo USB', 'USB device'), <select className={input} value={device || status?.app.device || ''} onChange={e => setDevice(e.target.value)}><option value="">{text('Selecione o rádio', 'Select a radio')}</option>{status?.app.devices.map(d => <option key={d} value={d}>{d}</option>)}</select>)}
-        {label(text('Modo', 'Mode'), <select className={input} value={mode} onChange={e => setMode(e.target.value)}><option value="send">{text('Somente envio (padrão)', 'Send only (default)')}</option><option value="relay">{text('Somente relay', 'Relay only')}</option><option value="both">{text('Bidirecional', 'Bidirectional')}</option></select>)}
+        {label(text('Dispositivo USB', 'USB device'), <select className={input} disabled={busy} value={selectedDevice} onChange={e => { setDevice(e.target.value); setConfirm(false) }}><option value="">{text('Selecione o rádio', 'Select a radio')}</option>{status?.app.devices.map(d => <option key={d} value={d}>{d}</option>)}</select>)}
+        {label(text('Modo', 'Mode'), <select className={input} disabled={busy} value={selectedMode} onChange={e => { setMode(e.target.value); setConfirm(false) }}><option value="send">{text('Somente envio (padrão)', 'Send only (default)')}</option><option value="relay">{text('Somente relay', 'Relay only')}</option><option value="both">{text('Bidirecional', 'Bidirectional')}</option></select>)}
       </div>
       {status && !status.app.devices.length && <p className="text-sm text-amber-200">{text('Nenhum rádio USB encontrado. Conecte o dispositivo e, em uma VM, habilite a conexão USB no hipervisor.', 'No USB radio found. Connect the device and, for a VM, enable USB passthrough in the hypervisor.')}</p>}
-      <div className="flex flex-wrap gap-3 text-sm text-fog/65"><span>{text('ID local', 'Local ID')}: {status?.radio.node ? `!${status.radio.node.toString(16).padStart(8, '0')}` : '—'}</span><span>SNR: {status?.radio.snr ?? '?'} dB · RSSI: {status?.radio.rssi ?? '?'} dBm</span><span>{text('Modo ativo', 'Active mode')}: {status?.mode || '—'}</span><span>{text('Último pacote', 'Last packet')}: {status?.radio.last_receive && !status.radio.last_receive.startsWith('0001') ? new Date(status.radio.last_receive).toLocaleString() : '—'}</span></div>
+      <div className="flex flex-wrap gap-3 text-sm text-fog/65"><span>{text('ID local', 'Local ID')}: {status?.radio.node ? `!${status.radio.node.toString(16).padStart(8, '0')}` : '—'}</span><span>SNR: {status?.radio.snr ?? '?'} dB · RSSI: {status?.radio.rssi ?? '?'} dBm</span><span>{text('Modo ativo', 'Active mode')}: {status?.mode ? modeNames[status.mode] : '—'}</span><span>{text('Último pacote', 'Last packet')}: {status?.radio.last_receive && !status.radio.last_receive.startsWith('0001') ? new Date(status.radio.last_receive).toLocaleString() : '—'}</span></div>
       <p className="text-xs text-fog/60">{text('Relay publica apenas transações assinadas de contatos pareados com permissão explícita. Não existe relay público.', 'Relay publishes signed transactions only from paired contacts with explicit permission. There is no public relay.')}</p>
-      <div className="flex flex-wrap gap-3"><button className="btn-primary" disabled={busy || !confirm || !(device || status?.app.device)} onClick={() => void act({ action: 'install', device: device || status?.app.device, mode, confirm })}>{text('Instalar / conectar rádio', 'Install / connect radio')}</button>{status?.app.installed && <button className="btn-secondary" disabled={busy || !confirm} onClick={() => void act({ action: 'mode', mode, confirm })}>{text('Aplicar modo', 'Apply mode')}</button>}</div>
+      {status?.app.installed && <p className="text-sm text-fog/75">{connected
+        ? text('Rádio conectado. O app já está instalado; não é necessário instalar novamente. O próximo passo é parear um contato.', 'Radio connected. The app is already installed; no installation is needed. Next, pair a contact.')
+        : text('O app já está instalado. Selecione um rádio USB disponível e use Reconectar rádio para restabelecer a conexão.', 'The app is already installed. Select an available USB radio and use Reconnect radio to restore the connection.')}</p>}
+      <p className="text-sm text-fog/75">{text('Selecionar um modo não o aplica automaticamente.', 'Selecting a mode does not apply it automatically.')}</p>
+      {modeChanged && <p role="status" className="text-sm text-amber-200">{text('Alteração pendente', 'Pending change')}: {modeNames[status!.mode]} → {modeNames[selectedMode]}. {text('Confirme a ação no card Confirmação local e clique em Aplicar modo.', 'Confirm the action in Local confirmation, then click Apply mode.')}</p>}
+      <div className="flex flex-wrap items-center gap-3">
+        {status && (!status.app.installed || !connected || deviceChanged) && <button className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed" disabled={busy || !confirm || !deviceAvailable} onClick={() => void act({ action: 'install', device: selectedDevice, mode: status.app.installed ? status.mode : selectedMode, confirm })}>{!status.app.installed ? text('Instalar LOS Mesh', 'Install LOS Mesh') : deviceChanged ? text('Conectar rádio selecionado', 'Connect selected radio') : text('Reconectar rádio', 'Reconnect radio')}</button>}
+        {status?.app.installed && (modeChanged
+          ? <button className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed" disabled={busy || !confirm} onClick={() => void act({ action: 'mode', mode: selectedMode, confirm })}>{text('Aplicar modo', 'Apply mode')}</button>
+          : <span className="text-sm text-emerald-300">{text('Modo aplicado', 'Applied mode')}: {modeNames[status.mode]}</span>)}
+      </div>
+      {status && (!status.app.installed || !connected || deviceChanged) && !confirm && <p className="text-xs text-fog/65">{text('Para habilitar o botão, preencha a senha e marque a autorização no card Confirmação local.', 'To enable the button, enter your password and check the authorization in Local confirmation.')}</p>}
     </div>
     <details className="section-card space-y-4" open={!paired.length}>
       <summary className="cursor-pointer text-lg font-semibold">{text('Contatos e pareamento privado', 'Contacts and private pairing')}</summary>

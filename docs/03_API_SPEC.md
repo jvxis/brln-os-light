@@ -865,6 +865,7 @@ Login protection must be enabled; ordinary authentication/CSRF rules apply.
 | `send` | Preview `id`, `confirm`, `confirm_password`; sign approved PSBT if needed, then queue binary transmission without local publication |
 | `invoice` | `node` and either `invoice` BOLT11 or `amount_sat`, optional `memo`; create/validate invoice and send to contact |
 | `request` | `node`, mainnet `address`, `amount_sat`, optional `memo`; transmit a payment request |
+| `request_invoice` | `node`, `amount_sat` (1 to 100000000), optional `memo`; request a BOLT11 from a contact; the remote operator explicitly creates and sends it |
 | `pay` | Pending request `id`, exact `amount_sat`, `max_fee_sat`, `confirm`, `confirm_password`; local spending guard plus LND payment, followed by authenticated radio result |
 | `cancel` | Preview/session `id`; release unsigned proposal or stop transfer/pending approval; a delivered signature cannot be revoked |
 

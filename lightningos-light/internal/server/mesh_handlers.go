@@ -165,7 +165,7 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Owner = session.ID
 	// Policy changes and spending actions require fresh LOS Mesh reauthentication.
-	if req.Action != "preview" && req.Action != "invoice" && req.Action != "request" && req.Action != "cancel" {
+	if req.Action != "preview" && req.Action != "invoice" && req.Action != "request" && req.Action != "request_invoice" && req.Action != "cancel" {
 		if !s.requireSensitiveReauth(w, r, authScopeMesh, req.Password, "mesh_reauth_required", "confirm your password for LOS Mesh") {
 			return
 		}
@@ -239,7 +239,7 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 		result, err = m.approveSend(ctx, req)
 	case "invoice":
 		result, err = m.invoice(ctx, req)
-	case "request":
+	case "request", "request_invoice":
 		result, err = m.paymentRequest(ctx, req)
 	case "pay":
 		if !req.Confirm {
@@ -445,12 +445,22 @@ func (m *meshService) decodeInvoice(ctx context.Context, invoice string) (lndcli
 }
 
 type meshAddressRequest struct {
+	Kind    string `json:"kind,omitempty"`
 	Address string `json:"address"`
 	Amount  int64  `json:"amount_sat"`
 	Memo    string `json:"memo"`
 }
 
 func validateMeshAddress(p meshAddressRequest) error {
+	if p.Kind == "invoice_request" {
+		if p.Address != "" || p.Amount <= 0 || p.Amount > 100_000_000 || len(p.Memo) > 120 {
+			return errors.New("invalid invoice request")
+		}
+		return nil
+	}
+	if p.Kind != "" && p.Kind != "onchain_request" {
+		return errors.New("unsupported payment request kind")
+	}
 	address, err := btcutil.DecodeAddress(p.Address, &chaincfg.MainNetParams)
 	if err != nil || !address.IsForNet(&chaincfg.MainNetParams) || p.Amount <= 0 || p.Amount > 21_000_000*100_000_000 || len(p.Memo) > 120 {
 		return errors.New("invalid mainnet payment request")
@@ -458,7 +468,10 @@ func validateMeshAddress(p meshAddressRequest) error {
 	return nil
 }
 func (m *meshService) paymentRequest(ctx context.Context, req meshAPIRequest) (any, error) {
-	p := meshAddressRequest{req.Address, req.Amount, req.Memo}
+	p := meshAddressRequest{Address: req.Address, Amount: req.Amount, Memo: req.Memo}
+	if req.Action == "request_invoice" {
+		p.Kind = "invoice_request"
+	}
 	if err := validateMeshAddress(p); err != nil {
 		return nil, err
 	}
@@ -495,10 +508,14 @@ func (m *meshService) acceptRequest(ctx context.Context, p mesh.Packet, raw []by
 		var request meshAddressRequest
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.DisallowUnknownFields()
-		if dec.Decode(&request) != nil || validateMeshAddress(request) != nil {
+		var extra any
+		if dec.Decode(&request) != nil || dec.Decode(&extra) != io.EOF || validateMeshAddress(request) != nil {
 			return "rejected"
 		}
 		pending.Kind = "onchain_request"
+		if request.Kind == "invoice_request" {
+			pending.Kind = request.Kind
+		}
 		pending.Address = request.Address
 		pending.Amount = request.Amount
 		pending.Memo = request.Memo

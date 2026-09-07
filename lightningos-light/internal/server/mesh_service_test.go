@@ -21,6 +21,29 @@ type meshTestWallet struct {
 	readyErr, publishErr    error
 }
 
+func TestMeshInvoiceRequestNeedsLocalAction(t *testing.T) {
+	m := &meshService{pending: map[string]*meshPending{}}
+	p := mesh.Packet{Kind: mesh.PaymentRequest, From: 1, To: 2, Expires: time.Now().Add(time.Minute).Unix()}
+	p.Session[0] = 1
+	if got := m.acceptRequest(context.Background(), p, []byte(`{"kind":"invoice_request","amount_sat":25,"memo":"test"}`)); got != "awaiting_approval" {
+		t.Fatal(got)
+	}
+	if pending := m.pending[sessionID(p)]; pending.Kind != "invoice_request" || pending.Amount != 25 || pending.Invoice != "" {
+		t.Fatal("invoice request was not preserved for explicit local action")
+	}
+	for _, raw := range []string{
+		`{"kind":"invoice_request","amount_sat":0}`,
+		`{"kind":"invoice_request","amount_sat":100000001}`,
+		`{"kind":"invoice_request","amount_sat":1,"address":"unexpected"}`,
+		`{"kind":"unsupported","amount_sat":1}`,
+		`{"kind":"invoice_request","amount_sat":1} {}`,
+	} {
+		if got := m.acceptRequest(context.Background(), p, []byte(raw)); got != "rejected" {
+			t.Fatal("accepted invalid request", raw)
+		}
+	}
+}
+
 func (w *meshTestWallet) MeshMainnetReady(context.Context) error { return w.readyErr }
 func (w *meshTestWallet) PublishTransaction(context.Context, string, string) error {
 	w.published++

@@ -127,6 +127,11 @@ func (m *NativeMeshManager) Control(ctx context.Context, p MeshParams, dry bool)
 		if err = validateMeshRootDirectory("/var/lib/lightningos-mesh"); err != nil {
 			return MeshState{}, err
 		}
+		// The broker's 0077 umask masks MkdirAll's requested mode. This directory
+		// contains only the public device path and must be traversable by losmesh.
+		if err = os.Chmod("/var/lib/lightningos-mesh", 0755); err != nil {
+			return MeshState{}, err
+		}
 		for _, parent := range []string{"/usr/local/libexec", "/etc/systemd/system"} {
 			if err = validateMeshRootDirectory(parent); err != nil {
 				return MeshState{}, err

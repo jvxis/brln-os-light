@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -66,6 +67,16 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() { <-ctx.Done(); _ = port.Close() }()
+	// Wake the serial client interface, as in the Meshtastic serial client.
+	// This prelude does not change any radio settings.
+	if _, err := port.Write(bytes.Repeat([]byte{0xc3}, 32)); err != nil {
+		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(100 * time.Millisecond):
+	}
 	var id [4]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		return

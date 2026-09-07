@@ -61,7 +61,7 @@ export default function LOSMesh() {
   }
   const connected = status?.radio.state === 'running' || status?.radio.state === 'awaiting_pairing'
   const canSend = connected && status?.mode !== 'relay' && Boolean(peer)
-  const input = 'input w-full'
+  const input = 'input-field w-full'
   const paired = status?.peers.filter(p => p.paired) || []
   const review = async () => { const value = await act<MeshPreview>({ action: 'preview', node: Number(peer), raw_tx: raw || undefined, address, amount_sat: Number(amount), sat_per_vbyte: Number(rate) }); if (value) setPreview(value) }
   return <section className="space-y-6">
@@ -72,6 +72,11 @@ export default function LOSMesh() {
     <p className="text-sm text-fog/70">{text('O rádio transporta solicitações e transações assinadas. Pagamentos Lightning usam a rede Lightning normal e exigem aprovação local. Use dois rádios compatíveis, na mesma região e canal Meshtastic.', 'The radio transports requests and signed transactions. Lightning payments use the normal Lightning network and require local approval. Use two compatible radios with matching Meshtastic region and channel settings.')} <a href="https://meshtastic.org/docs/" target="_blank" rel="noreferrer" className="text-emerald-300 underline">Meshtastic ↗</a></p>
     {error && <div role="alert" className="section-card text-red-300">{error}</div>}
     {notice && <p role="status" className="text-emerald-300">{notice}</p>}
+    <div className="section-card space-y-4 border-amber-400/20">
+      <h3 className="font-semibold">{text('Confirmação local', 'Local confirmation')}</h3>
+      {label(text('Senha do LightningOS', 'LightningOS password'), <input className={input} type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} />)}
+      <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={confirm} onChange={e => setConfirm(e.target.checked)} />{text('Revisei os dados e autorizo a ação selecionada.', 'I reviewed the details and authorize the selected action.')}</label>
+    </div>
     <div className="section-card space-y-4">
       <h3 className="text-lg font-semibold">{text('Rádio e operação', 'Radio and operation')}</h3>
       <div className="grid gap-4 md:grid-cols-2">
@@ -79,7 +84,7 @@ export default function LOSMesh() {
         {label(text('Modo', 'Mode'), <select className={input} value={mode} onChange={e => setMode(e.target.value)}><option value="send">{text('Somente envio (padrão)', 'Send only (default)')}</option><option value="relay">{text('Somente relay', 'Relay only')}</option><option value="both">{text('Bidirecional', 'Bidirectional')}</option></select>)}
       </div>
       {status && !status.app.devices.length && <p className="text-sm text-amber-200">{text('Nenhum rádio USB encontrado. Conecte o dispositivo e, em uma VM, habilite a conexão USB no hipervisor.', 'No USB radio found. Connect the device and, for a VM, enable USB passthrough in the hypervisor.')}</p>}
-      <div className="flex flex-wrap gap-3 text-sm text-fog/65"><span>{text('ID local', 'Local ID')}: {status?.radio.node ? `!${status.radio.node.toString(16).padStart(8, '0')}` : '—'}</span><span>SNR: {status?.radio.snr ?? '?'} dB ? RSSI: {status?.radio.rssi ?? '?'} dBm</span><span>{text('Modo ativo', 'Active mode')}: {status?.mode || '—'}</span><span>{text('Último pacote', 'Last packet')}: {status?.radio.last_receive && !status.radio.last_receive.startsWith('0001') ? new Date(status.radio.last_receive).toLocaleString() : '—'}</span></div>
+      <div className="flex flex-wrap gap-3 text-sm text-fog/65"><span>{text('ID local', 'Local ID')}: {status?.radio.node ? `!${status.radio.node.toString(16).padStart(8, '0')}` : '—'}</span><span>SNR: {status?.radio.snr ?? '?'} dB · RSSI: {status?.radio.rssi ?? '?'} dBm</span><span>{text('Modo ativo', 'Active mode')}: {status?.mode || '—'}</span><span>{text('Último pacote', 'Last packet')}: {status?.radio.last_receive && !status.radio.last_receive.startsWith('0001') ? new Date(status.radio.last_receive).toLocaleString() : '—'}</span></div>
       <p className="text-xs text-fog/60">{text('Relay publica apenas transações assinadas de contatos pareados com permissão explícita. Não existe relay público.', 'Relay publishes signed transactions only from paired contacts with explicit permission. There is no public relay.')}</p>
       <div className="flex flex-wrap gap-3"><button className="btn-primary" disabled={busy || !confirm || !(device || status?.app.device)} onClick={() => void act({ action: 'install', device: device || status?.app.device, mode, confirm })}>{text('Instalar / conectar rádio', 'Install / connect radio')}</button>{status?.app.installed && <button className="btn-secondary" disabled={busy || !confirm} onClick={() => void act({ action: 'mode', mode, confirm })}>{text('Aplicar modo', 'Apply mode')}</button>}</div>
     </div>
@@ -125,11 +130,6 @@ export default function LOSMesh() {
         {p.kind === 'invoice' ? <>{label(text('Taxa máxima Lightning (sats)', 'Maximum Lightning fee (sats)'), <input className={input} type="number" min="0" max="100000" value={maxFee} onChange={e => setMaxFee(e.target.value)} />)}<button className="btn-primary" disabled={busy || !confirm} onClick={() => void act({ action: 'pay', id: p.id, amount_sat: p.amount_sat, max_fee_sat: Number(maxFee), confirm })}>{text('Aprovar e pagar via Lightning', 'Approve and pay via Lightning')}</button></> : <button className="btn-primary" disabled={busy || Boolean(preview)} onClick={() => { setPeer(String(p.peer)); setAddress(p.address || ''); setAmount(String(p.amount_sat)); setRaw(''); setTab('onchain'); setNotice(text('Solicitação carregada. Revise a transação antes de aprovar.', 'Request loaded. Review the transaction before approving.')) }}>{text('Preparar prévia on-chain', 'Prepare on-chain preview')}</button>}
         <button className="btn-secondary ml-3" disabled={busy} onClick={() => void act({ action: 'cancel', id: p.id })}>{text('Rejeitar', 'Reject')}</button>
       </div>)}
-    </div>
-    <div className="section-card space-y-4 border-amber-400/20">
-      <h3 className="font-semibold">{text('Confirmação local', 'Local confirmation')}</h3>
-      {label(text('Senha do LightningOS', 'LightningOS password'), <input className={input} type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} />)}
-      <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={confirm} onChange={e => setConfirm(e.target.checked)} />{text('Revisei os dados e autorizo a ação selecionada.', 'I reviewed the details and authorize the selected action.')}</label>
     </div>
     <div className="section-card space-y-4"><h3 className="text-lg font-semibold">{text('Histórico de sessões', 'Session history')}</h3><p className="text-xs text-fog/60">{text('Até 100 sessões recentes; retenção de 30 dias. Sem transações brutas, invoices completas ou preimages no histórico.', 'Up to 100 recent sessions; 30-day retention. No raw transactions, full invoices or preimages in history.')}</p>
       {!status?.history.length && <p className="text-sm text-fog/60">{text('Nenhuma sessão registrada.', 'No sessions recorded.')}</p>}

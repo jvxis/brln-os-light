@@ -111,7 +111,12 @@ func TestOPReturnRegtestEndToEnd(t *testing.T) {
 	// RPC credentials. The container name is fixed to avoid accidental targeting.
 	cli := func(args ...string) []byte {
 		base := []string{"exec", "los-opreturn-137-bitcoin", "bitcoin-cli", "-datadir=/regtest"}
-		out, err := exec.CommandContext(ctx, "docker", append(base, args...)...).Output()
+		command := "docker"
+		if os.Getenv("LIGHTNINGOS_OPRETURN_REGTEST_BACKEND") == "native" {
+			command = "/tmp/los-opreturn-137-lab/bitcoin-cli"
+			base = []string{"-datadir=/tmp/los-opreturn-137-lab/bitcoin"}
+		}
+		out, err := exec.CommandContext(ctx, command, append(base, args...)...).Output()
 		if err != nil {
 			t.Fatal("fixture bitcoin-cli failed", err)
 		}

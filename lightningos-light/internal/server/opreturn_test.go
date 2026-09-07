@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/lnrpc"
@@ -138,12 +139,31 @@ func TestOPReturnPostgresLifecycleAndPublication(t *testing.T) {
 	wallet := &opreturnTestWallet{quote: lndclient.OPReturnQuote{FeeSat: 200, TotalDebitSat: 200, ByteCount: 4}}
 	s := &Server{db: db, auth: auth, opreturnWalletClient: wallet, logger: log.New(io.Discard, "", 0)}
 	app := opreturnApp{s}
-	if err = app.Install(ctx); err != nil {
-		t.Fatal(err)
+	// Exercise the real App Store handler: this must succeed even in a test
+	// process with no privileged-broker access or storage-root permissions.
+	installRequest := httptest.NewRequest("POST", "/api/apps/opreturn/install", nil)
+	route := chi.NewRouteContext()
+	route.URLParams.Add("id", "opreturn")
+	installRequest = installRequest.WithContext(context.WithValue(ctx, chi.RouteCtxKey, route))
+	installed := httptest.NewRecorder()
+	s.handleAppInstall(installed, installRequest)
+	if installed.Code != 200 {
+		t.Fatal("native install required external runtime", installed.Code, installed.Body)
 	}
 	if info, e := app.Info(ctx); e != nil || !info.Installed || info.Status != "running" {
 		t.Fatal(info, e)
 	}
+	assertMenuState := func(want bool) {
+		// Simulate a catalog refresh completed with the opposite lifecycle state.
+		s.appListCache = cachedAppList{at: time.Now(), apps: []appInfo{{ID: "opreturn", Installed: !want}}}
+		w := httptest.NewRecorder()
+		s.handleAppsList(w, httptest.NewRequest("GET", "/api/apps", nil))
+		var apps []appInfo
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &apps) != nil || len(apps) != 1 || apps[0].Installed != want {
+			t.Fatal("menu used stale catalog state", w.Code, w.Body)
+		}
+	}
+	assertMenuState(true)
 	if err = app.Stop(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -284,6 +304,7 @@ func TestOPReturnPostgresLifecycleAndPublication(t *testing.T) {
 	if info, _ := app.Info(ctx); info.Installed {
 		t.Fatal("uninstall remained installed")
 	}
+	assertMenuState(false)
 	if s.opreturnActive(ctx) == nil {
 		t.Fatal("uninstalled app active")
 	}

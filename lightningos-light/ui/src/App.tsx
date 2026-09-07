@@ -95,7 +95,7 @@ type MenuConfig = {
 
 const MENU_CONFIG_KEY = 'los-menu-config'
 const MENU_CONFIG_VERSION = 1
-const OPTIONAL_MENU_ROUTE_KEYS = ['pay-boleto', 'taproot-assets', 'lightning-loop', 'loop-out-brln', 'magma-sales']
+const OPTIONAL_MENU_ROUTE_KEYS = ['pay-boleto', 'taproot-assets', 'lightning-loop', 'loop-out-brln', 'magma-sales', 'opreturn']
 
 const readMenuConfig = (): MenuConfig | null => {
   try {

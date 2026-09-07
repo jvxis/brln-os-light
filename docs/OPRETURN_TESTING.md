@@ -24,6 +24,13 @@ timeout reconciliation, and preservation of confirmed local history.
   `bitcoin-cli -datadir=/regtest` configured for its own regtest wallet;
 - Docker access for mining a test block.
 
+For a native Core fixture, set `LIGHTNINGOS_OPRETURN_REGTEST_BACKEND=native`.
+The test then uses only `/tmp/los-opreturn-137-lab/bitcoin-cli` with
+`-datadir=/tmp/los-opreturn-137-lab/bitcoin`. Load the fixture wallet after
+restarting Core and mine any pending fixture transaction before rerunning a test
+that requires confirmed inputs. Both layouts must use the same dedicated
+regtest-only ports and data paths; never switch the installed mainnet backend.
+
 The test explicitly verifies **regtest** before funding, and again before
 mining. It calls the package-private WalletKit funding implementation; the
 production entry point's mainnet guard has no bypass flag. It previews and
@@ -37,6 +44,8 @@ it neither inspects the configured Core source nor signs/funds via Core RPC.
 Record the actual backend used when reporting compatibility validation.
 
 LOS-TEST2 validation for issue #137 used an isolated Core 31.1/LND 0.21.3 regtest
-fixture: 23 UTF-8 bytes, one input, 144 estimated vbytes, 144 sat fee, one
-confirmation. The installed node's mainnet source was remote Core. No mainnet
-message was published by this test.
+fixture, exercised with both Docker Core and native Core: 23 UTF-8 bytes, one
+input, 144 estimated vbytes, 144 sat fee, one confirmation in each successful
+run. The installed node's mainnet source was remote Core. No mainnet message was
+published by this test. Native systemd lifecycle is outside this app's scope;
+the app performs no Core or LND lifecycle operations.

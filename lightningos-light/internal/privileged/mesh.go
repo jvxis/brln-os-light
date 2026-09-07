@@ -14,7 +14,7 @@ import (
 
 const OperationMesh Operation = "app.mesh.control"
 const meshUnitPath = "/etc/systemd/system/lightningos-mesh.service"
-const meshConfigPath = "/etc/lightningos-mesh/device.json"
+const meshConfigPath = "/var/lib/lightningos-mesh/device.json"
 const meshBinaryPath = "/usr/local/libexec/lightningos-mesh"
 const meshService = "lightningos-mesh.service"
 
@@ -106,23 +106,25 @@ func (m *NativeMeshManager) Control(ctx context.Context, p MeshParams, dry bool)
 		if !safeNonEmptyRegularFile(meshBinaryPath) || validateRootOwnedRegularFile(meshBinaryPath, 0755) != nil {
 			return MeshState{}, errors.New("upgrade LightningOS to install the radio bridge")
 		}
-		// Fixed user and paths only. No dialout membership or generic device access.
+		// Fixed user and paths only. Account creation runs in a fixed transient
+		// host unit because the broker intentionally mounts /etc read-only.
+		// No caller-supplied arguments, dialout membership or generic device access.
 		if _, err = m.Runner.Run(ctx, idPath, "-u", "losmesh"); err != nil {
-			if _, err = m.Runner.Run(ctx, useraddPath, "--system", "--user-group", "--home-dir", "/nonexistent", "--no-create-home", "--shell", "/usr/sbin/nologin", "losmesh"); err != nil {
+			if _, err = m.Runner.Run(ctx, systemdRunPath, "--wait", "--pipe", "--collect", "--quiet", "--unit=lightningos-mesh-identity", "--", useraddPath, "--system", "--user-group", "--home-dir", "/nonexistent", "--no-create-home", "--shell", "/usr/sbin/nologin", "losmesh"); err != nil {
 				return MeshState{}, err
 			}
 		}
-		if info, err := os.Lstat("/etc/lightningos-mesh"); err == nil {
+		if info, err := os.Lstat("/var/lib/lightningos-mesh"); err == nil {
 			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 				return MeshState{}, errors.New("invalid mesh configuration directory")
 			}
 		} else if !os.IsNotExist(err) {
 			return MeshState{}, err
 		}
-		if err = os.MkdirAll("/etc/lightningos-mesh", 0755); err != nil {
+		if err = os.MkdirAll("/var/lib/lightningos-mesh", 0755); err != nil {
 			return MeshState{}, err
 		}
-		if err = validateMeshRootDirectory("/etc/lightningos-mesh"); err != nil {
+		if err = validateMeshRootDirectory("/var/lib/lightningos-mesh"); err != nil {
 			return MeshState{}, err
 		}
 		for _, parent := range []string{"/usr/local/libexec", "/etc/systemd/system"} {

@@ -21,6 +21,7 @@ credentials, IP networking, generic broker access or wallet signing capability.
 5. Grant relay permission explicitly on the receiving endpoint when it should
    publish signed transactions from that contact. There is no open public relay.
 
+The root-controlled device configuration is stored in `/var/lib/lightningos-mesh/device.json`.
 The broker creates the no-shell `losmesh` user only when the optional app is
 installed. It grants an ACL on the selected character device, plus a matching
 systemd `DeviceAllow`. It never joins `dialout` or an LND/Manager group. If a USB

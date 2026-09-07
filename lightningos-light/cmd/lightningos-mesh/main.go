@@ -17,7 +17,7 @@ func main() {
 	if len(os.Args) != 1 {
 		log.Fatal("no command-line arguments accepted")
 	}
-	content, err := os.ReadFile("/etc/lightningos-mesh/device.json")
+	content, err := os.ReadFile("/var/lib/lightningos-mesh/device.json")
 	if err != nil {
 		log.Fatal("radio configuration unavailable")
 	}

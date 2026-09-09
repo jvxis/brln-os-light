@@ -861,6 +861,13 @@ func (c *Client) sharedConn(ctx context.Context, role grpcConnRole) (*grpc.Clien
 	if c.grpcConns == nil {
 		c.grpcConns = make(map[grpcConnRole]*grpc.ClientConn)
 	}
+	// Tests and narrowly scoped in-process clients may inject an already-open
+	// shared connection without a certificate fingerprint. Production shared
+	// connections created below always record one, so only reuse this legacy
+	// state instead of trying to read an unrelated or empty TLS path.
+	if conn := c.grpcConns[role]; conn != nil && !c.grpcTLSKnown {
+		return conn, nil
+	}
 	fingerprint, err := c.tlsCertificateFingerprint()
 	if err != nil {
 		return nil, err

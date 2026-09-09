@@ -55,7 +55,7 @@ func LNbitsImageVariants() []AppImageVariant {
 func LNbitsManagedEnv() [][2]string {
 	return [][2]string{
 		{"LNBITS_BACKEND_WALLET_CLASS", "LndRestWallet"},
-		{"LND_REST_ENDPOINT", "https://host.docker.internal:8080/"},
+		{"LND_REST_ENDPOINT", "https://127.0.0.1:8080/"},
 		{"LND_REST_CERT", "/etc/lnd/" + LNbitsTLSCertFile},
 		{"LND_REST_MACAROON", "/etc/lnd/" + LNbitsMacaroonFile},
 		{"LNBITS_DATA_FOLDER", "/app/data"},
@@ -165,9 +165,11 @@ func ValidateLNbitsEnv(raw []byte) error {
 	return nil
 }
 
-// LNbitsCompose returns the only Compose document the broker accepts. The
-// application has no Docker socket or host namespace access; its two LND
-// inputs are individual read-only files and its root filesystem is read-only.
+// LNbitsCompose returns the only Compose document the broker accepts. Host
+// networking lets LNbits reach LND's loopback-only REST listener without
+// changing lnd.conf, rotating LND-managed TLS material, or exposing REST on a
+// Docker bridge. The container remains non-root, capability-free, read-only,
+// and receives only its dedicated macaroon and a public certificate copy.
 func LNbitsCompose(paths LNbitsComposePaths) string {
 	return fmt.Sprintf(`services:
   lnbits:
@@ -182,16 +184,13 @@ func LNbitsCompose(paths LNbitsComposePaths) string {
       - ALL
     security_opt:
       - no-new-privileges:true
+    network_mode: host
     env_file:
       - ./.env
     environment:
       HOME: /app/data
       XDG_CACHE_HOME: /app/data/.cache
       PYTHONDONTWRITEBYTECODE: "1"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "%d:%d"
     command:
       - /app/.venv/bin/lnbits
       - --port
@@ -206,9 +205,6 @@ func LNbitsCompose(paths LNbitsComposePaths) string {
       - %s:/etc/lnd/tls.cert:ro
       - %s:/etc/lnd/lnbits.macaroon:ro
 
-networks:
-  default:
-    name: lnbits_default
 `, LNbitsImage, LNbitsContainerUID, LNbitsContainerGID, LNbitsStopTimeout,
-		LNbitsPort, LNbitsPort, paths.DataDir, paths.TLSCertPath, paths.MacaroonPath)
+		paths.DataDir, paths.TLSCertPath, paths.MacaroonPath)
 }

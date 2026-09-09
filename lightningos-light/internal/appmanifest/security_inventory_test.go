@@ -68,7 +68,7 @@ func TestComposeCatalogSecurityInventory(t *testing.T) {
 		LNDgID + "/lndg-db": {noNewPrivileges: true, exception: "official Postgres entrypoint initializes the dedicated LNDg database volume before dropping privileges"},
 		LNDgID + "/lndg":    {nonRoot: true, capDropAll: true, noNewPrivileges: true, exception: "LNDg still needs writable application paths during startup; mounts and LND credentials remain narrowly scoped"},
 
-		LNbitsID + "/lnbits":   hardened,
+		LNbitsID + "/lnbits":   {nonRoot: true, readOnly: true, capDropAll: true, noNewPrivileges: true, allowHostNetwork: true, exception: "host networking is required to reach LND's loopback-only REST endpoint without mutating LND configuration or TLS material"},
 		ElectrsID + "/electrs": hardened,
 
 		MempoolID + "/mempool-web": hardened,

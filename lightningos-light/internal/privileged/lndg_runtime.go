@@ -344,9 +344,9 @@ func (manager *ComposeAppManager) ensureLNDgHostAccess(ctx context.Context) erro
 		}
 	}
 	if changed || certificateNeedsRefresh {
-		if err := manager.removeLNDServerCertificate(); err != nil {
-			return err
-		}
+		// LND exclusively owns tls.cert and tls.key. The broker only applies
+		// the reviewed configuration and lets LND's tlsautorefresh policy
+		// manage its own certificate lifecycle on restart.
 		if _, err := manager.Runner.Run(ctx, systemctlPath, "restart", "lnd"); err != nil {
 			return errors.New("LND restart failed")
 		}
@@ -424,27 +424,6 @@ func (manager *ComposeAppManager) lndCertificateNeedsDockerHostAccess() bool {
 		return true
 	}
 	return certificate.VerifyHostname("host.docker.internal") != nil
-}
-
-func (manager *ComposeAppManager) removeLNDServerCertificate() error {
-	lndDataRoot := manager.LNDDataRoot
-	if lndDataRoot == "" {
-		lndDataRoot = defaultLNDDataRoot
-	}
-	for _, name := range []string{"tls.cert", "tls.key"} {
-		path := filepath.Join(lndDataRoot, name)
-		info, err := os.Lstat(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("LND TLS material is unsafe")
-		}
-		if err := os.Remove(path); err != nil {
-			return errors.New("LND TLS material removal failed")
-		}
-	}
-	return nil
 }
 
 func (manager *ComposeAppManager) ensureLNDgInternalFirewall(ctx context.Context) error {

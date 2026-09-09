@@ -36,7 +36,7 @@ func TestNormalizeLNbitsEnvPreservesCustomSettingsAndScrubsLegacyCredentials(t *
 	got := string(normalized)
 	for _, required := range []string{
 		"LNBITS_SITE_TITLE=Preserved Node\n",
-		"LND_REST_ENDPOINT=https://host.docker.internal:8080/\n",
+		"LND_REST_ENDPOINT=https://127.0.0.1:8080/\n",
 		"LND_REST_MACAROON=/etc/lnd/lnbits.macaroon\n",
 		"AUTH_HTTPS_ONLY=false\n",
 	} {
@@ -69,7 +69,7 @@ func TestValidateLNbitsEnvRejectsRuntimeAndCredentialOverrides(t *testing.T) {
 
 func TestValidateLNbitsEnvRejectsManagedDriftAndDuplicates(t *testing.T) {
 	base := string(canonicalLNbitsEnvForTest())
-	if err := ValidateLNbitsEnv([]byte(strings.Replace(base, "LND_REST_ENDPOINT=https://host.docker.internal:8080/", "LND_REST_ENDPOINT=https://elsewhere:8080/", 1))); err == nil {
+	if err := ValidateLNbitsEnv([]byte(strings.Replace(base, "LND_REST_ENDPOINT=https://127.0.0.1:8080/", "LND_REST_ENDPOINT=https://elsewhere:8080/", 1))); err == nil {
 		t.Fatal("expected managed endpoint drift to be rejected")
 	}
 	if err := ValidateLNbitsEnv([]byte(base + "LNBITS_PORT=5000\n")); err == nil {
@@ -89,16 +89,16 @@ func TestLNbitsComposeClosesRuntimeAndMountsOnlyDedicatedCredential(t *testing.T
 		"read_only: true",
 		"cap_drop:\n      - ALL",
 		"no-new-privileges:true",
+		"network_mode: host",
 		"/apps-data/lnbits/data:/app/data:rw",
 		"/snapshot/lnbits/lnd/tls.cert:/etc/lnd/tls.cert:ro",
 		"/snapshot/lnbits/lnd/lnbits.macaroon:/etc/lnd/lnbits.macaroon:ro",
-		"name: lnbits_default",
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("compose missing %q\n%s", required, compose)
 		}
 	}
-	for _, forbidden := range []string{"admin.macaroon", "/data/lnd", "/var/run/docker.sock", "privileged: true", "network_mode: host"} {
+	for _, forbidden := range []string{"admin.macaroon", "/data/lnd", "/var/run/docker.sock", "privileged: true", "host.docker.internal", "ports:"} {
 		if strings.Contains(compose, forbidden) {
 			t.Fatalf("compose contains forbidden input %q\n%s", forbidden, compose)
 		}

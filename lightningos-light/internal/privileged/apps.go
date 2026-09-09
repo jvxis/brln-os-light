@@ -838,23 +838,6 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			if err := manager.migrateLNbitsLegacySettings(ctx); err != nil {
 				return err
 			}
-			if err := manager.ensureLNbitsHostAccess(ctx); err != nil {
-				return err
-			}
-			// A clean install does not have lnbits_default yet. Materialize the
-			// reviewed container and its network without starting it, so the
-			// broker can bind the internal LND REST firewall rule to the actual
-			// Compose subnet before LNbits becomes reachable.
-			createArgs := append(append([]string(nil), args...), "create")
-			if _, err := manager.Runner.Run(ctx, commandPath, createArgs...); err != nil {
-				return errors.New("LNbits container preparation failed")
-			}
-			if err := manager.ensureLNbitsInternalFirewall(ctx); err != nil {
-				return err
-			}
-			if err := manager.refreshLNbitsSnapshotCertificate(snapshot.root); err != nil {
-				return err
-			}
 		}
 		if manifest.ID == appmanifest.FedimintGuardianID || manifest.ID == appmanifest.FedimintGatewayID {
 			if err := manager.migrateLegacyFedimint(ctx, manifest.ID); err != nil {

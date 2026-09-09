@@ -327,9 +327,8 @@ func (manager *ComposeAppManager) ensureFedimintGatewayHostAccess(ctx context.Co
 		}
 	}
 	if changed || certificateNeedsRefresh {
-		if err := manager.removeLNDServerCertificate(); err != nil {
-			return err
-		}
+		// LND exclusively owns tls.cert and tls.key. Let its configured
+		// tlsautorefresh behavior manage certificate rotation on restart.
 		if _, err := manager.Runner.Run(ctx, systemctlPath, "restart", "lnd"); err != nil {
 			return errors.New("LND restart failed")
 		}

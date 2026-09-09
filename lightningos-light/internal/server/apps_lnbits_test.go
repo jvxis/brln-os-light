@@ -29,12 +29,13 @@ func TestLnbitsComposeUsesPinnedOfficialImageAndDedicatedCredential(t *testing.T
 		"read_only: true",
 		"cap_drop:\n      - ALL",
 		"no-new-privileges:true",
+		"network_mode: host",
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("compose missing %q\n%s", required, compose)
 		}
 	}
-	for _, forbidden := range []string{"lnbits/lnbits:latest", "/data/lnd", "admin.macaroon", "/var/run/docker.sock", "privileged: true"} {
+	for _, forbidden := range []string{"lnbits/lnbits:latest", "/data/lnd", "admin.macaroon", "/var/run/docker.sock", "privileged: true", "host.docker.internal", "ports:"} {
 		if strings.Contains(compose, forbidden) {
 			t.Fatalf("compose exposes mutable or privileged input %q\n%s", forbidden, compose)
 		}
@@ -82,7 +83,7 @@ func TestEnsureLnbitsEnvMigratesLegacyAdminCredentialSelectors(t *testing.T) {
 	}
 	got := string(content)
 	for _, required := range []string{
-		"LND_REST_ENDPOINT=https://host.docker.internal:8080/",
+		"LND_REST_ENDPOINT=https://127.0.0.1:8080/",
 		"LND_REST_CERT=/etc/lnd/tls.cert",
 		"LND_REST_MACAROON=/etc/lnd/lnbits.macaroon",
 		"CUSTOM_SETTING=preserved",

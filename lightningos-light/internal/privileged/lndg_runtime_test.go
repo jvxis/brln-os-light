@@ -332,6 +332,14 @@ func TestLNDgLifecycleUsesOnlyBrokerSnapshotAndDoesNotRestartConfiguredLND(t *te
 
 func TestLNDgHostAccessPreservesUnrelatedListenersAndRestartsOnlyOnChange(t *testing.T) {
 	fixture := writeTestLNDgFixture(t)
+	certificateBefore, err := os.ReadFile(filepath.Join(fixture.lndDataRoot, "tls.cert"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyBefore, err := os.ReadFile(filepath.Join(fixture.lndDataRoot, "tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	mustWriteTestFile(t, fixture.configPath, []byte("[Application Options]\nrpclisten=127.0.0.1:10009\nrpclisten=172.22.0.1:10009\nalias=test\n"), 0640)
 	fixture.runner.hook = func(path string, args []string) (string, error, bool) {
 		if path == dockerPath && reflect.DeepEqual(args, []string{"network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}"}) {
@@ -362,9 +370,6 @@ func TestLNDgHostAccessPreservesUnrelatedListenersAndRestartsOnlyOnChange(t *tes
 			t.Fatalf("updated LND config lost %q: %s", required, raw)
 		}
 	}
-	if _, err := os.Lstat(filepath.Join(fixture.lndDataRoot, "tls.cert")); !os.IsNotExist(err) {
-		t.Fatal("LND certificate was not removed before the required restart")
-	}
 	restarts := 0
 	for _, command := range fixture.runner.commands {
 		if command.path == systemctlPath && reflect.DeepEqual(command.args, []string{"restart", "lnd"}) {
@@ -373,6 +378,14 @@ func TestLNDgHostAccessPreservesUnrelatedListenersAndRestartsOnlyOnChange(t *tes
 	}
 	if restarts != 1 {
 		t.Fatalf("LND restart count=%d want=1", restarts)
+	}
+	certificateAfter, err := os.ReadFile(filepath.Join(fixture.lndDataRoot, "tls.cert"))
+	if err != nil || !reflect.DeepEqual(certificateAfter, certificateBefore) {
+		t.Fatalf("broker changed LND-managed tls.cert: equal=%v err=%v", reflect.DeepEqual(certificateAfter, certificateBefore), err)
+	}
+	keyAfter, err := os.ReadFile(filepath.Join(fixture.lndDataRoot, "tls.key"))
+	if err != nil || !reflect.DeepEqual(keyAfter, keyBefore) {
+		t.Fatalf("broker changed LND-managed tls.key: equal=%v err=%v", reflect.DeepEqual(keyAfter, keyBefore), err)
 	}
 }
 

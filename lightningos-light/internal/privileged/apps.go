@@ -1194,8 +1194,11 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 		}
 		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.LNbitsID:
-		_, err := manager.validatedLNbitsFiles()
+		files, err := manager.validatedLNbitsFiles()
 		if err != nil {
+			return inspection, err
+		}
+		if err := manager.refreshLNbitsSnapshotCertificate(files.certificateRaw); err != nil {
 			return inspection, err
 		}
 		return manager.inspectCatalogRuntime(ctx, manifest, false)

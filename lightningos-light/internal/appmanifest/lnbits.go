@@ -29,9 +29,8 @@ const (
 var lnbitsEnvKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,127}$`)
 
 type LNbitsComposePaths struct {
-	DataDir      string
-	TLSCertPath  string
-	MacaroonPath string
+	DataDir string
+	LNDDir  string
 }
 
 // LNbitsImageForVariant selects only the stable official LNbits image pinned
@@ -169,7 +168,10 @@ func ValidateLNbitsEnv(raw []byte) error {
 // networking lets LNbits reach LND's loopback-only REST listener without
 // changing lnd.conf, rotating LND-managed TLS material, or exposing REST on a
 // Docker bridge. The container remains non-root, capability-free, read-only,
-// and receives only its dedicated macaroon and a public certificate copy.
+// and receives a narrow read-only LND directory containing only its dedicated
+// macaroon and the public certificate mirrored by the privileged broker. The
+// directory mount lets certificate replacement remain visible to the running
+// container without exposing the native LND data directory.
 func LNbitsCompose(paths LNbitsComposePaths) string {
 	return fmt.Sprintf(`services:
   lnbits:
@@ -202,9 +204,8 @@ func LNbitsCompose(paths LNbitsComposePaths) string {
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
     volumes:
       - %s:/app/data:rw
-      - %s:/etc/lnd/tls.cert:ro
-      - %s:/etc/lnd/lnbits.macaroon:ro
+      - %s:/etc/lnd:ro
 
 `, LNbitsImage, LNbitsContainerUID, LNbitsContainerGID, LNbitsStopTimeout,
-		paths.DataDir, paths.TLSCertPath, paths.MacaroonPath)
+		paths.DataDir, paths.LNDDir)
 }

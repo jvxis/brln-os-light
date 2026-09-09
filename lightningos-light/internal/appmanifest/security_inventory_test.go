@@ -215,7 +215,7 @@ func testCatalogComposeDocuments(t *testing.T) []catalogComposeDocument {
 		{appID: BitcoinCoreID, raw: bitcoin},
 		{appID: BTCPayID, raw: BTCPayExecutionCompose(btcpayPaths, true, true)},
 		{appID: LNDgID, raw: LNDgCompose(LNDgComposePaths{DataDir: "/data/lndg", PgDir: "/data/lndg-postgres", LogPath: "/data/lndg/controller.log", LndDir: "/snapshot/lndg/lnd", ChannelDBPath: "/snapshot/lndg/lnd/channel.db", EntrypointPath: "/snapshot/lndg/entrypoint.sh"})},
-		{appID: LNbitsID, raw: LNbitsCompose(LNbitsComposePaths{DataDir: "/data/lnbits", TLSCertPath: "/snapshot/lnbits/tls.cert", MacaroonPath: "/snapshot/lnbits/lnbits.macaroon"})},
+		{appID: LNbitsID, raw: LNbitsCompose(LNbitsComposePaths{DataDir: "/data/lnbits", LNDDir: "/snapshot/lnbits/lnd"})},
 		{appID: ElectrsID, raw: electrs},
 		{appID: MempoolID, raw: mempool},
 		{appID: FedimintGuardianID, raw: guardian},

@@ -79,9 +79,8 @@ func TestValidateLNbitsEnvRejectsManagedDriftAndDuplicates(t *testing.T) {
 
 func TestLNbitsComposeClosesRuntimeAndMountsOnlyDedicatedCredential(t *testing.T) {
 	compose := LNbitsCompose(LNbitsComposePaths{
-		DataDir:      "/apps-data/lnbits/data",
-		TLSCertPath:  "/snapshot/lnbits/lnd/tls.cert",
-		MacaroonPath: "/snapshot/lnbits/lnd/lnbits.macaroon",
+		DataDir: "/apps-data/lnbits/data",
+		LNDDir:  "/snapshot/lnbits/lnd",
 	})
 	for _, required := range []string{
 		"image: " + LNbitsImage,
@@ -91,8 +90,7 @@ func TestLNbitsComposeClosesRuntimeAndMountsOnlyDedicatedCredential(t *testing.T
 		"no-new-privileges:true",
 		"network_mode: host",
 		"/apps-data/lnbits/data:/app/data:rw",
-		"/snapshot/lnbits/lnd/tls.cert:/etc/lnd/tls.cert:ro",
-		"/snapshot/lnbits/lnd/lnbits.macaroon:/etc/lnd/lnbits.macaroon:ro",
+		"/snapshot/lnbits/lnd:/etc/lnd:ro",
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("compose missing %q\n%s", required, compose)

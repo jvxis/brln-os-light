@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -24,7 +23,6 @@ type lnbitsPaths struct {
 	ComposePath  string
 	EnvPath      string
 	LndDir       string
-	TLSCertPath  string
 	MacaroonPath string
 }
 
@@ -98,7 +96,6 @@ func lnbitsAppPaths() lnbitsPaths {
 		ComposePath:  filepath.Join(root, appmanifest.LNbitsComposeFile),
 		EnvPath:      filepath.Join(root, appmanifest.LNbitsEnvFile),
 		LndDir:       lndDir,
-		TLSCertPath:  filepath.Join(lndDir, appmanifest.LNbitsTLSCertFile),
 		MacaroonPath: filepath.Join(lndDir, appmanifest.LNbitsMacaroonFile),
 	}
 }
@@ -111,6 +108,9 @@ func (s *Server) applyLnbits(ctx context.Context) error {
 	if err := ensureLnbitsPaths(paths); err != nil {
 		return err
 	}
+	if err := removeLegacyLNbitsCertificate(paths); err != nil {
+		return err
+	}
 	if _, err := ensureFileWithChange(paths.ComposePath, lnbitsComposeContents(paths)); err != nil {
 		return err
 	}
@@ -118,9 +118,6 @@ func (s *Server) applyLnbits(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureLnbitsMacaroon(ctx, paths); err != nil {
-		return err
-	}
-	if err := copyLnbitsLndCert(paths); err != nil {
 		return err
 	}
 	if handled, err := system.PrepareAppImageWithBroker(ctx, appmanifest.LNbitsID, string(appmanifest.LNbitsImageApp)); !handled {
@@ -186,11 +183,28 @@ func ensureLnbitsPaths(paths lnbitsPaths) error {
 	return nil
 }
 
+func removeLegacyLNbitsCertificate(paths lnbitsPaths) error {
+	legacyPath := filepath.Join(paths.LndDir, appmanifest.LNbitsTLSCertFile)
+	info, err := os.Lstat(legacyPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("LNbits legacy certificate state is unavailable")
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("LNbits legacy certificate state is invalid")
+	}
+	if err := os.Remove(legacyPath); err != nil {
+		return fmt.Errorf("failed to remove obsolete LNbits certificate copy: %w", err)
+	}
+	return nil
+}
+
 func lnbitsComposeContents(paths lnbitsPaths) string {
 	return appmanifest.LNbitsCompose(appmanifest.LNbitsComposePaths{
-		DataDir:      paths.DataDir,
-		TLSCertPath:  paths.TLSCertPath,
-		MacaroonPath: paths.MacaroonPath,
+		DataDir: paths.DataDir,
+		LNDDir:  paths.LndDir,
 	})
 }
 
@@ -297,39 +311,6 @@ func lnbitsMacaroonPermissions() []lndclient.MacaroonPermission {
 		{Entity: "peers", Action: "read"},
 		{Entity: "peers", Action: "write"},
 	}
-}
-
-func copyLnbitsLndCert(paths lnbitsPaths) error {
-	const source = "/data/lnd/tls.cert"
-	var raw []byte
-	var err error
-	for attempt := 0; attempt < 10; attempt++ {
-		raw, err = os.ReadFile(source)
-		if err == nil && len(raw) > 0 {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to read %s: %w", source, err)
-	}
-	if len(raw) == 0 {
-		return fmt.Errorf("%s is empty", source)
-	}
-	if info, statErr := os.Lstat(paths.TLSCertPath); statErr == nil {
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("LNbits LND certificate must be a regular file")
-		}
-		if existing, readErr := os.ReadFile(paths.TLSCertPath); readErr == nil && bytes.Equal(existing, raw) {
-			return nil
-		}
-	} else if !os.IsNotExist(statErr) {
-		return errors.New("LNbits LND certificate is unavailable")
-	}
-	if err := os.WriteFile(paths.TLSCertPath, raw, 0640); err != nil {
-		return fmt.Errorf("failed to copy LND tls.cert for LNbits: %w", err)
-	}
-	return nil
 }
 
 // envValueState remains shared by the compatibility implementations which

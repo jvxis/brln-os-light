@@ -100,7 +100,6 @@ func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, 
 		}
 	}
 	if err := validateSnapshotDirectoryEntries(lndDir, map[string]bool{
-		appmanifest.LNbitsTLSCertFile:  true,
 		appmanifest.LNbitsMacaroonFile: true,
 	}); err != nil {
 		return files, errors.New("LNbits LND declaration contains unexpected assets")
@@ -115,7 +114,7 @@ func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, 
 		return files, errors.New("LNbits environment does not match the catalog")
 	}
 
-	certificatePath := filepath.Join(lndDir, appmanifest.LNbitsTLSCertFile)
+	certificatePath := filepath.Join(lndDataRoot, appmanifest.LNbitsTLSCertFile)
 	certificateRaw, err := readRegularFile(certificatePath, maxLNbitsCredentialBytes)
 	if err != nil || validateTLSCertificate(certificateRaw) != nil {
 		return files, errors.New("LNbits LND certificate is invalid")
@@ -145,9 +144,8 @@ func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, 
 		return files, errors.New("LNbits compose manifest is unavailable")
 	}
 	expectedCompose := appmanifest.LNbitsCompose(appmanifest.LNbitsComposePaths{
-		DataDir:      dataDir,
-		TLSCertPath:  certificatePath,
-		MacaroonPath: macaroonPath,
+		DataDir: dataDir,
+		LNDDir:  lndDir,
 	})
 	if !bytes.Equal(composeRaw, []byte(expectedCompose)) {
 		return files, errors.New("LNbits compose manifest does not match the catalog")
@@ -199,9 +197,8 @@ func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFile
 	certificatePath := filepath.Join(lndDir, appmanifest.LNbitsTLSCertFile)
 	macaroonPath := filepath.Join(lndDir, appmanifest.LNbitsMacaroonFile)
 	compose := appmanifest.LNbitsCompose(appmanifest.LNbitsComposePaths{
-		DataDir:      filepath.Join(appsDataRoot, appmanifest.LNbitsID, "data"),
-		TLSCertPath:  certificatePath,
-		MacaroonPath: macaroonPath,
+		DataDir: filepath.Join(appsDataRoot, appmanifest.LNbitsID, "data"),
+		LNDDir:  lndDir,
 	})
 	executionEnv, err := lnbitsExecutionEnv(files.envRaw, files.restEndpoint)
 	if err != nil {
@@ -228,6 +225,43 @@ func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFile
 		}
 	}
 	return composeAppSnapshot{root: snapshotRoot, composePath: composePath, envPath: envPath}, func() {}, nil
+}
+
+// refreshLNbitsSnapshotCertificate keeps the running container's narrow LND
+// directory aligned with the certificate currently owned by native LND. The
+// directory, rather than the individual file, is mounted into the container so
+// an atomic replacement remains visible after LND renews tls.cert.
+func (manager *ComposeAppManager) refreshLNbitsSnapshotCertificate(certificateRaw []byte) error {
+	privilegedAppsRoot := manager.PrivilegedAppsRoot
+	if privilegedAppsRoot == "" {
+		privilegedAppsRoot = defaultPrivilegedAppsRoot
+	}
+	lndDir := filepath.Join(privilegedAppsRoot, appmanifest.LNbitsID, appmanifest.LNbitsLNDDir)
+	if err := validateRegularDirectory(lndDir); err != nil {
+		// An app that has been declared but never started has no execution
+		// snapshot yet. Lifecycle start will create it with the current cert.
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return errors.New("LNbits LND snapshot is invalid")
+	}
+	if err := validateExecutionSnapshotDirectoryEntries(lndDir, map[string]bool{
+		appmanifest.LNbitsTLSCertFile:  true,
+		appmanifest.LNbitsMacaroonFile: true,
+	}); err != nil {
+		return errors.New("LNbits LND snapshot contains unexpected assets")
+	}
+	certificatePath := filepath.Join(lndDir, appmanifest.LNbitsTLSCertFile)
+	if current, err := readRegularFile(certificatePath, maxLNbitsCredentialBytes); err == nil && bytes.Equal(current, certificateRaw) {
+		return nil
+	}
+	if err := writeAtomicRegularFile(certificatePath, certificateRaw, 0640); err != nil {
+		return errors.New("failed to refresh LNbits LND certificate")
+	}
+	if err := setPrivilegedPathGroup(certificatePath, appmanifest.LNbitsContainerGID); err != nil {
+		return errors.New("failed to assign LNbits certificate group")
+	}
+	return nil
 }
 
 func (manager *ComposeAppManager) removeLNbitsExecutionSnapshot(snapshotRoot string) error {

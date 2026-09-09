@@ -60,17 +60,14 @@ func writeTestLNbitsFixture(t *testing.T) *testLNbitsFixture {
 	}
 	composePath := filepath.Join(appRoot, appmanifest.LNbitsComposeFile)
 	envPath := filepath.Join(appRoot, appmanifest.LNbitsEnvFile)
-	certificatePath := filepath.Join(lndDir, appmanifest.LNbitsTLSCertFile)
 	macaroonPath := filepath.Join(lndDir, appmanifest.LNbitsMacaroonFile)
 	adminMacaroonPath := filepath.Join(lndDataRoot, "data", "chain", "bitcoin", "mainnet", "admin.macaroon")
 	certificate := testLNDgCertificate(t, "host.docker.internal")
 	mustWriteTestFile(t, composePath, []byte(appmanifest.LNbitsCompose(appmanifest.LNbitsComposePaths{
-		DataDir:      dataDir,
-		TLSCertPath:  certificatePath,
-		MacaroonPath: macaroonPath,
+		DataDir: dataDir,
+		LNDDir:  lndDir,
 	})), 0640)
 	mustWriteTestFile(t, envPath, testLNbitsEnv(), 0600)
-	mustWriteTestFile(t, certificatePath, certificate, 0640)
 	mustWriteTestFile(t, macaroonPath, []byte("dedicated-lnbits-macaroon"), 0600)
 	mustWriteTestFile(t, adminMacaroonPath, []byte("native-admin-macaroon"), 0600)
 	mustWriteTestFile(t, filepath.Join(lndDataRoot, "tls.cert"), certificate, 0640)
@@ -124,8 +121,7 @@ func TestLNbitsValidationAndSnapshotAreClosedAndPrivate(t *testing.T) {
 	for _, required := range []string{
 		appmanifest.LNbitsImage,
 		fixture.dataDir + ":/app/data:rw",
-		filepath.Join(wantRoot, appmanifest.LNbitsLNDDir, appmanifest.LNbitsTLSCertFile) + ":/etc/lnd/tls.cert:ro",
-		filepath.Join(wantRoot, appmanifest.LNbitsLNDDir, appmanifest.LNbitsMacaroonFile) + ":/etc/lnd/lnbits.macaroon:ro",
+		filepath.Join(wantRoot, appmanifest.LNbitsLNDDir) + ":/etc/lnd:ro",
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("execution compose missing %q\n%s", required, compose)
@@ -149,6 +145,43 @@ func TestLNbitsValidationAndSnapshotAreClosedAndPrivate(t *testing.T) {
 	}
 	if _, _, err := fixture.manager.createLNbitsSnapshot(files); err != nil {
 		t.Fatalf("second idempotent LNbits snapshot failed: %v", err)
+	}
+}
+
+func TestLNbitsSnapshotCertificateRefreshFollowsNativeLNDRotation(t *testing.T) {
+	fixture := writeTestLNbitsFixture(t)
+	files, err := fixture.manager.validatedLNbitsFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := fixture.manager.createLNbitsSnapshot(files); err != nil {
+		t.Fatal(err)
+	}
+
+	rotated := testLNDgCertificate(t, "rotated.local")
+	mustWriteTestFile(t, filepath.Join(fixture.lndDataRoot, appmanifest.LNbitsTLSCertFile), rotated, 0640)
+	files, err = fixture.manager.validatedLNbitsFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.manager.refreshLNbitsSnapshotCertificate(files.certificateRaw); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshotCert := filepath.Join(fixture.privilegedRoot, appmanifest.LNbitsID, appmanifest.LNbitsLNDDir, appmanifest.LNbitsTLSCertFile)
+	got, err := os.ReadFile(snapshotCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, rotated) {
+		t.Fatal("LNbits snapshot did not follow the native LND certificate rotation")
+	}
+	compose, err := os.ReadFile(filepath.Join(fixture.privilegedRoot, appmanifest.LNbitsID, appmanifest.LNbitsComposeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(compose), filepath.Dir(snapshotCert)+":/etc/lnd:ro") {
+		t.Fatal("LNbits must mount the credential directory so certificate replacement remains visible")
 	}
 }
 

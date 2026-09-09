@@ -288,20 +288,8 @@ func (manager *ComposeAppManager) refreshLNDgSnapshotCertificate(snapshotRoot st
 	if filepath.Clean(snapshotRoot) != expectedRoot {
 		return errors.New("invalid LNDg execution snapshot")
 	}
-	lndDataRoot := manager.LNDDataRoot
-	if lndDataRoot == "" {
-		lndDataRoot = defaultLNDDataRoot
-	}
-	var certificateRaw []byte
-	var err error
-	for attempt := 0; attempt < 30; attempt++ {
-		certificateRaw, err = readRegularFile(filepath.Join(lndDataRoot, "tls.cert"), maxLNDgCredentialBytes)
-		if err == nil && validateTLSCertificate(certificateRaw) == nil {
-			break
-		}
-		time.Sleep(time.Second)
-	}
-	if err != nil || validateTLSCertificate(certificateRaw) != nil {
+	certificateRaw, err := manager.waitForLNDDockerHostCertificate(30, time.Second)
+	if err != nil {
 		return errors.New("refreshed LND certificate is unavailable")
 	}
 	target := filepath.Join(expectedRoot, appmanifest.LNDgLNDDir, appmanifest.LNDgTLSCertFile)
@@ -312,6 +300,31 @@ func (manager *ComposeAppManager) refreshLNDgSnapshotCertificate(snapshotRoot st
 		return errors.New("failed to assign LNDg certificate group")
 	}
 	return nil
+}
+
+func lndCertificateSupportsDockerHost(raw []byte) bool {
+	certificate, err := parseTLSCertificate(raw)
+	if err != nil {
+		return false
+	}
+	return certificate.VerifyHostname("host.docker.internal") == nil
+}
+
+func (manager *ComposeAppManager) waitForLNDDockerHostCertificate(attempts int, delay time.Duration) ([]byte, error) {
+	lndDataRoot := manager.LNDDataRoot
+	if lndDataRoot == "" {
+		lndDataRoot = defaultLNDDataRoot
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		raw, err := readRegularFile(filepath.Join(lndDataRoot, "tls.cert"), maxLNDgCredentialBytes)
+		if err == nil && lndCertificateSupportsDockerHost(raw) {
+			return raw, nil
+		}
+		if attempt+1 < attempts {
+			time.Sleep(delay)
+		}
+	}
+	return nil, errors.New("LND certificate does not cover the Docker host")
 }
 
 func (manager *ComposeAppManager) ensureLNDgHostAccess(ctx context.Context) error {

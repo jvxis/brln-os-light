@@ -341,16 +341,8 @@ func (manager *ComposeAppManager) refreshFedimintGatewaySnapshotCertificate(root
 	if lndRoot == "" {
 		lndRoot = defaultLNDDataRoot
 	}
-	var certificate []byte
-	var err error
-	for attempt := 0; attempt < 20; attempt++ {
-		certificate, err = readRegularFile(filepath.Join(lndRoot, "tls.cert"), 64*1024)
-		if err == nil && validateTLSCertificate(certificate) == nil {
-			break
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	if err != nil || validateTLSCertificate(certificate) != nil {
+	certificate, err := manager.waitForLNDDockerHostCertificate(20, 250*time.Millisecond)
+	if err != nil {
 		return errors.New("LND certificate refresh failed")
 	}
 	target := filepath.Join(root, "lnd", appmanifest.FedimintGatewayTLSFile)

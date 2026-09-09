@@ -436,6 +436,42 @@ func testLNDgCertificate(t *testing.T, dnsName string) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER})
 }
 
+func TestLNDgCertificateSupportsDockerHost(t *testing.T) {
+	if lndCertificateSupportsDockerHost(testLNDgCertificate(t, "localhost")) {
+		t.Fatal("certificate without Docker host SAN was accepted")
+	}
+	if !lndCertificateSupportsDockerHost(testLNDgCertificate(t, "host.docker.internal")) {
+		t.Fatal("certificate with Docker host SAN was rejected")
+	}
+	if lndCertificateSupportsDockerHost([]byte("not a certificate")) {
+		t.Fatal("invalid certificate was accepted")
+	}
+}
+
+func TestRefreshLNDgSnapshotCertificateFollowsLNDRotation(t *testing.T) {
+	fixture := writeTestLNDgFixture(t)
+	files, err := fixture.manager.validatedLNDgFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := fixture.manager.createLNDgSnapshot(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated := testLNDgCertificate(t, "host.docker.internal")
+	mustWriteTestFile(t, filepath.Join(fixture.lndDataRoot, "tls.cert"), rotated, 0640)
+	if err := fixture.manager.refreshLNDgSnapshotCertificate(snapshot.root); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(snapshot.root, appmanifest.LNDgLNDDir, appmanifest.LNDgTLSCertFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, rotated) {
+		t.Fatal("LNDg snapshot did not follow the LND-owned certificate rotation")
+	}
+}
+
 func TestLNDgHostAccessRejectsUntrustedGateway(t *testing.T) {
 	fixture := writeTestLNDgFixture(t)
 	fixture.runner.hook = func(path string, args []string) (string, error, bool) {

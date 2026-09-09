@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"lightningos-light/internal/appmanifest"
 )
@@ -311,6 +312,11 @@ func (manager *ComposeAppManager) ensureBTCPayLNDHostAccess(ctx context.Context)
 		// replace either file.
 		if _, err := manager.Runner.Run(ctx, systemctlPath, "restart", "lnd"); err != nil {
 			return errors.New("LND restart failed")
+		}
+		if certificateNeedsRefresh {
+			if _, err := manager.waitForLNDDockerHostCertificate(30, time.Second); err != nil {
+				return errors.New("LND certificate refresh failed")
+			}
 		}
 	}
 	return nil

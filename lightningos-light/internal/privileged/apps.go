@@ -578,6 +578,7 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	var cleanup func()
 	var images []string
 	var legacyBitcoin *preparedLegacyBitcoinMigration
+	var lnbitsRESTEndpoint string
 	switch manifest.ID {
 	case appmanifest.CPUMinerID:
 		composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
@@ -677,6 +678,7 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			return err
 		}
 		images = []string{appmanifest.LNbitsImage}
+		lnbitsRESTEndpoint = files.restEndpoint
 		if dryRun {
 			return nil
 		}
@@ -835,7 +837,7 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			if err := prepareLNbitsWritableData(filepath.Join(appsDataRoot, appmanifest.LNbitsID, "data")); err != nil {
 				return errors.New("LNbits writable data preparation failed")
 			}
-			if err := manager.migrateLNbitsLegacySettings(ctx); err != nil {
+			if err := manager.migrateLNbitsLegacySettings(ctx, lnbitsRESTEndpoint); err != nil {
 				return err
 			}
 		}

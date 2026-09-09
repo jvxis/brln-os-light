@@ -187,6 +187,10 @@ func TestLNbitsValidationRejectsDeclarationAndCredentialDrift(t *testing.T) {
 
 func TestLNbitsLifecycleUsesBrokerSnapshotWithoutRestartingConfiguredLND(t *testing.T) {
 	fixture := writeTestLNbitsFixture(t)
+	resolvedEndpoint, err := fixture.manager.resolveLNbitsRESTEndpoint()
+	if err != nil || resolvedEndpoint != "https://127.0.0.1:8080/" {
+		t.Fatalf("resolved endpoint=%q err=%v", resolvedEndpoint, err)
+	}
 	configBefore, err := os.ReadFile(fixture.configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +227,7 @@ func TestLNbitsLifecycleUsesBrokerSnapshotWithoutRestartingConfiguredLND(t *test
 		if command.path == dockerPath && len(command.args) > 2 && command.args[0] == "run" && command.args[len(command.args)-2] == "-c" {
 			migrationObserved = true
 			joined := strings.Join(command.args, " ")
-			for _, required := range []string{"--network none", "--user 65532:65532", "--read-only", "--cap-drop ALL", "no-new-privileges", fixture.dataDir + ":/app/data:rw"} {
+			for _, required := range []string{"--network none", "--user 65532:65532", "--read-only", "--cap-drop ALL", "no-new-privileges", fixture.dataDir + ":/app/data:rw", "LND_REST_ENDPOINT=https://127.0.0.1:8080/"} {
 				if !strings.Contains(joined, required) {
 					t.Fatalf("migration command missing %q: %#v", required, command)
 				}
@@ -244,6 +248,9 @@ func TestLNbitsLifecycleUsesBrokerSnapshotWithoutRestartingConfiguredLND(t *test
 	}
 	if !strings.Contains(fixture.runner.envSnapshot, "LNBITS_SITE_TITLE=Preserved Node") {
 		t.Fatal("safe existing LNbits configuration was not preserved")
+	}
+	if !strings.Contains(fixture.runner.envSnapshot, "LND_REST_ENDPOINT=https://127.0.0.1:8080/") {
+		t.Fatalf("LNbits execution snapshot did not select the existing local REST listener:\n%s", fixture.runner.envSnapshot)
 	}
 	dataRaw, err := os.ReadFile(filepath.Join(fixture.dataDir, "database.sqlite3"))
 	if err != nil || string(dataRaw) != "preserved-data" {
@@ -266,7 +273,7 @@ func TestLNbitsLifecycleUsesBrokerSnapshotWithoutRestartingConfiguredLND(t *test
 func TestLNbitsSettingsMigrationIsNarrowAndParameterized(t *testing.T) {
 	for _, required := range []string{
 		`"lnbits_backend_wallet_class": "LndRestWallet"`,
-		`"lnd_rest_endpoint": "https://127.0.0.1:8080/"`,
+		`"lnd_rest_endpoint": os.environ["LND_REST_ENDPOINT"]`,
 		`"lnd_rest_cert": "/etc/lnd/tls.cert"`,
 		`"lnd_rest_macaroon": "/etc/lnd/lnbits.macaroon"`,
 		"update system_settings set value=? where id=?",
@@ -280,6 +287,37 @@ func TestLNbitsSettingsMigrationIsNarrowAndParameterized(t *testing.T) {
 		if strings.Contains(strings.ToLower(lnbitsSettingsMigrationScript), forbidden) {
 			t.Fatalf("settings migration contains forbidden operation %q", forbidden)
 		}
+	}
+}
+
+func TestSelectLNbitsRESTEndpointUsesExistingSafeListenerWithoutConfigMutation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		want    string
+		wantErr bool
+	}{
+		{name: "native default", config: "[Application Options]\nalias=test\n", want: "https://127.0.0.1:8080/"},
+		{name: "legacy docker bridge", config: "[Application Options]\nrestlisten=172.17.0.1:8080\n", want: "https://172.17.0.1:8080/"},
+		{name: "wildcard maps to loopback", config: "[Application Options]\nrestlisten=0.0.0.0:8080\n", want: "https://127.0.0.1:8080/"},
+		{name: "loopback preferred", config: "[Application Options]\nrestlisten=172.17.0.1:8080\nrestlisten=127.0.0.1:8080\n", want: "https://127.0.0.1:8080/"},
+		{name: "public only rejected", config: "[Application Options]\nrestlisten=203.0.113.8:8080\n", wantErr: true},
+		{name: "hostname rejected", config: "[Application Options]\nrestlisten=example.com:8080\n", wantErr: true},
+		{name: "invalid port rejected", config: "[Application Options]\nrestlisten=127.0.0.1:not-a-port\n", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := selectLNbitsRESTEndpoint(test.config)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("expected unsafe REST listener to be rejected, got %q", got)
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("endpoint=%q err=%v want=%q", got, err, test.want)
+			}
+		})
 	}
 }
 

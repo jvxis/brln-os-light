@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -31,7 +32,7 @@ try:
         raise SystemExit(0)
     desired = {
         "lnbits_backend_wallet_class": "LndRestWallet",
-        "lnd_rest_endpoint": "https://127.0.0.1:8080/",
+        "lnd_rest_endpoint": os.environ["LND_REST_ENDPOINT"],
         "lnd_rest_cert": "/etc/lnd/tls.cert",
         "lnd_rest_macaroon": "/etc/lnd/lnbits.macaroon",
     }
@@ -65,6 +66,7 @@ type lnbitsValidatedFiles struct {
 	envRaw         []byte
 	certificateRaw []byte
 	macaroonRaw    []byte
+	restEndpoint   string
 }
 
 func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, error) {
@@ -133,6 +135,10 @@ func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, 
 	if bytes.Equal(macaroonRaw, adminRaw) {
 		return files, errors.New("LNbits LND credential must not be the admin macaroon")
 	}
+	restEndpoint, err := manager.resolveLNbitsRESTEndpoint()
+	if err != nil {
+		return files, err
+	}
 
 	composeRaw, err := readRegularFile(filepath.Join(appRoot, appmanifest.LNbitsComposeFile), 64*1024)
 	if err != nil {
@@ -147,7 +153,7 @@ func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, 
 		return files, errors.New("LNbits compose manifest does not match the catalog")
 	}
 
-	return lnbitsValidatedFiles{envRaw: envRaw, certificateRaw: certificateRaw, macaroonRaw: macaroonRaw}, nil
+	return lnbitsValidatedFiles{envRaw: envRaw, certificateRaw: certificateRaw, macaroonRaw: macaroonRaw, restEndpoint: restEndpoint}, nil
 }
 
 func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFiles) (composeAppSnapshot, func(), error) {
@@ -197,6 +203,10 @@ func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFile
 		TLSCertPath:  certificatePath,
 		MacaroonPath: macaroonPath,
 	})
+	executionEnv, err := lnbitsExecutionEnv(files.envRaw, files.restEndpoint)
+	if err != nil {
+		return snapshot, func() {}, err
+	}
 	for _, file := range []struct {
 		path string
 		raw  []byte
@@ -204,7 +214,7 @@ func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFile
 		gid  int
 	}{
 		{composePath, []byte(compose), 0600, 0},
-		{envPath, files.envRaw, 0600, 0},
+		{envPath, executionEnv, 0600, 0},
 		{certificatePath, files.certificateRaw, 0640, appmanifest.LNbitsContainerGID},
 		{macaroonPath, files.macaroonRaw, 0640, appmanifest.LNbitsContainerGID},
 	} {
@@ -285,7 +295,7 @@ func (manager *ComposeAppManager) EnsureLNDHostAccess(ctx context.Context, appID
 	return manager.ensureBTCPayLNDHostAccess(ctx)
 }
 
-func (manager *ComposeAppManager) migrateLNbitsLegacySettings(ctx context.Context) error {
+func (manager *ComposeAppManager) migrateLNbitsLegacySettings(ctx context.Context, restEndpoint string) error {
 	appsDataRoot := manager.AppsDataRoot
 	if appsDataRoot == "" {
 		appsDataRoot = defaultAppsDataRoot
@@ -298,6 +308,7 @@ func (manager *ComposeAppManager) migrateLNbitsLegacySettings(ctx context.Contex
 		"--security-opt", "no-new-privileges",
 		"--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777",
 		"-e", "HOME=/app/data", "-e", "PYTHONDONTWRITEBYTECODE=1",
+		"-e", "LND_REST_ENDPOINT="+restEndpoint,
 		"-v", dataDir+":/app/data:rw",
 		appmanifest.LNbitsImage,
 		"/app/.venv/bin/python", "-c", lnbitsSettingsMigrationScript,
@@ -305,6 +316,89 @@ func (manager *ComposeAppManager) migrateLNbitsLegacySettings(ctx context.Contex
 		return errors.New("LNbits legacy settings migration failed")
 	}
 	return nil
+}
+
+func (manager *ComposeAppManager) resolveLNbitsRESTEndpoint() (string, error) {
+	configPath := manager.LNDConfigPath
+	if configPath == "" {
+		configPath = defaultLNDConfigPath
+	}
+	raw, err := readRegularFile(configPath, 1024*1024)
+	if err != nil {
+		return "", errors.New("LND configuration is unavailable")
+	}
+	return selectLNbitsRESTEndpoint(string(raw))
+}
+
+func selectLNbitsRESTEndpoint(config string) (string, error) {
+	loopback := make([]string, 0, 2)
+	private := make([]string, 0, 2)
+	hasRESTListener := false
+	for _, line := range strings.Split(config, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "restlisten=") {
+			continue
+		}
+		hasRESTListener = true
+		address := strings.TrimSpace(strings.TrimPrefix(trimmed, "restlisten="))
+		host, port, err := net.SplitHostPort(address)
+		if err != nil || strings.TrimSpace(port) == "" {
+			continue
+		}
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			continue
+		}
+		host = strings.Trim(strings.TrimSpace(host), "[]")
+		switch host {
+		case "", "*", "0.0.0.0":
+			host = "127.0.0.1"
+		case "::":
+			host = "::1"
+		}
+		candidate := "https://" + net.JoinHostPort(host, port) + "/"
+		if strings.EqualFold(host, "localhost") {
+			loopback = append(loopback, candidate)
+			continue
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			continue
+		}
+		if ip.IsLoopback() {
+			loopback = append(loopback, candidate)
+		} else if ip.IsPrivate() {
+			private = append(private, candidate)
+		}
+	}
+	if len(loopback) > 0 {
+		return loopback[0], nil
+	}
+	if len(private) > 0 {
+		return private[0], nil
+	}
+	if !hasRESTListener {
+		return "https://127.0.0.1:8080/", nil
+	}
+	return "", errors.New("LND REST has no safe local listener for LNbits")
+}
+
+func lnbitsExecutionEnv(raw []byte, restEndpoint string) ([]byte, error) {
+	if strings.TrimSpace(restEndpoint) == "" {
+		return nil, errors.New("LNbits LND REST endpoint is unavailable")
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	replaced := false
+	for index, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "LND_REST_ENDPOINT=") {
+			lines[index] = "LND_REST_ENDPOINT=" + restEndpoint
+			replaced = true
+		}
+	}
+	if !replaced {
+		return nil, errors.New("LNbits LND REST endpoint setting is unavailable")
+	}
+	return []byte(strings.Join(lines, "\n") + "\n"), nil
 }
 
 func updateLNDRESTHostAccessOptions(lines []string, gateway string) ([]string, bool) {

@@ -16,8 +16,8 @@ const (
 	BTCPayPort                   = 23000
 	BTCPayNbxplorerPort          = 32838
 	BTCPayStopTimeout            = 30
-	BTCPayRelease                = "2.4.2"
-	BTCPayNbxplorerRelease       = "2.6.10"
+	BTCPayRelease                = "2.4.4"
+	BTCPayNbxplorerRelease       = "2.6.13"
 
 	// BTCPayServerImage is the newest stable tag published by the official
 	// BTCPay Docker project. Upstream does not publish a usable `latest` tag.
@@ -94,9 +94,9 @@ func BTCPayCompose(paths BTCPayComposePaths, joinBitcoinNetwork bool, useTorProx
 	return btcpayCompose(paths, joinBitcoinNetwork, useTorProxy, BTCPayMacaroonFile)
 }
 
-// BTCPayExecutionCompose is the broker-only catalog form. BTCPay 2.4.2 fixes
-// the credential-disclosure vulnerability and requires the dedicated LND
-// credential path to use the .macaroon extension.
+// BTCPayExecutionCompose is the broker-only catalog form. Current releases
+// retain the dedicated LND credential requirement introduced by the 2.4.2
+// security fix, including the .macaroon filename extension.
 func BTCPayExecutionCompose(paths BTCPayComposePaths, joinBitcoinNetwork bool, useTorProxy bool) string {
 	return btcpayCompose(paths, joinBitcoinNetwork, useTorProxy, BTCPayMacaroonFile)
 }

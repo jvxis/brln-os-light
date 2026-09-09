@@ -101,8 +101,37 @@ if [ "$legacy_sqlite" = true ] && [ ! -f "$MIGRATION_MARKER" ]; then
         umask 077
         : > "$MIGRATION_MARKER"
       else
-        echo "Refusing automatic SQLite import into an initialized PostgreSQL schema" >&2
-        exit 1
+        sqlite_app_rows=$(SQLITE_FILE="$SQLITE_FILE" python - <<'PY'
+import os
+import sqlite3
+
+database = sqlite3.connect(os.environ["SQLITE_FILE"])
+try:
+    tables = [
+        row[0]
+        for row in database.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'gui_%'"
+        )
+    ]
+    total = 0
+    for table in tables:
+        escaped = table.replace('"', '""')
+        total += database.execute(f'SELECT COUNT(*) FROM "{escaped}"').fetchone()[0]
+    print(total)
+finally:
+    database.close()
+PY
+)
+        if [ "$sqlite_app_rows" = "0" ]; then
+          # Container recreation restores the image's SQLite settings. An
+          # empty gui_* dataset is the harmless bootstrap database left by
+          # initialize.py, so preserve the already initialized PostgreSQL DB.
+          umask 077
+          : > "$MIGRATION_MARKER"
+        else
+          echo "Refusing automatic SQLite import into an initialized PostgreSQL schema" >&2
+          exit 1
+        fi
       fi
     else
       SETTINGS_FILE="$SETTINGS_FILE" SQLITE_SETTINGS_FILE="$SQLITE_SETTINGS_FILE" SQLITE_FILE="$SQLITE_FILE" python - <<'PY'

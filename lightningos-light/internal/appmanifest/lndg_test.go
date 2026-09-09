@@ -138,6 +138,8 @@ func TestLNDgEntrypointMigratesOnlyLegacySQLiteIntoEmptyPostgres(t *testing.T) {
 		`fresh_settings=true`,
 		`select to_regclass('public.django_migrations');`,
 		`grep -q "django.db.backends.postgresql_psycopg2" "$SETTINGS_FILE"`,
+		`name LIKE 'gui_%'`,
+		`if [ "$sqlite_app_rows" = "0" ]`,
 		`Refusing automatic SQLite import into an initialized PostgreSQL schema`,
 		`DJANGO_SETTINGS_MODULE=lndg.sqlite_migration_settings python manage.py dumpdata`,
 		`'ENGINE': 'django.db.backends.sqlite3'`,

@@ -16,6 +16,14 @@ export default function LOSMesh() {
   const [mode, setMode] = useState('')
   const [peer, setPeer] = useState('')
   const [nodeSearch, setNodeSearch] = useState('')
+  const [nodePage, setNodePage] = useState(0)
+  const nodeListRef = useRef<HTMLDivElement>(null)
+  const filteredNodes = (status?.nodes || []).filter(n => `${n.name} ${n.short_name} !${n.node.toString(16).padStart(8, '0')}`.toLowerCase().includes(nodeSearch.trim().toLowerCase()))
+  const nodePageSize = 12
+  const nodePageCount = Math.max(1, Math.ceil(filteredNodes.length / nodePageSize))
+  const currentNodePage = Math.min(nodePage, nodePageCount - 1)
+  useEffect(() => { setNodePage(page => Math.min(page, nodePageCount - 1)) }, [nodePageCount])
+  useEffect(() => { nodeListRef.current?.scrollTo({ top: 0 }) }, [currentNodePage, nodeSearch])
   const [compareConfirmed, setCompareConfirmed] = useState<Record<string, boolean>>({})
   const [nodeID, setNodeID] = useState('')
   const [name, setName] = useState('')
@@ -166,8 +174,8 @@ export default function LOSMesh() {
     <div className="section-card space-y-4">
       <h3 className="text-lg font-semibold">{text('Contatos e pareamento privado', 'Contacts and private pairing')}</h3>
       <p className="text-sm text-fog/65">{text('Escolha um nó conhecido pelo rádio, verifique a resposta do LOS Mesh e envie um convite. A presença na lista não garante conexão nem identidade.', 'Choose a node known to the radio, check for a LOS Mesh response and send an invitation. Being listed does not guarantee reachability or identity.')}</p>
-      {label(text('Buscar nó por nome ou ID', 'Search nodes by name or ID'), <input className={input} value={nodeSearch} onChange={e => setNodeSearch(e.target.value)} />)}
-      <div className="space-y-3">{(status?.nodes || []).filter(n => `${n.name} ${n.short_name} ${n.node.toString(16)}`.toLowerCase().includes(nodeSearch.toLowerCase())).slice(0,12).map(n => {
+      {label(text('Buscar nó por nome ou ID', 'Search nodes by name or ID'), <input className={input} value={nodeSearch} onChange={e => { setNodeSearch(e.target.value); setNodePage(0) }} />)}
+      <div ref={nodeListRef} role="region" aria-label={text('Nós conhecidos pelo rádio', 'Nodes known to the radio')} tabIndex={0} className="max-h-[28rem] overflow-y-auto overscroll-contain space-y-3 pr-2">{filteredNodes.slice(currentNodePage * nodePageSize, (currentNodePage + 1) * nodePageSize).map(n => {
         const pairedNode = status?.peers.some(p => p.node === n.node && p.paired)
         const available = status?.pairings?.some(p => p.node === n.node && p.state === 'available')
         const pendingNode = status?.pairings?.some(p => p.node === n.node && !['available','verified'].includes(p.state))
@@ -177,7 +185,15 @@ export default function LOSMesh() {
         </div>
       })}</div>
       {!status?.nodes?.length && <p className="text-sm text-fog/60">{text('Nenhum nó foi recuperado do rádio. Conecte o rádio e aguarde a leitura da lista.', 'No nodes have been retrieved from the radio. Connect it and wait for the node list.')}</p>}
-      {(status?.nodes?.length || 0)>12 && <p className="text-xs text-fog/60">{text('Exibindo até 12 resultados. Use a busca para encontrar outros nós.', 'Showing up to 12 results. Search to find other nodes.')}</p>}
+      {Boolean(status?.nodes?.length) && !filteredNodes.length && <p className="text-sm text-fog/60">{text('Nenhum nó corresponde à busca.', 'No nodes match your search.')}</p>}
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-fog/70">
+        <p role="status">{filteredNodes.length ? `${currentNodePage * nodePageSize + 1}–${Math.min((currentNodePage + 1) * nodePageSize, filteredNodes.length)} / ${filteredNodes.length}` : '0'} {text('resultados', 'results')} · {status?.nodes?.length || 0} {text('nós no rádio', 'nodes in radio')}</p>
+        <nav aria-label={text('Paginação dos nós', 'Node pagination')} className="flex items-center gap-3">
+          <button className="btn-secondary" disabled={currentNodePage === 0} onClick={() => setNodePage(currentNodePage - 1)}>{text('Anterior', 'Previous')}</button>
+          <span>{currentNodePage + 1} / {nodePageCount}</span>
+          <button className="btn-secondary" disabled={currentNodePage + 1 >= nodePageCount} onClick={() => setNodePage(currentNodePage + 1)}>{text('Próxima', 'Next')}</button>
+        </nav>
+      </div>
       {(status?.pairings || []).map(p => <div key={p.id} className="rounded-xl border border-emerald-400/30 p-4 space-y-3"><strong>{p.name}</strong><p className="text-sm">{({checking:text('Verificando conexão…', 'Checking connection…'),declined:text('Convite recusado ou cancelado', 'Invitation declined or cancelled'),available:text('Resposta LOS Mesh recebida', 'LOS Mesh response received'),invitation_sent:text('Convite enviado; aguardando aceitação', 'Invitation sent; awaiting acceptance'),invitation_received:text('Convite recebido', 'Invitation received'),exchanging:text('Negociando conexão segura…', 'Negotiating secure connection…'),compare_code:text('Compare o código com o outro operador', 'Compare the code with the other operator'),verified:text('Contato verificado', 'Verified contact'),contact_conflict:text('Já existe um contato com este ID; nenhuma chave foi substituída.', 'A contact with this ID already exists; no key was replaced.')} as Record<string,string>)[p.state] || p.state}</p>
         <p className="text-xs text-fog/60">{text('Expira', 'Expires')}: {new Date(p.expires).toLocaleTimeString()}</p>
         {p.state==='invitation_received' && <button className="btn-primary" disabled={busy} onClick={() => void act({action:'pair_accept',id:p.id})}>{text('Aceitar convite', 'Accept invitation')}</button>}

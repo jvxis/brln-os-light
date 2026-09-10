@@ -946,6 +946,27 @@ LNDg notes:
 - If you see `Is a directory: /var/log/lndg-controller.log`, remove `/var/lib/lightningos/apps-data/lndg/data/lndg-controller.log` on the host and restart LNDg.
 - If LND is using Postgres, LNDg may log `channel.db` missing. This is expected and harmless.
 
+## LOS Mesh: radio, contacts and operating modes
+
+LOS Mesh transports signed Bitcoin transactions and payment requests between LightningOS endpoints using Meshtastic USB radios. Use two compatible radios configured for the same region and channel. The app preserves radio firmware and settings. A node appearing in the radio list does not prove that it is reachable or running LOS Mesh.
+
+1. In **Radio**, select the USB device and install LOS Mesh once. Reconnect if the connection is lost; select a mode and use **Apply mode**, confirming with your LightningOS password.
+2. In **Contacts**, search the radio's known nodes by name or ID. The list has 12-item pages and its own vertical scroll; search covers all retrieved nodes. Check the connection, send an invitation and have the remote operator accept it.
+3. Compare the displayed code in person or over another trusted channel, and confirm on both endpoints. Keys are negotiated automatically. Manual ID/key entry remains under **Advanced**. New contacts have relay permission disabled.
+4. Use **Payments** to review and approve transactions or requests. Receiving a request never automatically pays it. Lightning payments use the regular Lightning network and require local approval.
+
+| Mode | Initiate transaction/request transfers | Publish signed transactions from contacts |
+| --- | --- | --- |
+| **Send without offering relay** (default; formerly Send only) | Yes | No |
+| **Offer relay** (formerly Relay only) | No | Yes, with per-contact permission |
+| **Send and offer relay** (formerly Bidirectional) | Yes | Yes, with per-contact permission |
+
+**Relay** means using your connected node to publish an already signed transaction to the Bitcoin network. Enable **Allow relay** for each trusted contact you want to serve. To send through another endpoint, that endpoint must offer relay and authorize your contact. These modes do not disable reception of replies, invitations or requests, and do not prevent bitcoin from arriving in your wallet.
+
+Selecting a mode only previews the change; **Apply mode** activates it after password confirmation. If a destination rejects transaction publication because its mode or contact permission blocks relay, the sender's history shows **Destination relay not authorized**, provided the reply arrives. The destination currently has no automatic prompt to change mode. After the remote operator enables relay and authorizes the contact, retry explicitly.
+
+Physical pairing with a second radio and actual payment settlement remain acceptance tests for this experimental feature; simulated pairing and wallet tests do not replace those checks.
+
 ## App Store architecture
 - Each app implements a handler in `internal/server/apps_<app>.go`.
 - Apps are registered in `internal/server/apps_registry.go`.

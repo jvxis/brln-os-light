@@ -937,6 +937,27 @@ Notas LNDg:
 - Se aparecer `Is a directory: /var/log/lndg-controller.log`, remova `/var/lib/lightningos/apps-data/lndg/data/lndg-controller.log` no host e reinicie o LNDg.
 - Se LND estiver usando Postgres, o LNDg pode logar ausência de `channel.db`. Isso é esperado e inofensivo.
 
+## LOS Mesh: rádio, contatos e modos de operação
+
+O LOS Mesh transporta transações Bitcoin assinadas e solicitações de pagamento entre pontos LightningOS usando rádios Meshtastic USB. Use dois rádios compatíveis, configurados para a mesma região e canal. O app preserva o firmware e as configurações do rádio. Um nó aparecer na lista do rádio não comprova que está acessível ou executando LOS Mesh.
+
+1. Em **Rádio**, selecione o dispositivo USB e instale o LOS Mesh uma vez. Reconecte se a conexão cair; selecione um modo e use **Aplicar modo**, confirmando com sua senha do LightningOS.
+2. Em **Contatos**, busque os nós conhecidos pelo rádio por nome ou ID. A lista tem páginas de 12 itens e scroll vertical próprio; a busca cobre todos os nós recuperados. Verifique a conexão, envie um convite e peça ao outro operador que aceite.
+3. Compare o código exibido pessoalmente ou por outro canal confiável e confirme nos dois pontos. As chaves são negociadas automaticamente. O cadastro manual de ID/chave fica em **Avançado**. Novos contatos começam sem permissão de relay.
+4. Use **Pagamentos** para revisar e aprovar transações ou solicitações. Receber uma solicitação nunca gera pagamento automático. Pagamentos Lightning usam a rede Lightning normal e exigem aprovação local.
+
+| Modo | Iniciar envios de transações/solicitações | Publicar transações assinadas de contatos |
+| --- | --- | --- |
+| **Enviar sem oferecer relay** (padrão; antigo Somente envio) | Sim | Não |
+| **Oferecer relay** (antigo Somente relay) | Não | Sim, com permissão por contato |
+| **Enviar e oferecer relay** (antigo Bidirecional) | Sim | Sim, com permissão por contato |
+
+**Relay** significa usar seu node conectado para publicar na rede Bitcoin uma transação já assinada. Habilite **Permitir relay** para cada contato confiável que deseja atender. Para enviar por outro ponto, ele precisa oferecer relay e autorizar seu contato. Esses modos não impedem a recepção de respostas, convites ou solicitações, nem o recebimento de bitcoins na carteira.
+
+Selecionar um modo apenas prepara a alteração; **Aplicar modo** a ativa após confirmação por senha. Se o destino recusar a publicação porque seu modo ou a permissão do contato bloqueia relay, o histórico do remetente mostra **Relay não autorizado no destino**, desde que a resposta chegue. O destino ainda não recebe um aviso automático para mudar de modo. Após o outro operador habilitar relay e autorizar o contato, tente novamente de forma explícita.
+
+O pareamento físico com um segundo rádio e a liquidação real de pagamentos continuam sendo testes de aceite desta funcionalidade experimental; testes simulados de pareamento e carteira não substituem essas verificações.
+
 ## Arquitetura da App Store
 - Cada app implementa um handler em `internal/server/apps_<app>.go`.
 - Apps são registrados em `internal/server/apps_registry.go`.

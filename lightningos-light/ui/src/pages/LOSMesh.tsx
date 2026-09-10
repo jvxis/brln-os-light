@@ -103,7 +103,12 @@ export default function LOSMesh() {
   const modeChanged = Boolean(status?.app.installed && selectedMode !== status.mode)
   const deviceChanged = Boolean(status?.app.installed && selectedDevice !== status.app.device)
   const deviceAvailable = Boolean(selectedDevice && status?.app.devices.includes(selectedDevice))
-  const modeNames: Record<string, string> = { send: text('Somente envio', 'Send only'), relay: text('Somente relay', 'Relay only'), both: text('Bidirecional', 'Bidirectional') }
+  const modeNames: Record<string, string> = { send: text('Enviar sem oferecer relay', 'Send without offering relay'), relay: text('Oferecer relay', 'Offer relay'), both: text('Enviar e oferecer relay', 'Send and offer relay') }
+  const modeHints: Record<string, string> = {
+    send: text('Envie transações e solicitações para outros contatos. Você continua recebendo respostas, convites e solicitações, mas seu LOS não publica transações recebidas de outros contatos.', 'Send transactions and requests to other contacts. You still receive replies, invitations and requests, but your LOS does not publish transactions received from other contacts.'),
+    relay: text('Use seu LOS conectado à internet para publicar transações já assinadas de contatos autorizados. Este modo bloqueia novos envios de transações e solicitações pelo LOS Mesh.', 'Use your internet-connected LOS to publish already signed transactions from authorized contacts. This mode blocks new transaction and request transfers through LOS Mesh.'),
+    both: text('Envie transações e solicitações e também publique transações já assinadas de contatos autorizados. Escolha este modo para usar as duas funções.', 'Send transactions and requests and also publish already signed transactions from authorized contacts. Choose this mode to use both functions.')
+  }
   const approvalTitle = approval?.action === 'pair_invite' ? text('Enviar convite', 'Send invitation')
     : approval?.action === 'pair_accept' ? text('Aceitar convite', 'Accept invitation')
     : approval?.action === 'pair_confirm' ? text('Confirmar contato', 'Confirm contact')
@@ -151,7 +156,12 @@ export default function LOSMesh() {
       <h3 className="text-lg font-semibold">{text('Rádio e operação', 'Radio and operation')}</h3>
       <div className="grid gap-4 md:grid-cols-2">
         {label(text('Dispositivo USB', 'USB device'), <select className={input} disabled={busy} value={selectedDevice} onChange={e => { setDevice(e.target.value) }}><option value="">{text('Selecione o rádio', 'Select a radio')}</option>{status?.app.devices.map(d => <option key={d} value={d}>{d}</option>)}</select>)}
-        {label(text('Modo', 'Mode'), <select className={input} disabled={busy} value={selectedMode} onChange={e => { setMode(e.target.value) }}><option value="send">{text('Somente envio (padrão)', 'Send only (default)')}</option><option value="relay">{text('Somente relay', 'Relay only')}</option><option value="both">{text('Bidirecional', 'Bidirectional')}</option></select>)}
+        {label(text('Modo', 'Mode'), <select className={input} aria-describedby="mesh-mode-hint" disabled={busy} value={selectedMode} onChange={e => { setMode(e.target.value) }}>{Object.entries(modeNames).map(([value, title]) => <option key={value} value={value}>{title}{value === 'send' ? text(' (padrão)', ' (default)') : ''}</option>)}</select>)}
+      </div>
+      <div id="mesh-mode-hint" className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2 text-sm" aria-live="polite">
+        <p className="text-fog/85">{modeHints[selectedMode]}</p>
+        <p className="text-fog/65">{text('Relay significa publicar na rede Bitcoin uma transação já assinada por outro contato. Exige também habilitar Permitir relay nesse contato.', 'Relay means publishing a transaction already signed by another contact to the Bitcoin network. You must also enable Allow relay for that contact.')}</p>
+        <p className="text-fog/65">{text('Receber bitcoins na carteira funciona em qualquer modo. Pagamentos Lightning exigem aprovação local e usam a rede Lightning normal.', 'Receiving bitcoin in your wallet works in every mode. Lightning payments require local approval and use the regular Lightning network.')}</p>
       </div>
       {status && !status.app.devices.length && <p className="text-sm text-amber-200">{text('Nenhum rádio USB encontrado. Conecte o dispositivo e, em uma VM, habilite a conexão USB no hipervisor.', 'No USB radio found. Connect the device and, for a VM, enable USB passthrough in the hypervisor.')}</p>}
       <div className="flex flex-wrap gap-3 text-sm text-fog/65"><span>{text('ID local', 'Local ID')}: {status?.radio.node ? `!${status.radio.node.toString(16).padStart(8, '0')}` : '—'}</span><span>SNR: {status?.radio.snr ?? '?'} dB · RSSI: {status?.radio.rssi ?? '?'} dBm</span><span>{text('Modo ativo', 'Active mode')}: {status?.mode ? modeNames[status.mode] : '—'}</span><span>{text('Último pacote', 'Last packet')}: {status?.radio.last_receive && !status.radio.last_receive.startsWith('0001') ? new Date(status.radio.last_receive).toLocaleString() : '—'}</span></div>
@@ -212,6 +222,7 @@ export default function LOSMesh() {
     </div>
     </div>
     <div id="mesh-panel-payments" role="tabpanel" aria-labelledby="mesh-tab-payments" hidden={section !== 'payments'} className="space-y-6">
+    {status?.mode === 'relay' && <div className="section-card space-y-3"><p className="text-sm text-amber-200">{text('Seu modo ativo é Oferecer relay. Para iniciar envios, selecione Enviar sem oferecer relay ou Enviar e oferecer relay na aba Rádio e aplique a alteração.', 'Your active mode is Offer relay. To initiate transfers, select Send without offering relay or Send and offer relay in the Radio tab and apply the change.')}</p><button className="btn-secondary" onClick={() => setSection('radio')}>{text('Configurar modo', 'Configure mode')}</button></div>}
     {status && !paired.length && <div className="section-card space-y-3"><p className="text-sm text-fog/75">{text('Para enviar pagamentos e solicitações pelo rádio, primeiro pareie um contato em outro ponto LOS Mesh.', 'To send payments and requests over radio, first pair a contact at another LOS Mesh endpoint.')}</p><button className="btn-primary" onClick={() => setSection('contacts')}>{text('Parear contato', 'Pair a contact')}</button></div>}
     <div className="section-card space-y-4">
       <div className="flex flex-wrap gap-3">{['onchain', 'lightning'].map(t => <button key={t} className={tab === t ? 'btn-primary' : 'btn-secondary'} onClick={() => setTab(t)}>{t === 'onchain' ? 'Bitcoin on-chain' : 'Lightning'}</button>)}</div>

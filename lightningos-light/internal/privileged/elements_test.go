@@ -32,10 +32,11 @@ func TestNativeElementsApplicationTraversalIsLimitedToFixedParents(t *testing.T)
 }
 
 func TestExtractElementsBinariesRejectsMissingAndExtractsFixedNames(t *testing.T) {
+	releaseRoot := "elements-" + appmanifest.ElementsVersion + "/bin/"
 	archive := elementsTestArchive(t, map[string]string{
-		"elements-23.3.3/bin/elementsd":    "daemon",
-		"elements-23.3.3/bin/elements-cli": "client",
-		"elements-23.3.3/bin/other":        "ignored",
+		releaseRoot + "elementsd":    "daemon",
+		releaseRoot + "elements-cli": "client",
+		releaseRoot + "other":        "ignored",
 	})
 	binaries, err := extractElementsBinaries(archive)
 	if err != nil {
@@ -44,7 +45,7 @@ func TestExtractElementsBinariesRejectsMissingAndExtractsFixedNames(t *testing.T
 	if string(binaries["elementsd"]) != "daemon" || string(binaries["elements-cli"]) != "client" || len(binaries) != 2 {
 		t.Fatalf("unexpected extracted binaries: %#v", binaries)
 	}
-	if _, err := extractElementsBinaries(elementsTestArchive(t, map[string]string{"elements-23.3.3/bin/elementsd": "daemon"})); err == nil {
+	if _, err := extractElementsBinaries(elementsTestArchive(t, map[string]string{releaseRoot + "elementsd": "daemon"})); err == nil {
 		t.Fatal("expected missing elements-cli rejection")
 	}
 }

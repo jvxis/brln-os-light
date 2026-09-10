@@ -874,3 +874,24 @@ and Lightning outcomes can be uncertain and are not automatically retried. App
 start/stop/uninstall use the existing `/api/apps/{id}/...` lifecycle with ID
 `los-mesh`; initial installation uses the mesh action because a selected USB
 device is mandatory. See [LOS_MESH.md](LOS_MESH.md) for limits and protocol.
+
+### Guided LOS Mesh contacts
+
+Mesh status additionally returns `nodes` (up to 256 public radio NodeDB entries:
+node, name, short_name, last_heard, via_mqtt) and `pairings` (up to eight pending
+sessions: id, node, name, state, code when ready, expires, local_confirmed,
+remote_confirmed). Node names and reachability are unverified discovery hints.
+No position, radio private keys or channel configuration is returned.
+
+New actions on the existing mesh endpoint:
+- `pair_probe`: node; request a correlated LOS Mesh capability response.
+- `pair_invite`: node, confirm, confirm_password; start an invitation.
+- `pair_accept`: id, confirm, confirm_password; accept an incoming invitation.
+- `pair_confirm`: id, code, confirm, confirm_password; confirm the independently
+  compared code. Both operators must confirm before saving the contact.
+- `pair_cancel`: id; discard a provisional session without granting permissions.
+- `peer_permissions`: node, allow_relay, confirm, confirm_password; explicitly
+  change relay permission on an already verified contact.
+
+Pairings expire after five minutes and are discarded on Manager restart.
+Radio availability and a LOS Mesh response do not constitute authentication.

@@ -173,7 +173,7 @@ func DecodeRadio(b []byte) (*RadioPacket, uint32, error) {
 		if err != nil {
 			return err
 		}
-		if port == PrivatePort && len(p.Payload) <= MaxPacket && len(p.Payload) >= HeaderSize+16 {
+		if port == PrivatePort && len(p.Payload) <= MaxPacket && (len(p.Payload) >= HeaderSize+16 || IsPairMessage(p.Payload)) {
 			result = &p
 		}
 		return nil

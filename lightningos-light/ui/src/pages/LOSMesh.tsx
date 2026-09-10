@@ -15,6 +15,8 @@ export default function LOSMesh() {
   const [device, setDevice] = useState('')
   const [mode, setMode] = useState('')
   const [peer, setPeer] = useState('')
+  const [nodeSearch, setNodeSearch] = useState('')
+  const [compareConfirmed, setCompareConfirmed] = useState<Record<string, boolean>>({})
   const [nodeID, setNodeID] = useState('')
   const [name, setName] = useState('')
   const [key, setKey] = useState('')
@@ -54,7 +56,7 @@ export default function LOSMesh() {
     finally { setBusy(false) }
   }
   const act = <T,>(payload: MeshAction): Promise<T | undefined> => {
-    if (!['install', 'mode', 'peer', 'remove_peer', 'send', 'pay'].includes(payload.action)) return execute<T>(payload)
+    if (!['install', 'mode', 'peer', 'remove_peer', 'send', 'pay', 'pair_invite', 'pair_accept', 'pair_confirm', 'peer_permissions'].includes(payload.action)) return execute<T>(payload)
     if (approvalResult.current) return Promise.resolve(undefined)
     setPassword(''); setApprovalError(''); setApproval({ ...payload, confirm: true })
     return new Promise(resolve => { approvalResult.current = value => resolve(value as T | undefined) })
@@ -94,13 +96,23 @@ export default function LOSMesh() {
   const deviceChanged = Boolean(status?.app.installed && selectedDevice !== status.app.device)
   const deviceAvailable = Boolean(selectedDevice && status?.app.devices.includes(selectedDevice))
   const modeNames: Record<string, string> = { send: text('Somente envio', 'Send only'), relay: text('Somente relay', 'Relay only'), both: text('Bidirecional', 'Bidirectional') }
-  const approvalTitle = approval?.action === 'mode' ? text('Aplicar modo', 'Apply mode')
+  const approvalTitle = approval?.action === 'pair_invite' ? text('Enviar convite', 'Send invitation')
+    : approval?.action === 'pair_accept' ? text('Aceitar convite', 'Accept invitation')
+    : approval?.action === 'pair_confirm' ? text('Confirmar contato', 'Confirm contact')
+    : approval?.action === 'peer_permissions' ? text('Alterar permissões', 'Change permissions')
+    : approval?.action === 'mode' ? text('Aplicar modo', 'Apply mode')
     : approval?.action === 'install' ? text('Conectar rádio', 'Connect radio')
     : approval?.action === 'peer' ? text('Salvar e parear', 'Save and pair')
     : approval?.action === 'remove_peer' ? text('Remover contato', 'Remove contact')
     : approval?.action === 'send' ? text('Aprovar e transmitir', 'Approve and transmit')
     : text('Aprovar pagamento Lightning', 'Approve Lightning payment')
-  const approvalDescription = approval?.action === 'mode'
+  const approvalDescription = approval?.action === 'pair_confirm'
+    ? text('Confirme somente se comparou o código com o outro operador por um canal confiável e os dois são iguais. Isso não autoriza pagamentos nem relay.', 'Confirm only after comparing the code with the other operator over a trusted channel and finding an exact match. This does not authorize payments or relay.')
+    : approval?.action === 'pair_invite' || approval?.action === 'pair_accept'
+    ? text('O outro operador também precisa aceitar e confirmar o código. As chaves serão negociadas automaticamente.', 'The other operator must also accept and confirm the code. Keys are negotiated automatically.')
+    : approval?.action === 'peer_permissions'
+    ? `${text('Publicar transações deste contato pelo meu relay', 'Publish transactions from this contact through my relay')}: ${approval.allow_relay ? text('Permitir', 'Allow') : text('Bloquear', 'Block')}.`
+    : approval?.action === 'mode'
     ? `${text('Novo modo', 'New mode')}: ${modeNames[approval.mode || '']}. ${text('Confirme sua senha para aplicar.', 'Confirm your password to apply.')}`
     : approval?.action === 'pay'
     ? `${approval.amount_sat} sats. ${text('Taxa máxima', 'Maximum fee')}: ${approval.max_fee_sat} sats. ${text('Confirme para pagar a invoice revisada.', 'Confirm to pay the reviewed invoice.')}`
@@ -153,13 +165,34 @@ export default function LOSMesh() {
     <div id="mesh-panel-contacts" role="tabpanel" aria-labelledby="mesh-tab-contacts" hidden={section !== 'contacts'}>
     <div className="section-card space-y-4">
       <h3 className="text-lg font-semibold">{text('Contatos e pareamento privado', 'Contacts and private pairing')}</h3>
+      <p className="text-sm text-fog/65">{text('Escolha um nó conhecido pelo rádio, verifique a resposta do LOS Mesh e envie um convite. A presença na lista não garante conexão nem identidade.', 'Choose a node known to the radio, check for a LOS Mesh response and send an invitation. Being listed does not guarantee reachability or identity.')}</p>
+      {label(text('Buscar nó por nome ou ID', 'Search nodes by name or ID'), <input className={input} value={nodeSearch} onChange={e => setNodeSearch(e.target.value)} />)}
+      <div className="space-y-3">{(status?.nodes || []).filter(n => `${n.name} ${n.short_name} ${n.node.toString(16)}`.toLowerCase().includes(nodeSearch.toLowerCase())).slice(0,12).map(n => {
+        const pairedNode = status?.peers.some(p => p.node === n.node && p.paired)
+        const available = status?.pairings?.some(p => p.node === n.node && p.state === 'available')
+        const pendingNode = status?.pairings?.some(p => p.node === n.node && !['available','verified'].includes(p.state))
+        return <div key={n.node} className="rounded-xl border border-white/10 p-3 space-y-2 text-sm"><p className="font-semibold">{n.name || n.short_name || `!${n.node.toString(16)}`} <span className="font-mono text-xs text-fog/60">!{n.node.toString(16).padStart(8,'0')}</span></p><p className="text-xs text-fog/60">{text('Visto pelo rádio', 'Last heard by radio')}: {n.last_heard ? new Date(n.last_heard*1000).toLocaleString() : '—'}{n.via_mqtt ? ' · MQTT' : ''}</p>
+          <p>{pairedNode ? text('Contato verificado', 'Verified contact') : available ? text('LOS Mesh respondeu ao teste; identidade ainda não verificada.', 'LOS Mesh answered the check; identity not yet verified.') : text('Compatibilidade LOS Mesh ainda não confirmada.', 'LOS Mesh compatibility not yet confirmed.')}</p>
+          {!pairedNode && <div className="flex flex-wrap gap-2"><button className="btn-secondary" disabled={busy || !connected || pendingNode} onClick={() => void act({action:'pair_probe',node:n.node})}>{text('Verificar conexão', 'Check connection')}</button><button className="btn-primary" disabled={busy || !connected || !available || pendingNode} onClick={() => void act({action:'pair_invite',node:n.node})}>{text('Adicionar contato', 'Add contact')}</button></div>}
+        </div>
+      })}</div>
+      {!status?.nodes?.length && <p className="text-sm text-fog/60">{text('Nenhum nó foi recuperado do rádio. Conecte o rádio e aguarde a leitura da lista.', 'No nodes have been retrieved from the radio. Connect it and wait for the node list.')}</p>}
+      {(status?.nodes?.length || 0)>12 && <p className="text-xs text-fog/60">{text('Exibindo até 12 resultados. Use a busca para encontrar outros nós.', 'Showing up to 12 results. Search to find other nodes.')}</p>}
+      {(status?.pairings || []).map(p => <div key={p.id} className="rounded-xl border border-emerald-400/30 p-4 space-y-3"><strong>{p.name}</strong><p className="text-sm">{({checking:text('Verificando conexão…', 'Checking connection…'),declined:text('Convite recusado ou cancelado', 'Invitation declined or cancelled'),available:text('Resposta LOS Mesh recebida', 'LOS Mesh response received'),invitation_sent:text('Convite enviado; aguardando aceitação', 'Invitation sent; awaiting acceptance'),invitation_received:text('Convite recebido', 'Invitation received'),exchanging:text('Negociando conexão segura…', 'Negotiating secure connection…'),compare_code:text('Compare o código com o outro operador', 'Compare the code with the other operator'),verified:text('Contato verificado', 'Verified contact'),contact_conflict:text('Já existe um contato com este ID; nenhuma chave foi substituída.', 'A contact with this ID already exists; no key was replaced.')} as Record<string,string>)[p.state] || p.state}</p>
+        <p className="text-xs text-fog/60">{text('Expira', 'Expires')}: {new Date(p.expires).toLocaleTimeString()}</p>
+        {p.state==='invitation_received' && <button className="btn-primary" disabled={busy} onClick={() => void act({action:'pair_accept',id:p.id})}>{text('Aceitar convite', 'Accept invitation')}</button>}
+        {p.code && <><p className="font-mono text-2xl tracking-widest">{p.code}</p><p className="text-sm text-amber-200">{text('Compare pessoalmente ou por outro canal confiável. Não use o próprio chat de rádio para validar este código.', 'Compare in person or over another trusted channel. Do not use this radio chat to verify the code.')}</p>{!p.local_confirmed ? <><label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={Boolean(compareConfirmed[p.id])} onChange={e => setCompareConfirmed(v => ({...v,[p.id]:e.target.checked}))} />{text('Comparei: os códigos são iguais nos dois lados.', 'I compared: the codes match on both sides.')}</label><button className="btn-primary" disabled={busy || !compareConfirmed[p.id]} onClick={() => void act({action:'pair_confirm',id:p.id,code:p.code})}>{text('Confirmar contato', 'Confirm contact')}</button></> : <p>{text('Você confirmou. Aguardando confirmação do outro operador.', 'You confirmed. Waiting for the other operator.')}</p>}</>}
+        {p.state!=='verified' && <button className="btn-secondary" disabled={busy} onClick={() => void act({action:'pair_cancel',id:p.id})}>{text('Cancelar / recusar', 'Cancel / decline')}</button>}
+      </div>)}
+      <details className="space-y-4"><summary className="cursor-pointer text-sm">{text('Avançado: ID e chave manual', 'Advanced: manual ID and key')}</summary>
       <p className="text-sm text-fog/65">{text('Em cada LightningOS, cadastre o ID do rádio do outro lado e a mesma chave de 64 caracteres hexadecimais. Compartilhe a chave por um canal seguro. Salve nos dois lados e repita o pareamento se necessário.', 'On each LightningOS, enter the other radio’s ID and the same 64-character hexadecimal key. Share it through a secure channel. Save on both sides and repeat pairing if necessary.')}</p>
       <div className="grid gap-4 md:grid-cols-2">{label(text('Nome do contato', 'Contact name'), <input className={input} value={name} maxLength={64} onChange={e => setName(e.target.value)} />)}{label(text('ID do rádio remoto (!xxxxxxxx)', 'Remote radio ID (!xxxxxxxx)'), <input className={input} value={nodeID} placeholder="!1234abcd" onChange={e => setNodeID(e.target.value)} />)}</div>
       {label(text('Chave compartilhada', 'Shared key'), <input className={`${input} font-mono`} autoComplete="off" type="password" value={key} maxLength={64} onChange={e => setKey(e.target.value)} />)}
       <div className="flex flex-wrap gap-3"><button className="btn-secondary" onClick={() => setKey(Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, '0')).join(''))}>{text('Gerar chave', 'Generate key')}</button><button className="btn-secondary" disabled={!key} onClick={() => void navigator.clipboard.writeText(key).then(() => setNotice(text('Chave copiada. Compartilhe com segurança.', 'Key copied. Share securely.'))).catch(() => setError(text('Não foi possível copiar.', 'Copy failed.')))}>{text('Copiar chave', 'Copy key')}</button></div>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allowRelay} onChange={e => setAllowRelay(e.target.checked)} />{text('Autorizar este contato a publicar transações assinadas pelo meu relay', 'Allow this contact to publish signed transactions through my relay')}</label>
       <button className="btn-primary" disabled={busy || !connected || !/^!?[0-9a-fA-F]{8}$/.test(nodeID)} onClick={async () => { const result = await act({ action: 'peer', node: parseInt(nodeID.replace('!', ''), 16), name, key, allow_relay: allowRelay }); if (result) setKey('') }}>{text('Salvar e parear', 'Save and pair')}</button>
-      <div className="space-y-2">{status?.peers.map(p => <div key={p.node} className="rounded-xl border border-white/10 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{p.name} · !{p.node.toString(16).padStart(8, '0')}</strong><span>{p.paired ? text('Pareado', 'Paired') : text('Aguardando prova da chave', 'Awaiting key proof')}</span></div><p className="my-2 font-mono text-xs">{p.fingerprint} · relay {p.allow_relay ? '✓' : '—'}</p><button className="btn-secondary" disabled={busy} onClick={() => void act({ action: 'remove_peer', node: p.node })}>{text('Remover contato', 'Remove contact')}</button></div>)}</div>
+      </details>
+      <div className="space-y-2">{status?.peers.map(p => <div key={p.node} className="rounded-xl border border-white/10 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{p.name} · !{p.node.toString(16).padStart(8, '0')}</strong><span>{p.paired ? text('Pareado', 'Paired') : text('Aguardando prova da chave', 'Awaiting key proof')}</span></div><p className="my-2 font-mono text-xs">{p.fingerprint} · relay {p.allow_relay ? '✓' : '—'}</p>{p.paired && <button className="btn-secondary mr-2" disabled={busy} onClick={() => void act({action:'peer_permissions',node:p.node,allow_relay:!p.allow_relay})}>{p.allow_relay ? text('Revogar relay', 'Revoke relay') : text('Permitir relay', 'Allow relay')}</button>}<button className="btn-secondary" disabled={busy} onClick={() => void act({ action: 'remove_peer', node: p.node })}>{text('Remover contato', 'Remove contact')}</button></div>)}</div>
     </div>
     </div>
     <div id="mesh-panel-payments" role="tabpanel" aria-labelledby="mesh-tab-payments" hidden={section !== 'payments'} className="space-y-6">

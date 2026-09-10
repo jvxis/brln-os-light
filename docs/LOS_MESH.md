@@ -153,3 +153,33 @@ name starts with `los_mesh_test_`. Set `LOS_MESH_TEST_DSN` and run
 guarded test database and use a simulated wallet: they never publish or pay on
 Bitcoin mainnet. Physical acceptance requires two radios; separately validate
 WalletKit signing/publication and Lightning payment on a controlled funded fixture.
+
+## Guided pairing (LOSP v1)
+
+The radio NodeDB populates contact selection; names and last-heard times are
+untrusted hints. Only explicit, bounded unicast probes are transmitted. A
+correlated response advertises LOS Mesh availability, not verified identity.
+The private application port carries a separate LOSP envelope, never an admin
+command or device setting. Legacy/manual LOSM contacts remain supported.
+
+Both operators accept and independently compare an eight-digit SAS. Pairing
+uses fresh X25519 keys and 32-byte random opening nonces, SHA-256 commitments
+bound to sender/recipient/session/expiry, then key reveals after both commitments
+are fixed. Transcript-bound HMAC-SHA256 extract/expand derives the application
+key; separate domain labels derive the SAS and directional confirmation MACs.
+The code is not a password or a shared key and must not be compared over the
+same unverified radio channel. No TOFU or channel-key fallback grants trust.
+Both local approval and authenticated remote approval are required. Newly
+verified contacts always have relay disabled; existing contacts are never
+silently replaced. Key rotation requires contact removal and fresh pairing.
+
+Bounds: 256 cached radio nodes, 8 live pairing sessions, 128 recent session IDs,
+256 per-node rate records; five-minute exchange expiry; up to 12 bounded
+retransmissions at 12-second intervals, in addition to the bridge's global
+radio pacing. Incomplete exchanges are memory-only and disappear on restart;
+only mutually verified application keys enter the existing private contact DB.
+
+Validation includes transcript alteration, reflection, expiry, duplicate
+messages, two simulated operators with PostgreSQL persistence, invite flood
+limits and cancelled-session replay. A physical bidirectional acceptance test
+still needs a second LOS Mesh endpoint and radio; simulation is not a substitute.

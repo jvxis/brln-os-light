@@ -40,6 +40,7 @@ type meshProposal struct {
 	Session string
 }
 type meshAPIRequest struct {
+	Code       string `json:"code"`
 	Owner      string `json:"-"`
 	Action     string `json:"action"`
 	Device     string `json:"device"`
@@ -137,7 +138,15 @@ func (s *Server) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	for _, p := range m.pending {
 		pending = append(pending, p)
 	}
-	writeJSON(w, 200, map[string]any{"app": app, "radio": radio, "mode": mode, "peers": peers, "history": history, "pending": pending, "protocol_version": mesh.Version})
+	var nodes []mesh.RadioNode
+	_ = m.bridge(ctx, "GET", "/nodes", nil, &nodes)
+	pairing := []*meshPairing{}
+	for _, p := range m.pairings {
+		if time.Now().Before(p.Expires) {
+			pairing = append(pairing, p)
+		}
+	}
+	writeJSON(w, 200, map[string]any{"nodes": nodes, "pairings": pairing, "app": app, "radio": radio, "mode": mode, "peers": peers, "history": history, "pending": pending, "protocol_version": mesh.Version})
 }
 
 func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +174,7 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Owner = session.ID
 	// Policy changes and spending actions require fresh LOS Mesh reauthentication.
-	if req.Action != "preview" && req.Action != "invoice" && req.Action != "request" && req.Action != "request_invoice" && req.Action != "cancel" {
+	if req.Action != "pair_probe" && req.Action != "pair_cancel" && req.Action != "preview" && req.Action != "invoice" && req.Action != "request" && req.Action != "request_invoice" && req.Action != "cancel" {
 		if !s.requireSensitiveReauth(w, r, authScopeMesh, req.Password, "mesh_reauth_required", "confirm your password for LOS Mesh") {
 			return
 		}
@@ -176,6 +185,8 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 	var result any = map[string]bool{"ok": true}
 	var err error
 	switch req.Action {
+	case "pair_probe", "pair_invite", "pair_accept", "pair_confirm", "pair_cancel", "peer_permissions":
+		result, err = m.pairAction(ctx, req)
 	case "install":
 		if !req.Confirm || (req.Mode != "send" && req.Mode != "relay" && req.Mode != "both") {
 			err = errors.New("choose send, relay or both")

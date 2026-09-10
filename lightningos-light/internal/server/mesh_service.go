@@ -60,6 +60,9 @@ type meshWallet interface {
 }
 
 type meshService struct {
+	pairings    map[string]*meshPairing
+	pairSeen    map[string]time.Time
+	pairRate    map[uint32]time.Time
 	wallet      meshWallet
 	mu          sync.Mutex
 	db          *pgxpool.Pool
@@ -250,7 +253,12 @@ func (m *meshService) tick(ctx context.Context) {
 	if m.bridge(ctx, "GET", "/packets", nil, &received) != nil {
 		return
 	}
+	m.pairTick(ctx)
 	for _, wire := range received {
+		if mesh.IsPairMessage(wire.Payload) {
+			m.pairReceive(ctx, wire, status.Node, known)
+			continue
+		}
 		peer, ok := known[wire.From]
 		if !ok {
 			continue

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"sync"
 	"time"
 )
@@ -30,6 +31,7 @@ type RadioStatus struct {
 }
 
 type Bridge struct {
+	nodes  map[uint32]RadioNode
 	mu     sync.Mutex
 	status RadioStatus
 	rx     []RadioPacket
@@ -37,7 +39,7 @@ type Bridge struct {
 }
 
 func NewBridge(device string) *Bridge {
-	return &Bridge{status: RadioStatus{Protocol: Version, State: "hardware_disconnected", Device: device}, tx: make(chan RadioPacket, 16)}
+	return &Bridge{nodes: map[uint32]RadioNode{}, status: RadioStatus{Protocol: Version, State: "hardware_disconnected", Device: device}, tx: make(chan RadioPacket, 16)}
 }
 
 func (b *Bridge) Run(ctx context.Context, open func() (io.ReadWriteCloser, error)) {
@@ -99,11 +101,17 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 				cancel()
 				return
 			}
+			discovered, _ := DecodeRadioNode(raw)
 			packet, node, err := DecodeRadio(raw)
 			if err != nil {
 				continue
 			}
 			b.mu.Lock()
+			if discovered != nil {
+				if _, exists := b.nodes[discovered.Node]; exists || len(b.nodes) < 256 {
+					b.nodes[discovered.Node] = *discovered
+				}
+			}
 			if node != 0 {
 				b.status.Node = node
 				b.status.State = "running"
@@ -158,6 +166,19 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 
 func (b *Bridge) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /nodes", func(w http.ResponseWriter, r *http.Request) {
+		b.mu.Lock()
+		nodes := make([]RadioNode, 0, len(b.nodes))
+		for _, n := range b.nodes {
+			if n.Node != b.status.Node {
+				nodes = append(nodes, n)
+			}
+		}
+		b.mu.Unlock()
+		sort.Slice(nodes, func(i, j int) bool { return nodes[i].LastHeard > nodes[j].LastHeard })
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(nodes)
+	})
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		s := b.status

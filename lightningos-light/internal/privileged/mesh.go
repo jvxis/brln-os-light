@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"lightningos-light/internal/mesh"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -42,7 +43,11 @@ func validateMeshParams(p MeshParams) error {
 			return errors.New("unexpected mesh device")
 		}
 	case "install":
-		if !meshDeviceName.MatchString(p.Device) {
+		if strings.HasPrefix(p.Device, "tcp://") {
+			if _, err := mesh.TCPAddress(p.Device); err != nil {
+				return err
+			}
+		} else if !meshDeviceName.MatchString(p.Device) {
 			return errors.New("select a stable USB serial device")
 		}
 	default:
@@ -77,7 +82,7 @@ func (m *NativeMeshManager) status(ctx context.Context) (MeshState, error) {
 	if err != nil && s.Status == "unknown" {
 		return s, err
 	}
-	if s.Status == "running" {
+	if s.Status == "running" && !strings.HasPrefix(s.Device, "tcp://") {
 		if _, err := mesh.ResolveDevice(s.Device); err != nil {
 			s.Status = "hardware_disconnected"
 		}
@@ -99,7 +104,11 @@ func (m *NativeMeshManager) Control(ctx context.Context, p MeshParams, dry bool)
 		return MeshState{Status: "validated"}, nil
 	}
 	if p.Action == "install" {
-		device, err := mesh.ResolveDevice(p.Device)
+		device := p.Device
+		var err error
+		if !strings.HasPrefix(p.Device, "tcp://") {
+			device, err = mesh.ResolveDevice(p.Device)
+		}
 		if err != nil {
 			return MeshState{}, errors.New("selected USB radio is unavailable")
 		}
@@ -150,8 +159,10 @@ func (m *NativeMeshManager) Control(ctx context.Context, p MeshParams, dry bool)
 			return MeshState{}, errors.New("radio service must not have supplementary groups")
 		}
 		// Exclusive ownership of the daemon identity is required by the installer.
-		if _, err = m.Runner.Run(ctx, setfaclPath, "-m", "u:losmesh:rw", device); err != nil {
-			return MeshState{}, err
+		if !strings.HasPrefix(device, "tcp://") {
+			if _, err = m.Runner.Run(ctx, setfaclPath, "-m", "u:losmesh:rw", device); err != nil {
+				return MeshState{}, err
+			}
 		}
 		body, _ := json.Marshal(struct {
 			Device string `json:"device"`
@@ -213,8 +224,17 @@ func (m *NativeMeshManager) Control(ctx context.Context, p MeshParams, dry bool)
 }
 
 func meshServiceUnit(device string) string {
+	network := "RestrictAddressFamilies=AF_UNIX\nDevicePolicy=closed\nDeviceAllow=" + device + " rw"
+	if strings.HasPrefix(device, "tcp://") {
+		address, err := mesh.TCPAddress(device)
+		if err != nil {
+			return ""
+		}
+		host, _, _ := net.SplitHostPort(address)
+		network = "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nDevicePolicy=closed\nIPAddressDeny=any\nIPAddressAllow=" + host
+	}
 	return `[Unit]
-Description=LOS Mesh restricted Meshtastic USB bridge
+Description=LOS Mesh restricted Meshtastic bridge
 After=local-fs.target
 
 [Service]
@@ -239,9 +259,7 @@ RestrictSUIDSGID=yes
 RestrictRealtime=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
-RestrictAddressFamilies=AF_UNIX
-DevicePolicy=closed
-DeviceAllow=` + device + ` rw
+` + network + `
 InaccessiblePaths=-/etc/lightningos -/data/lnd -/data/bitcoin -/run/lightningos-privileged
 MemoryMax=64M
 TasksMax=32

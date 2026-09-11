@@ -77,8 +77,16 @@ func (m *meshService) pairName(ctx context.Context, node uint32) string {
 	var nodes []mesh.RadioNode
 	if m.bridge(ctx, "GET", "/nodes", nil, &nodes) == nil {
 		for _, n := range nodes {
-			if n.Node == node && n.Name != "" {
-				return n.Name
+			if n.Node == node {
+				if n.Name != "" && n.ShortName != "" && n.Name != n.ShortName {
+					return n.Name + " (" + n.ShortName + ")"
+				}
+				if n.Name != "" {
+					return n.Name
+				}
+				if n.ShortName != "" {
+					return n.ShortName
+				}
 			}
 		}
 	}
@@ -88,7 +96,7 @@ func (m *meshService) pairAction(ctx context.Context, req meshAPIRequest) (any, 
 	m.initPairing()
 	var radio mesh.RadioStatus
 	if m.bridge(ctx, "GET", "/status", nil, &radio) != nil || radio.State != "running" {
-		return nil, errors.New("connect the USB radio first")
+		return nil, errors.New("connect the radio first")
 	}
 	if req.Action == "peer_permissions" {
 		if !req.Confirm {

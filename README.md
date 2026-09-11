@@ -950,6 +950,26 @@ LNDg notes:
 
 LOS Mesh transports signed Bitcoin transactions and payment requests between LightningOS endpoints using Meshtastic USB radios. Use two compatible radios configured for the same region and channel. The app preserves radio firmware and settings. A node appearing in the radio list does not prove that it is reachable or running LOS Mesh.
 
+**USB or local TCP:** in Radio, choose USB/Serial or Local network — TCP. For TCP,
+enter the radio's private IP and port, for example `192.168.1.50:4403` (IPv6 ULA:
+`[fd00::50]:4403`). Hostnames and public addresses are not accepted. The radio must
+already be connected to Wi-Fi/Ethernet and expose the Meshtastic TCP API. T-Deck
+with MUI is not supported over TCP; keep using USB for that device.
+
+Confirming the connection replaces the previous active connection. Only one
+transport is active; do not connect a competing client to that radio. The bridge
+keeps the connection open independently of the browser and reconnects with
+backoff, keepalive and protocol heartbeats. Finish/cancel pending transfers and
+previews before switching. A failed connection attempts to restore the previous
+configuration. There is no automatic transport failover or new payment approval
+on reconnect. TCP has no TLS: use a trusted LAN. The bridge is restricted to the
+configured private IP. Compatible physical TCP hardware still needs acceptance
+testing; simulation verifies disconnect/reconnect behavior.
+
+Radio user long/short names are shown when provided by NodeInfo and used as
+display names for new pairings. They are self-reported metadata, not authenticated
+identity: both operators must still compare the pairing code.
+
 1. In **Radio**, select the USB device and install LOS Mesh once. Reconnect if the connection is lost; select a mode and use **Apply mode**, confirming with your LightningOS password.
 2. In **Contacts**, search the radio's known nodes by name or ID. The list has 12-item pages and its own vertical scroll; search covers all retrieved nodes. Check the connection, send an invitation and have the remote operator accept it.
 3. Compare the displayed code in person or over another trusted channel, and confirm on both endpoints. Keys are negotiated automatically. Manual ID/key entry remains under **Advanced**. New contacts have relay permission disabled.

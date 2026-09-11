@@ -13,6 +13,8 @@ export default function LOSMesh() {
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [device, setDevice] = useState('')
+  const [transport, setTransport] = useState('')
+  const [tcpEndpoint, setTcpEndpoint] = useState<string | null>(null)
   const [mode, setMode] = useState('')
   const [peer, setPeer] = useState('')
   const [nodeSearch, setNodeSearch] = useState('')
@@ -88,7 +90,7 @@ export default function LOSMesh() {
   const label = (title: string, children: ReactNode) => <label className="block space-y-2 text-sm"><span className="text-fog/75">{title}</span>{children}</label>
   const states: Record<string, string> = {
     not_installed: text('Não instalado', 'Not installed'), stopped: text('Parado', 'Stopped'), running: text('Conectado', 'Connected'),
-    hardware_disconnected: text('Rádio USB desconectado', 'USB radio disconnected'), connecting: text('Conectando ao rádio', 'Connecting to radio'),
+    hardware_disconnected: text('Rádio desconectado — tentando reconectar', 'Radio disconnected — reconnecting'), connecting: text('Conectando ao rádio', 'Connecting to radio'),
     awaiting_pairing: text('Aguardando pareamento', 'Awaiting pairing'), communication_error: text('Erro de comunicação', 'Communication error'), upgrade_required: text('Atualização necessária', 'Upgrade required'),
     sending: text('Enviando pacotes', 'Sending packets'), receiving: text('Recebendo pacotes', 'Receiving packets'), awaiting_result: text('Aguardando resposta', 'Awaiting result'),
     published: text('Publicada — aguarda confirmação na blockchain', 'Published — awaiting blockchain confirmation'), rejected: text('Rejeitada', 'Rejected'),
@@ -99,10 +101,13 @@ export default function LOSMesh() {
   }
   const connected = status?.radio.state === 'running' || status?.radio.state === 'awaiting_pairing'
   const selectedMode = mode || status?.mode || 'send'
-  const selectedDevice = device || status?.app.device || ''
+  const activeTCP = Boolean(status?.app.device?.startsWith('tcp://'))
+  const selectedTransport = transport || (activeTCP ? 'tcp' : 'usb')
+  const selectedEndpoint = tcpEndpoint ?? (activeTCP ? status!.app.device.slice(6) : '')
+  const selectedDevice = selectedTransport === 'tcp' ? `tcp://${selectedEndpoint.trim()}` : device || (!activeTCP ? status?.app.device : '') || ''
   const modeChanged = Boolean(status?.app.installed && selectedMode !== status.mode)
   const deviceChanged = Boolean(status?.app.installed && selectedDevice !== status.app.device)
-  const deviceAvailable = Boolean(selectedDevice && status?.app.devices.includes(selectedDevice))
+  const deviceAvailable = selectedTransport === 'tcp' ? Boolean(selectedEndpoint.trim()) : Boolean(selectedDevice && status?.app.devices.includes(selectedDevice))
   const modeNames: Record<string, string> = { send: text('Enviar sem oferecer relay', 'Send without offering relay'), relay: text('Oferecer relay', 'Offer relay'), both: text('Enviar e oferecer relay', 'Send and offer relay') }
   const modeHints: Record<string, string> = {
     send: text('Envie transações e solicitações para outros contatos. Você continua recebendo respostas, convites e solicitações, mas seu LOS não publica transações recebidas de outros contatos.', 'Send transactions and requests to other contacts. You still receive replies, invitations and requests, but your LOS does not publish transactions received from other contacts.'),
@@ -135,7 +140,7 @@ export default function LOSMesh() {
     ? `${text('Remover o contato e suas permissões', 'Remove contact and its permissions')}: ${status?.peers.find(p => p.node === approval.node)?.name || ''}.`
     : approval?.action === 'send'
     ? text('Confirme a transação apresentada na prévia. Uma assinatura transmitida não pode ser revogada pelo cancelamento do envio.', 'Confirm the transaction shown in the preview. Cancelling transmission cannot revoke a delivered signature.')
-    : `${text('Dispositivo', 'Device')}: ${approval?.device?.split('/').pop() || ''}. ${text('Modo', 'Mode')}: ${modeNames[approval?.mode || ''] || ''}.`
+    : `${text('Dispositivo', 'Device')}: ${approval?.device || ''}. ${text('Modo', 'Mode')}: ${modeNames[approval?.mode || ''] || ''}. ${approval?.action === 'install' ? text('Esta será a única conexão ativa do LOS Mesh e substituirá a anterior. Use um rádio TCP compatível; T-Deck com MUI não é suportado por TCP.', 'This will be the only active LOS Mesh connection and will replace the previous one. Use a compatible TCP radio; T-Deck with MUI is not supported over TCP.') : ''}`
   const canSend = connected && status?.mode !== 'relay' && Boolean(peer)
   const input = 'input-field w-full'
   const paired = status?.peers.filter(p => p.paired) || []
@@ -154,8 +159,10 @@ export default function LOSMesh() {
     <div id="mesh-panel-radio" role="tabpanel" aria-labelledby="mesh-tab-radio" hidden={section !== 'radio'}>
     <div className="section-card space-y-4">
       <h3 className="text-lg font-semibold">{text('Rádio e operação', 'Radio and operation')}</h3>
+      {label(text('Tipo de conexão', 'Connection type'), <select className={input} value={selectedTransport} disabled={busy} onChange={e => setTransport(e.target.value)}><option value="usb">USB / Serial</option><option value="tcp">{text('Rede local — TCP', 'Local network — TCP')}</option></select>)}
+      <p className="text-sm text-fog/75 break-all">{text('Conexão ativa', 'Active connection')}: {status?.app.device || '—'}. {text('Apenas uma conexão fica ativa. Conectar outra substitui a anterior; mudar a seleção não aplica a troca.', 'Only one connection is active. Connecting another replaces the previous one; changing the selection does not apply the switch.')}</p>
       <div className="grid gap-4 md:grid-cols-2">
-        {label(text('Dispositivo USB', 'USB device'), <select className={input} disabled={busy} value={selectedDevice} onChange={e => { setDevice(e.target.value) }}><option value="">{text('Selecione o rádio', 'Select a radio')}</option>{status?.app.devices.map(d => <option key={d} value={d}>{d}</option>)}</select>)}
+        {selectedTransport === 'tcp' ? label(text('IP privado e porta TCP', 'Private IP and TCP port'), <input className={input} disabled={busy} value={selectedEndpoint} placeholder="192.168.1.50:4403" onChange={e => setTcpEndpoint(e.target.value)} />) : label(text('Dispositivo USB', 'USB device'), <select className={input} disabled={busy} value={selectedDevice} onChange={e => { setDevice(e.target.value) }}><option value="">{text('Selecione o rádio', 'Select a radio')}</option>{status?.app.devices.map(d => <option key={d} value={d}>{d}</option>)}</select>)}
         {label(text('Modo', 'Mode'), <select className={input} aria-describedby="mesh-mode-hint" disabled={busy} value={selectedMode} onChange={e => { setMode(e.target.value) }}>{Object.entries(modeNames).map(([value, title]) => <option key={value} value={value}>{title}{value === 'send' ? text(' (padrão)', ' (default)') : ''}</option>)}</select>)}
       </div>
       <div id="mesh-mode-hint" className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2 text-sm" aria-live="polite">
@@ -163,12 +170,14 @@ export default function LOSMesh() {
         <p className="text-fog/65">{text('Relay significa publicar na rede Bitcoin uma transação já assinada por outro contato. Exige também habilitar Permitir relay nesse contato.', 'Relay means publishing a transaction already signed by another contact to the Bitcoin network. You must also enable Allow relay for that contact.')}</p>
         <p className="text-fog/65">{text('Receber bitcoins na carteira funciona em qualquer modo. Pagamentos Lightning exigem aprovação local e usam a rede Lightning normal.', 'Receiving bitcoin in your wallet works in every mode. Lightning payments require local approval and use the regular Lightning network.')}</p>
       </div>
-      {status && !status.app.devices.length && <p className="text-sm text-amber-200">{text('Nenhum rádio USB encontrado. Conecte o dispositivo e, em uma VM, habilite a conexão USB no hipervisor.', 'No USB radio found. Connect the device and, for a VM, enable USB passthrough in the hypervisor.')}</p>}
+      {selectedTransport === 'tcp' && <p className="text-sm text-amber-200">{text('O rádio precisa estar no Wi-Fi/Ethernet e oferecer a API Meshtastic TCP (porta usual 4403). Use uma rede local confiável: TCP não tem TLS. Não conecte outro cliente ao mesmo rádio. A conexão permanece aberta mesmo ao fechar esta página e reconecta automaticamente. T-Deck com MUI: utilize USB.', 'The radio must be on Wi-Fi/Ethernet and expose the Meshtastic TCP API (usual port 4403). Use a trusted local network: TCP has no TLS. Do not connect another client to the same radio. The connection stays open after closing this page and reconnects automatically. T-Deck with MUI: use USB.')}</p>}
+      {selectedTransport === 'usb' && status && !status.app.devices.length && <p className="text-sm text-amber-200">{text('Nenhum rádio USB encontrado. Conecte o dispositivo e, em uma VM, habilite a conexão USB no hipervisor.', 'No USB radio found. Connect the device and, for a VM, enable USB passthrough in the hypervisor.')}</p>}
+      {status?.radio.name && <p className="text-sm">{text('Nome do rádio', 'Radio name')}: {status.radio.name}{status.radio.short_name ? ` (${status.radio.short_name})` : ''}</p>}
       <div className="flex flex-wrap gap-3 text-sm text-fog/65"><span>{text('ID local', 'Local ID')}: {status?.radio.node ? `!${status.radio.node.toString(16).padStart(8, '0')}` : '—'}</span><span>SNR: {status?.radio.snr ?? '?'} dB · RSSI: {status?.radio.rssi ?? '?'} dBm</span><span>{text('Modo ativo', 'Active mode')}: {status?.mode ? modeNames[status.mode] : '—'}</span><span>{text('Último pacote', 'Last packet')}: {status?.radio.last_receive && !status.radio.last_receive.startsWith('0001') ? new Date(status.radio.last_receive).toLocaleString() : '—'}</span></div>
       <p className="text-xs text-fog/60">{text('Relay publica apenas transações assinadas de contatos pareados com permissão explícita. Não existe relay público.', 'Relay publishes signed transactions only from paired contacts with explicit permission. There is no public relay.')}</p>
       {status?.app.installed && <p className="text-sm text-fog/75">{connected
         ? text('Rádio conectado. O app já está instalado; não é necessário instalar novamente. O próximo passo é parear um contato.', 'Radio connected. The app is already installed; no installation is needed. Next, pair a contact.')
-        : text('O app já está instalado. Selecione um rádio USB disponível e use Reconectar rádio para restabelecer a conexão.', 'The app is already installed. Select an available USB radio and use Reconnect radio to restore the connection.')}</p>}
+        : text('O app já está instalado. Confira a conexão configurada e use Reconectar rádio para restabelecer a conexão.', 'The app is already installed. Check the configured connection and use Reconnect radio to restore it.')}</p>}
       <p className="text-sm text-fog/75">{text('Selecionar um modo não o aplica automaticamente.', 'Selecting a mode does not apply it automatically.')}</p>
       {modeChanged && <p role="status" className="text-sm text-amber-200">{text('Alteração pendente', 'Pending change')}: {modeNames[status!.mode]} → {modeNames[selectedMode]}. {text('Clique em Aplicar modo e confirme com sua senha no modal.', 'Click Apply mode and confirm your password in the dialog.')}</p>}
       <div className="flex flex-wrap items-center gap-3">
@@ -189,7 +198,7 @@ export default function LOSMesh() {
         const pairedNode = status?.peers.some(p => p.node === n.node && p.paired)
         const available = status?.pairings?.some(p => p.node === n.node && p.state === 'available')
         const pendingNode = status?.pairings?.some(p => p.node === n.node && !['available','verified'].includes(p.state))
-        return <div key={n.node} className="rounded-xl border border-white/10 p-3 space-y-2 text-sm"><p className="font-semibold">{n.name || n.short_name || `!${n.node.toString(16)}`} <span className="font-mono text-xs text-fog/60">!{n.node.toString(16).padStart(8,'0')}</span></p><p className="text-xs text-fog/60">{text('Visto pelo rádio', 'Last heard by radio')}: {n.last_heard ? new Date(n.last_heard*1000).toLocaleString() : '—'}{n.via_mqtt ? ' · MQTT' : ''}</p>
+        return <div key={n.node} className="rounded-xl border border-white/10 p-3 space-y-2 text-sm"><p className="font-semibold">{n.name || n.short_name || `!${n.node.toString(16)}`}{n.name && n.short_name && n.name !== n.short_name ? ` (${n.short_name})` : ''} <span className="font-mono text-xs text-fog/60">!{n.node.toString(16).padStart(8,'0')}</span></p><p className="text-xs text-fog/60">{text('Visto pelo rádio', 'Last heard by radio')}: {n.last_heard ? new Date(n.last_heard*1000).toLocaleString() : '—'}{n.via_mqtt ? ' · MQTT' : ''}</p>
           <p>{pairedNode ? text('Contato verificado', 'Verified contact') : available ? text('LOS Mesh respondeu ao teste; identidade ainda não verificada.', 'LOS Mesh answered the check; identity not yet verified.') : text('Compatibilidade LOS Mesh ainda não confirmada.', 'LOS Mesh compatibility not yet confirmed.')}</p>
           {!pairedNode && <div className="flex flex-wrap gap-2"><button className="btn-secondary" disabled={busy || !connected || pendingNode} onClick={() => void act({action:'pair_probe',node:n.node})}>{text('Verificar conexão', 'Check connection')}</button><button className="btn-primary" disabled={busy || !connected || !available || pendingNode} onClick={() => void act({action:'pair_invite',node:n.node})}>{text('Adicionar contato', 'Add contact')}</button></div>}
         </div>

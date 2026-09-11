@@ -941,6 +941,26 @@ Notas LNDg:
 
 O LOS Mesh transporta transações Bitcoin assinadas e solicitações de pagamento entre pontos LightningOS usando rádios Meshtastic USB. Use dois rádios compatíveis, configurados para a mesma região e canal. O app preserva o firmware e as configurações do rádio. Um nó aparecer na lista do rádio não comprova que está acessível ou executando LOS Mesh.
 
+**USB ou TCP local:** em Rádio, escolha USB/Serial ou Rede local — TCP. Para TCP,
+informe o IP privado e a porta do rádio, por exemplo `192.168.1.50:4403` (IPv6 ULA:
+`[fd00::50]:4403`). Nomes de host e endereços públicos não são aceitos. O rádio já
+precisa estar no Wi-Fi/Ethernet e disponibilizar a API TCP do Meshtastic. T-Deck
+com MUI não é suportado por TCP; continue usando USB nesse aparelho.
+
+Confirmar a conexão substitui a conexão ativa anterior. Só um transporte fica
+ativo; não conecte outro cliente concorrente ao mesmo rádio. O serviço mantém a
+conexão aberta independentemente do navegador e reconecta com espera progressiva,
+keepalive e heartbeat do protocolo. Conclua/cancele transferências e prévias
+pendentes antes de trocar. Uma conexão malsucedida tenta restaurar a configuração
+anterior. Não há troca automática de transporte nem nova autorização de pagamento
+ao reconectar. TCP não tem TLS: use uma LAN confiável. O serviço fica restrito ao
+IP privado configurado. O teste de aceite com rádio TCP físico compatível ainda
+está pendente; a simulação verifica queda e reconexão.
+
+O nome e o nome curto do usuário do rádio aparecem quando informados pelo NodeInfo
+e identificam novos pareamentos. São metadados declarados pelo rádio, não uma
+identidade autenticada: os dois operadores ainda precisam comparar o código.
+
 1. Em **Rádio**, selecione o dispositivo USB e instale o LOS Mesh uma vez. Reconecte se a conexão cair; selecione um modo e use **Aplicar modo**, confirmando com sua senha do LightningOS.
 2. Em **Contatos**, busque os nós conhecidos pelo rádio por nome ou ID. A lista tem páginas de 12 itens e scroll vertical próprio; a busca cobre todos os nós recuperados. Verifique a conexão, envie um convite e peça ao outro operador que aceite.
 3. Compare o código exibido pessoalmente ou por outro canal confiável e confirme nos dois pontos. As chaves são negociadas automaticamente. O cadastro manual de ID/chave fica em **Avançado**. Novos contatos começam sem permissão de relay.

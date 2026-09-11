@@ -857,7 +857,7 @@ Login protection must be enabled; ordinary authentication/CSRF rules apply.
 
 | `action` | Parameters and behavior |
 |---|---|
-| `install` | `device` stable USB path, `mode` (`send`, `relay`, `both`), `confirm`, `confirm_password`; broker provisions service and validates serial identity |
+| `install` | `device` stable USB path or `tcp://<private-IP>:<port>` (IPv6 uses brackets), `mode` (`send`, `relay`, `both`), `confirm`, `confirm_password`; broker provisions service and validates Meshtastic identity |
 | `mode` | `mode`, `confirm`, `confirm_password`; change relay/send policy |
 | `peer` | `node` uint32, `name`, `key` 64 hex characters, `allow_relay`, `confirm`, `confirm_password`; save secret locally and authenticate pairing |
 | `remove_peer` | `node`, `confirm`, `confirm_password`; revoke trust and remove pending requests |
@@ -872,7 +872,7 @@ Login protection must be enabled; ordinary authentication/CSRF rules apply.
 Mutating policy/spending actions use reauthentication scope `los_mesh`. On-chain
 and Lightning outcomes can be uncertain and are not automatically retried. App
 start/stop/uninstall use the existing `/api/apps/{id}/...` lifecycle with ID
-`los-mesh`; initial installation uses the mesh action because a selected USB
+`los-mesh`; initial installation uses the mesh action because a selected radio
 device is mandatory. See [LOS_MESH.md](LOS_MESH.md) for limits and protocol.
 
 ### Guided LOS Mesh contacts
@@ -895,3 +895,15 @@ New actions on the existing mesh endpoint:
 
 Pairings expire after five minutes and are discarded on Manager restart.
 Radio availability and a LOS Mesh response do not constitute authentication.
+
+LOS Mesh TCP transport: `device` accepts literal RFC1918/ULA addresses only, with
+an explicit port (normally 4403); DNS names, public/loopback/link-local addresses
+and URL paths are rejected. The same value is returned as `app.device` and
+`radio.device`. One bridge owns the active connection, including outside browser
+sessions. Switching requires reauthentication and no pending transfers/previews;
+a failed connection attempts to restore the previous configuration. No automatic
+USB/TCP failover occurs. TCP uses keepalive, bounded I/O, heartbeat nonce zero and
+reconnection with backoff; reconnecting does not authorize payments.
+`radio.name` and `radio.short_name` optionally expose public user names from the
+local NodeInfo. Pairing names use the remote NodeInfo long/short names as display
+hints, never as proof of identity. Existing verified contacts are not renamed.

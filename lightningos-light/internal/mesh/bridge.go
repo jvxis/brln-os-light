@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,6 +21,8 @@ import (
 const SocketPath = "/run/lightningos-mesh/bridge.sock"
 
 type RadioStatus struct {
+	Name        string    `json:"name,omitempty"`
+	ShortName   string    `json:"short_name,omitempty"`
 	Protocol    int       `json:"protocol"`
 	SNR         float32   `json:"snr"`
 	RSSI        int32     `json:"rssi"`
@@ -43,7 +46,9 @@ func NewBridge(device string) *Bridge {
 }
 
 func (b *Bridge) Run(ctx context.Context, open func() (io.ReadWriteCloser, error)) {
+	retry := 3 * time.Second
 	for ctx.Err() == nil {
+		started := time.Now()
 		port, err := open()
 		if err == nil {
 			b.session(ctx, port)
@@ -51,6 +56,9 @@ func (b *Bridge) Run(ctx context.Context, open func() (io.ReadWriteCloser, error
 		b.mu.Lock()
 		b.status.State = "hardware_disconnected"
 		b.status.Node = 0
+		b.status.Name = ""
+		b.status.ShortName = ""
+		b.nodes = map[uint32]RadioNode{}
 		b.rx = nil
 		b.mu.Unlock()
 		for len(b.tx) > 0 {
@@ -59,7 +67,15 @@ func (b *Bridge) Run(ctx context.Context, open func() (io.ReadWriteCloser, error
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(3 * time.Second):
+		case <-time.After(retry):
+		}
+		if time.Since(started) > time.Minute {
+			retry = 3 * time.Second
+		} else if retry < 30*time.Second {
+			retry *= 2
+			if retry > 30*time.Second {
+				retry = 30 * time.Second
+			}
 		}
 	}
 }
@@ -69,10 +85,23 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() { <-ctx.Done(); _ = port.Close() }()
+	tcp := strings.HasPrefix(b.status.Device, "tcp://")
+	write := func(data []byte) error {
+		if c, ok := port.(net.Conn); ok {
+			_ = c.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		}
+		n, err := port.Write(data)
+		if err == nil && n != len(data) {
+			return io.ErrShortWrite
+		}
+		return err
+	}
 	// Wake the serial client interface, as in the Meshtastic serial client.
 	// This prelude does not change any radio settings.
-	if _, err := port.Write(bytes.Repeat([]byte{0xc3}, 32)); err != nil {
-		return
+	if !tcp {
+		if err := write(bytes.Repeat([]byte{0xc3}, 32)); err != nil {
+			return
+		}
 	}
 	select {
 	case <-ctx.Done():
@@ -84,7 +113,7 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 		return
 	}
 	frame, _ := Frame(ConfigRequest(binary.BigEndian.Uint32(id[:])))
-	if _, err := port.Write(frame); err != nil {
+	if err := write(frame); err != nil {
 		return
 	}
 	b.mu.Lock()
@@ -96,6 +125,9 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 		defer close(done)
 		r := bufio.NewReader(port)
 		for {
+			if c, ok := port.(net.Conn); ok {
+				_ = c.SetReadDeadline(time.Now().Add(90 * time.Second))
+			}
 			raw, err := ReadFrame(r)
 			if err != nil {
 				cancel()
@@ -116,6 +148,10 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 				b.status.Node = node
 				b.status.State = "running"
 			}
+			if local, exists := b.nodes[b.status.Node]; exists {
+				b.status.Name = local.Name
+				b.status.ShortName = local.ShortName
+			}
 			if packet != nil {
 				b.status.LastReceive = time.Now().UTC()
 				b.status.SNR = packet.SNR
@@ -129,6 +165,8 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 			b.mu.Unlock()
 		}
 	}()
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	deadline := time.NewTimer(20 * time.Second)
@@ -137,6 +175,13 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat.C:
+			if tcp {
+				frame, _ := Frame(Heartbeat())
+				if write(frame) != nil {
+					return
+				}
+			}
 		case <-deadline.C:
 			b.mu.Lock()
 			ready := b.status.Node != 0
@@ -155,7 +200,7 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 					continue
 				}
 				frame, _ := Frame(raw)
-				if _, err = port.Write(frame); err != nil {
+				if err = write(frame); err != nil {
 					return
 				}
 			default:

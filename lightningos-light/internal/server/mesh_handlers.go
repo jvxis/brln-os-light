@@ -192,7 +192,35 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 			err = errors.New("choose send, relay or both")
 			break
 		}
+		if len(m.outgoing) > 0 || len(m.incoming) > 0 || len(m.pending) > 0 || len(m.proposals) > 0 {
+			err = errors.New("finish or cancel pending radio transfers before changing the active connection")
+			break
+		}
+		if strings.HasPrefix(req.Device, "tcp://") {
+			if _, e := mesh.TCPAddress(req.Device); e != nil {
+				err = e
+				break
+			}
+		}
+		previous, previousErr := system.MeshControlWithBroker(ctx, "status", "")
+		if previousErr != nil {
+			err = previousErr
+			break
+		}
+		var old privileged.MeshState
+		if json.Unmarshal([]byte(previous), &old) != nil {
+			err = errors.New("cannot read active connection")
+			break
+		}
 		_, err = system.MeshControlWithBroker(ctx, "install", req.Device)
+		if err != nil && old.Installed {
+			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			_, restoreErr := system.MeshControlWithBroker(cleanup, "install", old.Device)
+			cancel()
+			if restoreErr != nil {
+				err = errors.New("connection change failed; restoring the previous connection failed")
+			}
+		}
 		if err == nil {
 			connected := false
 			for deadline := time.Now().Add(22 * time.Second); time.Now().Before(deadline) && ctx.Err() == nil; {
@@ -208,10 +236,20 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 			}
 			if !connected {
 				cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				_, _ = system.MeshControlWithBroker(cleanup, "remove", "")
+				if old.Installed {
+					_, restoreErr := system.MeshControlWithBroker(cleanup, "install", old.Device)
+					if restoreErr != nil {
+						err = errors.New("radio did not respond; restoring the previous connection failed")
+					}
+				} else {
+					_, _ = system.MeshControlWithBroker(cleanup, "remove", "")
+				}
 				cancel()
-				err = errors.New("USB device did not respond to the Meshtastic serial API; installation rolled back")
+				if err == nil {
+					err = errors.New("radio did not respond to the Meshtastic API; previous connection configuration restored")
+				}
 			} else {
+				m.pairings = nil // Invitations belong to the previous active radio session.
 				_, err = m.db.Exec(ctx, "UPDATE los_mesh_settings SET mode=$1", req.Mode)
 			}
 			s.invalidateAppListCache()

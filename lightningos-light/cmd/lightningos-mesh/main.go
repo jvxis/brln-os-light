@@ -38,7 +38,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer cancel()
 	b := mesh.NewBridge(cfg.Device)
-	go b.Run(ctx, func() (io.ReadWriteCloser, error) { return mesh.OpenSerial(cfg.Device) })
+	go b.Run(ctx, func() (io.ReadWriteCloser, error) { return mesh.OpenRadio(ctx, cfg.Device) })
 	if err = mesh.Serve(ctx, b, uint32(uid)); err != nil && ctx.Err() == nil {
 		log.Fatal("radio bridge stopped")
 	}

@@ -28,3 +28,22 @@ func TestMeshIsolation(t *testing.T) {
 		}
 	}
 }
+
+func TestMeshTCPIsolation(t *testing.T) {
+	target := "tcp://192.168.1.50:4403"
+	if err := validateMeshParams(MeshParams{Action: "install", Device: target}); err != nil {
+		t.Fatal(err)
+	}
+	unit := meshServiceUnit(target)
+	for _, required := range []string{"IPAddressDeny=any", "IPAddressAllow=192.168.1.50", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", "DevicePolicy=closed", "User=losmesh", "ProtectSystem=strict"} {
+		if !strings.Contains(unit, required) {
+			t.Fatal("missing restriction", required)
+		}
+	}
+	if strings.Contains(unit, "DeviceAllow=") {
+		t.Fatal("TCP must not grant serial access")
+	}
+	if meshServiceUnit("tcp://1.1.1.1:4403") != "" {
+		t.Fatal("unsafe unit rendered")
+	}
+}

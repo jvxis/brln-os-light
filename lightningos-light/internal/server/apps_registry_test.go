@@ -89,6 +89,7 @@ func TestConfiguredAppsHaveExplicitRuntimeSecurityClass(t *testing.T) {
 		reason string
 	}
 	policies := map[string]runtimePolicy{
+		"opreturn":          {class: "manager", reason: "in-process typed LND WalletKit publisher; no external credentials or privileged runtime"},
 		"bitcoincore":       {class: "compose", reason: "closed broker-owned Compose manifest"},
 		"bark-wallet":       {class: "compose", reason: "closed broker-owned Compose manifest"},
 		"electrs":           {class: "compose", reason: "closed broker-owned Compose manifest"},

@@ -25,6 +25,10 @@ import (
 type Server struct {
 	meshMu                      sync.Mutex
 	mesh                        *meshService
+	opreturnMu                  sync.Mutex
+	opreturnSchema              bool
+	opreturnPublishMu           sync.Mutex
+	opreturnWalletClient        opreturnWallet
 	cfg                         *config.Config
 	logger                      *log.Logger
 	shutdownCtx                 context.Context

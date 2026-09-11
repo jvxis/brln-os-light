@@ -68,7 +68,7 @@ func TestComposeCatalogSecurityInventory(t *testing.T) {
 		LNDgID + "/lndg-db": {noNewPrivileges: true, exception: "official Postgres entrypoint initializes the dedicated LNDg database volume before dropping privileges"},
 		LNDgID + "/lndg":    {nonRoot: true, capDropAll: true, noNewPrivileges: true, exception: "LNDg still needs writable application paths during startup; mounts and LND credentials remain narrowly scoped"},
 
-		LNbitsID + "/lnbits":   hardened,
+		LNbitsID + "/lnbits":   {nonRoot: true, readOnly: true, capDropAll: true, noNewPrivileges: true, allowHostNetwork: true, exception: "host networking is required to reach LND's loopback-only REST endpoint without mutating LND configuration or TLS material"},
 		ElectrsID + "/electrs": hardened,
 
 		MempoolID + "/mempool-web": hardened,
@@ -215,7 +215,7 @@ func testCatalogComposeDocuments(t *testing.T) []catalogComposeDocument {
 		{appID: BitcoinCoreID, raw: bitcoin},
 		{appID: BTCPayID, raw: BTCPayExecutionCompose(btcpayPaths, true, true)},
 		{appID: LNDgID, raw: LNDgCompose(LNDgComposePaths{DataDir: "/data/lndg", PgDir: "/data/lndg-postgres", LogPath: "/data/lndg/controller.log", LndDir: "/snapshot/lndg/lnd", ChannelDBPath: "/snapshot/lndg/lnd/channel.db", EntrypointPath: "/snapshot/lndg/entrypoint.sh"})},
-		{appID: LNbitsID, raw: LNbitsCompose(LNbitsComposePaths{DataDir: "/data/lnbits", TLSCertPath: "/snapshot/lnbits/tls.cert", MacaroonPath: "/snapshot/lnbits/lnbits.macaroon"})},
+		{appID: LNbitsID, raw: LNbitsCompose(LNbitsComposePaths{DataDir: "/data/lnbits", LNDDir: "/snapshot/lnbits/lnd"})},
 		{appID: ElectrsID, raw: electrs},
 		{appID: MempoolID, raw: mempool},
 		{appID: FedimintGuardianID, raw: guardian},

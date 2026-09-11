@@ -1,5 +1,36 @@
 const base = ''
 
+export type MeshPeer = { node: number; name: string; paired: boolean; allow_relay: boolean; fingerprint: string }
+export type MeshPending = { id: string; peer: number; kind: string; address?: string; amount_sat: number; payment_hash?: string; destination?: string; memo?: string; expires: string }
+export type MeshRadioNode = { node: number; name: string; short_name: string; last_heard: number; via_mqtt: boolean }
+export type MeshPairing = { id: string; node: number; name: string; state: string; code?: string; expires: string; local_confirmed: boolean; remote_confirmed: boolean }
+export type MeshStatus = {
+  nodes?: MeshRadioNode[]; pairings?: MeshPairing[]
+  app: { installed: boolean; status: string; device: string; devices: string[] }
+  radio: { state: string; node: number; name?: string; short_name?: string; device: string; last_receive: string; dropped: number; snr: number; rssi: number; protocol: number }
+  mode: 'send' | 'relay' | 'both'; peers: MeshPeer[]; pending: MeshPending[]
+  history: { id: string; peer: number; direction: string; state: string; txid: string; received: number; total: number; created: string }[]
+  protocol_version: number
+}
+export type MeshAction = { action: 'disconnect' | 'pair_probe' | 'pair_invite' | 'pair_accept' | 'pair_confirm' | 'pair_cancel' | 'peer_permissions' | 'install' | 'mode' | 'peer' | 'remove_peer' | 'preview' | 'send' | 'invoice' | 'request' | 'request_invoice' | 'pay' | 'cancel'; code?: string; device?: string; mode?: string; node?: number; name?: string; key?: string; allow_relay?: boolean; id?: string; raw_tx?: string; address?: string; amount_sat?: number; sat_per_vbyte?: number; invoice?: string; memo?: string; max_fee_sat?: number; confirm?: boolean; confirm_password?: string }
+export type MeshPreview = { id: string; expires: string; preview: { txid?: string; bytes?: number; chunks?: number; outputs?: { address: string; sats: number }[]; address?: string; recipient_amount_sat?: number; fee_sat?: number; change_sat?: number; total_debit_sat?: number; selected_input_count?: number } }
+export const getMeshStatus = (): Promise<MeshStatus> => request('/api/apps/los-mesh/status')
+export const meshAction = <T = { ok?: boolean; id?: string; state?: string }>(payload: MeshAction): Promise<T> => request('/api/apps/los-mesh/action', { method: 'POST', body: JSON.stringify(payload) })
+export type OPReturnQuote = {
+  text: string; payload_hex: string; byte_count: number; selected_input_count: number
+  selected_input_sat: number; estimated_vbytes: number; sat_per_vbyte: number
+  fee_sat: number; total_debit_sat: number
+}
+export type OPReturnPreview = OPReturnQuote & { preview_id: string; expires_at: string; max_fee_sat: number }
+export type OPReturnRecord = { id: string; quote: OPReturnQuote; state: string; txid: string; confirmations: number; block_height: number; created_at: string }
+export const getOPReturnStatus = (): Promise<{ ready: boolean }> => request('/api/apps/opreturn/status')
+export const previewOPReturn = (text: string, sat_per_vbyte: number): Promise<OPReturnPreview> =>
+  request('/api/apps/opreturn/preview', { method: 'POST', body: JSON.stringify({ text, sat_per_vbyte }) })
+export const publishOPReturn = (preview_id: string, idempotency_key: string): Promise<OPReturnRecord> =>
+  request('/api/apps/opreturn/publish', { method: 'POST', body: JSON.stringify({ preview_id, idempotency_key, confirm_publication: true }) })
+export const getOPReturnRecords = (): Promise<OPReturnRecord[]> => request('/api/apps/opreturn/records')
+export const getOPReturnRecord = (id: string): Promise<OPReturnRecord> => request(`/api/apps/opreturn/records/${encodeURIComponent(id)}`)
+
 let csrfToken = ''
 let lndStatusInFlight: Promise<any> | null = null
 let lndStatusCached: any = null
@@ -1176,7 +1207,7 @@ export type StorageTarget = {
 }
 
 export type AppOperationInfo = {
-  action: 'install' | 'start' | 'stop' | 'uninstall'
+  action: 'pair_probe' | 'pair_invite' | 'pair_accept' | 'pair_confirm' | 'pair_cancel' | 'peer_permissions' | 'install' | 'start' | 'stop' | 'uninstall'
   started_at: string
   stage?: string
 }

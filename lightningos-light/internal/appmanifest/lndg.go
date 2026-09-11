@@ -80,7 +80,9 @@ if [ -s "$SQLITE_FILE" ]; then
   legacy_sqlite=true
 fi
 
+fresh_settings=false
 if [ ! -f "$SETTINGS_FILE" ]; then
+  fresh_settings=true
   python initialize.py -d -net "$LNDG_NETWORK" -rpc "$LNDG_RPC_SERVER" -dir "$LNDG_LND_DIR" -tls "$LNDG_TLS_PATH" -mcrn "$LNDG_MACAROON_PATH" -lnddb "$LNDG_DATABASE_PATH" -u "$LNDG_ADMIN_USER" --adminpw="$LNDG_ADMIN_PASSWORD" -wn -f
 fi
 
@@ -92,10 +94,47 @@ if [ "$legacy_sqlite" = true ] && [ ! -f "$MIGRATION_MARKER" ]; then
   postgres_schema=$(PGPASSWORD="$LNDG_DB_PASSWORD" psql -h lndg-db -U lndg -d lndg -Atc "select to_regclass('public.django_migrations');")
   if [ ! -f "$MIGRATION_FIXTURE" ]; then
     if [ -n "$postgres_schema" ]; then
-      echo "Refusing automatic SQLite import into an initialized PostgreSQL schema" >&2
-      exit 1
-    fi
-    SETTINGS_FILE="$SETTINGS_FILE" SQLITE_SETTINGS_FILE="$SQLITE_SETTINGS_FILE" SQLITE_FILE="$SQLITE_FILE" python - <<'PY'
+      if grep -q "django.db.backends.postgresql_psycopg2" "$SETTINGS_FILE"; then
+        # A previous clean bootstrap already selected and initialized
+        # PostgreSQL. initialize.py also leaves a framework-only SQLite file;
+        # do not reinterpret that file as legacy data on the next start.
+        umask 077
+        : > "$MIGRATION_MARKER"
+      else
+        sqlite_app_rows=$(SQLITE_FILE="$SQLITE_FILE" python - <<'PY'
+import os
+import sqlite3
+
+database = sqlite3.connect(os.environ["SQLITE_FILE"])
+try:
+    tables = [
+        row[0]
+        for row in database.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'gui_%'"
+        )
+    ]
+    total = 0
+    for table in tables:
+        escaped = table.replace('"', '""')
+        total += database.execute(f'SELECT COUNT(*) FROM "{escaped}"').fetchone()[0]
+    print(total)
+finally:
+    database.close()
+PY
+)
+        if [ "$sqlite_app_rows" = "0" ]; then
+          # Container recreation restores the image's SQLite settings. An
+          # empty gui_* dataset is the harmless bootstrap database left by
+          # initialize.py, so preserve the already initialized PostgreSQL DB.
+          umask 077
+          : > "$MIGRATION_MARKER"
+        else
+          echo "Refusing automatic SQLite import into an initialized PostgreSQL schema" >&2
+          exit 1
+        fi
+      fi
+    else
+      SETTINGS_FILE="$SETTINGS_FILE" SQLITE_SETTINGS_FILE="$SQLITE_SETTINGS_FILE" SQLITE_FILE="$SQLITE_FILE" python - <<'PY'
 import os
 
 source = os.environ["SETTINGS_FILE"]
@@ -127,12 +166,13 @@ raw = raw[:start] + replacement + raw[end+1:]
 with open(target, "w", encoding="utf-8") as f:
   f.write("\n".join(raw) + "\n")
 PY
-    umask 077
-    DJANGO_SETTINGS_MODULE=lndg.sqlite_migration_settings python manage.py dumpdata --natural-foreign --natural-primary \
-      --exclude contenttypes --exclude auth.permission --exclude admin.logentry --exclude sessions \
-      > "$MIGRATION_FIXTURE.tmp"
-    mv "$MIGRATION_FIXTURE.tmp" "$MIGRATION_FIXTURE"
-    rm -f "$SQLITE_SETTINGS_FILE"
+      umask 077
+      DJANGO_SETTINGS_MODULE=lndg.sqlite_migration_settings python manage.py dumpdata --natural-foreign --natural-primary \
+        --exclude contenttypes --exclude auth.permission --exclude admin.logentry --exclude sessions \
+        > "$MIGRATION_FIXTURE.tmp"
+      mv "$MIGRATION_FIXTURE.tmp" "$MIGRATION_FIXTURE"
+      rm -f "$SQLITE_SETTINGS_FILE"
+    fi
   fi
 fi
 
@@ -218,6 +258,13 @@ with open(path, "w", encoding="utf-8") as f:
 PY
 
 python manage.py migrate
+if [ "$fresh_settings" = true ] && [ ! -f "$MIGRATION_MARKER" ]; then
+  # initialize.py may create db.sqlite3 even though this clean installation
+  # immediately switches to PostgreSQL. Mark that bootstrap as complete so a
+  # later restart never mistakes the generated file for a legacy database.
+  umask 077
+  : > "$MIGRATION_MARKER"
+fi
 if [ -f "$MIGRATION_FIXTURE" ] && [ ! -f "$MIGRATION_MARKER" ]; then
   python manage.py loaddata "$MIGRATION_FIXTURE"
   umask 077

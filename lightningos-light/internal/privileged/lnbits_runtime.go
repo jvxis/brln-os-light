@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,7 +33,7 @@ try:
         raise SystemExit(0)
     desired = {
         "lnbits_backend_wallet_class": "LndRestWallet",
-        "lnd_rest_endpoint": "https://host.docker.internal:8080/",
+        "lnd_rest_endpoint": os.environ["LND_REST_ENDPOINT"],
         "lnd_rest_cert": "/etc/lnd/tls.cert",
         "lnd_rest_macaroon": "/etc/lnd/lnbits.macaroon",
     }
@@ -66,6 +67,7 @@ type lnbitsValidatedFiles struct {
 	envRaw         []byte
 	certificateRaw []byte
 	macaroonRaw    []byte
+	restEndpoint   string
 }
 
 func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, error) {
@@ -99,7 +101,6 @@ func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, 
 		}
 	}
 	if err := validateSnapshotDirectoryEntries(lndDir, map[string]bool{
-		appmanifest.LNbitsTLSCertFile:  true,
 		appmanifest.LNbitsMacaroonFile: true,
 	}); err != nil {
 		return files, errors.New("LNbits LND declaration contains unexpected assets")
@@ -114,7 +115,7 @@ func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, 
 		return files, errors.New("LNbits environment does not match the catalog")
 	}
 
-	certificatePath := filepath.Join(lndDir, appmanifest.LNbitsTLSCertFile)
+	certificatePath := filepath.Join(lndDataRoot, appmanifest.LNbitsTLSCertFile)
 	certificateRaw, err := readRegularFile(certificatePath, maxLNbitsCredentialBytes)
 	if err != nil || validateTLSCertificate(certificateRaw) != nil {
 		return files, errors.New("LNbits LND certificate is invalid")
@@ -134,21 +135,24 @@ func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, 
 	if bytes.Equal(macaroonRaw, adminRaw) {
 		return files, errors.New("LNbits LND credential must not be the admin macaroon")
 	}
+	restEndpoint, err := manager.resolveLNbitsRESTEndpoint()
+	if err != nil {
+		return files, err
+	}
 
 	composeRaw, err := readRegularFile(filepath.Join(appRoot, appmanifest.LNbitsComposeFile), 64*1024)
 	if err != nil {
 		return files, errors.New("LNbits compose manifest is unavailable")
 	}
 	expectedCompose := appmanifest.LNbitsCompose(appmanifest.LNbitsComposePaths{
-		DataDir:      dataDir,
-		TLSCertPath:  certificatePath,
-		MacaroonPath: macaroonPath,
+		DataDir: dataDir,
+		LNDDir:  lndDir,
 	})
 	if !bytes.Equal(composeRaw, []byte(expectedCompose)) {
 		return files, errors.New("LNbits compose manifest does not match the catalog")
 	}
 
-	return lnbitsValidatedFiles{envRaw: envRaw, certificateRaw: certificateRaw, macaroonRaw: macaroonRaw}, nil
+	return lnbitsValidatedFiles{envRaw: envRaw, certificateRaw: certificateRaw, macaroonRaw: macaroonRaw, restEndpoint: restEndpoint}, nil
 }
 
 func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFiles) (composeAppSnapshot, func(), error) {
@@ -194,10 +198,13 @@ func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFile
 	certificatePath := filepath.Join(lndDir, appmanifest.LNbitsTLSCertFile)
 	macaroonPath := filepath.Join(lndDir, appmanifest.LNbitsMacaroonFile)
 	compose := appmanifest.LNbitsCompose(appmanifest.LNbitsComposePaths{
-		DataDir:      filepath.Join(appsDataRoot, appmanifest.LNbitsID, "data"),
-		TLSCertPath:  certificatePath,
-		MacaroonPath: macaroonPath,
+		DataDir: filepath.Join(appsDataRoot, appmanifest.LNbitsID, "data"),
+		LNDDir:  lndDir,
 	})
+	executionEnv, err := lnbitsExecutionEnv(files.envRaw, files.restEndpoint)
+	if err != nil {
+		return snapshot, func() {}, err
+	}
 	for _, file := range []struct {
 		path string
 		raw  []byte
@@ -205,7 +212,7 @@ func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFile
 		gid  int
 	}{
 		{composePath, []byte(compose), 0600, 0},
-		{envPath, files.envRaw, 0600, 0},
+		{envPath, executionEnv, 0600, 0},
 		{certificatePath, files.certificateRaw, 0640, appmanifest.LNbitsContainerGID},
 		{macaroonPath, files.macaroonRaw, 0640, appmanifest.LNbitsContainerGID},
 	} {
@@ -219,6 +226,43 @@ func (manager *ComposeAppManager) createLNbitsSnapshot(files lnbitsValidatedFile
 		}
 	}
 	return composeAppSnapshot{root: snapshotRoot, composePath: composePath, envPath: envPath}, func() {}, nil
+}
+
+// refreshLNbitsSnapshotCertificate keeps the running container's narrow LND
+// directory aligned with the certificate currently owned by native LND. The
+// directory, rather than the individual file, is mounted into the container so
+// an atomic replacement remains visible after LND renews tls.cert.
+func (manager *ComposeAppManager) refreshLNbitsSnapshotCertificate(certificateRaw []byte) error {
+	privilegedAppsRoot := manager.PrivilegedAppsRoot
+	if privilegedAppsRoot == "" {
+		privilegedAppsRoot = defaultPrivilegedAppsRoot
+	}
+	lndDir := filepath.Join(privilegedAppsRoot, appmanifest.LNbitsID, appmanifest.LNbitsLNDDir)
+	if err := validateRegularDirectory(lndDir); err != nil {
+		// An app that has been declared but never started has no execution
+		// snapshot yet. Lifecycle start will create it with the current cert.
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return errors.New("LNbits LND snapshot is invalid")
+	}
+	if err := validateExecutionSnapshotDirectoryEntries(lndDir, map[string]bool{
+		appmanifest.LNbitsTLSCertFile:  true,
+		appmanifest.LNbitsMacaroonFile: true,
+	}); err != nil {
+		return errors.New("LNbits LND snapshot contains unexpected assets")
+	}
+	certificatePath := filepath.Join(lndDir, appmanifest.LNbitsTLSCertFile)
+	if current, err := readRegularFile(certificatePath, maxLNbitsCredentialBytes); err == nil && bytes.Equal(current, certificateRaw) {
+		return nil
+	}
+	if err := writeAtomicRegularFile(certificatePath, certificateRaw, 0640); err != nil {
+		return errors.New("failed to refresh LNbits LND certificate")
+	}
+	if err := setPrivilegedPathGroup(certificatePath, appmanifest.LNbitsContainerGID); err != nil {
+		return errors.New("failed to assign LNbits certificate group")
+	}
+	return nil
 }
 
 func (manager *ComposeAppManager) removeLNbitsExecutionSnapshot(snapshotRoot string) error {
@@ -236,49 +280,14 @@ func (manager *ComposeAppManager) removeLNbitsExecutionSnapshot(snapshotRoot str
 	return os.RemoveAll(expectedRoot)
 }
 
-func (manager *ComposeAppManager) refreshLNbitsSnapshotCertificate(snapshotRoot string) error {
-	privilegedAppsRoot := manager.PrivilegedAppsRoot
-	if privilegedAppsRoot == "" {
-		privilegedAppsRoot = defaultPrivilegedAppsRoot
-	}
-	expectedRoot := filepath.Join(filepath.Clean(privilegedAppsRoot), appmanifest.LNbitsID)
-	if filepath.Clean(snapshotRoot) != expectedRoot {
-		return errors.New("invalid LNbits execution snapshot")
-	}
-	lndDataRoot := manager.LNDDataRoot
-	if lndDataRoot == "" {
-		lndDataRoot = defaultLNDDataRoot
-	}
-	var certificateRaw []byte
-	var err error
-	for attempt := 0; attempt < 30; attempt++ {
-		certificateRaw, err = readRegularFile(filepath.Join(lndDataRoot, "tls.cert"), maxLNbitsCredentialBytes)
-		if err == nil && validateTLSCertificate(certificateRaw) == nil {
-			break
-		}
-		time.Sleep(time.Second)
-	}
-	if err != nil || validateTLSCertificate(certificateRaw) != nil {
-		return errors.New("refreshed LND certificate is unavailable")
-	}
-	target := filepath.Join(expectedRoot, appmanifest.LNbitsLNDDir, appmanifest.LNbitsTLSCertFile)
-	if err := writeAtomicRegularFile(target, certificateRaw, 0640); err != nil {
-		return errors.New("failed to refresh LNbits certificate snapshot")
-	}
-	if err := setPrivilegedPathGroup(target, appmanifest.LNbitsContainerGID); err != nil {
-		return errors.New("failed to assign LNbits certificate group")
-	}
-	return nil
-}
-
-func (manager *ComposeAppManager) ensureLNbitsHostAccess(ctx context.Context) error {
+func (manager *ComposeAppManager) ensureBTCPayLNDHostAccess(ctx context.Context) error {
 	gatewayRaw, err := manager.Runner.Run(ctx, dockerPath, "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}")
 	if err != nil {
-		return errors.New("LNbits network gateway lookup failed")
+		return errors.New("BTCPay network gateway lookup failed")
 	}
 	gateway := strings.TrimSpace(gatewayRaw)
 	if !isPrivateDockerGateway(gateway) {
-		return errors.New("LNbits network gateway is invalid")
+		return errors.New("BTCPay network gateway is invalid")
 	}
 	configPath := manager.LNDConfigPath
 	if configPath == "" {
@@ -289,7 +298,7 @@ func (manager *ComposeAppManager) ensureLNbitsHostAccess(ctx context.Context) er
 		return errors.New("LND configuration is unavailable")
 	}
 	lines := strings.Split(strings.TrimRight(string(configRaw), "\n"), "\n")
-	updated, changed := updateLNbitsRESTOptions(lines, gateway)
+	updated, changed := updateLNDRESTHostAccessOptions(lines, gateway)
 	certificateNeedsRefresh := manager.lndCertificateNeedsDockerHostAccess()
 	if changed {
 		if err := replaceRegularFilePreservingMetadata(configPath, []byte(strings.Join(updated, "\n")+"\n")); err != nil {
@@ -297,11 +306,17 @@ func (manager *ComposeAppManager) ensureLNbitsHostAccess(ctx context.Context) er
 		}
 	}
 	if changed || certificateNeedsRefresh {
-		if err := manager.removeLNDServerCertificate(); err != nil {
-			return err
-		}
+		// LND exclusively owns tls.cert and tls.key. With tlsautorefresh
+		// enabled, LND decides whether its certificate needs regeneration
+		// after the configuration change; the broker must never remove or
+		// replace either file.
 		if _, err := manager.Runner.Run(ctx, systemctlPath, "restart", "lnd"); err != nil {
 			return errors.New("LND restart failed")
+		}
+		if certificateNeedsRefresh {
+			if _, err := manager.waitForLNDDockerHostCertificate(30, time.Second); err != nil {
+				return errors.New("LND certificate refresh failed")
+			}
 		}
 	}
 	return nil
@@ -317,10 +332,10 @@ func (manager *ComposeAppManager) EnsureLNDHostAccess(ctx context.Context, appID
 	if dryRun {
 		return nil
 	}
-	return manager.ensureLNbitsHostAccess(ctx)
+	return manager.ensureBTCPayLNDHostAccess(ctx)
 }
 
-func (manager *ComposeAppManager) migrateLNbitsLegacySettings(ctx context.Context) error {
+func (manager *ComposeAppManager) migrateLNbitsLegacySettings(ctx context.Context, restEndpoint string) error {
 	appsDataRoot := manager.AppsDataRoot
 	if appsDataRoot == "" {
 		appsDataRoot = defaultAppsDataRoot
@@ -333,6 +348,7 @@ func (manager *ComposeAppManager) migrateLNbitsLegacySettings(ctx context.Contex
 		"--security-opt", "no-new-privileges",
 		"--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777",
 		"-e", "HOME=/app/data", "-e", "PYTHONDONTWRITEBYTECODE=1",
+		"-e", "LND_REST_ENDPOINT="+restEndpoint,
 		"-v", dataDir+":/app/data:rw",
 		appmanifest.LNbitsImage,
 		"/app/.venv/bin/python", "-c", lnbitsSettingsMigrationScript,
@@ -342,7 +358,90 @@ func (manager *ComposeAppManager) migrateLNbitsLegacySettings(ctx context.Contex
 	return nil
 }
 
-func updateLNbitsRESTOptions(lines []string, gateway string) ([]string, bool) {
+func (manager *ComposeAppManager) resolveLNbitsRESTEndpoint() (string, error) {
+	configPath := manager.LNDConfigPath
+	if configPath == "" {
+		configPath = defaultLNDConfigPath
+	}
+	raw, err := readRegularFile(configPath, 1024*1024)
+	if err != nil {
+		return "", errors.New("LND configuration is unavailable")
+	}
+	return selectLNbitsRESTEndpoint(string(raw))
+}
+
+func selectLNbitsRESTEndpoint(config string) (string, error) {
+	loopback := make([]string, 0, 2)
+	private := make([]string, 0, 2)
+	hasRESTListener := false
+	for _, line := range strings.Split(config, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "restlisten=") {
+			continue
+		}
+		hasRESTListener = true
+		address := strings.TrimSpace(strings.TrimPrefix(trimmed, "restlisten="))
+		host, port, err := net.SplitHostPort(address)
+		if err != nil || strings.TrimSpace(port) == "" {
+			continue
+		}
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			continue
+		}
+		host = strings.Trim(strings.TrimSpace(host), "[]")
+		switch host {
+		case "", "*", "0.0.0.0":
+			host = "127.0.0.1"
+		case "::":
+			host = "::1"
+		}
+		candidate := "https://" + net.JoinHostPort(host, port) + "/"
+		if strings.EqualFold(host, "localhost") {
+			loopback = append(loopback, candidate)
+			continue
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			continue
+		}
+		if ip.IsLoopback() {
+			loopback = append(loopback, candidate)
+		} else if ip.IsPrivate() {
+			private = append(private, candidate)
+		}
+	}
+	if len(loopback) > 0 {
+		return loopback[0], nil
+	}
+	if len(private) > 0 {
+		return private[0], nil
+	}
+	if !hasRESTListener {
+		return "https://127.0.0.1:8080/", nil
+	}
+	return "", errors.New("LND REST has no safe local listener for LNbits")
+}
+
+func lnbitsExecutionEnv(raw []byte, restEndpoint string) ([]byte, error) {
+	if strings.TrimSpace(restEndpoint) == "" {
+		return nil, errors.New("LNbits LND REST endpoint is unavailable")
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	replaced := false
+	for index, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "LND_REST_ENDPOINT=") {
+			lines[index] = "LND_REST_ENDPOINT=" + restEndpoint
+			replaced = true
+		}
+	}
+	if !replaced {
+		return nil, errors.New("LNbits LND REST endpoint setting is unavailable")
+	}
+	return []byte(strings.Join(lines, "\n") + "\n"), nil
+}
+
+func updateLNDRESTHostAccessOptions(lines []string, gateway string) ([]string, bool) {
 	seen := make(map[string]bool)
 	hasWildcard := false
 	for _, line := range lines {
@@ -381,28 +480,4 @@ func updateLNbitsRESTOptions(lines []string, gateway string) ([]string, bool) {
 	updated = append(updated, block...)
 	updated = append(updated, lines[insert:]...)
 	return updated, true
-}
-
-func (manager *ComposeAppManager) ensureLNbitsInternalFirewall(ctx context.Context) error {
-	status, err := manager.Runner.Run(ctx, ufwPath, "status")
-	if err != nil || !strings.Contains(strings.ToLower(status), "status: active") {
-		return nil
-	}
-	networkID, err := manager.Runner.Run(ctx, dockerPath, "network", "inspect", appmanifest.LNbitsProject+"_default", "--format", "{{.Id}}")
-	if err != nil {
-		return errors.New("LNbits network lookup failed")
-	}
-	id := strings.TrimSpace(networkID)
-	if len(id) < 12 || len(id) > 64 {
-		return errors.New("LNbits network ID is invalid")
-	}
-	for _, char := range id {
-		if !strings.ContainsRune("0123456789abcdef", char) {
-			return errors.New("LNbits network ID is invalid")
-		}
-	}
-	if _, err := manager.Runner.Run(ctx, ufwPath, "allow", "in", "on", "br-"+id[:12], "to", "any", "port", "8080", "proto", "tcp"); err != nil {
-		return errors.New("LNbits internal firewall rule failed")
-	}
-	return nil
 }

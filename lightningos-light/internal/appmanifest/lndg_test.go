@@ -123,7 +123,7 @@ func TestLNDgEntrypointAlwaysSelectsPostgres(t *testing.T) {
 		}
 	}
 	csrfEnd := strings.Index(LNDgEntrypoint, "      csrf_trusted.append(f\"{scheme}://{host}:8889\")")
-	replacement := strings.Index(LNDgEntrypoint, "django.db.backends.postgresql_psycopg2")
+	replacement := strings.LastIndex(LNDgEntrypoint, "django.db.backends.postgresql_psycopg2")
 	if csrfEnd < 0 || replacement <= csrfEnd {
 		t.Fatal("PostgreSQL replacement is unexpectedly nested in the CSRF fallback")
 	}
@@ -135,7 +135,11 @@ func TestLNDgEntrypointAlwaysSelectsPostgres(t *testing.T) {
 func TestLNDgEntrypointMigratesOnlyLegacySQLiteIntoEmptyPostgres(t *testing.T) {
 	for _, required := range []string{
 		`if [ -s "$SQLITE_FILE" ]`,
+		`fresh_settings=true`,
 		`select to_regclass('public.django_migrations');`,
+		`grep -q "django.db.backends.postgresql_psycopg2" "$SETTINGS_FILE"`,
+		`name LIKE 'gui_%'`,
+		`if [ "$sqlite_app_rows" = "0" ]`,
 		`Refusing automatic SQLite import into an initialized PostgreSQL schema`,
 		`DJANGO_SETTINGS_MODULE=lndg.sqlite_migration_settings python manage.py dumpdata`,
 		`'ENGINE': 'django.db.backends.sqlite3'`,

@@ -10,7 +10,7 @@ import (
 
 const (
 	ElementsID             = "elements"
-	ElementsVersion        = "23.3.3"
+	ElementsVersion        = "23.3.4"
 	ElementsUser           = "lightningos-elements"
 	ElementsManagerGroup   = "lightningos"
 	ElementsService        = "lightningos-elements"
@@ -63,10 +63,10 @@ func ElementsAssetForArch(goarch string) (ElementsReleaseAsset, error) {
 	switch goarch {
 	case "amd64":
 		suffix = "x86_64-linux-gnu"
-		checksum = "90d6659a4f5d6d94bbf2321f6114e1286fbec8031cfc614b2f2319ddfcd9b3e1"
+		checksum = "a758151ace3f21008ab162067ffce9e0e526a1b5d55995e2c30d9cd7ccda41a0"
 	case "arm64":
 		suffix = "aarch64-linux-gnu"
-		checksum = "279c6cf96ca0583e93fa8531ca671ffde91694254fce4719e6f3b1d0d883dd34"
+		checksum = "ee20cc20302bf7a41a063241f59f17a0a2e4d18479c2fff9cbdbfc6c25919510"
 	default:
 		return ElementsReleaseAsset{}, fmt.Errorf("Elements does not support architecture %s", goarch)
 	}

@@ -845,3 +845,141 @@ POST   /api/chat/send
 ```
 
 `POST /api/chat/read` marks the latest inbound message for one `peer_pubkey` as read. The read timestamp is persisted on the node and returned as `last_read_at` by the inbox, so unread state is shared across browsers. Existing browser-local state is migrated by the UI when possible.
+# LOS Mesh API
+
+`GET /api/apps/los-mesh/status` returns `app` (installed/status/device/devices),
+`radio` (state/node/protocol/SNR/RSSI/last_receive/dropped), operation `mode`, paired
+contact metadata, recent session metadata and pending local payment approvals.
+Pairing keys, raw transactions and complete invoices are never returned by status.
+Login protection must be enabled; ordinary authentication/CSRF rules apply.
+
+`POST /api/apps/los-mesh/action` accepts a strict JSON object up to 40,000 bytes:
+
+| `action` | Parameters and behavior |
+|---|---|
+| `install` | `device` stable USB path or `tcp://<private-IP>:<port>` (IPv6 uses brackets), `mode` (`send`, `relay`, `both`), `confirm`, `confirm_password`; broker provisions service and validates Meshtastic identity |
+| `mode` | `mode`, `confirm`, `confirm_password`; change relay/send policy |
+| `peer` | `node` uint32, `name`, `key` 64 hex characters, `allow_relay`, `confirm`, `confirm_password`; save secret locally and authenticate pairing |
+| `remove_peer` | `node`, `confirm`, `confirm_password`; revoke trust and remove pending requests |
+| `preview` | `node` and either `raw_tx` hex or `address`, `amount_sat`, `sat_per_vbyte`; returns `{id, expires, preview}`; unsigned funded proposal expires after two minutes |
+| `send` | Preview `id`, `confirm`, `confirm_password`; sign approved PSBT if needed, then queue binary transmission without local publication |
+| `invoice` | `node` and either `invoice` BOLT11 or `amount_sat`, optional `memo`; create/validate invoice and send to contact |
+| `request` | `node`, mainnet `address`, `amount_sat`, optional `memo`; transmit a payment request |
+| `request_invoice` | `node`, `amount_sat` (1 to 100000000), optional `memo`; request a BOLT11 from a contact; the remote operator explicitly creates and sends it |
+| `pay` | Pending request `id`, exact `amount_sat`, `max_fee_sat`, `confirm`, `confirm_password`; local spending guard plus LND payment, followed by authenticated radio result |
+| `cancel` | Preview/session `id`; release unsigned proposal or stop transfer/pending approval; a delivered signature cannot be revoked |
+
+Mutating policy/spending actions use reauthentication scope `los_mesh`. On-chain
+and Lightning outcomes can be uncertain and are not automatically retried. App
+start/stop/uninstall use the existing `/api/apps/{id}/...` lifecycle with ID
+`los-mesh`; initial installation uses the mesh action because a selected radio
+device is mandatory. See [LOS_MESH.md](LOS_MESH.md) for limits and protocol.
+
+### Guided LOS Mesh contacts
+
+Mesh status additionally returns `nodes` (up to 256 public radio NodeDB entries:
+node, name, short_name, last_heard, via_mqtt) and `pairings` (up to eight pending
+sessions: id, node, name, state, code when ready, expires, local_confirmed,
+remote_confirmed). Node names and reachability are unverified discovery hints.
+No position, radio private keys or channel configuration is returned.
+
+New actions on the existing mesh endpoint:
+- `pair_probe`: node; request a correlated LOS Mesh capability response.
+- `pair_invite`: node, confirm, confirm_password; start an invitation.
+- `pair_accept`: id, confirm, confirm_password; accept an incoming invitation.
+- `pair_confirm`: id, code, confirm, confirm_password; confirm the independently
+  compared code. Both operators must confirm before saving the contact.
+- `pair_cancel`: id; discard a provisional session without granting permissions.
+- `peer_permissions`: node, allow_relay, confirm, confirm_password; explicitly
+  change relay permission on an already verified contact.
+
+Pairings expire after five minutes and are discarded on Manager restart.
+Radio availability and a LOS Mesh response do not constitute authentication.
+
+LOS Mesh TCP transport: `device` accepts literal RFC1918/ULA addresses only, with
+an optional port (default 4403); DNS names, public/loopback/link-local addresses
+and URL paths are rejected. The same value is returned as `app.device` and
+`radio.device`. One bridge owns the active connection, including outside browser
+sessions. Switching requires reauthentication and no pending transfers/previews;
+a failed connection attempts to restore the previous configuration. No automatic
+USB/TCP failover occurs. TCP uses keepalive, bounded I/O, heartbeat nonce zero and
+reconnection with backoff; reconnecting does not authorize payments.
+`radio.name` and `radio.short_name` optionally expose public user names from the
+local NodeInfo. Pairing names use the remote NodeInfo long/short names as display
+hints, never as proof of identity. Existing verified contacts are not renamed.
+
+Mesh action `disconnect` requires an authenticated session, CSRF protection and `confirm`, but no password reauthentication, stops the bridge, preserves configuration/contacts and blocks while transfers or previews are pending. `install` reconnects the saved endpoint. Bare private IP TCP targets default to port 4403 and are saved with the explicit port.
+
+## Bitcoin OP_RETURN (optional native app)
+
+App ID: `opreturn`. The standard App Store install/start/stop/uninstall endpoints
+persist `installed` and `enabled` in PostgreSQL. Installation enables the app;
+navigation follows `installed`, including while stopped. Uninstallation hides
+the page and preserves publication history. No container, daemon, broker action,
+Core wallet, or external LND credential disclosure is involved.
+
+All five endpoints require an authenticated session with login protection
+enabled and the app both installed and running. Mutations use the normal CSRF
+and same-origin checks. Production funding requires a synchronized, unlocked
+Bitcoin **mainnet** LND wallet and confirmed spendable UTXOs, regardless of
+whether its backend is managed Core, native Core, or remote Core.
+
+```text
+GET  /api/apps/opreturn/status
+POST /api/apps/opreturn/preview
+POST /api/apps/opreturn/publish
+GET  /api/apps/opreturn/records
+GET  /api/apps/opreturn/records/{id}
+```
+
+- Status: `{installed:true, enabled:true, ready:boolean, max_bytes:80, max_sat_per_vbyte:1000}`.
+- Preview body: `{text:string, sat_per_vbyte:integer}`. Accepts 1–80 encoded UTF-8
+  bytes of printable text, rejects controls/NUL, and bounds fee rates to 1–1000
+  sat/vB. Constructs exactly one canonical, zero-sat `OP_RETURN` output, funds
+  through WalletKit, inspects inputs/change, and releases every returned lease
+  with a fresh cleanup context before responding. No transaction is published.
+- Preview response: `{preview_id, expires_at, max_fee_sat, text, payload_hex,
+  byte_count, selected_input_count, selected_input_sat, estimated_vbytes,
+  sat_per_vbyte, fee_sat, total_debit_sat}`. `max_fee_sat` is exactly the displayed
+  fee; debit is the fee because all other value returns to wallet change.
+  Preview expires after three minutes, is bound to the authenticated session,
+  payload hash and fee rate, and is replaced by a new preview from that session.
+- Before publishing, call `POST /api/auth/reauth` with
+  `{password:string, scope:"opreturn_publish"}`. Publish body:
+  `{preview_id:string, idempotency_key:string, confirm_publication:true}`.
+  Idempotency keys must contain 16–128 bytes. A preview can fund a publication
+  only once. Reusing the same session/key/preview returns its existing record;
+  rebinding a key is rejected. Fresh reauthentication is required on retries too.
+- Publish rebuilds/funds, rejects any fee above the approved maximum, finalizes
+  through WalletKit, verifies the complete transaction skeleton, durably stores
+  the deterministic TXID, then publishes through LND. Labels contain only the
+  `lightningos:opreturn:` prefix and record ID. Pre-broadcast failures release
+  leases. Funding/preview conflicts return 409, missing reauth 403, unavailable
+  app 503, and missing login 401.
+- Publish/detail return `{id, quote, state, txid, confirmations, block_height,
+  created_at}`, where `quote` contains the preview transaction fields (without
+  its capability/expiry). List returns the latest 100 such records. States:
+  `preparing`, `unknown`, `broadcast`, `confirmed`, `failed`. HTTP 202 may return
+  the known transaction snapshot if the final persistence read is unavailable.
+  Always inspect `state`; HTTP success alone does not imply confirmation.
+- One publication can be in flight for the entire app. A durable `unknown`
+  outcome blocks replacements across sessions/restarts. GET/history and a
+  bounded 30-second in-process worker reconcile the known TXID; neither
+  rebroadcasts nor funds a replacement. An unresolved TXID requires operator
+  investigation, not a new idempotency key. Preparations interrupted before
+  the durable TXID barrier become failed after three minutes; consumed previews
+  remain consumed. WalletKit's lease expiry also bounds locks after process death.
+- Audit events cover preview, publish attempt, broadcast success/failure and
+  confirmation. Metadata contains payload hash, byte count, TXID, fee and result,
+  never plaintext. Text is stored locally in PostgreSQL preview/history records;
+  expired unused previews are pruned. Confirmation tracking continues after
+  uninstall, but app routes remain inaccessible until reinstalled and running.
+
+Broadcast content enters the blockchain only when a miner confirms the
+transaction. Confirmed data is public, permanent and cannot be edited/deleted.
+The UI explicitly confirms this and the fee, shows exact text/hex, supports
+economy/normal/fast/manual fee selection, and makes each TXID a clickable link.
+Links prefer a running locally installed Mempool, with an explicitly labeled
+`mempool.space (external)` fallback. Explorer navigation happens only on click,
+in a new tab without a referrer; the app does not fetch external TXID lookups
+automatically. The separate copy-TXID action remains available.

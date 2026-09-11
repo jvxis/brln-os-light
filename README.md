@@ -946,6 +946,46 @@ LNDg notes:
 - If you see `Is a directory: /var/log/lndg-controller.log`, remove `/var/lib/lightningos/apps-data/lndg/data/lndg-controller.log` on the host and restart LNDg.
 - If LND is using Postgres, LNDg may log `channel.db` missing. This is expected and harmless.
 
+## LOS Mesh: radio, contacts and operating modes
+
+LOS Mesh transports signed Bitcoin transactions and payment requests between LightningOS endpoints using Meshtastic USB radios. Use two compatible radios configured for the same region and channel. The app preserves radio firmware and settings. A node appearing in the radio list does not prove that it is reachable or running LOS Mesh.
+
+**USB or local TCP:** in Radio, choose USB/Serial or Local network — TCP. For TCP,
+enter the radio's private IP and port, for example `192.168.1.50:4403` (IPv6 ULA:
+`[fd00::50]:4403`). Hostnames and public addresses are not accepted. The radio must
+already be connected to Wi-Fi/Ethernet and expose the Meshtastic TCP API. Devices running MUI may not support TCP; check firmware compatibility or use USB.
+
+Confirming the connection replaces the previous active connection. Only one
+transport is active; do not connect a competing client to that radio. The bridge
+keeps the connection open independently of the browser and reconnects with
+backoff, keepalive and protocol heartbeats. Finish/cancel pending transfers and
+previews before switching. A failed connection attempts to restore the previous
+configuration. There is no automatic transport failover or new payment approval
+on reconnect. TCP has no TLS: use a trusted LAN. The bridge is restricted to the
+configured private IP. Compatible physical TCP hardware still needs acceptance
+testing; simulation verifies disconnect/reconnect behavior.
+
+Radio user long/short names are shown when provided by NodeInfo and used as
+display names for new pairings. They are self-reported metadata, not authenticated
+identity: both operators must still compare the pairing code.
+
+1. In **Radio**, select the USB device and install LOS Mesh once. Reconnect if the connection is lost; select a mode and use **Apply mode**, confirming with your LightningOS password.
+2. In **Contacts**, search the radio's known nodes by name or ID. The list has 12-item pages and its own vertical scroll; search covers all retrieved nodes. Check the connection, send an invitation and have the remote operator accept it.
+3. Compare the displayed code in person or over another trusted channel, and confirm on both endpoints. Keys are negotiated automatically. Manual ID/key entry remains under **Advanced**. New contacts have relay permission disabled.
+4. Use **Payments** to review and approve transactions or requests. Receiving a request never automatically pays it. Lightning payments use the regular Lightning network and require local approval.
+
+| Mode | Initiate transaction/request transfers | Publish signed transactions from contacts |
+| --- | --- | --- |
+| **Send without offering relay** (default; formerly Send only) | Yes | No |
+| **Offer relay** (formerly Relay only) | No | Yes, with per-contact permission |
+| **Send and offer relay** (formerly Bidirectional) | Yes | Yes, with per-contact permission |
+
+**Relay** means using your connected node to publish an already signed transaction to the Bitcoin network. Enable **Allow relay** for each trusted contact you want to serve. To send through another endpoint, that endpoint must offer relay and authorize your contact. These modes do not disable reception of replies, invitations or requests, and do not prevent bitcoin from arriving in your wallet.
+
+Selecting a mode only previews the change; **Apply mode** activates it after password confirmation. If a destination rejects transaction publication because its mode or contact permission blocks relay, the sender's history shows **Destination relay not authorized**, provided the reply arrives. The destination currently has no automatic prompt to change mode. After the remote operator enables relay and authorizes the contact, retry explicitly.
+
+Physical pairing with a second radio and actual payment settlement remain acceptance tests for this experimental feature; simulated pairing and wallet tests do not replace those checks.
+
 ## App Store architecture
 - Each app implements a handler in `internal/server/apps_<app>.go`.
 - Apps are registered in `internal/server/apps_registry.go`.
@@ -1022,3 +1062,5 @@ sudo cp -a ui/dist/. /opt/lightningos/ui/
 ```
 
 
+
+**Disconnect radio** closes the connection and stops reconnection attempts while preserving settings and contacts. Reconnect radio starts it again. Finish/cancel pending transfers and previews first. TCP defaults to port 4403 when only a private IP is entered.

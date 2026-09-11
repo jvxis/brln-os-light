@@ -192,10 +192,10 @@ func TestBtcpayImageTracksLatestStableRelease(t *testing.T) {
 	if btcpayImage != appmanifest.BTCPayServerImage {
 		t.Fatalf("server and catalog BTCPay images differ: %q != %q", btcpayImage, appmanifest.BTCPayServerImage)
 	}
-	if btcpayImage != "btcpayserver/btcpayserver:2.4.2" || appmanifest.BTCPayRelease != "2.4.2" {
+	if btcpayImage != "btcpayserver/btcpayserver:2.4.4" || appmanifest.BTCPayRelease != "2.4.4" {
 		t.Fatalf("BTCPay image must track the latest stable release, got %q", btcpayImage)
 	}
-	if btcpayNbxplorerImage != "nicolasdorier/nbxplorer:2.6.10" {
+	if btcpayNbxplorerImage != "nicolasdorier/nbxplorer:2.6.13" {
 		t.Fatalf("NBXplorer must track the companion release recommended by BTCPay, got %q", btcpayNbxplorerImage)
 	}
 }

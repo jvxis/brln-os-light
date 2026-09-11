@@ -7,7 +7,7 @@ export type MeshPairing = { id: string; node: number; name: string; state: strin
 export type MeshStatus = {
   nodes?: MeshRadioNode[]; pairings?: MeshPairing[]
   app: { installed: boolean; status: string; device: string; devices: string[] }
-  radio: { state: string; node: number; name?: string; short_name?: string; device: string; last_receive: string; dropped: number; snr: number; rssi: number; protocol: number }
+  radio: { last_error_code?: number; last_error_at?: string; state: string; node: number; name?: string; short_name?: string; device: string; last_receive: string; dropped: number; snr: number; rssi: number; protocol: number }
   mode: 'send' | 'relay' | 'both'; peers: MeshPeer[]; pending: MeshPending[]
   history: { id: string; peer: number; direction: string; state: string; txid: string; received: number; total: number; created: string }[]
   protocol_version: number

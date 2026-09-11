@@ -116,6 +116,11 @@ func (m *NativeMeshManager) Control(ctx context.Context, p MeshParams, dry bool)
 		if err != nil {
 			return MeshState{}, errors.New("selected USB radio is unavailable")
 		}
+		if _, missing := os.Lstat(meshBinaryPath); os.IsNotExist(missing) {
+			if _, err = m.Runner.Run(ctx, systemdRunPath, "--wait", "--pipe", "--collect", "--quiet", "--unit=lightningos-mesh-repair", "--", "/usr/local/libexec/lightningos-privileged", "--repair-mesh-binary"); err != nil {
+				return MeshState{}, errors.New("mesh binary repair failed")
+			}
+		}
 		if !safeNonEmptyRegularFile(meshBinaryPath) || validateRootOwnedRegularFile(meshBinaryPath, 0755) != nil {
 			return MeshState{}, errors.New("upgrade LightningOS to install the radio bridge")
 		}

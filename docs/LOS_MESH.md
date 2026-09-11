@@ -183,3 +183,9 @@ Validation includes transcript alteration, reflection, expiry, duplicate
 messages, two simulated operators with PostgreSQL persistence, invite flood
 limits and cancelled-session replay. A physical bidirectional acceptance test
 still needs a second LOS Mesh endpoint and radio; simulation is not a substitute.
+
+## 0.5.27 transport compatibility
+
+New data sessions use authenticated LOSM v2 with 100-byte fragments (208-byte envelopes). The Meshtastic Data wrapper, firmware bitfield, 12-byte PKC overhead and 16-byte radio header fit below the 255-byte PHY limit. v1 receive remains supported, including legacy 120-byte fragments. Update both endpoints before sending new sessions; pairing keys remain unchanged. New outgoing content is bounded to 12,800 bytes.
+
+Radio routing errors are shown with their timestamp and are correlated to locally issued packet IDs for two minutes. They are diagnostics only, never proof of invoice delivery or payment.

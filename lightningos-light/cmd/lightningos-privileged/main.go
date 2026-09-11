@@ -3,13 +3,29 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"lightningos-light/internal/mesh"
 	"os"
+	"path/filepath"
 	"time"
 
 	"lightningos-light/internal/privileged"
 )
 
 func main() {
+	if filepath.Base(os.Args[0]) == "lightningos-mesh" {
+		if os.Geteuid() == 0 {
+			os.Exit(1)
+		}
+		mesh.RunDaemon()
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "--repair-mesh-binary" {
+		if err := privileged.RepairMeshBinary(); err != nil {
+			os.Stderr.WriteString("mesh binary repair failed\n")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) != 1 {
 		writeResponse(privileged.ErrorResponse("", "invalid_invocation", "broker accepts no command-line arguments"))
 		return

@@ -1064,3 +1064,7 @@ sudo cp -a ui/dist/. /opt/lightningos/ui/
 
 
 **Disconnect radio** closes the connection and stops reconnection attempts while preserving settings and contacts. Reconnect radio starts it again. Finish/cancel pending transfers and previews first. TCP defaults to port 4403 when only a private IP is entered.
+
+### LOS Mesh / 0.5.27 upgrade
+
+Updates initiated by older releases may omit the standalone `lightningos-mesh` binary. Starting with 0.5.27, installing/connecting LOS Mesh automatically restores a missing executable from the locally installed, root-owned broker. No additional download or reinstall of LightningOS is needed. Existing executables and radio settings are preserved. Both endpoints must use 0.5.27 or later for new fragmented invoice/transaction sessions.

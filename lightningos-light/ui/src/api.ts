@@ -1,5 +1,20 @@
 const base = ''
 
+export type OPReturnQuote = {
+  text: string; payload_hex: string; byte_count: number; selected_input_count: number
+  selected_input_sat: number; estimated_vbytes: number; sat_per_vbyte: number
+  fee_sat: number; total_debit_sat: number
+}
+export type OPReturnPreview = OPReturnQuote & { preview_id: string; expires_at: string; max_fee_sat: number }
+export type OPReturnRecord = { id: string; quote: OPReturnQuote; state: string; txid: string; confirmations: number; block_height: number; created_at: string }
+export const getOPReturnStatus = (): Promise<{ ready: boolean }> => request('/api/apps/opreturn/status')
+export const previewOPReturn = (text: string, sat_per_vbyte: number): Promise<OPReturnPreview> =>
+  request('/api/apps/opreturn/preview', { method: 'POST', body: JSON.stringify({ text, sat_per_vbyte }) })
+export const publishOPReturn = (preview_id: string, idempotency_key: string): Promise<OPReturnRecord> =>
+  request('/api/apps/opreturn/publish', { method: 'POST', body: JSON.stringify({ preview_id, idempotency_key, confirm_publication: true }) })
+export const getOPReturnRecords = (): Promise<OPReturnRecord[]> => request('/api/apps/opreturn/records')
+export const getOPReturnRecord = (id: string): Promise<OPReturnRecord> => request(`/api/apps/opreturn/records/${encodeURIComponent(id)}`)
+
 let csrfToken = ''
 let lndStatusInFlight: Promise<any> | null = null
 let lndStatusCached: any = null

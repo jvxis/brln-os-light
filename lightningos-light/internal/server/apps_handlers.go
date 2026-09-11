@@ -68,6 +68,17 @@ func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for index := range resp {
+		// Catalog refreshes may outlive an install/uninstall and return stale
+		// runtime snapshots. OP_RETURN navigation must use persisted state now.
+		if resp[index].ID == "opreturn" {
+			info, err := (opreturnApp{s}).Info(r.Context())
+			if err != nil {
+				info.Available = false
+				info.Status = "unknown"
+				info.UnavailableMessage = "PostgreSQL app state unavailable"
+			}
+			resp[index] = info
+		}
 		if operation, active := s.currentAppOperation(resp[index].ID); active {
 			operationCopy := operation
 			resp[index].Operation = &operationCopy
@@ -303,6 +314,16 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer finishOperation()
+	// This in-process app persists its state only in PostgreSQL. In particular,
+	// installation must not depend on the privileged storage-root operation.
+	if appID == "opreturn" {
+		if err := app.Install(r.Context()); err != nil {
+			writeAppOperationError(w, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
+		return
+	}
 	if err := ensureAppStorageRoots(r.Context()); err != nil {
 		writeAppOperationError(w, http.StatusInternalServerError, err)
 		return

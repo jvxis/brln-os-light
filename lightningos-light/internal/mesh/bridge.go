@@ -21,19 +21,22 @@ import (
 const SocketPath = "/run/lightningos-mesh/bridge.sock"
 
 type RadioStatus struct {
-	Name        string    `json:"name,omitempty"`
-	ShortName   string    `json:"short_name,omitempty"`
-	Protocol    int       `json:"protocol"`
-	SNR         float32   `json:"snr"`
-	RSSI        int32     `json:"rssi"`
-	State       string    `json:"state"`
-	Node        uint32    `json:"node"`
-	Device      string    `json:"device"`
-	LastReceive time.Time `json:"last_receive"`
-	Dropped     uint64    `json:"dropped"`
+	LastErrorCode uint32    `json:"last_error_code,omitempty"`
+	LastErrorAt   time.Time `json:"last_error_at,omitempty"`
+	Name          string    `json:"name,omitempty"`
+	ShortName     string    `json:"short_name,omitempty"`
+	Protocol      int       `json:"protocol"`
+	SNR           float32   `json:"snr"`
+	RSSI          int32     `json:"rssi"`
+	State         string    `json:"state"`
+	Node          uint32    `json:"node"`
+	Device        string    `json:"device"`
+	LastReceive   time.Time `json:"last_receive"`
+	Dropped       uint64    `json:"dropped"`
 }
 
 type Bridge struct {
+	sent   map[uint32]time.Time
 	nodes  map[uint32]RadioNode
 	mu     sync.Mutex
 	status RadioStatus
@@ -42,7 +45,7 @@ type Bridge struct {
 }
 
 func NewBridge(device string) *Bridge {
-	return &Bridge{nodes: map[uint32]RadioNode{}, status: RadioStatus{Protocol: Version, State: "hardware_disconnected", Device: device}, tx: make(chan RadioPacket, 16)}
+	return &Bridge{sent: map[uint32]time.Time{}, nodes: map[uint32]RadioNode{}, status: RadioStatus{Protocol: Version, State: "hardware_disconnected", Device: device}, tx: make(chan RadioPacket, 16)}
 }
 
 func (b *Bridge) Run(ctx context.Context, open func() (io.ReadWriteCloser, error)) {
@@ -60,6 +63,7 @@ func (b *Bridge) Run(ctx context.Context, open func() (io.ReadWriteCloser, error
 		b.status.ShortName = ""
 		b.nodes = map[uint32]RadioNode{}
 		b.rx = nil
+		b.sent = map[uint32]time.Time{}
 		b.mu.Unlock()
 		for len(b.tx) > 0 {
 			<-b.tx
@@ -133,6 +137,13 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 				cancel()
 				return
 			}
+			request, code, routingErr := decodeRouting(raw)
+			b.mu.Lock()
+			if sentAt, ok := b.sent[request]; routingErr == nil && ok && time.Since(sentAt) < 2*time.Minute && code != 0 {
+				b.status.LastErrorCode = code
+				b.status.LastErrorAt = time.Now().UTC()
+			}
+			b.mu.Unlock()
 			discovered, _ := DecodeRadioNode(raw)
 			packet, node, err := DecodeRadio(raw)
 			if err != nil {
@@ -200,6 +211,14 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 					continue
 				}
 				frame, _ := Frame(raw)
+				b.mu.Lock()
+				for old, at := range b.sent {
+					if time.Since(at) >= 2*time.Minute {
+						delete(b.sent, old)
+					}
+				}
+				b.sent[binary.BigEndian.Uint32(id[:])] = time.Now()
+				b.mu.Unlock()
 				if err = write(frame); err != nil {
 					return
 				}
@@ -235,6 +254,7 @@ func (b *Bridge) Handler() http.Handler {
 		b.mu.Lock()
 		packets := b.rx
 		b.rx = nil
+		b.sent = map[uint32]time.Time{}
 		b.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(packets)

@@ -983,3 +983,5 @@ Links prefer a running locally installed Mempool, with an explicitly labeled
 `mempool.space (external)` fallback. Explorer navigation happens only on click,
 in a new tab without a referrer; the app does not fetch external TXID lookups
 automatically. The separate copy-TXID action remains available.
+
+LOS Mesh status: `radio.last_error_code` and `radio.last_error_at` optionally expose the last correlated Meshtastic routing failure code and UTC timestamp. They contain no invoice or transaction payload and do not change payment approval state.

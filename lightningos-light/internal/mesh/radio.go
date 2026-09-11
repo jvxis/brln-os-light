@@ -78,6 +78,10 @@ func EncodeRadio(p RadioPacket, id uint32) ([]byte, error) {
 		return nil, ErrPacket
 	}
 	data := blob(varint(nil, 1, PrivatePort), 2, p.Payload)
+	// Reserve firmware bitfield (2), PKC (12), and LoRa header (16).
+	if len(data)+2+12+16 > 255 {
+		return nil, ErrPacket
+	}
 	packet := fixed(nil, 2, p.To)
 	packet = blob(packet, 4, data)
 	packet = fixed(packet, 6, id)

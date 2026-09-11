@@ -14,19 +14,20 @@ import (
 )
 
 const (
-	Version          = 1
-	PrivatePort      = 256
-	ChunkSize        = 120
-	MaxChunks        = 128
-	MaxContent       = ChunkSize * MaxChunks
-	HeaderSize       = 92
-	MaxPacket        = HeaderSize + ChunkSize + 16
-	Hello       byte = 1
-	HelloAck    byte = 2
-	Transaction byte = 3
-	ChunkAck    byte = 4
-	Result      byte = 5
-	Cancel      byte = 6
+	Version              = 1
+	PrivatePort          = 256
+	ChunkSize            = 100
+	LegacyChunkSize      = 120
+	MaxChunks            = 128
+	MaxContent           = ChunkSize * MaxChunks
+	HeaderSize           = 92
+	MaxPacket            = HeaderSize + LegacyChunkSize + 16
+	Hello           byte = 1
+	HelloAck        byte = 2
+	Transaction     byte = 3
+	ChunkAck        byte = 4
+	Result          byte = 5
+	Cancel          byte = 6
 )
 
 const Invoice byte = 7
@@ -39,6 +40,7 @@ func dataKind(kind byte) bool {
 var ErrPacket = errors.New("invalid mesh packet")
 
 type Packet struct {
+	WireVersion  byte // Zero retains v1 control/legacy packet encoding.
 	Kind         byte
 	From, To     uint32
 	Session      [16]byte
@@ -61,7 +63,7 @@ func (p Packet) Seal(key []byte) ([]byte, error) {
 	}
 	b := make([]byte, HeaderSize)
 	copy(b, "LOSM")
-	b[4] = Version
+	b[4] = p.version()
 	b[5] = p.Kind
 	b[6] = 0 // Bitcoin mainnet
 	binary.BigEndian.PutUint32(b[8:12], p.From)
@@ -82,7 +84,7 @@ func (p Packet) Seal(key []byte) ([]byte, error) {
 
 func Open(b, key []byte, from, to uint32, now time.Time) (Packet, error) {
 	p := Packet{}
-	if len(b) < HeaderSize+16 || len(b) > MaxPacket || !bytes.Equal(b[:4], []byte("LOSM")) || b[4] != Version || b[6] != 0 || b[7] != 0 {
+	if len(b) < HeaderSize+16 || len(b) > MaxPacket || !bytes.Equal(b[:4], []byte("LOSM")) || (b[4] != 1 && b[4] != 2) || b[6] != 0 || b[7] != 0 {
 		return p, ErrPacket
 	}
 	aead, err := newAEAD(key)
@@ -94,6 +96,7 @@ func Open(b, key []byte, from, to uint32, now time.Time) (Packet, error) {
 	if err != nil {
 		return Packet{}, ErrPacket
 	}
+	p.WireVersion = b[4]
 	p.Kind = b[5]
 	p.From = binary.BigEndian.Uint32(b[8:12])
 	p.To = binary.BigEndian.Uint32(b[12:16])
@@ -120,17 +123,30 @@ func newAEAD(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(b)
 }
 
+func (p Packet) version() byte {
+	if p.WireVersion == 0 {
+		return 1
+	}
+	return p.WireVersion
+}
+
 func (p Packet) validate(now time.Time) error {
-	if p.From == 0 || p.To == 0 || p.To == 0xffffffff || p.From == p.To || p.Session == ([16]byte{}) || p.Kind < Hello || p.Kind > PaymentRequest || len(p.Payload) > ChunkSize || p.Expires <= now.Unix() || p.Expires > now.Add(30*time.Minute).Unix() {
+	chunkSize := LegacyChunkSize
+	if p.version() == 2 {
+		chunkSize = ChunkSize
+	} else if p.version() != 1 {
+		return ErrPacket
+	}
+	if p.From == 0 || p.To == 0 || p.To == 0xffffffff || p.From == p.To || p.Session == ([16]byte{}) || p.Kind < Hello || p.Kind > PaymentRequest || len(p.Payload) > chunkSize || p.Expires <= now.Unix() || p.Expires > now.Add(30*time.Minute).Unix() {
 		return ErrPacket
 	}
 	if dataKind(p.Kind) {
-		if p.Size == 0 || p.Size > MaxContent || p.Total != uint16((p.Size+ChunkSize-1)/ChunkSize) || p.Index >= p.Total {
+		if p.Size == 0 || p.Size > LegacyChunkSize*MaxChunks || p.Total > MaxChunks || p.Total != uint16((int(p.Size)+chunkSize-1)/chunkSize) || p.Index >= p.Total {
 			return ErrPacket
 		}
-		want := ChunkSize
+		want := chunkSize
 		if p.Index == p.Total-1 {
-			want = int(p.Size) - int(p.Index)*ChunkSize
+			want = int(p.Size) - int(p.Index)*chunkSize
 		}
 		if len(p.Payload) != want {
 			return ErrPacket
@@ -156,7 +172,7 @@ func Fragment(from, to uint32, kind byte, content []byte, now time.Time) ([]Pack
 		if end > len(content) {
 			end = len(content)
 		}
-		packets = append(packets, Packet{Kind: kind, From: from, To: to, Session: session, Index: uint16(i), Total: uint16(total), Size: uint32(len(content)), Hash: sha256.Sum256(content), Expires: now.Add(20 * time.Minute).Unix(), Payload: append([]byte{}, content[i*ChunkSize:end]...)})
+		packets = append(packets, Packet{WireVersion: 2, Kind: kind, From: from, To: to, Session: session, Index: uint16(i), Total: uint16(total), Size: uint32(len(content)), Hash: sha256.Sum256(content), Expires: now.Add(20 * time.Minute).Unix(), Payload: append([]byte{}, content[i*ChunkSize:end]...)})
 	}
 	return packets, nil
 }
@@ -178,7 +194,7 @@ func (a *Assembly) Add(p Packet) ([]byte, error) {
 		a.Parts = make(map[uint16][]byte)
 	}
 	f := a.First
-	if p.Kind != f.Kind || p.From != f.From || p.To != f.To || p.Session != f.Session || p.Total != f.Total || p.Size != f.Size || p.Hash != f.Hash || p.Expires != f.Expires {
+	if p.version() != f.version() || p.Kind != f.Kind || p.From != f.From || p.To != f.To || p.Session != f.Session || p.Total != f.Total || p.Size != f.Size || p.Hash != f.Hash || p.Expires != f.Expires {
 		return nil, ErrPacket
 	}
 	if old, ok := a.Parts[p.Index]; ok && !bytes.Equal(old, p.Payload) {

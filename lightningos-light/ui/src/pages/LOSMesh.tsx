@@ -143,7 +143,7 @@ export default function LOSMesh() {
     ? `${text('Remover o contato e suas permissões', 'Remove contact and its permissions')}: ${status?.peers.find(p => p.node === approval.node)?.name || ''}.`
     : approval?.action === 'send'
     ? text('Confirme a transação apresentada na prévia. Uma assinatura transmitida não pode ser revogada pelo cancelamento do envio.', 'Confirm the transaction shown in the preview. Cancelling transmission cannot revoke a delivered signature.')
-    : `${text('Dispositivo', 'Device')}: ${approval?.device || ''}. ${text('Modo', 'Mode')}: ${modeNames[approval?.mode || ''] || ''}. ${approval?.action === 'install' ? text('Esta será a única conexão ativa do LOS Mesh e substituirá a anterior. Use um rádio TCP compatível; T-Deck com MUI não é suportado por TCP.', 'This will be the only active LOS Mesh connection and will replace the previous one. Use a compatible TCP radio; Devices running MUI may not support TCP.') : ''}`
+    : `${text('Dispositivo', 'Device')}: ${approval?.device || ''}. ${text('Modo', 'Mode')}: ${modeNames[approval?.mode || ''] || ''}. ${approval?.action === 'install' ? text('Esta será a única conexão ativa do LOS Mesh e substituirá a anterior. Dispositivos com MUI podem não suportar TCP; confira a compatibilidade do firmware ou utilize USB.', 'This will be the only active LOS Mesh connection and will replace the previous one. Devices running MUI may not support TCP; check firmware compatibility or use USB.') : ''}`
   const canSend = connected && status?.mode !== 'relay' && Boolean(peer)
   const input = 'input-field w-full'
   const paired = status?.peers.filter(p => p.paired) || []

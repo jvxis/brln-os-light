@@ -1193,7 +1193,7 @@ export type StorageTarget = {
 }
 
 export type AppOperationInfo = {
-  action: 'disconnect' | 'pair_probe' | 'pair_invite' | 'pair_accept' | 'pair_confirm' | 'pair_cancel' | 'peer_permissions' | 'install' | 'start' | 'stop' | 'uninstall'
+  action: 'pair_probe' | 'pair_invite' | 'pair_accept' | 'pair_confirm' | 'pair_cancel' | 'peer_permissions' | 'install' | 'start' | 'stop' | 'uninstall'
   started_at: string
   stage?: string
 }

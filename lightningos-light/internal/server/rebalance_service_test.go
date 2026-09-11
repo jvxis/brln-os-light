@@ -49,6 +49,41 @@ func TestSortRebalanceTargetsGivesEnforcedIntentOperationalPriority(t *testing.T
 	}
 }
 
+func TestApplyRefillTargetIntentsKeepsPriorityWhenRoundedScoreDoesNotChange(t *testing.T) {
+	candidates := []rebalanceTarget{
+		{Channel: RebalanceChannel{ChannelID: 1}, Score: 1},
+		{Channel: RebalanceChannel{ChannelID: 2}, Score: 0},
+		{Channel: RebalanceChannel{ChannelID: 3}, Score: -3},
+	}
+	intents := map[uint64][]AutomationIntent{}
+	for _, candidate := range candidates {
+		intents[candidate.Channel.ChannelID] = []AutomationIntent{{
+			ChannelID:  candidate.Channel.ChannelID,
+			Kind:       automationIntentKindRefillTarget,
+			Confidence: 1,
+		}}
+	}
+
+	applied := applyRefillTargetIntents(candidates, intents, AutomationIntentConfig{
+		Mode:                  automationIntentModeEnforce,
+		RefillScoreMultiplier: 1.2,
+		MinConfidence:         .8,
+	}, rebalanceProfileBalanced)
+
+	if applied != len(candidates) {
+		t.Fatalf("expected all low-score intents to be admitted, got %d", applied)
+	}
+	wantScores := []int64{1, 0, -3}
+	for i, candidate := range candidates {
+		if candidate.Score != wantScores[i] || candidate.IntentScoreAfter != wantScores[i] {
+			t.Fatalf("candidate %d score changed after rounded no-op: %+v", i, candidate)
+		}
+		if !candidate.IntentApplied || candidate.AutomationIntent == nil {
+			t.Fatalf("candidate %d lost operational intent priority: %+v", i, candidate)
+		}
+	}
+}
+
 func TestBroadSourceFailureQuarantineRequiresMultipleTargetsAndRecovers(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	stat := recentCooldownStat{
@@ -4621,6 +4656,40 @@ func TestInjectSovereignExplorationSlotsDoesNotDisplaceUrgentTargets(t *testing.
 	}
 	if len(out) <= 5 || !out[5].ExplorationSlot {
 		t.Fatalf("expected exploration fallback immediately after urgent prefix")
+	}
+}
+
+func TestInjectSovereignExplorationSlotsKeepsLaneWhenAllCandidatesUrgent(t *testing.T) {
+	candidates := []rebalanceTarget{
+		{Channel: RebalanceChannel{ChannelID: 1, CapacitySat: 1_000_000, LocalPct: 1.0}, Score: 100},
+		{Channel: RebalanceChannel{ChannelID: 2, CapacitySat: 1_000_000, LocalPct: 1.2}, Score: 90},
+		{Channel: RebalanceChannel{ChannelID: 3, CapacitySat: 1_000_000, LocalPct: 1.4}, Score: 80},
+		{Channel: RebalanceChannel{ChannelID: 4, CapacitySat: 1_000_000, LocalPct: 2.5}, Score: 70},
+		{Channel: RebalanceChannel{ChannelID: 5, CapacitySat: 1_000_000, LocalPct: 2.9}, Score: 60},
+	}
+
+	// Production shape observed on BRLN HUB: maxJobs=3, pct=20 gives two
+	// deterministic urgent positions plus one exploration position. Before the
+	// all-urgent fallback, the urgent prefix consumed the entire list and no
+	// candidate ever received the exploration bypass.
+	out := injectSovereignExplorationSlots(candidates, 3, 20, nil, nil)
+	if len(out) != len(candidates) {
+		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
+	}
+	if out[0].ExplorationSlot || out[1].ExplorationSlot {
+		t.Fatalf("top urgent exploitation positions must remain deterministic: %+v", out[:2])
+	}
+	marked := 0
+	for _, candidate := range out {
+		if candidate.ExplorationSlot {
+			marked++
+		}
+	}
+	if marked != 1 {
+		t.Fatalf("expected exactly one urgent exploration candidate, got %d", marked)
+	}
+	if !out[2].ExplorationSlot {
+		t.Fatalf("expected exploration candidate in the configured third slot: %+v", out)
 	}
 }
 

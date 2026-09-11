@@ -11494,14 +11494,17 @@ func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, 
 		keepTop = probeCount + 1
 	}
 	// Do not let a random exploration slot displace a critical/high-outbound
-	// target. sortRebalanceTargets places urgent targets at the front, so keep
-	// the entire urgent prefix deterministic. Exploration remains immediately
-	// behind it as a fallback when an urgent target is rejected by later gates.
+	// target with a normal-liquidity one. sortRebalanceTargets places urgent
+	// targets at the front, so keep the entire urgent prefix deterministic when
+	// a normal-liquidity tail exists. When every candidate is urgent, retaining
+	// the whole prefix would suppress exploration indefinitely; preserve the
+	// configured deterministic positions and draw the exploration slot from the
+	// remaining urgent tail instead.
 	urgentEnd := probeCount
 	for urgentEnd < len(candidates) && sovereignOutboundUrgency(candidates[urgentEnd].Channel) > sovereignOutboundUrgencyNormal {
 		urgentEnd++
 	}
-	if keepTop < urgentEnd {
+	if urgentEnd < len(candidates) && keepTop < urgentEnd {
 		keepTop = urgentEnd
 	}
 	if keepTop >= len(candidates) {
@@ -12084,9 +12087,6 @@ func applyRefillTargetIntents(candidates []rebalanceTarget, intents map[uint64][
 			// zero instead of multiplying the loss and accidentally deprioritizing
 			// the channel the intent is meant to favor.
 			after = int64(math.Round(float64(before) / multiplier))
-		}
-		if after == before {
-			continue
 		}
 		intentCopy := *intent
 		candidates[i].AutomationIntent = &intentCopy

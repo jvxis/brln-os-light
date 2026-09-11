@@ -211,6 +211,7 @@ type Broker struct {
 	LNDManagerCredential LNDManagerCredentialManager
 	BitcoinStorage       BitcoinStorageManager
 	BitcoinConfig        BitcoinConfigManager
+	Mesh                 MeshManager
 	Loop                 LoopManager
 	Elements             ElementsManager
 	PeerSwap             PeerSwapManager
@@ -309,7 +310,7 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		if configured < privilegedImageProbeTimeout {
 			return privilegedImageProbeTimeout
 		}
-	case OperationSystemIntegrationsApply, OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove:
+	case OperationMesh, OperationSystemIntegrationsApply, OperationAppLifecycle, OperationAppRemove, OperationAppAdminReset, OperationBitcoinConsumerNetworkEnsure, OperationLoopEnsure, OperationLoopLifecycle, OperationLoopRemove, OperationElementsEnsure, OperationElementsLifecycle, OperationElementsRemove, OperationPeerSwapEnsure, OperationPeerSwapLifecycle, OperationPeerSwapRemove, OperationTapdEnsure, OperationTapdLifecycle, OperationTapdRemove, OperationTapdCLI, OperationPublicPoolEnsure, OperationPublicPoolLifecycle, OperationPublicPoolRemove, OperationBarkWalletEnsure, OperationBarkWalletLifecycle, OperationBarkWalletRemove:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}
@@ -897,6 +898,19 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "bitcoin_consumer_network_failed", errors.New("bitcoin consumer network ensure failed")
 		}
 		return state, "", nil
+	case OperationMesh:
+		if broker.Mesh == nil {
+			return nil, "broker_unavailable", errors.New("LOS Mesh manager unavailable")
+		}
+		var params MeshParams
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			return nil, "invalid_request", errors.New("invalid mesh params")
+		}
+		state, err := broker.Mesh.Control(ctx, params, request.DryRun)
+		if err != nil {
+			return nil, "mesh_control_failed", errors.New("LOS Mesh operation failed; verify the selected USB device and service")
+		}
+		return state, "", nil
 	case OperationLoopStatus:
 		if broker.Loop == nil {
 			return nil, "broker_unavailable", errors.New("Lightning Loop manager is unavailable")
@@ -1294,7 +1308,7 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
-	case OperationManagerFirewallConfigure:
+	case OperationMesh, OperationManagerFirewallConfigure:
 		return true
 	case OperationAppLNDHostAccessEnsure:
 		return true
@@ -1311,7 +1325,7 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
-	case OperationManagerFirewallConfigure:
+	case OperationMesh, OperationManagerFirewallConfigure:
 		return true
 	case OperationAppLNDHostAccessEnsure:
 		return true

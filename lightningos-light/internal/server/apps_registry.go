@@ -26,6 +26,7 @@ func (s *Server) appRegistry() ([]appHandler, error) {
 		newFswapApp(s),
 		newTapdApp(s),
 		newLoopApp(s),
+		newMeshApp(s),
 		newLoopOutBRLNApp(s),
 		newMagmaApp(s),
 	}

@@ -71,6 +71,7 @@ func main() {
 		BitcoinStorage:       privileged.NewBitcoinCoreStorageManager(),
 		BitcoinConfig:        privileged.NewBitcoinCoreConfigManager(),
 		Loop:                 privileged.NewNativeLoopManager(runner),
+		Mesh:                 &privileged.NativeMeshManager{Runner: runner},
 		Elements:             privileged.NewNativeElementsManager(runner),
 		PeerSwap:             privileged.NewNativePeerSwapManager(runner),
 		Tapd:                 privileged.NewNativeTapdManager(runner),

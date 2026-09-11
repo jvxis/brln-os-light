@@ -706,10 +706,11 @@ build_manager() {
   (cd "$REPO_ROOT" && \
     GOFLAGS="-mod=mod" go mod download && \
     GOFLAGS="-mod=mod -buildvcs=false" go build -o dist/lightningos-manager ./cmd/lightningos-manager && \
-    GOFLAGS="-mod=mod -buildvcs=false" go build -o dist/lightningos-privileged ./cmd/lightningos-privileged)
+    GOFLAGS="-mod=mod -buildvcs=false" go build -o dist/lightningos-privileged ./cmd/lightningos-privileged && \
+    GOFLAGS="-mod=mod -buildvcs=false" go build -o dist/lightningos-mesh ./cmd/lightningos-mesh)
   install -m 0755 "$REPO_ROOT/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
   local broker_path
-  for broker_path in /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
+  for broker_path in /usr/local/libexec/lightningos-mesh /usr/local/libexec /var/log/lightningos-privileged /run/lock/lightningos "$PRIVILEGED_BROKER" "$PRIVILEGED_TMPFILES_CONFIG"; do
     [[ ! -L "$broker_path" ]] || die "Refusing symlinked privileged broker path: $broker_path"
   done
   [[ -f "$REPO_ROOT/templates/lightningos-privileged.tmpfiles.conf" ]] || die "Privileged broker tmpfiles template is missing"
@@ -719,6 +720,7 @@ build_manager() {
   install -o root -g root -m 0644 "$REPO_ROOT/templates/lightningos-privileged.tmpfiles.conf" "$PRIVILEGED_TMPFILES_CONFIG"
   /usr/bin/systemd-tmpfiles --create "$PRIVILEGED_TMPFILES_CONFIG"
   install -o root -g root -m 0755 "$REPO_ROOT/dist/lightningos-privileged" "$PRIVILEGED_BROKER"
+  install -o root -g root -m 0755 "$REPO_ROOT/dist/lightningos-mesh" /usr/local/libexec/lightningos-mesh
   local broker_response
   broker_response=$(printf '%s\n' '{"version":1,"request_id":"install_self_test","operation":"self_test","params":{}}' | env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$PRIVILEGED_BROKER")
   if ! jq -e '.version == 1 and .request_id == "install_self_test" and .ok == true and .result.ready == true' >/dev/null <<<"$broker_response"; then

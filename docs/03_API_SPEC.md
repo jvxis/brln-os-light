@@ -845,6 +845,70 @@ POST   /api/chat/send
 ```
 
 `POST /api/chat/read` marks the latest inbound message for one `peer_pubkey` as read. The read timestamp is persisted on the node and returned as `last_read_at` by the inbox, so unread state is shared across browsers. Existing browser-local state is migrated by the UI when possible.
+# LOS Mesh API
+
+`GET /api/apps/los-mesh/status` returns `app` (installed/status/device/devices),
+`radio` (state/node/protocol/SNR/RSSI/last_receive/dropped), operation `mode`, paired
+contact metadata, recent session metadata and pending local payment approvals.
+Pairing keys, raw transactions and complete invoices are never returned by status.
+Login protection must be enabled; ordinary authentication/CSRF rules apply.
+
+`POST /api/apps/los-mesh/action` accepts a strict JSON object up to 40,000 bytes:
+
+| `action` | Parameters and behavior |
+|---|---|
+| `install` | `device` stable USB path or `tcp://<private-IP>:<port>` (IPv6 uses brackets), `mode` (`send`, `relay`, `both`), `confirm`, `confirm_password`; broker provisions service and validates Meshtastic identity |
+| `mode` | `mode`, `confirm`, `confirm_password`; change relay/send policy |
+| `peer` | `node` uint32, `name`, `key` 64 hex characters, `allow_relay`, `confirm`, `confirm_password`; save secret locally and authenticate pairing |
+| `remove_peer` | `node`, `confirm`, `confirm_password`; revoke trust and remove pending requests |
+| `preview` | `node` and either `raw_tx` hex or `address`, `amount_sat`, `sat_per_vbyte`; returns `{id, expires, preview}`; unsigned funded proposal expires after two minutes |
+| `send` | Preview `id`, `confirm`, `confirm_password`; sign approved PSBT if needed, then queue binary transmission without local publication |
+| `invoice` | `node` and either `invoice` BOLT11 or `amount_sat`, optional `memo`; create/validate invoice and send to contact |
+| `request` | `node`, mainnet `address`, `amount_sat`, optional `memo`; transmit a payment request |
+| `request_invoice` | `node`, `amount_sat` (1 to 100000000), optional `memo`; request a BOLT11 from a contact; the remote operator explicitly creates and sends it |
+| `pay` | Pending request `id`, exact `amount_sat`, `max_fee_sat`, `confirm`, `confirm_password`; local spending guard plus LND payment, followed by authenticated radio result |
+| `cancel` | Preview/session `id`; release unsigned proposal or stop transfer/pending approval; a delivered signature cannot be revoked |
+
+Mutating policy/spending actions use reauthentication scope `los_mesh`. On-chain
+and Lightning outcomes can be uncertain and are not automatically retried. App
+start/stop/uninstall use the existing `/api/apps/{id}/...` lifecycle with ID
+`los-mesh`; initial installation uses the mesh action because a selected radio
+device is mandatory. See [LOS_MESH.md](LOS_MESH.md) for limits and protocol.
+
+### Guided LOS Mesh contacts
+
+Mesh status additionally returns `nodes` (up to 256 public radio NodeDB entries:
+node, name, short_name, last_heard, via_mqtt) and `pairings` (up to eight pending
+sessions: id, node, name, state, code when ready, expires, local_confirmed,
+remote_confirmed). Node names and reachability are unverified discovery hints.
+No position, radio private keys or channel configuration is returned.
+
+New actions on the existing mesh endpoint:
+- `pair_probe`: node; request a correlated LOS Mesh capability response.
+- `pair_invite`: node, confirm, confirm_password; start an invitation.
+- `pair_accept`: id, confirm, confirm_password; accept an incoming invitation.
+- `pair_confirm`: id, code, confirm, confirm_password; confirm the independently
+  compared code. Both operators must confirm before saving the contact.
+- `pair_cancel`: id; discard a provisional session without granting permissions.
+- `peer_permissions`: node, allow_relay, confirm, confirm_password; explicitly
+  change relay permission on an already verified contact.
+
+Pairings expire after five minutes and are discarded on Manager restart.
+Radio availability and a LOS Mesh response do not constitute authentication.
+
+LOS Mesh TCP transport: `device` accepts literal RFC1918/ULA addresses only, with
+an optional port (default 4403); DNS names, public/loopback/link-local addresses
+and URL paths are rejected. The same value is returned as `app.device` and
+`radio.device`. One bridge owns the active connection, including outside browser
+sessions. Switching requires reauthentication and no pending transfers/previews;
+a failed connection attempts to restore the previous configuration. No automatic
+USB/TCP failover occurs. TCP uses keepalive, bounded I/O, heartbeat nonce zero and
+reconnection with backoff; reconnecting does not authorize payments.
+`radio.name` and `radio.short_name` optionally expose public user names from the
+local NodeInfo. Pairing names use the remote NodeInfo long/short names as display
+hints, never as proof of identity. Existing verified contacts are not renamed.
+
+Mesh action `disconnect` requires an authenticated session, CSRF protection and `confirm`, but no password reauthentication, stops the bridge, preserves configuration/contacts and blocks while transfers or previews are pending. `install` reconnects the saved endpoint. Bare private IP TCP targets default to port 4403 and are saved with the explicit port.
 
 ## Bitcoin OP_RETURN (optional native app)
 

@@ -17,6 +17,7 @@ import taprootAssetsIcon from '../assets/apps/taproot-assets.svg'
 import barkWalletIcon from '../assets/apps/bark-wallet.svg'
 import btcpayIcon from '../assets/apps/btcpay.svg'
 import loopIcon from '../assets/apps/lightning-loop.svg'
+import meshIcon from '../assets/apps/los-mesh.svg'
 import loopOutBRLNIcon from '../assets/apps/loopout-brln.png'
 import magmaSalesIcon from '../assets/apps/magma-sales.svg'
 import opreturnIcon from '../assets/apps/opreturn.svg'
@@ -69,6 +70,7 @@ type CatalogStorageDialog = {
 }
 
 const iconMap: Record<string, string> = {
+  'los-mesh': meshIcon,
   opreturn: opreturnIcon,
   lndg: lndgIcon,
   bitcoincore: bitcoincoreIcon,
@@ -92,6 +94,7 @@ const iconMap: Record<string, string> = {
 }
 
 const internalRoutes: Record<string, string> = {
+  'los-mesh': 'los-mesh',
   opreturn: 'opreturn',
   bitcoincore: 'bitcoin-local',
   elements: 'elements',
@@ -1150,7 +1153,7 @@ export default function AppStore() {
 
               <div className="flex flex-wrap items-center gap-3">
                 {!app.installed && (
-                  <button className="btn-primary" disabled={isBusy || unavailable} title={unavailable ? unavailableMessage : undefined} onClick={() => handleAction(app.id, 'install')}>
+                  <button className="btn-primary" disabled={isBusy || unavailable} title={unavailable ? unavailableMessage : undefined} onClick={() => app.id === 'los-mesh' ? window.location.hash = 'los-mesh-setup' : handleAction(app.id, 'install')}>
                     {isBusy ? t('appStore.installing') : t('appStore.install')}
                   </button>
                 )}
@@ -1159,6 +1162,7 @@ export default function AppStore() {
                     {t('appStore.bitcoinLegacyMigrationAction')}
                   </button>
                 )}
+                {app.id === 'los-mesh' && app.installed && app.status !== 'running' && <a className="btn-primary" href="#los-mesh">{t('common.open')}</a>}
                 {app.installed && app.status === 'running' && !app.legacy_migration_required && (
                   <>
                     {internalRoute && (

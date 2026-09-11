@@ -254,7 +254,6 @@ func (b *Bridge) Handler() http.Handler {
 		b.mu.Lock()
 		packets := b.rx
 		b.rx = nil
-		b.sent = map[uint32]time.Time{}
 		b.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(packets)

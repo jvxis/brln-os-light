@@ -908,4 +908,4 @@ reconnection with backoff; reconnecting does not authorize payments.
 local NodeInfo. Pairing names use the remote NodeInfo long/short names as display
 hints, never as proof of identity. Existing verified contacts are not renamed.
 
-Mesh action `disconnect` requires `confirm` and fresh reauthentication, stops the bridge, preserves configuration/contacts and blocks while transfers or previews are pending. `install` reconnects the saved endpoint. Bare private IP TCP targets default to port 4403 and are saved with the explicit port.
+Mesh action `disconnect` requires an authenticated session, CSRF protection and `confirm`, but no password reauthentication, stops the bridge, preserves configuration/contacts and blocks while transfers or previews are pending. `install` reconnects the saved endpoint. Bare private IP TCP targets default to port 4403 and are saved with the explicit port.

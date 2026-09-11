@@ -66,7 +66,7 @@ export default function LOSMesh() {
     finally { setBusy(false) }
   }
   const act = <T,>(payload: MeshAction): Promise<T | undefined> => {
-    if (!['disconnect', 'install', 'mode', 'peer', 'remove_peer', 'send', 'pay', 'pair_invite', 'pair_accept', 'pair_confirm', 'peer_permissions'].includes(payload.action)) return execute<T>(payload)
+    if (!['install', 'mode', 'peer', 'remove_peer', 'send', 'pay', 'pair_invite', 'pair_accept', 'pair_confirm', 'peer_permissions'].includes(payload.action)) return execute<T>(payload)
     if (approvalResult.current) return Promise.resolve(undefined)
     setPassword(''); setApprovalError(''); setApproval({ ...payload, confirm: true })
     return new Promise(resolve => { approvalResult.current = value => resolve(value as T | undefined) })
@@ -184,7 +184,7 @@ export default function LOSMesh() {
       <p className="text-sm text-fog/75">{text('Selecionar um modo não o aplica automaticamente.', 'Selecting a mode does not apply it automatically.')}</p>
       {modeChanged && <p role="status" className="text-sm text-amber-200">{text('Alteração pendente', 'Pending change')}: {modeNames[status!.mode]} → {modeNames[selectedMode]}. {text('Clique em Aplicar modo e confirme com sua senha no modal.', 'Click Apply mode and confirm your password in the dialog.')}</p>}
       <div className="flex flex-wrap items-center gap-3">
-        {status?.app.installed && status.app.status !== 'stopped' && <button className="btn-secondary" disabled={busy} onClick={() => void act({ action: 'disconnect' })}>{text('Desconectar rádio', 'Disconnect radio')}</button>}
+        {status?.app.installed && status.app.status !== 'stopped' && <button className="btn-secondary" disabled={busy} onClick={() => void act({ action: 'disconnect', confirm: true })}>{text('Desconectar rádio', 'Disconnect radio')}</button>}
         {status && (!status.app.installed || !connected || deviceChanged) && <button className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed" disabled={busy || !deviceAvailable} onClick={() => void act({ action: 'install', device: selectedDevice, mode: status.app.installed ? status.mode : selectedMode })}>{!status.app.installed ? text('Instalar LOS Mesh', 'Install LOS Mesh') : deviceChanged ? text('Conectar rádio selecionado', 'Connect selected radio') : text('Reconectar rádio', 'Reconnect radio')}</button>}
         {status?.app.installed && (modeChanged
           ? <button className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed" disabled={busy} onClick={() => void act({ action: 'mode', mode: selectedMode })}>{text('Aplicar modo', 'Apply mode')}</button>

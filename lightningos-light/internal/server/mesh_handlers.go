@@ -174,7 +174,7 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Owner = session.ID
 	// Policy changes and spending actions require fresh LOS Mesh reauthentication.
-	if req.Action != "pair_probe" && req.Action != "pair_cancel" && req.Action != "preview" && req.Action != "invoice" && req.Action != "request" && req.Action != "request_invoice" && req.Action != "cancel" {
+	if req.Action != "disconnect" && req.Action != "pair_probe" && req.Action != "pair_cancel" && req.Action != "preview" && req.Action != "invoice" && req.Action != "request" && req.Action != "request_invoice" && req.Action != "cancel" {
 		if !s.requireSensitiveReauth(w, r, authScopeMesh, req.Password, "mesh_reauth_required", "confirm your password for LOS Mesh") {
 			return
 		}

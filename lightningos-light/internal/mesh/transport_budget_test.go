@@ -3,9 +3,19 @@ package mesh
 import (
 	"bytes"
 	"crypto/sha256"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestPacketPollingPreservesRoutingCorrelation(t *testing.T) {
+	b := NewBridge("tcp://192.168.1.2:4403")
+	b.sent[123] = time.Now()
+	b.Handler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/packets", nil))
+	if _, ok := b.sent[123]; !ok {
+		t.Fatal("Manager polling erased pending radio error correlation")
+	}
+}
 
 func TestInvoicePKCBudget(t *testing.T) {
 	key := bytes.Repeat([]byte{1}, 32)

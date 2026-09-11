@@ -3,6 +3,7 @@ package lndclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -77,6 +78,8 @@ type Client struct {
 	nodeAliasCache     map[string]nodeAliasCacheEntry
 	grpcMu             sync.Mutex
 	grpcConns          map[grpcConnRole]*grpc.ClientConn
+	grpcTLSFingerprint [sha256.Size]byte
+	grpcTLSKnown       bool
 }
 
 type nodeAliasCacheEntry struct {
@@ -804,6 +807,14 @@ func (c *Client) dialOptions(withMacaroon bool) ([]grpc.DialOption, error) {
 	return opts, nil
 }
 
+func (c *Client) tlsCertificateFingerprint() ([sha256.Size]byte, error) {
+	raw, err := os.ReadFile(c.cfg.LND.TLSCertPath)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	return sha256.Sum256(raw), nil
+}
+
 func (c *Client) dial(ctx context.Context, withMacaroon bool) (*grpc.ClientConn, error) {
 	opts, err := c.dialOptions(withMacaroon)
 	if err != nil {
@@ -850,6 +861,20 @@ func (c *Client) sharedConn(ctx context.Context, role grpcConnRole) (*grpc.Clien
 	if c.grpcConns == nil {
 		c.grpcConns = make(map[grpcConnRole]*grpc.ClientConn)
 	}
+	// Tests and narrowly scoped in-process clients may inject an already-open
+	// shared connection without a certificate fingerprint. Production shared
+	// connections created below always record one, so only reuse this legacy
+	// state instead of trying to read an unrelated or empty TLS path.
+	if conn := c.grpcConns[role]; conn != nil && !c.grpcTLSKnown {
+		return conn, nil
+	}
+	fingerprint, err := c.tlsCertificateFingerprint()
+	if err != nil {
+		return nil, err
+	}
+	if c.grpcTLSKnown && fingerprint != c.grpcTLSFingerprint {
+		_ = c.closeSharedConnsLocked("LND TLS certificate changed")
+	}
 	if conn := c.grpcConns[role]; conn != nil {
 		return conn, nil
 	}
@@ -863,6 +888,8 @@ func (c *Client) sharedConn(ctx context.Context, role grpcConnRole) (*grpc.Clien
 		return nil, err
 	}
 	c.grpcConns[role] = conn
+	c.grpcTLSFingerprint = fingerprint
+	c.grpcTLSKnown = true
 	if c.logger != nil {
 		c.logger.Printf("lndclient: shared grpc connection opened role=%s host=%s", role, c.cfg.LND.GRPCHost)
 	}
@@ -875,7 +902,10 @@ func (c *Client) Close() error {
 	}
 	c.grpcMu.Lock()
 	defer c.grpcMu.Unlock()
+	return c.closeSharedConnsLocked("client closed")
+}
 
+func (c *Client) closeSharedConnsLocked(reason string) error {
 	var firstErr error
 	for role, conn := range c.grpcConns {
 		if conn == nil {
@@ -885,10 +915,11 @@ func (c *Client) Close() error {
 			firstErr = err
 		}
 		if c.logger != nil {
-			c.logger.Printf("lndclient: shared grpc connection closed role=%s", role)
+			c.logger.Printf("lndclient: shared grpc connection closed role=%s reason=%s", role, reason)
 		}
 		delete(c.grpcConns, role)
 	}
+	c.grpcTLSKnown = false
 	return firstErr
 }
 

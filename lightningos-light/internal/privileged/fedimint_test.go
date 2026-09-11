@@ -94,6 +94,35 @@ func TestFedimintGatewaySnapshotUsesDedicatedCredentialAndClosedPaths(t *testing
 	}
 }
 
+func TestFedimintGatewaySnapshotFollowsLNDCertificateRotation(t *testing.T) {
+	fixture := writeTestFedimintGateway(t)
+	files, err := fixture.manager.validatedFedimintFiles(appmanifest.FedimintGatewayID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := fixture.manager.createFedimintSnapshot(appmanifest.FedimintGatewayID, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(snapshot.root, "lnd", appmanifest.FedimintGatewayTLSFile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rotated := testLNDgCertificate(t, "host.docker.internal")
+	if err := os.WriteFile(filepath.Join(fixture.lndRoot, "tls.cert"), rotated, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.manager.refreshFedimintGatewaySnapshotCertificate(snapshot.root); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(snapshot.root, "lnd", appmanifest.FedimintGatewayTLSFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, rotated) {
+		t.Fatal("Fedimint Gateway snapshot did not follow the LND-owned certificate rotation")
+	}
+}
+
 func TestFedimintGatewayRejectsAdminMacaroonAndTamperedDeclaration(t *testing.T) {
 	fixture := writeTestFedimintGateway(t)
 	admin, _ := os.ReadFile(filepath.Join(fixture.lndRoot, "data", "chain", "bitcoin", "mainnet", "admin.macaroon"))

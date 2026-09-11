@@ -578,6 +578,7 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 	var cleanup func()
 	var images []string
 	var legacyBitcoin *preparedLegacyBitcoinMigration
+	var lnbitsRESTEndpoint string
 	switch manifest.ID {
 	case appmanifest.CPUMinerID:
 		composeRaw, envRaw, err := manager.validatedCPUMinerFiles()
@@ -677,6 +678,7 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			return err
 		}
 		images = []string{appmanifest.LNbitsImage}
+		lnbitsRESTEndpoint = files.restEndpoint
 		if dryRun {
 			return nil
 		}
@@ -835,24 +837,7 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			if err := prepareLNbitsWritableData(filepath.Join(appsDataRoot, appmanifest.LNbitsID, "data")); err != nil {
 				return errors.New("LNbits writable data preparation failed")
 			}
-			if err := manager.migrateLNbitsLegacySettings(ctx); err != nil {
-				return err
-			}
-			if err := manager.ensureLNbitsHostAccess(ctx); err != nil {
-				return err
-			}
-			// A clean install does not have lnbits_default yet. Materialize the
-			// reviewed container and its network without starting it, so the
-			// broker can bind the internal LND REST firewall rule to the actual
-			// Compose subnet before LNbits becomes reachable.
-			createArgs := append(append([]string(nil), args...), "create")
-			if _, err := manager.Runner.Run(ctx, commandPath, createArgs...); err != nil {
-				return errors.New("LNbits container preparation failed")
-			}
-			if err := manager.ensureLNbitsInternalFirewall(ctx); err != nil {
-				return err
-			}
-			if err := manager.refreshLNbitsSnapshotCertificate(snapshot.root); err != nil {
+			if err := manager.migrateLNbitsLegacySettings(ctx, lnbitsRESTEndpoint); err != nil {
 				return err
 			}
 		}
@@ -1209,8 +1194,11 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 		}
 		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.LNbitsID:
-		_, err := manager.validatedLNbitsFiles()
+		files, err := manager.validatedLNbitsFiles()
 		if err != nil {
+			return inspection, err
+		}
+		if err := manager.refreshLNbitsSnapshotCertificate(files.certificateRaw); err != nil {
 			return inspection, err
 		}
 		return manager.inspectCatalogRuntime(ctx, manifest, false)

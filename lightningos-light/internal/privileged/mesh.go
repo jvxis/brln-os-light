@@ -104,6 +104,10 @@ func (m *NativeMeshManager) Control(ctx context.Context, p MeshParams, dry bool)
 		return MeshState{Status: "validated"}, nil
 	}
 	if p.Action == "install" {
+		if strings.HasPrefix(p.Device, "tcp://") {
+			address, _ := mesh.TCPAddress(p.Device)
+			p.Device = "tcp://" + address
+		}
 		device := p.Device
 		var err error
 		if !strings.HasPrefix(p.Device, "tcp://") {

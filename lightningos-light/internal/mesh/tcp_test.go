@@ -11,6 +11,12 @@ import (
 )
 
 func TestTCPAddressPolicy(t *testing.T) {
+	for input, want := range map[string]string{"tcp://192.168.1.50": "192.168.1.50:4403", "tcp://[fd00::50]": "[fd00::50]:4403", "tcp://fd00::50": "[fd00::50]:4403", "tcp://192.168.1.50:4500": "192.168.1.50:4500"} {
+		got, err := TCPAddress(input)
+		if err != nil || got != want {
+			t.Fatalf("%s: %s %v", input, got, err)
+		}
+	}
 	for _, target := range []string{"tcp://192.168.1.50:4403", "tcp://10.1.2.3:4403", "tcp://[fd00::1234]:4403"} {
 		if _, err := TCPAddress(target); err != nil {
 			t.Fatal(target, err)

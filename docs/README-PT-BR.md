@@ -1055,3 +1055,5 @@ sudo cp -a ui/dist/. /opt/lightningos/ui/
 Licenciado sob a Licenca MIT. Veja `LICENSE` para o texto canonico e `LICENSE.pt-BR.md` para a traducao informativa em PT-BR.
 
 
+
+**Desconectar rádio** encerra a conexão e interrompe as tentativas de reconexão, preservando configurações e contatos. Reconectar rádio inicia novamente. Conclua/cancele transferências e prévias pendentes antes. TCP usa a porta 4403 quando apenas o IP privado é informado.

@@ -897,7 +897,7 @@ Pairings expire after five minutes and are discarded on Manager restart.
 Radio availability and a LOS Mesh response do not constitute authentication.
 
 LOS Mesh TCP transport: `device` accepts literal RFC1918/ULA addresses only, with
-an explicit port (normally 4403); DNS names, public/loopback/link-local addresses
+an optional port (default 4403); DNS names, public/loopback/link-local addresses
 and URL paths are rejected. The same value is returned as `app.device` and
 `radio.device`. One bridge owns the active connection, including outside browser
 sessions. Switching requires reauthentication and no pending transfers/previews;
@@ -907,3 +907,5 @@ reconnection with backoff; reconnecting does not authorize payments.
 `radio.name` and `radio.short_name` optionally expose public user names from the
 local NodeInfo. Pairing names use the remote NodeInfo long/short names as display
 hints, never as proof of identity. Existing verified contacts are not renamed.
+
+Mesh action `disconnect` requires `confirm` and fresh reauthentication, stops the bridge, preserves configuration/contacts and blocks while transfers or previews are pending. `install` reconnects the saved endpoint. Bare private IP TCP targets default to port 4403 and are saved with the explicit port.

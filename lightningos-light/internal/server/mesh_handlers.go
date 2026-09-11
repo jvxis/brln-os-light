@@ -102,7 +102,7 @@ func (s *Server) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	radio := mesh.RadioStatus{State: app.Status}
-	if app.Installed {
+	if app.Installed && app.Status != "stopped" {
 		if m.bridge(ctx, "GET", "/status", nil, &radio) != nil && app.Status == "running" {
 			radio.State = "communication_error"
 		}
@@ -187,6 +187,20 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 	switch req.Action {
 	case "pair_probe", "pair_invite", "pair_accept", "pair_confirm", "pair_cancel", "peer_permissions":
 		result, err = m.pairAction(ctx, req)
+	case "disconnect":
+		if !req.Confirm {
+			err = errors.New("confirm disconnecting the radio")
+			break
+		}
+		if len(m.outgoing) > 0 || len(m.incoming) > 0 || len(m.pending) > 0 || len(m.proposals) > 0 {
+			err = errors.New("finish or cancel pending transfers and previews before disconnecting")
+			break
+		}
+		_, err = system.MeshControlWithBroker(ctx, "stop", "")
+		if err == nil {
+			m.pairings = nil
+			s.invalidateAppListCache()
+		}
 	case "install":
 		if !req.Confirm || (req.Mode != "send" && req.Mode != "relay" && req.Mode != "both") {
 			err = errors.New("choose send, relay or both")

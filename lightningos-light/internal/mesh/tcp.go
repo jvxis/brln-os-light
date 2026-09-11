@@ -17,6 +17,13 @@ func TCPAddress(device string) (string, error) {
 		return "", errors.New("invalid TCP radio target")
 	}
 	address := strings.TrimPrefix(device, "tcp://")
+	if strings.HasPrefix(address, "[") != strings.Contains(address, "]") {
+		return "", errors.New("invalid IP brackets")
+	}
+	// A bare IP (including bracketed IPv6) uses the Meshtastic default port.
+	if ip, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(address, "["), "]")); err == nil {
+		address = net.JoinHostPort(ip.String(), "4403")
+	}
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return "", errors.New("enter a private IP address and TCP port")

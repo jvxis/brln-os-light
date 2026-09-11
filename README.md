@@ -953,8 +953,7 @@ LOS Mesh transports signed Bitcoin transactions and payment requests between Lig
 **USB or local TCP:** in Radio, choose USB/Serial or Local network — TCP. For TCP,
 enter the radio's private IP and port, for example `192.168.1.50:4403` (IPv6 ULA:
 `[fd00::50]:4403`). Hostnames and public addresses are not accepted. The radio must
-already be connected to Wi-Fi/Ethernet and expose the Meshtastic TCP API. T-Deck
-with MUI is not supported over TCP; keep using USB for that device.
+already be connected to Wi-Fi/Ethernet and expose the Meshtastic TCP API. Devices running MUI may not support TCP; check firmware compatibility or use USB.
 
 Confirming the connection replaces the previous active connection. Only one
 transport is active; do not connect a competing client to that radio. The bridge
@@ -1063,3 +1062,5 @@ sudo cp -a ui/dist/. /opt/lightningos/ui/
 ```
 
 
+
+**Disconnect radio** closes the connection and stops reconnection attempts while preserving settings and contacts. Reconnect radio starts it again. Finish/cancel pending transfers and previews first. TCP defaults to port 4403 when only a private IP is entered.

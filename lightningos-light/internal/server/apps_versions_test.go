@@ -81,7 +81,7 @@ func TestDecorateAppVersionsDistinguishesAvailableAppliedAndUnknown(t *testing.T
 	versions := map[string]appVersionRecord{
 		appmanifest.MempoolID:  {CatalogVersion: "3.4.0", AppliedVersion: "3.3.1"},
 		appmanifest.ElectrsID:  {CatalogVersion: "0.11.1"},
-		appmanifest.BTCPayID:   {CatalogVersion: "2.4.2", AppliedVersion: "2.3.0"},
+		appmanifest.BTCPayID:   {CatalogVersion: "2.4.4", AppliedVersion: "2.3.0"},
 		appmanifest.PeerSwapID: {CatalogVersion: "should-not-appear", AppliedVersion: "should-not-appear"},
 	}
 
@@ -93,7 +93,7 @@ func TestDecorateAppVersionsDistinguishesAvailableAppliedAndUnknown(t *testing.T
 	if apps[1].AvailableVersion != "0.11.1" || apps[1].InstalledVersion != "" || apps[1].UpdateAvailable {
 		t.Fatalf("legacy Electrs install must remain unknown: %+v", apps[1])
 	}
-	if apps[2].AvailableVersion != "2.4.2" || apps[2].InstalledVersion != "" || apps[2].UpdateAvailable {
+	if apps[2].AvailableVersion != "2.4.4" || apps[2].InstalledVersion != "" || apps[2].UpdateAvailable {
 		t.Fatalf("not-installed BTCPay must expose only the catalog version: %+v", apps[2])
 	}
 	if apps[3].AvailableVersion != "" || apps[3].InstalledVersion != "" || apps[3].UpdateAvailable {

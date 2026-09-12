@@ -1558,6 +1558,13 @@ export type MagmaOrder = {
   status: string
   buyer_pubkey: string
   buyer_alias?: string
+  // Local knowledge rather than fields of the Amboss order: the deadline we
+  // read from their API, when this app last worked on it, and when auto mode
+  // will refuse it. refuse_at is computed server-side so the countdown cannot
+  // disagree with what the code actually does.
+  timeout_at?: string
+  last_attempt_at?: string
+  refuse_at?: string
   offer_id: string
   size_sat: number
   revenue_sat: number

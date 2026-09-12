@@ -202,6 +202,16 @@ type MagmaOrder struct {
 	// BuyerAlias is resolved from our own graph and cached locally; the API does
 	// not carry it.
 	BuyerAlias             string     `json:"buyer_alias,omitempty"`
+	// TimeoutAt is Amboss's own deadline for this order, when they publish one.
+	// LastAttemptAt is when this app last worked on it. Both are local knowledge
+	// rather than fields of the Amboss order, so they are only ever set by the
+	// database read, never by decoding an API response.
+	TimeoutAt              *time.Time `json:"timeout_at,omitempty"`
+	LastAttemptAt          *time.Time `json:"last_attempt_at,omitempty"`
+	// RefuseAt is when auto mode will refuse this order if it is still waiting.
+	// Computed rather than stored: the rule belongs next to the code that acts on
+	// it, so a countdown can never disagree with what actually happens.
+	RefuseAt               *time.Time `json:"refuse_at,omitempty"`
 	OfferID                string     `json:"offer_id"`
 	SizeSat                int64      `json:"size_sat"`
 	RevenueSat             int64      `json:"revenue_sat"`

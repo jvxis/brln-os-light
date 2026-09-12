@@ -120,6 +120,35 @@ type magmaPolicyInputs struct {
 	BuyerUnreachable bool
 }
 
+// magmaRefusalInstant is when auto mode will refuse an order it is still
+// waiting on, or nil when nothing is pending on our side.
+//
+// The rule lives here rather than in the interface so the two cannot drift. A
+// countdown the operator trusts has to be the same instant the code acts on,
+// and a second copy of "deadline minus grace" in TypeScript would be wrong the
+// first time either constant moved.
+//
+// The refusal is deliberately before Amboss's deadline, not at it: refusing at
+// the deadline is not refusing at all, it is the lapse recorded as
+// SELLER_FAILED_TO_REACT.
+func magmaRefusalInstant(order MagmaOrder) *time.Time {
+	if order.Status != "WAITING_FOR_SELLER_APPROVAL" || order.LocalState != magmaStateObserved {
+		return nil
+	}
+	if order.TimeoutAt != nil {
+		at := order.TimeoutAt.Add(-(magmaApprovalWindow - magmaApprovalGrace))
+		return &at
+	}
+	if order.CreatedAt != nil {
+		at := order.CreatedAt.Add(magmaApprovalGrace)
+		return &at
+	}
+	// Age unknown, so no instant can be shown without inventing one. The policy
+	// does not refuse in that case either, and a countdown to a made-up moment
+	// would be worse than none.
+	return nil
+}
+
 // magmaTimeLeft is how long this order still has. It prefers Amboss's own
 // deadline and falls back to the observed window, so an order is never judged by
 // an estimate when the real number is available.
@@ -652,16 +681,24 @@ func (s *MagmaService) rejectAfterFailedAccept(
 }
 
 func (s *MagmaService) recordDeferral(ctx context.Context, orderID, reason string) {
+	// The timestamp is written on every pass, the event only when the reason
+	// changes. They answer different questions: the event is the history of what
+	// went wrong, and repeating an identical line every cycle would bury it - but
+	// "is this still being worked on?" needs the most recent attempt, and an
+	// operator watching a stalled order cannot tell a patient retry from a dead
+	// one without it.
 	var lastReason string
+	sameReason := false
 	if err := s.db.QueryRow(ctx,
 		`select last_error from magma_orders where order_id=$1`, orderID).Scan(&lastReason); err == nil {
-		if lastReason == reason {
-			return
-		}
+		sameReason = lastReason == reason
 	}
 	if _, err := s.db.Exec(ctx,
-		`update magma_orders set last_error=$2, updated_at=now() where order_id=$1`,
+		`update magma_orders set last_error=$2, last_attempt_at=now(), updated_at=now() where order_id=$1`,
 		orderID, reason); err != nil {
+		return
+	}
+	if sameReason {
 		return
 	}
 	s.appendEvent(ctx, orderID, "auto_deferred", "info", reason, nil)

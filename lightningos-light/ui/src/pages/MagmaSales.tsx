@@ -723,6 +723,22 @@ export default function MagmaSales() {
                 {order.last_error && (
                   <p className="mt-2 text-rose-200">{order.last_error}</p>
                 )}
+                {/* What the app will do and when, rather than what might go
+                    wrong. The old warning said Amboss records a failure if the
+                    order lapses - true of the API, but the app refuses
+                    explicitly before that, so the sentence described a risk
+                    that no longer exists and gave no deadline to act on. */}
+                {(order.refuse_at || order.last_attempt_at) && (
+                  <p className="mt-2 text-xs text-fog/50">
+                    {order.refuse_at && t('magma.willRefuseAt', {
+                      time: formatDateTime(order.refuse_at, locale)
+                    })}
+                    {order.refuse_at && order.last_attempt_at ? ' · ' : ''}
+                    {order.last_attempt_at && t('magma.lastTried', {
+                      time: formatDateTime(order.last_attempt_at, locale)
+                    })}
+                  </p>
+                )}
                 {assisted && <MagmaOrderActions order={order} locale={locale} onDone={load} />}
               </div>
             ))}

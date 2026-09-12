@@ -11,7 +11,6 @@ TOR_REPO_URL="https://deb.torproject.org/torproject.org"
 TOR_REPO_KEY_URL="${TOR_REPO_URL}/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc"
 TOR_REPO_KEY_FINGERPRINT="A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89"
 TOR_KEYRING="/usr/share/keyrings/deb.torproject.org-keyring.gpg"
-TOR_SOURCES="/etc/apt/sources.list.d/tor.sources"
 ASSUME_YES=0
 AUTO_CONFIGURE_REPO=0
 AUTO_RESTART=0
@@ -122,6 +121,186 @@ get_os_codename() {
   echo "$codename"
 }
 
+# Called only after the downloaded key AND repository signature are verified.
+# Keep this embedded so the privileged broker authenticates the entire helper.
+reconcile_tor_sources() {
+  require_command python3
+  python3 - /etc/apt "$TOR_KEYRING" "$1" "$2" "$3" <<'TOR_SOURCES_PY'
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import tempfile
+
+
+def official_uri(uri):
+    return uri.rstrip('/') in (
+        'https://deb.torproject.org/torproject.org',
+        'http://deb.torproject.org/torproject.org',
+    )
+
+
+def rewrite_list(text, suite):
+    result = []
+    for line in text.splitlines(keepends=True):
+        match = re.match(r'^\s*deb(?:-src)?\s+(?:\[[^\]\n]*\]\s+)?(\S+)\s+(\S+)', line)
+        if match and official_uri(match[1]) and match[2] == suite:
+            line = '# Disabled by LightningOS Tor repository reconciliation: ' + line
+        result.append(line)
+    return ''.join(result)
+
+
+def stanza_fields(block):
+    fields = {}
+    current = None
+    for line in block.splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        if line[0].isspace() and current:
+            fields[current] += ' ' + line.strip()
+            continue
+        match = re.match(r'^([A-Za-z0-9-]+):\s*(.*)$', line)
+        if not match or match[1].lower() in fields:
+            raise RuntimeError('Invalid or duplicate deb822 field; review APT sources before retrying')
+        current = match[1].lower()
+        fields[current] = match[2]
+    return fields
+
+
+def rewrite_sources(text, suite, managed, canonical):
+    # Preserve unrelated stanzas, comments and field continuations. A mixed
+    # stanza needs an operator split: never disable unrelated URIs or suites.
+    parts = re.split(r'(\r?\n[ \t]*\r?\n)', text)
+    for index in range(0, len(parts), 2):
+        block = parts[index]
+        fields = stanza_fields(block)
+        if fields.get('enabled', 'yes').lower() == 'no':
+            continue
+        uris = fields.get('uris', '').split()
+        suites = fields.get('suites', '').split()
+        if not any(official_uri(uri) for uri in uris) or suite not in suites:
+            continue
+        if any(not official_uri(uri) for uri in uris) or any(item != suite for item in suites):
+            raise RuntimeError('Mixed Tor/non-Tor URI or suite stanza; split it manually before retrying')
+        if managed:
+            parts[index] = ''
+        else:
+            parts[index] = ''.join('# Disabled by LightningOS: ' + line for line in block.splitlines(keepends=True))
+    result = ''.join(parts)
+    if managed:
+        result = result.rstrip()
+        result = (result + '\n\n' if result else '') + canonical
+    return result
+
+
+def validate_path(path, directory=False):
+    info = path.lstat()
+    expected = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+    if not expected or (not directory and info.st_nlink != 1):
+        raise RuntimeError('Unsafe APT/keyring path (not a plain directory/file): ' + str(path))
+    if os.name == 'posix' and (info.st_uid != 0 or info.st_mode & 0o022):
+        raise RuntimeError('APT/keyring path must be root-owned and not group/world writable: ' + str(path))
+
+
+def atomic_write(path, content, mode):
+    fd, temporary = tempfile.mkstemp(prefix='.lightningos-tor-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def reconcile(apt_root, keyring, authenticated_key, suite, architecture):
+    sources_dir = apt_root / 'sources.list.d'
+    managed = sources_dir / 'tor.sources'
+    for path in (apt_root, sources_dir, keyring.parent):
+        validate_path(path, directory=True)
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]*', suite) or architecture not in ('amd64', 'arm64'):
+        raise RuntimeError('Unsupported Tor repository suite/architecture')
+    canonical = ('Types: deb\nURIs: https://deb.torproject.org/torproject.org/\n'
+                 f'Suites: {suite}\nComponents: main\nArchitectures: {architecture}\n'
+                 f'Signed-By: {keyring}\n')
+    paths = [apt_root / 'sources.list'] + sorted(
+        path for path in sources_dir.iterdir()
+        if re.fullmatch(r'[A-Za-z0-9_.-]+\.(list|sources)', path.name)
+    )
+    if managed not in paths:
+        paths.append(managed)
+    originals, updates = {}, {}
+    # Preflight ALL files and build the full plan before writing anything.
+    for path in paths + [keyring]:
+        exists = os.path.lexists(path)
+        if exists:
+            validate_path(path)
+        old = path.read_bytes() if exists else None
+        mode = stat.S_IMODE(path.stat().st_mode) if exists else 0o644
+        originals[path] = (old, mode)
+        if path == keyring:
+            new = authenticated_key.read_bytes()
+            if not new:
+                raise RuntimeError('Authenticated keyring is empty')
+        elif old is None and path != managed:
+            continue
+        else:
+            text = old.decode('utf-8') if old is not None else ''
+            try:
+                if path.suffix == '.sources':
+                    new = rewrite_sources(text, suite, path == managed, canonical).encode('utf-8')
+                else:
+                    new = rewrite_list(text, suite).encode('utf-8')
+            except RuntimeError as error:
+                raise RuntimeError(str(path) + ': ' + str(error)) from error
+        if new != old or (os.name == 'posix' and path == keyring and mode != 0o644):
+            updates[path] = new
+    if not updates:
+        print('[OK] Tor repository sources already reconciled.')
+        return
+    backup = Path(tempfile.mkdtemp(prefix='lightningos-tor-backup-', dir=apt_root))
+    os.chmod(backup, 0o700)
+    manifest = []
+    for index, path in enumerate(updates):
+        old, mode = originals[path]
+        saved = f'{index}.original'
+        if old is not None:
+            (backup / saved).write_bytes(old)
+            os.chmod(backup / saved, 0o600)
+        manifest.append({'path': str(path), 'backup': saved if old is not None else None, 'mode': mode})
+    (backup / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+    print('[OK] APT/keyring backup: ' + str(backup), flush=True)
+    applied = []
+    try:
+        for path, content in updates.items():
+            atomic_write(path, content, 0o644 if path == keyring else originals[path][1])
+            applied.append(path)
+    except Exception:
+        # Restore only exact paths changed by this invocation. Keep the backup
+        # even after rollback so a disk/permission failure remains recoverable.
+        for path in reversed(applied):
+            old, mode = originals[path]
+            if old is None:
+                path.unlink()
+            else:
+                atomic_write(path, old, mode)
+        raise
+    print(f'[OK] Reconciled {len(updates)} APT/keyring files; unrelated repositories preserved.')
+
+
+if __name__ == '__main__':
+    try:
+        reconcile(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4], sys.argv[5])
+    except Exception as error:
+        sys.exit('[ERROR] Tor repository reconciliation failed: ' + str(error))
+TOR_SOURCES_PY
+}
+
 configure_official_repo() {
   local architecture codename tmp_dir key_file keyring_file inrelease_file imported_fingerprint
 
@@ -171,18 +350,9 @@ configure_official_repo() {
     return 0
   fi
 
-  install -o root -g root -m 0644 "$keyring_file" "$TOR_KEYRING"
+  reconcile_tor_sources "$keyring_file" "$codename" "$architecture"
   rm -rf "$tmp_dir"
   trap - RETURN EXIT
-
-  cat > "$TOR_SOURCES" <<EOF
-Types: deb
-URIs: ${TOR_REPO_URL}/
-Suites: ${codename}
-Components: main
-Architectures: ${architecture}
-Signed-By: ${TOR_KEYRING}
-EOF
 
   print_ok "Official Tor Project repository configured (${codename}/${architecture})."
 }
@@ -390,7 +560,7 @@ main() {
     exit 0
   fi
 
-  restart_since=$(date --iso-8601=seconds)
+  restart_since=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
   systemctl restart "$unit"
 
   if ! wait_for_service "$unit"; then

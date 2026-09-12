@@ -11,7 +11,7 @@ func TestTorUpgradeAuthenticatesPinnedRepositoryKeyBeforeInstallation(t *testing
 		`TOR_REPO_KEY_FINGERPRINT="A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89"`,
 		`--fingerprint "$TOR_REPO_KEY_FINGERPRINT"`,
 		`if [[ "$imported_fingerprint" != "$TOR_REPO_KEY_FINGERPRINT" ]]`,
-		`Signed-By: ${TOR_KEYRING}`,
+		`Signed-By: {keyring}`,
 		`--verify-only`,
 		`--proto '=https' --tlsv1.2`,
 		`gpgv --keyring "$keyring_file" "$inrelease_file"`,
@@ -29,8 +29,12 @@ func TestTorUpgradeAuthenticatesPinnedRepositoryKeyBeforeInstallation(t *testing
 	}
 	fingerprintIndex := strings.Index(script, `if [[ "$imported_fingerprint" != "$TOR_REPO_KEY_FINGERPRINT" ]]`)
 	signatureIndex := strings.Index(script, `gpgv --keyring "$keyring_file" "$inrelease_file"`)
-	installIndex := strings.Index(script, `install -o root -g root -m 0644 "$keyring_file" "$TOR_KEYRING"`)
+	installIndex := strings.Index(script, `reconcile_tor_sources "$keyring_file" "$codename" "$architecture"`)
 	if fingerprintIndex < 0 || signatureIndex <= fingerprintIndex || installIndex <= signatureIndex {
 		t.Fatal("Tor helper installs the keyring before fingerprint and repository-signature validation")
+	}
+	verifyIndex := strings.Index(script, `if [[ "$VERIFY_ONLY" -eq 1 ]]; then`)
+	if verifyIndex <= signatureIndex || verifyIndex >= installIndex || !strings.Contains(script[verifyIndex:installIndex], "return 0") {
+		t.Fatal("verify-only must return before source/keyring reconciliation")
 	}
 }

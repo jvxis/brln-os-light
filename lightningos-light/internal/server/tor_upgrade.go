@@ -149,6 +149,13 @@ func torUpgradeStatus(ctx context.Context) torUpgradeStatusResponse {
 		resp.UpdateAvailable = compareErr == nil
 	}
 	resp.CanUpdate = resp.CandidatePackageVersion != "" && (resp.UpdateAvailable || !resp.RepositoryOfficial)
+	// A recognized Tor Signed-By conflict prevents apt-cache from returning any
+	// candidate. Still permit the explicitly confirmed, authenticated repository
+	// reconciliation workflow; unrelated APT errors must remain blocked.
+	torSourceConflict := policyErr != nil && torRepositorySignedByConflict(policyOut)
+	if torSourceConflict {
+		resp.CanUpdate = true
+	}
 
 	resp.ServiceUnit, resp.ServiceActive = firstActiveSystemdUnit(ctx, []string{"tor@default", "tor"})
 	if resp.ServiceUnit == "" {
@@ -169,13 +176,25 @@ func torUpgradeStatus(ctx context.Context) torUpgradeStatusResponse {
 	if installedErr != nil && versionErr != nil {
 		errorsFound = append(errorsFound, "Tor is not installed or its version could not be read")
 	}
-	if policyErr != nil {
+	if torSourceConflict {
+		errorsFound = append(errorsFound, "Conflicting Tor repository Signed-By entries; use Upgrade Tor to reconcile them with a backup and then check for an update")
+	} else if policyErr != nil {
 		errorsFound = append(errorsFound, "APT candidate could not be resolved")
 	} else if resp.CandidatePackageVersion == "" {
 		errorsFound = append(errorsFound, "APT did not provide a Tor candidate; refresh package metadata and verify the Tor repository")
 	}
 	resp.Error = strings.Join(errorsFound, "; ")
 	return resp
+}
+
+func torRepositorySignedByConflict(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "Conflicting values set for option Signed-By regarding source https://deb.torproject.org/torproject.org/ ") ||
+			strings.Contains(line, "Conflicting values set for option Signed-By regarding source http://deb.torproject.org/torproject.org/ ") {
+			return true
+		}
+	}
+	return false
 }
 
 func aptPolicyCandidate(policy string) string {

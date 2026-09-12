@@ -296,7 +296,7 @@ func validateLnbitsCredentialNotAdmin(credential []byte) error {
 	return nil
 }
 
-// LNbits v1.5.6 uses this credential for both LndRestWallet and its built-in
+// LNbits v1.6.1 uses this credential for both LndRestWallet and its built-in
 // LndRestNode manager. The latter adds node info, peer, channel, fee-policy,
 // and on-chain balance/open/close RPCs to the wallet's invoice/payment calls.
 func lnbitsMacaroonPermissions() []lndclient.MacaroonPermission {

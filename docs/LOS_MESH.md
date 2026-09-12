@@ -189,3 +189,24 @@ still needs a second LOS Mesh endpoint and radio; simulation is not a substitute
 New data sessions use authenticated LOSM v2 with 100-byte fragments (208-byte envelopes). The Meshtastic Data wrapper, firmware bitfield, 12-byte PKC overhead and 16-byte radio header fit below the 255-byte PHY limit. v1 receive remains supported, including legacy 120-byte fragments. Update both endpoints before sending new sessions; pairing keys remain unchanged. New outgoing content is bounded to 12,800 bytes.
 
 Radio routing errors are shown with their timestamp and are correlated to locally issued packet IDs for two minutes. They are diagnostics only, never proof of invoice delivery or payment.
+# Diagnóstico 0.5.28
+
+O painel projeta apenas metadados públicos do rádio. `NodeInfo` pode informar SNR,
+saltos e métricas do dispositivo; telemetria recebida na porta 67 atualiza bateria
+e utilização de canal/transmissão. Campos ausentes não viram zero. Bateria acima
+de 100 indica alimentação externa. Os campos seguem os protobufs oficiais em
+`meshtastic/protobufs` na revisão `3b3df2a5e54a6f4599ab37ac819da597607a4a27`.
+
+O cache NodeInfo não fornece horário da amostra de bateria/utilização: a UI
+informa horário desconhecido. Amostras de telemetria com mais de uma hora são
+marcadas como antigas; esse limite é uma indicação de idade, não de disponibilidade.
+SNR/saltos referem-se ao último registro do nó. Origem MQTT não prova alcance LoRa.
+As métricas não são usadas para autorizar contatos ou gastos, nem para inferir
+congestionamento automaticamente. Nenhum comando modifica a configuração do rádio.
+
+No histórico, tentativas contam chamadas ao bridge, inclusive recusas; aceitas
+conta entradas na fila, incluindo retransmissões. Esses números não comprovam
+transmissão RF. O contador de pacotes confirma o protocolo LOS Mesh, e não um
+pagamento. Erros sem resposta não são classificados como falha financeira definitiva.
+Metadados novos persistem com a sessão por até 30 dias; dados antigos não recebem
+horários inventados. Nenhum payload financeiro é adicionado ao histórico.

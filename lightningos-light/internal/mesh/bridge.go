@@ -21,18 +21,19 @@ import (
 const SocketPath = "/run/lightningos-mesh/bridge.sock"
 
 type RadioStatus struct {
-	LastErrorCode uint32    `json:"last_error_code,omitempty"`
-	LastErrorAt   time.Time `json:"last_error_at,omitempty"`
-	Name          string    `json:"name,omitempty"`
-	ShortName     string    `json:"short_name,omitempty"`
-	Protocol      int       `json:"protocol"`
-	SNR           float32   `json:"snr"`
-	RSSI          int32     `json:"rssi"`
-	State         string    `json:"state"`
-	Node          uint32    `json:"node"`
-	Device        string    `json:"device"`
-	LastReceive   time.Time `json:"last_receive"`
-	Dropped       uint64    `json:"dropped"`
+	Metrics       *DeviceMetrics `json:"metrics,omitempty"`
+	LastErrorCode uint32         `json:"last_error_code,omitempty"`
+	LastErrorAt   time.Time      `json:"last_error_at,omitempty"`
+	Name          string         `json:"name,omitempty"`
+	ShortName     string         `json:"short_name,omitempty"`
+	Protocol      int            `json:"protocol"`
+	SNR           float32        `json:"snr"`
+	RSSI          int32          `json:"rssi"`
+	State         string         `json:"state"`
+	Node          uint32         `json:"node"`
+	Device        string         `json:"device"`
+	LastReceive   time.Time      `json:"last_receive"`
+	Dropped       uint64         `json:"dropped"`
 }
 
 type Bridge struct {
@@ -61,6 +62,7 @@ func (b *Bridge) Run(ctx context.Context, open func() (io.ReadWriteCloser, error
 		b.status.Node = 0
 		b.status.Name = ""
 		b.status.ShortName = ""
+		b.status.Metrics = nil
 		b.nodes = map[uint32]RadioNode{}
 		b.rx = nil
 		b.sent = map[uint32]time.Time{}
@@ -145,6 +147,7 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 			}
 			b.mu.Unlock()
 			discovered, _ := DecodeRadioNode(raw)
+			telemetry, _ := DecodeNodeTelemetry(raw)
 			packet, node, err := DecodeRadio(raw)
 			if err != nil {
 				continue
@@ -159,9 +162,24 @@ func (b *Bridge) session(ctx context.Context, port io.ReadWriteCloser) {
 				b.status.Node = node
 				b.status.State = "running"
 			}
+			if telemetry != nil {
+				if old, exists := b.nodes[telemetry.Node]; exists || len(b.nodes) < 256 {
+					if old.Metrics == nil || telemetry.Metrics.Time >= old.Metrics.Time {
+						old.Node = telemetry.Node
+						old.Metrics = telemetry.Metrics
+						if telemetry.LastHeard >= old.LastHeard {
+							old.LastHeard = telemetry.LastHeard
+							old.SNR = telemetry.SNR
+							old.ViaMQTT = telemetry.ViaMQTT
+						}
+						b.nodes[telemetry.Node] = old
+					}
+				}
+			}
 			if local, exists := b.nodes[b.status.Node]; exists {
 				b.status.Name = local.Name
 				b.status.ShortName = local.ShortName
+				b.status.Metrics = local.Metrics
 			}
 			if packet != nil {
 				b.status.LastReceive = time.Now().UTC()

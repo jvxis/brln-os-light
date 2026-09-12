@@ -14,6 +14,7 @@ import (
 	"lightningos-light/internal/privileged"
 	"lightningos-light/internal/system"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -119,7 +120,7 @@ func (s *Server) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			radio.State = "awaiting_pairing"
 		}
 	}
-	rows, err := m.db.Query(ctx, "SELECT id,peer,direction,state,txid,received,total,created FROM los_mesh_sessions WHERE state<>'handshake' ORDER BY created DESC LIMIT 100")
+	rows, err := m.db.Query(ctx, "SELECT id,peer,direction,state,txid,received,total,created,updated,send_attempts,bridge_accepted,last_error,operation FROM los_mesh_sessions WHERE state<>'handshake' ORDER BY created DESC LIMIT 100")
 	if err != nil {
 		writeError(w, 503, "history unavailable")
 		return
@@ -128,7 +129,7 @@ func (s *Server) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	history := []meshHistory{}
 	for rows.Next() {
 		var h meshHistory
-		if rows.Scan(&h.ID, &h.Peer, &h.Direction, &h.State, &h.TXID, &h.Received, &h.Total, &h.Created) != nil {
+		if rows.Scan(&h.ID, &h.Peer, &h.Direction, &h.State, &h.TXID, &h.Received, &h.Total, &h.Created, &h.Updated, &h.SendAttempts, &h.BridgeAccepted, &h.LastError, &h.Operation) != nil {
 			writeError(w, 503, "history unavailable")
 			return
 		}
@@ -138,6 +139,7 @@ func (s *Server) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	for _, p := range m.pending {
 		pending = append(pending, p)
 	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].ID < pending[j].ID })
 	var nodes []mesh.RadioNode
 	_ = m.bridge(ctx, "GET", "/nodes", nil, &nodes)
 	pairing := []*meshPairing{}
@@ -395,6 +397,18 @@ func (m *meshService) queue(ctx context.Context, node uint32, kind byte, content
 	if err != nil || tag.RowsAffected() != 1 {
 		return "", errors.New("session ledger full or unavailable")
 	}
+	operation := "onchain_send"
+	if kind == mesh.Invoice {
+		operation = "invoice"
+	}
+	if kind == mesh.PaymentRequest {
+		operation = "onchain_request"
+		var request meshAddressRequest
+		if json.Unmarshal(content, &request) == nil && request.Kind == "invoice_request" {
+			operation = request.Kind
+		}
+	}
+	_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),operation=$2 WHERE id=$1", id, operation)
 	m.outgoing[id] = &meshOutbound{Packets: packets}
 	return id, nil
 }
@@ -583,6 +597,9 @@ func (m *meshService) acceptRequest(ctx context.Context, p mesh.Packet, raw []by
 		pending.Amount = request.Amount
 		pending.Memo = request.Memo
 	}
+	if m.db != nil {
+		_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),operation=$2 WHERE id=$1", pending.ID, pending.Kind)
+	}
 	m.pending[pending.ID] = pending
 	return "awaiting_approval"
 }
@@ -622,7 +639,7 @@ func (m *meshService) pay(ctx context.Context, req meshAPIRequest) (any, error) 
 		state = "payment_unknown"
 	}
 	_, _ = m.db.Exec(paymentCtx, "UPDATE los_mesh_payments SET state=$2 WHERE hash=$1", p.Hash, state)
-	_, _ = m.db.Exec(paymentCtx, "UPDATE los_mesh_sessions SET state=$2 WHERE id=$1", req.ID, state)
+	_, _ = m.db.Exec(paymentCtx, "UPDATE los_mesh_sessions SET updated=now(),state=$2 WHERE id=$1", req.ID, state)
 	_ = m.send(paymentCtx, reply(p.Packet, mesh.Result, []byte(state)), peer.Key)
 	delete(m.pending, req.ID)
 	m.server.recordWalletActivity(p.Hash)
@@ -651,6 +668,6 @@ func (m *meshService) cancel(ctx context.Context, id, owner string) error {
 	}
 	delete(m.incoming, id)
 	delete(m.pending, id)
-	_, err := m.db.Exec(ctx, "UPDATE los_mesh_sessions SET state='cancelled' WHERE id=$1 AND state IN ('receiving','sending','awaiting_approval','awaiting_result')", id)
+	_, err := m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state='cancelled' WHERE id=$1 AND state IN ('receiving','sending','awaiting_approval','awaiting_result')", id)
 	return err
 }

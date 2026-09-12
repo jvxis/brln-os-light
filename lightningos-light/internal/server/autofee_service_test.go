@@ -810,14 +810,14 @@ func TestShouldSkipAutofeeIdleRefreshRepeat(t *testing.T) {
 	if !shouldSkipAutofeeIdleRefreshRepeat(st, now, 650, 650) {
 		t.Fatalf("expected recent same-ppm idle refresh to be skipped")
 	}
-	if shouldSkipAutofeeIdleRefreshRepeat(st, now, 600, 650) {
-		t.Fatalf("expected local ppm drift to allow idle refresh retry")
+	if !shouldSkipAutofeeIdleRefreshRepeat(st, now, 600, 650) {
+		t.Fatalf("local ppm drift must not bypass the idle refresh interval")
 	}
 	if !shouldSkipAutofeeIdleRefreshRepeat(st, now, 649, 650) {
 		t.Fatalf("expected recent same-target small-delta idle refresh to be skipped")
 	}
-	if shouldSkipAutofeeIdleRefreshRepeat(st, now, 650, 700) {
-		t.Fatalf("expected target change to allow idle refresh")
+	if !shouldSkipAutofeeIdleRefreshRepeat(st, now, 650, 700) {
+		t.Fatalf("reference drift must not bypass the idle refresh interval")
 	}
 	st.LastIdleRefreshTs = now.Add(-time.Duration(autofeeIdleRefreshWindowDays)*24*time.Hour - time.Minute)
 	st.LastIdleRefreshPpm = 650

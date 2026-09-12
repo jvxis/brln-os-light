@@ -5462,17 +5462,28 @@ func shouldSkipAutofeeIdleRefreshRepeat(st *autofeeChannelState, now time.Time, 
 	if st == nil || targetPpm <= 0 || st.LastIdleRefreshTs.IsZero() {
 		return false
 	}
-	if targetPpm != localPpm && !shouldHoldAutofeeSmallDelta(localPpm, targetPpm) {
-		return false
-	}
-	if st.LastIdleRefreshPpm > 0 && st.LastIdleRefreshPpm != targetPpm {
-		return false
-	}
+	// Reference drift is not new channel demand. Let the normal evaluator
+	// continue discovering prices between scheduled refreshes.
 	elapsed := now.Sub(st.LastIdleRefreshTs)
 	if elapsed < 0 {
 		return true
 	}
 	return elapsed < time.Duration(autofeeIdleRefreshWindowDays)*24*time.Hour
+}
+
+func shouldPreserveAutofeeDecisionOnIdleRefresh(d *decision, refreshTargetPpm int, goodLiquidity bool) bool {
+	if d == nil {
+		return true
+	}
+	// Never replace an already computed decrease (and its caps/cooldowns) with
+	// a hard-set reference, nor let a stale reference reverse downward intent.
+	if d.NewPpm < d.LocalPpm || (d.Target < d.LocalPpm && refreshTargetPpm >= d.LocalPpm) {
+		return true
+	}
+	if goodLiquidity && refreshTargetPpm > d.LocalPpm {
+		return true
+	}
+	return isHardAutofeeFloorSource(d.FloorSrc, d.FloorBaseSrc) && refreshTargetPpm < d.Floor
 }
 
 func minAutofeeApplyDeltaPpm(localPpm int) int {
@@ -5663,7 +5674,7 @@ func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.
 	if ch.CapacitySat > 0 {
 		rawOutRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
 	}
-	effectiveOutRatio, _ := effectiveChannelOutRatio(rawOutRatio, ch.LocalBalanceSat, ch.CapacitySat, e.calib.AvgCapacitySat, e.calib.LocalRatio)
+	effectiveOutRatio, outNormMeta := effectiveChannelOutRatio(rawOutRatio, ch.LocalBalanceSat, ch.CapacitySat, e.calib.AvgCapacitySat, e.calib.LocalRatio)
 	if adjustedTargetPpm, adjustedReferencePpm, adjustedSource, adjusted := applyAutofeeRefreshSeedLiquidityAdjustment(
 		targetPpm,
 		referencePpm,
@@ -5688,10 +5699,23 @@ func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.
 		e.cfg.MinPpm,
 		intentMaxPpm,
 	)
-	if shouldSkipAutofeeIdleRefreshRepeat(d.State, e.now, d.LocalPpm, effectiveTargetPpm) {
+	protectFloor := intent != nil && !intentShadow && effectiveTargetPpm != refreshTargetPpm
+	mustRaiseFloor := protectFloor && effectiveTargetPpm > d.NewPpm
+	if isHardAutofeeFloorSource(d.FloorSrc, d.FloorBaseSrc) && effectiveTargetPpm < d.Floor {
+		d.Tags = appendAutofeeTagOnce(d.Tags, "idle-refresh-preserve-decision")
 		return d
 	}
-	protectFloor := intent != nil && !intentShadow && effectiveTargetPpm != refreshTargetPpm
+	goodLiquidity := hasGoodLocalLiquidityForAutofeeUp(effectiveOutRatio, dynamicGoodOutRatio(e.profile, e.calib.LiquidityClass, e.calib.LocalRatio, outNormMeta))
+	if !mustRaiseFloor && shouldPreserveAutofeeDecisionOnIdleRefresh(d, refreshTargetPpm, goodLiquidity) {
+		d.Tags = appendAutofeeTagOnce(d.Tags, "idle-refresh-preserve-decision")
+		return d
+	}
+	// Economic protection may become stricter during the interval. It must
+	// still be enforced; only discretionary reference refreshes wait.
+	if !mustRaiseFloor && shouldSkipAutofeeIdleRefreshRepeat(d.State, e.now, d.LocalPpm, effectiveTargetPpm) {
+		d.Tags = appendAutofeeTagOnce(d.Tags, "idle-refresh-wait")
+		return d
+	}
 	applyAutofeeIdleRefreshDecisionWithFloor(d, e.now, effectiveTargetPpm, referencePpm, source, protectFloor)
 	if intent != nil {
 		// Keep the idle-refresh reference visible as the raw target while making
@@ -7563,6 +7587,10 @@ func isStaleNoFlowAdvisoryFloorSource(src string, baseSrc string) bool {
 		return true
 	case "outrate":
 		return strings.TrimSpace(baseSrc) == "outrate-mem"
+	case "rescue", "rank", "revfloor":
+		// These wrappers may carry either a seed or a real economic floor.
+		// Only seed provenance is eligible for this no-demand relaxation.
+		return strings.TrimSpace(baseSrc) == "seed"
 	default:
 		return false
 	}
@@ -7593,7 +7621,7 @@ func relaxStaleNoFlowAdvisoryFloor(
 ) (int, string, []string) {
 	if marketRefillMode ||
 		localPpm <= minPpm ||
-		targetPpm >= localPpm ||
+		targetPpm > localPpm ||
 		floorPpm < localPpm ||
 		!noFlow1d ||
 		outPpm7d > 0 ||
@@ -7615,9 +7643,8 @@ func relaxStaleNoFlowAdvisoryFloor(
 	if channelAgeHours <= float64(bootstrapHours) {
 		return floorPpm, floorSrc, nil
 	}
-	if hoursSinceLastChange <= 0 {
-		hoursSinceLastChange = channelAgeHours
-	}
+	// Zero means a change just happened, not an unknown timestamp. The caller
+	// already substitutes channel age when no last-change timestamp exists.
 	if hoursSinceLastChange < 0 {
 		hoursSinceLastChange = 0
 	}
@@ -7647,7 +7674,7 @@ func relaxStaleNoFlowAdvisoryFloor(
 	step := int(math.Round(float64(localPpm) * stepFrac))
 	step = clampInt(step, staleNoFlowDownMinStepPpm, maxStep)
 	relaxed := localPpm - step
-	if targetPpm > relaxed {
+	if targetPpm < localPpm && targetPpm > relaxed {
 		relaxed = targetPpm
 	}
 	if relaxed < minPpm {
@@ -11291,7 +11318,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floorBaseSrc,
 		outNormMeta,
 		goodOutRatio,
-		noFlow1d,
+		noFlow1d && !hasAutofeeForwardMovement(fwd7d) &&
+			(target < localPpm || (e.cfg.DiscoveryEnabled && (noSignalNoUpActive || seedFullHoldActive))),
 		outPpm7d,
 		rebalHistoryRefPpm,
 		recentRebalanceRelevantCount,
@@ -11308,6 +11336,15 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floor = relaxedFloor
 		floorSrc = relaxedSrc
 		tags = append(tags, relaxTags...)
+		if target == localPpm {
+			// A no-signal/seed hold can pin the target as well as the floor.
+			// Use the same bounded experiment; all final safety gates still run.
+			target = relaxedFloor
+			rawStep = applyStepCap(localPpm, target, capFrac, minStepDown, capRefPpm)
+			tags = removeAutofeeTags(tags, map[string]bool{"trend-flat": true})
+			tags = appendAutofeeTagOnce(tags, "stale-noflow-target-relax")
+			tags = appendAutofeeTagOnce(tags, "trend-down")
+		}
 	}
 	if target < localPpm && floor >= localPpm {
 		stallRelaxGapFrac := e.profile.StallFloorRelaxGapFrac
@@ -13469,6 +13506,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧭cap")
 		case t == "idle-refresh":
 			add("idle-refresh")
+		case t == "idle-refresh-wait" || t == "idle-refresh-preserve-decision":
+			add(t)
 		case strings.HasPrefix(t, "idle-refresh:"):
 			add(t)
 		case t == "rescue":
@@ -13673,6 +13712,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧯noflow-up-cap")
 		case t == "stale-noflow-down":
 			add("stale-noflow-down")
+		case t == "stale-noflow-target-relax":
+			add(t)
 		case t == "stale-noflow-small-down":
 			add("stale-noflow-small")
 		case t == "neg-margin-stale-down":

@@ -23,16 +23,23 @@ import (
 )
 
 type meshContact struct {
-	Node           uint32    `json:"node"`
-	Name           string    `json:"name"`
-	Paired         bool      `json:"paired"`
-	AllowRelay     bool      `json:"allow_relay"`
-	Fingerprint    string    `json:"fingerprint"`
-	Key            []byte    `json:"-"`
-	Challenge      string    `json:"-"`
-	ChallengeUntil time.Time `json:"-"`
+	LastResponse   *time.Time `json:"last_response,omitempty"`
+	Node           uint32     `json:"node"`
+	Name           string     `json:"name"`
+	Paired         bool       `json:"paired"`
+	AllowRelay     bool       `json:"allow_relay"`
+	Fingerprint    string     `json:"fingerprint"`
+	Key            []byte     `json:"-"`
+	Challenge      string     `json:"-"`
+	ChallengeUntil time.Time  `json:"-"`
 }
 type meshHistory struct {
+	Updated        *time.Time `json:"updated,omitempty"`
+	SendAttempts   int        `json:"send_attempts"`
+	BridgeAccepted int        `json:"bridge_accepted"`
+	LastError      string     `json:"last_error,omitempty"`
+	Operation      string     `json:"operation,omitempty"`
+
 	ID        string    `json:"id"`
 	Peer      uint32    `json:"peer"`
 	Direction string    `json:"direction"`
@@ -114,8 +121,14 @@ CREATE TABLE IF NOT EXISTS los_mesh_peers (node bigint PRIMARY KEY, name text NO
 CREATE TABLE IF NOT EXISTS los_mesh_sessions (id text PRIMARY KEY, peer bigint NOT NULL, direction text NOT NULL, state text NOT NULL, txid text NOT NULL DEFAULT '', received integer NOT NULL DEFAULT 0, total integer NOT NULL DEFAULT 0, hash text NOT NULL DEFAULT '', expires timestamptz NOT NULL, created timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS los_mesh_publications (txid text PRIMARY KEY, state text NOT NULL, created timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS los_mesh_payments (hash text PRIMARY KEY,state text NOT NULL,created timestamptz NOT NULL DEFAULT now());
+ALTER TABLE los_mesh_peers ADD COLUMN IF NOT EXISTS last_response timestamptz;
+ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS updated timestamptz;
+ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS send_attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS bridge_accepted integer NOT NULL DEFAULT 0;
+ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS last_error text NOT NULL DEFAULT '';
+ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS operation text NOT NULL DEFAULT '';
 UPDATE los_mesh_payments SET state='payment_unknown' WHERE state='paying';
-UPDATE los_mesh_sessions SET state='interrupted' WHERE state IN ('receiving','sending','awaiting_result','awaiting_approval');
+UPDATE los_mesh_sessions SET updated=now(),state='interrupted' WHERE state IN ('receiving','sending','awaiting_result','awaiting_approval');
 UPDATE los_mesh_publications SET state='publication_unknown' WHERE state='publishing';`)
 	if err != nil {
 		return nil, errors.New("LOS Mesh storage initialization failed")
@@ -149,7 +162,7 @@ func (m *meshService) bridge(ctx context.Context, method, path string, body any,
 	return nil
 }
 func (m *meshService) contacts(ctx context.Context) ([]meshContact, error) {
-	rows, err := m.db.Query(ctx, "SELECT node,name,secret,paired,allow_relay,challenge,challenge_until FROM los_mesh_peers ORDER BY name LIMIT 16")
+	rows, err := m.db.Query(ctx, "SELECT node,name,secret,paired,allow_relay,challenge,challenge_until,last_response FROM los_mesh_peers ORDER BY name LIMIT 16")
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +170,7 @@ func (m *meshService) contacts(ctx context.Context) ([]meshContact, error) {
 	out := []meshContact{}
 	for rows.Next() {
 		var p meshContact
-		if err = rows.Scan(&p.Node, &p.Name, &p.Key, &p.Paired, &p.AllowRelay, &p.Challenge, &p.ChallengeUntil); err != nil {
+		if err = rows.Scan(&p.Node, &p.Name, &p.Key, &p.Paired, &p.AllowRelay, &p.Challenge, &p.ChallengeUntil, &p.LastResponse); err != nil {
 			return nil, err
 		}
 		sum := sha256.Sum256(p.Key)
@@ -216,10 +229,10 @@ func (m *meshService) tick(ctx context.Context) {
 	for id, p := range m.pending {
 		if now.After(p.Expires) {
 			delete(m.pending, id)
-			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET state='expired' WHERE id=$1 AND state='awaiting_approval'", id)
+			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state='expired' WHERE id=$1 AND state='awaiting_approval'", id)
 		}
 	}
-	_, err := m.db.Exec(ctx, `DELETE FROM los_mesh_sessions WHERE created < now()-interval '30 days'; DELETE FROM los_mesh_payments WHERE created < now()-interval '30 days'; DELETE FROM los_mesh_publications WHERE created < now()-interval '30 days'; UPDATE los_mesh_sessions SET state='expired' WHERE expires<now() AND state IN ('receiving','sending','awaiting_result','awaiting_approval')`)
+	_, err := m.db.Exec(ctx, `DELETE FROM los_mesh_sessions WHERE created < now()-interval '30 days'; DELETE FROM los_mesh_payments WHERE created < now()-interval '30 days'; DELETE FROM los_mesh_publications WHERE created < now()-interval '30 days'; UPDATE los_mesh_sessions SET updated=now(),state='expired' WHERE expires<now() AND state IN ('receiving','sending','awaiting_result','awaiting_approval')`)
 	if err != nil {
 		return
 	}
@@ -267,6 +280,7 @@ func (m *meshService) tick(ctx context.Context) {
 		if err != nil || wire.To != status.Node {
 			continue
 		}
+		_, _ = m.db.Exec(ctx, "UPDATE los_mesh_peers SET last_response=now() WHERE node=$1 AND (last_response IS NULL OR last_response<now()-interval '30 seconds')", peer.Node)
 		m.receive(ctx, p, peer, mode)
 	}
 	// One outstanding data packet globally per tick. The serial daemon also
@@ -281,7 +295,7 @@ func (m *meshService) tick(ctx context.Context) {
 			continue
 		}
 		if o.Attempts >= 3 {
-			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET state='incomplete' WHERE id=$1", id)
+			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),last_error=CASE WHEN last_error='' THEN 'no_los_confirmation' ELSE last_error END,state='incomplete' WHERE id=$1", id)
 			delete(m.outgoing, id)
 			continue
 		}
@@ -289,10 +303,14 @@ func (m *meshService) tick(ctx context.Context) {
 		if index >= len(o.Packets) {
 			index = len(o.Packets) - 1
 		}
-		if m.send(ctx, o.Packets[index], peer.Key) == nil {
-			o.Sent = now
-			o.Attempts++
+		sendErr := m.send(ctx, o.Packets[index], peer.Key)
+		o.Sent = now
+		o.Attempts++
+		accepted, reason := 1, ""
+		if sendErr != nil {
+			accepted, reason = 0, "bridge_unavailable"
 		}
+		_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),send_attempts=send_attempts+1,bridge_accepted=bridge_accepted+$2,last_error=$3 WHERE id=$1", id, accepted, reason)
 		break
 	}
 }
@@ -324,7 +342,7 @@ func (m *meshService) receive(ctx context.Context, p mesh.Packet, peer meshConta
 		if o == nil && p.Kind == mesh.Result && peer.Paired {
 			state := string(p.Payload)
 			if state == "paid" || state == "payment_unknown" {
-				_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET state=$4 WHERE id=$1 AND peer=$2 AND hash=$3 AND direction='out' AND state='awaiting_approval'", outID, p.From, hex.EncodeToString(p.Hash[:]), state)
+				_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state=$4 WHERE id=$1 AND peer=$2 AND hash=$3 AND direction='out' AND state='awaiting_approval'", outID, p.From, hex.EncodeToString(p.Hash[:]), state)
 			}
 			return
 		}
@@ -336,7 +354,7 @@ func (m *meshService) receive(ctx context.Context, p mesh.Packet, peer meshConta
 			if state != "published" && state != "rejected" && state != "publication_unknown" && state != "relay_disabled" && state != "awaiting_approval" && state != "paid" && state != "payment_unknown" {
 				return
 			}
-			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET state=$2 WHERE id=$1", outID, state)
+			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state=$2 WHERE id=$1", outID, state)
 			delete(m.outgoing, outID)
 		} else if int(p.Index) == o.Next {
 			o.Next++
@@ -346,12 +364,12 @@ func (m *meshService) receive(ctx context.Context, p mesh.Packet, peer meshConta
 			if o.Next == len(o.Packets) {
 				state = "awaiting_result"
 			}
-			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET received=$2,state=$3 WHERE id=$1", outID, o.Next, state)
+			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),received=$2,state=$3 WHERE id=$1", outID, o.Next, state)
 		}
 	case mesh.Cancel:
 		delete(m.incoming, id)
 		delete(m.pending, id)
-		_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET state='cancelled' WHERE id=$1 AND state IN ('receiving','awaiting_approval')", id)
+		_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state='cancelled' WHERE id=$1 AND state IN ('receiving','awaiting_approval')", id)
 	case mesh.Transaction, mesh.Invoice, mesh.PaymentRequest:
 		if !peer.Paired || (p.Kind == mesh.Transaction && (!peer.AllowRelay || mode == "send")) {
 			if time.Since(m.lastControl[p.From]) > 10*time.Second {
@@ -397,10 +415,10 @@ func (m *meshService) receive(ctx context.Context, p mesh.Packet, peer meshConta
 		content, err := a.Add(p)
 		if err != nil {
 			delete(m.incoming, id)
-			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET state='rejected' WHERE id=$1", id)
+			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state='rejected' WHERE id=$1", id)
 			return
 		}
-		_, err = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET received=$2 WHERE id=$1", id, len(a.Parts))
+		_, err = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),received=$2 WHERE id=$1", id, len(a.Parts))
 		if err != nil {
 			return
 		}
@@ -417,7 +435,7 @@ func (m *meshService) receive(ctx context.Context, p mesh.Packet, peer meshConta
 		} else {
 			state = m.acceptRequest(ctx, p, content)
 		}
-		if _, err = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET state=$2,txid=$3 WHERE id=$1", id, state, txid); err == nil {
+		if _, err = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state=$2,txid=$3 WHERE id=$1", id, state, txid); err == nil {
 			_ = m.send(ctx, reply(p, mesh.Result, []byte(state)), peer.Key)
 		}
 	}

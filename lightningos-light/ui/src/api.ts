@@ -1,15 +1,16 @@
 const base = ''
 
-export type MeshPeer = { node: number; name: string; paired: boolean; allow_relay: boolean; fingerprint: string }
+export type MeshPeer = { last_response?: string; node: number; name: string; paired: boolean; allow_relay: boolean; fingerprint: string }
 export type MeshPending = { id: string; peer: number; kind: string; address?: string; amount_sat: number; payment_hash?: string; destination?: string; memo?: string; expires: string }
-export type MeshRadioNode = { node: number; name: string; short_name: string; last_heard: number; via_mqtt: boolean }
+export type MeshMetrics = { battery?: number; channel_utilization?: number; air_util_tx?: number; time: number }
+export type MeshRadioNode = { snr?: number; hops_away?: number; metrics?: MeshMetrics; node: number; name: string; short_name: string; last_heard: number; via_mqtt: boolean }
 export type MeshPairing = { id: string; node: number; name: string; state: string; code?: string; expires: string; local_confirmed: boolean; remote_confirmed: boolean }
 export type MeshStatus = {
   nodes?: MeshRadioNode[]; pairings?: MeshPairing[]
   app: { installed: boolean; status: string; device: string; devices: string[] }
-  radio: { last_error_code?: number; last_error_at?: string; state: string; node: number; name?: string; short_name?: string; device: string; last_receive: string; dropped: number; snr: number; rssi: number; protocol: number }
+  radio: { metrics?: MeshMetrics; last_error_code?: number; last_error_at?: string; state: string; node: number; name?: string; short_name?: string; device: string; last_receive: string; dropped: number; snr: number; rssi: number; protocol: number }
   mode: 'send' | 'relay' | 'both'; peers: MeshPeer[]; pending: MeshPending[]
-  history: { id: string; peer: number; direction: string; state: string; txid: string; received: number; total: number; created: string }[]
+  history: { updated?: string; send_attempts?: number; bridge_accepted?: number; last_error?: string; operation?: string; id: string; peer: number; direction: string; state: string; txid: string; received: number; total: number; created: string }[]
   protocol_version: number
 }
 export type MeshAction = { action: 'disconnect' | 'pair_probe' | 'pair_invite' | 'pair_accept' | 'pair_confirm' | 'pair_cancel' | 'peer_permissions' | 'install' | 'mode' | 'peer' | 'remove_peer' | 'preview' | 'send' | 'invoice' | 'request' | 'request_invoice' | 'pay' | 'cancel'; code?: string; device?: string; mode?: string; node?: number; name?: string; key?: string; allow_relay?: boolean; id?: string; raw_tx?: string; address?: string; amount_sat?: number; sat_per_vbyte?: number; invoice?: string; memo?: string; max_fee_sat?: number; confirm?: boolean; confirm_password?: string }

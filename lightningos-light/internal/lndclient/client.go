@@ -4820,7 +4820,7 @@ func (c *Client) listOnchainRangeWithClient(ctx context.Context, client lnrpc.Li
 			continue
 		}
 		txTime := time.Unix(tx.TimeStamp, 0).UTC()
-		if txTime.Before(start) || txTime.After(end) {
+		if !onchainActivityTimeInRange(txTime, start, end, time.Now().UTC()) {
 			continue
 		}
 

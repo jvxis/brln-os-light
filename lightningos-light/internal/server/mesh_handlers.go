@@ -20,6 +20,7 @@ import (
 )
 
 type meshPending struct {
+	ReplyFormat bool        `json:"-"`
 	Packet      mesh.Packet `json:"-"`
 	Invoice     string      `json:"-"`
 	ID          string      `json:"id"`
@@ -33,6 +34,7 @@ type meshPending struct {
 	Expires     time.Time   `json:"expires"`
 }
 type meshProposal struct {
+	Request *meshPending
 	Owner   string
 	Funded  *lndclient.MeshFundedTransaction
 	Raw     []byte
@@ -41,6 +43,7 @@ type meshProposal struct {
 	Session string
 }
 type meshAPIRequest struct {
+	RequestID  string `json:"request_id"`
 	Code       string `json:"code"`
 	Owner      string `json:"-"`
 	Action     string `json:"action"`
@@ -120,7 +123,7 @@ func (s *Server) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 			radio.State = "awaiting_pairing"
 		}
 	}
-	rows, err := m.db.Query(ctx, "SELECT id,peer,direction,state,txid,received,total,created,updated,send_attempts,bridge_accepted,last_error,operation FROM los_mesh_sessions WHERE state<>'handshake' ORDER BY created DESC LIMIT 100")
+	rows, err := m.db.Query(ctx, "SELECT id,peer,direction,state,txid,received,total,created,updated,send_attempts,bridge_accepted,last_error,operation,request_id,response_id FROM los_mesh_sessions WHERE state<>'handshake' ORDER BY created DESC LIMIT 100")
 	if err != nil {
 		writeError(w, 503, "history unavailable")
 		return
@@ -129,10 +132,11 @@ func (s *Server) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	history := []meshHistory{}
 	for rows.Next() {
 		var h meshHistory
-		if rows.Scan(&h.ID, &h.Peer, &h.Direction, &h.State, &h.TXID, &h.Received, &h.Total, &h.Created, &h.Updated, &h.SendAttempts, &h.BridgeAccepted, &h.LastError, &h.Operation) != nil {
+		if rows.Scan(&h.ID, &h.Peer, &h.Direction, &h.State, &h.TXID, &h.Received, &h.Total, &h.Created, &h.Updated, &h.SendAttempts, &h.BridgeAccepted, &h.LastError, &h.Operation, &h.RequestID, &h.ResponseID) != nil {
 			writeError(w, 503, "history unavailable")
 			return
 		}
+		h.CanRetry = m.canRetry(h.ID)
 		history = append(history, h)
 	}
 	pending := []*meshPending{}
@@ -314,6 +318,12 @@ func (s *Server) handleMeshAction(w http.ResponseWriter, r *http.Request) {
 		result, err = m.pay(ctx, req)
 	case "cancel":
 		err = m.cancel(ctx, req.ID, req.Owner)
+	case "retry":
+		if !req.Confirm {
+			err = errors.New("explicit retransmission approval required")
+			break
+		}
+		err = m.retry(ctx, req.ID)
 	default:
 		err = errors.New("unknown LOS Mesh action")
 	}
@@ -369,6 +379,19 @@ func (m *meshService) savePeer(ctx context.Context, req meshAPIRequest) error {
 	return m.send(ctx, mesh.Packet{Kind: mesh.Hello, From: radio.Node, To: req.Node, Session: id, Expires: expires.Unix()}, key)
 }
 func (m *meshService) queue(ctx context.Context, node uint32, kind byte, content []byte) (string, error) {
+	return m.queueReply(ctx, node, kind, content, nil)
+}
+func (m *meshService) queueReply(ctx context.Context, node uint32, kind byte, content []byte, request *meshPending) (string, error) {
+	originalKind, originalContent := kind, content
+	if request != nil && request.ReplyFormat {
+		wrapped, err := mesh.EncodeReply(kind, request.Packet, content)
+		if err != nil {
+			return "", err
+		}
+		content = wrapped
+		kind = mesh.CorrelatedReply
+	}
+
 	mode, err := m.mode(ctx)
 	if err != nil || mode == "relay" {
 		return "", errors.New("enable send mode first")
@@ -386,33 +409,56 @@ func (m *meshService) queue(ctx context.Context, node uint32, kind byte, content
 	}
 	id := sessionID(packets[0])
 	txid := ""
-	if kind == mesh.Transaction {
-		p, e := mesh.ValidateTransaction(content)
+	if originalKind == mesh.Transaction {
+		p, e := mesh.ValidateTransaction(originalContent)
 		if e != nil {
 			return "", e
 		}
 		txid = p.TXID
 	}
-	tag, err := m.db.Exec(ctx, `INSERT INTO los_mesh_sessions(id,peer,direction,state,txid,total,hash,expires) SELECT $1,$2,'out','sending',$3,$4,$5,$6 WHERE (SELECT count(*) FROM los_mesh_sessions)<1000`, id, node, txid, len(packets), hex.EncodeToString(packets[0].Hash[:]), time.Unix(packets[0].Expires, 0))
+	tx, err := m.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	parentID := ""
+	if request != nil {
+		parentID = request.ID
+		tag, e := tx.Exec(ctx, "UPDATE los_mesh_sessions SET response_id=$2,state='responding',updated=now() WHERE id=$1 AND peer=$3 AND direction='in' AND state='awaiting_approval' AND response_id='' AND expires>now()", parentID, id, node)
+		if e != nil || tag.RowsAffected() != 1 {
+			return "", errors.New("request already answered or expired")
+		}
+	}
+	operation := "onchain_send"
+	var terms meshAddressRequest
+	if originalKind == mesh.Invoice {
+		operation = "invoice"
+	}
+	if originalKind == mesh.PaymentRequest {
+		operation = "onchain_request"
+		if json.Unmarshal(originalContent, &terms) == nil && terms.Kind == "invoice_request" {
+			operation = terms.Kind
+		}
+	}
+	tag, err := tx.Exec(ctx, `INSERT INTO los_mesh_sessions(id,peer,direction,state,txid,total,hash,expires,updated,operation,request_id,request_amount,request_address,expects_reply) SELECT $1,$2,'out','sending',$3,$4,$5,$6,now(),$7,$8,$9,$10,$11 WHERE (SELECT count(*) FROM los_mesh_sessions)<1000`, id, node, txid, len(packets), hex.EncodeToString(packets[0].Hash[:]), time.Unix(packets[0].Expires, 0), operation, parentID, terms.Amount, terms.Address, terms.ReplyFormat)
 	if err != nil || tag.RowsAffected() != 1 {
 		return "", errors.New("session ledger full or unavailable")
 	}
-	operation := "onchain_send"
-	if kind == mesh.Invoice {
-		operation = "invoice"
+	if err = tx.Commit(ctx); err != nil {
+		return "", err
 	}
-	if kind == mesh.PaymentRequest {
-		operation = "onchain_request"
-		var request meshAddressRequest
-		if json.Unmarshal(content, &request) == nil && request.Kind == "invoice_request" {
-			operation = request.Kind
-		}
+	if request != nil {
+		delete(m.pending, request.ID)
 	}
-	_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),operation=$2 WHERE id=$1", id, operation)
 	m.outgoing[id] = &meshOutbound{Packets: packets}
 	return id, nil
 }
 func (m *meshService) preview(ctx context.Context, req meshAPIRequest) (any, error) {
+	request, err := m.replyRequest(req, "onchain_request")
+	if err != nil {
+		return nil, err
+	}
+
 	if _, _, err := m.radioPeer(ctx, req.Node); err != nil {
 		return nil, err
 	}
@@ -420,7 +466,7 @@ func (m *meshService) preview(ctx context.Context, req meshAPIRequest) (any, err
 		return nil, errors.New("cancel or wait for existing previews to expire")
 	}
 	var result any
-	proposal := &meshProposal{Owner: req.Owner, Peer: req.Node, Expires: time.Now().Add(2 * time.Minute)}
+	proposal := &meshProposal{Request: request, Owner: req.Owner, Peer: req.Node, Expires: time.Now().Add(2 * time.Minute)}
 	if req.Raw != "" {
 		raw, err := hex.DecodeString(strings.TrimSpace(req.Raw))
 		if err != nil {
@@ -462,6 +508,12 @@ func (m *meshService) approveSend(ctx context.Context, req meshAPIRequest) (any,
 	if len(m.outgoing) >= 4 {
 		return nil, errors.New("outbound session limit reached")
 	}
+	if p.Request != nil {
+		current := m.pending[p.Request.ID]
+		if current != p.Request || !time.Now().Before(current.Expires) {
+			return nil, errors.New("request already answered or expired")
+		}
+	}
 	raw := p.Raw
 	if p.Funded != nil {
 		if err := m.wallet.MeshMainnetReady(ctx); err != nil {
@@ -473,7 +525,7 @@ func (m *meshService) approveSend(ctx context.Context, req meshAPIRequest) (any,
 			return nil, errors.New("transaction signing failed")
 		}
 	}
-	id, err := m.queue(ctx, p.Peer, mesh.Transaction, raw)
+	id, err := m.queueReply(ctx, p.Peer, mesh.Transaction, raw, p.Request)
 	if err != nil {
 		return nil, err
 	}
@@ -487,6 +539,11 @@ func (m *meshService) approveSend(ctx context.Context, req meshAPIRequest) (any,
 	return map[string]string{"id": id, "state": "sending"}, nil
 }
 func (m *meshService) invoice(ctx context.Context, req meshAPIRequest) (any, error) {
+	request, err := m.replyRequest(req, "invoice_request")
+	if err != nil {
+		return nil, err
+	}
+
 	if _, _, err := m.radioPeer(ctx, req.Node); err != nil {
 		return nil, err
 	}
@@ -504,10 +561,14 @@ func (m *meshService) invoice(ctx context.Context, req meshAPIRequest) (any, err
 		}
 		invoice = created.PaymentRequest
 	}
-	if _, err := m.decodeInvoice(ctx, invoice); err != nil {
+	decoded, err := m.decodeInvoice(ctx, invoice)
+	if err != nil {
 		return nil, err
 	}
-	id, err := m.queue(ctx, req.Node, mesh.Invoice, []byte(invoice))
+	if request != nil && decoded.AmountSat != request.Amount {
+		return nil, errors.New("invoice does not match requested amount")
+	}
+	id, err := m.queueReply(ctx, req.Node, mesh.Invoice, []byte(invoice), request)
 	return map[string]string{"id": id}, err
 }
 func (m *meshService) decodeInvoice(ctx context.Context, invoice string) (lndclient.DecodedInvoice, error) {
@@ -522,10 +583,11 @@ func (m *meshService) decodeInvoice(ctx context.Context, invoice string) (lndcli
 }
 
 type meshAddressRequest struct {
-	Kind    string `json:"kind,omitempty"`
-	Address string `json:"address"`
-	Amount  int64  `json:"amount_sat"`
-	Memo    string `json:"memo"`
+	ReplyFormat bool   `json:"correlated_reply,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Address     string `json:"address"`
+	Amount      int64  `json:"amount_sat"`
+	Memo        string `json:"memo"`
 }
 
 func validateMeshAddress(p meshAddressRequest) error {
@@ -545,12 +607,16 @@ func validateMeshAddress(p meshAddressRequest) error {
 	return nil
 }
 func (m *meshService) paymentRequest(ctx context.Context, req meshAPIRequest) (any, error) {
-	p := meshAddressRequest{Address: req.Address, Amount: req.Amount, Memo: req.Memo}
+	p := meshAddressRequest{ReplyFormat: m.supportsReplies(req.Node), Address: req.Address, Amount: req.Amount, Memo: req.Memo}
 	if req.Action == "request_invoice" {
 		p.Kind = "invoice_request"
 	}
 	if err := validateMeshAddress(p); err != nil {
 		return nil, err
+	}
+	if p.Kind != "invoice_request" {
+		address, _ := btcutil.DecodeAddress(p.Address, &chaincfg.MainNetParams)
+		p.Address = address.EncodeAddress()
 	}
 	raw, _ := json.Marshal(p)
 	id, err := m.queue(ctx, req.Node, mesh.PaymentRequest, raw)
@@ -593,6 +659,7 @@ func (m *meshService) acceptRequest(ctx context.Context, p mesh.Packet, raw []by
 		if request.Kind == "invoice_request" {
 			pending.Kind = request.Kind
 		}
+		pending.ReplyFormat = request.ReplyFormat
 		pending.Address = request.Address
 		pending.Amount = request.Amount
 		pending.Memo = request.Memo
@@ -630,6 +697,12 @@ func (m *meshService) pay(ctx context.Context, req meshAPIRequest) (any, error) 
 		_, _ = m.db.Exec(ctx, "UPDATE los_mesh_payments SET state='rejected' WHERE hash=$1", p.Hash)
 		return nil, errors.New("spending guard rejected this payment")
 	}
+	// Persist the uncertain financial boundary before calling LND. A restart
+	// must not turn an in-flight payment into a safely repeatable request.
+	if _, err = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET state='paying',updated=now() WHERE id=$1", req.ID); err != nil {
+		m.server.finishSpendingReservation(reservation, paymentHash, err)
+		return nil, errors.New("payment state unavailable; consult wallet before retrying")
+	}
 	paymentCtx, cancel := context.WithTimeout(m.server.shutdownContext(), lndWalletPaymentTimeout)
 	defer cancel()
 	paymentErr := m.wallet.PayMeshInvoice(paymentCtx, p.Invoice, req.MaxFee)
@@ -641,6 +714,7 @@ func (m *meshService) pay(ctx context.Context, req meshAPIRequest) (any, error) 
 	_, _ = m.db.Exec(paymentCtx, "UPDATE los_mesh_payments SET state=$2 WHERE hash=$1", p.Hash, state)
 	_, _ = m.db.Exec(paymentCtx, "UPDATE los_mesh_sessions SET updated=now(),state=$2 WHERE id=$1", req.ID, state)
 	_ = m.send(paymentCtx, reply(p.Packet, mesh.Result, []byte(state)), peer.Key)
+	m.updateRequestResult(paymentCtx, req.ID, state)
 	delete(m.pending, req.ID)
 	m.server.recordWalletActivity(p.Hash)
 	return map[string]string{"state": state, "payment_hash": p.Hash}, nil

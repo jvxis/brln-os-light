@@ -1003,3 +1003,12 @@ retries, not unique packets or RF acknowledgements. Error codes are
 `bridge_unavailable` and `no_los_confirmation`; the existing radio diagnostic
 retains firmware errors separately. Old rows retain unknown `updated` and zero
 counters. Pending requests have stable ID ordering.
+
+
+## LOS Mesh linked workflow additions (0.5.28)
+
+`GET /api/apps/los-mesh/status`: peers add `correlated_replies` (short-lived authenticated capability); history adds optional `request_id`, `response_id`, and boolean `can_retry`. New states `responding` and `answered` describe response progress, not settlement.
+
+`POST /api/apps/los-mesh/action`: `preview` and `invoice` accept optional `request_id` referencing a pending request from the same peer. Kind, amount, address and expiry must match; arbitrary raw transaction replies cannot bypass those terms. The subsequent `send` uses the request binding stored in its owner-bound preview. Successful response enqueue removes the original preparation action. Unlinked calls keep their previous contract.
+
+Action `retry` accepts `id`, `confirm: true`, and `confirm_password`; it requires fresh Mesh reauthentication. Only paused, unexpired in-memory transmissions with fewer than two resumptions are eligible. The operation never creates a new invoice or wallet transaction. Clients should render the action only when `can_retry` is true, while the server rechecks eligibility.

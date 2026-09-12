@@ -23,17 +23,21 @@ import (
 )
 
 type meshContact struct {
-	LastResponse   *time.Time `json:"last_response,omitempty"`
-	Node           uint32     `json:"node"`
-	Name           string     `json:"name"`
-	Paired         bool       `json:"paired"`
-	AllowRelay     bool       `json:"allow_relay"`
-	Fingerprint    string     `json:"fingerprint"`
-	Key            []byte     `json:"-"`
-	Challenge      string     `json:"-"`
-	ChallengeUntil time.Time  `json:"-"`
+	CorrelatedReplies bool       `json:"correlated_replies"`
+	LastResponse      *time.Time `json:"last_response,omitempty"`
+	Node              uint32     `json:"node"`
+	Name              string     `json:"name"`
+	Paired            bool       `json:"paired"`
+	AllowRelay        bool       `json:"allow_relay"`
+	Fingerprint       string     `json:"fingerprint"`
+	Key               []byte     `json:"-"`
+	Challenge         string     `json:"-"`
+	ChallengeUntil    time.Time  `json:"-"`
 }
 type meshHistory struct {
+	CanRetry       bool       `json:"can_retry"`
+	RequestID      string     `json:"request_id,omitempty"`
+	ResponseID     string     `json:"response_id,omitempty"`
 	Updated        *time.Time `json:"updated,omitempty"`
 	SendAttempts   int        `json:"send_attempts"`
 	BridgeAccepted int        `json:"bridge_accepted"`
@@ -50,6 +54,8 @@ type meshHistory struct {
 	Created   time.Time `json:"created"`
 }
 type meshOutbound struct {
+	Paused   bool
+	Resumes  int
 	Packets  []mesh.Packet
 	Next     int
 	Attempts int
@@ -67,20 +73,22 @@ type meshWallet interface {
 }
 
 type meshService struct {
-	pairings    map[string]*meshPairing
-	pairSeen    map[string]time.Time
-	pairRate    map[uint32]time.Time
-	wallet      meshWallet
-	mu          sync.Mutex
-	db          *pgxpool.Pool
-	client      *http.Client
-	server      *Server
-	incoming    map[string]*mesh.Assembly
-	outgoing    map[string]*meshOutbound
-	lastControl map[uint32]time.Time
-	pending     map[string]*meshPending
-	proposals   map[string]*meshProposal
-	leased      map[string]*meshProposal
+	capabilities   map[uint32]*meshCapability
+	capabilitySent time.Time
+	pairings       map[string]*meshPairing
+	pairSeen       map[string]time.Time
+	pairRate       map[uint32]time.Time
+	wallet         meshWallet
+	mu             sync.Mutex
+	db             *pgxpool.Pool
+	client         *http.Client
+	server         *Server
+	incoming       map[string]*mesh.Assembly
+	outgoing       map[string]*meshOutbound
+	lastControl    map[uint32]time.Time
+	pending        map[string]*meshPending
+	proposals      map[string]*meshProposal
+	leased         map[string]*meshProposal
 }
 
 func (s *Server) meshService() (*meshService, error) {
@@ -127,8 +135,15 @@ ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS send_attempts integer NOT
 ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS bridge_accepted integer NOT NULL DEFAULT 0;
 ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS last_error text NOT NULL DEFAULT '';
 ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS operation text NOT NULL DEFAULT '';
+ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS request_id text NOT NULL DEFAULT '';
+ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS response_id text NOT NULL DEFAULT '';
+ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS request_amount bigint NOT NULL DEFAULT 0;
+ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS request_address text NOT NULL DEFAULT '';
+ALTER TABLE los_mesh_sessions ADD COLUMN IF NOT EXISTS expects_reply boolean NOT NULL DEFAULT false;
 UPDATE los_mesh_payments SET state='payment_unknown' WHERE state='paying';
+UPDATE los_mesh_sessions SET updated=now(),state='payment_unknown' WHERE state='paying';
 UPDATE los_mesh_sessions SET updated=now(),state='interrupted' WHERE state IN ('receiving','sending','awaiting_result','awaiting_approval');
+UPDATE los_mesh_sessions SET updated=now(),state=child.state FROM (SELECT id,state FROM los_mesh_sessions WHERE state IN ('interrupted','payment_unknown','publication_unknown')) child WHERE los_mesh_sessions.response_id=child.id AND los_mesh_sessions.state IN ('responding','answered');
 UPDATE los_mesh_publications SET state='publication_unknown' WHERE state='publishing';`)
 	if err != nil {
 		return nil, errors.New("LOS Mesh storage initialization failed")
@@ -175,6 +190,7 @@ func (m *meshService) contacts(ctx context.Context) ([]meshContact, error) {
 		}
 		sum := sha256.Sum256(p.Key)
 		p.Fingerprint = hex.EncodeToString(sum[:8])
+		p.CorrelatedReplies = m.supportsReplies(p.Node)
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -267,6 +283,7 @@ func (m *meshService) tick(ctx context.Context) {
 		return
 	}
 	m.pairTick(ctx)
+	m.capabilityTick(ctx, status.Node, peers)
 	for _, wire := range received {
 		if mesh.IsPairMessage(wire.Payload) {
 			m.pairReceive(ctx, wire, status.Node, known)
@@ -291,12 +308,15 @@ func (m *meshService) tick(ctx context.Context) {
 			delete(m.outgoing, id)
 			continue
 		}
+		if o.Paused {
+			continue
+		}
 		if now.Sub(o.Sent) < 12*time.Second {
 			continue
 		}
 		if o.Attempts >= 3 {
 			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),last_error=CASE WHEN last_error='' THEN 'no_los_confirmation' ELSE last_error END,state='incomplete' WHERE id=$1", id)
-			delete(m.outgoing, id)
+			o.Paused = true
 			continue
 		}
 		index := o.Next
@@ -318,6 +338,8 @@ func (m *meshService) tick(ctx context.Context) {
 func (m *meshService) receive(ctx context.Context, p mesh.Packet, peer meshContact, mode string) {
 	id := sessionID(p)
 	switch p.Kind {
+	case mesh.Capabilities:
+		m.capabilityReceive(ctx, p, peer)
 	case mesh.Hello:
 		// Paired trust is provisioned locally; the handshake proves key possession.
 		if time.Since(m.lastControl[p.From]) < 10*time.Second {
@@ -343,6 +365,7 @@ func (m *meshService) receive(ctx context.Context, p mesh.Packet, peer meshConta
 			state := string(p.Payload)
 			if state == "paid" || state == "payment_unknown" {
 				_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state=$4 WHERE id=$1 AND peer=$2 AND hash=$3 AND direction='out' AND state='awaiting_approval'", outID, p.From, hex.EncodeToString(p.Hash[:]), state)
+				m.updateRequestResult(ctx, outID, state)
 			}
 			return
 		}
@@ -355,6 +378,7 @@ func (m *meshService) receive(ctx context.Context, p mesh.Packet, peer meshConta
 				return
 			}
 			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state=$2 WHERE id=$1", outID, state)
+			m.updateRequestResult(ctx, outID, state)
 			delete(m.outgoing, outID)
 		} else if int(p.Index) == o.Next {
 			o.Next++
@@ -364,13 +388,16 @@ func (m *meshService) receive(ctx context.Context, p mesh.Packet, peer meshConta
 			if o.Next == len(o.Packets) {
 				state = "awaiting_result"
 			}
+			if o.Paused {
+				state = "incomplete"
+			}
 			_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),received=$2,state=$3 WHERE id=$1", outID, o.Next, state)
 		}
 	case mesh.Cancel:
 		delete(m.incoming, id)
 		delete(m.pending, id)
 		_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state='cancelled' WHERE id=$1 AND state IN ('receiving','awaiting_approval')", id)
-	case mesh.Transaction, mesh.Invoice, mesh.PaymentRequest:
+	case mesh.Transaction, mesh.Invoice, mesh.PaymentRequest, mesh.CorrelatedReply:
 		if !peer.Paired || (p.Kind == mesh.Transaction && (!peer.AllowRelay || mode == "send")) {
 			if time.Since(m.lastControl[p.From]) > 10*time.Second {
 				m.lastControl[p.From] = time.Now()
@@ -428,14 +455,29 @@ func (m *meshService) receive(ctx context.Context, p mesh.Packet, peer meshConta
 		}
 		delete(m.incoming, id)
 		txid := ""
+		if p.Kind == mesh.CorrelatedReply {
+			kind, decoded, e := m.acceptReply(ctx, p, content)
+			if e != nil {
+				_, _ = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state='rejected' WHERE id=$1", id)
+				_ = m.send(ctx, reply(p, mesh.Result, []byte("rejected")), peer.Key)
+				return
+			}
+			p.Kind = kind
+			content = decoded
+		}
 		if p.Kind == mesh.Transaction {
-			state = m.publish(ctx, content)
+			if !peer.AllowRelay || mode == "send" {
+				state = "relay_disabled"
+			} else {
+				state = m.publish(ctx, content)
+			}
 			preview, _ := mesh.ValidateTransaction(content)
 			txid = preview.TXID
 		} else {
 			state = m.acceptRequest(ctx, p, content)
 		}
 		if _, err = m.db.Exec(ctx, "UPDATE los_mesh_sessions SET updated=now(),state=$2,txid=$3 WHERE id=$1", id, state, txid); err == nil {
+			m.updateRequestResult(ctx, id, state)
 			_ = m.send(ctx, reply(p, mesh.Result, []byte(state)), peer.Key)
 		}
 	}

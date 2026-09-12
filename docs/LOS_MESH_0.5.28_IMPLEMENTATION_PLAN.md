@@ -86,3 +86,8 @@ Se algum código externo vier a ser reutilizado, verificar licença e preservar 
 ## Condição para a release
 
 As etapas são candidatas à 0.5.28. Correlação e repetição só entram após os testes de compatibilidade, persistência e duplicação passarem. Se essa validação não fechar, entregar UI/diagnóstico e manter recuperação/correlação pendentes de forma explícita. Não encerrar a #147 até comprovar seus critérios de diagnóstico com dados reais; o experimento de redundância continua separado.
+
+
+## Implementation progress ? 2026-09-12
+
+Diagnostic code is in PR #153 (draft); correlated workflows, bounded resume and independent UI drafts are in the dependent workflow branch. Automated parser/protocol, PostgreSQL integration and browser validation are in progress/completed as recorded in each PR. These changes have not been deployed. Real-firmware telemetry and two-radio validation remain release gates; #147 remains open. No fountain-code experiment was added.

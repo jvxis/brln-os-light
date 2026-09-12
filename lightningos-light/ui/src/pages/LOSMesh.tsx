@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getWalletAddress, getMeshStatus, meshAction, type MeshAction, type MeshPreview, type MeshStatus } from '../api'
+import { getWalletAddress, getMeshStatus, meshAction, type MeshAction, type MeshPreview, type MeshPending, type MeshStatus } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
 import MeshDiagnostics from '../components/MeshDiagnostics'
 import meshIcon from '../assets/apps/los-mesh.svg'
+
+type PaymentDraft = { peer: string; raw: string; address: string; amount: string; rate: string; invoice: string; memo: string; requestID: string }
+const emptyDraft: PaymentDraft = { peer: '', raw: '', address: '', amount: '', rate: '2', invoice: '', memo: '', requestID: '' }
 
 export default function LOSMesh() {
   const { i18n } = useTranslation()
@@ -17,7 +20,6 @@ export default function LOSMesh() {
   const [transport, setTransport] = useState('')
   const [tcpEndpoint, setTcpEndpoint] = useState<string | null>(null)
   const [mode, setMode] = useState('')
-  const [peer, setPeer] = useState('')
   const [nodeSearch, setNodeSearch] = useState('')
   const [nodePage, setNodePage] = useState(0)
   const nodeListRef = useRef<HTMLDivElement>(null)
@@ -38,12 +40,6 @@ export default function LOSMesh() {
   const [approvalError, setApprovalError] = useState('')
   const approvalResult = useRef<((value: unknown) => void) | null>(null)
   useEffect(() => () => { approvalResult.current?.(undefined) }, [])
-  const [raw, setRaw] = useState('')
-  const [address, setAddress] = useState('')
-  const [amount, setAmount] = useState('')
-  const [rate, setRate] = useState('2')
-  const [invoice, setInvoice] = useState('')
-  const [memo, setMemo] = useState('')
   const [maxFee, setMaxFee] = useState('10')
   const [preview, setPreview] = useState<MeshPreview | null>(null)
   const [tab, setTab] = useState('onchain')
@@ -66,6 +62,36 @@ export default function LOSMesh() {
   const showRequests = () => { setSection('payments'); window.setTimeout(() => requestListRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0) }
   const showPaymentForm = () => window.setTimeout(() => paymentFormRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0)
   const [onchainIntent, setOnchainIntent] = useState<'receive' | 'send'>('receive')
+  const [drafts, setDrafts] = useState<Record<string, PaymentDraft>>({})
+  const draftKey = `${tab}:${tab === 'onchain' ? onchainIntent : lightningIntent}`
+  const draft = drafts[draftKey] || emptyDraft
+  const { peer, raw, address, amount, rate, invoice, memo, requestID } = draft
+  const setDraftField = (field: keyof PaymentDraft, value: string) => setDrafts(previous => ({ ...previous, [draftKey]: { ...(previous[draftKey] || emptyDraft), [field]: value } }))
+  const setPeer = (v: string) => { setDraftField('peer', v); setDraftField('requestID', '') }
+  const setRaw = (v: string) => setDraftField('raw', v)
+  const setAddress = (v: string) => setDraftField('address', v)
+  const setAmount = (v: string) => setDraftField('amount', v)
+  const setRate = (v: string) => setDraftField('rate', v)
+  const setInvoice = (v: string) => setDraftField('invoice', v)
+  const setMemo = (v: string) => setDraftField('memo', v)
+  const prepareRequest = (p: MeshPending) => {
+    const network = p.kind === 'onchain_request' ? 'onchain' : 'lightning'
+    const key = network === 'onchain' ? 'onchain:send' : 'lightning:receive'
+    setDrafts(previous => ({ ...previous, [key]: { ...emptyDraft, peer: String(p.peer), address: p.address || '', amount: String(p.amount_sat), memo: p.memo || '', requestID: p.id } }))
+    setTab(network)
+    if (network === 'onchain') setOnchainIntent('send'); else setLightningIntent('receive')
+    setError(''); showPaymentForm()
+    setNotice(text('Solicitação carregada. Revise os dados antes de continuar.', 'Request loaded. Review the details before continuing.'))
+  }
+  const navigateTabs = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return
+    const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)'))
+    const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
+    if (index < 0) return
+    event.preventDefault()
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+    tabs[next]?.focus(); tabs[next]?.click()
+  }
   const refresh = useCallback(async () => { const value = await getMeshStatus(); setStatus(value); return value }, [])
   useEffect(() => {
     let live = true
@@ -78,6 +104,7 @@ export default function LOSMesh() {
     try {
       const response = await meshAction<T>({ ...payload, confirm_password: confirmationPassword })
       await refresh().catch(() => setError(text('A ação foi concluída, mas não foi possível atualizar o estado.', 'The action completed, but status could not be refreshed.')))
+      if (payload.action === 'invoice') setDrafts(previous => ({ ...previous, [draftKey]: { ...emptyDraft, peer } }))
       if (payload.action === 'mode' || payload.action === 'install') setMode('')
       setNotice(text('Solicitação registrada. Acompanhe o estado abaixo.', 'Request recorded. Follow its status below.'))
       if (payload.action === 'install') window.dispatchEvent(new CustomEvent('apps:changed', { detail: { id: 'los-mesh' } }))
@@ -86,7 +113,7 @@ export default function LOSMesh() {
     finally { setBusy(false) }
   }
   const act = <T,>(payload: MeshAction): Promise<T | undefined> => {
-    if (!['install', 'mode', 'peer', 'remove_peer', 'send', 'pay', 'pair_invite', 'pair_accept', 'pair_confirm', 'peer_permissions'].includes(payload.action)) return execute<T>(payload)
+    if (!['install', 'mode', 'peer', 'remove_peer', 'retry', 'send', 'pay', 'pair_invite', 'pair_accept', 'pair_confirm', 'peer_permissions'].includes(payload.action)) return execute<T>(payload)
     if (approvalResult.current) return Promise.resolve(undefined)
     setPassword(''); setApprovalError(''); setApproval({ ...payload, confirm: true })
     return new Promise(resolve => { approvalResult.current = value => resolve(value as T | undefined) })
@@ -109,6 +136,8 @@ export default function LOSMesh() {
   }
   const label = (title: string, children: ReactNode) => <label className="block space-y-2 text-sm"><span className="text-fog/75">{title}</span>{children}</label>
   const states: Record<string, string> = {
+    paying: text('Pagamento em andamento no LND', 'Payment in progress in LND'),
+    responding: text('Resposta em transmissão', 'Response being transmitted'), answered: text('Solicitação atendida — resposta disponível', 'Request answered — response available'),
     not_installed: text('Não instalado', 'Not installed'), stopped: text('Parado', 'Stopped'), running: text('Conectado', 'Connected'),
     hardware_disconnected: text('Rádio desconectado — tentando reconectar', 'Radio disconnected — reconnecting'), connecting: text('Conectando ao rádio', 'Connecting to radio'),
     awaiting_pairing: text('Aguardando pareamento', 'Awaiting pairing'), communication_error: text('Erro de comunicação', 'Communication error'), upgrade_required: text('Atualização necessária', 'Upgrade required'),
@@ -134,7 +163,8 @@ export default function LOSMesh() {
     relay: text('Use seu LOS conectado à internet para publicar transações já assinadas de contatos autorizados. Este modo bloqueia novos envios de transações e solicitações pelo LOS Mesh.', 'Use your internet-connected LOS to publish already signed transactions from authorized contacts. This mode blocks new transaction and request transfers through LOS Mesh.'),
     both: text('Envie transações e solicitações e também publique transações já assinadas de contatos autorizados. Escolha este modo para usar as duas funções.', 'Send transactions and requests and also publish already signed transactions from authorized contacts. Choose this mode to use both functions.')
   }
-  const approvalTitle = approval?.action === 'pair_invite' ? text('Enviar convite', 'Send invitation')
+  const approvalTitle = approval?.action === 'retry' ? text('Retomar transmissão original', 'Resume original transmission')
+    : approval?.action === 'pair_invite' ? text('Enviar convite', 'Send invitation')
     : approval?.action === 'pair_accept' ? text('Aceitar convite', 'Accept invitation')
     : approval?.action === 'pair_confirm' ? text('Confirmar contato', 'Confirm contact')
     : approval?.action === 'peer_permissions' ? text('Alterar permissões', 'Change permissions')
@@ -145,7 +175,9 @@ export default function LOSMesh() {
     : approval?.action === 'remove_peer' ? text('Remover contato', 'Remove contact')
     : approval?.action === 'send' ? text('Aprovar e transmitir', 'Approve and transmit')
     : text('Aprovar pagamento Lightning', 'Approve Lightning payment')
-  const approvalDescription = approval?.action === 'disconnect'
+  const approvalDescription = approval?.action === 'retry'
+    ? text('Reenvia os mesmos pacotes ainda em memória, com a mesma invoice ou assinatura e a mesma validade. Não cria um novo pagamento. Confirme após conferir o contato e a carteira.', 'Resends the same packets still in memory, with the same invoice or signature and expiry. Does not create a new payment. Confirm after checking the contact and wallet.')
+    : approval?.action === 'disconnect'
     ? text('A conexão será encerrada e as tentativas de reconexão serão interrompidas. Seus contatos e configurações serão preservados. Use Reconectar rádio para voltar a conectar.', 'The connection will close and reconnection attempts will stop. Your contacts and settings will be preserved. Use Reconnect radio to connect again.')
     : approval?.action === 'pair_confirm'
     ? text('Confirme somente se comparou o código com o outro operador por um canal confiável e os dois são iguais. Isso não autoriza pagamentos nem relay.', 'Confirm only after comparing the code with the other operator over a trusted channel and finding an exact match. This does not authorize payments or relay.')
@@ -169,7 +201,7 @@ export default function LOSMesh() {
   const validAmount = Number.isSafeInteger(Number(amount)) && Number(amount) > 0
   const input = 'input-field w-full'
   const paired = status?.peers.filter(p => p.paired) || []
-  const review = async () => { const value = await act<MeshPreview>({ action: 'preview', node: Number(peer), raw_tx: raw || undefined, address, amount_sat: Number(amount), sat_per_vbyte: Number(rate) }); if (value) setPreview(value) }
+  const review = async () => { const value = await act<MeshPreview>({ action: 'preview', request_id: requestID || undefined, node: Number(peer), raw_tx: raw || undefined, address, amount_sat: Number(amount), sat_per_vbyte: Number(rate) }); if (value) setPreview(value) }
   return <section className="space-y-6">
     <div className="section-card flex flex-wrap items-center justify-between gap-4">
       <div className="flex items-center gap-4"><img src={meshIcon} className="h-14 w-14" alt="" /><div><h2 className="text-2xl font-semibold">LOS Mesh</h2><p className="text-sm text-fog/60">Bitcoin · Lightning · Meshtastic LoRa</p></div></div>
@@ -180,8 +212,8 @@ export default function LOSMesh() {
     {Boolean(incomingNotice) && <div role="status" className="sticky top-2 z-20 flex flex-wrap items-center gap-3 rounded-xl border border-emerald-400/40 bg-ink p-4 shadow-lg"><span>{text('Solicitações recebidas foram atualizadas.', 'Received requests updated.')}</span><button className="btn-primary" onClick={showRequests}>{text('Ver solicitações', 'View requests')}</button><button className="btn-secondary" onClick={() => setIncomingNotice(0)}>{text('Dispensar', 'Dismiss')}</button></div>}
     {notice && <p role="status" className="text-emerald-300">{notice}</p>}
     {!!status?.radio.last_error_code && <p role="alert" className="section-card text-amber-300">{text('Último erro de transporte informado pelo rádio', 'Last transport error reported by the radio')}: {({ 7: 'TOO_LARGE', 9: 'DUTY_CYCLE_LIMIT', 3: 'TIMEOUT', 5: 'MAX_RETRANSMIT', 6: 'NO_CHANNEL', 34: 'PKI_FAILED', 35: 'PKI_UNKNOWN_PUBKEY', 39: 'PKI_SEND_FAIL_PUBLIC_KEY' } as Record<number, string>)[status.radio.last_error_code] || status.radio.last_error_code} · {status.radio.last_error_at ? new Date(status.radio.last_error_at).toLocaleString() : ''}. {text('Esse aviso não confirma recebimento nem pagamento.', 'This report does not confirm receipt or payment.')}</p>}
-    <div role="tablist" aria-label={text('Seções do LOS Mesh', 'LOS Mesh sections')} className="flex flex-wrap gap-3 border-b border-white/15">
-      {(['radio', 'contacts', 'payments'] as const).map(value => <button key={value} id={`mesh-tab-${value}`} role="tab" aria-selected={section === value} aria-controls={`mesh-panel-${value}`} className={tabClass(section === value)} onClick={() => setSection(value)}>{value === 'radio' ? text('Rádio', 'Radio') : value === 'contacts' ? text('Contatos', 'Contacts') : `${text('Pagamentos', 'Payments')}${status?.pending.length ? ` (${status.pending.length})` : ''}`}</button>)}
+    <div role="tablist" onKeyDown={navigateTabs} aria-label={text('Seções do LOS Mesh', 'LOS Mesh sections')} className="flex flex-wrap gap-3 border-b border-white/15">
+      {(['radio', 'contacts', 'payments'] as const).map(value => <button key={value} id={`mesh-tab-${value}`} role="tab" tabIndex={section === value ? 0 : -1} aria-selected={section === value} aria-controls={`mesh-panel-${value}`} className={tabClass(section === value)} onClick={() => setSection(value)}>{value === 'radio' ? text('Rádio', 'Radio') : value === 'contacts' ? text('Contatos', 'Contacts') : `${text('Pagamentos', 'Payments')}${status?.pending.length ? ` (${status.pending.length})` : ''}`}</button>)}
     </div>
     <div id="mesh-panel-radio" role="tabpanel" aria-labelledby="mesh-tab-radio" hidden={section !== 'radio'}>
     <div className="section-card space-y-4">
@@ -267,28 +299,30 @@ export default function LOSMesh() {
       {!status?.pending.length && <p className="text-sm text-fog/60">{text('Nenhuma solicitação aguardando aprovação.', 'No requests awaiting approval.')}</p>}
       <div className="max-h-[32rem] overflow-y-auto overscroll-contain space-y-3 pr-2" role="region" aria-label={text('Pendências', 'Pending requests')} tabIndex={0}>
       {status?.pending.map(p => <div key={p.id} className="space-y-3 rounded-xl border border-white/10 p-4"><p><strong>{p.kind === 'onchain_request' ? 'Bitcoin' : 'Lightning'} · {p.amount_sat} sats</strong> · {status.peers.find(peer => peer.node === p.peer)?.name}</p><p className="break-all text-sm">{p.memo}</p><p className="break-all font-mono text-xs">{p.address || p.destination}<br />{p.payment_hash}</p><p className="text-xs">{text('Expira', 'Expires')}: {new Date(p.expires).toLocaleString()}</p>
-        {p.kind === 'invoice_request' ? <button className="btn-primary" disabled={busy} onClick={() => { setPeer(String(p.peer)); setAmount(String(p.amount_sat)); setMemo(p.memo || ''); setInvoice(''); setLightningIntent('receive'); setTab('lightning'); showPaymentForm(); setNotice(text('Pedido de invoice carregado. Confira os dados e clique em Criar e enviar cobrança.', 'Invoice request loaded. Review the details and click Create and send invoice.')) }}>{text('Preparar invoice solicitada', 'Prepare requested invoice')}</button> : p.kind === 'invoice' ? <>{label(text('Taxa máxima Lightning (sats)', 'Maximum Lightning fee (sats)'), <input className={input} type="number" min="0" max="100000" value={maxFee} onChange={e => setMaxFee(e.target.value)} />)}<button className="btn-primary" disabled={busy} onClick={() => void act({ action: 'pay', id: p.id, amount_sat: p.amount_sat, max_fee_sat: Number(maxFee) })}>{text('Aprovar e pagar via Lightning', 'Approve and pay via Lightning')}</button></> : <button className="btn-primary" disabled={busy || Boolean(preview)} onClick={() => { setPeer(String(p.peer)); setAddress(p.address || ''); setAmount(String(p.amount_sat)); setRaw(''); setOnchainIntent('send'); setTab('onchain'); showPaymentForm(); setError(''); setNotice(text('Solicitação carregada. Revise a transação antes de aprovar.', 'Request loaded. Review the transaction before approving.')) }}>{text('Preparar prévia on-chain', 'Prepare on-chain preview')}</button>}
+        {p.kind === 'invoice_request' ? <button className="btn-primary" disabled={busy || Boolean(preview)} onClick={() => prepareRequest(p)}>{text('Preparar invoice solicitada', 'Prepare requested invoice')}</button> : p.kind === 'invoice' ? <>{label(text('Taxa máxima Lightning (sats)', 'Maximum Lightning fee (sats)'), <input className={input} type="number" min="0" max="100000" value={maxFee} onChange={e => setMaxFee(e.target.value)} />)}<button className="btn-primary" disabled={busy} onClick={() => void act({ action: 'pay', id: p.id, amount_sat: p.amount_sat, max_fee_sat: Number(maxFee) })}>{text('Aprovar e pagar via Lightning', 'Approve and pay via Lightning')}</button></> : <button className="btn-primary" disabled={busy || Boolean(preview)} onClick={() => prepareRequest(p)}>{text('Preparar prévia on-chain', 'Prepare on-chain preview')}</button>}
         <button className="btn-secondary ml-3" disabled={busy} onClick={() => void act({ action: 'cancel', id: p.id })}>{text('Rejeitar', 'Reject')}</button>
       </div>)}
       </div>
     </div>
     <div ref={paymentFormRef} className="section-card space-y-4 scroll-mt-20">
-      <div role="tablist" aria-label={text('Rede de pagamento', 'Payment network')} className="flex gap-5 border-b border-white/15">{['onchain', 'lightning'].map(t => <button role="tab" aria-selected={tab === t} key={t} className={tabClass(tab === t)} disabled={busy || Boolean(preview)} onClick={() => setTab(t)}>{t === 'onchain' ? 'On-chain' : 'Lightning'}</button>)}</div>
-      {label(text('Contato de destino', 'Destination contact'), <select className={input} value={peer} onChange={e => setPeer(e.target.value)}><option value="">{text('Selecione um contato pareado', 'Select a paired contact')}</option>{paired.map(p => <option key={p.node} value={p.node}>{p.name}</option>)}</select>)}
+      <div role="tablist" onKeyDown={navigateTabs} aria-label={text('Rede de pagamento', 'Payment network')} className="flex gap-5 border-b border-white/15">{['onchain', 'lightning'].map(t => <button role="tab" tabIndex={tab === t ? 0 : -1} aria-selected={tab === t} key={t} className={tabClass(tab === t)} disabled={busy || Boolean(preview)} onClick={() => setTab(t)}>{t === 'onchain' ? 'On-chain' : 'Lightning'}</button>)}</div>
+      {label(text('Contato de destino', 'Destination contact'), <select className={input} disabled={busy || Boolean(preview)} value={peer} onChange={e => setPeer(e.target.value)}><option value="">{text('Selecione um contato pareado', 'Select a paired contact')}</option>{paired.map(p => <option key={p.node} value={p.node}>{p.name}</option>)}</select>)}
       {peer && <div className="rounded-xl border border-white/10 p-3 text-sm space-y-2"><strong>{paired.find(p => String(p.node) === peer)?.name}</strong><p>{text('Última resposta autenticada', 'Last authenticated response')}: {paired.find(p => String(p.node) === peer)?.last_response ? new Date(paired.find(p => String(p.node) === peer)!.last_response!).toLocaleString() : text('Ainda não registrada', 'Not recorded yet')}</p><p>{text('Permissão para publicar pelo meu relay', 'Permission to publish through my relay')}: {paired.find(p => String(p.node) === peer)?.allow_relay ? text('Permitido', 'Allowed') : text('Bloqueado', 'Blocked')}. {text('A permissão no destino é definida pelo outro operador.', 'Permission at the destination is set by the other operator.')}</p><MeshDiagnostics node={status?.nodes?.find(n => String(n.node) === peer)} pt={pt} /></div>}
+      {requestID && <p className="text-sm text-emerald-300">{text('Respondendo à solicitação selecionada. Endereço e valor devem corresponder ao pedido.', 'Replying to the selected request. Address and amount must match the request.')} <button className="underline" onClick={() => setDraftField('requestID', '')} disabled={busy || Boolean(preview)}>{text('Desvincular rascunho', 'Unlink draft')}</button></p>}
+      {peer && !paired.find(p => String(p.node) === peer)?.correlated_replies && <p className="text-xs text-fog/65">{text('Vínculo remoto automático ainda não disponível para este contato. As operações continuam disponíveis com acompanhamento separado.', 'Automatic remote linking is not yet available for this contact. Operations remain available with separate tracking.')}</p>}
       {tab === 'onchain' ? <>
         <fieldset className="rounded-xl border border-white/15 p-4" disabled={busy || Boolean(preview)}>
           <legend className="px-2 text-sm text-fog/75">{text('O que você quer fazer?', 'What would you like to do?')}</legend>
           <div className="grid gap-4 sm:grid-cols-2">{(['receive', 'send'] as const).map(intent => <label key={intent} className="flex cursor-pointer items-start gap-3 text-sm">
-            <input type="radio" name="mesh-onchain-intent" value={intent} checked={onchainIntent === intent} className="mt-1 h-4 w-4 accent-emerald-400" onChange={() => { setOnchainIntent(intent); setAddress(''); setAmount(''); setRaw(''); setError(''); setNotice('') }} />
+            <input type="radio" name="mesh-onchain-intent" value={intent} checked={onchainIntent === intent} className="mt-1 h-4 w-4 accent-emerald-400" onChange={() => { setOnchainIntent(intent); setError(''); setNotice('') }} />
             <span><span className="block font-semibold">{intent === 'receive' ? text('Quero receber', 'Receive bitcoin') : text('Enviar bitcoin', 'Send bitcoin')}</span><span className="mt-1 block text-xs text-fog/65">{intent === 'receive' ? text('Pedir um pagamento ao contato.', 'Request payment from the contact.') : text('Pagar usando a minha carteira.', 'Pay from my wallet.')}</span></span>
           </label>)}</div>
         </fieldset>
         <p className="text-sm text-fog/65">{onchainIntent === 'receive' ? text('Envie seu endereço e o valor solicitado ao contato. Ele decide se paga usando a carteira dele. Você não precisa de saldo, prévia de transação ou taxa para solicitar recebimento.', 'Send your address and requested amount to the contact. They decide whether to pay from their wallet. Requesting payment requires no balance, transaction preview or fee.') : text('Esta operação gasta fundos da sua carteira. Revise e aprove a transação; o contato de destino precisa oferecer relay e autorizar você para publicá-la.', 'This operation spends funds from your wallet. Review and approve the transaction; the destination contact must offer relay and authorize you to publish it.')}</p>
-        {label(onchainIntent === 'receive' ? text('Meu endereço Bitcoin de recebimento', 'My Bitcoin receiving address') : text('Endereço Bitcoin do destinatário', 'Recipient Bitcoin address'), <input className={input} value={address} onChange={e => setAddress(e.target.value)} />)}
+        {label(onchainIntent === 'receive' ? text('Meu endereço Bitcoin de recebimento', 'My Bitcoin receiving address') : text('Endereço Bitcoin do destinatário', 'Recipient Bitcoin address'), <input className={input} disabled={busy || Boolean(preview)} value={address} onChange={e => setAddress(e.target.value)} />)}
         {onchainIntent === 'receive' && <button className="btn-secondary" disabled={busy} onClick={async () => { setBusy(true); setError(''); try { const result = await getWalletAddress(); setAddress(result?.address || '') } catch (e) { setError(String(e)) } finally { setBusy(false) } }}>{text('Gerar meu endereço de recebimento', 'Generate my receiving address')}</button>}
-        <div className="grid gap-4 md:grid-cols-2">{label(text('Valor (sats)', 'Amount (sats)'), <input className={input} type="number" min="1" value={amount} onChange={e => setAmount(e.target.value)} />)}{onchainIntent === 'send' && label('sat/vB (1–1000)', <input className={input} type="number" min="1" max="1000" value={rate} onChange={e => setRate(e.target.value)} />)}</div>
-        {onchainIntent === 'send' && <details><summary className="cursor-pointer text-sm">{text('Importar transação assinada', 'Import signed transaction')}</summary><textarea className={`${input} mt-3 min-h-28 font-mono text-xs`} value={raw} maxLength={25600} onChange={e => setRaw(e.target.value)} placeholder="Raw transaction hex" /><p className="text-xs text-fog/60">{text('Quando preenchido, o raw substitui os campos de criação acima. Até 12.800 bytes.', 'When provided, raw transaction data overrides the creation fields above. Up to 12,800 bytes.')}</p></details>}
+        <div className="grid gap-4 md:grid-cols-2">{label(text('Valor (sats)', 'Amount (sats)'), <input className={input} type="number" min="1" disabled={busy || Boolean(preview)} value={amount} onChange={e => setAmount(e.target.value)} />)}{onchainIntent === 'send' && label('sat/vB (1–1000)', <input className={input} type="number" min="1" max="1000" disabled={busy || Boolean(preview)} value={rate} onChange={e => setRate(e.target.value)} />)}</div>
+        {onchainIntent === 'send' && <details><summary className="cursor-pointer text-sm">{text('Importar transação assinada', 'Import signed transaction')}</summary><textarea className={`${input} mt-3 min-h-28 font-mono text-xs`} disabled={busy || Boolean(preview)} value={raw} maxLength={25600} onChange={e => setRaw(e.target.value)} placeholder="Raw transaction hex" /><p className="text-xs text-fog/60">{text('Quando preenchido, o raw substitui os campos de criação acima. Até 12.800 bytes.', 'When provided, raw transaction data overrides the creation fields above. Up to 12,800 bytes.')}</p></details>}
         {onchainIntent === 'receive' ? <>
           {peer && (status?.mode !== 'both' || !status?.peers.find(p => String(p.node) === peer)?.allow_relay) && <p className="text-sm text-amber-200">{text('Você pode solicitar o pagamento. Para seu LOS publicar a transação assinada que o contato devolver pelo Mesh, aplique “Enviar e oferecer relay” na aba Rádio e habilite “Permitir relay” para esse contato. Isso não autoriza gastos da sua carteira.', 'You can request payment. For your LOS to publish the signed transaction the contact sends back through Mesh, apply “Send and offer relay” in Radio and enable “Allow relay” for this contact. This does not authorize spending from your wallet.')}</p>}
           <button className="btn-primary" disabled={busy || !canSend || !address.trim() || !Number.isSafeInteger(Number(amount)) || Number(amount) <= 0} onClick={() => void act({ action: 'request', node: Number(peer), address: address.trim(), amount_sat: Number(amount), memo })}>{text('Enviar solicitação de recebimento', 'Send payment request')}</button>
@@ -307,22 +341,22 @@ export default function LOSMesh() {
         <fieldset className="rounded-xl border border-white/15 p-4" disabled={busy}>
           <legend className="px-2 text-sm text-fog/75">{text('O que você quer fazer?', 'What would you like to do?')}</legend>
           <div className="grid gap-4 sm:grid-cols-2">{(['receive', 'pay'] as const).map(intent => <label key={intent} className="flex cursor-pointer items-start gap-3 text-sm">
-            <input type="radio" name="mesh-lightning-intent" value={intent} checked={lightningIntent === intent} className="mt-1 h-4 w-4 accent-emerald-400" onChange={() => { setLightningIntent(intent); setInvoice(''); setNotice('') }} />
+            <input type="radio" name="mesh-lightning-intent" value={intent} checked={lightningIntent === intent} className="mt-1 h-4 w-4 accent-emerald-400" onChange={() => { setLightningIntent(intent); setNotice('') }} />
             <span><span className="block font-semibold">{intent === 'receive' ? text('Receber', 'Receive') : text('Pagar', 'Pay')}</span><span className="mt-1 block text-xs text-fog/65">{intent === 'receive' ? text('Enviar uma cobrança ao contato.', 'Send an invoice to the contact.') : text('Pedir uma cobrança ao contato e aprovar depois.', 'Ask the contact for an invoice, then approve it.')}</span></span>
           </label>)}</div>
         </fieldset>
         <p className="text-sm text-fog/65">{lightningIntent === 'receive' ? text('Crie uma invoice para receber. O contato recebe a cobrança e decide se paga.', 'Create an invoice to receive funds. The contact receives it and decides whether to pay.') : text('Solicite uma invoice ao contato. Quando chegar, ela aparecerá em Solicitações recebidas para você revisar e aprovar com sua senha. Solicitar não realiza o pagamento.', 'Request an invoice from the contact. When it arrives, review and approve it with your password in Received requests. Requesting an invoice does not make a payment.')}</p>
-        {label(text('Valor (sats)', 'Amount (sats)'), <input className={input} type="number" min="1" value={amount} onChange={e => setAmount(e.target.value)} />)}
+        {label(text('Valor (sats)', 'Amount (sats)'), <input className={input} type="number" min="1" disabled={busy || Boolean(preview)} value={amount} onChange={e => setAmount(e.target.value)} />)}
         {label(text('Descrição', 'Description'), <input className={input} value={memo} maxLength={120} onChange={e => setMemo(e.target.value)} />)}
         {lightningIntent === 'receive' && <details><summary className="cursor-pointer text-sm">{text('Usar uma invoice existente', 'Use an existing invoice')}</summary>{label('BOLT11', <textarea className={`${input} mt-3 font-mono text-xs`} value={invoice} maxLength={4096} onChange={e => setInvoice(e.target.value)} />)}</details>}
         {lightningIntent === 'pay' ? <button className="btn-primary" disabled={busy || !canSend || !validAmount} onClick={() => void act({ action: 'request_invoice', node: Number(peer), amount_sat: Number(amount), memo })}>{text('Solicitar cobrança para pagar', 'Request invoice to pay')}</button>
-          : <button className="btn-primary" disabled={busy || !canSend || (!invoice.trim() && !validAmount)} onClick={() => void act({ action: 'invoice', node: Number(peer), invoice: invoice.trim(), amount_sat: Number(amount), memo })}>{invoice.trim() ? text('Enviar cobrança existente', 'Send existing invoice') : text('Criar e enviar cobrança', 'Create and send invoice')}</button>}
+          : <button className="btn-primary" disabled={busy || !canSend || (!invoice.trim() && !validAmount)} onClick={() => void act({ action: 'invoice', request_id: requestID || undefined, node: Number(peer), invoice: invoice.trim(), amount_sat: Number(amount), memo })}>{invoice.trim() ? text('Enviar cobrança existente', 'Send existing invoice') : text('Criar e enviar cobrança', 'Create and send invoice')}</button>}
       </>}
     </div>
     <div className="section-card space-y-4"><h3 className="text-lg font-semibold">{text('Histórico de sessões', 'Session history')}</h3><p className="text-xs text-fog/60">{text('Até 100 sessões recentes; retenção de 30 dias. Sem transações brutas, invoices completas ou preimages no histórico.', 'Up to 100 recent sessions; 30-day retention. No raw transactions, full invoices or preimages in history.')}</p>
       {!status?.history.length && <p className="text-sm text-fog/60">{text('Nenhuma sessão registrada.', 'No sessions recorded.')}</p>}
       <div role="region" aria-label={text('Sessões recentes', 'Recent sessions')} tabIndex={0} className="max-h-[28rem] overflow-y-auto overscroll-contain space-y-3 pr-2">
-      {status?.history.map(h => <div key={h.id} className="space-y-2 rounded-xl border border-white/10 p-3 text-sm"><p className="font-semibold">{h.direction === 'in' ? '↓' : '↑'} {h.state === 'awaiting_approval' && h.direction === 'out' ? text('Entregue ao contato — aguarda decisão no destino', 'Delivered to contact — awaiting decision at destination') : states[h.state] || h.state}</p><p className="text-xs text-fog/65">{new Date(h.created).toLocaleString()} · {h.received}/{h.total} {text('pacotes', 'packets')} · !{h.peer.toString(16).padStart(8, '0')}</p><details className="text-xs text-fog/70"><summary className="cursor-pointer">{text('Detalhes e próximo passo', 'Details and next step')}</summary><p>{text('Tentativas de envio ao bridge', 'Send attempts to bridge')}: {h.send_attempts ?? '—'} · {text('Aceitas na fila do bridge', 'Accepted into bridge queue')}: {h.bridge_accepted ?? '—'}</p><p>{text('Última atualização', 'Last update')}: {h.updated ? new Date(h.updated).toLocaleString() : '—'}</p>{h.last_error && <p className="text-amber-200">{h.last_error === 'bridge_unavailable' ? text('Bridge indisponível ou fila cheia.', 'Bridge unavailable or queue full.') : h.last_error === 'no_los_confirmation' ? text('Sem confirmação do LOS remoto após as tentativas.', 'No remote LOS confirmation after retries.') : h.last_error}</p>}<p>{h.state === 'awaiting_approval' ? h.direction === 'in' ? text('Revise em Solicitações recebidas.', 'Review in Received requests.') : h.operation === 'invoice_request' ? text('Aguardando o contato enviar a cobrança.', 'Waiting for the contact to send an invoice.') : text('Aguardando decisão do contato.', 'Waiting for the contact’s decision.') : ['incomplete','publication_unknown','payment_unknown'].includes(h.state) ? text('Consulte a carteira e o contato antes de repetir. Ausência de confirmação não comprova falha financeira.', 'Check the wallet and contact before repeating. Missing confirmation does not prove financial failure.') : h.state === 'published' ? text('Consulte o TXID para acompanhar a confirmação em bloco.', 'Check the TXID for block confirmation.') : text('Acompanhe o estado acima.', 'Follow the status above.')}</p><p>{text('Aceitação pelo bridge não comprova envio pelo rádio. Confirmação de pacotes não comprova pagamento.', 'Bridge acceptance does not prove radio transmission. Packet acknowledgement does not prove payment.')}</p></details>{h.txid && <a className="block break-all font-mono text-xs text-emerald-300 underline" href={`https://mempool.space/tx/${h.txid}`} target="_blank" rel="noreferrer">{h.txid} ↗</a>}{['sending', 'receiving', 'awaiting_result'].includes(h.state) && <button className="btn-secondary" disabled={busy} onClick={() => void act({ action: 'cancel', id: h.id })}>{text('Cancelar envio', 'Cancel transfer')}</button>}</div>)}
+      {status?.history.map(h => <div key={h.id} className="space-y-2 rounded-xl border border-white/10 p-3 text-sm"><p className="font-semibold">{h.direction === 'in' ? '↓' : '↑'} {h.state === 'paid' && (h.response_id ? h.direction === 'in' : h.direction === 'out') ? text('Contato informou pagamento confirmado', 'Contact reported confirmed payment') : h.state === 'published' && (h.response_id ? h.direction === 'in' : h.direction === 'out') ? text('Contato informou publica\u00e7\u00e3o', 'Contact reported publication') : h.state === 'awaiting_approval' && h.direction === 'out' ? text('Entregue ao contato — aguarda decisão no destino', 'Delivered to contact — awaiting decision at destination') : states[h.state] || h.state}</p><p className="text-xs text-fog/65">{new Date(h.created).toLocaleString()} · {h.received}/{h.total} {text('pacotes', 'packets')} · !{h.peer.toString(16).padStart(8, '0')}</p><details className="text-xs text-fog/70"><summary className="cursor-pointer">{text('Detalhes e próximo passo', 'Details and next step')}</summary><p>{text('Tentativas de envio ao bridge', 'Send attempts to bridge')}: {h.send_attempts ?? '—'} · {text('Aceitas na fila do bridge', 'Accepted into bridge queue')}: {h.bridge_accepted ?? '—'}</p><p>{text('Última atualização', 'Last update')}: {h.updated ? new Date(h.updated).toLocaleString() : '—'}</p>{h.last_error && <p className="text-amber-200">{h.last_error === 'bridge_unavailable' ? text('Bridge indisponível ou fila cheia.', 'Bridge unavailable or queue full.') : h.last_error === 'no_los_confirmation' ? text('Sem confirmação do LOS remoto após as tentativas.', 'No remote LOS confirmation after retries.') : h.last_error}</p>}<p>{h.state === 'answered' ? h.direction === 'out' && h.operation === 'invoice_request' ? text('Revise a invoice em Solicita\u00e7\u00f5es recebidas.', 'Review the invoice in Received requests.') : text('Resposta enviada. Aguardando a decis\u00e3o do contato.', 'Response sent. Waiting for the contact decision.') : h.state === 'responding' ? text('Acompanhe a sess\u00e3o da resposta abaixo.', 'Follow the response session below.') : h.state === 'awaiting_approval' ? h.direction === 'in' ? text('Revise em Solicitações recebidas.', 'Review in Received requests.') : h.operation === 'invoice_request' ? text('Aguardando o contato enviar a cobrança.', 'Waiting for the contact to send an invoice.') : text('Aguardando decisão do contato.', 'Waiting for the contact’s decision.') : ['incomplete','publication_unknown','payment_unknown'].includes(h.state) ? text('Consulte a carteira e o contato antes de repetir. Ausência de confirmação não comprova falha financeira.', 'Check the wallet and contact before repeating. Missing confirmation does not prove financial failure.') : h.state === 'published' ? text('Consulte o TXID para acompanhar a confirmação em bloco.', 'Check the TXID for block confirmation.') : text('Acompanhe o estado acima.', 'Follow the status above.')}</p><p>{text('Aceitação pelo bridge não comprova envio pelo rádio. Confirmação de pacotes não comprova pagamento.', 'Bridge acceptance does not prove radio transmission. Packet acknowledgement does not prove payment.')}</p></details>{h.request_id && <p className="text-xs text-fog/65">{text('Resposta vinculada à solicitação', 'Reply linked to request')}: {h.request_id}</p>}{h.response_id && <p className="text-xs text-fog/65">{text('Sessão da resposta', 'Response session')}: {h.response_id}</p>}{h.can_retry && <button className="btn-secondary" disabled={busy} onClick={() => void act({action:'retry',id:h.id})}>{text('Retomar transmissão original', 'Resume original transmission')}</button>}{h.txid && <a className="block break-all font-mono text-xs text-emerald-300 underline" href={`https://mempool.space/tx/${h.txid}`} target="_blank" rel="noreferrer">{h.txid} ↗</a>}{(['sending', 'receiving', 'awaiting_result'].includes(h.state) || h.can_retry) && <button className="btn-secondary" disabled={busy} onClick={() => void act({ action: 'cancel', id: h.id })}>{text('Cancelar envio', 'Cancel transfer')}</button>}</div>)}
     </div>
     </div>
     </div>

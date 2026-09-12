@@ -76,3 +76,21 @@ func TestTorUpgradeScriptForcesStableAptLocale(t *testing.T) {
 		}
 	}
 }
+
+func TestTorRepositorySignedByConflictIsRestrictedToOfficialTorSource(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  bool
+	}{
+		{"E: Conflicting values set for option Signed-By regarding source https://deb.torproject.org/torproject.org/ jammy: old.gpg != new.gpg", true},
+		{"E: Conflicting values set for option Signed-By regarding source http://deb.torproject.org/torproject.org/ noble: old.gpg != new.gpg", true},
+		{"E: Conflicting values set for option Signed-By regarding source https://other.example/repo/ jammy: old.gpg != new.gpg", false},
+		{"E: Conflicting values set for option Signed-By regarding source https://deb.torproject.org/torproject.org/evil/ jammy: old.gpg != new.gpg", false},
+		{"E: Conflicting values set for option Trusted regarding source https://deb.torproject.org/torproject.org/ jammy", false},
+		{"APT candidate could not be resolved", false},
+	} {
+		if got := torRepositorySignedByConflict(tc.input); got != tc.want {
+			t.Errorf("conflict(%q) = %v want %v", tc.input, got, tc.want)
+		}
+	}
+}

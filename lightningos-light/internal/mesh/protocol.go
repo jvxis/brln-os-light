@@ -34,7 +34,7 @@ const Invoice byte = 7
 const PaymentRequest byte = 8
 
 func dataKind(kind byte) bool {
-	return kind == Transaction || kind == Invoice || kind == PaymentRequest
+	return kind == Transaction || kind == Invoice || kind == PaymentRequest || kind == CorrelatedReply
 }
 
 var ErrPacket = errors.New("invalid mesh packet")
@@ -137,7 +137,7 @@ func (p Packet) validate(now time.Time) error {
 	} else if p.version() != 1 {
 		return ErrPacket
 	}
-	if p.From == 0 || p.To == 0 || p.To == 0xffffffff || p.From == p.To || p.Session == ([16]byte{}) || p.Kind < Hello || p.Kind > PaymentRequest || len(p.Payload) > chunkSize || p.Expires <= now.Unix() || p.Expires > now.Add(30*time.Minute).Unix() {
+	if p.From == 0 || p.To == 0 || p.To == 0xffffffff || p.From == p.To || p.Session == ([16]byte{}) || p.Kind < Hello || p.Kind > Capabilities || len(p.Payload) > chunkSize || p.Expires <= now.Unix() || p.Expires > now.Add(30*time.Minute).Unix() {
 		return ErrPacket
 	}
 	if dataKind(p.Kind) {

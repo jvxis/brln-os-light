@@ -191,10 +191,12 @@ Body:
 GET /api/tor/upgrade/status
 - Returns the installed Tor/runtime version, current APT candidate, package source, service/port health, update availability, transient upgrade state, and check timestamp.
 - `force=1` refreshes APT metadata before returning status.
+- `can_update` is also true for a recognized `Signed-By` conflict on the exact official Tor repository, even when APT cannot resolve a candidate. `error` explains the conflict and the confirmed upgrade/reconciliation action. Unrelated APT errors do not enable this recovery path.
 
 POST /api/tor/upgrade/start
 - Starts a transient `lightningos-tor-upgrade` systemd unit after the authenticated UI confirmation.
 - The embedded helper configures the official Tor Project repository when missing, upgrades `tor`, `tor-geoipdb`, and the repository keyring, restarts Tor, and waits for bootstrap.
+- After authenticating the pinned key and repository signature, it backs up and reconciles active Tor entries for the current OS suite in `.list` and `.sources` files. Unrelated repositories and disabled entries are preserved; mixed URI/suite stanzas are refused before writes. Reconciliation also handles a recognized conflict that left the APT candidate unavailable. It does not force a package downgrade or a service restart when no package update occurs.
 - Returns `409` when an upgrade is already running or the official candidate is already installed.
 
 ## Wizard

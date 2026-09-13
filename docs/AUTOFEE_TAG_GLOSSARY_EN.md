@@ -19,6 +19,10 @@ Notes:
 - `trend-flat`: no strong directional trend.
 
 ## Movement and execution controls
+
+- `stale-noflow-target-relax`: a mature, idle channel with sufficient effective local liquidity was pinned by a seed/no-signal hold; a bounded downward price experiment also lowered its target. Final safety gates still apply.
+- `idle-refresh-wait`: the seven-day automatic reference-refresh interval has not elapsed, even if the seed changed. The normal AutoFee decision remains in effect.
+- `idle-refresh-preserve-decision`: a stale reference refresh would replace a normal decrease, reverse downward intent, raise an idle liquid channel, or undercut a hard cost floor; the normal decision was retained.
 - `stepcap`: target was limited by per-round step cap.
 - `stepcap-lock`: target wanted a move, but step cap kept `same-ppm`.
 - `floor-lock`: final fee is pinned at floor.

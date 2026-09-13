@@ -250,7 +250,11 @@ alter table magma_orders
   -- rather than held in memory so a restart neither repeats the whole history
   -- nor silently resets the clock.
   add column if not exists open_alert_at timestamptz,
-  add column if not exists open_expiry_notified boolean not null default false;
+  add column if not exists open_expiry_notified boolean not null default false,
+  -- Stamped on every evaluation pass, even when the reason has not changed. The
+  -- deferral event is deduplicated on purpose, so without this there is no way
+  -- to tell a patient retry from one that stopped.
+  add column if not exists last_attempt_at timestamptz;
 
 create table if not exists magma_offer_state (
   offer_id text primary key,
@@ -1025,7 +1029,7 @@ select order_id, buyer_pubkey, offer_id, size_sat, revenue_sat, buyer_pays_sat, 
        magma_status, payment_status, payment_hash, channel_scid, channel_point,
        cancellation_reason, seller_close_side, buyer_close_side, is_automated, chat_enabled,
        order_created_at, order_updated_at, local_state, funding_txid, last_error,
-       coalesce(buyer_alias, '')
+       coalesce(buyer_alias, ''), timeout_at, last_attempt_at
 from magma_orders
 order by coalesce(order_created_at, first_seen_at) desc
 limit $1
@@ -1048,9 +1052,11 @@ limit $1
 			&order.BuyerCloseSide, &order.IsAutomated, &order.ChatEnabled,
 			&order.CreatedAt, &order.UpdatedAt,
 			&order.LocalState, &order.FundingTxid, &order.LastError, &order.BuyerAlias,
+			&order.TimeoutAt, &order.LastAttemptAt,
 		); err != nil {
 			return nil, err
 		}
+		order.RefuseAt = magmaRefusalInstant(order)
 		orders = append(orders, order)
 	}
 	if err := rows.Err(); err != nil {

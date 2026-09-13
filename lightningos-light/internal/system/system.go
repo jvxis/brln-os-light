@@ -2164,6 +2164,12 @@ func journalTailArgs(service string, lines int, since string) []string {
 	// journalctl's ambiguous English "Mon DD HH:mm:ss" prefix.
 	args := []string{"-u", service, "-n", strconv.Itoa(lines), "--no-pager", "--output=short-iso"}
 	if strings.TrimSpace(since) != "" {
+		// Browsers send RFC3339 (including fractional seconds and Z). Older
+		// journalctl versions reject that spelling; use their UTC calendar form.
+		// Preserve legacy relative/calendar expressions supplied by other callers.
+		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(since)); err == nil {
+			since = parsed.UTC().Format("2006-01-02 15:04:05.999999 UTC")
+		}
 		args = append(args, "--since", since)
 	}
 	return args

@@ -19,6 +19,10 @@ Notas:
 - `trend-flat`: tendencia neutra (sem direcao forte).
 
 ## Controles de movimento e execucao
+
+- `stale-noflow-target-relax`: canal maduro, ocioso e com liquidez local efetiva suficiente estava preso pelo alvo da seed/ausencia de sinais; uma exploracao gradual para baixo reduziu tambem o alvo. As protecoes finais continuam valendo.
+- `idle-refresh-wait`: o intervalo de sete dias do refresh automatico ainda nao terminou, mesmo que a seed tenha mudado. A decisao normal do AutoFee continua valendo.
+- `idle-refresh-preserve-decision`: o refresh de uma referencia antiga substituiria uma reducao normal, inverteria a intencao de queda, aumentaria a taxa de um canal ocioso com liquidez ou atravessaria um piso de custo real; a decisao normal foi preservada.
 - `stepcap`: alvo foi limitado por limite de passo por rodada.
 - `stepcap-lock`: alvo pedia mudanca, mas o limite de passo segurou em `same-ppm`.
 - `floor-lock`: fee final ficou travada no floor.

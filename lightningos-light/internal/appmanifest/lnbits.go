@@ -13,8 +13,8 @@ const (
 	LNbitsComposeFile                    = "docker-compose.yaml"
 	LNbitsEnvFile                        = ".env"
 	LNbitsPrimaryService                 = "lnbits"
-	LNbitsRelease                        = "1.5.6"
-	LNbitsManifestSHA256                 = "6e37fbf9b847c066d7e022e19a018b3df7f12602a370f117857165d36bfb165b"
+	LNbitsRelease                        = "1.6.1"
+	LNbitsManifestSHA256                 = "fe328a130414d54e45c54e4c12b44ea10b4b542eace7df9e66f5b076b2e33816"
 	LNbitsImage                          = "lnbits/lnbits:v" + LNbitsRelease + "@sha256:" + LNbitsManifestSHA256
 	LNbitsMacaroonFile                   = "lnbits.macaroon"
 	LNbitsTLSCertFile                    = "tls.cert"

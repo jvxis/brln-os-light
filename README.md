@@ -1068,3 +1068,7 @@ sudo cp -a ui/dist/. /opt/lightningos/ui/
 ### LOS Mesh / 0.5.27 upgrade
 
 Updates initiated by older releases may omit the standalone `lightningos-mesh` binary. Starting with 0.5.27, installing/connecting LOS Mesh automatically restores a missing executable from the locally installed, root-owned broker. No additional download or reinstall of LightningOS is needed. Existing executables and radio settings are preserved. Both endpoints must use 0.5.27 or later for new fragmented invoice/transaction sessions.
+
+### LOS Mesh payment flow (0.5.28)
+
+Choose **Receive bitcoin** to send your address and requested amount without funding or signing a transaction. Choose **Send bitcoin** to review and approve spending from your wallet. Publishing the signed return transaction requires the receiving LOS to offer relay and authorize the payer contact. A delivered request is not a completed payment; outgoing requests await a decision at the destination.

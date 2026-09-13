@@ -985,3 +985,30 @@ in a new tab without a referrer; the app does not fetch external TXID lookups
 automatically. The separate copy-TXID action remains available.
 
 LOS Mesh status: `radio.last_error_code` and `radio.last_error_at` optionally expose the last correlated Meshtastic routing failure code and UTC timestamp. They contain no invoice or transaction payload and do not change payment approval state.
+# LOS Mesh diagnostics additions (0.5.28)
+
+`GET /api/apps/los-mesh/status` adds optional node `snr`, `hops_away`, and
+`metrics` (`battery`, `channel_utilization`, `air_util_tx`, `time`). Zero is a
+valid reported value; absent values are omitted. `time=0` means unknown sample
+time, including cached NodeInfo device metrics. `radio.metrics` describes the
+local radio only. Battery greater than 100 indicates external power.
+
+Peers add nullable `last_response`: most recent authenticated LOS packet observed
+by Manager, persisted at most once per 30 seconds. Discovery probes alone do not
+update this field. It is neither proof of current reachability nor relay authority.
+
+History adds nullable `updated`, `send_attempts`, `bridge_accepted`, `last_error`
+and `operation`. Attempts and bridge acceptance count submissions, including
+retries, not unique packets or RF acknowledgements. Error codes are
+`bridge_unavailable` and `no_los_confirmation`; the existing radio diagnostic
+retains firmware errors separately. Old rows retain unknown `updated` and zero
+counters. Pending requests have stable ID ordering.
+
+
+## LOS Mesh linked workflow additions (0.5.28)
+
+`GET /api/apps/los-mesh/status`: peers add `correlated_replies` (short-lived authenticated capability); history adds optional `request_id`, `response_id`, and boolean `can_retry`. New states `responding` and `answered` describe response progress, not settlement.
+
+`POST /api/apps/los-mesh/action`: `preview` and `invoice` accept optional `request_id` referencing a pending request from the same peer. Kind, amount, address and expiry must match; arbitrary raw transaction replies cannot bypass those terms. The subsequent `send` uses the request binding stored in its owner-bound preview. Successful response enqueue removes the original preparation action. Unlinked calls keep their previous contract.
+
+Action `retry` accepts `id`, `confirm: true`, and `confirm_password`; it requires fresh Mesh reauthentication. Only paused, unexpired in-memory transmissions with fewer than two resumptions are eligible. The operation never creates a new invoice or wallet transaction. Clients should render the action only when `can_retry` is true, while the server rechecks eligibility.

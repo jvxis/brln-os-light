@@ -189,3 +189,39 @@ still needs a second LOS Mesh endpoint and radio; simulation is not a substitute
 New data sessions use authenticated LOSM v2 with 100-byte fragments (208-byte envelopes). The Meshtastic Data wrapper, firmware bitfield, 12-byte PKC overhead and 16-byte radio header fit below the 255-byte PHY limit. v1 receive remains supported, including legacy 120-byte fragments. Update both endpoints before sending new sessions; pairing keys remain unchanged. New outgoing content is bounded to 12,800 bytes.
 
 Radio routing errors are shown with their timestamp and are correlated to locally issued packet IDs for two minutes. They are diagnostics only, never proof of invoice delivery or payment.
+# Diagnóstico 0.5.28
+
+O painel projeta apenas metadados públicos do rádio. `NodeInfo` pode informar SNR,
+saltos e métricas do dispositivo; telemetria recebida na porta 67 atualiza bateria
+e utilização de canal/transmissão. Campos ausentes não viram zero. Bateria acima
+de 100 indica alimentação externa. Os campos seguem os protobufs oficiais em
+`meshtastic/protobufs` na revisão `3b3df2a5e54a6f4599ab37ac819da597607a4a27`.
+
+O cache NodeInfo não fornece horário da amostra de bateria/utilização: a UI
+informa horário desconhecido. Amostras de telemetria com mais de uma hora são
+marcadas como antigas; esse limite é uma indicação de idade, não de disponibilidade.
+SNR/saltos referem-se ao último registro do nó. Origem MQTT não prova alcance LoRa.
+As métricas não são usadas para autorizar contatos ou gastos, nem para inferir
+congestionamento automaticamente. Nenhum comando modifica a configuração do rádio.
+
+No histórico, tentativas contam chamadas ao bridge, inclusive recusas; aceitas
+conta entradas na fila, incluindo retransmissões. Esses números não comprovam
+transmissão RF. O contador de pacotes confirma o protocolo LOS Mesh, e não um
+pagamento. Erros sem resposta não são classificados como falha financeira definitiva.
+Metadados novos persistem com a sessão por até 30 dias; dados antigos não recebem
+horários inventados. Nenhum payload financeiro é adicionado ao histórico.
+
+
+## Correlated requests and recovery (0.5.28)
+
+Paired nodes negotiate reply format 1 using authenticated LOSM capability controls (kind 10, payload bytes version=1 and request=0/reply=1). Reply controls must echo a pending challenge; probes/replies are rate limited and support expires after ten minutes. Idle probing is limited to one peer per 30 seconds and one probe per peer per five minutes. This uses the existing key and does not grant payment or relay permissions.
+
+Only a known-capable peer receives the optional `correlated_reply` request field. Otherwise requests keep their legacy JSON shape. A requested correlated reply uses data kind 9: one byte original kind (transaction=3 or invoice=7), 16-byte original session, 32-byte original content hash, then the original response bytes. The entire envelope is fragmented and authenticated using existing v2 data frames. Its 49-byte header counts toward the 12,800-byte content limit. No historical associations are guessed.
+
+The requester verifies peer, original session/hash, expiry, kind and amount/address before accepting a link. The response sender atomically claims the incoming request and records the outgoing response; a second preparation cannot spend for that request. Request terms and relationship IDs persist as metadata, without raw transactions or invoices. A matching response stops retransmission of the original request even when its acknowledgement was lost. Responded/answered does not mean paid; financial status comes from the child session, with local versus remote source retained. On-chain publication is not block confirmation.
+
+An incomplete outgoing session can be resumed at most twice while the original packets remain in memory and unexpired (maximum 20 minutes). Resuming requires fresh local reauthentication and reuses session, hash, invoice/signature and acknowledged offset; it never funds/signs/creates an invoice/pays again. Re-encryption uses a fresh nonce. The four-session memory bound includes paused sessions. After restart or expiry, resuming is unavailable. Unknown payment/publication results are not automatically retried. Existing durable hash/TXID deduplication remains in force.
+
+UI drafts are kept only in component memory, independently for each network and intent. Preparing a request binds the draft to that request; changing the peer unlinks it. Preview terms cannot be edited while awaiting approval. Tabs support arrow/Home/End navigation.
+
+Release validation still requires a two-radio mixed/new-version check and real firmware telemetry samples; no real funds are used by the automated tests.

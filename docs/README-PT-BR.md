@@ -1057,3 +1057,8 @@ Licenciado sob a Licenca MIT. Veja `LICENSE` para o texto canonico e `LICENSE.pt
 
 
 **Desconectar rádio** encerra a conexão e interrompe as tentativas de reconexão, preservando configurações e contatos. Reconectar rádio inicia novamente. Conclua/cancele transferências e prévias pendentes antes. TCP usa a porta 4403 quando apenas o IP privado é informado.
+
+
+### LOS Mesh: fluxo de pagamentos na 0.5.28
+
+Escolha **Quero receber** para enviar seu endereço e o valor solicitado, sem financiar ou assinar uma transação. Escolha **Enviar bitcoin** para revisar e aprovar um gasto da sua carteira. Para publicar a transação assinada que o pagador devolver, o LOS receptor precisa oferecer relay e autorizar esse contato. Um pedido entregue ainda aguarda a decisão do destinatário; não equivale a pagamento concluído.

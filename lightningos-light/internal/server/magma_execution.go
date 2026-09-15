@@ -524,7 +524,7 @@ func (s *MagmaService) OpenChannelPreview(ctx context.Context, orderID string, s
 	// the order back in line only when nothing was funded, so an open that
 	// broadcast before erroring is adopted rather than repeated.
 	fundable := record.LocalState == magmaStateAccepted ||
-		(record.LocalState == magmaStateNeedsAttention && record.PaymentStatus == magmaPaymentSuccessful)
+		(record.LocalState == magmaStateNeedsAttention && magmaBuyerHasPaid(record.MagmaStatus))
 	if !fundable {
 		preview.Blockers = append(preview.Blockers, fmt.Sprintf(
 			"order is in local state %s; only an accepted-and-paid order can be funded", record.LocalState))
@@ -1086,9 +1086,8 @@ select order_id, buyer_pubkey, size_sat, timeout_at, first_seen_at, attempt_coun
 from magma_orders
 where local_state = $1
   and magma_status = 'WAITING_FOR_CHANNEL_OPEN'
-  and payment_status = $2
-  and not (magma_status = any($3))
-`, magmaStateNeedsAttention, magmaPaymentSuccessful, magmaTerminalStatusList())
+  and not (magma_status = any($2))
+`, magmaStateNeedsAttention, magmaTerminalStatusList())
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Printf("magma: paid-retry query failed: %v", err)
@@ -1180,8 +1179,7 @@ select order_id, buyer_pubkey, size_sat, revenue_sat, timeout_at, open_alert_at,
 from magma_orders
 where local_state = any($1)
   and magma_status = 'WAITING_FOR_CHANNEL_OPEN'
-  and payment_status = $2
-`, []string{magmaStateAccepted, magmaStateNeedsAttention}, magmaPaymentSuccessful)
+`, []string{magmaStateAccepted, magmaStateNeedsAttention})
 	if err != nil {
 		return
 	}
@@ -1243,6 +1241,22 @@ Retrying automatically; opening it by hand also resolves the order.`,
 			`update magma_orders set open_alert_at=now(), updated_at=now() where order_id=$1`,
 			item.orderID)
 	}
+}
+
+// magmaBuyerHasPaid reports that the buyer's money is in and a channel is owed.
+//
+// The signal is the Amboss status, not payment_status. That field looks like the
+// obvious one and is the wrong one: it stays empty through exactly the window
+// where the money is in and the channel has not been opened, and only fills in
+// later, once the order has already moved on. Filtering on it excluded every
+// order from the protections built for them - order 4edc6750 sat six hours after
+// a failed open with no retry and no alert, because payment_status was still
+// null while Amboss had said "the buyer prepaid this order" five hours earlier.
+//
+// WAITING_FOR_CHANNEL_OPEN is the state Amboss puts an order in once the buyer
+// has prepaid, and it is exactly the window these paths exist to cover.
+func magmaBuyerHasPaid(magmaStatus string) bool {
+	return magmaStatus == "WAITING_FOR_CHANNEL_OPEN"
 }
 
 // magmaStatusMeansChannelIsOut reports the statuses where Amboss has seen the

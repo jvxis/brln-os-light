@@ -642,6 +642,13 @@ where order_id=$1
 		// does not go back to `accepted` where it could be funded twice.
 		s.failOrder(ctx, record.OrderID, magmaStateNeedsAttention,
 			fmt.Sprintf("channel open failed: %v", err))
+		// A refusal about how the buyer's node is configured will be the same
+		// refusal in two days. Ending it now returns their money and closes the
+		// order as a mismatch of terms, instead of spending the window retrying
+		// an impossibility and finishing as a seller who did not deliver.
+		if magmaFundingErrorIsPermanent(err) {
+			s.cancelUnfulfillableOrder(ctx, token, record.OrderID, err)
+		}
 		return MagmaOrder{}, fmt.Errorf("failed to open the channel: %w", err)
 	}
 
@@ -1241,6 +1248,53 @@ Retrying automatically; opening it by hand also resolves the order.`,
 			`update magma_orders set open_alert_at=now(), updated_at=now() where order_id=$1`,
 			item.orderID)
 	}
+}
+
+// magmaFundingErrorIsPermanent reports a funding refusal that retrying cannot
+// fix, because it describes how the buyer's node is configured rather than what
+// it is doing right now.
+//
+// Order 4edc6750 was refused with "chan size of 0.01986390 BTC exceeds maximum
+// chan size of 0.01000000 BTC": the buyer had ordered a channel their own node
+// caps below. No number of attempts changes that, and the window would have been
+// spent retrying an impossibility before recording a seller failure.
+//
+// The match is deliberately narrow. Missing one of these costs retries, which
+// are cheap; calling a transient failure permanent cancels a sale that would
+// have completed, which is not. Anything unrecognised keeps being retried.
+func magmaFundingErrorIsPermanent(err error) bool {
+	if err == nil {
+		return false
+	}
+	lowered := strings.ToLower(err.Error())
+	return strings.Contains(lowered, "exceeds maximum chan size") ||
+		strings.Contains(lowered, "below the minimum chan size") ||
+		strings.Contains(lowered, "channel too small") ||
+		strings.Contains(lowered, "chan size of")
+}
+
+// cancelUnfulfillableOrder ends an order the buyer's own node will never accept.
+//
+// Cancelling writes off a debt: the sale is gone and the buyer is refunded. It
+// is the right trade only against a failure that cannot resolve, and Amboss
+// records the reason, so the order closes as a mismatch of terms rather than as
+// a seller who did not deliver.
+func (s *MagmaService) cancelUnfulfillableOrder(ctx context.Context, token, orderID string, cause error) {
+	if err := s.amboss.CancelOrder(ctx, token, orderID, magmaCancelChannelSizeOutOfBounds); err != nil {
+		// Leave the order where it is. A cancel that did not land must not be
+		// recorded as one, or the retry stops for an order still owed.
+		s.appendEvent(ctx, orderID, "auto_error", "warning", fmt.Sprintf(
+			"could not cancel an order the buyer's node cannot accept: %v", err), nil)
+		return
+	}
+	_, _ = s.db.Exec(ctx,
+		`update magma_orders set local_state=$2, last_error='', updated_at=now() where order_id=$1`,
+		orderID, magmaStateRejected)
+	s.appendEvent(ctx, orderID, "auto_cancelled", "warning", fmt.Sprintf(
+		"cancelled on Amboss: the buyer's node refuses this channel size (%v)", cause), nil)
+	s.notifyTelegram(ctx, MagmaOrder{ID: orderID}, fmt.Sprintf(`Order %s cancelled automatically.
+The buyer's node refuses a channel of this size, so it could never be opened.
+Amboss was told the reason and the buyer is refunded.`, orderID))
 }
 
 // magmaBuyerHasPaid reports that the buyer's money is in and a channel is owed.

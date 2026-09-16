@@ -5504,6 +5504,20 @@ func shouldHoldAutofeeSmallDelta(localPpm int, nextPpm int) bool {
 	return absInt(nextPpm-localPpm) < minAutofeeApplyDeltaPpm(localPpm)
 }
 
+// A daily no-demand experiment can otherwise deadlock at low fees: the down
+// cap permits fewer ppm than the absolute anti-noise minimum. Accept the
+// already-capped move, never enlarge it. The caller must have passed the full
+// stale-floor eligibility check in this evaluation (including its 24h/96h wait).
+func allowStaleNoFlowMicroStep(discoveryEnabled, staleFloorRelaxed bool, localPpm, nextPpm int, htlcSampleLow bool) bool {
+	if !discoveryEnabled || !staleFloorRelaxed || nextPpm < 0 || nextPpm >= localPpm {
+		return false
+	}
+	lowest, _ := capDownMoveGeneral(localPpm, 0, htlcSampleLow)
+	lowest, _ = capDownMoveForLowHTLCSample(localPpm, lowest, htlcSampleLow)
+	maxStep := localPpm - lowest
+	return maxStep < minAutofeeApplyDeltaPpm(localPpm) && nextPpm >= lowest
+}
+
 func appendAutofeeTagOnce(tags []string, tag string) []string {
 	tag = strings.TrimSpace(tag)
 	if tag == "" || containsTag(tags, tag) {
@@ -11309,6 +11323,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floorSrc = "rebal-exec-anchor"
 		tags = append(tags, "rebal-exec-floor-anchor")
 	}
+	staleNoFlowFloorRelaxed := false
 	if relaxedFloor, relaxedSrc, relaxTags := relaxStaleNoFlowAdvisoryFloor(
 		marketRefillMode,
 		localPpm,
@@ -11333,6 +11348,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		hoursSinceLastFeeChange,
 		e.cfg.MinPpm,
 	); len(relaxTags) > 0 {
+		staleNoFlowFloorRelaxed = true
 		floor = relaxedFloor
 		floorSrc = relaxedSrc
 		tags = append(tags, relaxTags...)
@@ -11714,7 +11730,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, reversalTags...)
 		}
 	}
-	if shouldHoldAutofeeSmallDelta(localPpm, finalPpm) {
+	staleNoFlowMicroStep := allowStaleNoFlowMicroStep(e.cfg.DiscoveryEnabled, staleNoFlowFloorRelaxed, localPpm, finalPpm, htlcSampleLow)
+	if staleNoFlowMicroStep {
+		tags = appendAutofeeTagOnce(tags, "stale-noflow-micro-step")
+	} else if shouldHoldAutofeeSmallDelta(localPpm, finalPpm) {
 		finalPpm = localPpm
 		tags = appendAutofeeTagOnce(tags, "hold-small")
 		tags = appendAutofeeTagOnce(tags, "small-delta")
@@ -11727,7 +11746,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		containsTag(tags, "surge-hold-flow") ||
 		containsTag(tags, "surge-timeout-release") ||
 		containsTag(tags, "surge-confirmed-rounds")
-	allowSmallStep := newInboundBootstrap && finalPpm > localPpm
+	allowSmallStep := staleNoFlowMicroStep || (newInboundBootstrap && finalPpm > localPpm)
 	if floorDrivenStepUp && finalPpm > localPpm {
 		if delta >= floorDrivenSmallUpMinStepPpm || newInboundBootstrap || surgeDrivenStepUp {
 			allowSmallStep = true
@@ -13713,6 +13732,8 @@ func formatAutofeeTags(d *decision) string {
 		case t == "stale-noflow-down":
 			add("stale-noflow-down")
 		case t == "stale-noflow-target-relax":
+			add(t)
+		case t == "stale-noflow-micro-step":
 			add(t)
 		case t == "stale-noflow-small-down":
 			add("stale-noflow-small")

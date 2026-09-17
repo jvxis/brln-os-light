@@ -711,9 +711,11 @@ npub. Ownership was as declared: the key file `0600` owned by 65529, the local
 secrets `0640` root/65529, the snapshot compose `0600` root and the proxy
 material `0640` root/65532. No LND, Bitcoin, macaroon or TLS material was
 mounted. Evidence:
-`docs/baselines/brln-community-app-gate-2026-09-17.json`. Pending before
-acceptance: the same gate on Ubuntu 26.04 and a real phone pairing through
-`signer.br-ln.com`.
+`docs/baselines/brln-community-app-gate-2026-09-17.json`. The same node then
+took the 0.1.1 release by digest, reported the update in the Store and kept the
+npub, and a phone on the public network paired by scanning the app's QR code,
+joined the space and published a message the relay stored in `geral`. Pending
+before acceptance: the same gate on Ubuntu 26.04.
 
 The later manual password-reset regression is closed by implementation commit
 `de6997025486d9ad98d050fd8489af7b7f419363`. Individual file bind mounts kept

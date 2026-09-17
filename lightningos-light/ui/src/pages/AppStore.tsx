@@ -1252,7 +1252,6 @@ export default function AppStore() {
                 {app.id === 'brln-community' && (
                   <>
                     <p>{t('appStore.brlnCommunityRelays')}</p>
-                    <p>{t('appStore.brlnCommunityNoLocalLnd')}</p>
                     <p>{t('appStore.brlnCommunityIdentityPreserved')}</p>
                     <p>{t('appStore.brlnCommunitySignerReauth')}</p>
                   </>

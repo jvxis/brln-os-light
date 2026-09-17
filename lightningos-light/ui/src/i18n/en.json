@@ -1332,7 +1332,6 @@
     "barkWalletInstallBackup": "Back up the seed and wallet data, and test recovery before holding meaningful funds.",
     "brlnCommunityTest": "Test",
     "brlnCommunityRelays": "Chat relays: relay.br-ln.com and signer.br-ln.com, operated by the BR⚡LN Club.",
-    "brlnCommunityNoLocalLnd": "Does not access your LND, Bitcoin node, macaroons or TLS certificate.",
     "brlnCommunityIdentityPreserved": "Your Nostr identity and paired devices are preserved when the app is uninstalled.",
     "brlnCommunitySignerReauth": "Open signer asks for your LightningOS password; it then allows key setup, pairing and backup for 3 minutes.",
     "brlnCommunitySignerPasswordSavedAt": "Signer access password saved at {{path}}",

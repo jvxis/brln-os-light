@@ -23,7 +23,7 @@ func brlnCommunityDefinition() appDefinition {
 	return appDefinition{
 		ID:          brlnCommunityAppID,
 		Name:        "BR⚡LN Community",
-		Description: "Test build of the BR⚡LN Club members chat, with your Nostr signer on this node. Chat data may be reset before launch; does not use local LND.",
+		Description: "Test build of the BR⚡LN Club members chat, with your Nostr signer on this node. Chat data may be reset before launch.",
 		Port:        brlnCommunityPort,
 	}
 }

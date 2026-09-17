@@ -1332,7 +1332,6 @@
     "barkWalletInstallBackup": "Faça backup da seed e dos dados da carteira e teste a recuperação antes de manter valores relevantes.",
     "brlnCommunityTest": "Teste",
     "brlnCommunityRelays": "Relays do chat: relay.br-ln.com e signer.br-ln.com, operados pelo Clube BR⚡LN.",
-    "brlnCommunityNoLocalLnd": "Não acessa seu LND, node Bitcoin, macaroons nem certificado TLS.",
     "brlnCommunityIdentityPreserved": "Sua identidade Nostr e os dispositivos pareados são preservados ao desinstalar o app.",
     "brlnCommunitySignerReauth": "Abrir signer pede sua senha do LightningOS e libera configurar a chave, parear e fazer backup por 3 minutos.",
     "brlnCommunitySignerPasswordSavedAt": "Senha de acesso do signer salva em {{path}}",

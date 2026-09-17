@@ -696,9 +696,24 @@ that create, import or export the key, or pair a device, pass a three-minute
 `forward_auth`, which trusts only the fixed root-owned LightningOS CA, uses SNI
 `localhost` and drops the signer `Authorization` header from the subrequest.
 Active UFW admits 8443 only on the validated app bridge. Caddy 2.10.2 accepted
-the generated configuration. Pending before acceptance: the disposable-VM gate
-(clean install, pairing, reboot, uninstall preserving the npub, reinstall) and
-its evidence file.
+the generated configuration.
+
+LOS TESTE2 (Ubuntu 24.04.4) passed the first functional gate: install to
+running in 50 s with all three no-network image probes, chat and signer pages
+served over the app TLS boundary, `/signer` redirected to `/signer/`, the
+signer API refused without its access password, the protected routes refused
+without a manager session (401) and without a fresh reauthentication (428
+`brln_community_signer_reauth_required`), key creation and device pairing
+succeeded after reauthentication, a host reboot brought the app back with the
+same npub, and a confirmed uninstall removed the containers and the broker
+snapshot while preserving the signer data, so the reinstall returned the same
+npub. Ownership was as declared: the key file `0600` owned by 65529, the local
+secrets `0640` root/65529, the snapshot compose `0600` root and the proxy
+material `0640` root/65532. No LND, Bitcoin, macaroon or TLS material was
+mounted. Evidence:
+`docs/baselines/brln-community-app-gate-2026-09-17.json`. Pending before
+acceptance: the same gate on Ubuntu 26.04 and a real phone pairing through
+`signer.br-ln.com`.
 
 The later manual password-reset regression is closed by implementation commit
 `de6997025486d9ad98d050fd8489af7b7f419363`. Individual file bind mounts kept

@@ -10,7 +10,7 @@ The registry exposes 20 app IDs through the common `Info`, `Install`,
 
 | Family | App IDs | Current lifecycle boundary | Additional privileged dependencies |
 | --- | --- | --- | --- |
-| Docker Compose | `bitcoincore`, `bark-wallet`, `electrs`, `mempool`, `fedimint-guardian`, `fedimint-gateway`, `lndg`, `lnbits`, `btcpay`, `robosats`, `publicpool`, `cpuminer`, `tapd` | Closed typed broker manifests and operations; the manager has no Docker/Compose execution path | Final Ubuntu 24.04/26.04 lifecycle, reboot, and rollback matrix |
+| Docker Compose | `bitcoincore`, `bark-wallet`, `brln-community`, `electrs`, `mempool`, `fedimint-guardian`, `fedimint-gateway`, `lndg`, `lnbits`, `btcpay`, `robosats`, `publicpool`, `cpuminer`, `tapd` | Closed typed broker manifests and operations; the manager has no Docker/Compose execution path | Final Ubuntu 24.04/26.04 lifecycle, reboot, and rollback matrix |
 | Native systemd (migrated) | `loop`, `elements`, `peerswap` | Closed typed broker operations; no direct privileged manager call | Final Ubuntu 24.04/26.04 clean-install, reboot, and shared cutover matrix |
 | In-process feature toggle | `depixbuy`, `fswap`, `loopout-brln`, `magma-sales` | Non-root manager/database state only; permanent source gates reject OS-privileged execution | Cross-version application regression matrix |
 
@@ -30,6 +30,7 @@ catalog capabilities rather than an argument allowlist.
 | --- | --- | --- | --- |
 | `bitcoincore` | Compose | Broker: verified image, storage/config, lifecycle, status, logs, network and firewall | None |
 | `bark-wallet` | Compose | Broker: exact images/runtime, lifecycle, firewall and password operations | None |
+| `brln-community` | Compose (test build, 0.5.29) | Broker: exact images/runtime, lifecycle, data-preserving removal, firewall and signer access password read | None |
 | `electrs` | Compose | Broker: verified build, private Bitcoin credential, lifecycle and inspection | None |
 | `mempool` | Compose | Broker: images, Full Node/Electrs gate, lifecycle, removal and firewall | None |
 | `fedimint-guardian` | Compose | Broker: exact runtime, lifecycle, logs and firewall | None |

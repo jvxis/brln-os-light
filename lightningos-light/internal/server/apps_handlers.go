@@ -676,7 +676,7 @@ func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "missing app id")
 		return
 	}
-	if appID != "lndg" && appID != fedimintGatewayAppID && appID != barkWalletAppID {
+	if appID != "lndg" && appID != fedimintGatewayAppID && appID != barkWalletAppID && appID != brlnCommunityAppID {
 		writeError(w, http.StatusBadRequest, "admin password not available for this app")
 		return
 	}
@@ -690,6 +690,17 @@ func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) 
 		}
 	} else if appID == fedimintGatewayAppID {
 		password = readSecretFile(fedimintGatewayAppPaths().AdminPasswordPath)
+	} else if appID == brlnCommunityAppID {
+		handled, brokerPassword, err := system.ReadBRLNCommunityPasswordWithBroker(r.Context())
+		if !handled {
+			writeError(w, http.StatusInternalServerError, "BR⚡LN Community password requires privileged broker enforce mode")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusNotFound, "admin password unavailable")
+			return
+		}
+		password = brokerPassword
 	} else {
 		handled, brokerPassword, err := system.ReadBarkWalletPasswordWithBroker(r.Context())
 		if !handled {
@@ -717,6 +728,23 @@ func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"password": password})
+}
+
+// handleBRLNCommunitySignerAuthorization is the forward_auth target the app proxy
+// calls before the signer sets up or exports the key, or pairs a new device.
+func (s *Server) handleBRLNCommunitySignerAuthorization(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
+	if !s.requireSensitiveReauth(
+		w,
+		r,
+		authScopeBRLNCommunitySigner,
+		"",
+		"brln_community_signer_reauth_required",
+		"authorize signer changes in the LightningOS App Store first",
+	) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleBarkWalletRevealAuthorization(w http.ResponseWriter, r *http.Request) {

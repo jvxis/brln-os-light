@@ -564,6 +564,75 @@ func (client *Client) ResetBarkWalletPassword(ctx context.Context, dryRun bool) 
 	return err
 }
 
+func (client *Client) BRLNCommunityStatus(ctx context.Context) (bool, string, bool, bool, error) {
+	response, err := client.call(ctx, OperationBRLNCommunityStatus, struct{}{}, false)
+	if err != nil {
+		return false, "", false, false, err
+	}
+	state, err := decodeBRLNCommunityState(response, false)
+	return state.Installed, state.Status, state.UFWActive, state.PasswordAvailable, err
+}
+
+func (client *Client) EnsureBRLNCommunity(ctx context.Context, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBRLNCommunityEnsure, struct{}{}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeBRLNCommunityState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) BRLNCommunityLifecycle(ctx context.Context, action string, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBRLNCommunityLifecycle, BRLNCommunityLifecycleParams{Action: AppLifecycleAction(action)}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeBRLNCommunityState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) RemoveBRLNCommunity(ctx context.Context, dryRun bool) error {
+	_, err := client.call(ctx, OperationBRLNCommunityRemove, struct{}{}, dryRun)
+	return err
+}
+
+func (client *Client) EnsureBRLNCommunityFirewall(ctx context.Context, dryRun bool) (string, error) {
+	response, err := client.call(ctx, OperationBRLNCommunityFirewall, struct{}{}, dryRun)
+	if err != nil {
+		return "", err
+	}
+	state, err := decodeBRLNCommunityState(response, dryRun)
+	return state.Status, err
+}
+
+func (client *Client) ReadBRLNCommunityPassword(ctx context.Context) (string, error) {
+	response, err := client.call(ctx, OperationBRLNCommunityPasswordRead, struct{}{}, false)
+	if err != nil {
+		return "", err
+	}
+	var result BRLNCommunityPasswordResult
+	if err := decodeStrict(response.Result, &result); err != nil || result.Password == "" {
+		return "", errors.New("invalid broker BR⚡LN Community password response")
+	}
+	return result.Password, nil
+}
+
+func decodeBRLNCommunityState(response Response, dryRun bool) (BRLNCommunityState, error) {
+	var state BRLNCommunityState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return state, errors.New("invalid broker BR⚡LN Community state response")
+	}
+	if dryRun && state.Status == "validated" {
+		return state, nil
+	}
+	switch state.Status {
+	case "running", "stopped", "unknown", "active", "inactive":
+		return state, nil
+	default:
+		return BRLNCommunityState{}, errors.New("invalid broker BR⚡LN Community status")
+	}
+}
+
 func decodeBarkWalletState(response Response, dryRun bool) (BarkWalletState, error) {
 	var state BarkWalletState
 	if err := decodeStrict(response.Result, &state); err != nil {

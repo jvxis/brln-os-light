@@ -45,18 +45,19 @@ const (
 	authSecretRecoveryTokenHashKey   = "UI_ADMIN_RECOVERY_TOKEN_HASH"
 	authSecretRecoveryTokenExpiryKey = "UI_ADMIN_RECOVERY_TOKEN_EXPIRES_AT"
 
-	authScopeWalletSendExternal = "wallet_send_external"
-	authScopeMacaroonExport     = "macaroon_export"
-	authScopeNodeRetirement     = "node_retirement_control"
-	authScopeSuccessionLive     = "succession_live_control"
-	authScopeLoopSwap           = "loop_swap"
-	authScopeMesh               = "los_mesh"
-	authScopeLoopOutBRLN        = "loopout_brln"
-	authScopeTerminalCredential = "terminal_credential"
-	authScopeTerminalControl    = "terminal_control"
-	authScopeLightningFunds     = "lightning_funds"
-	authScopeLNDMaintenance     = "lnd_maintenance"
-	authScopeBarkSeedReveal     = "bark_seed_reveal"
+	authScopeWalletSendExternal  = "wallet_send_external"
+	authScopeMacaroonExport      = "macaroon_export"
+	authScopeNodeRetirement      = "node_retirement_control"
+	authScopeSuccessionLive      = "succession_live_control"
+	authScopeLoopSwap            = "loop_swap"
+	authScopeMesh                = "los_mesh"
+	authScopeLoopOutBRLN         = "loopout_brln"
+	authScopeTerminalCredential  = "terminal_credential"
+	authScopeTerminalControl     = "terminal_control"
+	authScopeLightningFunds      = "lightning_funds"
+	authScopeLNDMaintenance      = "lnd_maintenance"
+	authScopeBarkSeedReveal      = "bark_seed_reveal"
+	authScopeBRLNCommunitySigner = "brln_community_signer"
 )
 
 type authContextKey string
@@ -526,7 +527,7 @@ func (a *AuthService) reauth(sessionID string, password string, scope string) (t
 
 func authScopeValid(scope string) bool {
 	switch strings.TrimSpace(scope) {
-	case authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeBarkSeedReveal:
+	case authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeBarkSeedReveal, authScopeBRLNCommunitySigner:
 		return true
 	default:
 		return false

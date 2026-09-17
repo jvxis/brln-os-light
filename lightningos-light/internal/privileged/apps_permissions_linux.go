@@ -295,6 +295,112 @@ func prepareBarkWalletWritableData(walletDir, authDir, passwordPath, sessionPath
 	return nil
 }
 
+// prepareBRLNCommunityWritableData gives the signer sole ownership of its data
+// directory and group read access to the broker-generated local secrets.
+func prepareBRLNCommunityWritableData(signerDir, authDir string, secretPaths ...string) error {
+	passwdRaw, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return errors.New("host account inventory is unavailable")
+	}
+	groupRaw, err := os.ReadFile("/etc/group")
+	if err != nil {
+		return errors.New("host group inventory is unavailable")
+	}
+	for _, identity := range []struct {
+		uid, gid int
+		name     string
+	}{
+		{appmanifest.BRLNCommunitySignerUID, appmanifest.BRLNCommunitySignerGID, "signer"},
+		{appmanifest.BRLNCommunityProxyUID, appmanifest.BRLNCommunityProxyGID, "proxy"},
+	} {
+		if identityFileContainsNumericID(passwdRaw, 2, identity.uid) {
+			return errors.New("BR⚡LN Community " + identity.name + " UID collides with a host account")
+		}
+		if identityFileContainsNumericID(groupRaw, 2, identity.gid) {
+			return errors.New("BR⚡LN Community " + identity.name + " GID collides with a host group")
+		}
+	}
+	if err := filepath.WalkDir(signerDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("BR⚡LN Community signer entry is unsafe")
+		}
+		if info.IsDir() {
+			if os.Geteuid() == 0 {
+				if err := os.Chown(path, appmanifest.BRLNCommunitySignerUID, appmanifest.BRLNCommunitySignerGID); err != nil {
+					return err
+				}
+			}
+			return os.Chmod(path, 0700)
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("BR⚡LN Community signer entry is not a regular file")
+		}
+		if os.Geteuid() == 0 {
+			if err := os.Chown(path, appmanifest.BRLNCommunitySignerUID, appmanifest.BRLNCommunitySignerGID); err != nil {
+				return err
+			}
+		}
+		return os.Chmod(path, 0600)
+	}); err != nil {
+		return err
+	}
+	if os.Geteuid() == 0 {
+		if err := os.Chown(authDir, 0, appmanifest.BRLNCommunitySignerGID); err != nil {
+			return err
+		}
+	}
+	if err := os.Chmod(authDir, 0750); err != nil {
+		return err
+	}
+	for _, path := range secretPaths {
+		if err := setPrivilegedPathGroup(path, appmanifest.BRLNCommunitySignerGID); err != nil {
+			return err
+		}
+		if err := os.Chmod(path, 0640); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateBRLNCommunitySnapshotPermissions(paths BRLNCommunityPaths) error {
+	checks := []struct {
+		path      string
+		mode      os.FileMode
+		uid, gid  uint32
+		directory bool
+	}{
+		{paths.SnapshotRoot, 0700, 0, 0, true},
+		{paths.TLSDir, 0700, 0, 0, true},
+		{paths.ComposePath, 0600, 0, 0, false},
+		{paths.CaddyfilePath, 0640, 0, uint32(appmanifest.BRLNCommunityProxyGID), false},
+		{paths.TLSCertificate, 0640, 0, uint32(appmanifest.BRLNCommunityProxyGID), false},
+		{paths.TLSPrivateKey, 0640, 0, uint32(appmanifest.BRLNCommunityProxyGID), false},
+		{paths.SignerDir, 0700, uint32(appmanifest.BRLNCommunitySignerUID), uint32(appmanifest.BRLNCommunitySignerGID), true},
+		{paths.AuthDir, 0750, 0, uint32(appmanifest.BRLNCommunitySignerGID), true},
+		{paths.KeyPasswordPath, 0640, 0, uint32(appmanifest.BRLNCommunitySignerGID), false},
+		{paths.AccessPasswordPath, 0640, 0, uint32(appmanifest.BRLNCommunitySignerGID), false},
+	}
+	for _, check := range checks {
+		info, err := os.Lstat(check.path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != check.mode || check.directory != info.IsDir() {
+			return errors.New("BR⚡LN Community snapshot permissions are unsafe")
+		}
+		if !check.directory && !info.Mode().IsRegular() {
+			return errors.New("BR⚡LN Community snapshot entry type is unsafe")
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != check.uid || stat.Gid != check.gid {
+			return errors.New("BR⚡LN Community snapshot ownership is unsafe")
+		}
+	}
+	return nil
+}
+
 func validateBarkWalletSnapshotPermissions(paths BarkWalletPaths) error {
 	checks := []struct {
 		path      string

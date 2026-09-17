@@ -677,6 +677,29 @@ the disposable Ubuntu 26.04 VM. Evidence:
 and
 `docs/baselines/privilege-hardening-phase2-bark-wallet-reauth-2026-08-13.json`.
 
+The BR⚡LN Community test app (0.5.29 series) follows the Bark Wallet
+pattern. Six typed operations (`app.brlncommunity.status`, `.ensure`,
+`.lifecycle`, `.remove`, `.firewall`, `.password.read`) own its exact runtime,
+lifecycle, data-preserving removal, fixed port 4448 and the signer access
+password read. The chat (`ghcr.io/jvxis/brln-community-web:0.1.0`), the NIP-46
+signer (`ghcr.io/jvxis/brln-signer:0.1.0`) and the Caddy proxy shared with Bark
+are manifest-digest pinned; the broker probes nginx and Caddy and requires the
+exact `brln-signer 0.1.0` version output before lifecycle execution. All
+services are non-root, read-only, capability-free and `no-new-privileges`.
+Only the signer (dedicated UID/GID 65529) mounts
+`apps-data/brln-community/signer`, where the member's Nostr key stays NIP-49
+encrypted under a broker-generated key password; the broker never reads or
+returns the key, and uninstall preserves both the signer data and the local
+secrets. The app has no LND, Bitcoin, macaroon or LND TLS access. Signer calls
+that create, import or export the key, or pair a device, pass a three-minute
+`brln_community_signer` LightningOS reauthentication gate through Caddy
+`forward_auth`, which trusts only the fixed root-owned LightningOS CA, uses SNI
+`localhost` and drops the signer `Authorization` header from the subrequest.
+Active UFW admits 8443 only on the validated app bridge. Caddy 2.10.2 accepted
+the generated configuration. Pending before acceptance: the disposable-VM gate
+(clean install, pairing, reboot, uninstall preserving the npub, reinstall) and
+its evidence file.
+
 The later manual password-reset regression is closed by implementation commit
 `de6997025486d9ad98d050fd8489af7b7f419363`. Individual file bind mounts kept
 the previous inode visible after the broker atomically replaced

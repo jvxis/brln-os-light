@@ -103,6 +103,12 @@ const (
 	OperationBarkWalletFirewall              Operation = "app.bark.firewall"
 	OperationBarkWalletPasswordRead          Operation = "app.bark.password.read"
 	OperationBarkWalletPasswordReset         Operation = "app.bark.password.reset"
+	OperationBRLNCommunityStatus             Operation = "app.brlncommunity.status"
+	OperationBRLNCommunityEnsure             Operation = "app.brlncommunity.ensure"
+	OperationBRLNCommunityLifecycle          Operation = "app.brlncommunity.lifecycle"
+	OperationBRLNCommunityRemove             Operation = "app.brlncommunity.remove"
+	OperationBRLNCommunityFirewall           Operation = "app.brlncommunity.firewall"
+	OperationBRLNCommunityPasswordRead       Operation = "app.brlncommunity.password.read"
 )
 
 type Request struct {
@@ -593,6 +599,21 @@ type BarkWalletState struct {
 }
 
 type BarkWalletPasswordResult struct {
+	Password string `json:"password"`
+}
+
+type BRLNCommunityLifecycleParams struct {
+	Action AppLifecycleAction `json:"action"`
+}
+
+type BRLNCommunityState struct {
+	Installed         bool   `json:"installed"`
+	Status            string `json:"status"`
+	UFWActive         bool   `json:"ufw_active,omitempty"`
+	PasswordAvailable bool   `json:"password_available,omitempty"`
+}
+
+type BRLNCommunityPasswordResult struct {
 	Password string `json:"password"`
 }
 
@@ -1256,6 +1277,23 @@ func ValidateRequest(request Request) error {
 		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
 			return errors.New("Bark Wallet lifecycle action is not allowed")
 		}
+	case OperationBRLNCommunityStatus, OperationBRLNCommunityEnsure, OperationBRLNCommunityRemove,
+		OperationBRLNCommunityFirewall, OperationBRLNCommunityPasswordRead:
+		if request.DryRun && (request.Operation == OperationBRLNCommunityStatus || request.Operation == OperationBRLNCommunityPasswordRead) {
+			return fmt.Errorf("dry_run is not valid for %s", request.Operation)
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
+		}
+	case OperationBRLNCommunityLifecycle:
+		var params BRLNCommunityLifecycleParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid app.brlncommunity.lifecycle params: %w", err)
+		}
+		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
+			return errors.New("BR⚡LN Community lifecycle action is not allowed")
+		}
 	default:
 		return errors.New("unknown operation")
 	}
@@ -1289,7 +1327,7 @@ func validateCatalogImageParams(params AppImageParams) error {
 }
 
 func validateProbedImageParams(params AppImageParams) error {
-	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID && params.AppID != appmanifest.BarkWalletID && params.AppID != appmanifest.MempoolID && params.AppID != appmanifest.FedimintGuardianID && params.AppID != appmanifest.FedimintGatewayID {
+	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID && params.AppID != appmanifest.BarkWalletID && params.AppID != appmanifest.BRLNCommunityID && params.AppID != appmanifest.MempoolID && params.AppID != appmanifest.FedimintGuardianID && params.AppID != appmanifest.FedimintGatewayID {
 		return errors.New("app manifest is not allowed")
 	}
 	if _, err := appmanifest.CatalogImageForVariant(params.AppID, params.Variant); err != nil {

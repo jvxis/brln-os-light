@@ -92,6 +92,7 @@ func TestConfiguredAppsHaveExplicitRuntimeSecurityClass(t *testing.T) {
 		"opreturn":          {class: "manager", reason: "in-process typed LND WalletKit publisher; no external credentials or privileged runtime"},
 		"bitcoincore":       {class: "compose", reason: "closed broker-owned Compose manifest"},
 		"bark-wallet":       {class: "compose", reason: "closed broker-owned Compose manifest"},
+		"brln-community":    {class: "compose", reason: "closed broker-owned Compose manifest"},
 		"electrs":           {class: "compose", reason: "closed broker-owned Compose manifest"},
 		"mempool":           {class: "compose", reason: "closed broker-owned Compose manifest"},
 		"fedimint-guardian": {class: "compose", reason: "closed broker-owned Compose manifest"},

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { APIError, getAppAdminPassword, getAppOperations, getAppStorageTargets, getAppStorePreferences, getApps, getBarkWalletRevealAuthorization, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, reauthAuth, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, updateAppStorePreferences, type AppStoreInfo, type StorageTarget } from '../api'
+import { APIError, getAppAdminPassword, getAppOperations, getAppStorageTargets, getAppStorePreferences, getApps, getBarkWalletRevealAuthorization, getBRLNCommunitySignerAuthorization, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, reauthAuth, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, updateAppStorePreferences, type AppStoreInfo, type StorageTarget } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
@@ -15,6 +15,7 @@ import fedimintIcon from '../assets/apps/fedimint.svg'
 import cpuLotteryIcon from '../assets/apps/cpu-lottery.svg'
 import taprootAssetsIcon from '../assets/apps/taproot-assets.svg'
 import barkWalletIcon from '../assets/apps/bark-wallet.svg'
+import brlnCommunityIcon from '../assets/apps/brln-community.svg'
 import btcpayIcon from '../assets/apps/btcpay.svg'
 import loopIcon from '../assets/apps/lightning-loop.svg'
 import meshIcon from '../assets/apps/los-mesh.svg'
@@ -87,6 +88,7 @@ const iconMap: Record<string, string> = {
   'fedimint-gateway': fedimintIcon,
   tapd: taprootAssetsIcon,
   'bark-wallet': barkWalletIcon,
+  'brln-community': brlnCommunityIcon,
   btcpay: btcpayIcon,
   loop: loopIcon,
   'loopout-brln': loopOutBRLNIcon,
@@ -147,6 +149,23 @@ const validatedBarkWalletURL = (rawURL: string) => {
   }
 }
 
+const validatedBRLNCommunityURL = (rawURL: string, path = '/') => {
+  try {
+    const base = new URL(rawURL, window.location.href)
+    const baseHost = base.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    const currentHost = window.location.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    if (
+      base.protocol !== 'https:' || baseHost !== currentHost || base.port !== '4448' ||
+      base.username !== '' || base.password !== ''
+    ) {
+      return ''
+    }
+    return new URL(path, base.origin).href
+  } catch {
+    return ''
+  }
+}
+
 export default function AppStore() {
   const { t } = useTranslation()
   const [apps, setApps] = useState<AppInfo[]>([])
@@ -186,6 +205,12 @@ export default function AppStore() {
   const [catalogStorageError, setCatalogStorageError] = useState('')
   const [pendingFedimintGatewayAction, setPendingFedimintGatewayAction] = useState<'install' | 'start' | null>(null)
   const [barkRevealReauthOpen, setBarkRevealReauthOpen] = useState(false)
+  const [brlnCommunityInstallOpen, setBrlnCommunityInstallOpen] = useState(false)
+  const [brlnSignerReauthOpen, setBrlnSignerReauthOpen] = useState(false)
+  const [brlnSignerPassword, setBrlnSignerPassword] = useState('')
+  const [brlnSignerBusy, setBrlnSignerBusy] = useState(false)
+  const [brlnSignerError, setBrlnSignerError] = useState('')
+  const [brlnSignerURL, setBrlnSignerURL] = useState('')
   const [barkRevealPassword, setBarkRevealPassword] = useState('')
   const [barkRevealBusy, setBarkRevealBusy] = useState(false)
   const [barkRevealError, setBarkRevealError] = useState('')
@@ -516,6 +541,10 @@ export default function AppStore() {
       setBarkWalletInstallOpen(true)
       return
     }
+    if (id === 'brln-community' && action === 'install' && !payload) {
+      setBrlnCommunityInstallOpen(true)
+      return
+    }
     if (id === 'bitcoincore' && action === 'install' && !payload) {
       setBitcoinCoreUseStorageMount(false)
       setBitcoinCoreSelectedMount('')
@@ -745,6 +774,69 @@ export default function AppStore() {
     }
   }
 
+  const handleBRLNCommunityInstallConfirm = async () => {
+    setBrlnCommunityInstallOpen(false)
+    await handleAction('brln-community', 'install', {})
+  }
+
+  const closeBRLNSignerReauth = () => {
+    if (brlnSignerBusy) return
+    setBrlnSignerReauthOpen(false)
+    setBrlnSignerPassword('')
+    setBrlnSignerError('')
+    setBrlnSignerURL('')
+  }
+
+  // The signer page is open to read; creating or importing the key, pairing a
+  // device and exporting a backup need this authorization, which lasts 3 minutes.
+  const handleBRLNSignerOpen = async (url: string) => {
+    const safeURL = validatedBRLNCommunityURL(url, '/signer/')
+    if (!safeURL) {
+      setMessage(t('appStore.brlnCommunityOpenFailed'))
+      return
+    }
+    const popup = openBarkWalletWindow()
+    setMessage('')
+    try {
+      await getBRLNCommunitySignerAuthorization()
+      navigateBarkWalletWindow(popup, safeURL)
+    } catch (err) {
+      popup?.close()
+      if (err instanceof APIError && err.code === 'brln_community_signer_reauth_required') {
+        setBrlnSignerURL(safeURL)
+        setBrlnSignerPassword('')
+        setBrlnSignerError('')
+        setBrlnSignerReauthOpen(true)
+        return
+      }
+      setMessage(err instanceof Error ? err.message : t('appStore.brlnCommunityOpenFailed'))
+    }
+  }
+
+  const handleBRLNSignerReauth = async () => {
+    if (!brlnSignerPassword.trim()) {
+      setBrlnSignerError(t('appStore.barkWalletReauthPasswordRequired'))
+      return
+    }
+    const popup = openBarkWalletWindow()
+    setBrlnSignerBusy(true)
+    setBrlnSignerError('')
+    try {
+      await reauthAuth({ password: brlnSignerPassword, scope: 'brln_community_signer' })
+      await getBRLNCommunitySignerAuthorization()
+      const url = brlnSignerURL
+      setBrlnSignerReauthOpen(false)
+      setBrlnSignerPassword('')
+      setBrlnSignerURL('')
+      navigateBarkWalletWindow(popup, url)
+    } catch (err) {
+      popup?.close()
+      setBrlnSignerError(err instanceof Error ? err.message : t('appStore.brlnCommunityOpenFailed'))
+    } finally {
+      setBrlnSignerBusy(false)
+    }
+  }
+
   const closeElevatedInstall = () => {
     setPendingElevatedInstall(null)
     setElevatedInstallAcknowledged(false)
@@ -910,7 +1002,13 @@ export default function AppStore() {
           const icon = iconMap[app.id]
           const unavailable = app.available === false
           const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
-          const canCopyAdminPassword = app.id === 'lndg' || app.id === 'fedimint-gateway' || app.id === 'bark-wallet'
+          const canCopyAdminPassword = app.id === 'lndg' || app.id === 'fedimint-gateway' || app.id === 'bark-wallet' || app.id === 'brln-community'
+          const accessPasswordSavedAtKey = app.id === 'bark-wallet'
+            ? 'appStore.barkWalletAccessPasswordSavedAt'
+            : app.id === 'brln-community' ? 'appStore.brlnCommunitySignerPasswordSavedAt' : 'appStore.adminPasswordSavedAt'
+          const copyPasswordKey = app.id === 'bark-wallet'
+            ? 'appStore.copyBarkWalletAccessPassword'
+            : app.id === 'brln-community' ? 'appStore.copyBrlnCommunitySignerPassword' : 'appStore.copyAdminPassword'
           const hasElevatedLndAccess = app.security_notices?.includes(elevatedLndAccessNotice) ?? false
           const hasLimitedLndAccess = app.security_notices?.includes(limitedLndAccessNotice) ?? false
           const hasDirectLndAccess = hasElevatedLndAccess || hasLimitedLndAccess
@@ -924,7 +1022,7 @@ export default function AppStore() {
                       <img
                         src={icon}
                         alt={`${app.name} icon`}
-                        className={`h-12 w-12 rounded-2xl ${app.id === 'bark-wallet' ? 'bg-white p-2 object-contain' : app.id === 'electrs' || app.id === 'btcpay' ? 'object-contain' : 'object-cover'}`}
+                        className={`h-12 w-12 rounded-2xl ${app.id === 'bark-wallet' ? 'bg-white p-2 object-contain' : app.id === 'electrs' || app.id === 'btcpay' || app.id === 'brln-community' ? 'object-contain' : 'object-cover'}`}
                       />
                     ) : (
                       <span className="text-xs text-fog/50">{t('appStore.appBadge')}</span>
@@ -938,6 +1036,12 @@ export default function AppStore() {
                           <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-200">{t('appStore.barkWalletBeta')}</span>
                           <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/70">{t('appStore.barkWalletMainnet')}</span>
                           <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/70">{t('appStore.barkWalletSecond')}</span>
+                        </>
+                      )}
+                      {app.id === 'brln-community' && (
+                        <>
+                          <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-200">{t('appStore.brlnCommunityTest')}</span>
+                          <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/70">Nostr</span>
                         </>
                       )}
                       {hasElevatedLndAccess && (
@@ -1058,13 +1162,13 @@ export default function AppStore() {
                 ) : null}
                 {app.admin_password_path && (
                   <div className="flex flex-wrap items-center gap-2">
-                    <span>{t(app.id === 'bark-wallet' ? 'appStore.barkWalletAccessPasswordSavedAt' : 'appStore.adminPasswordSavedAt', { path: app.admin_password_path })}</span>
+                    <span>{t(accessPasswordSavedAtKey, { path: app.admin_password_path })}</span>
                     {canCopyAdminPassword && (
                       <button
                         className="text-fog/50 hover:text-fog"
                         onClick={() => handleCopyAdminPassword(app.id)}
-                        title={t(app.id === 'bark-wallet' ? 'appStore.copyBarkWalletAccessPassword' : 'appStore.copyAdminPassword')}
-                        aria-label={t(app.id === 'bark-wallet' ? 'appStore.copyBarkWalletAccessPassword' : 'appStore.copyAdminPassword')}
+                        title={t(copyPasswordKey)}
+                        aria-label={t(copyPasswordKey)}
                         disabled={Boolean(copying[app.id])}
                       >
                         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -1145,6 +1249,13 @@ export default function AppStore() {
                     <p>{t('appStore.barkWalletSeedReauth')}</p>
                   </>
                 )}
+                {app.id === 'brln-community' && (
+                  <>
+                    <p>{t('appStore.brlnCommunityRelays')}</p>
+                    <p>{t('appStore.brlnCommunityIdentityPreserved')}</p>
+                    <p>{t('appStore.brlnCommunitySignerReauth')}</p>
+                  </>
+                )}
               </div>
 
               {app.id === 'cpuminer' && app.installed && (
@@ -1175,7 +1286,17 @@ export default function AppStore() {
                         {t('common.open')}
                       </button>
                     )}
-                    {!internalRoute && openUrl && app.id !== 'bark-wallet' && (
+                    {!internalRoute && openUrl && app.id === 'brln-community' && (
+                      <>
+                        <a className="btn-primary" href={validatedBRLNCommunityURL(openUrl) || undefined} target="_blank" rel="noreferrer">
+                          {t('appStore.brlnCommunityOpenChat')}
+                        </a>
+                        <button className="btn-secondary" type="button" onClick={() => void handleBRLNSignerOpen(openUrl)}>
+                          {t('appStore.brlnCommunityOpenSigner')}
+                        </button>
+                      </>
+                    )}
+                    {!internalRoute && openUrl && app.id !== 'bark-wallet' && app.id !== 'brln-community' && (
                       <a className="btn-primary" href={openUrl} target="_blank" rel="noreferrer">
                         {t('common.open')}
                       </a>
@@ -1356,6 +1477,41 @@ export default function AppStore() {
                 {t('common.cancel')}
               </button>
               <button className="btn-primary" type="button" onClick={handleBarkWalletInstallConfirm}>
+                {t('appStore.install')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {brlnCommunityInstallOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true" aria-labelledby="brln-community-install-title">
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <img src={brlnCommunityIcon} alt="" className="h-10 w-10 rounded-xl" />
+                <div>
+                  <h3 id="brln-community-install-title" className="text-lg font-semibold">{t('appStore.brlnCommunityInstallTitle')}</h3>
+                  <p className="text-xs uppercase tracking-wide text-amber-200">{t('appStore.brlnCommunityInstallBadge')}</p>
+                </div>
+              </div>
+              <p className="text-sm text-fog/60">{t('appStore.brlnCommunityInstallBody')}</p>
+            </div>
+
+            <div className="mt-5 space-y-3 rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-fog/80">
+              <p>• {t('appStore.brlnCommunityInstallMembers')}</p>
+              <p>• {t('appStore.brlnCommunityInstallReset')}</p>
+              <p>• {t('appStore.brlnCommunityInstallNotEncrypted')}</p>
+              <p>• {t('appStore.brlnCommunityInstallKey')}</p>
+              <p>• {t('appStore.brlnCommunityInstallNoLnd')}</p>
+              <p>• {t('appStore.brlnCommunityInstallEnglish')}</p>
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-secondary" type="button" onClick={() => setBrlnCommunityInstallOpen(false)}>
+                {t('common.cancel')}
+              </button>
+              <button className="btn-primary" type="button" onClick={handleBRLNCommunityInstallConfirm}>
                 {t('appStore.install')}
               </button>
             </div>
@@ -1739,6 +1895,19 @@ export default function AppStore() {
         onPasswordChange={setBarkRevealPassword}
         onConfirm={handleBarkRevealReauth}
         onClose={closeBarkRevealReauth}
+      />
+
+      <SensitiveActionModal
+        open={brlnSignerReauthOpen}
+        title={t('appStore.brlnCommunitySignerReauthTitle')}
+        description={t('appStore.brlnCommunitySignerReauthBody')}
+        password={brlnSignerPassword}
+        busy={brlnSignerBusy}
+        error={brlnSignerError}
+        confirmLabel={t('appStore.barkWalletReauthConfirm')}
+        onPasswordChange={setBrlnSignerPassword}
+        onConfirm={handleBRLNSignerReauth}
+        onClose={closeBRLNSignerReauth}
       />
     </section>
   )

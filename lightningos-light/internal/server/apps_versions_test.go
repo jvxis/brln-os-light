@@ -28,6 +28,7 @@ func TestThirdPartyAppCatalogVersionsScope(t *testing.T) {
 	for _, appID := range []string{
 		appmanifest.BitcoinCoreID,
 		appmanifest.BarkWalletID,
+		appmanifest.BRLNCommunityID,
 		appmanifest.ElectrsID,
 		appmanifest.MempoolID,
 		appmanifest.FedimintGuardianID,

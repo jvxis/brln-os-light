@@ -20,6 +20,7 @@ func thirdPartyAppCatalogVersions() map[string]string {
 	return map[string]string{
 		appmanifest.BitcoinCoreID:      appmanifest.BitcoinCoreRelease,
 		appmanifest.BarkWalletID:       catalogImageVersion(appmanifest.BarkWalletWebImage),
+		appmanifest.BRLNCommunityID:    appmanifest.BRLNCommunityRelease,
 		appmanifest.ElectrsID:          appmanifest.ElectrsRelease,
 		appmanifest.MempoolID:          appmanifest.MempoolRelease,
 		appmanifest.FedimintGuardianID: appmanifest.FedimintRelease,

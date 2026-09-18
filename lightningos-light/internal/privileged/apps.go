@@ -265,7 +265,7 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 
 func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error) {
 	var probe AppImageProbe
-	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID && appID != appmanifest.BarkWalletID && appID != appmanifest.MempoolID && appID != appmanifest.FedimintGuardianID && appID != appmanifest.FedimintGatewayID {
+	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID && appID != appmanifest.BarkWalletID && appID != appmanifest.BRLNCommunityID && appID != appmanifest.MempoolID && appID != appmanifest.FedimintGuardianID && appID != appmanifest.FedimintGatewayID {
 		return probe, errors.New("app image probe is not allowed")
 	}
 	image, _, _, err := validatedCatalogImage(appID, variant)
@@ -348,6 +348,28 @@ func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, 
 		probe.Runnable = runErr == nil && strings.TrimSpace(output) != ""
 		if variant == appmanifest.BarkWalletImageDaemon {
 			probe.Runnable = probe.Runnable && strings.TrimSpace(output) == appmanifest.BarkWalletDaemonVersionOutput
+		}
+		return probe, nil
+	}
+	if appID == appmanifest.BRLNCommunityID {
+		baseArgs := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+			"--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
+		var args []string
+		switch variant {
+		case appmanifest.BRLNCommunityImageWeb:
+			args = append(append([]string{}, baseArgs...), "--user", "101:101", "--entrypoint", "/usr/sbin/nginx", image, "-v")
+		case appmanifest.BRLNCommunityImageSigner:
+			args = append(append([]string{}, baseArgs...), "--user", "65529:65529", "--entrypoint", "/brln-signer", image, "-version")
+		case appmanifest.BRLNCommunityImageProxy:
+			args = append(append([]string{}, baseArgs...), "--user", "65532:65532", "--tmpfs",
+				"/run/lightningos-bin:rw,exec,nosuid,nodev,size=64m,uid=65532,gid=65532,mode=0700",
+				"--entrypoint", "/bin/sh", image, "-c",
+				"cp /usr/bin/caddy /run/lightningos-bin/caddy && exec /run/lightningos-bin/caddy version")
+		}
+		output, runErr := manager.Runner.Run(ctx, dockerPath, args...)
+		probe.Runnable = runErr == nil && strings.TrimSpace(output) != ""
+		if variant == appmanifest.BRLNCommunityImageSigner {
+			probe.Runnable = probe.Runnable && strings.TrimSpace(output) == appmanifest.BRLNCommunitySignerVersionOutput
 		}
 		return probe, nil
 	}
@@ -516,6 +538,11 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 			appmanifest.BarkWalletImageAPI:    "lightningos-bark-image-api",
 			appmanifest.BarkWalletImageDaemon: "lightningos-bark-image-daemon",
 			appmanifest.BarkWalletImageProxy:  "lightningos-bark-image-proxy",
+		},
+		appmanifest.BRLNCommunityID: {
+			appmanifest.BRLNCommunityImageWeb:    "lightningos-brlncommunity-image-web",
+			appmanifest.BRLNCommunityImageSigner: "lightningos-brlncommunity-image-signer",
+			appmanifest.BRLNCommunityImageProxy:  "lightningos-brlncommunity-image-proxy",
 		},
 	}
 	appUnits, ok := units[appID]

@@ -40,6 +40,19 @@ func validateBarkWalletSnapshotPermissions(paths BarkWalletPaths) error {
 	return nil
 }
 
+func prepareBRLNCommunityWritableData(string, string, ...string) error { return nil }
+
+func validateBRLNCommunitySnapshotPermissions(paths BRLNCommunityPaths) error {
+	for _, path := range []string{paths.SnapshotRoot, paths.TLSDir, paths.ComposePath, paths.CaddyfilePath,
+		paths.TLSCertificate, paths.TLSPrivateKey, paths.SignerDir, paths.AuthDir, paths.KeyPasswordPath, paths.AccessPasswordPath} {
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("BR⚡LN Community snapshot entry is unsafe")
+		}
+	}
+	return nil
+}
+
 func validateSecretFileMode(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {

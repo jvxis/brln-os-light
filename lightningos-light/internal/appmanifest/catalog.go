@@ -114,6 +114,11 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			ID: BarkWalletID, Project: BarkWalletProject, ComposeFile: BarkWalletComposeFile,
 			PrimaryService: BarkWalletPrimaryService, StopTimeoutSeconds: BarkWalletStopTimeout,
 		}, nil
+	case BRLNCommunityID:
+		return ComposeManifest{
+			ID: BRLNCommunityID, Project: BRLNCommunityProject, ComposeFile: BRLNCommunityComposeFile,
+			PrimaryService: BRLNCommunityPrimaryService, StopTimeoutSeconds: BRLNCommunityStopTimeout,
+		}, nil
 	default:
 		return ComposeManifest{}, errors.New("compose app manifest is not allowed")
 	}
@@ -145,6 +150,8 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return PublicPoolImageForVariant(variant)
 	case BarkWalletID:
 		return BarkWalletImageForVariant(variant)
+	case BRLNCommunityID:
+		return BRLNCommunityImageForVariant(variant)
 	default:
 		return "", errors.New("app image manifest is not allowed")
 	}
@@ -176,6 +183,8 @@ func CatalogExternalTCPPort(appID string) (int, error) {
 		return PeerSwapWebPort, nil
 	case BarkWalletID:
 		return BarkWalletPort, nil
+	case BRLNCommunityID:
+		return BRLNCommunityPort, nil
 	case MempoolID:
 		return MempoolPort, nil
 	case FedimintGuardianID:

@@ -1240,6 +1240,8 @@ export const getApps = (): Promise<AppStoreInfo[]> => request('/api/apps')
 export const getAppOperations = (): Promise<Record<string, AppOperationInfo>> => request('/api/apps/operations')
 export const getBarkWalletRevealAuthorization = () =>
   request('/api/apps/bark-wallet/reveal-authorization')
+export const getBRLNCommunitySignerAuthorization = () =>
+  request('/api/apps/brln-community/signer-authorization')
 export const getAppStorageTargets = (app: string) =>
   request(`/api/apps/storage-targets${buildQuery({ app })}`)
 export const getElectrsStatus = () => request('/api/apps/electrs/status')

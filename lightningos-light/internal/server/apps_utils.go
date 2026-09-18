@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -29,6 +31,61 @@ func ensureFileWithChange(path string, content string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// reconcileInstalledCatalogFile replaces only an existing regular
+// manager-owned declaration file. It never creates a missing installation and
+// refuses links or directories before writing the current closed catalog
+// content. The privileged broker validates the result before any lifecycle
+// command is executed.
+func reconcileInstalledCatalogFile(path string, content string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("failed to inspect installed catalog file %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("installed catalog file is unsafe: %s", path)
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read installed catalog file %s: %w", path, err)
+	}
+	if string(current) == content {
+		return nil
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".lightningos-catalog-*")
+	if err != nil {
+		return fmt.Errorf("failed to create catalog replacement for %s: %w", path, err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(info.Mode().Perm()); err != nil {
+		temporary.Close()
+		return fmt.Errorf("failed to secure catalog replacement for %s: %w", path, err)
+	}
+	if _, err := temporary.WriteString(content); err != nil {
+		temporary.Close()
+		return fmt.Errorf("failed to write catalog replacement for %s: %w", path, err)
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return fmt.Errorf("failed to sync catalog replacement for %s: %w", path, err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("failed to close catalog replacement for %s: %w", path, err)
+	}
+	// Windows does not replace an existing destination with os.Rename. Removing
+	// the directory entry remains safe here: it never follows a link, and the
+	// production Linux path uses the atomic replacement below.
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("failed to replace installed catalog file %s: %w", path, err)
+		}
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("failed to reconcile installed catalog file %s: %w", path, err)
+	}
+	return nil
 }
 
 func writeFile(path string, content string, mode os.FileMode) error {

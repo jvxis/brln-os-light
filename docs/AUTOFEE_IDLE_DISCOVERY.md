@@ -37,6 +37,35 @@ contracts remain in the normal decision path. Inbound-discount calculation and
 Market Refill mode are not changed. Low-liquidity/new inbound bootstrap rules
 remain protected. This relaxation does not promise any additional routing.
 
+## Low-fee progress (0.5.29)
+
+At low outgoing fees, the existing percentage down cap can permit less than
+the absolute 5 ppm anti-noise minimum. For example, a 50 ppm fee can fall only
+4 ppm under the normal 8% cap; rejecting every such move traps discovery at
+50 ppm indefinitely. Waiting for more rounds does not resolve that conflict.
+
+An eligible stale/no-flow experiment now accepts its already-capped small
+decrease when the entire permitted down step is below the usual minimum.
+Discovery must be enabled and the full reference-floor relaxation eligibility
+must have passed in that same evaluation. This is not a global reduction of
+the anti-noise threshold or permission to enlarge a decrease to 5 ppm.
+
+- Normal and low-HTLC-sample percentage caps remain unchanged, including their
+  existing minimum step of 1 ppm. Examples: 50 -> 46 and 10 -> 9 ppm.
+- The existing 24-hour wait (96 hours for the small-channel exception),
+  maturity, liquidity, no-flow and cost/HTLC checks still apply.
+- Configured minimum fees, reversal confirmation, downstream cooldowns,
+  economic interlock floors, settling and fee contracts remain authoritative.
+- A successful fee change updates the existing state/timestamp; the exception
+  cannot repeat at every scan and needs no new persistence or configuration.
+- `stale-noflow-micro-step` identifies this anti-noise exception in decision
+  telemetry. It does not by itself mean a policy was applied: a later guard
+  can still veto or adjust the decision. Check the final result/apply status.
+
+Ordinary tiny changes at higher fees, increases, disabled discovery and channels
+that fail stale-floor eligibility retain their existing behavior. Inbound fees
+and Sovereign rebalance selection are unchanged.
+
 ## Automatic idle refresh
 
 Automatic refresh still requires seven days without outgoing, incoming or

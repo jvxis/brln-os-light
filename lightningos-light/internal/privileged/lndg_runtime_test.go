@@ -261,6 +261,39 @@ func TestLNDgValidationRejectsTamperingAndBroadSecrets(t *testing.T) {
 	}
 }
 
+func TestLNDgInspectUsesCatalogLabelsForOutdatedDeclaration(t *testing.T) {
+	fixture := writeTestLNDgFixture(t)
+	mustWriteTestFile(t, fixture.entrypointPath, []byte("#!/bin/sh\n# previous catalog entrypoint\n"), 0750)
+
+	inspection, err := fixture.manager.Inspect(context.Background(), appmanifest.LNDgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Status != "stopped" {
+		t.Fatalf("status=%q want stopped", inspection.Status)
+	}
+	if len(fixture.runner.commands) != 1 || fixture.runner.commands[0].path != dockerPath {
+		t.Fatalf("unexpected inspection commands: %#v", fixture.runner.commands)
+	}
+	joined := strings.Join(fixture.runner.commands[0].args, " ")
+	if strings.Contains(joined, fixture.appRoot) || !strings.Contains(joined, "com.docker.compose.project="+appmanifest.LNDgProject) {
+		t.Fatalf("inspection did not stay on catalog-fixed Docker labels: %#v", fixture.runner.commands[0])
+	}
+}
+
+func TestLNDgInspectRejectsUnsafeOutdatedDeclarationShape(t *testing.T) {
+	fixture := writeTestLNDgFixture(t)
+	mustWriteTestFile(t, fixture.entrypointPath, []byte("#!/bin/sh\n# previous catalog entrypoint\n"), 0750)
+	mustWriteTestFile(t, filepath.Join(fixture.appRoot, "unexpected.sh"), []byte("exit 0\n"), 0640)
+
+	if _, err := fixture.manager.Inspect(context.Background(), appmanifest.LNDgID); err == nil {
+		t.Fatal("unsafe declaration shape was accepted")
+	}
+	if len(fixture.runner.commands) != 0 {
+		t.Fatalf("unsafe declaration reached Docker: %#v", fixture.runner.commands)
+	}
+}
+
 func TestLNDgLifecycleUsesOnlyBrokerSnapshotAndDoesNotRestartConfiguredLND(t *testing.T) {
 	fixture := writeTestLNDgFixture(t)
 	imageID := "sha256:" + strings.Repeat("a", 64)

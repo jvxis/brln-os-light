@@ -1190,12 +1190,25 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 	case appmanifest.LNDgID:
 		_, err := manager.validatedLNDgFiles()
 		if err != nil {
+			if manager.hasSafeCatalogDeclarationShape(manifest, []catalogDeclarationFile{
+				{name: appmanifest.LNDgComposeFile, max: 64 * 1024, modes: []os.FileMode{0640}},
+				{name: appmanifest.LNDgEnvFile, max: maxLNDgEnvBytes, modes: []os.FileMode{0600}},
+				{name: appmanifest.LNDgEntrypointFile, max: maxLNDgEntrypointBytes, modes: []os.FileMode{0640, 0750}},
+			}) {
+				return manager.inspectCatalogRuntime(ctx, manifest, false)
+			}
 			return inspection, err
 		}
 		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.LNbitsID:
 		files, err := manager.validatedLNbitsFiles()
 		if err != nil {
+			if manager.hasSafeCatalogDeclarationShape(manifest, []catalogDeclarationFile{
+				{name: appmanifest.LNbitsComposeFile, max: 64 * 1024, modes: []os.FileMode{0640}},
+				{name: appmanifest.LNbitsEnvFile, max: 64 * 1024, modes: []os.FileMode{0600}},
+			}) {
+				return manager.inspectCatalogRuntime(ctx, manifest, false)
+			}
 			return inspection, err
 		}
 		if err := manager.refreshLNbitsSnapshotCertificate(files.certificateRaw); err != nil {
@@ -1324,6 +1337,49 @@ func (manager *ComposeAppManager) inspectCatalogRuntime(ctx context.Context, man
 		inspection.CPUPercentRaw = parseDockerCPUPercent(output)
 	}
 	return inspection, nil
+}
+
+type catalogDeclarationFile struct {
+	name  string
+	max   int64
+	modes []os.FileMode
+}
+
+// hasSafeCatalogDeclarationShape recognizes an installed manager-owned app
+// declaration without trusting or executing its contents. This allows status
+// inspection through catalog-fixed Docker labels after an application upgrade
+// changes a Compose document, image pin, or static entrypoint. Mutating
+// lifecycle operations still require the current closed catalog declaration.
+func (manager *ComposeAppManager) hasSafeCatalogDeclarationShape(manifest appmanifest.ComposeManifest, files []catalogDeclarationFile) bool {
+	appsRoot := manager.AppsRoot
+	if appsRoot == "" {
+		appsRoot = defaultAppsRoot
+	}
+	appRoot := filepath.Join(appsRoot, manifest.ID)
+	allowed := make(map[string]bool, len(files))
+	for _, file := range files {
+		allowed[file.name] = true
+	}
+	if validateRegularDirectory(appRoot) != nil || validateSnapshotDirectoryEntries(appRoot, allowed) != nil {
+		return false
+	}
+	for _, file := range files {
+		info, err := os.Lstat(filepath.Join(appRoot, file.name))
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > file.max {
+			return false
+		}
+		modeReady := false
+		for _, mode := range file.modes {
+			if legacyManagerFileModeReady(info, mode) {
+				modeReady = true
+				break
+			}
+		}
+		if !modeReady {
+			return false
+		}
+	}
+	return true
 }
 
 func (manager *ComposeAppManager) stopLegacyCatalogRuntime(ctx context.Context, manifest appmanifest.ComposeManifest) error {

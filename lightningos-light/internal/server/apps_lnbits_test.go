@@ -101,6 +101,42 @@ func TestRemoveLegacyLNbitsCertificateRejectsSymlink(t *testing.T) {
 	}
 }
 
+func TestReconcileLNbitsCatalogDeclarationUpdatesOnlyCompose(t *testing.T) {
+	root := t.TempDir()
+	paths := lnbitsPaths{
+		DataDir:     filepath.Join(root, "data"),
+		LndDir:      filepath.Join(root, "lnd"),
+		ComposePath: filepath.Join(root, appmanifest.LNbitsComposeFile),
+		EnvPath:     filepath.Join(root, appmanifest.LNbitsEnvFile),
+	}
+	if err := os.WriteFile(paths.ComposePath, []byte("services:\n  lnbits:\n    image: lnbits/lnbits:v1.5.6\n"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.EnvPath, []byte("CUSTOM_SETTING=preserved\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.LndDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	legacyCertificate := filepath.Join(paths.LndDir, appmanifest.LNbitsTLSCertFile)
+	if err := os.WriteFile(legacyCertificate, []byte("obsolete public certificate"), 0640); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reconcileLnbitsCatalogDeclaration(paths); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(paths.ComposePath); err != nil || string(raw) != lnbitsComposeContents(paths) {
+		t.Fatalf("compose was not reconciled: %v", err)
+	}
+	if raw, err := os.ReadFile(paths.EnvPath); err != nil || string(raw) != "CUSTOM_SETTING=preserved\n" {
+		t.Fatalf("environment changed during compose reconciliation: %q/%v", raw, err)
+	}
+	if _, err := os.Lstat(legacyCertificate); !os.IsNotExist(err) {
+		t.Fatalf("obsolete LNbits certificate copy still exists: %v", err)
+	}
+}
+
 func TestEnsureLnbitsEnvMigratesLegacyAdminCredentialSelectors(t *testing.T) {
 	paths := lnbitsPaths{EnvPath: filepath.Join(t.TempDir(), ".env")}
 	legacy := strings.Join([]string{

@@ -104,6 +104,19 @@ func TestBRLNCommunityProxyProtectsSignerChanges(t *testing.T) {
 	}
 }
 
+func TestBRLNCommunityComposeFollowsTheProxyConfiguration(t *testing.T) {
+	compose, err := BRLNCommunityCompose(testBRLNCommunityComposePaths())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(compose, "CONFIG_HASH: "+brlnCommunityProxyConfigHash()) {
+		t.Fatal("the proxy service does not pin the configuration it serves")
+	}
+	if len(brlnCommunityProxyConfigHash()) != 16 {
+		t.Fatalf("unexpected hash: %q", brlnCommunityProxyConfigHash())
+	}
+}
+
 func TestBRLNCommunityComposeRejectsMissingBrokerPath(t *testing.T) {
 	paths := testBRLNCommunityComposePaths()
 	paths.ManagerCACertificate = ""

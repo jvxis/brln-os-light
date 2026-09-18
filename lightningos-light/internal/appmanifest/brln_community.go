@@ -1,6 +1,8 @@
 package appmanifest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -121,6 +123,14 @@ https://:%d {
 `, BRLNCommunityPort, BRLNCommunitySignerPort, BRLNCommunitySignerPort, BRLNCommunityWebInternalPort)
 }
 
+// brlnCommunityProxyConfigHash pins the proxy service to its configuration, so a
+// change in the Caddyfile recreates the container. Compose only compares service
+// definitions, never the contents of a bind-mounted file.
+func brlnCommunityProxyConfigHash() string {
+	sum := sha256.Sum256([]byte(BRLNCommunityCaddyConfig()))
+	return hex.EncodeToString(sum[:8])
+}
+
 func BRLNCommunityCompose(paths BRLNCommunityComposePaths) (string, error) {
 	if paths.SignerDir == "" || paths.AuthDir == "" || paths.CaddyfilePath == "" || paths.TLSCertificate == "" ||
 		paths.TLSPrivateKey == "" || paths.ManagerCACertificate == "" {
@@ -170,6 +180,8 @@ func BRLNCommunityCompose(paths BRLNCommunityComposePaths) (string, error) {
       - ALL
     security_opt:
       - no-new-privileges:true
+    environment:
+      CONFIG_HASH: %s
     entrypoint:
       - /bin/sh
       - -c
@@ -204,6 +216,7 @@ networks:
 		BRLNCommunitySignerImage, BRLNCommunityStopTimeout, BRLNCommunitySignerUID, BRLNCommunitySignerGID,
 		BRLNCommunitySignerPort, BRLNCommunitySignerRelay, paths.SignerDir, paths.AuthDir,
 		BRLNCommunityProxyImage, BRLNCommunityStopTimeout, BRLNCommunityProxyUID, BRLNCommunityProxyGID,
+		brlnCommunityProxyConfigHash(),
 		BRLNCommunityPort, BRLNCommunityPort,
 		BRLNCommunityProxyUID, BRLNCommunityProxyGID, BRLNCommunityProxyUID, BRLNCommunityProxyGID,
 		BRLNCommunityProxyUID, BRLNCommunityProxyGID,

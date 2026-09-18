@@ -1,0 +1,226 @@
+{
+  "schema": "lightningos.app-gate.brln-community.v1",
+  "captured_at": "2026-09-17T19:05:00Z",
+  "branch": "agent/0.5.29-brln-community-test",
+  "commit": "56fdb90b7c61fa70490fba8b46c8b09df43f308f",
+  "commit_short": "56fdb90b",
+  "node": "LOS-TESTE2",
+  "host": {
+    "os": "Ubuntu 24.04.4 LTS",
+    "kernel": "7.0.0-31-generic",
+    "arch": "x86_64",
+    "manager_build": "PR build installed from the branch; previous binaries and UI kept in /opt/lightningos/backups/pr162-20260917184830"
+  },
+  "scope": "first functional gate of the BR⚡LN Community test app: install, proxy boundary, reauthentication, key setup, pairing, reboot persistence, data-preserving uninstall and reinstall",
+  "images": {
+    "web": "ghcr.io/jvxis/brln-community-web:0.1.1@sha256:d67d5ed74ab0a9001cf8aafccb387d30f45dbf538a77110e4482b288af582d6a",
+    "signer": "ghcr.io/jvxis/brln-signer:0.1.1@sha256:f6052f613f712ca32e17e4d4a83afbb97603f355f93b97dfcbd51f447ac65e70",
+    "proxy": "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d",
+    "mutable_latest_tags_used": false,
+    "request_selectable_images": false,
+    "registry_pull_without_credentials": true,
+    "no_network_runnable_probes_passed": [
+      "web",
+      "signer",
+      "proxy"
+    ],
+    "signer_version_output_attested": "brln-signer 0.1.1"
+  },
+  "broker": {
+    "operations": [
+      "app.brlncommunity.status",
+      "app.brlncommunity.ensure",
+      "app.brlncommunity.lifecycle",
+      "app.brlncommunity.remove",
+      "app.brlncommunity.firewall",
+      "app.brlncommunity.password.read"
+    ],
+    "manager_direct_docker_execution": false,
+    "mode": "enforce"
+  },
+  "store_entry": {
+    "id": "brln-community",
+    "name": "BR⚡LN Community",
+    "port": 4448,
+    "scheme": "https",
+    "available_version": "0.1.0",
+    "security_notices": []
+  },
+  "runtime": {
+    "containers": [
+      {
+        "name": "brln-community-web-1",
+        "user": "101:101",
+        "read_only": true,
+        "cap_drop": [
+          "ALL"
+        ],
+        "security_opt": [
+          "no-new-privileges:true"
+        ],
+        "network": "brln-community_default"
+      },
+      {
+        "name": "brln-community-signer-1",
+        "user": "65529:65529",
+        "read_only": true,
+        "cap_drop": [
+          "ALL"
+        ],
+        "security_opt": [
+          "no-new-privileges:true"
+        ],
+        "network": "brln-community_default"
+      },
+      {
+        "name": "brln-community-proxy-1",
+        "user": "65532:65532",
+        "read_only": true,
+        "cap_drop": [
+          "ALL"
+        ],
+        "security_opt": [
+          "no-new-privileges:true"
+        ],
+        "network": "brln-community_default"
+      }
+    ],
+    "published_ports": [
+      "4448/tcp"
+    ],
+    "host_network_used": false,
+    "signer_mounts": [
+      {
+        "source": "/var/lib/lightningos/apps-data/brln-community/signer",
+        "destination": "/data",
+        "rw": true
+      },
+      {
+        "source": "/var/lib/lightningos/apps-data/brln-community/auth",
+        "destination": "/run/lightningos-auth",
+        "rw": false
+      }
+    ],
+    "lnd_bitcoin_macaroon_or_tls_mounted": false
+  },
+  "ownership": {
+    "apps_data_signer_dir": {
+      "mode": "0700",
+      "uid": 65529,
+      "gid": 65529
+    },
+    "member_key_file": {
+      "path": "key.ncryptsec",
+      "mode": "0600",
+      "uid": 65529,
+      "gid": 65529
+    },
+    "auth_dir": {
+      "mode": "0750",
+      "uid": 0,
+      "gid": 65529
+    },
+    "key_password": {
+      "mode": "0640",
+      "uid": 0,
+      "gid": 65529
+    },
+    "access_password": {
+      "mode": "0640",
+      "uid": 0,
+      "gid": 65529
+    },
+    "snapshot_compose": {
+      "mode": "0600",
+      "uid": 0,
+      "gid": 0
+    },
+    "snapshot_caddyfile": {
+      "mode": "0640",
+      "uid": 0,
+      "gid": 65532
+    },
+    "snapshot_tls": {
+      "mode": "0640",
+      "uid": 0,
+      "gid": 65532
+    }
+  },
+  "checks": {
+    "install_to_running_seconds": 50,
+    "chat_page_served": {
+      "status": 200,
+      "title": "BR⚡LN Community"
+    },
+    "signer_page_served": {
+      "status": 200,
+      "title": "BR⚡LN Signer"
+    },
+    "signer_path_redirect": {
+      "from": "/signer",
+      "status": 308,
+      "to": "/signer/"
+    },
+    "signer_api_without_access_password": {
+      "status": 401
+    },
+    "sensitive_route_without_manager_session": {
+      "status": 401,
+      "code": "auth_required"
+    },
+    "sensitive_route_without_recent_reauth": {
+      "status": 428,
+      "code": "brln_community_signer_reauth_required"
+    },
+    "reauth_then_key_creation": {
+      "reauth_status": 200,
+      "key_status": 200,
+      "has_key": true
+    },
+    "pairing_link_created": {
+      "status": 200,
+      "scheme": "bunker://",
+      "qr_returned": true
+    },
+    "reboot_persistence": {
+      "app_status_after_reboot": "running",
+      "same_npub": true
+    },
+    "uninstall": {
+      "status": 200,
+      "confirmation_required_without_payload": 409,
+      "containers_removed": true,
+      "broker_snapshot_removed": true,
+      "app_unreachable": true,
+      "apps_data_preserved": true
+    },
+    "reinstall": {
+      "status": 200,
+      "app_status": "running",
+      "same_npub": true
+    },
+    "release_update": {
+      "from": "0.1.0",
+      "to": "0.1.1",
+      "store_reported_update": true,
+      "applied": "running",
+      "same_npub": true
+    },
+    "phone_pairing": {
+      "device": "iPhone over the public network",
+      "paired_by": "QR code from the app signer page, carried by wss://signer.br-ln.com",
+      "joined_space": true,
+      "message_stored_by_the_relay": {
+        "kind": 9,
+        "group": "geral",
+        "author_prefix": "4d8121ed",
+        "created_at": "2026-09-17T22:40:48Z",
+        "protected_tag": true
+      }
+    }
+  },
+  "secrets_disclosed": false,
+  "pending": [
+    "Ubuntu 26.04 run of the same gate"
+  ]
+}

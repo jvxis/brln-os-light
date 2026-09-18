@@ -218,6 +218,39 @@ func TestLNbitsValidationRejectsDeclarationAndCredentialDrift(t *testing.T) {
 	}
 }
 
+func TestLNbitsInspectUsesCatalogLabelsForOutdatedDeclaration(t *testing.T) {
+	fixture := writeTestLNbitsFixture(t)
+	mustWriteTestFile(t, fixture.composePath, []byte("services:\n  lnbits:\n    image: lnbits/lnbits:v1.5.6\n"), 0640)
+
+	inspection, err := fixture.manager.Inspect(context.Background(), appmanifest.LNbitsID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Status != "stopped" {
+		t.Fatalf("status=%q want stopped", inspection.Status)
+	}
+	if len(fixture.runner.commands) != 1 || fixture.runner.commands[0].path != dockerPath {
+		t.Fatalf("unexpected inspection commands: %#v", fixture.runner.commands)
+	}
+	joined := strings.Join(fixture.runner.commands[0].args, " ")
+	if strings.Contains(joined, fixture.appRoot) || !strings.Contains(joined, "com.docker.compose.project="+appmanifest.LNbitsProject) {
+		t.Fatalf("inspection did not stay on catalog-fixed Docker labels: %#v", fixture.runner.commands[0])
+	}
+}
+
+func TestLNbitsInspectRejectsUnsafeOutdatedDeclarationShape(t *testing.T) {
+	fixture := writeTestLNbitsFixture(t)
+	mustWriteTestFile(t, fixture.composePath, []byte("services:\n  lnbits:\n    image: lnbits/lnbits:v1.5.6\n"), 0640)
+	mustWriteTestFile(t, filepath.Join(fixture.appRoot, "unexpected.env"), []byte("KEY=value\n"), 0600)
+
+	if _, err := fixture.manager.Inspect(context.Background(), appmanifest.LNbitsID); err == nil {
+		t.Fatal("unsafe declaration shape was accepted")
+	}
+	if len(fixture.runner.commands) != 0 {
+		t.Fatalf("unsafe declaration reached Docker: %#v", fixture.runner.commands)
+	}
+}
+
 func TestLNbitsLifecycleUsesBrokerSnapshotWithoutRestartingConfiguredLND(t *testing.T) {
 	fixture := writeTestLNbitsFixture(t)
 	resolvedEndpoint, err := fixture.manager.resolveLNbitsRESTEndpoint()

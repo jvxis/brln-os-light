@@ -195,6 +195,9 @@ func (s *Server) applyLndg(ctx context.Context) error {
 func (s *Server) uninstallLndg(ctx context.Context) error {
 	paths := lndgAppPaths()
 	if fileExists(paths.ComposePath) {
+		if err := reconcileLndgCatalogDeclaration(paths); err != nil {
+			return fmt.Errorf("failed to reconcile LNDg declaration: %w", err)
+		}
 		if handled, err := system.RemoveAppWithBroker(ctx, appmanifest.LNDgID); !handled {
 			return errors.New("LNDg removal requires privileged broker enforce mode")
 		} else if err != nil {
@@ -216,6 +219,9 @@ func (s *Server) stopLndg(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("LNDg is not installed")
 	}
+	if err := reconcileLndgCatalogDeclaration(paths); err != nil {
+		return fmt.Errorf("failed to reconcile LNDg declaration: %w", err)
+	}
 	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.LNDgID, "stop"); !handled {
 		return errors.New("LNDg lifecycle requires privileged broker enforce mode")
 	} else if err != nil {
@@ -229,6 +235,9 @@ func (s *Server) resetLndgAdminPassword(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("LNDg is not installed")
 	}
+	if err := reconcileLndgCatalogDeclaration(paths); err != nil {
+		return fmt.Errorf("failed to reconcile LNDg declaration: %w", err)
+	}
 
 	if handled, err := system.ResetAppAdminWithBroker(ctx, appmanifest.LNDgID); !handled {
 		return errors.New("LNDg admin reset requires privileged broker enforce mode")
@@ -236,6 +245,13 @@ func (s *Server) resetLndgAdminPassword(ctx context.Context) error {
 		return fmt.Errorf("LNDg admin reset failed: %w", err)
 	}
 	return nil
+}
+
+func reconcileLndgCatalogDeclaration(paths lndgPaths) error {
+	if err := reconcileInstalledCatalogFile(paths.EntrypointPath, lndgEntrypoint); err != nil {
+		return err
+	}
+	return reconcileInstalledCatalogFile(paths.ComposePath, lndgComposeContents(paths))
 }
 
 func lndgComposeContents(paths lndgPaths) string {

@@ -141,6 +141,9 @@ func (s *Server) applyLnbits(ctx context.Context) error {
 func (s *Server) uninstallLnbits(ctx context.Context) error {
 	paths := lnbitsAppPaths()
 	if fileExists(paths.ComposePath) {
+		if err := reconcileLnbitsCatalogDeclaration(paths); err != nil {
+			return fmt.Errorf("failed to reconcile LNbits declaration: %w", err)
+		}
 		if handled, err := system.RemoveAppWithBroker(ctx, appmanifest.LNbitsID); !handled {
 			return errors.New("LNbits removal requires privileged broker enforce mode")
 		} else if err != nil {
@@ -158,12 +161,22 @@ func (s *Server) stopLnbits(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("LNbits is not installed")
 	}
+	if err := reconcileLnbitsCatalogDeclaration(paths); err != nil {
+		return fmt.Errorf("failed to reconcile LNbits declaration: %w", err)
+	}
 	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.LNbitsID, "stop"); !handled {
 		return errors.New("LNbits lifecycle requires privileged broker enforce mode")
 	} else if err != nil {
 		return fmt.Errorf("LNbits stop failed: %w", err)
 	}
 	return nil
+}
+
+func reconcileLnbitsCatalogDeclaration(paths lnbitsPaths) error {
+	if err := removeLegacyLNbitsCertificate(paths); err != nil {
+		return err
+	}
+	return reconcileInstalledCatalogFile(paths.ComposePath, lnbitsComposeContents(paths))
 }
 
 func ensureLnbitsPaths(paths lnbitsPaths) error {

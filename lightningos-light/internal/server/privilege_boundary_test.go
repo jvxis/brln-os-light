@@ -29,6 +29,7 @@ type privilegeCallBudget struct {
 var legacyPrivilegeCallBudgets = map[string]privilegeCallBudget{
 	"internal/server/app_upgrade.go":              {},
 	"internal/server/apps_bark_wallet.go":         {},
+	"internal/server/apps_brln_community.go":      {},
 	"internal/server/apps_bitcoincore.go":         {},
 	"internal/server/apps_btcpay.go":              {},
 	"internal/server/apps_cpuminer.go":            {},

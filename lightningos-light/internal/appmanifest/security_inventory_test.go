@@ -87,6 +87,10 @@ func TestComposeCatalogSecurityInventory(t *testing.T) {
 		BarkWalletID + "/api":   hardened,
 		BarkWalletID + "/barkd": hardened,
 		BarkWalletID + "/proxy": hardened,
+
+		BRLNCommunityID + "/web":    hardened,
+		BRLNCommunityID + "/signer": hardened,
+		BRLNCommunityID + "/proxy":  hardened,
 	}
 
 	imageExceptions := map[string]string{
@@ -186,6 +190,10 @@ func testCatalogComposeDocuments(t *testing.T) []catalogComposeDocument {
 	if err != nil {
 		t.Fatal(err)
 	}
+	brlnCommunity, err := BRLNCommunityCompose(testBRLNCommunityComposePaths())
+	if err != nil {
+		t.Fatal(err)
+	}
 	electrs, err := ElectrsCompose(ElectrsRuntime{BitcoinMode: ElectrsBitcoinModeApp, Network: "bitcoin"})
 	if err != nil {
 		t.Fatal(err)
@@ -223,5 +231,6 @@ func testCatalogComposeDocuments(t *testing.T) []catalogComposeDocument {
 		{appID: TapdID, raw: TapdCompose(TapdComposePaths{DataDir: "/data/tapd", ConfigPath: "/snapshot/tapd/tapd.conf", TLSCertPath: "/snapshot/tapd/tls.cert", MacaroonPath: "/snapshot/tapd/tapd.macaroon"})},
 		{appID: PublicPoolID, raw: publicPool},
 		{appID: BarkWalletID, raw: bark},
+		{appID: BRLNCommunityID, raw: brlnCommunity},
 	}
 }

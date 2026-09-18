@@ -282,6 +282,15 @@ type barkWalletPrivilegedClient interface {
 	ResetBarkWalletPassword(ctx context.Context, dryRun bool) error
 }
 
+type brlnCommunityPrivilegedClient interface {
+	BRLNCommunityStatus(ctx context.Context) (installed bool, status string, ufwActive bool, passwordAvailable bool, err error)
+	EnsureBRLNCommunity(ctx context.Context, dryRun bool) (status string, err error)
+	BRLNCommunityLifecycle(ctx context.Context, action string, dryRun bool) (status string, err error)
+	RemoveBRLNCommunity(ctx context.Context, dryRun bool) error
+	EnsureBRLNCommunityFirewall(ctx context.Context, dryRun bool) (status string, err error)
+	ReadBRLNCommunityPassword(ctx context.Context) (password string, err error)
+}
+
 type PublicPoolBrokerState struct {
 	Installed bool
 	Status    string
@@ -444,6 +453,97 @@ func barkWalletMutationWithBroker(ctx context.Context, operation func(context.Co
 		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		_ = operation(shadowCtx, barkClient, true)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+type BRLNCommunityBrokerState struct {
+	Installed         bool
+	Status            string
+	UFWActive         bool
+	PasswordAvailable bool
+}
+
+func BRLNCommunityStatusWithBroker(ctx context.Context) (bool, BRLNCommunityBrokerState, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, BRLNCommunityBrokerState{}, nil
+	}
+	appClient, ok := client.(brlnCommunityPrivilegedClient)
+	if !ok {
+		return true, BRLNCommunityBrokerState{}, errors.New("privileged broker does not support BR⚡LN Community")
+	}
+	installed, status, ufwActive, passwordAvailable, err := appClient.BRLNCommunityStatus(ctx)
+	return true, BRLNCommunityBrokerState{Installed: installed, Status: status, UFWActive: ufwActive, PasswordAvailable: passwordAvailable}, err
+}
+
+func EnsureBRLNCommunityWithBroker(ctx context.Context) (bool, error) {
+	return brlnCommunityMutationWithBroker(ctx, func(callCtx context.Context, client brlnCommunityPrivilegedClient, dryRun bool) error {
+		_, err := client.EnsureBRLNCommunity(callCtx, dryRun)
+		return err
+	})
+}
+
+func BRLNCommunityLifecycleWithBroker(ctx context.Context, action string) (bool, error) {
+	return brlnCommunityMutationWithBroker(ctx, func(callCtx context.Context, client brlnCommunityPrivilegedClient, dryRun bool) error {
+		_, err := client.BRLNCommunityLifecycle(callCtx, action, dryRun)
+		return err
+	})
+}
+
+func RemoveBRLNCommunityWithBroker(ctx context.Context) (bool, error) {
+	return brlnCommunityMutationWithBroker(ctx, func(callCtx context.Context, client brlnCommunityPrivilegedClient, dryRun bool) error {
+		return client.RemoveBRLNCommunity(callCtx, dryRun)
+	})
+}
+
+func EnsureBRLNCommunityFirewallWithBroker(ctx context.Context) (bool, error) {
+	return brlnCommunityMutationWithBroker(ctx, func(callCtx context.Context, client brlnCommunityPrivilegedClient, dryRun bool) error {
+		_, err := client.EnsureBRLNCommunityFirewall(callCtx, dryRun)
+		return err
+	})
+}
+
+func ReadBRLNCommunityPasswordWithBroker(ctx context.Context) (bool, string, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return false, "", nil
+	}
+	appClient, ok := client.(brlnCommunityPrivilegedClient)
+	if !ok {
+		return true, "", errors.New("privileged broker does not support BR⚡LN Community")
+	}
+	password, err := appClient.ReadBRLNCommunityPassword(ctx)
+	return true, password, err
+}
+
+func brlnCommunityMutationWithBroker(ctx context.Context, operation func(context.Context, brlnCommunityPrivilegedClient, bool) error) (bool, error) {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil {
+		return false, nil
+	}
+	appClient, ok := client.(brlnCommunityPrivilegedClient)
+	if !ok {
+		if client.Mode() == "enforce" {
+			return true, errors.New("privileged broker does not support BR⚡LN Community")
+		}
+		return false, nil
+	}
+	switch client.Mode() {
+	case "enforce":
+		return true, operation(ctx, appClient, false)
+	case "shadow":
+		shadowCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		_ = operation(shadowCtx, appClient, true)
 		return false, nil
 	default:
 		return false, nil

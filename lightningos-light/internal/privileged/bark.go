@@ -419,16 +419,24 @@ func (manager *NativeBarkWalletManager) validateSnapshot() error {
 }
 
 func (manager *NativeBarkWalletManager) validateManagerCA() error {
-	if manager == nil || manager.Paths.ManagerCACertificate == "" {
+	if manager == nil {
 		return errors.New("manager CA certificate is unavailable")
 	}
-	if manager.requireFixed {
-		if !fixedBarkManagerCACertificatePath(manager.Paths.ManagerCACertificate) ||
-			validateRootOwnedRegularFile(manager.Paths.ManagerCACertificate, 0o644) != nil {
+	return validateManagerCACertificate(manager.Paths.ManagerCACertificate, manager.requireFixed)
+}
+
+// validateManagerCACertificate checks the local manager CA that app proxies trust
+// for forward_auth. Production managers require one of the fixed root-owned paths.
+func validateManagerCACertificate(path string, requireFixed bool) error {
+	if path == "" {
+		return errors.New("manager CA certificate is unavailable")
+	}
+	if requireFixed {
+		if !fixedBarkManagerCACertificatePath(path) || validateRootOwnedRegularFile(path, 0o644) != nil {
 			return errors.New("manager CA certificate metadata is unsafe")
 		}
 	}
-	raw, err := readRegularFile(manager.Paths.ManagerCACertificate, 64*1024)
+	raw, err := readRegularFile(path, 64*1024)
 	if err != nil {
 		return errors.New("manager CA certificate is unavailable")
 	}
@@ -516,6 +524,12 @@ func secureBarkWalletTLSFiles(paths ...string) error {
 }
 
 func generateBarkWalletTLS() ([]byte, []byte, error) {
+	return generateLocalAppTLS("lightningos-bark-wallet")
+}
+
+// generateLocalAppTLS creates the self-signed certificate an app proxy serves on
+// the node's LAN address.
+func generateLocalAppTLS(commonName string) ([]byte, []byte, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, err
@@ -525,7 +539,7 @@ func generateBarkWalletTLS() ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 	template := x509.Certificate{
-		SerialNumber: serial, Subject: pkix.Name{CommonName: "lightningos-bark-wallet"},
+		SerialNumber: serial, Subject: pkix.Name{CommonName: commonName},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().AddDate(10, 0, 0),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true,

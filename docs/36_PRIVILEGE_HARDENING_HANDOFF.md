@@ -677,6 +677,46 @@ the disposable Ubuntu 26.04 VM. Evidence:
 and
 `docs/baselines/privilege-hardening-phase2-bark-wallet-reauth-2026-08-13.json`.
 
+The BR⚡LN Community test app (0.5.29 series) follows the Bark Wallet
+pattern. Six typed operations (`app.brlncommunity.status`, `.ensure`,
+`.lifecycle`, `.remove`, `.firewall`, `.password.read`) own its exact runtime,
+lifecycle, data-preserving removal, fixed port 4448 and the signer access
+password read. The chat (`ghcr.io/jvxis/brln-community-web:0.1.0`), the NIP-46
+signer (`ghcr.io/jvxis/brln-signer:0.1.0`) and the Caddy proxy shared with Bark
+are manifest-digest pinned; the broker probes nginx and Caddy and requires the
+exact `brln-signer 0.1.0` version output before lifecycle execution. All
+services are non-root, read-only, capability-free and `no-new-privileges`.
+Only the signer (dedicated UID/GID 65529) mounts
+`apps-data/brln-community/signer`, where the member's Nostr key stays NIP-49
+encrypted under a broker-generated key password; the broker never reads or
+returns the key, and uninstall preserves both the signer data and the local
+secrets. The app has no LND, Bitcoin, macaroon or LND TLS access. Signer calls
+that create, import or export the key, or pair a device, pass a three-minute
+`brln_community_signer` LightningOS reauthentication gate through Caddy
+`forward_auth`, which trusts only the fixed root-owned LightningOS CA, uses SNI
+`localhost` and drops the signer `Authorization` header from the subrequest.
+Active UFW admits 8443 only on the validated app bridge. Caddy 2.10.2 accepted
+the generated configuration.
+
+LOS TESTE2 (Ubuntu 24.04.4) passed the first functional gate: install to
+running in 50 s with all three no-network image probes, chat and signer pages
+served over the app TLS boundary, `/signer` redirected to `/signer/`, the
+signer API refused without its access password, the protected routes refused
+without a manager session (401) and without a fresh reauthentication (428
+`brln_community_signer_reauth_required`), key creation and device pairing
+succeeded after reauthentication, a host reboot brought the app back with the
+same npub, and a confirmed uninstall removed the containers and the broker
+snapshot while preserving the signer data, so the reinstall returned the same
+npub. Ownership was as declared: the key file `0600` owned by 65529, the local
+secrets `0640` root/65529, the snapshot compose `0600` root and the proxy
+material `0640` root/65532. No LND, Bitcoin, macaroon or TLS material was
+mounted. Evidence:
+`docs/baselines/brln-community-app-gate-2026-09-17.json`. The same node then
+took the 0.1.1 release by digest, reported the update in the Store and kept the
+npub, and a phone on the public network paired by scanning the app's QR code,
+joined the space and published a message the relay stored in `geral`. Pending
+before acceptance: the same gate on Ubuntu 26.04.
+
 The later manual password-reset regression is closed by implementation commit
 `de6997025486d9ad98d050fd8489af7b7f419363`. Individual file bind mounts kept
 the previous inode visible after the broker atomically replaced

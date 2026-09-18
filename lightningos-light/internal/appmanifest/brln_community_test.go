@@ -90,6 +90,7 @@ func TestBRLNCommunityProxyProtectsSignerChanges(t *testing.T) {
 		"header_up -Authorization",
 		"tls_trust_pool file /etc/caddy/manager-ca.crt", "tls_server_name localhost",
 		"handle_path /signer/*", "reverse_proxy signer:8081", "reverse_proxy web:8080",
+		"protocols h1 h2",
 	} {
 		if !strings.Contains(config, required) {
 			t.Fatalf("proxy config is missing %q", required)

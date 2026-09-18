@@ -29,9 +29,9 @@ const (
 	BRLNCommunityProxyUID  = 65532
 	BRLNCommunityProxyGID  = 65532
 
-	BRLNCommunityRelease             = "0.1.3"
-	BRLNCommunityWebDigest           = "ef72fc088fc7e22b465ebbfba59cabf93559e57fa797398efa7920fd2e535aa1"
-	BRLNCommunitySignerDigest        = "e55b1e111955103438b8aa7aec1c9418cd1cc92da2c71fa6b61a830aa2eb3acd"
+	BRLNCommunityRelease             = "0.1.4"
+	BRLNCommunityWebDigest           = "3aec012bfdb29f3e4cf6f7626b25333a8505844c56decb6d522ffbc211cd68d6"
+	BRLNCommunitySignerDigest        = "c1c5b282cd0fa5ea5720f7c021a5fa32da6c7a00b1e45552193d207c89a3b2bc"
 	BRLNCommunitySignerVersionOutput = "brln-signer " + BRLNCommunityRelease
 
 	BRLNCommunityWebImage    = "ghcr.io/jvxis/brln-community-web:" + BRLNCommunityRelease + "@sha256:" + BRLNCommunityWebDigest
@@ -81,6 +81,12 @@ func BRLNCommunityCaddyConfig() string {
 	return fmt.Sprintf(`{
 	admin off
 	auto_https off
+
+	# HTTP/3 brings nothing on a LAN and breaks the browser exception for the
+	# app's self-signed certificate: the page loads, then QUIC requests fail.
+	servers {
+		protocols h1 h2
+	}
 }
 
 https://:%d {

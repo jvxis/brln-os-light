@@ -574,6 +574,12 @@ const (
 	magmaMarketRejectOrderMutation = `mutation RejectOrder($input: SellerRejectOrdersInput!) {
   market { order { seller { reject(input: $input) { success } } } }
 }`
+	// Cancelling is for an order already accepted and paid, which reject cannot
+	// touch. The reason is an enum, not free text: Amboss accepts exactly
+	// CHANNEL_SIZE_OUT_OF_BOUNDS, UNABLE_TO_CONNECT_TO_NODE and UNABLE_TO_PAY.
+	magmaMarketCancelOrderMutation = `mutation CancelOrder($input: CancelOrderInput!) {
+  market { order { cancel(input: $input) { success } } }
+}`
 	// tx_id keeps the legacy format. Amboss documents it as TXID:OUTPUT_INDEX
 	// and states "the field is named tx_id but the format is unchanged", which
 	// is the one detail worth having in writing: submitting a channel point the
@@ -728,6 +734,52 @@ func (c *magmaAmbossClient) OrderTimeouts(ctx context.Context, token string) (ma
 
 // RejectOrder declines an order explicitly. Letting an unwanted order lapse is
 // not free: Amboss records SELLER_FAILED_TO_REACT against the account.
+// magmaCancellationReason is the enum Amboss accepts. Declared rather than
+// passed as a string so a typo is a compile error instead of a rejected call on
+// an order that is already paid.
+type magmaCancellationReason string
+
+const (
+	magmaCancelChannelSizeOutOfBounds magmaCancellationReason = "CHANNEL_SIZE_OUT_OF_BOUNDS"
+	magmaCancelUnableToConnect        magmaCancellationReason = "UNABLE_TO_CONNECT_TO_NODE"
+)
+
+// CancelOrder ends an accepted order and returns the buyer's money.
+//
+// Only ever called for a failure that cannot resolve itself. An order the buyer
+// has paid for is a debt, and cancelling writes it off: the sale is gone and the
+// counterparty is refunded, so the bar is that retrying could not possibly work,
+// not that it has not worked yet.
+func (c *magmaAmbossClient) CancelOrder(ctx context.Context, token, orderID string, reason magmaCancellationReason) error {
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" {
+		return errors.New("order id required")
+	}
+	if reason == "" {
+		return errors.New("cancellation reason required")
+	}
+	// The cancel mutation sits on market.order, not market.order.seller, so the
+	// shared seller decoder does not fit it.
+	var out struct {
+		Market struct {
+			Order struct {
+				Cancel struct {
+					Success bool `json:"success"`
+				} `json:"cancel"`
+			} `json:"order"`
+		} `json:"market"`
+	}
+	if err := c.doMarket(ctx, token, magmaMarketCancelOrderMutation, map[string]any{
+		"input": map[string]any{"order_id": orderID, "cancellation_reason": string(reason)},
+	}, &out); err != nil {
+		return err
+	}
+	if !out.Market.Order.Cancel.Success {
+		return fmt.Errorf("Amboss did not cancel order %s", orderID)
+	}
+	return nil
+}
+
 func (c *magmaAmbossClient) RejectOrder(ctx context.Context, token, orderID string) error {
 	orderID = strings.TrimSpace(orderID)
 	if orderID == "" {

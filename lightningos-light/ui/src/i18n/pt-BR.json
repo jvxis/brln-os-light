@@ -1,4 +1,51 @@
 {
+  "rebalanceEligibility": {
+    "details": "Estado e elegibilidade do rebalance — expandir detalhes",
+    "unavailable": "Estado do rebalance indisponível",
+    "costBlocked": "Cost gate bloqueia auto",
+    "sourceExcluded": "Excluído como source",
+    "economicWarning": "Restrição econômica",
+    "snapshot": "Baseado nas últimas configurações salvas e na última leitura do canal. Confira no Rebalance Center antes de agir.",
+    "targetControls": "Receber liquidez (target)",
+    "sourceControls": "Fornecer liquidez (source)",
+    "manualRestart": "Manual Restart",
+    "controls": "Controles de automação e source",
+    "modeHint": "Auto e Manual Restart são mutuamente exclusivos neste canal. Ambos dependem do Auto Rebalance global; o Manual Restart também depende do agendador ativo. O Manual Rebal In avulso continua sendo uma ação separada.",
+    "bypassHint": "O bypass ignora apenas o filtro de custo histórico no auto/auto-restart. Não liga a automação, não ignora o teto de fee e não remove as demais verificações de ROI, lucro, orçamento e operação.",
+    "convictionHint": "O modo convicção do Manual Restart já ignora os filtros de custo histórico e ROI. Continuam valendo o teto de fee, orçamento, cooldown e proteções operacionais.",
+    "sourceHint": "Excluir como source impede este canal de fornecer liquidez. Isso não o exclui como destino para receber liquidez.",
+    "costHint": "Orçamento da rota: {{budget}} ppm; custo estimado: {{cost}} ppm (histórico de 7 dias ou fallback configurado). O filtro de custo histórico bloqueia a seleção automática. Execuções manuais têm suas próprias verificações. Esta comparação não comprova que exista uma rota.",
+    "noRoutePromise": "Seleção não garante execução nem existência de rota. Déficit, política do peer, teto de fee, ROI/lucro, orçamento, cooldown, liquidez e agendador ativo ainda podem impedir a execução.",
+    "economicWarningHint": "Há uma restrição no orçamento econômico atual. Revise fees e orçamento no Rebalance Center.",
+    "states": {
+      "parked": "Estacionado",
+      "globalOff": "Automação global desligada",
+      "shadow": "Somente simulação",
+      "auto": "Auto selecionado",
+      "restart": "Manual Restart selecionado",
+      "restartOff": "Monitor de Restart desligado",
+      "scopeExcluded": "Fora do escopo do agendador",
+      "guaranteed": "Pool garantido selecionado",
+      "channelOff": "Auto / Restart desligados"
+    },
+    "hints": {
+      "parked": "O estacionamento suspende a participação deste canal no rebalance. Retire-o do estacionamento pelo Ranking de Canais para retomar.",
+      "globalOff": "O Auto Rebalance global está desligado. As seleções salvas por canal não iniciam tarefas automáticas.",
+      "shadow": "O agendador soberano está em modo shadow: avalia candidatos sem executar rebalances automáticos.",
+      "auto": "Este canal está selecionado para reposição automática. A elegibilidade e as verificações do agendador continuam valendo.",
+      "restart": "Este canal está selecionado para reposição recorrente pelo Manual Restart ou pelo escopo configurado do agendador soberano.",
+      "restartOff": "O Manual Restart está selecionado neste canal, mas seu monitor global está desligado no agendador por regras.",
+      "scopeExcluded": "O Manual Restart está selecionado neste canal, mas o escopo do agendador soberano exclui esses canais.",
+      "guaranteed": "Este canal está no pool garantido. A seleção de slots continua respeitando orçamento e proteções operacionais.",
+      "channelOff": "Nem Auto nem Manual Restart estão selecionados neste canal. Isso é uma configuração do operador, não uma falha econômica."
+    },
+    "reasons": {
+      "peer_policy_unavailable": "A política do peer está indisponível; não é possível confirmar a viabilidade econômica.",
+      "fixed_fee_budget_below_cost": "O teto fixo de fee está abaixo do custo necessário estimado.",
+      "invalid_econ_ratio": "O fator econômico configurado não cobre o custo estimado.",
+      "econ_ratio_cap_below_cost": "O teto do fator econômico está abaixo do custo necessário estimado."
+    }
+  },
   "dbMaintenance": {
     "title": "Manutenção do banco",
     "kicker": "Postgres • LOS",

@@ -30,6 +30,7 @@ import type { AutomationIntent, AutomationIntentConfig } from '../api'
 import { MetricDisclosure } from '../components/rebalance/MetricDisclosure'
 import OverviewHero from '../components/rebalance/OverviewHero'
 import { PairStatsPanel } from '../components/rebalance/PairStatsPanel'
+import ChannelRebalanceControls from '../components/rebalance/ChannelRebalanceControls'
 import { RebalanceInAction } from '../components/rebalance/RebalanceInAction'
 import type { RebalanceInOverrides } from '../components/rebalance/RebalanceInAction'
 import { SettingsSubcard } from '../components/rebalance/SettingsSubcard'
@@ -3948,7 +3949,7 @@ export default function RebalanceCenter() {
               !config || config.roi_min <= 0 || !expectedRoiValid || expectedRoi >= config.roi_min
             const passesProfit = !scoreMeta || !(scoreMeta.expectedGain > 0 && scoreMeta.estimatedCost > 0 && scoreMeta.expectedGain < scoreMeta.estimatedCost)
             const draftEligibleAsTarget = channelDraftEligibleAsTarget(ch)
-            const isAutoTarget = draftEligibleAsTarget && ch.auto_enabled && meetsRoi && passesProfit
+            const isAutoTarget = Boolean(serverConfig?.auto_enabled) && draftEligibleAsTarget && ch.auto_enabled && meetsRoi && passesProfit
             const manualRestartSelected = manualRestart[ch.channel_point] === true
             const { chunkCost: manualRestartChunkCost, chunked: manualRestartChunked } = manualRestartChunkInfo(ch)
             const manualRestartBudgetLow =
@@ -4023,6 +4024,7 @@ export default function RebalanceCenter() {
                       min={1}
                       max={99}
                       step={0.1}
+                      aria-label={t('rebalanceCenter.channelsHints.targetOutbound')}
                       title={t('rebalanceCenter.channelsHints.targetOutbound')}
                       value={editTargets[channelKey(ch)] ?? String(Math.round(ch.target_outbound_pct * 10) / 10)}
                       onChange={(e) => setEditTargets((prev) => ({ ...prev, [channelKey(ch)]: e.target.value }))}
@@ -4038,6 +4040,7 @@ export default function RebalanceCenter() {
                       className="input-field h-9 w-full min-w-0"
                       type="text"
                       inputMode="decimal"
+                      aria-label={t('rebalanceCenter.channelsHints.econRatio')}
                       title={t('rebalanceCenter.channelsHints.econRatio')}
                       value={channelEconRatioInput(ch)}
                       disabled={channelUseDefaultEconRatio(ch)}
@@ -4058,23 +4061,7 @@ export default function RebalanceCenter() {
                     />
                     {t('rebalanceCenter.channels.useDefaultEconRatio')}
                   </label>
-                  {(() => {
-                    const convictionOverrides = Boolean(config?.manual_restart_ignore_economic_gates && ch.manual_restart_enabled)
-                    return (
-                      <label
-                        className={`flex items-center gap-2 text-xs ${convictionOverrides ? 'text-fog/30' : 'text-amber-100/80'}`}
-                        title={convictionOverrides ? t('rebalanceCenter.channelsHints.autoBypassCostGateConviction') : t('rebalanceCenter.channelsHints.autoBypassCostGate')}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={channelAutoBypassCostGate(ch)}
-                          onChange={(e) => void handleAutoBypassCostGateToggle(ch, e.target.checked)}
-                          disabled={convictionOverrides}
-                        />
-                        {t('rebalanceCenter.channels.autoBypassCostGate')}
-                      </label>
-                    )
-                  })()}
+
                   <div className="text-xs text-fog/50">
                     {t('rebalanceCenter.channels.amount', { value: formatSats(ch.target_amount_sat) })}
                   </div>
@@ -4113,15 +4100,7 @@ export default function RebalanceCenter() {
                     disabled={!ch.eligible_as_manual_target}
                     onRun={(overrides) => handleRunRebalance(ch, overrides)}
                   />
-                  <label className="flex items-center gap-1 text-[11px] text-fog/60" title={t('rebalanceCenter.channelsHints.rebalanceRestart')}>
-                    <span>⟳</span>
-                    <input
-                      type="checkbox"
-                      checked={manualRestartSelected}
-                      onChange={(e) => handleManualRestartToggle(ch, e.target.checked)}
-                      disabled={channelParked(ch)}
-                    />
-                  </label>
+
                   <button
                     className="btn-secondary text-xs px-3 py-1"
                     onClick={() => handleTogglePairStats(ch)}
@@ -4141,35 +4120,17 @@ export default function RebalanceCenter() {
                   )}
                 </div>
 
-                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
-                  <label className="flex items-center gap-2 text-amber-100" title={t('rebalanceCenter.channelsHints.guaranteedRebalance')}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(ch.guaranteed_rebalance_enabled)}
-                      onChange={(e) => void handleToggleChannelGuaranteed(ch, e.target.checked)}
-                      disabled={channelParked(ch)}
-                    />
-                    {t('rebalanceCenter.channels.guaranteedRebalance')}
-                  </label>
-                  <label className="flex items-center gap-2" title={t('rebalanceCenter.channelsHints.auto')}>
-                    <input
-                      type="checkbox"
-                      checked={ch.auto_enabled}
-                      onChange={(e) => handleToggleChannelAuto(ch, e.target.checked)}
-                      disabled={channelParked(ch)}
-                    />
-                    {t('rebalanceCenter.channels.auto')}
-                  </label>
-                  <label className="flex items-center gap-2" title={t('rebalanceCenter.channelsHints.excludeSource')}>
-                    <input
-                      type="checkbox"
-                      checked={ch.excluded_as_source}
-                      onChange={(e) => handleExcludeSource(ch, e.target.checked)}
-                      disabled={channelParked(ch)}
-                    />
-                    {t('rebalanceCenter.channels.excludeSource')}
-                  </label>
-                </div>
+                <ChannelRebalanceControls
+                  channel={ch}
+                  config={serverConfig}
+                  bypass={channelAutoBypassCostGate(ch)}
+                  onAuto={(enabled) => void handleToggleChannelAuto(ch, enabled)}
+                  onRestart={(enabled) => void handleManualRestartToggle(ch, enabled)}
+                  onBypass={(enabled) => void handleAutoBypassCostGateToggle(ch, enabled)}
+                  onGuaranteed={(enabled) => void handleToggleChannelGuaranteed(ch, enabled)}
+                  onExclude={(enabled) => void handleExcludeSource(ch, enabled)}
+                  onAutoTarget={(enabled) => void handleSaveChannelAutoTargetManaged(ch, enabled)}
+                />
                 {pairStatsOpen[channelKey(ch)] && renderPairStatsPanel(ch)}
               </article>
             )
@@ -4224,7 +4185,7 @@ export default function RebalanceCenter() {
                   !config || config.roi_min <= 0 || !expectedRoiValid || expectedRoi >= config.roi_min
                 const passesProfit = !scoreMeta || !(scoreMeta.expectedGain > 0 && scoreMeta.estimatedCost > 0 && scoreMeta.expectedGain < scoreMeta.estimatedCost)
                 const draftEligibleAsTarget = channelDraftEligibleAsTarget(ch)
-                const isAutoTarget = draftEligibleAsTarget && ch.auto_enabled && meetsRoi && passesProfit
+                const isAutoTarget = Boolean(serverConfig?.auto_enabled) && draftEligibleAsTarget && ch.auto_enabled && meetsRoi && passesProfit
                 const manualRestartSelected = manualRestart[ch.channel_point] === true
                 const { chunkCost: manualRestartChunkCost, chunked: manualRestartChunked } = manualRestartChunkInfo(ch)
                 const manualRestartBudgetLow =
@@ -4310,6 +4271,7 @@ export default function RebalanceCenter() {
                         min={1}
                         max={99}
                         step={0.1}
+                        aria-label={t('rebalanceCenter.channelsHints.targetOutbound')}
                         title={t('rebalanceCenter.channelsHints.targetOutbound')}
                         value={editTargets[channelKey(ch)] ?? String(Math.round(ch.target_outbound_pct * 10) / 10)}
                         onChange={(e) => setEditTargets((prev) => ({ ...prev, [channelKey(ch)]: e.target.value }))}
@@ -4325,6 +4287,7 @@ export default function RebalanceCenter() {
                         className="input-field ml-3 h-8 w-10 px-1 py-1 text-xs"
                         type="text"
                         inputMode="decimal"
+                        aria-label={t('rebalanceCenter.channelsHints.econRatio')}
                         title={t('rebalanceCenter.channelsHints.econRatio')}
                         value={channelEconRatioInput(ch)}
                         disabled={channelUseDefaultEconRatio(ch)}
@@ -4345,23 +4308,7 @@ export default function RebalanceCenter() {
                         {t('rebalanceCenter.channels.useDefaultEconRatio')}
                       </label>
                     </div>
-                    {(() => {
-                      const convictionOverrides = Boolean(config?.manual_restart_ignore_economic_gates && ch.manual_restart_enabled)
-                      return (
-                        <label
-                          className={`mt-1 flex items-center gap-1 whitespace-nowrap text-[11px] ${convictionOverrides ? 'text-fog/30' : 'text-amber-100/80'}`}
-                          title={convictionOverrides ? t('rebalanceCenter.channelsHints.autoBypassCostGateConviction') : t('rebalanceCenter.channelsHints.autoBypassCostGate')}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={channelAutoBypassCostGate(ch)}
-                            onChange={(e) => void handleAutoBypassCostGateToggle(ch, e.target.checked)}
-                            disabled={convictionOverrides}
-                          />
-                          {t('rebalanceCenter.channels.autoBypassCostGate')}
-                        </label>
-                      )
-                    })()}
+
                     <div className="text-xs text-fog/50">
                       {t('rebalanceCenter.channels.amount', { value: formatSats(ch.target_amount_sat) })}
                     </div>
@@ -4389,18 +4336,7 @@ export default function RebalanceCenter() {
                         disabled={!ch.eligible_as_manual_target}
                         onRun={(overrides) => handleRunRebalance(ch, overrides)}
                       />
-                      <div
-                        className="flex flex-col items-center gap-1 text-[10px] text-fog/60"
-                        title={t('rebalanceCenter.channelsHints.rebalanceRestart')}
-                      >
-                        <span className="text-sm">⟳</span>
-                        <input
-                          type="checkbox"
-                          checked={manualRestartSelected}
-                          onChange={(e) => handleManualRestartToggle(ch, e.target.checked)}
-                          disabled={channelParked(ch)}
-                        />
-                      </div>
+
                       <button
                         className="btn-secondary text-xs px-3 py-1"
                         onClick={() => handleTogglePairStats(ch)}
@@ -4419,46 +4355,17 @@ export default function RebalanceCenter() {
                         })}
                       </div>
                     )}
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <label className="flex items-center gap-2 text-amber-100" title={t('rebalanceCenter.channelsHints.guaranteedRebalance')}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(ch.guaranteed_rebalance_enabled)}
-                          onChange={(e) => void handleToggleChannelGuaranteed(ch, e.target.checked)}
-                          disabled={channelParked(ch)}
-                        />
-                        {t('rebalanceCenter.channels.guaranteedRebalance')}
-                      </label>
-                      <label className="flex items-center gap-2" title={t('rebalanceCenter.channelsHints.auto')}>
-                        <input
-                          type="checkbox"
-                          checked={ch.auto_enabled}
-                          onChange={(e) => handleToggleChannelAuto(ch, e.target.checked)}
-                          disabled={channelParked(ch)}
-                        />
-                        {t('rebalanceCenter.channels.auto')}
-                      </label>
-                      <label className="flex items-center gap-2" title={t('rebalanceCenter.channelsHints.excludeSource')}>
-                        <input
-                          type="checkbox"
-                          checked={ch.excluded_as_source}
-                          onChange={(e) => handleExcludeSource(ch, e.target.checked)}
-                          disabled={channelParked(ch)}
-                        />
-                        {t('rebalanceCenter.channels.excludeSource')}
-                      </label>
-                      {config?.auto_target_enabled && (
-                        <label className="flex items-center gap-2" title={t('rebalanceCenter.autoTarget.enableHint')}>
-                          <input
-                            type="checkbox"
-                            checked={ch.auto_target_managed ?? true}
-                            onChange={(e) => handleSaveChannelAutoTargetManaged(ch, e.target.checked)}
-                            disabled={channelParked(ch)}
-                          />
-                          {t('rebalanceCenter.autoTarget.managed')}
-                        </label>
-                      )}
-                    </div>
+                    <ChannelRebalanceControls
+                      channel={ch}
+                      config={serverConfig}
+                      bypass={channelAutoBypassCostGate(ch)}
+                      onAuto={(enabled) => void handleToggleChannelAuto(ch, enabled)}
+                      onRestart={(enabled) => void handleManualRestartToggle(ch, enabled)}
+                      onBypass={(enabled) => void handleAutoBypassCostGateToggle(ch, enabled)}
+                      onGuaranteed={(enabled) => void handleToggleChannelGuaranteed(ch, enabled)}
+                      onExclude={(enabled) => void handleExcludeSource(ch, enabled)}
+                      onAutoTarget={(enabled) => void handleSaveChannelAutoTargetManaged(ch, enabled)}
+                    />
                     <div className="text-xs text-fog/50">
                       {scoreMeta && expectedRoiValid
                         ? t('rebalanceCenter.channels.roiEstimate', { value: formatRoi(expectedRoi) })

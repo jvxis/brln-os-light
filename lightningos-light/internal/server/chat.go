@@ -318,9 +318,12 @@ func (c *ChatService) runInvoices() {
 			return
 		default:
 		}
-
-		settleIndex := c.loadCursor()
-
+		checkpoint, err := c.loadInvoiceCheckpoint()
+		if err != nil {
+			c.logger.Printf("chat: invoice checkpoint read failed: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
 		dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		conn, release, err := c.lnd.BorrowLightning(dialCtx, true)
 		dialCancel()
@@ -329,123 +332,77 @@ func (c *ChatService) runInvoices() {
 			time.Sleep(5 * time.Second)
 			continue
 		}
-
-		client := lnrpc.NewLightningClient(conn)
-		streamCtx, cleanupStreamCtx := contextWithStopCancel(c.stop)
-		stream, err := client.SubscribeInvoices(streamCtx, &lnrpc.InvoiceSubscription{
-			SettleIndex: settleIndex,
-		})
+		streamCtx, cleanup := contextWithStopCancel(c.stop)
+		err = followSettledInvoices(streamCtx, lnrpc.NewLightningClient(conn), checkpoint,
+			c.saveInvoiceCheckpoint, c.processSettledInvoice, func(format string, args ...any) {
+				c.logger.Printf("chat: "+format, args...)
+			})
+		cleanup()
+		release()
 		if err != nil {
-			c.logger.Printf("chat: invoice stream subscribe failed: %v", err)
-			cleanupStreamCtx()
-			release()
-			time.Sleep(5 * time.Second)
-			continue
+			c.logger.Printf("chat: invoice stream ended: %v", err)
 		}
-
-		for {
-			invoice, err := stream.Recv()
-			if err != nil {
-				c.logger.Printf("chat: invoice stream ended: %v", err)
-				cleanupStreamCtx()
-				release()
-				break
-			}
-
-			if invoice.State != lnrpc.Invoice_SETTLED {
-				continue
-			}
-			if invoice.SettleIndex <= settleIndex {
-				continue
-			}
-
-			if !invoice.IsKeysend {
-				settleIndex = invoice.SettleIndex
-				c.saveCursor(settleIndex)
-				continue
-			}
-
-			message, chanID, senderPubkey, senderSignature := extractKeysendMessage(invoice)
-			if message == "" {
-				settleIndex = invoice.SettleIndex
-				c.saveCursor(settleIndex)
-				continue
-			}
-
-			peerPubkey := ""
-			peerAlias := ""
-			paymentHash := strings.ToLower(hex.EncodeToString(invoice.RHash))
-			amountSat := keysendInvoiceAmountSat(invoice)
-			identitySource := ""
-			senderVerified := false
-			if senderPubkey != "" && senderSignature != "" && isValidPubkeyHex(senderPubkey) {
-				if c.verifyKeysendSender(invoice, senderPubkey, senderSignature, amountSat, paymentHash, message) {
-					peerPubkey = senderPubkey
-					peerAlias = c.resolvePeerAlias(peerPubkey)
-					identitySource = "signed_sender"
-					senderVerified = true
-				}
-			}
-			if peerPubkey == "" && chanID != 0 {
-				peerPubkey, peerAlias = c.lookupPeerByChanID(chanID)
-				if peerPubkey != "" {
-					identitySource = "incoming_channel"
-				}
-			}
-			if peerPubkey == "" && senderPubkey != "" && isValidPubkeyHex(senderPubkey) {
-				peerPubkey = senderPubkey
-				peerAlias = c.resolvePeerAlias(peerPubkey)
-				identitySource = "sender_record"
-			}
-			if peerPubkey == "" {
-				settleIndex = invoice.SettleIndex
-				c.saveCursor(settleIndex)
-				continue
-			}
-			if peerAlias == "" {
-				peerAlias = c.resolvePeerAlias(peerPubkey)
-			}
-
-			msg := ChatMessage{
-				Timestamp:      time.Unix(invoice.SettleDate, 0).UTC(),
-				PeerPubkey:     peerPubkey,
-				PeerAlias:      peerAlias,
-				Direction:      "in",
-				Message:        message,
-				Status:         "received",
-				PaymentHash:    paymentHash,
-				AmountSat:      amountSat,
-				IdentitySource: identitySource,
-				SenderVerified: senderVerified,
-			}
-			persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := c.persistInboundAndAdvanceCursor(persistCtx, msg, invoice.SettleIndex, &settleIndex); err != nil {
-				c.logger.Printf("chat: failed to persist inbound message: %v", err)
-				cancel()
-				// Do not acknowledge this invoice in the durable cursor. Reconnect
-				// from the previous index so a temporary storage failure cannot
-				// permanently discard a paid Chat message.
-				cleanupStreamCtx()
-				release()
-				break
-			}
-			cancel()
-		}
-
 		time.Sleep(2 * time.Second)
 	}
 }
 
-func (c *ChatService) persistInboundAndAdvanceCursor(ctx context.Context, msg ChatMessage, invoiceIndex uint64, settleIndex *uint64) error {
-	if settleIndex == nil {
-		return errors.New("chat settle cursor is unavailable")
+func (c *ChatService) processSettledInvoice(parent context.Context, invoice *lnrpc.Invoice, _ bool) error {
+	if !invoice.IsKeysend {
+		return nil
 	}
-	if err := c.persistMessage(ctx, msg); err != nil {
-		return err
+
+	message, chanID, senderPubkey, senderSignature := extractKeysendMessage(invoice)
+	if message == "" {
+		return nil
 	}
-	*settleIndex = invoiceIndex
-	c.saveCursor(invoiceIndex)
-	return nil
+
+	peerPubkey := ""
+	peerAlias := ""
+	paymentHash := strings.ToLower(hex.EncodeToString(invoice.RHash))
+	amountSat := keysendInvoiceAmountSat(invoice)
+	identitySource := ""
+	senderVerified := false
+	if senderPubkey != "" && senderSignature != "" && isValidPubkeyHex(senderPubkey) {
+		if c.verifyKeysendSender(invoice, senderPubkey, senderSignature, amountSat, paymentHash, message) {
+			peerPubkey = senderPubkey
+			peerAlias = c.resolvePeerAlias(peerPubkey)
+			identitySource = "signed_sender"
+			senderVerified = true
+		}
+	}
+	if peerPubkey == "" && chanID != 0 {
+		peerPubkey, peerAlias = c.lookupPeerByChanID(chanID)
+		if peerPubkey != "" {
+			identitySource = "incoming_channel"
+		}
+	}
+	if peerPubkey == "" && senderPubkey != "" && isValidPubkeyHex(senderPubkey) {
+		peerPubkey = senderPubkey
+		peerAlias = c.resolvePeerAlias(peerPubkey)
+		identitySource = "sender_record"
+	}
+	if peerPubkey == "" {
+		return nil
+	}
+	if peerAlias == "" {
+		peerAlias = c.resolvePeerAlias(peerPubkey)
+	}
+
+	msg := ChatMessage{
+		Timestamp:      time.Unix(invoice.SettleDate, 0).UTC(),
+		PeerPubkey:     peerPubkey,
+		PeerAlias:      peerAlias,
+		Direction:      "in",
+		Message:        message,
+		Status:         "received",
+		PaymentHash:    paymentHash,
+		AmountSat:      amountSat,
+		IdentitySource: identitySource,
+		SenderVerified: senderVerified,
+	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	return c.persistMessage(ctx, msg)
 }
 
 func (c *ChatService) lookupPeerByChanID(chanID uint64) (string, string) {
@@ -508,32 +465,6 @@ func (c *ChatService) persistMessage(ctx context.Context, msg ChatMessage) error
 		return fmt.Errorf("db: %w", dbErr)
 	}
 	return legacyErr
-}
-
-func (c *ChatService) loadCursor() uint64 {
-	if db := c.dbPool(); db != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		val, err := c.dbLoadCursor(ctx, db)
-		cancel()
-		if err == nil && val > 0 {
-			return val
-		}
-		if err != nil {
-			c.logger.Printf("chat: db cursor fallback: %v", err)
-		}
-	}
-	return c.legacy.loadCursor()
-}
-
-func (c *ChatService) saveCursor(val uint64) {
-	if db := c.dbPool(); db != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		if err := c.dbSaveCursor(ctx, db, val); err != nil {
-			c.logger.Printf("chat: failed to persist cursor in db: %v", err)
-		}
-		cancel()
-	}
-	c.legacy.saveCursor(val)
 }
 
 func (c *ChatService) dbPool() *pgxpool.Pool {
@@ -1004,6 +935,7 @@ type chatFileStore struct {
 	readStatePath string
 	mu            sync.Mutex
 	lastCleanup   time.Time
+	messageKeys   map[string]struct{}
 }
 
 func newChatFileStore(path string, cursorPath string, readStatePath string) *chatFileStore {
@@ -1023,7 +955,21 @@ func (s *chatFileStore) append(msg ChatMessage) error {
 	}
 	s.cleanupLocked()
 
-	data, err := json.Marshal(normalizeChatMessage(msg))
+	msg = normalizeChatMessage(msg)
+	if s.messageKeys == nil {
+		items, err := s.readRetainedLocked()
+		if err != nil {
+			return err
+		}
+		s.rememberMessagesLocked(items)
+	}
+	key := msg.Direction + ":" + msg.PaymentHash
+	if msg.PaymentHash != "" {
+		if _, exists := s.messageKeys[key]; exists {
+			return nil
+		}
+	}
+	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
@@ -1034,6 +980,12 @@ func (s *chatFileStore) append(msg ChatMessage) error {
 	defer f.Close()
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if msg.PaymentHash != "" {
+		s.messageKeys[key] = struct{}{}
 	}
 	return nil
 }
@@ -1260,6 +1212,7 @@ func (s *chatFileStore) readRetainedLocked() ([]ChatMessage, error) {
 
 	cutoff := time.Now().AddDate(0, 0, -chatRetentionDays)
 	items := []ChatMessage{}
+	seen := map[string]bool{}
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -1273,12 +1226,28 @@ func (s *chatFileStore) readRetainedLocked() ([]ChatMessage, error) {
 		if msg.Timestamp.Before(cutoff) {
 			continue
 		}
+		if msg.PaymentHash != "" {
+			key := msg.Direction + ":" + msg.PaymentHash
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+		}
 		items = append(items, msg)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return items, nil
+}
+
+func (s *chatFileStore) rememberMessagesLocked(items []ChatMessage) {
+	s.messageKeys = make(map[string]struct{}, len(items))
+	for _, msg := range items {
+		if msg.PaymentHash != "" {
+			s.messageKeys[msg.Direction+":"+msg.PaymentHash] = struct{}{}
+		}
+	}
 }
 
 func (s *chatFileStore) cleanupLocked() {
@@ -1291,6 +1260,7 @@ func (s *chatFileStore) cleanupLocked() {
 	if err != nil {
 		return
 	}
+	s.rememberMessagesLocked(items)
 
 	if err := s.ensureDir(); err != nil {
 		return

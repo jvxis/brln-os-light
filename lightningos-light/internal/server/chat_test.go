@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,12 @@ func TestChatInboundCursorAdvancesOnlyAfterPersistence(t *testing.T) {
 		Message:    "persist before cursor",
 		Status:     "received",
 	}
+	run := func(service *ChatService) error {
+		checkpoint := invoiceCheckpoint{Index: 41, SettledAt: msg.Timestamp.Unix() - 1}
+		client := &invoiceCursorClient{live: []*lnrpc.Invoice{cursorInvoice(42, 50, msg.Timestamp.Unix(), 1)}}
+		return followSettledInvoices(context.Background(), client, checkpoint, service.saveInvoiceCheckpoint,
+			func(ctx context.Context, _ *lnrpc.Invoice, _ bool) error { return service.persistMessage(ctx, msg) }, func(string, ...any) {})
+	}
 
 	t.Run("success", func(t *testing.T) {
 		dir := t.TempDir()
@@ -29,12 +37,12 @@ func TestChatInboundCursorAdvancesOnlyAfterPersistence(t *testing.T) {
 			filepath.Join(dir, "cursor.txt"),
 			filepath.Join(dir, "read-state.json"),
 		)}
-		settleIndex := uint64(41)
-		if err := service.persistInboundAndAdvanceCursor(context.Background(), msg, 42, &settleIndex); err != nil {
+		if err := run(service); !errors.Is(err, io.EOF) {
 			t.Fatal(err)
 		}
-		if settleIndex != 42 || service.legacy.loadCursor() != 42 {
-			t.Fatalf("cursor was not committed after persistence: memory=%d disk=%d", settleIndex, service.legacy.loadCursor())
+		checkpoint, err := service.loadInvoiceCheckpoint()
+		if err != nil || checkpoint.Index != 42 || service.legacy.loadCursor() != 42 {
+			t.Fatalf("cursor was not committed after persistence: checkpoint=%+v err=%v", checkpoint, err)
 		}
 		items, err := service.legacy.list(peerPubkey, 10)
 		if err != nil || len(items) != 1 {
@@ -54,12 +62,8 @@ func TestChatInboundCursorAdvancesOnlyAfterPersistence(t *testing.T) {
 			cursorPath,
 			filepath.Join(blockedParent, "read-state.json"),
 		)}
-		settleIndex := uint64(41)
-		if err := service.persistInboundAndAdvanceCursor(context.Background(), msg, 42, &settleIndex); err == nil {
+		if err := run(service); err == nil || errors.Is(err, io.EOF) {
 			t.Fatal("expected persistence failure")
-		}
-		if settleIndex != 41 {
-			t.Fatalf("cursor advanced after failed persistence: %d", settleIndex)
 		}
 		if _, err := os.Stat(cursorPath); err == nil {
 			t.Fatal("cursor file was created after failed persistence")

@@ -543,7 +543,7 @@ work without a current issue.
 | Status | ID | Item | Notes |
 |---|---|---|---|
 | Closed | R4 | Source rotation deterministica | [Issue #110](https://github.com/jvxis/brln-os-light/issues/110) closed as not planned; the LND fast-path, legacy fallback, expiring pair state, and Pairs visibility cover the current operational need. |
-| Partial | R7 | UI polish | Tracked by [issue #112](https://github.com/jvxis/brln-os-light/issues/112). Per-channel controls and profiles exist; cost-gate eligibility tags/hierarchy still incomplete. |
+| Implemented for 0.5.30 | R7 | UI polish | [Issue #112](https://github.com/jvxis/brln-os-light/issues/112): shared channel controls and economic eligibility in Rebalance Center and Ranking; no new presets. |
 | Closed | R8 | AutoFee <-> Rebalance intent interlock | [Issue #109](https://github.com/jvxis/brln-os-light/issues/109) closed as not planned; `refill_target` and `protect_fee_floor` cover the current bidirectional operational contract. |
 | Done | R0, R1, R2, R3, R5, R6, R9 | Implemented or superseded | Keep sections below as historical context. |
 
@@ -599,14 +599,34 @@ if stats.Attempts >= 5 && stats.Failures == stats.Attempts {
 
 ### R7 — UI polish
 
-**Current status (2026-06-20): partially open.** Profiles and per-channel
-controls exist, but the cost-gate eligibility tag and clearer per-channel
-hierarchy are still UI backlog.
+**Implementation for 0.5.30 (2026-09-19):** per-channel controls now separate
+receiving liquidity (Auto / Manual Restart, cost override, guaranteed slot)
+from providing liquidity (exclude as source). Controls and explanations use
+keyboard/touch-accessible disclosures to keep rows compact. Parked-channel
+restrictions and existing handlers are preserved; no rebalance algorithm or
+new operation preset is introduced.
+
+Rebalance Center and both Ranking views share saved-state labels for global
+automation, channel selection, scheduler scope/shadow mode, historical-cost
+blocking and manual source exclusion. A cost-gate block is inferred only from
+the backend's manual-target/auto-target eligibility difference, not from general
+ineligibility. Bypass and classic Manual Restart conviction are accounted for;
+no label promises route availability. Ranking uses existing read-only endpoints
+and shows unavailable status if that supplementary data cannot be loaded.
+
+Validation: `node --test tests/rebalance-eligibility.test.mjs` (Node 22.18+),
+`npm run build`, and the optional Playwright fixture
+`node tests/rebalance-ui-smoke.mjs` with Vite on localhost:5178. The browser check
+covers EN/PT-BR at 390px and 1440px, keyboard disclosure, exclusive target modes,
+and horizontal viewport overflow. `PLAYWRIGHT_MODULE` can select an existing
+Playwright installation; `SMOKE_OUTPUT` selects the screenshot directory.
+
+The following proposal is retained as historical context, not active backlog.
 
 **Esforço:** ~2h
 **Risco:** zero (cosmético)
 
-**O que falta:**
+**Proposta original:**
 
 1. **Hierarquia per-channel mais clara**: hoje `auto_enabled`,
    `manual_restart_enabled`, `auto_bypass_cost_gate` ficam misturados no

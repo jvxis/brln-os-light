@@ -31,9 +31,9 @@ const (
 	BRLNCommunityProxyUID  = 65532
 	BRLNCommunityProxyGID  = 65532
 
-	BRLNCommunityRelease             = "0.1.9"
-	BRLNCommunityWebDigest           = "2b2ab4645fc16ffe8428082d767bedcc390a42d1b10113055d8b96946ef6e676"
-	BRLNCommunitySignerDigest        = "d0bfbe5564715822270892739273466e80634b0e70f2f869305180fbf783e217"
+	BRLNCommunityRelease             = "0.1.10"
+	BRLNCommunityWebDigest           = "17324ed6df6b8c1acc1793780d65da889600ae1313f4b890a1b324ef6769e826"
+	BRLNCommunitySignerDigest        = "5cb8dd4f442627f876c92e5d9ea5867c753d33d79f0fce9d931ddb272609ada4"
 	BRLNCommunitySignerVersionOutput = "brln-signer " + BRLNCommunityRelease
 
 	BRLNCommunityWebImage    = "ghcr.io/jvxis/brln-community-web:" + BRLNCommunityRelease + "@sha256:" + BRLNCommunityWebDigest

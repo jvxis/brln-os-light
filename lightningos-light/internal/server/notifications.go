@@ -1480,21 +1480,28 @@ func (n *Notifier) runInvoices() {
 			return
 		default:
 		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		cursorVal, _ := n.getCursor(ctx, "invoice_settle_index")
+		cursorVal, err := n.getCursor(ctx, "invoice_settle_index")
+		var raw string
+		if err == nil {
+			raw, err = n.getCursor(ctx, "invoice_checkpoint")
+		}
 		cancel()
-		if strings.TrimSpace(cursorVal) == "" {
+		if err != nil {
+			n.logger.Printf("notifications: invoice cursor read failed: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		legacy, _ := strconv.ParseUint(cursorVal, 10, 64)
+		checkpoint, err := decodeInvoiceCheckpoint(raw, legacy)
+		if err != nil {
+			n.logger.Printf("notifications: invalid invoice checkpoint: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		if cursorVal == "" && raw == "" {
 			n.invoicesCatchupMode.Store(true)
 		}
-
-		var settleIndex uint64
-		if cursorVal != "" {
-			if parsed, err := strconv.ParseUint(cursorVal, 10, 64); err == nil {
-				settleIndex = parsed
-			}
-		}
-
 		dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		conn, release, err := n.lnd.BorrowLightning(dialCtx, true)
 		dialCancel()
@@ -1503,122 +1510,108 @@ func (n *Notifier) runInvoices() {
 			time.Sleep(5 * time.Second)
 			continue
 		}
-
-		client := lnrpc.NewLightningClient(conn)
-		streamCtx, cleanupStreamCtx := contextWithStopCancel(n.stop)
-		stream, err := client.SubscribeInvoices(streamCtx, &lnrpc.InvoiceSubscription{
-			SettleIndex: settleIndex,
-		})
+		streamCtx, cleanup := contextWithStopCancel(n.stop)
+		err = followSettledInvoices(streamCtx, lnrpc.NewLightningClient(conn), checkpoint,
+			n.saveInvoiceCheckpoint, n.processSettledInvoice, func(format string, args ...any) {
+				n.logger.Printf("notifications: "+format, args...)
+			})
+		cleanup()
+		release()
 		if err != nil {
-			n.logger.Printf("notifications: invoice stream subscribe failed: %v", err)
-			cleanupStreamCtx()
-			release()
-			time.Sleep(5 * time.Second)
-			continue
+			n.logger.Printf("notifications: invoice stream ended: %v", err)
 		}
-
-		for {
-			invoice, err := stream.Recv()
-			if err != nil {
-				n.logger.Printf("notifications: invoice stream ended: %v", err)
-				cleanupStreamCtx()
-				release()
-				break
-			}
-
-			if invoice.State != lnrpc.Invoice_SETTLED {
-				continue
-			}
-			if invoice.SettleIndex <= settleIndex {
-				continue
-			}
-
-			settleIndex = invoice.SettleIndex
-			hash := normalizeHash(hex.EncodeToString(invoice.RHash))
-			if hash == "" {
-				continue
-			}
-			amount := invoice.AmtPaidSat
-			if amount == 0 {
-				amount = invoice.Value
-			}
-			occurredAt := time.Unix(invoice.SettleDate, 0).UTC()
-			suppressMirror := false
-			if n.invoicesCatchupMode.Load() {
-				if notificationIsHistoricalCatchup(n.startedAt, occurredAt, invoiceCatchupLiveGrace) {
-					suppressMirror = true
-				} else {
-					n.invoicesCatchupMode.Store(false)
-				}
-			}
-			isKeysend := invoice.IsKeysend
-			evtType := "lightning"
-			peerPubkey := ""
-			peerAlias := ""
-			memo := strings.TrimSpace(invoice.Memo)
-			ctxPeer, cancelPeer := context.WithTimeout(context.Background(), 4*time.Second)
-			peerPubkey, peerAlias = n.keysendPeerFromInvoice(ctxPeer, invoice)
-			cancelPeer()
-			if peerAlias == "" && peerPubkey != "" {
-				peerAlias = n.lookupNodeAlias(peerPubkey)
-			}
-			if isKeysend {
-				evtType = "keysend"
-				memo = keysendMessageFromInvoice(invoice)
-			}
-			evt := Notification{
-				OccurredAt:  occurredAt,
-				Type:        evtType,
-				Action:      "received",
-				Direction:   "in",
-				Status:      "SETTLED",
-				AmountSat:   amount,
-				PeerPubkey:  peerPubkey,
-				PeerAlias:   peerAlias,
-				PaymentHash: hash,
-				Memo:        memo,
-			}
-			ctxChannel, cancelChannel := context.WithTimeout(context.Background(), 4*time.Second)
-			if chanID, channelPoint, channelAlias := n.invoiceReceiveChannel(ctxChannel, invoice); chanID != 0 || channelPoint != "" || channelAlias != "" {
-				evt.ChannelID = chanID
-				evt.ChannelPoint = channelPoint
-				evt.ChannelAlias = channelAlias
-			}
-			cancelChannel()
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if n.isRebalanceHash(ctx, hash) {
-				_ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
-				cancel()
-				continue
-			}
-
-			if pay, err := n.lookupPaymentByHash(ctx, hash); err == nil && pay != nil {
-				if n.isSelfPayment(ctx, pay.PaymentRequest, pay) {
-					if shouldSuppressExternalFailedRebalance(pay.Status.String(), memo) {
-						_ = n.removeRebalanceInvoice(ctx, hash)
-						_ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
-						cancel()
-						continue
-					}
-					rebalanceEvt := n.rebalanceEvent(ctx, pay, occurredAt)
-					if _, err := n.upsertNotificationWithOptions(ctx, fmt.Sprintf("payment:%s", hash), rebalanceEvt, notificationUpsertOptions{suppressMirror: suppressMirror}); err == nil {
-						_ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
-					}
-					cancel()
-					continue
-				}
-			}
-
-			if _, err := n.upsertNotificationWithOptions(ctx, fmt.Sprintf("invoice:%s", hash), evt, notificationUpsertOptions{suppressMirror: suppressMirror}); err == nil {
-				_ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
-				n.reconcileRebalance(ctx, hash)
-			}
-			cancel()
-		}
-
 		time.Sleep(2 * time.Second)
 	}
+}
+
+func (n *Notifier) saveInvoiceCheckpoint(parent context.Context, checkpoint invoiceCheckpoint) error {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	raw, err := json.Marshal(checkpoint)
+	if err != nil {
+		return err
+	}
+	_, err = n.db.Exec(ctx, `
+insert into notification_cursors (key, value, updated_at)
+values ('invoice_checkpoint', $1, now()), ('invoice_settle_index', $2, now())
+on conflict (key) do update set value=excluded.value, updated_at=excluded.updated_at
+`, string(raw), strconv.FormatUint(checkpoint.Index, 10))
+	return err
+}
+
+func (n *Notifier) processSettledInvoice(parent context.Context, invoice *lnrpc.Invoice, historical bool) error {
+	hash := normalizeHash(hex.EncodeToString(invoice.RHash))
+	amount := invoice.AmtPaidSat
+	if amount == 0 {
+		amount = invoice.Value
+	}
+	occurredAt := time.Unix(invoice.SettleDate, 0).UTC()
+	suppressMirror := historical
+	if n.invoicesCatchupMode.Load() {
+		if notificationIsHistoricalCatchup(n.startedAt, occurredAt, invoiceCatchupLiveGrace) {
+			suppressMirror = true
+		} else {
+			n.invoicesCatchupMode.Store(false)
+		}
+	}
+	isKeysend := invoice.IsKeysend
+	evtType := "lightning"
+	peerPubkey := ""
+	peerAlias := ""
+	memo := strings.TrimSpace(invoice.Memo)
+	ctxPeer, cancelPeer := context.WithTimeout(context.Background(), 4*time.Second)
+	peerPubkey, peerAlias = n.keysendPeerFromInvoice(ctxPeer, invoice)
+	cancelPeer()
+	if peerAlias == "" && peerPubkey != "" {
+		peerAlias = n.lookupNodeAlias(peerPubkey)
+	}
+	if isKeysend {
+		evtType = "keysend"
+		memo = keysendMessageFromInvoice(invoice)
+	}
+	evt := Notification{
+		OccurredAt:  occurredAt,
+		Type:        evtType,
+		Action:      "received",
+		Direction:   "in",
+		Status:      "SETTLED",
+		AmountSat:   amount,
+		PeerPubkey:  peerPubkey,
+		PeerAlias:   peerAlias,
+		PaymentHash: hash,
+		Memo:        memo,
+	}
+	ctxChannel, cancelChannel := context.WithTimeout(context.Background(), 4*time.Second)
+	if chanID, channelPoint, channelAlias := n.invoiceReceiveChannel(ctxChannel, invoice); chanID != 0 || channelPoint != "" || channelAlias != "" {
+		evt.ChannelID = chanID
+		evt.ChannelPoint = channelPoint
+		evt.ChannelAlias = channelAlias
+	}
+	cancelChannel()
+
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	if n.isRebalanceHash(ctx, hash) {
+		return nil
+	}
+
+	if pay, err := n.lookupPaymentByHash(ctx, hash); err == nil && pay != nil {
+		if n.isSelfPayment(ctx, pay.PaymentRequest, pay) {
+			if shouldSuppressExternalFailedRebalance(pay.Status.String(), memo) {
+				_ = n.removeRebalanceInvoice(ctx, hash)
+				return nil
+			}
+			rebalanceEvt := n.rebalanceEvent(ctx, pay, occurredAt)
+			_, err := n.upsertNotificationWithOptions(ctx, fmt.Sprintf("payment:%s", hash), rebalanceEvt, notificationUpsertOptions{suppressMirror: suppressMirror})
+			return err
+		}
+	}
+
+	_, err := n.upsertNotificationWithOptions(ctx, fmt.Sprintf("invoice:%s", hash), evt, notificationUpsertOptions{suppressMirror: suppressMirror})
+	if err == nil {
+		n.reconcileRebalance(ctx, hash)
+	}
+	return err
 }
 
 func (n *Notifier) runPayments() {

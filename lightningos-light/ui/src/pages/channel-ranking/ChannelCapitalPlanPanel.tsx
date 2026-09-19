@@ -1,9 +1,12 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import RebalanceEligibility from '../../components/rebalance/RebalanceEligibility'
+import type { RebalanceEligibilityData } from '../../components/rebalance/eligibility'
 import { moduleHash } from './links'
 import type { ChannelCapitalPlanItem, ChannelCapitalPlanSummary, ChannelRankingFormatters } from './types'
 
 type Props = {
+  rebalance: RebalanceEligibilityData
   items: ChannelCapitalPlanItem[]
   summary: ChannelCapitalPlanSummary
   magmaStateKnown: boolean
@@ -45,7 +48,7 @@ const actionClass = (action: ChannelCapitalPlanItem['action']) => {
   }
 }
 
-export default function ChannelCapitalPlanPanel({ items, summary, magmaStateKnown, loading, format, onSelect }: Props) {
+export default function ChannelCapitalPlanPanel({ items, rebalance, summary, magmaStateKnown, loading, format, onSelect }: Props) {
   const { t } = useTranslation()
   const groups = useMemo(
     () => actionOrder
@@ -168,6 +171,7 @@ export default function ChannelCapitalPlanPanel({ items, summary, magmaStateKnow
                     </div>
                   )}
 
+                  <RebalanceEligibility channel={rebalance.channels[channel.channel_point]} config={rebalance.config} />
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <button type="button" className="btn-secondary" onClick={() => onSelect(planItem)}>
                       {t('channelRanking.plan.inspect')}

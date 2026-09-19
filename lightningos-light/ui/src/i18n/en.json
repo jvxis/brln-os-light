@@ -1,4 +1,51 @@
 {
+  "rebalanceEligibility": {
+    "details": "Rebalance status and eligibility — expand for details",
+    "unavailable": "Rebalance status unavailable",
+    "costBlocked": "Cost gate blocks auto",
+    "sourceExcluded": "Excluded as source",
+    "economicWarning": "Economic constraint",
+    "snapshot": "Based on the last saved settings and channel snapshot. Recheck in Rebalance Center before acting.",
+    "targetControls": "Receiving liquidity (target)",
+    "sourceControls": "Providing liquidity (source)",
+    "manualRestart": "Manual Restart",
+    "controls": "Automation and source controls",
+    "modeHint": "Auto and Manual Restart are mutually exclusive for this channel. Both require the global Auto Rebalance switch; Manual Restart also depends on the active scheduler. A one-off Manual Rebal In remains a separate action.",
+    "bypassHint": "Bypass only skips the historical-cost gate for auto/auto-restart. It does not enable automation, bypass fee caps, or remove the remaining ROI, profit, budget and operational checks.",
+    "convictionHint": "Manual Restart conviction mode already bypasses the historical-cost and ROI gates. Fee caps, budget, cooldown and operational protections still apply.",
+    "sourceHint": "Excluding as source prevents this channel from providing liquidity. It does not exclude it as a receiving target.",
+    "costHint": "Route budget: {{budget}} ppm; estimated cost: {{cost}} ppm (7-day history or configured fallback). The historical-cost gate blocks automatic selection. Manual runs have their own checks. This comparison does not prove that a route exists.",
+    "noRoutePromise": "Selection is not a job or a route guarantee. Deficit, peer policy, fee caps, ROI/profit, budget, cooldown, liquidity and the active scheduler can still prevent execution.",
+    "economicWarningHint": "The current fee-budget envelope has a constraint. Review fees and budget in Rebalance Center.",
+    "states": {
+      "parked": "Parked",
+      "globalOff": "Global automation off",
+      "shadow": "Simulation only",
+      "auto": "Auto selected",
+      "restart": "Manual Restart selected",
+      "restartOff": "Restart watcher off",
+      "scopeExcluded": "Outside scheduler scope",
+      "guaranteed": "Guaranteed pool selected",
+      "channelOff": "Auto / Restart off"
+    },
+    "hints": {
+      "parked": "Parking suspends this channel's rebalance participation. Unpark it through Channel Ranking to resume.",
+      "globalOff": "Global Auto Rebalance is off. Saved per-channel selections do not start automatic jobs.",
+      "shadow": "The sovereign scheduler is in shadow mode: it evaluates candidates without executing automatic rebalances.",
+      "auto": "This channel is selected for automatic replenishment. Eligibility and scheduler checks still apply.",
+      "restart": "This channel is selected for repeat replenishment through Manual Restart or the sovereign scheduler's configured scope.",
+      "restartOff": "Manual Restart is selected here, but its global watcher is off in the rules scheduler.",
+      "scopeExcluded": "Manual Restart is selected here, but the sovereign scheduler's candidate scope excludes these channels.",
+      "guaranteed": "This channel is in the guaranteed pool. Slot selection still respects budget and operational protections.",
+      "channelOff": "Neither Auto nor Manual Restart is selected for this channel. This is an operator setting, not an economic failure."
+    },
+    "reasons": {
+      "peer_policy_unavailable": "Peer policy is unavailable; the economic envelope cannot be confirmed.",
+      "fixed_fee_budget_below_cost": "The fixed fee cap is below the estimated required cost.",
+      "invalid_econ_ratio": "The configured economic ratio cannot fund the estimated cost.",
+      "econ_ratio_cap_below_cost": "The economic-ratio ceiling is below the estimated required cost."
+    }
+  },
   "dbMaintenance": {
     "title": "Database maintenance",
     "kicker": "Postgres • LOS",

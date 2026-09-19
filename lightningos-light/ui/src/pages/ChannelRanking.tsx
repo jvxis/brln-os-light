@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getChannelCapitalPlan, getChannelRanking, recomputeChannelRankings } from '../api'
+import { getChannelCapitalPlan, getChannelRanking, getRebalanceChannels, getRebalanceConfig, recomputeChannelRankings } from '../api'
+import type { RebalanceEligibilityData } from '../components/rebalance/eligibility'
+import type { RebalanceChannel, RebalanceConfig } from '../components/rebalance/types'
 import { getLocale } from '../i18n'
 import ChannelCapitalPlanPanel from './channel-ranking/ChannelCapitalPlanPanel'
 import ChannelRankingDetailPanel from './channel-ranking/ChannelRankingDetailPanel'
@@ -32,6 +34,7 @@ export default function ChannelRanking() {
   const locale = getLocale(i18n.language)
   const [view, setView] = useState<View>('plan')
   const [items, setItems] = useState<ChannelCapitalPlanItem[]>([])
+  const [rebalance, setRebalance] = useState<RebalanceEligibilityData>({ channels: {}, config: null })
   const [summary, setSummary] = useState<ChannelCapitalPlanSummary>(emptySummary)
   const [stateCounts, setStateCounts] = useState<Record<string, number>>({})
   const [available, setAvailable] = useState(true)
@@ -78,7 +81,17 @@ export default function ChannelRanking() {
     setStatus('')
     try {
       if (options.recompute) await recomputeChannelRankings()
-      const payload = await getChannelCapitalPlan() as ChannelCapitalPlanPayload
+      const [planPayload, rebalancePayload, rebalanceConfig] = await Promise.all([
+        getChannelCapitalPlan(),
+        getRebalanceChannels().catch(() => null),
+        getRebalanceConfig().catch(() => null)
+      ])
+      const payload = planPayload as ChannelCapitalPlanPayload
+      const channels = (rebalancePayload as { channels?: RebalanceChannel[] } | null)?.channels
+      setRebalance({
+        channels: Object.fromEntries((Array.isArray(channels) ? channels : []).map((channel) => [channel.channel_point, channel])),
+        config: rebalanceConfig as RebalanceConfig | null
+      })
       const nextItems = Array.isArray(payload.items) ? payload.items : []
       setItems(nextItems)
       setSummary(payload.summary || { ...emptySummary, total_channels: nextItems.length })
@@ -189,9 +202,9 @@ export default function ChannelRanking() {
       </nav>
 
       {view === 'plan' ? (
-        <ChannelCapitalPlanPanel items={items} summary={summary} magmaStateKnown={magmaStateKnown} loading={loading} format={format} onSelect={selectPlanItem} />
+        <ChannelCapitalPlanPanel items={items} rebalance={rebalance} summary={summary} magmaStateKnown={magmaStateKnown} loading={loading} format={format} onSelect={selectPlanItem} />
       ) : (
-        <ChannelRankingTable items={items} stateCounts={stateCounts} selectedChannelPoint={selectedChannelPoint} loading={loading} format={format} onSelect={selectPlanItem} />
+        <ChannelRankingTable items={items} rebalance={rebalance} stateCounts={stateCounts} selectedChannelPoint={selectedChannelPoint} loading={loading} format={format} onSelect={selectPlanItem} />
       )}
 
       {drawerOpen && selectedPlanItem && (

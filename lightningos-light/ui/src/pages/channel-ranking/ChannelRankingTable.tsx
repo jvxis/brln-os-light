@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import RebalanceEligibility from '../../components/rebalance/RebalanceEligibility'
+import type { RebalanceEligibilityData } from '../../components/rebalance/eligibility'
 import type { ChannelCapitalPlanItem, ChannelRankingFormatters, ChannelRankingItem } from './types'
 
 type RankingFilter = 'all' | ChannelRankingItem['state']
 type SortKey = 'score' | 'net_7d' | 'net_30d' | 'capital_efficiency' | 'rebalance_cost' | 'risk' | 'peer_stability' | 'htlc_failures' | 'rebalance_dependence'
 
 type Props = {
+  rebalance: RebalanceEligibilityData
   items: ChannelCapitalPlanItem[]
   stateCounts: Record<string, number>
   selectedChannelPoint: string
@@ -35,7 +38,7 @@ const actionClass = (action: string) => {
   }
 }
 
-export default function ChannelRankingTable({ items, stateCounts, selectedChannelPoint, loading, format, onSelect }: Props) {
+export default function ChannelRankingTable({ items, rebalance, stateCounts, selectedChannelPoint, loading, format, onSelect }: Props) {
   const { t } = useTranslation()
   const [filter, setFilter] = useState<RankingFilter>('all')
   const [search, setSearch] = useState('')
@@ -157,9 +160,9 @@ export default function ChannelRankingTable({ items, stateCounts, selectedChanne
             {filtered.map((planItem) => {
               const channel = planItem.channel
               return (
-                <button key={channel.channel_point} type="button" onClick={() => onSelect(planItem)} className={`w-full rounded-2xl border p-4 text-left ${selectedChannelPoint === channel.channel_point ? 'border-sky-300/60 bg-sky-500/10' : 'border-white/10 bg-white/[0.03]'}`}>
+                <article key={channel.channel_point} className={`w-full rounded-2xl border p-4 text-left ${selectedChannelPoint === channel.channel_point ? 'border-sky-300/60 bg-sky-500/10' : 'border-white/10 bg-white/[0.03]'}`}>
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 truncate font-medium">{channel.peer_alias || channel.peer_pubkey || channel.channel_point}</div>
+                    <button type="button" onClick={() => onSelect(planItem)} className="min-w-0 truncate text-left font-medium hover:underline">{channel.peer_alias || channel.peer_pubkey || channel.channel_point}</button>
                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${rankingClass(channel.state)}`}>{t(`channelRanking.states.${channel.state}` as any)}</span>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fog/65">
@@ -168,7 +171,8 @@ export default function ChannelRankingTable({ items, stateCounts, selectedChanne
                     <span>{t('channelRanking.localBalancePct', { value: format.pct(channel.local_balance_pct) })}</span>
                     <span>{t('channelRanking.netFees7d', { value: format.sats(channel.profit_fee_7d_sat) })}</span>
                   </div>
-                </button>
+                  <RebalanceEligibility channel={rebalance.channels[channel.channel_point]} config={rebalance.config} />
+                </article>
               )
             })}
           </div>
@@ -201,6 +205,7 @@ export default function ChannelRankingTable({ items, stateCounts, selectedChanne
                           {planItem.magma_commitment && <span className="rounded-full border border-sky-300/30 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-100">Magma</span>}
                         </div>
                         <div className={`mt-1 text-xs ${actionClass(planItem.action)}`}>{t(`channelRanking.plan.actions.${planItem.action}` as any)}</div>
+                        <RebalanceEligibility channel={rebalance.channels[channel.channel_point]} config={rebalance.config} />
                       </td>
                       <td className="p-3 text-xs text-fog/70">
                         <div>{t('channelRanking.localBalancePct', { value: format.pct(channel.local_balance_pct) })}</div>

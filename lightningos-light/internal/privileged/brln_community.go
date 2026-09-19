@@ -132,7 +132,7 @@ func (manager *NativeBRLNCommunityManager) Ensure(_ context.Context, dryRun bool
 	if err := writeAtomicRegularFile(manager.Paths.ComposePath, []byte(composeRaw), 0600); err != nil {
 		return BRLNCommunityState{}, errors.New("BR⚡LN Community compose write failed")
 	}
-	if err := manager.validateSnapshot(); err != nil {
+	if err := manager.validateSnapshot(false); err != nil {
 		return BRLNCommunityState{}, err
 	}
 	return BRLNCommunityState{Installed: true, Status: "stopped", PasswordAvailable: true}, nil
@@ -142,7 +142,7 @@ func (manager *NativeBRLNCommunityManager) Lifecycle(ctx context.Context, action
 	if action != AppLifecycleStart && action != AppLifecycleStop {
 		return BRLNCommunityState{}, errors.New("BR⚡LN Community lifecycle action is not allowed")
 	}
-	if err := manager.validateSnapshot(); err != nil {
+	if err := manager.validateSnapshot(action == AppLifecycleStop); err != nil {
 		return BRLNCommunityState{}, err
 	}
 	if dryRun {
@@ -180,7 +180,7 @@ func (manager *NativeBRLNCommunityManager) Remove(ctx context.Context, dryRun bo
 	if !manager.snapshotReady() {
 		return nil
 	}
-	if err := manager.validateSnapshot(); err != nil {
+	if err := manager.validateSnapshot(true); err != nil {
 		return err
 	}
 	if dryRun {
@@ -237,7 +237,7 @@ func (manager *NativeBRLNCommunityManager) ReadPassword() (string, error) {
 	if !manager.snapshotReady() {
 		return "", errors.New("BR⚡LN Community is not installed")
 	}
-	if err := manager.validateSnapshot(); err != nil {
+	if err := manager.validateSnapshot(true); err != nil {
 		return "", err
 	}
 	return readBarkWalletSecret(manager.Paths.AccessPasswordPath)
@@ -313,7 +313,10 @@ func (manager *NativeBRLNCommunityManager) secureTLSFiles() error {
 	return nil
 }
 
-func (manager *NativeBRLNCommunityManager) validateSnapshot() error {
+// Previous image pins are accepted only to stop/remove an installed release or
+// read its existing access password. Starting always requires the current
+// catalog, written by Ensure; compatibility never authorizes old images to run.
+func (manager *NativeBRLNCommunityManager) validateSnapshot(allowPreviousImages bool) error {
 	if err := validateManagerCACertificate(manager.Paths.ManagerCACertificate, manager.requireFixed); err != nil {
 		return err
 	}
@@ -331,7 +334,8 @@ func (manager *NativeBRLNCommunityManager) validateSnapshot() error {
 	}
 	composeRaw, err := readRegularFile(manager.Paths.ComposePath, 64*1024)
 	expectedCompose, expectedErr := appmanifest.BRLNCommunityCompose(manager.composePaths())
-	if err != nil || expectedErr != nil || string(composeRaw) != expectedCompose {
+	if err != nil || expectedErr != nil || (string(composeRaw) != expectedCompose &&
+		(!allowPreviousImages || !brlnCommunityPreviousComposeMatches(string(composeRaw), expectedCompose))) {
 		return errors.New("BR⚡LN Community compose does not match the catalog")
 	}
 	caddyRaw, err := readRegularFile(manager.Paths.CaddyfilePath, 16*1024)
@@ -350,6 +354,18 @@ func (manager *NativeBRLNCommunityManager) validateSnapshot() error {
 		return errors.New("BR⚡LN Community access password is invalid")
 	}
 	return nil
+}
+
+// The official 0.5.29 catalog used this exact 0.1.4 image pair. Do not accept
+// arbitrary tags/digests or normalize YAML: every byte outside these two pins
+// must still match the current hardened catalog. This deliberately fails closed
+// for mixed releases, altered mounts/commands, and unknown images.
+func brlnCommunityPreviousComposeMatches(installed, current string) bool {
+	previous := strings.NewReplacer(
+		appmanifest.BRLNCommunityWebImage, "ghcr.io/jvxis/brln-community-web:0.1.4@sha256:3aec012bfdb29f3e4cf6f7626b25333a8505844c56decb6d522ffbc211cd68d6",
+		appmanifest.BRLNCommunitySignerImage, "ghcr.io/jvxis/brln-signer:0.1.4@sha256:c1c5b282cd0fa5ea5720f7c021a5fa32da6c7a00b1e45552193d207c89a3b2bc",
+	).Replace(current)
+	return installed == previous
 }
 
 func (manager *NativeBRLNCommunityManager) snapshotReady() bool {

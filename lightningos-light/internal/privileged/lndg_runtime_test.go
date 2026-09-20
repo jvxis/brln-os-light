@@ -281,17 +281,23 @@ func TestLNDgInspectUsesCatalogLabelsForOutdatedDeclaration(t *testing.T) {
 	}
 }
 
-func TestLNDgInspectRejectsUnsafeOutdatedDeclarationShape(t *testing.T) {
+func TestLNDgStartRejectsUnsafeOutdatedDeclarationShape(t *testing.T) {
 	fixture := writeTestLNDgFixture(t)
 	mustWriteTestFile(t, fixture.entrypointPath, []byte("#!/bin/sh\n# previous catalog entrypoint\n"), 0750)
 	mustWriteTestFile(t, filepath.Join(fixture.appRoot, "unexpected.sh"), []byte("exit 0\n"), 0640)
 
-	if _, err := fixture.manager.Inspect(context.Background(), appmanifest.LNDgID); err == nil {
+	if err := fixture.manager.Lifecycle(context.Background(), appmanifest.LNDgID, AppLifecycleStart, false); err == nil {
 		t.Fatal("unsafe declaration shape was accepted")
 	}
 	if len(fixture.runner.commands) != 0 {
 		t.Fatalf("unsafe declaration reached Docker: %#v", fixture.runner.commands)
 	}
+	// Read-only status must remain usable even when starting this declaration is refused.
+	if _, err := fixture.manager.Inspect(context.Background(), appmanifest.LNDgID); err != nil {
+		t.Fatal(err)
+	}
+	assertCatalogStopOnly(t, fixture.runner, 0)
+
 }
 
 func TestLNDgLifecycleUsesOnlyBrokerSnapshotAndDoesNotRestartConfiguredLND(t *testing.T) {

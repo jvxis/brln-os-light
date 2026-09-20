@@ -48,7 +48,7 @@ func communityPersistentHashes(t *testing.T, manager *NativeBRLNCommunityManager
 }
 
 func TestNativeBRLNCommunityUpgradeStopThenStart(t *testing.T) {
-	runner := &composeRecordingRunner{}
+	runner := catalogStopRunner(t, appmanifest.BRLNCommunityID, "proxy", "web", "signer")
 	manager := communityPreviousInstall(t, runner)
 	preserved := communityPersistentHashes(t, manager)
 	oldCompose := mustReadTestFile(t, manager.Paths.ComposePath)
@@ -69,11 +69,7 @@ func TestNativeBRLNCommunityUpgradeStopThenStart(t *testing.T) {
 	if err != nil || state.Status != "stopped" {
 		t.Fatalf("stop failed: %v", err)
 	}
-	wantStop := []string{"compose", "--project-name", "brln-community", "--project-directory", manager.Paths.SnapshotRoot,
-		"-f", manager.Paths.ComposePath, "stop", "--timeout", "30"}
-	if len(runner.commands) != 3 || runner.commands[1].path != dockerPath || !reflect.DeepEqual(runner.commands[1].args, wantStop) {
-		t.Fatalf("unexpected stop commands: %#v", runner.commands)
-	}
+	assertCatalogStopOnly(t, runner, 3)
 	if !reflect.DeepEqual(oldCompose, mustReadTestFile(t, manager.Paths.ComposePath)) {
 		t.Fatal("stop rewrote the installed snapshot")
 	}
@@ -162,8 +158,8 @@ func TestNativeBRLNCommunityPreviousReleaseRejectsTampering(t *testing.T) {
 			manager := communityPreviousInstall(t, runner)
 			change(t, manager)
 			for _, dryRun := range []bool{true, false} {
-				if _, err := manager.Lifecycle(context.Background(), AppLifecycleStop, dryRun); err == nil {
-					t.Fatal("tampered stop accepted")
+				if _, err := manager.Lifecycle(context.Background(), AppLifecycleStart, dryRun); err == nil {
+					t.Fatal("tampered start accepted")
 				}
 				if err := manager.Remove(context.Background(), dryRun); err == nil {
 					t.Fatal("tampered removal accepted")
@@ -192,7 +188,7 @@ func communityReplaceFile(t *testing.T, path, old, replacement string) {
 
 func TestNativeBRLNCommunityPreviousReleaseStopFailurePreservesState(t *testing.T) {
 	runner := &composeRecordingRunner{hook: func(_ string, args []string) (string, error, bool) {
-		if hasArgsSuffix(args, "stop", "--timeout", "30") {
+		if len(args) > 0 && args[0] == "ps" {
 			return "", errors.New("docker unavailable"), true
 		}
 		return "", nil, false

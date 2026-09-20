@@ -238,17 +238,23 @@ func TestLNbitsInspectUsesCatalogLabelsForOutdatedDeclaration(t *testing.T) {
 	}
 }
 
-func TestLNbitsInspectRejectsUnsafeOutdatedDeclarationShape(t *testing.T) {
+func TestLNbitsStartRejectsUnsafeOutdatedDeclarationShape(t *testing.T) {
 	fixture := writeTestLNbitsFixture(t)
 	mustWriteTestFile(t, fixture.composePath, []byte("services:\n  lnbits:\n    image: lnbits/lnbits:v1.5.6\n"), 0640)
 	mustWriteTestFile(t, filepath.Join(fixture.appRoot, "unexpected.env"), []byte("KEY=value\n"), 0600)
 
-	if _, err := fixture.manager.Inspect(context.Background(), appmanifest.LNbitsID); err == nil {
+	if err := fixture.manager.Lifecycle(context.Background(), appmanifest.LNbitsID, AppLifecycleStart, false); err == nil {
 		t.Fatal("unsafe declaration shape was accepted")
 	}
 	if len(fixture.runner.commands) != 0 {
 		t.Fatalf("unsafe declaration reached Docker: %#v", fixture.runner.commands)
 	}
+	// Read-only status must remain usable even when starting this declaration is refused.
+	if _, err := fixture.manager.Inspect(context.Background(), appmanifest.LNbitsID); err != nil {
+		t.Fatal(err)
+	}
+	assertCatalogStopOnly(t, fixture.runner, 0)
+
 }
 
 func TestLNbitsLifecycleUsesBrokerSnapshotWithoutRestartingConfiguredLND(t *testing.T) {

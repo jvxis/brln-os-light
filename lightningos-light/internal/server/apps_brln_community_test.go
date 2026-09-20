@@ -88,7 +88,7 @@ func TestStopBRLNCommunityIsIdempotentWhenStopped(t *testing.T) {
 	if err := (&Server{}).stopBRLNCommunity(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if client.ensureCalls != 0 || len(client.lifecycleCalls) != 0 {
+	if client.ensureCalls != 0 || len(client.lifecycleCalls) != 1 || client.lifecycleCalls[0] != "stop" {
 		t.Fatalf("stopped app was mutated: %#v", client)
 	}
 }

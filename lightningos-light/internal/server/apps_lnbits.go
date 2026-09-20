@@ -161,9 +161,6 @@ func (s *Server) stopLnbits(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("LNbits is not installed")
 	}
-	if err := reconcileLnbitsCatalogDeclaration(paths); err != nil {
-		return fmt.Errorf("failed to reconcile LNbits declaration: %w", err)
-	}
 	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.LNbitsID, "stop"); !handled {
 		return errors.New("LNbits lifecycle requires privileged broker enforce mode")
 	} else if err != nil {

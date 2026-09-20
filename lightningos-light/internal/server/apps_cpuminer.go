@@ -191,18 +191,23 @@ func (s *Server) installCpuMiner(ctx context.Context) error {
 }
 
 func (s *Server) startCpuMiner(ctx context.Context) error {
-	return startCpuMinerAtPaths(ctx, cpuMinerAppPaths())
+	return s.startCpuMinerAtPaths(ctx, cpuMinerAppPaths())
 }
 
-func startCpuMinerAtPaths(ctx context.Context, paths cpuMinerPaths) error {
+func (s *Server) startCpuMinerAtPaths(ctx context.Context, paths cpuMinerPaths) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("CPU Lottery Miner is not installed")
 	}
-	// Re-apply the closed declaration before asking the broker to start it.
-	// This migrates 0.5.2 installs whose compose file is intentionally rejected
-	// by the hardened broker, while preserving pool, payout and thread settings
-	// stored in the existing .env file.
-	if err := migrateCpuMinerImageReference(paths); err != nil {
+	if !fileExists(paths.EnvPath) {
+		return errors.New("CPU Lottery Miner configuration is missing")
+	}
+	// Select and prepare a current catalog image on every start. The old image
+	// is not an input to execution; pool, payout and thread settings are retained.
+	image, err := s.selectCpuMinerImage(ctx)
+	if err != nil {
+		return err
+	}
+	if err := setEnvValue(paths.EnvPath, "CPUMINER_IMAGE", image); err != nil {
 		return err
 	}
 	if err := ensureCpuMinerCompose(paths); err != nil {
@@ -393,27 +398,6 @@ func cpuMinerResolveImage(paths cpuMinerPaths) string {
 		}
 	}
 	return cpuMinerBaselineImage
-}
-
-func migrateCpuMinerImageReference(paths cpuMinerPaths) error {
-	legacyImage := strings.TrimSpace(readEnvValue(paths.EnvPath, "CPUMINER_IMAGE"))
-	image := cpuMinerResolveImage(paths)
-	if _, err := appmanifest.CPUMinerVariantForImage(image); err != nil {
-		return errors.New("CPU Lottery Miner image is not allowed")
-	}
-	if legacyImage == image {
-		return nil
-	}
-	content, err := os.ReadFile(paths.EnvPath)
-	if err != nil {
-		return fmt.Errorf("failed to read %s: %w", paths.EnvPath, err)
-	}
-	legacyLine := "CPUMINER_IMAGE=" + legacyImage
-	if legacyImage == "" || !strings.Contains(string(content), legacyLine) {
-		return errors.New("CPU Lottery Miner image declaration is missing")
-	}
-	migrated := strings.Replace(string(content), legacyLine, "CPUMINER_IMAGE="+image, 1)
-	return writeFile(paths.EnvPath, migrated, 0600)
 }
 
 // cpuMinerMaxThreads caps mining threads at the host core count minus one, so

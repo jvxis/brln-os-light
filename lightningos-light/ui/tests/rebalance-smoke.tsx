@@ -23,7 +23,7 @@ function Fixture() {
   const rebalance = { config, channels: { [channel.channel_point]: channel } }
   return <main className="mx-auto max-w-6xl space-y-6 p-4 text-fog">
     <h1>Rebalance UI fixture</h1>
-    <section data-testid="controls" className="max-w-md rounded-2xl border border-white/10 p-3">
+    <section data-testid="controls" className="w-full rounded-2xl border border-white/10 p-3">
       <ChannelRebalanceControls channel={channel} config={config} bypass={Boolean(channel.auto_bypass_cost_gate)}
         onAuto={(enabled) => setChannel({ ...channel, auto_enabled: enabled, manual_restart_enabled: enabled ? false : channel.manual_restart_enabled })}
         onRestart={(enabled) => setChannel({ ...channel, manual_restart_enabled: enabled, auto_enabled: enabled ? false : channel.auto_enabled })}

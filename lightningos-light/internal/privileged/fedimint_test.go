@@ -195,7 +195,7 @@ func TestFedimintInspectRecognizesLegacyRuntimeWithoutExecutingCompose(t *testin
 	}
 }
 
-func TestFedimintInspectRejectsUnexpectedLegacyAssets(t *testing.T) {
+func TestFedimintStartRejectsUnexpectedLegacyAssets(t *testing.T) {
 	appsRoot := t.TempDir()
 	appRoot := filepath.Join(appsRoot, appmanifest.FedimintGuardianID)
 	if err := os.Mkdir(appRoot, 0750); err != nil {
@@ -209,12 +209,18 @@ func TestFedimintInspectRejectsUnexpectedLegacyAssets(t *testing.T) {
 	}
 	runner := &composeRecordingRunner{}
 	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
-	if _, err := manager.Inspect(context.Background(), appmanifest.FedimintGuardianID); err == nil {
+	if err := manager.Lifecycle(context.Background(), appmanifest.FedimintGuardianID, AppLifecycleStart, false); err == nil {
 		t.Fatal("unexpected legacy assets were accepted")
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("rejected legacy declaration reached Docker: %#v", runner.commands)
 	}
+	// Read-only status must remain usable even when starting this declaration is refused.
+	if _, err := manager.Inspect(context.Background(), appmanifest.FedimintGuardianID); err != nil {
+		t.Fatal(err)
+	}
+	assertCatalogStopOnly(t, runner, 0)
+
 }
 
 func TestFedimintLifecycleStopsLegacyContainerWithoutExecutingCompose(t *testing.T) {
@@ -226,32 +232,12 @@ func TestFedimintLifecycleStopsLegacyContainerWithoutExecutingCompose(t *testing
 	if err := os.WriteFile(filepath.Join(appRoot, appmanifest.FedimintGuardianComposeFile), []byte("legacy declaration\n"), 0640); err != nil {
 		t.Fatal(err)
 	}
-	containerID := strings.Repeat("d", 64)
-	statusArgs := []string{
-		"ps",
-		"--no-trunc",
-		"--filter", "label=com.docker.compose.project=" + appmanifest.FedimintGuardianProject,
-		"--filter", "label=com.docker.compose.service=" + appmanifest.FedimintGuardianPrimaryService,
-		"--format", "{{.ID}}",
-	}
-	stopArgs := []string{"stop", "--time", "60", containerID}
-	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
-		if path == dockerPath && reflect.DeepEqual(args, statusArgs) {
-			return containerID + "\n", nil, true
-		}
-		if path == dockerPath && reflect.DeepEqual(args, stopArgs) {
-			return containerID + "\n", nil, true
-		}
-		return "", nil, false
-	}}
+	runner := catalogStopRunner(t, appmanifest.FedimintGuardianID, appmanifest.FedimintGuardianPrimaryService)
 	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
 	if err := manager.Lifecycle(context.Background(), appmanifest.FedimintGuardianID, AppLifecycleStop, false); err != nil {
 		t.Fatal(err)
 	}
-	want := []recordedCommand{{path: dockerPath, args: statusArgs}, {path: dockerPath, args: stopArgs}}
-	if !reflect.DeepEqual(runner.commands, want) {
-		t.Fatalf("legacy stop commands=%#v want=%#v", runner.commands, want)
-	}
+	assertCatalogStopOnly(t, runner, 1)
 }
 
 func TestFedimintLegacyLifecycleDryRunDoesNotReachDocker(t *testing.T) {

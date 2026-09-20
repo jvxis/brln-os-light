@@ -567,10 +567,9 @@ func parseSystemdProperties(output string) map[string]string {
 	return values
 }
 
-// Lifecycle validates the selected catalog manifest and its environment,
-// snapshots both into a broker-owned directory, and executes one fixed Docker
-// Compose action. No path, service name, image, or argument comes from the
-// request.
+// Lifecycle starts only validated current catalog snapshots. Stop uses verified
+// runtime identities independent of the installed image version (Bitcoin keeps
+// its storage/migration path). No execution path or argument comes from requests.
 func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, action AppLifecycleAction, dryRun bool) error {
 	if manager == nil || manager.Runner == nil {
 		return errors.New("compose app manager is unavailable")
@@ -586,18 +585,10 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		return errors.New("app lifecycle action is not allowed")
 	}
 	if action == AppLifecycleStop {
-		legacy := false
-		switch manifest.ID {
-		case appmanifest.CPUMinerID:
-			legacy = manager.hasLegacyCPUMinerDeclaration(manifest)
-		case appmanifest.FedimintGuardianID, appmanifest.FedimintGatewayID:
-			legacy = manager.hasLegacyFedimintDeclaration(manifest.ID, manifest.ComposeFile)
-		}
-		if legacy {
-			if dryRun {
-				return nil
-			}
-			return manager.stopLegacyCatalogRuntime(ctx, manifest)
+		// Bitcoin keeps its storage-enrollment safeguards. Other catalog apps
+		// stop their verified existing runtime, independent of version/config.
+		if manifest.ID != appmanifest.BitcoinCoreID {
+			return stopCatalogApp(ctx, manager.Runner, appID, dryRun)
 		}
 	}
 
@@ -1170,20 +1161,22 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 		return inspection, errors.New("app manifest is not allowed")
 	}
 
+	// Status is read-only Docker telemetry, not permission to execute an old
+	// declaration. Image/catalog drift must not hide Stop in the App Store.
 	switch manifest.ID {
 	case appmanifest.CPUMinerID:
-		_, _, err := manager.validatedCPUMinerFiles()
-		if err != nil {
-			if manager.hasLegacyCPUMinerDeclaration(manifest) {
-				return manager.inspectCatalogRuntime(ctx, manifest, true)
-			}
-			return inspection, err
-		}
 		return manager.inspectCatalogRuntime(ctx, manifest, true)
-	case appmanifest.RoboSatsID:
-		_, err := manager.validatedRoboSatsFiles()
-		if err != nil {
-			return inspection, err
+	case appmanifest.RoboSatsID, appmanifest.BTCPayID, appmanifest.LNDgID,
+		appmanifest.ElectrsID, appmanifest.MempoolID,
+		appmanifest.FedimintGuardianID, appmanifest.FedimintGatewayID:
+		return manager.inspectCatalogRuntime(ctx, manifest, false)
+	case appmanifest.LNbitsID:
+		// Retain certificate refresh for a valid current installation, without
+		// treating a stale declaration as a runtime status failure.
+		if files, err := manager.validatedLNbitsFiles(); err == nil {
+			if err := manager.refreshLNbitsSnapshotCertificate(files.certificateRaw); err != nil {
+				return inspection, err
+			}
 		}
 		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.BitcoinCoreID:
@@ -1208,66 +1201,9 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 		}
 		defer cleanup()
 		return manager.inspectComposeSnapshot(ctx, manifest, snapshot, false)
-	case appmanifest.BTCPayID:
-		_, err := manager.validatedBTCPayFiles()
-		if err != nil {
-			return inspection, err
-		}
-		return manager.inspectCatalogRuntime(ctx, manifest, false)
-	case appmanifest.LNDgID:
-		_, err := manager.validatedLNDgFiles()
-		if err != nil {
-			if manager.hasSafeCatalogDeclarationShape(manifest, []catalogDeclarationFile{
-				{name: appmanifest.LNDgComposeFile, max: 64 * 1024, modes: []os.FileMode{0640}},
-				{name: appmanifest.LNDgEnvFile, max: maxLNDgEnvBytes, modes: []os.FileMode{0600}},
-				{name: appmanifest.LNDgEntrypointFile, max: maxLNDgEntrypointBytes, modes: []os.FileMode{0640, 0750}},
-			}) {
-				return manager.inspectCatalogRuntime(ctx, manifest, false)
-			}
-			return inspection, err
-		}
-		return manager.inspectCatalogRuntime(ctx, manifest, false)
-	case appmanifest.LNbitsID:
-		files, err := manager.validatedLNbitsFiles()
-		if err != nil {
-			if manager.hasSafeCatalogDeclarationShape(manifest, []catalogDeclarationFile{
-				{name: appmanifest.LNbitsComposeFile, max: 64 * 1024, modes: []os.FileMode{0640}},
-				{name: appmanifest.LNbitsEnvFile, max: 64 * 1024, modes: []os.FileMode{0600}},
-			}) {
-				return manager.inspectCatalogRuntime(ctx, manifest, false)
-			}
-			return inspection, err
-		}
-		if err := manager.refreshLNbitsSnapshotCertificate(files.certificateRaw); err != nil {
-			return inspection, err
-		}
-		return manager.inspectCatalogRuntime(ctx, manifest, false)
-	case appmanifest.ElectrsID:
-		_, err := manager.validatedElectrsFiles()
-		if err != nil {
-			return inspection, err
-		}
-		return manager.inspectCatalogRuntime(ctx, manifest, false)
-	case appmanifest.MempoolID:
-		_, err := manager.validatedMempoolFiles()
-		if err != nil {
-			return inspection, err
-		}
-		return manager.inspectCatalogRuntime(ctx, manifest, false)
-	case appmanifest.FedimintGuardianID, appmanifest.FedimintGatewayID:
-		_, err := manager.validatedFedimintFiles(appID)
-		if err != nil {
-			if manager.hasLegacyFedimintDeclaration(appID, manifest.ComposeFile) {
-				return manager.inspectCatalogRuntime(ctx, manifest, false)
-			}
-			return inspection, err
-		}
-		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	default:
 		return inspection, errors.New("app manifest is not allowed")
 	}
-
-	return inspection, errors.New("app manifest is not allowed")
 }
 
 func (manager *ComposeAppManager) inspectComposeSnapshot(ctx context.Context, manifest appmanifest.ComposeManifest, snapshot composeAppSnapshot, includeCPU bool) (AppInspection, error) {
@@ -1320,7 +1256,7 @@ func (manager *ComposeAppManager) inspectComposeSnapshot(ctx context.Context, ma
 
 // inspectCatalogRuntime never reads or executes a manager-owned Compose file.
 // It derives both labels from the closed app catalog and uses Docker only for
-// read-only telemetry while lifecycle operations remain on validated snapshots.
+// read-only telemetry. Start remains restricted to validated catalog snapshots.
 func (manager *ComposeAppManager) catalogRunningContainerID(ctx context.Context, manifest appmanifest.ComposeManifest) (string, error) {
 	output, err := manager.Runner.Run(ctx, dockerPath,
 		"ps",
@@ -1407,17 +1343,6 @@ func (manager *ComposeAppManager) hasSafeCatalogDeclarationShape(manifest appman
 		}
 	}
 	return true
-}
-
-func (manager *ComposeAppManager) stopLegacyCatalogRuntime(ctx context.Context, manifest appmanifest.ComposeManifest) error {
-	containerID, err := manager.catalogRunningContainerID(ctx, manifest)
-	if err != nil || containerID == "" {
-		return err
-	}
-	if _, err := manager.Runner.Run(ctx, dockerPath, "stop", "--time", strconv.Itoa(manifest.StopTimeoutSeconds), containerID); err != nil {
-		return errors.New("legacy app stop command failed")
-	}
-	return nil
 }
 
 func (manager *ComposeAppManager) validatedCPUMinerFiles() ([]byte, []byte, error) {

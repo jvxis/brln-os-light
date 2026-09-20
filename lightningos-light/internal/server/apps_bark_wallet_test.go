@@ -80,7 +80,7 @@ func TestStopBarkWalletIsIdempotentWithoutMigratingStoppedInstall(t *testing.T) 
 	if err := (&Server{}).stopBarkWallet(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if client.ensureCalls != 0 || client.lifecycleCalls != 0 {
+	if client.ensureCalls != 0 || client.lifecycleCalls != 1 {
 		t.Fatalf("stopped Bark Wallet was mutated: %#v", client)
 	}
 }

@@ -219,9 +219,6 @@ func (s *Server) stopLndg(ctx context.Context) error {
 	if !fileExists(paths.ComposePath) {
 		return errors.New("LNDg is not installed")
 	}
-	if err := reconcileLndgCatalogDeclaration(paths); err != nil {
-		return fmt.Errorf("failed to reconcile LNDg declaration: %w", err)
-	}
 	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.LNDgID, "stop"); !handled {
 		return errors.New("LNDg lifecycle requires privileged broker enforce mode")
 	} else if err != nil {

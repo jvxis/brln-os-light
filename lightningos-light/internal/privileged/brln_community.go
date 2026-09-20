@@ -142,7 +142,17 @@ func (manager *NativeBRLNCommunityManager) Lifecycle(ctx context.Context, action
 	if action != AppLifecycleStart && action != AppLifecycleStop {
 		return BRLNCommunityState{}, errors.New("BR⚡LN Community lifecycle action is not allowed")
 	}
-	if err := manager.validateSnapshot(action == AppLifecycleStop); err != nil {
+	if action == AppLifecycleStop {
+		if err := stopCatalogApp(ctx, manager.Runner, appmanifest.BRLNCommunityID, dryRun); err != nil {
+			return BRLNCommunityState{}, err
+		}
+		status := "stopped"
+		if dryRun {
+			status = "validated"
+		}
+		return BRLNCommunityState{Installed: manager.snapshotReady(), Status: status}, nil
+	}
+	if err := manager.validateSnapshot(false); err != nil {
 		return BRLNCommunityState{}, err
 	}
 	if dryRun {
@@ -162,11 +172,7 @@ func (manager *NativeBRLNCommunityManager) Lifecycle(ctx context.Context, action
 	args := append([]string(nil), prefix...)
 	args = append(args, "--project-name", appmanifest.BRLNCommunityProject,
 		"--project-directory", manager.Paths.SnapshotRoot, "-f", manager.Paths.ComposePath)
-	if action == AppLifecycleStart {
-		args = append(args, "up", "-d")
-	} else {
-		args = append(args, "stop", "--timeout", strconv.Itoa(appmanifest.BRLNCommunityStopTimeout))
-	}
+	args = append(args, "up", "-d")
 	if _, err := manager.Runner.Run(ctx, command, args...); err != nil {
 		return BRLNCommunityState{}, errors.New("BR⚡LN Community lifecycle command failed")
 	}

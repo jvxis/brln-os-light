@@ -984,23 +984,15 @@ func TestComposeAppBTCPayPostgresRepairRejectsUnexpectedComposeCommand(t *testin
 	}
 }
 
-func TestComposeAppBTCPayStopUsesSnapshotWithoutDatabaseCommands(t *testing.T) {
+func TestComposeAppBTCPayStopUsesRuntimeWithoutDatabaseCommands(t *testing.T) {
 	fixture := writeTestBTCPayApp(t, false, false)
-	runner := fixture.manager.Runner.(*composeRecordingRunner)
+	runner := catalogStopRunner(t, appmanifest.BTCPayID, "btcpayserver", "nbxplorer", "btcpay-db", "tor")
+	fixture.manager.Runner = runner
 	if err := fixture.manager.Lifecycle(context.Background(), appmanifest.BTCPayID, AppLifecycleStop, false); err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range runner.commands {
-		if command.path == dockerPath && len(command.args) > 0 && command.args[0] == "exec" {
-			t.Fatalf("stop invoked a database command: %#v", command)
-		}
-	}
-	last := runner.commands[len(runner.commands)-1]
-	if !hasArgsSuffix(last.args, "stop", "--timeout", strconv.Itoa(appmanifest.BTCPayStopTimeout)) || strings.Contains(strings.Join(last.args, " "), fixture.appRoot) {
-		t.Fatalf("unsafe BTCPay stop command: %#v", last)
-	}
+	assertCatalogStopOnly(t, runner, 4)
 }
-
 func TestComposeAppBTCPayRemoveUsesAndDeletesOnlySnapshot(t *testing.T) {
 	fixture := writeTestBTCPayApp(t, false, false)
 	runner := fixture.manager.Runner.(*composeRecordingRunner)
@@ -1179,23 +1171,15 @@ func TestValidateExecutionSnapshotDirectoryEntriesRejectsSpoofedTemporaryEntry(t
 	}
 }
 
-func TestComposeAppLifecycleSupportsFixedStandaloneBinary(t *testing.T) {
-	appsRoot, _ := writeTestCPUMinerApp(t)
-	runner := &composeRecordingRunner{standalone: true}
-	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, TempRoot: t.TempDir()}
-	if err := manager.Lifecycle(context.Background(), "cpuminer", AppLifecycleStop, false); err != nil {
+func TestComposeAppStopDoesNotNeedComposeBinary(t *testing.T) {
+	runner := catalogStopRunner(t, appmanifest.CPUMinerID, "cpuminer")
+	runner.standalone = true
+	manager := &ComposeAppManager{Runner: runner, AppsRoot: t.TempDir()}
+	if err := manager.Lifecycle(context.Background(), appmanifest.CPUMinerID, AppLifecycleStop, false); err != nil {
 		t.Fatal(err)
 	}
-	wantTail := []string{"stop", "--timeout", "2"}
-	if len(runner.commands) != 3 {
-		t.Fatalf("unexpected standalone command sequence: %#v", runner.commands)
-	}
-	gotArgs := runner.commands[2].args
-	if runner.commands[2].path != dockerComposePath || len(gotArgs) < len(wantTail) || !reflect.DeepEqual(gotArgs[len(gotArgs)-len(wantTail):], wantTail) {
-		t.Fatalf("unexpected standalone command sequence: %#v", runner.commands)
-	}
+	assertCatalogStopOnly(t, runner, 1)
 }
-
 func TestComposeAppLifecycleDryRunValidatesWithoutCommand(t *testing.T) {
 	appsRoot, _ := writeTestCPUMinerApp(t)
 	runner := &composeRecordingRunner{}
@@ -1465,7 +1449,7 @@ func TestComposeAppInspectRecognizesLegacyCPUMinerWithoutExecutingCompose(t *tes
 	}
 }
 
-func TestComposeAppInspectRejectsUnexpectedLegacyCPUMinerLayout(t *testing.T) {
+func TestComposeAppStartRejectsUnexpectedLegacyCPUMinerLayout(t *testing.T) {
 	appsRoot := t.TempDir()
 	appRoot := filepath.Join(appsRoot, appmanifest.CPUMinerID)
 	if err := os.Mkdir(appRoot, 0750); err != nil {
@@ -1483,12 +1467,18 @@ func TestComposeAppInspectRejectsUnexpectedLegacyCPUMinerLayout(t *testing.T) {
 	}
 	runner := &composeRecordingRunner{}
 	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot}
-	if _, err := manager.Inspect(context.Background(), appmanifest.CPUMinerID); err == nil {
+	if err := manager.Lifecycle(context.Background(), appmanifest.CPUMinerID, AppLifecycleStart, false); err == nil {
 		t.Fatal("unexpected legacy CPU miner declaration was accepted")
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("rejected legacy declaration reached Docker: %#v", runner.commands)
 	}
+	// Read-only status must remain usable even when starting this declaration is refused.
+	if _, err := manager.Inspect(context.Background(), appmanifest.CPUMinerID); err != nil {
+		t.Fatal(err)
+	}
+	assertCatalogStopOnly(t, runner, 0)
+
 }
 
 func TestComposeAppLifecycleStopsLegacyCPUMinerIdempotently(t *testing.T) {
@@ -1508,7 +1498,7 @@ func TestComposeAppLifecycleStopsLegacyCPUMinerIdempotently(t *testing.T) {
 		"ps",
 		"--no-trunc",
 		"--filter", "label=com.docker.compose.project=" + appmanifest.CPUMinerProject,
-		"--filter", "label=com.docker.compose.service=" + appmanifest.CPUMinerID,
+		"--filter", "label=com.docker.compose.oneoff=False",
 		"--format", "{{.ID}}",
 	}
 	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
@@ -1555,7 +1545,7 @@ func TestComposeAppInspectRejectsInvalidContainerIDBeforeStats(t *testing.T) {
 	}
 }
 
-func TestComposeAppInspectRejectsTamperedManifestBeforeCommand(t *testing.T) {
+func TestComposeAppStartRejectsTamperedManifestBeforeCommand(t *testing.T) {
 	appsRoot, _ := writeTestCPUMinerApp(t)
 	path := filepath.Join(appsRoot, appmanifest.CPUMinerID, appmanifest.CPUMinerComposeFile)
 	if err := os.WriteFile(path, []byte(appmanifest.CPUMinerCompose()+"    privileged: true\n"), 0600); err != nil {
@@ -1563,12 +1553,18 @@ func TestComposeAppInspectRejectsTamperedManifestBeforeCommand(t *testing.T) {
 	}
 	runner := &composeRecordingRunner{}
 	manager := &ComposeAppManager{Runner: runner, AppsRoot: appsRoot, TempRoot: t.TempDir()}
-	if _, err := manager.Inspect(context.Background(), "cpuminer"); err == nil {
+	if err := manager.Lifecycle(context.Background(), "cpuminer", AppLifecycleStart, false); err == nil {
 		t.Fatal("expected tampered manifest to fail")
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("rejected manifest executed commands: %#v", runner.commands)
 	}
+	// Read-only status must remain usable even when starting this declaration is refused.
+	if _, err := manager.Inspect(context.Background(), "cpuminer"); err != nil {
+		t.Fatal(err)
+	}
+	assertCatalogStopOnly(t, runner, 0)
+
 }
 
 func TestRootOwnedDirectoryHelperRejectsManagerSharedStorageRoots(t *testing.T) {

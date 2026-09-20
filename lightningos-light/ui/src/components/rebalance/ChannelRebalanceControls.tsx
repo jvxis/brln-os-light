@@ -21,9 +21,9 @@ export default function ChannelRebalanceControls({ channel, config, bypass, onAu
   const conviction = config ? rebalanceEligibility(channel, config).conviction : false
   const label = 'flex items-start gap-2 text-xs text-fog/75'
   return (
-    <div className="mt-3 min-w-0 space-y-2 md:min-w-[16rem]">
+    <div className="mt-3 min-w-0 space-y-2">
       <RebalanceEligibility channel={{ ...channel, auto_bypass_cost_gate: bypass }} config={config} />
-      <details className="rounded-xl border border-white/10 p-2">
+      <details className="w-80 max-w-full rounded-xl border border-white/10 p-2">
         <summary className="cursor-pointer rounded text-xs text-fog/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-300">{t('rebalanceEligibility.controls')}</summary>
         <div className="mt-3 space-y-3">
           <fieldset className="space-y-2" disabled={parked}>

@@ -230,11 +230,11 @@ func TestStartCpuMinerMigratesLegacyComposeAndPreservesEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
 	system.ConfigurePrivilegedClient(client)
 	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
 
-	if err := startCpuMinerAtPaths(context.Background(), paths); err != nil {
+	if err := (&Server{}).startCpuMinerAtPaths(context.Background(), paths); err != nil {
 		t.Fatal(err)
 	}
 	compose, err := os.ReadFile(paths.ComposePath)
@@ -248,12 +248,68 @@ func TestStartCpuMinerMigratesLegacyComposeAndPreservesEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantEnv := strings.Replace(legacyEnv, "jvx1971/cpu-lottery-miner:v1", cpuMinerBaselineImage, 1)
-	if string(env) != wantEnv {
-		t.Fatalf("legacy migration changed settings other than the image:\ngot:  %q\nwant: %q", env, wantEnv)
+	if readEnvValue(paths.EnvPath, "CPUMINER_IMAGE") != cpuMinerBaselineImage {
+		t.Fatalf("old image retained: %s", env)
+	}
+	for key, want := range map[string]string{"POOL_MODE": "brln", "MINING_ADDRESS": "bc1qlegacy", "THREADS": "1"} {
+		if readEnvValue(paths.EnvPath, key) != want {
+			t.Fatalf("user setting %s changed", key)
+		}
+	}
+	if client.prepareCalls == 0 {
+		t.Fatal("new image was not prepared")
 	}
 	if client.appCalls != 1 || client.appID != cpuMinerAppID || client.action != "start" || client.dryRun {
 		t.Fatalf("unexpected broker call: %#v", client)
+	}
+}
+
+func TestCpuMinerStartSelectsCatalogInsteadOfHistoricalImage(t *testing.T) {
+	for _, oldImage := range []string{"old.example/miner:0.0.1", "old.example/miner:0.7.9@sha256:" + strings.Repeat("a", 64)} {
+		t.Run(oldImage, func(t *testing.T) {
+			root := t.TempDir()
+			paths := cpuMinerPaths{Root: root, ComposePath: filepath.Join(root, "docker-compose.yaml"), EnvPath: filepath.Join(root, ".env")}
+			if err := os.WriteFile(paths.ComposePath, []byte("old-compose"), 0640); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(paths.EnvPath, []byte("CPUMINER_IMAGE="+oldImage+"\nMINING_ADDRESS=bc1qpreserved\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
+			system.ConfigurePrivilegedClient(client)
+			t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+			if err := (&Server{}).startCpuMinerAtPaths(context.Background(), paths); err != nil {
+				t.Fatal(err)
+			}
+			if readEnvValue(paths.EnvPath, "CPUMINER_IMAGE") != cpuMinerBaselineImage || readEnvValue(paths.EnvPath, "MINING_ADDRESS") != "bc1qpreserved" {
+				t.Fatal("catalog image/payout not preserved correctly")
+			}
+		})
+	}
+}
+
+func TestCpuMinerStartImageFailurePreservesDeclarations(t *testing.T) {
+	root := t.TempDir()
+	paths := cpuMinerPaths{Root: root, ComposePath: filepath.Join(root, "docker-compose.yaml"), EnvPath: filepath.Join(root, ".env")}
+	for _, p := range []string{paths.ComposePath, paths.EnvPath} {
+		if err := os.WriteFile(p, []byte("unchanged"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageErr: errors.New("unavailable")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	if err := (&Server{}).startCpuMinerAtPaths(context.Background(), paths); err == nil {
+		t.Fatal("missing image accepted")
+	}
+	for _, p := range []string{paths.ComposePath, paths.EnvPath} {
+		raw, err := os.ReadFile(p)
+		if err != nil || string(raw) != "unchanged" {
+			t.Fatal("failed preparation changed config")
+		}
+	}
+	if client.appCalls != 0 {
+		t.Fatal("failed preparation started app")
 	}
 }
 

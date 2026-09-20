@@ -214,14 +214,17 @@ func (manager *NativePeerSwapManager) Lifecycle(ctx context.Context, action AppL
 	if dryRun {
 		return PeerSwapState{Status: "validated"}, nil
 	}
-	if !safeNonEmptyRegularFile(manager.Paths.PeerswapdPath) || !safeNonEmptyRegularFile(manager.Paths.PSWebPath) || !safeNonEmptyRegularFile(manager.Paths.LNDMacaroonPath) {
-		return PeerSwapState{}, errors.New("PeerSwap is not ready")
-	}
-	if source, err := manager.Source(ctx); err != nil || !source.Configured {
-		return PeerSwapState{}, errors.New("PeerSwap Elements source is not configured")
-	} else if source.Source.Mode == appmanifest.PeerSwapElementsModeLocal {
-		if status, _ := manager.serviceStatus(ctx, appmanifest.ElementsService); status != "running" {
-			return PeerSwapState{}, errors.New("local Elements must be running before PeerSwap")
+	// Stopping fixed services must not depend on healthy dependencies or credentials.
+	if action != AppLifecycleStop {
+		if !safeNonEmptyRegularFile(manager.Paths.PeerswapdPath) || !safeNonEmptyRegularFile(manager.Paths.PSWebPath) || !safeNonEmptyRegularFile(manager.Paths.LNDMacaroonPath) {
+			return PeerSwapState{}, errors.New("PeerSwap is not ready")
+		}
+		if source, err := manager.Source(ctx); err != nil || !source.Configured {
+			return PeerSwapState{}, errors.New("PeerSwap Elements source is not configured")
+		} else if source.Source.Mode == appmanifest.PeerSwapElementsModeLocal {
+			if status, _ := manager.serviceStatus(ctx, appmanifest.ElementsService); status != "running" {
+				return PeerSwapState{}, errors.New("local Elements must be running before PeerSwap")
+			}
 		}
 	}
 	switch action {

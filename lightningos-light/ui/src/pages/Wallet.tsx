@@ -1,3 +1,4 @@
+import type { WalletRouteHop, WalletRouteProbe, WalletRouteSummary, WalletPaymentDetail } from '../api'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QrScanner from 'qr-scanner'
@@ -79,40 +80,6 @@ type WalletActivityItem = {
   payment_hash?: string
 }
 
-type WalletRouteHop = {
-  pubkey?: string
-  alias?: string
-  channel_id?: number
-  channel_capacity_sat?: number
-  amt_to_forward_sat?: number
-  amt_to_forward_msat?: number
-  fee_sat?: number
-  fee_msat?: number
-  expiry?: number
-}
-
-type WalletRouteProbe = {
-  status?: string
-  likely_liquid?: boolean
-  failure_code?: string
-  failure_source_index?: number
-  failure_hop_index?: number
-  message?: string
-}
-
-type WalletRouteSummary = {
-  route_key?: string
-  route_token?: string
-  total_amt_sat?: number
-  total_amt_msat?: number
-  total_fees_sat?: number
-  total_fees_msat?: number
-  total_time_lock?: number
-  hop_count?: number
-  hops?: WalletRouteHop[]
-  probe?: WalletRouteProbe
-}
-
 type WalletPaymentProbe = {
   success?: boolean
   fee_sat?: number
@@ -174,18 +141,6 @@ type WalletPaymentPreview = {
   routes?: WalletRouteSummary[]
   mpp_plan?: WalletMPPPlan
   recommendation?: WalletPaymentRecommendation
-}
-
-type WalletPaymentDetail = {
-  payment_hash?: string
-  payment_request?: string
-  status?: string
-  value_sat?: number
-  value_msat?: number
-  fee_sat?: number
-  fee_msat?: number
-  created_at?: string
-  route?: WalletRouteSummary
 }
 
 const walletActivityPageSize = 100
@@ -1633,6 +1588,14 @@ export default function Wallet() {
   const spendingGuardLimit = Number(spendingGuard?.rolling_24h_limit_sat || 0)
   const spendingGuardProgress = spendingGuardLimit > 0 ? Math.min(100, (spendingGuardConsumed / spendingGuardLimit) * 100) : 0
 
+  const activityPaymentDetail = selectedPaymentDetail?.payment_hash === selectedActivity?.payment_hash
+    ? selectedPaymentDetail : null
+  const invoiceCreatedAt = selectedActivity?.keysend ? undefined
+    : activityPaymentDetail?.invoice_created_at
+      || (selectedActivity?.type === 'invoice' ? selectedActivity.created_at : undefined)
+  const paymentStartedAt = activityPaymentDetail?.started_at
+  const paymentSettledAt = activityPaymentDetail?.settled_at || selectedActivity?.settled_at
+
   return (
     <section className="space-y-6">
       <div className="section-card">
@@ -2827,16 +2790,22 @@ export default function Wallet() {
                   <div className="mt-1">{formatSats(selectedActivity.fee_sat)} sats</div>
                 </div>
               )}
-              {selectedActivity.created_at && (
+              {invoiceCreatedAt && (
                 <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
-                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailCreatedAt')}</div>
-                  <div className="mt-1">{formatTimestamp(selectedActivity.created_at)}</div>
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailInvoiceCreatedAt')}</div>
+                  <div className="mt-1">{formatTimestamp(invoiceCreatedAt)}</div>
                 </div>
               )}
-              {selectedActivity.settled_at && (
+              {paymentStartedAt && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailPaymentStartedAt')}</div>
+                  <div className="mt-1">{formatTimestamp(paymentStartedAt)}</div>
+                </div>
+              )}
+              {paymentSettledAt && (
                 <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
-                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailSettledAt')}</div>
-                  <div className="mt-1">{formatTimestamp(selectedActivity.settled_at)}</div>
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailPaymentSettledAt')}</div>
+                  <div className="mt-1">{formatTimestamp(paymentSettledAt)}</div>
                 </div>
               )}
               {selectedActivity.memo && String(selectedActivity.type || '').toLowerCase() === 'invoice' && (

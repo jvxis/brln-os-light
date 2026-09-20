@@ -40,6 +40,18 @@ Optional `created_at` and `settled_at` timestamps are included only when known;
 unknown values are omitted instead of serialized as year-one dates. Consumers
 must not infer creation or settlement times from the event timestamp.
 
+`GET /api/wallet/payments/{paymentHash}` additionally returns these optional
+RFC3339 timestamps when LND retains the corresponding data:
+- `invoice_created_at`: BOLT11 timestamp decoded from the payment request;
+  absent for Keysend, missing invoices, or decode failures.
+- `started_at`: LND payment creation time, preferring nanosecond precision.
+- `settled_at`: latest resolution time among successful HTLC attempts, only
+  for successful payments with known resolution times for every successful shard.
+
+The legacy payment-detail `created_at` field retains its existing meaning
+(payment creation); the UI uses the explicit fields above to distinguish
+invoice creation from payment initiation. Missing dates are not estimated.
+
 ## Error format
 - Non-2xx responses return JSON: `{"error":"message","code":"optional_code"}`
 

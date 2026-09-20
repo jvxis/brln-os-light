@@ -8162,8 +8162,8 @@ type RecentActivity struct {
 	AmountSat     int64     `json:"amount_sat"`
 	Memo          string    `json:"memo"`
 	Timestamp     time.Time `json:"timestamp"`
-	CreatedAt     time.Time `json:"created_at,omitempty"`
-	SettledAt     time.Time `json:"settled_at,omitempty"`
+	CreatedAt     time.Time `json:"created_at,omitzero"`
+	SettledAt     time.Time `json:"settled_at,omitzero"`
 	Status        string    `json:"status"`
 	Txid          string    `json:"txid,omitempty"`
 	FeeSat        int64     `json:"fee_sat,omitempty"`

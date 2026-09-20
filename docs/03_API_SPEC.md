@@ -33,6 +33,13 @@ trust before the administrator logs in:
 
 The local CA private key is never returned or read by these handlers.
 
+## Wallet activity timestamps
+
+`GET /api/wallet/activity` returns activity items with an event `timestamp`.
+Optional `created_at` and `settled_at` timestamps are included only when known;
+unknown values are omitted instead of serialized as year-one dates. Consumers
+must not infer creation or settlement times from the event timestamp.
+
 ## Error format
 - Non-2xx responses return JSON: `{"error":"message","code":"optional_code"}`
 

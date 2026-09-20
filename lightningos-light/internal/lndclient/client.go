@@ -2028,7 +2028,8 @@ func routeForInvoicePayment(route *lnrpc.Route, decoded DecodedInvoice, amountMs
 			TotalAmtMsat: amountMsat,
 		}
 		finalHop.TlvPayload = true
-		finalHop.TotalAmtMsat = uint64(amountMsat)
+		// Hop.TotalAmtMsat is exclusive to blinded payments. Regular
+		// invoice payments carry their total only in the MPP record.
 	}
 	return cloned, nil
 }

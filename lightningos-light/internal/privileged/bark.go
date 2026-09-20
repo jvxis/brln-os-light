@@ -176,6 +176,16 @@ func (manager *NativeBarkWalletManager) Lifecycle(ctx context.Context, action Ap
 	if action != AppLifecycleStart && action != AppLifecycleStop {
 		return BarkWalletState{}, errors.New("Bark Wallet lifecycle action is not allowed")
 	}
+	if action == AppLifecycleStop {
+		if err := stopCatalogApp(ctx, manager.Runner, appmanifest.BarkWalletID, dryRun); err != nil {
+			return BarkWalletState{}, err
+		}
+		status := "stopped"
+		if dryRun {
+			status = "validated"
+		}
+		return BarkWalletState{Installed: manager.snapshotReady(), Status: status}, nil
+	}
 	if err := manager.validateSnapshot(); err != nil {
 		return BarkWalletState{}, err
 	}
@@ -196,11 +206,7 @@ func (manager *NativeBarkWalletManager) Lifecycle(ctx context.Context, action Ap
 	args := append([]string(nil), prefix...)
 	args = append(args, "--project-name", appmanifest.BarkWalletProject,
 		"--project-directory", manager.Paths.SnapshotRoot, "-f", manager.Paths.ComposePath)
-	if action == AppLifecycleStart {
-		args = append(args, "up", "-d")
-	} else {
-		args = append(args, "stop", "--timeout", strconv.Itoa(appmanifest.BarkWalletStopTimeout))
-	}
+	args = append(args, "up", "-d")
 	if _, err := manager.Runner.Run(ctx, command, args...); err != nil {
 		return BarkWalletState{}, errors.New("Bark Wallet lifecycle command failed")
 	}

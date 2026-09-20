@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"lightningos-light/internal/appmanifest"
@@ -123,5 +124,35 @@ func TestNativePeerSwapLifecycleRejectsArbitraryActionWithoutExecution(t *testin
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("rejected action executed commands: %#v", runner.commands)
+	}
+}
+
+func TestNativePeerSwapStopDoesNotRequireElementsOrCredentials(t *testing.T) {
+	runner := &composeRecordingRunner{}
+	paths := appmanifest.DefaultPeerSwapPaths()
+	paths.PeerswapdPath = filepath.Join(t.TempDir(), "missing-daemon")
+	paths.PSCLIPath = paths.PeerswapdPath
+	paths.PSWebPath = paths.PeerswapdPath
+	paths.LNDMacaroonPath = paths.PeerswapdPath
+	paths.DataRoot = filepath.Join(t.TempDir(), "missing-source")
+	manager := &NativePeerSwapManager{Runner: runner, Paths: paths}
+	if _, err := manager.Lifecycle(context.Background(), AppLifecycleStop, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 2 {
+		t.Fatalf("stop touched dependencies: %#v", runner.commands)
+	}
+	for i, unit := range []string{appmanifest.PeerSwapWebService, appmanifest.PeerSwapService} {
+		c := runner.commands[i]
+		if c.path != systemctlPath || strings.Join(c.args, " ") != "disable --now "+unit {
+			t.Fatalf("unexpected command: %#v", c)
+		}
+	}
+	runner.commands = nil
+	if _, err := manager.Lifecycle(context.Background(), AppLifecycleStart, false); err == nil {
+		t.Fatal("start bypassed readiness")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatal("unsafe start executed")
 	}
 }

@@ -102,6 +102,16 @@ func (manager *NativePublicPoolManager) Lifecycle(ctx context.Context, action Ap
 	if action != AppLifecycleStart && action != AppLifecycleStop {
 		return PublicPoolState{}, errors.New("Public Pool lifecycle action is not allowed")
 	}
+	if action == AppLifecycleStop {
+		if err := stopCatalogApp(ctx, manager.Runner, appmanifest.PublicPoolID, dryRun); err != nil {
+			return PublicPoolState{}, err
+		}
+		status := "stopped"
+		if dryRun {
+			status = "validated"
+		}
+		return PublicPoolState{Installed: manager.snapshotReady(), Status: status}, nil
+	}
 	if _, err := manager.validateSnapshot(); err != nil {
 		return PublicPoolState{}, err
 	}
@@ -122,11 +132,7 @@ func (manager *NativePublicPoolManager) Lifecycle(ctx context.Context, action Ap
 	args := append([]string(nil), prefix...)
 	args = append(args, "--project-name", appmanifest.PublicPoolProject, "--project-directory", manager.Paths.SnapshotRoot,
 		"-f", manager.Paths.ComposePath)
-	if action == AppLifecycleStart {
-		args = append(args, "up", "-d")
-	} else {
-		args = append(args, "stop", "--timeout", strconv.Itoa(appmanifest.PublicPoolStopTimeout))
-	}
+	args = append(args, "up", "-d")
 	if _, err := manager.Runner.Run(ctx, command, args...); err != nil {
 		return PublicPoolState{}, errors.New("Public Pool lifecycle command failed")
 	}

@@ -146,6 +146,9 @@ func removeRoboSatsApp(ctx context.Context, paths robosatsPaths) error {
 }
 
 func (s *Server) startRobosats(ctx context.Context) error {
+	if err := ensureRobosatsImages(ctx); err != nil {
+		return err
+	}
 	paths := robosatsAppPaths()
 	if fileExists(paths.ComposePath) {
 		if err := prepareRoboSatsCatalogAssets(paths); err != nil {
@@ -164,12 +167,6 @@ func (s *Server) startRobosats(ctx context.Context) error {
 }
 
 func (s *Server) stopRobosats(ctx context.Context) error {
-	paths := robosatsAppPaths()
-	if fileExists(paths.ComposePath) {
-		if err := prepareRoboSatsCatalogAssets(paths); err != nil {
-			return err
-		}
-	}
 	if handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.RoboSatsID, "stop"); !handled {
 		return errors.New("RoboSats lifecycle requires privileged broker enforce mode")
 	} else {

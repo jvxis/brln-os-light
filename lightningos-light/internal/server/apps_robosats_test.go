@@ -14,7 +14,7 @@ import (
 )
 
 func TestRoboSatsStartAndStopEnforceUseBroker(t *testing.T) {
-	client := &cpuMinerPrivilegedClient{mode: "enforce"}
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready"}
 	system.ConfigurePrivilegedClient(client)
 	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
 	server := &Server{}
@@ -24,6 +24,9 @@ func TestRoboSatsStartAndStopEnforceUseBroker(t *testing.T) {
 	}
 	if client.appCalls != 1 || client.appID != appmanifest.RoboSatsID || client.action != "start" || client.dryRun || client.firewallCalls != 1 || client.firewallAppID != appmanifest.RoboSatsID || client.firewallDryRun {
 		t.Fatalf("unexpected start broker call: %#v", client)
+	}
+	if !reflect.DeepEqual(client.preparedVariants, []string{"client", "tor", "proxy"}) {
+		t.Fatal("start did not prepare current images")
 	}
 	if err := server.stopRobosats(context.Background()); err != nil {
 		t.Fatal(err)
@@ -60,7 +63,7 @@ func TestEnsureRoboSatsUFWAccessEnforceFailsClosed(t *testing.T) {
 }
 
 func TestRoboSatsLifecycleEnforceFailsClosed(t *testing.T) {
-	client := &cpuMinerPrivilegedClient{mode: "enforce", lifecycleErr: errors.New("rejected")}
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageStatus: "ready", lifecycleErr: errors.New("rejected")}
 	system.ConfigurePrivilegedClient(client)
 	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
 	server := &Server{}
@@ -73,6 +76,25 @@ func TestRoboSatsLifecycleEnforceFailsClosed(t *testing.T) {
 	}
 	if client.appCalls != 2 {
 		t.Fatalf("unexpected broker calls: %#v", client)
+	}
+}
+
+func TestRoboSatsStopDoesNotPrepareImagesAndStartFailsClosedOnPullFailure(t *testing.T) {
+	client := &cpuMinerPrivilegedClient{mode: "enforce", imageErr: errors.New("pull unavailable")}
+	system.ConfigurePrivilegedClient(client)
+	t.Cleanup(func() { system.ConfigurePrivilegedClient(nil) })
+	server := &Server{}
+	if err := server.stopRobosats(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.prepareCalls != 0 || client.appCalls != 1 {
+		t.Fatal("stop tried to upgrade")
+	}
+	if err := server.startRobosats(context.Background()); err == nil {
+		t.Fatal("start ignored image failure")
+	}
+	if client.appCalls != 1 {
+		t.Fatal("start ran without verified images")
 	}
 }
 

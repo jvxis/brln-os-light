@@ -107,19 +107,6 @@ func (s *Server) uninstallBRLNCommunity(ctx context.Context) error {
 }
 
 func (s *Server) stopBRLNCommunity(ctx context.Context) error {
-	handled, state, err := system.BRLNCommunityStatusWithBroker(ctx)
-	if !handled {
-		return errors.New("BR⚡LN Community status requires privileged broker enforce mode")
-	}
-	if err != nil {
-		return err
-	}
-	if !state.Installed {
-		return errors.New("BR⚡LN Community is not installed")
-	}
-	if state.Status != "running" {
-		return nil
-	}
 	if handled, err := system.BRLNCommunityLifecycleWithBroker(ctx, "stop"); !handled {
 		return errors.New("BR⚡LN Community lifecycle requires privileged broker enforce mode")
 	} else {

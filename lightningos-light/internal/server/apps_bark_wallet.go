@@ -116,27 +116,6 @@ func (s *Server) uninstallBarkWallet(ctx context.Context) error {
 }
 
 func (s *Server) stopBarkWallet(ctx context.Context) error {
-	handled, state, err := system.BarkWalletStatusWithBroker(ctx)
-	if !handled {
-		return errors.New("Bark Wallet status requires privileged broker enforce mode")
-	}
-	if err != nil {
-		return err
-	}
-	if !state.Installed {
-		return errors.New("Bark Wallet is not installed")
-	}
-	if state.Status != "running" {
-		return nil
-	}
-	// A legacy installation may be running before its first 0.5.3 start. Enroll
-	// its declaration and permissions without recreating containers so stop
-	// remains available immediately after an in-place upgrade.
-	if handled, err := system.EnsureBarkWalletWithBroker(ctx); !handled {
-		return errors.New("Bark Wallet preparation requires privileged broker enforce mode")
-	} else if err != nil {
-		return fmt.Errorf("Bark Wallet preparation failed: %w", err)
-	}
 	if handled, err := system.BarkWalletLifecycleWithBroker(ctx, "stop"); !handled {
 		return errors.New("Bark Wallet lifecycle requires privileged broker enforce mode")
 	} else {

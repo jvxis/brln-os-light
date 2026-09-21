@@ -30,7 +30,7 @@ catalog capabilities rather than an argument allowlist.
 | --- | --- | --- | --- |
 | `bitcoincore` | Compose | Broker: verified image, storage/config, lifecycle, status, logs, network and firewall | None |
 | `bark-wallet` | Compose | Broker: exact images/runtime, lifecycle, firewall and password operations | None |
-| `brln-community` | Compose (test build, 0.5.29) | Broker: exact images/runtime, lifecycle, data-preserving removal, firewall and signer access password read | None |
+| `brln-community` | Compose (test build, 0.5.29; node pairing relay since 0.5.33) | Broker: exact images/runtime, lifecycle, data-preserving removal, firewall and signer access password read | None |
 | `electrs` | Compose | Broker: verified build, private Bitcoin credential, lifecycle and inspection | None |
 | `mempool` | Compose | Broker: images, Full Node/Electrs gate, lifecycle, removal and firewall | None |
 | `fedimint-guardian` | Compose | Broker: exact runtime, lifecycle, logs and firewall | None |

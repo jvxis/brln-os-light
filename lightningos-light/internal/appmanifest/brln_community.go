@@ -9,8 +9,13 @@ import (
 
 // BR⚡LN Community is the members chat of the BR⚡LN Club (test build). The node
 // runs a local copy of the chat and the member's Nostr remote signer (NIP-46).
-// The key never leaves the signer data directory; the relays are operated by
-// the club and are reached over outbound WebSockets only.
+// The key never leaves the signer data directory; the chat relay is operated by
+// the club and is reached over an outbound WebSocket only.
+//
+// The node also runs its own NIP-46 pairing relay next to the signer, so the chat
+// and the signer on the same node do not need the club's server to talk to each
+// other. The club's pairing relay stays in every pairing link for devices that
+// cannot reach the node.
 const (
 	BRLNCommunityID              = "brln-community"
 	BRLNCommunityProject         = "brln-community"
@@ -23,6 +28,8 @@ const (
 	BRLNCommunityWebInternalPort = 8080
 	BRLNCommunitySignerPort      = 8081
 	BRLNCommunitySignerRelay     = "wss://signer.br-ln.com"
+	BRLNCommunityPairingPort     = 3335
+	BRLNCommunityPairingPath     = "/pairing"
 
 	BRLNCommunityWebUID    = 101
 	BRLNCommunityWebGID    = 101
@@ -30,10 +37,14 @@ const (
 	BRLNCommunitySignerGID = 65529
 	BRLNCommunityProxyUID  = 65532
 	BRLNCommunityProxyGID  = 65532
+	// The pairing relay runs from the signer image but never as the signer: it holds
+	// nothing and mounts nothing, and a separate identity keeps it that way.
+	BRLNCommunityPairingUID = 65528
+	BRLNCommunityPairingGID = 65528
 
-	BRLNCommunityRelease             = "0.1.16"
-	BRLNCommunityWebDigest           = "1475abb9fad29c20a0b404d1ebe4d60c11a8063079338db14fb9722374a9f5a6"
-	BRLNCommunitySignerDigest        = "e333d60963e29591b1a79e3185f0bc2eb99dade6c3c823322f506fdd37bfa342"
+	BRLNCommunityRelease             = "0.1.18"
+	BRLNCommunityWebDigest           = "3a8c1e74d365c0cc02e17aac0e7c5b3e5b7e81ebe3b16ee568accc971567ba57"
+	BRLNCommunitySignerDigest        = "414987115257a54c4e5038896d040b19f082fc97800496beb14de6645fe41b0d"
 	BRLNCommunitySignerVersionOutput = "brln-signer " + BRLNCommunityRelease
 
 	BRLNCommunityWebImage    = "ghcr.io/jvxis/brln-community-web:" + BRLNCommunityRelease + "@sha256:" + BRLNCommunityWebDigest
@@ -115,12 +126,23 @@ https://:%d {
 			reverse_proxy signer:%d
 		}
 
+		# The node's own pairing relay. It only carries NIP-46 messages, which are
+		# end-to-end encrypted between device and signer, so it sits beside the chat
+		# rather than behind the LightningOS reauthentication.
+		@pairing path %s %s/
+		handle @pairing {
+			rewrite * /
+			reverse_proxy pairing:%d
+		}
+
 		handle {
 			reverse_proxy web:%d
 		}
 	}
 }
-`, BRLNCommunityPort, BRLNCommunitySignerPort, BRLNCommunitySignerPort, BRLNCommunityWebInternalPort)
+`, BRLNCommunityPort, BRLNCommunitySignerPort, BRLNCommunitySignerPort,
+		BRLNCommunityPairingPath, BRLNCommunityPairingPath, BRLNCommunityPairingPort,
+		BRLNCommunityWebInternalPort)
 }
 
 // brlnCommunityProxyConfigHash pins the proxy service to its configuration, so a
@@ -164,11 +186,30 @@ func BRLNCommunityCompose(paths BRLNCommunityComposePaths) (string, error) {
       DATA_DIR: /data
       LISTEN: ":%d"
       RELAYS: %s
+      LOCAL_RELAY: ws://pairing:%d
+      LOCAL_RELAY_PATH: %s
       KEY_PASSWORD_FILE: /run/lightningos-auth/key_password
       ACCESS_PASSWORD_FILE: /run/lightningos-auth/access_password
     volumes:
       - %s:/data:rw
       - %s:/run/lightningos-auth:ro
+    depends_on:
+      - pairing
+
+  pairing:
+    image: %s
+    restart: unless-stopped
+    stop_grace_period: %ds
+    user: "%d:%d"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    entrypoint:
+      - /brln-signer-relay
+    environment:
+      PORT: "%d"
 
   proxy:
     image: %s
@@ -208,13 +249,18 @@ func BRLNCommunityCompose(paths BRLNCommunityComposePaths) (string, error) {
     depends_on:
       - web
       - signer
+      - pairing
 
 networks:
   default:
     name: brln-community_default
 `, BRLNCommunityWebImage, BRLNCommunityStopTimeout, BRLNCommunityWebUID, BRLNCommunityWebGID,
 		BRLNCommunitySignerImage, BRLNCommunityStopTimeout, BRLNCommunitySignerUID, BRLNCommunitySignerGID,
-		BRLNCommunitySignerPort, BRLNCommunitySignerRelay, paths.SignerDir, paths.AuthDir,
+		BRLNCommunitySignerPort, BRLNCommunitySignerRelay,
+		BRLNCommunityPairingPort, BRLNCommunityPairingPath,
+		paths.SignerDir, paths.AuthDir,
+		BRLNCommunitySignerImage, BRLNCommunityStopTimeout, BRLNCommunityPairingUID, BRLNCommunityPairingGID,
+		BRLNCommunityPairingPort,
 		BRLNCommunityProxyImage, BRLNCommunityStopTimeout, BRLNCommunityProxyUID, BRLNCommunityProxyGID,
 		brlnCommunityProxyConfigHash(),
 		BRLNCommunityPort, BRLNCommunityPort,

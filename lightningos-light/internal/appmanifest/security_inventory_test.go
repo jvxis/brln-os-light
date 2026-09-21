@@ -89,8 +89,9 @@ func TestComposeCatalogSecurityInventory(t *testing.T) {
 		BarkWalletID + "/proxy": hardened,
 
 		BRLNCommunityID + "/web":    hardened,
-		BRLNCommunityID + "/signer": hardened,
-		BRLNCommunityID + "/proxy":  hardened,
+		BRLNCommunityID + "/signer":  hardened,
+		BRLNCommunityID + "/pairing": hardened,
+		BRLNCommunityID + "/proxy":   hardened,
 	}
 
 	imageExceptions := map[string]string{

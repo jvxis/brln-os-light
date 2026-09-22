@@ -677,21 +677,34 @@ the disposable Ubuntu 26.04 VM. Evidence:
 and
 `docs/baselines/privilege-hardening-phase2-bark-wallet-reauth-2026-08-13.json`.
 
-The BR⚡LN Community test app (app release 0.1.11, shipped from the 0.5.29
-series) follows the Bark Wallet
+The BR⚡LN Community test app (app release 0.1.24 in the 0.5.33 series; first
+shipped as 0.1.11 in the 0.5.29 series) follows the Bark Wallet
 pattern. Six typed operations (`app.brlncommunity.status`, `.ensure`,
 `.lifecycle`, `.remove`, `.firewall`, `.password.read`) own its exact runtime,
 lifecycle, data-preserving removal, fixed port 4448 and the signer access
-password read. The chat (`ghcr.io/jvxis/brln-community-web:0.1.11`), the NIP-46
-signer (`ghcr.io/jvxis/brln-signer:0.1.11`) and the Caddy proxy shared with Bark
+password read. The chat (`ghcr.io/jvxis/brln-community-web:0.1.24`), the NIP-46
+signer (`ghcr.io/jvxis/brln-signer:0.1.24`) and the Caddy proxy shared with Bark
 are manifest-digest pinned; the broker probes nginx and Caddy and requires the
-exact `brln-signer 0.1.11` version output before lifecycle execution. All
+exact `brln-signer 0.1.24` version output before lifecycle execution. All
 services are non-root, read-only, capability-free and `no-new-privileges`.
 Only the signer (dedicated UID/GID 65529) mounts
 `apps-data/brln-community/signer`, where the member's Nostr key stays NIP-49
 encrypted under a broker-generated key password; the broker never reads or
 returns the key, and uninstall preserves both the signer data and the local
-secrets. The app has no LND, Bitcoin, macaroon or LND TLS access. Signer calls
+secrets. The app has no LND, Bitcoin, macaroon or LND TLS access.
+
+Since 0.1.22 the node also runs its own NIP-46 pairing relay (`pairing`). It runs
+the pinned signer image with the `/brln-signer-relay` entrypoint, but under its
+own UID/GID 65528, so it never shares the signer's identity: it mounts nothing,
+publishes no port, has no host access and writes nothing (read-only, messages
+held in memory only). Devices reach it only through Caddy at `/pairing`, outside
+`forward_auth`, because it carries end-to-end encrypted NIP-46 traffic rather
+than key changes; the signer reaches it internally as `ws://pairing:3335`. The
+signer listens there and on the club's `wss://signer.br-ln.com`, and each
+pairing link names the relay at the address the browser used to reach the node
+followed by the club's, so a chat and a signer on the same node no longer need
+the club's server to sign, while devices that cannot reach the node keep
+working through it. Signer calls
 that create, import or export the key, or pair a device, pass a three-minute
 `brln_community_signer` LightningOS reauthentication gate through Caddy
 `forward_auth`, which trusts only the fixed root-owned LightningOS CA, uses SNI

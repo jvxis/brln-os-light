@@ -5158,6 +5158,7 @@
         "scanReasonCooldownProbeNotSovereign": "cooldown-probe outside autopilot",
         "scanReasonTargetStructuralCooldown": "target structural cooldown",
         "scanReasonPaidLiquidityUnsoldCooldown": "unsold paid liquidity cooldown",
+        "scanReasonInventoryUnavailable": "paid inventory unavailable; replenishment paused",
         "scanReasonPaidLiquidityUnsoldPenalty": "unsold paid liquidity penalty",
         "scanReasonLowSuccessOpportunity": "low-success opportunity below floor",
         "scanReasonBudgetEfficiency": "budget efficiency below floor",
@@ -5236,6 +5237,8 @@
       "roi": "ROI: {{value}}",
       "unsoldLiquidity": "Paid liquidity: {{sent}} · sold: {{forwarded}}",
       "unsoldPayback": "Recovered fee: {{fee}} · score {{multiplier}}",
+      "unsoldInventory": "Remaining in lots under observation: {{value}}",
+      "inventoryProbe": "Reduced inventory exploration: {{value}}",
       "targetClass": "Class: {{value}}",
       "targetClasses": {
         "fast_seller": "fast seller",

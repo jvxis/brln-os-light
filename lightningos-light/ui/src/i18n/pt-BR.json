@@ -5158,6 +5158,7 @@
       "scanReasonCooldownProbeNotSovereign": "cooldown-probe fora do autopilot",
       "scanReasonTargetStructuralCooldown": "target em cooldown estrutural",
       "scanReasonPaidLiquidityUnsoldCooldown": "liquidez paga não vendida em cooldown",
+      "scanReasonInventoryUnavailable": "estoque pago indisponível; reposição pausada",
       "scanReasonPaidLiquidityUnsoldPenalty": "liquidez paga não vendida penalizada",
       "scanReasonLowSuccessOpportunity": "oportunidade com baixo sucesso abaixo do piso",
       "scanReasonBudgetEfficiency": "eficiência de budget abaixo do piso",
@@ -5236,6 +5237,8 @@
       "roi": "ROI: {{value}}",
       "unsoldLiquidity": "Liquidez paga: {{sent}} · vendido: {{forwarded}}",
       "unsoldPayback": "Fee recuperada: {{fee}} · score {{multiplier}}",
+      "unsoldInventory": "Saldo dos lotes em observação: {{value}}",
+      "inventoryProbe": "Exploração reduzida por estoque: {{value}}",
       "targetClass": "Classe: {{value}}",
       "targetClasses": {
         "fast_seller": "venda rápida",

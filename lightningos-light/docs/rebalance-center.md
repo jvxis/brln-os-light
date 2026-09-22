@@ -3,6 +3,8 @@
 **Versão-base auditada:** 0.5.22-Beta
 **Última revisão:** 2026-08-29
 
+Complemento da 0.5.33: [estoque sem venda e novas reposições no Sovereign](sovereign-unsold-inventory-0.5.33.md).
+
 Documento consolidado em duas partes:
 
 - **[Parte I — Como o Rebalance Center funciona](#parte-i--como-o-rebalance-center-funciona)** —

@@ -277,9 +277,7 @@ const (
 	sovereignUnsoldPaidLiquidityReason           = "paid_liquidity_unsold_cooldown"
 	sovereignUnsoldPaidLiquidityPenaltyReason    = "paid_liquidity_unsold_penalty"
 	sovereignUnsoldPaidLiquidityLookback         = 24 * time.Hour
-	sovereignUnsoldPaidLiquidityMinAge           = 2 * time.Hour
 	sovereignUnsoldPaidLiquidityHardAge          = 4 * time.Hour
-	sovereignUnsoldPaidLiquidityMinFillPct       = int64(25)
 	sovereignUnsoldPaidLiquidityMinForwardPct    = int64(10)
 	sovereignUnsoldPaidLiquidityMinFeePaybackPct = int64(25)
 	sovereignUnsoldPaidLiquiditySevereFillPct    = int64(75)
@@ -1016,6 +1014,10 @@ type RebalanceSovereignDecision struct {
 	ROIMultiplier               float64 `json:"roi_multiplier,omitempty"`
 	BudgetEfficiencyMultiplier  float64 `json:"budget_efficiency_multiplier,omitempty"`
 	UnsoldLiquidityMultiplier   float64 `json:"unsold_liquidity_multiplier,omitempty"`
+	UnsoldPaidSat               int64   `json:"unsold_paid_sat,omitempty"`
+	UnsoldOldestAt              string  `json:"unsold_oldest_at,omitempty"`
+	UnsoldLastPaidAt            string  `json:"unsold_last_paid_at,omitempty"`
+	InventoryProbe              bool    `json:"inventory_probe,omitempty"`
 	RealizedEconomicsMultiplier float64 `json:"realized_economics_multiplier,omitempty"`
 	ExplorationSlot             bool    `json:"exploration_slot,omitempty"`
 	IntentKind                  string  `json:"intent_kind,omitempty"`
@@ -1344,12 +1346,15 @@ type sovereignTargetStructuralCooldownStat struct {
 }
 
 type sovereignUnsoldLiquidityStat struct {
+	Unavailable      bool
 	CompletedAt      time.Time
+	LastPaidAt       time.Time
 	TargetAmountSat  int64
 	SentSat          int64
 	FeePaidSat       int64
 	ForwardAmountSat int64
 	ForwardFeeSat    int64
+	ForwardFeeMsat   int64
 }
 
 type rebalanceJobEconomics struct {
@@ -4389,6 +4394,15 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		if budgetCost <= 0 {
 			budgetCost = estimatedCost
 		}
+		inventoryAmount, inventoryReason := sovereignUnsoldInventoryAllowance(target.UnsoldLiquidity, targetCfg, scanAt, target.ExplorationSlot, targetAmount)
+		inventoryProbe := inventoryReason == "" && inventoryAmount < targetAmount
+		if inventoryProbe {
+			targetAmount = inventoryAmount
+			budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
+			estimatedCost = estimateSovereignTargetCost(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, targetCfg)
+			target.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
+			target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
+		}
 		historicalSuccessRate, historicalAttempts := sovereignHistoricalSuccessRate(target.PairStats)
 		expectedProfit := target.ExpectedGainSat - estimatedCost
 		decision := RebalanceSovereignDecision{
@@ -4432,6 +4446,8 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			ROIMultiplier:               target.ROIMultiplier,
 			BudgetEfficiencyMultiplier:  target.BudgetEfficiencyMultiplier,
 			UnsoldLiquidityMultiplier:   target.UnsoldLiquidityMultiplier,
+			UnsoldPaidSat:               target.UnsoldLiquidity.SentSat - target.UnsoldLiquidity.ForwardAmountSat,
+			InventoryProbe:              inventoryProbe,
 			RealizedEconomicsMultiplier: target.RealizedEconomicsMultiplier,
 			ExplorationSlot:             target.ExplorationSlot,
 		}
@@ -4440,15 +4456,20 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			decision.IntentReason = target.AutomationIntent.ReasonCode
 			decision.IntentConfidence = target.AutomationIntent.Confidence
 		}
+		if !target.UnsoldLiquidity.CompletedAt.IsZero() {
+			decision.UnsoldOldestAt = target.UnsoldLiquidity.CompletedAt.UTC().Format(time.RFC3339)
+		}
+		if !target.UnsoldLiquidity.LastPaidAt.IsZero() {
+			decision.UnsoldLastPaidAt = target.UnsoldLiquidity.LastPaidAt.UTC().Format(time.RFC3339)
+		}
 		if target.StructuralCooldown.LastFailureAttempts > decision.RecentStructuralFailures {
 			decision.RecentStructuralFailures = target.StructuralCooldown.LastFailureAttempts
 		}
 
-		// ExplorationSlot bypasses every empirical-history gate (including the
-		// budget-efficiency hard skip) so that a chronically deprioritized
-		// channel can be retried in spite of past failures or weak observed
-		// profit/cost ratios. Only hard operational gates (cycle limit, profit
-		// floor, channel busy, budget refit math) still apply. CooldownProbe
+		// Exploration bypasses empirical-history gates except inventory pacing,
+		// so a deprioritized channel can still be retried with a bounded probe.
+		// Operational and resized-probe economics gates remain in force.
+		// CooldownProbe
 		// entries are a distinct mechanism and remain non-sovereign regardless.
 		switch {
 		case target.CooldownProbe:
@@ -4457,8 +4478,11 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		case !target.ExplorationSlot && shouldSkipSovereignTargetStructuralCooldown(target.StructuralCooldown, cfg, scanAt):
 			decision.Reason = sovereignTargetStructuralCooldownReason
 			noteSkip(decision.Reason)
-		case !target.ExplorationSlot && shouldSkipSovereignUnsoldPaidLiquidity(target.UnsoldLiquidity, cfg, scanAt):
-			decision.Reason = sovereignUnsoldPaidLiquidityReason
+		case inventoryReason != "":
+			decision.Reason = inventoryReason
+			noteSkip(decision.Reason)
+		case inventoryProbe && targetCfg.ROIMin > 0 && decision.ExpectedROIValid && decision.ExpectedROI < targetCfg.ROIMin:
+			decision.Reason = "roi_guardrail"
 			noteSkip(decision.Reason)
 		case !target.ExplorationSlot && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
 			decision.Reason = sovereignRouteDeadOpportunityReason
@@ -4486,7 +4510,8 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			decision.Reason = "channel_busy"
 			noteSkip(decision.Reason)
 		default:
-			amountOverride := int64(0)
+			// Persist the selected execution batch, not the strategic deficit.
+			amountOverride := targetAmount
 			if budgetEnforced && budgetCost > remaining {
 				maxFeeMsat, err := calcFeeLimitMsat(targetAmount*1000, targetPolicy, nil, targetCfg)
 				if err != nil || maxFeeMsat <= 0 {
@@ -4525,6 +4550,13 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 				decision.BudgetCostSat = budgetCost
 				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
 				decision.ExpectedProfitSat = decision.ExpectedGainSat - decision.EstimatedCostSat
+				decision.ExpectedROI, decision.ExpectedROIValid = estimateTargetROI(decision.ExpectedGainSat, decision.EstimatedCostSat, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
+				if inventoryProbe && targetCfg.ROIMin > 0 && decision.ExpectedROIValid && decision.ExpectedROI < targetCfg.ROIMin {
+					decision.Reason = "roi_guardrail"
+					noteSkip(decision.Reason)
+					appendDecision(decision)
+					continue
+				}
 				if !(target.ExplorationSlot && decision.ExpectedProfitSat >= 0) && decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
 					decision.Reason = "expected_profit_below_min"
 					noteSkip(decision.Reason)
@@ -9434,107 +9466,37 @@ group by target_channel_id
 }
 
 func (s *RebalanceService) loadSovereignUnsoldPaidLiquidityStats(ctx context.Context, cfg RebalanceConfig, targetIDs []uint64, now time.Time) map[uint64]sovereignUnsoldLiquidityStat {
-	stats := map[uint64]sovereignUnsoldLiquidityStat{}
 	if s.db == nil || len(targetIDs) == 0 {
-		return stats
+		return nil
 	}
-	ids := make([]int64, 0, len(targetIDs))
-	seen := map[uint64]struct{}{}
+	validIDs := make([]uint64, 0, len(targetIDs))
 	for _, id := range targetIDs {
-		if id == 0 {
-			continue
+		if id != 0 {
+			validIDs = append(validIDs, id)
 		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, int64(id))
 	}
-	if len(ids) == 0 {
-		return stats
+	if len(validIDs) == 0 {
+		return nil // an empty filter would load every target
 	}
 	if now.IsZero() {
 		now = time.Now()
 	}
-	lookback := time.Duration(sovereignSlowSellerWindowHoursForConfig(cfg)) * time.Hour
-	if lookback < sovereignUnsoldPaidLiquidityLookback {
-		lookback = sovereignUnsoldPaidLiquidityLookback
-	}
-	since := now.Add(-lookback)
-	rows, err := s.db.Query(ctx, `
-with job_stats as (
-  select
-    j.id,
-    j.target_channel_id,
-    j.completed_at,
-    j.target_amount_sat,
-    coalesce(sum(a.amount_sat) filter (where a.status='succeeded'), 0) as sent_sat,
-    coalesce(sum(a.fee_paid_sat) filter (where a.status='succeeded'), 0) as fee_paid_sat
-  from rebalance_jobs j
-  left join rebalance_attempts a on a.job_id = j.id
-  where j.target_channel_id = any($1::bigint[])
-    and j.trigger_reason = $2
-    and j.status in ('succeeded','partial')
-    and j.completed_at is not null
-    and j.completed_at >= $3
-    and j.completed_at <= $4
-  group by j.id, j.target_channel_id, j.completed_at, j.target_amount_sat
-),
-latest as (
-  select distinct on (target_channel_id)
-    id, target_channel_id, completed_at, target_amount_sat, sent_sat, fee_paid_sat
-  from job_stats
-  where sent_sat > 0
-    and target_amount_sat > 0
-    and sent_sat * 100 >= target_amount_sat * $5
-  order by target_channel_id, completed_at desc, id desc
-)
-select
-  l.target_channel_id,
-  l.completed_at,
-  l.target_amount_sat,
-  l.sent_sat,
-  l.fee_paid_sat,
-  coalesce(sum(n.amount_sat), 0) as forward_amount_sat,
-  coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end), 0) as forward_fee_msat
-from latest l
-left join notifications n on n.type='forward'
-  and n.channel_id = l.target_channel_id
-  and n.occurred_at >= l.completed_at
-  and n.occurred_at <= $4
-group by l.target_channel_id, l.completed_at, l.target_amount_sat, l.sent_sat, l.fee_paid_sat
-`, ids, rebalanceSovereignReason, since, now, sovereignUnsoldPaidLiquidityMinFillPct)
+	// One extra window supplies FIFO context: a sale belonging to an older
+	// lot must not be assigned to a new purchase at the reporting boundary.
+	lots, forwards, err := s.loadRebalanceAttributionInputs(ctx, now.Add(-2*sovereignUnsoldInventoryWindow(cfg)), validIDs)
 	if err != nil {
-		return stats
+		if s.logger != nil {
+			s.logger.Printf("rebalance unsold inventory unavailable: %v", err)
+		}
+		// Unknown inventory is not empty inventory. Pause only Sovereign
+		// replenishment; the separate operator/guaranteed paths are unchanged.
+		unavailable := make(map[uint64]sovereignUnsoldLiquidityStat, len(validIDs))
+		for _, id := range validIDs {
+			unavailable[id] = sovereignUnsoldLiquidityStat{Unavailable: true}
+		}
+		return unavailable
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var channelID int64
-		var completedAt time.Time
-		var targetAmountSat int64
-		var sentSat int64
-		var feePaidSat int64
-		var forwardAmountSat int64
-		var forwardFeeMsat int64
-		if err := rows.Scan(&channelID, &completedAt, &targetAmountSat, &sentSat, &feePaidSat, &forwardAmountSat, &forwardFeeMsat); err != nil {
-			return stats
-		}
-		if channelID == 0 || sentSat <= 0 {
-			continue
-		}
-		stat := sovereignUnsoldLiquidityStat{
-			CompletedAt:      completedAt,
-			TargetAmountSat:  targetAmountSat,
-			SentSat:          sentSat,
-			FeePaidSat:       feePaidSat,
-			ForwardAmountSat: forwardAmountSat,
-			ForwardFeeSat:    forwardFeeMsat / 1000,
-		}
-		if hasSovereignUnsoldPaidLiquidity(stat, cfg, now) {
-			stats[uint64(channelID)] = stat
-		}
-	}
-	return stats
+	return buildSovereignUnsoldInventory(lots, forwards, cfg, now)
 }
 
 func (s *RebalanceService) acquireSem(ctx context.Context) bool {
@@ -11589,7 +11551,7 @@ func hasSovereignUnsoldPaidLiquidity(stat sovereignUnsoldLiquidityStat, cfg Reba
 	if lookback < sovereignUnsoldPaidLiquidityLookback {
 		lookback = sovereignUnsoldPaidLiquidityLookback
 	}
-	if age < sovereignUnsoldPaidLiquidityMinAge || age > lookback {
+	if age < 0 || age >= lookback {
 		return false
 	}
 	if stat.ForwardAmountSat*100 >= stat.SentSat*sovereignUnsoldPaidLiquidityMinForwardPct {

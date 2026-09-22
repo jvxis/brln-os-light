@@ -1476,6 +1476,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonTargetStructuralCooldown')
       case 'paid_liquidity_unsold_cooldown':
         return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldCooldown')
+      case 'paid_liquidity_inventory_unavailable':
+        return t('rebalanceCenter.overview.scanReasonInventoryUnavailable')
       case 'paid_liquidity_unsold_penalty':
         return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldPenalty')
       case 'low_success_opportunity_below_floor':
@@ -1534,6 +1536,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonTargetStructuralCooldown')
       case 'paid_liquidity_unsold_cooldown':
         return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldCooldown')
+      case 'paid_liquidity_inventory_unavailable':
+        return t('rebalanceCenter.overview.scanReasonInventoryUnavailable')
       case 'paid_liquidity_unsold_penalty':
         return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldPenalty')
       case 'low_success_opportunity_below_floor':
@@ -1604,6 +1608,12 @@ export default function RebalanceCenter() {
               value: formatSats(decision.recent_realized_net_slow_sat ?? 0)
             })}
           </span>
+        )}
+        {decision.unsold_paid_sat !== undefined && (
+          <span>{t('rebalanceCenter.autopilot.unsoldInventory', { value: formatSats(decision.unsold_paid_sat) })}</span>
+        )}
+        {decision.inventory_probe && (
+          <span>{t('rebalanceCenter.autopilot.inventoryProbe', { value: formatSats(decision.amount_sat) })}</span>
         )}
         {decision.recent_rebalance_sent_sat ? (
           <span>

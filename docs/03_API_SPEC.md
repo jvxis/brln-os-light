@@ -838,6 +838,14 @@ GET /api/rebalance/overview
 - Includes separate 7-day exploration counters and realized economics under the `sovereign_exploration_*_7d` fields. `sovereign_jobs_7d` and `sovereign_exploration_share_7d` expose the actual completed-job mix so operators can compare the effective exploration share with the configured per-cycle slot percentage.
 - Exploration attribution starts when the persisted marker is deployed; jobs created by older versions cannot be classified retroactively.
 
+GET /api/rebalance/sovereign-history
+- Inventory diagnostics also appear in overview's Sovereign decisions. Since 0.5.33, `recent_rebalance_sent_sat` / `recent_rebalance_target_sat` describe the actual purchased cohort still under observation, not the last job's full channel deficit; `recent_forwarded_after_sat` / `recent_forward_fee_after_sat` are its FIFO-attributed sales and fees.
+- Optional `unsold_paid_sat` is the remaining volume in that cohort. It is **not** total local balance or a complete inventory ledger: lots leave observation after material sale/payback or expiry of the configured slow-seller window (minimum 24 hours).
+- Optional `unsold_oldest_at` and `unsold_last_paid_at` are UTC RFC3339 timestamps for the oldest observed lot and the latest Sovereign purchase respectively. Missing fields in older history are not evidence of zero inventory.
+- `inventory_probe: true` marks exploration reduced to 10% of the normal execution batch, subject to the execution minimum and budget. Existing `amount_sat` and economics fields describe the reduced amount.
+- `paid_liquidity_unsold_cooldown` applies to normal and exploration replenishment during observation. `paid_liquidity_inventory_unavailable` pauses Sovereign replenishment when inventory inputs cannot be loaded; explicit operator and guaranteed jobs are unaffected.
+- Sovereign jobs now persist the selected execution batch in `target_amount_sat`, clamped to the current deficit at job creation. No historical rows are rewritten.
+
 ## Terminal
 
 GET /api/terminal/status

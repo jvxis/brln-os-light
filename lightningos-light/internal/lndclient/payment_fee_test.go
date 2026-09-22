@@ -161,8 +161,11 @@ func TestRouteForInvoicePaymentAddsMPPRecord(t *testing.T) {
 	if got.Hops[1].MppRecord.TotalAmtMsat != 123_456 {
 		t.Fatalf("MPP total amount = %d, want 123456", got.Hops[1].MppRecord.TotalAmtMsat)
 	}
-	if got.Hops[1].TotalAmtMsat != 123_456 {
-		t.Fatalf("final hop total amount = %d, want 123456", got.Hops[1].TotalAmtMsat)
+	if got.Hops[1].TotalAmtMsat != 0 {
+		t.Fatalf("non-blinded final hop total amount = %d, want 0", got.Hops[1].TotalAmtMsat)
+	}
+	if !got.Hops[1].TlvPayload {
+		t.Fatal("MPP payment requires a TLV payload")
 	}
 	paymentAddr[0] = 9
 	if !bytes.Equal(got.Hops[1].MppRecord.PaymentAddr, []byte{1, 2, 3}) {

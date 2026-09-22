@@ -33,6 +33,25 @@ trust before the administrator logs in:
 
 The local CA private key is never returned or read by these handlers.
 
+## Wallet activity timestamps
+
+`GET /api/wallet/activity` returns activity items with an event `timestamp`.
+Optional `created_at` and `settled_at` timestamps are included only when known;
+unknown values are omitted instead of serialized as year-one dates. Consumers
+must not infer creation or settlement times from the event timestamp.
+
+`GET /api/wallet/payments/{paymentHash}` additionally returns these optional
+RFC3339 timestamps when LND retains the corresponding data:
+- `invoice_created_at`: BOLT11 timestamp decoded from the payment request;
+  absent for Keysend, missing invoices, or decode failures.
+- `started_at`: LND payment creation time, preferring nanosecond precision.
+- `settled_at`: latest resolution time among successful HTLC attempts, only
+  for successful payments with known resolution times for every successful shard.
+
+The legacy payment-detail `created_at` field retains its existing meaning
+(payment creation); the UI uses the explicit fields above to distinguish
+invoice creation from payment initiation. Missing dates are not estimated.
+
 ## Error format
 - Non-2xx responses return JSON: `{"error":"message","code":"optional_code"}`
 
@@ -748,6 +767,8 @@ GET /api/apps/{id}/admin-password
 
 GET /api/notifications?limit=200&range=7d&type=all&outcome=all&hide_failed_outgoing=false&cursor=...
 - Returns stored notifications ordered by `occurred_at DESC, id DESC`.
+- Channel notifications include optional `channel_private`: `true` for private channels, `false` for public channels, omitted when visibility is unknown (including older stored events). Visibility comes from LND channel metadata, never from alias lookup results.
+- LND alias-lookup error placeholders are omitted from `peer_alias`; clients can fall back to `peer_pubkey`.
 - Optional `range`: `7d`, `1m`, `3m`, `6m`, `1y`, or `all`. When omitted, `all` preserves compatibility with older clients.
 - Optional `type`: `all`, `onchain`, `lightning`, `keysend`, `channel`, `forward`, `rebalance`, or `security`.
 - Optional `outcome`: `all`, `completed`, `failed`, or `pending` (normalized from the stored service status).
@@ -757,7 +778,7 @@ GET /api/notifications?limit=200&range=7d&type=all&outcome=all&hide_failed_outgo
 - Response: `{ "items": [...], "has_more": bool, "next_cursor": string, "range": string, "type": string, "outcome": string, "hide_failed_outgoing": bool }`.
 
 GET /api/notifications/stream
-- Server Sent Events stream.
+- Server Sent Events stream. Notification payloads use the same fields as the list endpoint, including optional `channel_private`.
 
 GET /api/notifications/backup/telegram
 POST /api/notifications/backup/telegram
@@ -818,6 +839,14 @@ GET /api/rebalance/history
 GET /api/rebalance/overview
 - Includes separate 7-day exploration counters and realized economics under the `sovereign_exploration_*_7d` fields. `sovereign_jobs_7d` and `sovereign_exploration_share_7d` expose the actual completed-job mix so operators can compare the effective exploration share with the configured per-cycle slot percentage.
 - Exploration attribution starts when the persisted marker is deployed; jobs created by older versions cannot be classified retroactively.
+
+GET /api/rebalance/sovereign-history
+- Inventory diagnostics also appear in overview's Sovereign decisions. Since 0.5.33, `recent_rebalance_sent_sat` / `recent_rebalance_target_sat` describe the actual purchased cohort still under observation, not the last job's full channel deficit; `recent_forwarded_after_sat` / `recent_forward_fee_after_sat` are its FIFO-attributed sales and fees.
+- Optional `unsold_paid_sat` is the remaining volume in that cohort. It is **not** total local balance or a complete inventory ledger: lots leave observation after material sale/payback or expiry of the configured slow-seller window (minimum 24 hours).
+- Optional `unsold_oldest_at` and `unsold_last_paid_at` are UTC RFC3339 timestamps for the oldest observed lot and the latest Sovereign purchase respectively. Missing fields in older history are not evidence of zero inventory.
+- `inventory_probe: true` marks exploration reduced to 10% of the normal execution batch, subject to the execution minimum and budget. Existing `amount_sat` and economics fields describe the reduced amount.
+- `paid_liquidity_unsold_cooldown` applies to normal and exploration replenishment during observation. `paid_liquidity_inventory_unavailable` pauses Sovereign replenishment when inventory inputs cannot be loaded; explicit operator and guaranteed jobs are unaffected.
+- Sovereign jobs now persist the selected execution batch in `target_amount_sat`, clamped to the current deficit at job creation. No historical rows are rewritten.
 
 ## Terminal
 

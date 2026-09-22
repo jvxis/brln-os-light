@@ -144,6 +144,10 @@ export type RebalanceSovereignDecision = {
   roi_multiplier?: number
   budget_efficiency_multiplier?: number
   unsold_liquidity_multiplier?: number
+  unsold_paid_sat?: number
+  unsold_oldest_at?: string
+  unsold_last_paid_at?: string
+  inventory_probe?: boolean
   realized_economics_multiplier?: number
 	intent_kind?: string
 	intent_reason?: string

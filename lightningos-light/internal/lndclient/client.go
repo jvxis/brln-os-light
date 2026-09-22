@@ -2028,7 +2028,8 @@ func routeForInvoicePayment(route *lnrpc.Route, decoded DecodedInvoice, amountMs
 			TotalAmtMsat: amountMsat,
 		}
 		finalHop.TlvPayload = true
-		finalHop.TotalAmtMsat = uint64(amountMsat)
+		// Hop.TotalAmtMsat is exclusive to blinded payments. Regular
+		// invoice payments carry their total only in the MPP record.
 	}
 	return cloned, nil
 }
@@ -3918,15 +3919,18 @@ type PaymentPreview struct {
 }
 
 type PaymentDetails struct {
-	PaymentHash    string               `json:"payment_hash,omitempty"`
-	PaymentRequest string               `json:"payment_request,omitempty"`
-	Status         string               `json:"status,omitempty"`
-	ValueSat       int64                `json:"value_sat,omitempty"`
-	ValueMsat      int64                `json:"value_msat,omitempty"`
-	FeeSat         int64                `json:"fee_sat,omitempty"`
-	FeeMsat        int64                `json:"fee_msat,omitempty"`
-	CreatedAt      time.Time            `json:"created_at,omitempty"`
-	Route          *PaymentRouteSummary `json:"route,omitempty"`
+	PaymentHash      string               `json:"payment_hash,omitempty"`
+	PaymentRequest   string               `json:"payment_request,omitempty"`
+	Status           string               `json:"status,omitempty"`
+	ValueSat         int64                `json:"value_sat,omitempty"`
+	ValueMsat        int64                `json:"value_msat,omitempty"`
+	FeeSat           int64                `json:"fee_sat,omitempty"`
+	FeeMsat          int64                `json:"fee_msat,omitempty"`
+	CreatedAt        time.Time            `json:"created_at,omitempty"`
+	InvoiceCreatedAt time.Time            `json:"invoice_created_at,omitzero"`
+	StartedAt        time.Time            `json:"started_at,omitzero"`
+	SettledAt        time.Time            `json:"settled_at,omitzero"`
+	Route            *PaymentRouteSummary `json:"route,omitempty"`
 }
 
 func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64, numRoutes int32) (PaymentPreview, error) {
@@ -4083,11 +4087,53 @@ func (c *Client) PaymentDetails(ctx context.Context, paymentHash string, lookbac
 	if details.FeeSat <= 0 {
 		details.FeeSat = msatToSatCeil(details.FeeMsat)
 	}
+	populatePaymentLifecycle(&details, pay)
+	populateInvoiceCreation(ctx, lightning, &details)
 	if route := recentRouteFromPayment(pay); route != nil {
 		summary := c.convertPaymentRouteWithClient(ctx, lightning, route)
 		details.Route = &summary
 	}
 	return details, nil
+}
+
+// populatePaymentLifecycle uses only timestamps recorded by LND. Failed
+// attempts do not establish settlement; MPP completes with its last shard.
+func populatePaymentLifecycle(details *PaymentDetails, pay *lnrpc.Payment) {
+	if pay.CreationTimeNs > 0 {
+		details.StartedAt = time.Unix(0, pay.CreationTimeNs).UTC()
+	} else if pay.CreationDate > 0 {
+		details.StartedAt = time.Unix(pay.CreationDate, 0).UTC()
+	}
+	if pay.Status != lnrpc.Payment_SUCCEEDED {
+		return
+	}
+	var latest int64
+	for _, attempt := range pay.Htlcs {
+		if attempt == nil || attempt.Status != lnrpc.HTLCAttempt_SUCCEEDED {
+			continue
+		}
+		// Without a timestamp for every successful shard, completion is unknown.
+		if attempt.ResolveTimeNs <= 0 {
+			return
+		}
+		if attempt.ResolveTimeNs > latest {
+			latest = attempt.ResolveTimeNs
+		}
+	}
+	if latest > 0 {
+		details.SettledAt = time.Unix(0, latest).UTC()
+	}
+}
+
+func populateInvoiceCreation(ctx context.Context, client lnrpc.LightningClient, details *PaymentDetails) {
+	if details.PaymentRequest == "" {
+		return
+	}
+	// An unavailable invoice timestamp must not hide the payment details.
+	decoded, err := client.DecodePayReq(ctx, &lnrpc.PayReqString{PayReq: details.PaymentRequest})
+	if err == nil && decoded != nil && decoded.Timestamp > 0 {
+		details.InvoiceCreatedAt = time.Unix(decoded.Timestamp, 0).UTC()
+	}
 }
 
 func (c *Client) convertPaymentRouteWithClient(ctx context.Context, client lnrpc.LightningClient, route *lnrpc.Route) PaymentRouteSummary {
@@ -8162,8 +8208,8 @@ type RecentActivity struct {
 	AmountSat     int64     `json:"amount_sat"`
 	Memo          string    `json:"memo"`
 	Timestamp     time.Time `json:"timestamp"`
-	CreatedAt     time.Time `json:"created_at,omitempty"`
-	SettledAt     time.Time `json:"settled_at,omitempty"`
+	CreatedAt     time.Time `json:"created_at,omitzero"`
+	SettledAt     time.Time `json:"settled_at,omitzero"`
 	Status        string    `json:"status"`
 	Txid          string    `json:"txid,omitempty"`
 	FeeSat        int64     `json:"fee_sat,omitempty"`

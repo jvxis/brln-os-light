@@ -3705,8 +3705,8 @@ func TestShouldSkipSovereignUnsoldPaidLiquidity(t *testing.T) {
 
 	stat.ForwardFeeSat = 0
 	stat.CompletedAt = now.Add(-30 * time.Minute)
-	if shouldSkipSovereignUnsoldPaidLiquidity(stat, cfg, now) {
-		t.Fatalf("expected fresh rebalance to wait for the minimum age before cooldown")
+	if !shouldSkipSovereignUnsoldPaidLiquidity(stat, cfg, now) {
+		t.Fatalf("expected fresh paid inventory to prevent immediate repeat purchases")
 	}
 }
 

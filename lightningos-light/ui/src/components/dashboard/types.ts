@@ -432,22 +432,4 @@ export type SuccessionConfig = {
   status?: string
 }
 
-export type NotificationItem = {
-  id: number
-  occurred_at: string
-  type: string
-  action: string
-  direction: string
-  status: string
-  amount_sat: number
-  fee_sat: number
-  fee_msat?: number
-  peer_pubkey?: string
-  peer_alias?: string
-  channel_id?: number
-  channel_point?: string
-  channel_alias?: string
-  txid?: string
-  payment_hash?: string
-  memo?: string
-}
+export type { NotificationItem } from '../../api'

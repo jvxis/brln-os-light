@@ -391,7 +391,56 @@ export const markWalletActivity = (payload: {
 }) => request('/api/wallet/activity/mark', { method: 'POST', body: JSON.stringify(payload) })
 export const getWalletActivity = (range: '7d' | '1m' | '1a', limit = 100, offset = 0) =>
   request(`/api/wallet/activity?range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`)
-export const getWalletPaymentDetail = (paymentHash: string) =>
+export type WalletRouteHop = {
+  pubkey?: string
+  alias?: string
+  channel_id?: number
+  channel_capacity_sat?: number
+  amt_to_forward_sat?: number
+  amt_to_forward_msat?: number
+  fee_sat?: number
+  fee_msat?: number
+  expiry?: number
+}
+
+export type WalletRouteProbe = {
+  status?: string
+  likely_liquid?: boolean
+  failure_code?: string
+  failure_source_index?: number
+  failure_hop_index?: number
+  message?: string
+}
+
+export type WalletRouteSummary = {
+  route_key?: string
+  route_token?: string
+  total_amt_sat?: number
+  total_amt_msat?: number
+  total_fees_sat?: number
+  total_fees_msat?: number
+  total_time_lock?: number
+  hop_count?: number
+  hops?: WalletRouteHop[]
+  probe?: WalletRouteProbe
+}
+
+export type WalletPaymentDetail = {
+  payment_hash?: string
+  payment_request?: string
+  status?: string
+  value_sat?: number
+  value_msat?: number
+  fee_sat?: number
+  fee_msat?: number
+  created_at?: string
+  invoice_created_at?: string
+  started_at?: string
+  settled_at?: string
+  route?: WalletRouteSummary
+}
+
+export const getWalletPaymentDetail = (paymentHash: string): Promise<WalletPaymentDetail> =>
   request(`/api/wallet/payments/${encodeURIComponent(paymentHash)}`)
 export const getWalletAddress = () => request('/api/wallet/address', { method: 'POST' })
 export const previewOnchainSend = (payload: { address: string; amount_sat?: number; sat_per_vbyte: number; sweep_all?: boolean; outpoints?: string[] }) =>
@@ -786,6 +835,37 @@ export const markChatRead = (peerPubkey: string) =>
 export const sendChatMessage = (payload: { peer_pubkey: string; message: string; amount_sat?: number }) =>
   request('/api/chat/send', { method: 'POST', body: JSON.stringify(payload) })
 
+export type NotificationItem = {
+  id: number
+  occurred_at: string
+  type: string
+  action: string
+  direction: string
+  status: string
+  amount_sat: number
+  fee_sat: number
+  fee_msat?: number
+  peer_pubkey?: string
+  peer_alias?: string
+  channel_private?: boolean
+  channel_id?: number
+  channel_point?: string
+  channel_alias?: string
+  txid?: string
+  payment_hash?: string
+  memo?: string
+}
+
+export type NotificationPage = {
+  items: NotificationItem[]
+  has_more: boolean
+  next_cursor?: string
+  range: string
+  type: string
+  outcome: string
+  hide_failed_outgoing: boolean
+}
+
 export type NotificationQuery = {
   limit?: number
   range?: '7d' | '1m' | '3m' | '6m' | '1y' | 'all'
@@ -795,7 +875,7 @@ export type NotificationQuery = {
   cursor?: string
 }
 
-export const getNotifications = (params: NotificationQuery | number = {}) => {
+export const getNotifications = (params: NotificationQuery | number = {}): Promise<NotificationPage> => {
   const query = typeof params === 'number' ? { limit: params } : params
   return request(`/api/notifications${buildQuery(query)}`)
 }

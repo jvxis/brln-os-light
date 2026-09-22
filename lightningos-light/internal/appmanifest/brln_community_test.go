@@ -51,6 +51,8 @@ func TestBRLNCommunityComposeIsClosedAndLeastPrivilege(t *testing.T) {
 		"read_only: true", "cap_drop:", "no-new-privileges:true",
 		`user: "101:101"`, `user: "65529:65529"`, `user: "65532:65532"`,
 		"RELAYS: wss://signer.br-ln.com",
+		"LOCAL_RELAY: ws://pairing:3335", "LOCAL_RELAY_PATH: /pairing",
+		"- /brln-signer-relay", `user: "65528:65528"`, `PORT: "3335"`,
 		"/var/lib/lightningos/apps-data/brln-community/signer:/data:rw",
 		"/var/lib/lightningos/apps-data/brln-community/auth:/run/lightningos-auth:ro",
 		"host.docker.internal:host-gateway", "/etc/caddy/manager-ca.crt:ro",
@@ -70,10 +72,44 @@ func TestBRLNCommunityComposeIsClosedAndLeastPrivilege(t *testing.T) {
 	if strings.Count(compose, "apps-data/brln-community/signer") != 1 {
 		t.Fatal("only the signer may mount the member key directory")
 	}
+
+	// The pairing relay holds nothing and reaches nothing but its own port: no
+	// volume, no published port, no host access. It runs from the signer image,
+	// so this is what keeps it from ever becoming a second way into the key.
+	pairing := composeService(t, compose, "pairing")
+	if !strings.Contains(pairing, BRLNCommunitySignerImage) || !strings.Contains(pairing, "- /brln-signer-relay") {
+		t.Fatalf("pairing relay does not run the relay from the pinned signer image:\n%s", pairing)
+	}
+	for _, forbidden := range []string{"volumes:", "ports:", "extra_hosts:", "apps-data", "lightningos-auth", `user: "65529:65529"`} {
+		if strings.Contains(pairing, forbidden) {
+			t.Fatalf("pairing relay has %q:\n%s", forbidden, pairing)
+		}
+	}
+}
+
+// composeService returns one service block of a generated compose file.
+func composeService(t *testing.T, compose, name string) string {
+	t.Helper()
+	lines := strings.Split(compose, "\n")
+	for i, line := range lines {
+		if line != "  "+name+":" {
+			continue
+		}
+		block := []string{line}
+		for _, next := range lines[i+1:] {
+			if next != "" && !strings.HasPrefix(next, "    ") {
+				break
+			}
+			block = append(block, next)
+		}
+		return strings.Join(block, "\n")
+	}
+	t.Fatalf("compose has no %q service", name)
+	return ""
 }
 
 func TestBRLNCommunitySignerIdentityIsSeparate(t *testing.T) {
-	for _, other := range []int{BRLNCommunityWebUID, BRLNCommunityProxyUID, BarkWalletAPIUID, BarkWalletDaemonUID, BarkWalletProxyUID, LNbitsContainerUID, PublicPoolContainerUID} {
+	for _, other := range []int{BRLNCommunityWebUID, BRLNCommunityProxyUID, BRLNCommunityPairingUID, BarkWalletAPIUID, BarkWalletDaemonUID, BarkWalletProxyUID, LNbitsContainerUID, PublicPoolContainerUID} {
 		if other == BRLNCommunitySignerUID {
 			t.Fatalf("signer UID %d is shared with another container", BRLNCommunitySignerUID)
 		}
@@ -91,6 +127,7 @@ func TestBRLNCommunityProxyProtectsSignerChanges(t *testing.T) {
 		"tls_trust_pool file /etc/caddy/manager-ca.crt", "tls_server_name localhost",
 		"handle_path /signer/*", "reverse_proxy signer:8081", "reverse_proxy web:8080",
 		"protocols h1 h2",
+		"@pairing path /pairing /pairing/", "reverse_proxy pairing:3335",
 	} {
 		if !strings.Contains(config, required) {
 			t.Fatalf("proxy config is missing %q", required)
@@ -101,6 +138,19 @@ func TestBRLNCommunityProxyProtectsSignerChanges(t *testing.T) {
 	}
 	if strings.Contains(config, "tls_insecure_skip_verify") {
 		t.Fatal("proxy disables manager TLS verification")
+	}
+
+	// The pairing relay must answer before the chat's catch-all, and never behind
+	// the reauthentication that guards key changes: a device asking for a
+	// signature is not changing the key, and the manager would refuse it.
+	pairing := strings.Index(config, "handle @pairing")
+	if pairing < 0 || pairing > strings.Index(config, "reverse_proxy web:") {
+		t.Fatal("the pairing route must come before the chat's catch-all")
+	}
+	block := config[pairing:]
+	block = block[:strings.Index(block, "}")]
+	if strings.Contains(block, "forward_auth") {
+		t.Fatal("the pairing relay is behind the LightningOS reauthentication")
 	}
 }
 

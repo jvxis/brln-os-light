@@ -11,7 +11,7 @@ import (
 )
 
 func TestPaymentLifecycle(t *testing.T) {
-	for _, tc := range []struct {
+	cases := []struct {
 		name             string
 		pay              lnrpc.Payment
 		started, settled time.Time
@@ -27,7 +27,9 @@ func TestPaymentLifecycle(t *testing.T) {
 		{name: "in flight is not settled", pay: lnrpc.Payment{Status: lnrpc.Payment_IN_FLIGHT, Htlcs: []*lnrpc.HTLCAttempt{{Status: lnrpc.HTLCAttempt_SUCCEEDED, ResolveTimeNs: 300}}}},
 		{name: "failed is not settled", pay: lnrpc.Payment{Status: lnrpc.Payment_FAILED, Htlcs: []*lnrpc.HTLCAttempt{{Status: lnrpc.HTLCAttempt_FAILED, ResolveTimeNs: 300}}}},
 		{name: "missing successful resolution", pay: lnrpc.Payment{Status: lnrpc.Payment_SUCCEEDED, Htlcs: []*lnrpc.HTLCAttempt{{Status: lnrpc.HTLCAttempt_SUCCEEDED, ResolveTimeNs: 300}, {Status: lnrpc.HTLCAttempt_SUCCEEDED}}}},
-	} {
+	}
+	for i := range cases {
+		tc := &cases[i]
 		t.Run(tc.name, func(t *testing.T) {
 			var details PaymentDetails
 			populatePaymentLifecycle(&details, &tc.pay)

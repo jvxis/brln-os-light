@@ -4,25 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { getNotifications, getTelegramNotifications, testTelegramBackup, updateTelegramNotifications } from '../api'
 import { getLocale } from '../i18n'
 
-type Notification = {
-  id: number
-  occurred_at: string
-  type: string
-  action: string
-  direction: string
-  status: string
-  amount_sat: number
-  fee_sat: number
-  fee_msat?: number
-  peer_pubkey?: string
-  peer_alias?: string
-  channel_id?: number
-  channel_point?: string
-  channel_alias?: string
-  txid?: string
-  payment_hash?: string
-  memo?: string
-}
+type Notification = import('../api').NotificationItem
 
 type NotificationTypeFilter = 'all' | 'onchain' | 'lightning' | 'keysend' | 'channel' | 'forward' | 'rebalance' | 'security'
 type NotificationRange = '7d' | '1m' | '3m' | '6m' | '1y'
@@ -836,7 +818,10 @@ export default function Notifications() {
             <div className="space-y-2 text-sm">
               {filtered.map((item) => {
                 const arrow = arrowForDirection(item.direction)
-                const title = `${labelForType(item.type)} ${labelForAction(item.action)}`
+                const typeLabel = item.type === 'channel' && item.channel_private
+                  ? t('notifications.privateChannel')
+                  : labelForType(item.type)
+                const title = `${typeLabel} ${labelForAction(item.action)}`
                 const statusLabel = normalizeStatus(item.status)
                 const peer = item.peer_alias || (item.peer_pubkey ? item.peer_pubkey.slice(0, 16) : '')
                 const peerLabel = peer

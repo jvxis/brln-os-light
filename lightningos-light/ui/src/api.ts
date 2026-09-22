@@ -835,6 +835,37 @@ export const markChatRead = (peerPubkey: string) =>
 export const sendChatMessage = (payload: { peer_pubkey: string; message: string; amount_sat?: number }) =>
   request('/api/chat/send', { method: 'POST', body: JSON.stringify(payload) })
 
+export type NotificationItem = {
+  id: number
+  occurred_at: string
+  type: string
+  action: string
+  direction: string
+  status: string
+  amount_sat: number
+  fee_sat: number
+  fee_msat?: number
+  peer_pubkey?: string
+  peer_alias?: string
+  channel_private?: boolean
+  channel_id?: number
+  channel_point?: string
+  channel_alias?: string
+  txid?: string
+  payment_hash?: string
+  memo?: string
+}
+
+export type NotificationPage = {
+  items: NotificationItem[]
+  has_more: boolean
+  next_cursor?: string
+  range: string
+  type: string
+  outcome: string
+  hide_failed_outgoing: boolean
+}
+
 export type NotificationQuery = {
   limit?: number
   range?: '7d' | '1m' | '3m' | '6m' | '1y' | 'all'
@@ -844,7 +875,7 @@ export type NotificationQuery = {
   cursor?: string
 }
 
-export const getNotifications = (params: NotificationQuery | number = {}) => {
+export const getNotifications = (params: NotificationQuery | number = {}): Promise<NotificationPage> => {
   const query = typeof params === 'number' ? { limit: params } : params
   return request(`/api/notifications${buildQuery(query)}`)
 }

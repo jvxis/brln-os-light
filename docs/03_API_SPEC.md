@@ -767,6 +767,8 @@ GET /api/apps/{id}/admin-password
 
 GET /api/notifications?limit=200&range=7d&type=all&outcome=all&hide_failed_outgoing=false&cursor=...
 - Returns stored notifications ordered by `occurred_at DESC, id DESC`.
+- Channel notifications include optional `channel_private`: `true` for private channels, `false` for public channels, omitted when visibility is unknown (including older stored events). Visibility comes from LND channel metadata, never from alias lookup results.
+- LND alias-lookup error placeholders are omitted from `peer_alias`; clients can fall back to `peer_pubkey`.
 - Optional `range`: `7d`, `1m`, `3m`, `6m`, `1y`, or `all`. When omitted, `all` preserves compatibility with older clients.
 - Optional `type`: `all`, `onchain`, `lightning`, `keysend`, `channel`, `forward`, `rebalance`, or `security`.
 - Optional `outcome`: `all`, `completed`, `failed`, or `pending` (normalized from the stored service status).
@@ -776,7 +778,7 @@ GET /api/notifications?limit=200&range=7d&type=all&outcome=all&hide_failed_outgo
 - Response: `{ "items": [...], "has_more": bool, "next_cursor": string, "range": string, "type": string, "outcome": string, "hide_failed_outgoing": bool }`.
 
 GET /api/notifications/stream
-- Server Sent Events stream.
+- Server Sent Events stream. Notification payloads use the same fields as the list endpoint, including optional `channel_private`.
 
 GET /api/notifications/backup/telegram
 POST /api/notifications/backup/telegram

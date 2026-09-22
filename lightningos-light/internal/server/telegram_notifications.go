@@ -717,7 +717,7 @@ func (s *Server) handleTelegramScbCommand(cfg telegramBackupConfig) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := s.notifier.sendTelegramBackup(ctx, cfg, "command", "", ""); err != nil {
+	if err := s.notifier.sendTelegramBackup(ctx, cfg, "command", "", "", nil); err != nil {
 		if s.logger != nil {
 			s.logger.Printf("notifications: telegram /scb failed: %v", err)
 		}
@@ -1207,6 +1207,9 @@ func uniqueStrings(values []string) []string {
 
 func telegramActivityMirrorMessage(evt Notification) string {
 	typeLabel := telegramNotificationTypeLabel(evt.Type)
+	if evt.Type == "channel" && evt.ChannelPrivate != nil && *evt.ChannelPrivate {
+		typeLabel = "Private channel"
+	}
 	header := typeLabel
 	actionLabel := telegramNotificationActionLabel(evt.Action)
 	if override := telegramNotificationStatusActionLabel(evt); override != "" {
@@ -1351,7 +1354,7 @@ func telegramNotificationActionLabel(value string) string {
 }
 
 func telegramNotificationRoute(evt Notification) string {
-	route := strings.TrimSpace(evt.PeerAlias)
+	route := notificationPeerAlias(evt.PeerAlias)
 	if route == "" {
 		route = shortPubKey(evt.PeerPubkey)
 	}

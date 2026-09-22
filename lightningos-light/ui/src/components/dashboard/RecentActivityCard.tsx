@@ -165,7 +165,10 @@ export default function RecentActivityCard({ notifications }: RecentActivityCard
           <div className="space-y-2 text-sm">
             {filtered.map((item) => {
               const arrow = arrowForDirection(item.direction)
-              const title = `${labelForType(item.type)} ${labelForAction(item.action)}`
+              const typeLabel = item.type === 'channel' && item.channel_private
+                ? t('notifications.privateChannel')
+                : labelForType(item.type)
+              const title = `${typeLabel} ${labelForAction(item.action)}`
               const statusLabel = normalizeStatus(item.status)
               const peer = item.peer_alias || (item.peer_pubkey ? item.peer_pubkey.slice(0, 16) : '')
               const peerLabel = peer

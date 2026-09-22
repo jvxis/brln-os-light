@@ -70,6 +70,7 @@ type Notification struct {
 	PeerAlias         string    `json:"peer_alias,omitempty"`
 	ChannelID         int64     `json:"channel_id,omitempty"`
 	ChannelPoint      string    `json:"channel_point,omitempty"`
+	ChannelPrivate    *bool     `json:"channel_private,omitempty"`
 	ChannelAlias      string    `json:"channel_alias,omitempty"`
 	ChanIDIn          int64     `json:"chan_id_in,omitempty"`
 	ChanIDOut         int64     `json:"chan_id_out,omitempty"`
@@ -598,6 +599,7 @@ create table if not exists notifications (
 
 alter table notifications add column if not exists fee_msat bigint not null default 0;
 alter table notifications add column if not exists channel_alias text;
+alter table notifications add column if not exists channel_private boolean;
 alter table notifications add column if not exists chan_id_in bigint;
 alter table notifications add column if not exists chan_id_out bigint;
 alter table notifications add column if not exists amount_in_msat bigint;
@@ -740,17 +742,17 @@ insert into notifications (
   peer_pubkey_in, peer_pubkey_out, channel_point_in, channel_point_out,
   rebal_source_chan_id, rebal_target_chan_id, rebal_source_point, rebal_target_point,
   rebal_source_pubkey, rebal_target_pubkey,
-  txid, payment_hash, memo
+  txid, payment_hash, memo, channel_private
 ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
   $15,$16,$17,$18,
   $19,$20,$21,$22,
   $23,$24,$25,$26,
   $27,$28,$29,
-  $30,$31
+  $30,$31,$32
 )
 on conflict (event_key) do nothing
 returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo,
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo, channel_private,
   true as inserted
 ),
 upd as (
@@ -784,20 +786,21 @@ update notifications set
   rebal_target_pubkey = $28,
   txid = $29,
   payment_hash = $30,
-  memo = $31
+  memo = $31,
+  channel_private = coalesce($32, notifications.channel_private)
 where event_key = $1
   and not exists (select 1 from ins)
 returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo,
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo, channel_private,
   false as inserted
 )
 select id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo,
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo, channel_private,
   inserted
 from ins
 union all
 select id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo,
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo, channel_private,
   inserted
 from upd
 limit 1
@@ -811,7 +814,7 @@ limit 1
 		nullableInt(evt.RebalSourceChanID), nullableInt(evt.RebalTargetChanID),
 		nullableString(evt.RebalSourcePoint), nullableString(evt.RebalTargetPoint),
 		nullableString(evt.RebalSourcePubkey), nullableString(evt.RebalTargetPubkey),
-		nullableString(evt.Txid), nullableString(evt.PaymentHash), nullableString(evt.Memo),
+		nullableString(evt.Txid), nullableString(evt.PaymentHash), nullableString(evt.Memo), evt.ChannelPrivate,
 	)
 
 	var stored Notification
@@ -997,7 +1000,7 @@ not (
 	limitArg := addArg(fetchLimit)
 	query := fmt.Sprintf(`
 select id, occurred_at, type, action, direction, status, amount_sat, fee_sat, fee_msat,
-  peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo
+  peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo, channel_private
 from notifications n
 where %s
 order by n.occurred_at desc, n.id desc
@@ -1426,7 +1429,7 @@ set type='rebalance',
   channel_alias=null
 where id=$1
 returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo, channel_private
 `, payID, invAmount, payFee, payFeeMsat, memoValue, invAt,
 		nullableInt(rebalanceMeta.RebalSourceChanID), nullableInt(rebalanceMeta.RebalTargetChanID),
 		nullableString(rebalanceMeta.RebalSourcePoint), nullableString(rebalanceMeta.RebalTargetPoint),
@@ -2024,7 +2027,7 @@ func (n *Notifier) runTransactions() {
 			if direction == "in" && status == "CONFIRMED" {
 				txid := strings.TrimSpace(tx.TxHash)
 				if txid != "" {
-					n.triggerTelegramBackup("onchain_receive_confirmed", txid, "")
+					n.triggerTelegramBackup("onchain_receive_confirmed", txid, "", nil)
 				}
 			}
 
@@ -2096,7 +2099,7 @@ func (n *Notifier) runChannels() {
 				continue
 			}
 
-			n.maybeSendTelegramBackup(update)
+			n.maybeSendTelegramBackup(evt)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_, _ = n.upsertNotification(ctx, eventKey, evt)
@@ -2157,11 +2160,8 @@ func (n *Notifier) runPendingChannels() {
 			if channelPoint == "" && strings.TrimSpace(item.ClosingTxid) != "" {
 				channelPoint = strings.TrimSpace(item.ClosingTxid)
 			}
-			peerAlias := strings.TrimSpace(item.PeerAlias)
-			if peerAlias == "" && strings.TrimSpace(item.RemotePubkey) != "" {
-				peerAlias = n.lookupNodeAlias(item.RemotePubkey)
-			}
-			n.triggerTelegramBackup(reason, channelPoint, peerAlias)
+			peerAlias := n.channelPeerAlias(item.PeerAlias, item.RemotePubkey)
+			n.triggerTelegramBackup(reason, channelPoint, peerAlias, &item.Private)
 			if item.Status == "waiting_close" && strings.TrimSpace(item.ClosingTxid) == "" && n.markWaitingCloseRecoveryAttempt(channelPoint) {
 				recoverCtx, recoverCancel := context.WithTimeout(context.Background(), 8*time.Second)
 				recoveredTxid, attempted, recoverErr := n.lnd.RecoverWaitingCloseTx(recoverCtx, channelPoint)
@@ -2215,19 +2215,17 @@ func (n *Notifier) notifyPendingChannelClosing(item lndclient.PendingChannelInfo
 	}
 
 	evt := Notification{
-		OccurredAt:   time.Now().UTC(),
-		Type:         "channel",
-		Action:       "closing",
-		Direction:    "neutral",
-		Status:       status,
-		AmountSat:    amount,
-		PeerPubkey:   item.RemotePubkey,
-		PeerAlias:    item.PeerAlias,
-		ChannelPoint: item.ChannelPoint,
-		Txid:         closingTxid,
-	}
-	if evt.PeerAlias == "" && evt.PeerPubkey != "" {
-		evt.PeerAlias = n.lookupNodeAlias(evt.PeerPubkey)
+		OccurredAt:     time.Now().UTC(),
+		Type:           "channel",
+		Action:         "closing",
+		Direction:      "neutral",
+		Status:         status,
+		AmountSat:      amount,
+		PeerPubkey:     item.RemotePubkey,
+		PeerAlias:      n.channelPeerAlias(item.PeerAlias, item.RemotePubkey),
+		ChannelPrivate: &item.Private,
+		ChannelPoint:   item.ChannelPoint,
+		Txid:           closingTxid,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -2323,22 +2321,20 @@ func (n *Notifier) channelEventToNotification(update *lnrpc.ChannelEventUpdate) 
 			return Notification{}, ""
 		}
 		evt := Notification{
-			OccurredAt:   now,
-			Type:         "channel",
-			Action:       "open",
-			Direction:    "neutral",
-			Status:       "OPENED",
-			AmountSat:    ch.Capacity,
-			PeerPubkey:   ch.RemotePubkey,
-			PeerAlias:    ch.PeerAlias,
-			ChannelID:    int64(ch.ChanId),
-			ChannelPoint: ch.ChannelPoint,
+			OccurredAt:     now,
+			Type:           "channel",
+			Action:         "open",
+			Direction:      "neutral",
+			Status:         "OPENED",
+			AmountSat:      ch.Capacity,
+			PeerPubkey:     ch.RemotePubkey,
+			PeerAlias:      n.channelPeerAlias(ch.PeerAlias, ch.RemotePubkey),
+			ChannelPrivate: &ch.Private,
+			ChannelID:      int64(ch.ChanId),
+			ChannelPoint:   ch.ChannelPoint,
 		}
 		if evt.Txid == "" {
 			evt.Txid = channelPointTxid(evt.ChannelPoint)
-		}
-		if evt.PeerAlias == "" && evt.PeerPubkey != "" {
-			evt.PeerAlias = n.lookupNodeAlias(evt.PeerPubkey)
 		}
 		return evt, fmt.Sprintf("channel:open:%s", ch.ChannelPoint)
 	case lnrpc.ChannelEventUpdate_CLOSED_CHANNEL:
@@ -2382,23 +2378,7 @@ func (n *Notifier) channelEventToNotification(update *lnrpc.ChannelEventUpdate) 
 			ChannelPoint: channelPoint,
 			Txid:         txid,
 		}
-		if info := n.lookupPendingChannel(channelPoint, txid); info != nil {
-			if info.CapacitySat > 0 {
-				evt.AmountSat = info.CapacitySat
-			}
-			if info.RemotePubkey != "" {
-				evt.PeerPubkey = info.RemotePubkey
-			}
-			if info.PeerAlias != "" {
-				evt.PeerAlias = info.PeerAlias
-			}
-			if evt.PeerAlias == "" && evt.PeerPubkey != "" {
-				evt.PeerAlias = n.lookupNodeAlias(evt.PeerPubkey)
-			}
-			if evt.ChannelPoint == "" && info.ChannelPoint != "" {
-				evt.ChannelPoint = info.ChannelPoint
-			}
-		}
+		n.enrichPendingChannelNotification(&evt, n.lookupPendingChannel(channelPoint, txid))
 		if channelPoint == "" {
 			return evt, fmt.Sprintf("channel:opening:%d", time.Now().UnixNano())
 		}
@@ -3605,6 +3585,7 @@ func scanNotification(scanner notificationRowScanner) (Notification, error) {
 		&txid,
 		&paymentHash,
 		&memo,
+		&evt.ChannelPrivate,
 	)
 	if err != nil {
 		return Notification{}, err
@@ -3613,7 +3594,7 @@ func scanNotification(scanner notificationRowScanner) (Notification, error) {
 		evt.PeerPubkey = peerPubkey.String
 	}
 	if peerAlias.Valid {
-		evt.PeerAlias = peerAlias.String
+		evt.PeerAlias = notificationPeerAlias(peerAlias.String)
 	}
 	if channelID.Valid {
 		evt.ChannelID = channelID.Int64
@@ -3665,6 +3646,7 @@ func scanNotificationWithInserted(scanner notificationRowScanner) (Notification,
 		&txid,
 		&paymentHash,
 		&memo,
+		&evt.ChannelPrivate,
 		&inserted,
 	)
 	if err != nil {
@@ -3674,7 +3656,7 @@ func scanNotificationWithInserted(scanner notificationRowScanner) (Notification,
 		evt.PeerPubkey = peerPubkey.String
 	}
 	if peerAlias.Valid {
-		evt.PeerAlias = peerAlias.String
+		evt.PeerAlias = notificationPeerAlias(peerAlias.String)
 	}
 	if channelID.Valid {
 		evt.ChannelID = channelID.Int64

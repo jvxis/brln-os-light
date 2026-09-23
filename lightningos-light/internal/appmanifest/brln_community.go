@@ -42,9 +42,9 @@ const (
 	BRLNCommunityPairingUID = 65528
 	BRLNCommunityPairingGID = 65528
 
-	BRLNCommunityRelease             = "0.1.25"
-	BRLNCommunityWebDigest           = "eae710cc1caf92236dce8f7d28cc55c8fbadd13b7d4dcfda9d55305fa8a46d33"
-	BRLNCommunitySignerDigest        = "ed67d2effe05a3b84d6217ab6be958641449dfee4474cf804803d13901ba8c0b"
+	BRLNCommunityRelease             = "0.1.26"
+	BRLNCommunityWebDigest           = "799bfbd2c741e3825bbdf3af7f1b42834bf71f3b1ad1d4ecf993e905d73859a8"
+	BRLNCommunitySignerDigest        = "726ab1d5709dbb2649e562cf4c8ab11980ea979f7319ec79687e1fb09a750b58"
 	BRLNCommunitySignerVersionOutput = "brln-signer " + BRLNCommunityRelease
 
 	BRLNCommunityWebImage    = "ghcr.io/jvxis/brln-community-web:" + BRLNCommunityRelease + "@sha256:" + BRLNCommunityWebDigest

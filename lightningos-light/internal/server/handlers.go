@@ -3428,7 +3428,7 @@ func (s *Server) handleLNUpdateFees(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if err := s.lnd.UpdateChannelFees(ctx, point, false, baseFeeMsat, feeRatePpm,
+		if err := s.lnd.UpdateChannelFees(lndclient.WithPolicyObservationSource(ctx, "manual"), point, false, baseFeeMsat, feeRatePpm,
 			timeLockDelta, req.InboundEnabled, inboundBaseMsat, inboundFeeRatePpm); err != nil {
 			if isTimeoutError(err) && !req.ApplyAll {
 				writeJSON(w, http.StatusOK, map[string]any{

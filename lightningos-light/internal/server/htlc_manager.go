@@ -739,7 +739,7 @@ func (m *HtlcManager) tick(force bool) {
 		}
 
 		updateCtx, updateCancel := context.WithTimeout(context.Background(), lndRPCTimeout)
-		updateErr := m.lnd.UpdateChannelPolicy(updateCtx, lndclient.UpdateChannelPolicyParams{
+		updateErr := m.lnd.UpdateChannelPolicy(lndclient.WithPolicyObservationSource(updateCtx, "htlc_manager"), lndclient.UpdateChannelPolicyParams{
 			ChannelPoint:         ch.ChannelPoint,
 			ApplyAll:             false,
 			BaseFeeMsat:          policy.BaseFeeMsat,

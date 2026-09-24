@@ -80,6 +80,10 @@ type Client struct {
 	grpcConns          map[grpcConnRole]*grpc.ClientConn
 	grpcTLSFingerprint [sha256.Size]byte
 	grpcTLSKnown       bool
+
+	policyObservationMu   sync.Mutex
+	policyObservations    chan PolicyApplicationObservation
+	policyObservationLoss uint64
 }
 
 type nodeAliasCacheEntry struct {
@@ -695,17 +699,17 @@ type ChannelPolicy struct {
 }
 
 type UpdateChannelPolicyParams struct {
-	ChannelPoint         string
-	ApplyAll             bool
-	BaseFeeMsat          int64
-	FeeRatePpm           int64
-	TimeLockDelta        int64
-	InboundEnabled       bool
-	InboundBaseMsat      int64
-	InboundFeeRatePpm    int64
-	MaxHtlcMsat          *uint64
-	MinHtlcMsat          *uint64
-	MinHtlcMsatSpecified bool
+	ChannelPoint         string  `json:"channel_point"`
+	ApplyAll             bool    `json:"apply_all"`
+	BaseFeeMsat          int64   `json:"base_fee_msat"`
+	FeeRatePpm           int64   `json:"fee_rate_ppm"`
+	TimeLockDelta        int64   `json:"time_lock_delta"`
+	InboundEnabled       bool    `json:"inbound_enabled"`
+	InboundBaseMsat      int64   `json:"inbound_base_msat"`
+	InboundFeeRatePpm    int64   `json:"inbound_fee_rate_ppm"`
+	MaxHtlcMsat          *uint64 `json:"max_htlc_msat"`
+	MinHtlcMsat          *uint64 `json:"min_htlc_msat"`
+	MinHtlcMsatSpecified bool    `json:"min_htlc_msat_specified"`
 }
 
 type infoSnapshot struct {
@@ -7396,7 +7400,9 @@ func (c *Client) UpdateChannelPolicy(ctx context.Context, params UpdateChannelPo
 	}
 
 	client := lnrpc.NewLightningClient(conn)
-	_, err = client.UpdateChannelPolicy(ctx, req)
+	startedAt := time.Now().UTC()
+	resp, err := client.UpdateChannelPolicy(ctx, req)
+	c.observePolicyApplication(ctx, params, startedAt, resp, err)
 	return err
 }
 

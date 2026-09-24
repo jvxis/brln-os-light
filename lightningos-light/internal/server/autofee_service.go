@@ -2094,7 +2094,7 @@ order by channel_id asc
 		// would put the channel back above the ceiling it is now contractually held
 		// under. The commitment outranks the snapshot.
 		baseFeeMsat, feeRatePpm, _ = magmaClampChannelFees(0, channelPoint, baseFeeMsat, feeRatePpm)
-		if err := s.lnd.UpdateChannelFees(ctx, channelPoint, false, baseFeeMsat, feeRatePpm, timeLockDelta, true, inboundBaseMsat, inboundFeeRatePpm); err != nil {
+		if err := s.lnd.UpdateChannelFees(lndclient.WithPolicyObservationSource(ctx, "autofee_restore"), channelPoint, false, baseFeeMsat, feeRatePpm, timeLockDelta, true, inboundBaseMsat, inboundFeeRatePpm); err != nil {
 			return fmt.Errorf("restore policy %s: %w", channelPoint, err)
 		}
 	}
@@ -2386,6 +2386,7 @@ func (s *AutofeeService) Start() {
 
 	go s.loop()
 	go s.measurementLoop(stop)
+	go s.policyExposureLoop(stop)
 }
 
 func (s *AutofeeService) Stop() {
@@ -3501,7 +3502,7 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 			// one chance this path has to bring it back down.
 			baseFeeMsat, _, _ := magmaClampChannelFees(ch.ChannelID, item.ChannelPoint, policy.BaseFeeMsat, int64(targetPpm))
 			if err := s.lnd.UpdateChannelFees(
-				ctx,
+				lndclient.WithPolicyObservationSource(ctx, "autofee_refresh"),
 				item.ChannelPoint,
 				false,
 				baseFeeMsat,
@@ -12791,6 +12792,7 @@ func (e *autofeeEngine) applyDecision(ctx context.Context, ch lndclient.ChannelI
 // retries) with 200ms and 600ms backoffs. The retry only applies inside the
 // caller's context — if the context is canceled we abort.
 func (e *autofeeEngine) applyChannelFeesWithRetry(ctx context.Context, ch lndclient.ChannelInfo, baseFee, feeRate, timeLock int64, inboundEnabled bool, inboundRate int64) error {
+	ctx = lndclient.WithPolicyObservationSource(ctx, "autofee")
 	if e.svc == nil || e.svc.lnd == nil {
 		return errors.New("lnd unavailable")
 	}

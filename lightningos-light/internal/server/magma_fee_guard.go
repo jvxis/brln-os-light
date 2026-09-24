@@ -145,7 +145,7 @@ func (s *MagmaService) enforceFeeCaps(ctx context.Context, channelPoint string, 
 		return false, "", nil
 	}
 
-	if err := guard.UpdateChannelPolicy(ctx, lndclient.UpdateChannelPolicyParams{
+	if err := guard.UpdateChannelPolicy(lndclient.WithPolicyObservationSource(ctx, "magma"), lndclient.UpdateChannelPolicyParams{
 		ChannelPoint:      channelPoint,
 		ApplyAll:          false,
 		BaseFeeMsat:       targetBaseMsat,

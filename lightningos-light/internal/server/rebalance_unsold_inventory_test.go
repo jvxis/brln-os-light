@@ -117,11 +117,11 @@ func TestSovereignUnsoldInventoryAllowance(t *testing.T) {
 		{"fresh normal", time.Minute, time.Minute, false, 300_000, 0, true},
 		{"fresh exploration", 40 * time.Minute, 40 * time.Minute, true, 300_000, 0, true},
 		{"new purchase cannot reset oldest age", 80 * time.Hour, time.Hour, true, 300_000, 0, true},
-		{"exact observation boundary", 4 * time.Hour, 4 * time.Hour, true, 300_000, 30_000, false},
+		{"exact observation boundary", 4 * time.Hour, 4 * time.Hour, true, 300_000, 50_000, false},
 		{"regular soft penalty period", 5 * time.Hour, 5 * time.Hour, false, 300_000, 300_000, false},
 		{"severe old normal stock", 80 * time.Hour, 5 * time.Hour, false, 300_000, 0, true},
-		{"severe old exploration remains possible", 80 * time.Hour, 5 * time.Hour, true, 300_000, 30_000, false},
-		{"respect execution minimum", 5 * time.Hour, 5 * time.Hour, true, 100_000, 20_000, false},
+		{"severe old exploration remains possible", 80 * time.Hour, 5 * time.Hour, true, 300_000, 50_000, false},
+		{"respect operator minimum", 5 * time.Hour, 5 * time.Hour, true, 100_000, 50_000, false},
 		{"never increase deficit", 5 * time.Hour, 5 * time.Hour, true, 10_000, 10_000, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,6 +137,33 @@ func TestSovereignUnsoldInventoryAllowance(t *testing.T) {
 	}
 }
 
+func TestSovereignInventoryProbeOperatorMinimum(t *testing.T) {
+	now := time.Now()
+	stat := sovereignUnsoldLiquidityStat{CompletedAt: now.Add(-5 * time.Hour), SentSat: 900_000, TargetAmountSat: 900_000, FeePaidSat: 450}
+	for _, tc := range []struct {
+		name                           string
+		minimum, execute, amount, want int64
+		split                          bool
+	}{
+		{"Friendspool", 50_000, 10_000, 300_000, 50_000, true},
+		{"BRLN", 1_000, 1_000, 100_000, 1_000, true},
+		{"no fixed ten percent", 80_000, 10_000, 300_000, 80_000, true},
+		{"execution floor higher", 5_000, 10_000, 300_000, 10_000, true},
+		{"unset start", 0, 10_000, 300_000, 10_000, true},
+		{"limited by remaining batch", 50_000, 10_000, 20_000, 20_000, true},
+		{"split off", 50_000, 10_000, 300_000, 50_000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := defaultRebalanceConfig()
+			cfg.MinAmountSat, cfg.MinExecuteSat, cfg.MinSplitEnabled = tc.minimum, tc.execute, tc.split
+			got, reason := sovereignUnsoldInventoryAllowance(stat, cfg, now, true, tc.amount)
+			if got != tc.want || reason != "" {
+				t.Fatalf("amount=%d reason=%s, want=%d", got, reason, tc.want)
+			}
+		})
+	}
+}
+
 func TestExecuteSovereignUnsoldInventoryProbeEconomics(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
@@ -148,9 +175,9 @@ func TestExecuteSovereignUnsoldInventoryProbeEconomics(t *testing.T) {
 		wantReason string
 	}{
 		{"pace fresh exploration", time.Hour, 0, 1, 300_000, sovereignUnsoldPaidLiquidityReason},
-		{"bounded profitable probe", 5 * time.Hour, 0, 1, 30_000, "would_queue"},
-		{"probe still respects ROI", 5 * time.Hour, 0, 10, 30_000, "roi_guardrail"},
-		{"probe cannot buy guaranteed loss", 5 * time.Hour, 990, 0, 30_000, "expected_profit_below_min"},
+		{"bounded profitable probe", 5 * time.Hour, 0, 1, 50_000, "would_queue"},
+		{"probe still respects ROI", 5 * time.Hour, 0, 10, 50_000, "roi_guardrail"},
+		{"probe cannot buy guaranteed loss", 5 * time.Hour, 990, 0, 50_000, "expected_profit_below_min"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := NewRebalanceService(nil, nil, nil)
@@ -178,7 +205,7 @@ func TestExecuteSovereignUnsoldInventoryProbeEconomics(t *testing.T) {
 			if d.AmountSat != tc.wantAmount || d.Reason != tc.wantReason || d.Selected != (tc.wantReason == "would_queue") {
 				t.Fatalf("unexpected decision: %+v", d)
 			}
-			if d.UnsoldPaidSat != 900_000 || d.UnsoldOldestAt == "" || d.UnsoldLastPaidAt == "" || d.InventoryProbe != (tc.wantAmount == 30_000) {
+			if d.UnsoldPaidSat != 900_000 || d.UnsoldOldestAt == "" || d.UnsoldLastPaidAt == "" || d.InventoryProbe != (tc.wantAmount == 50_000) {
 				t.Fatalf("missing inventory evidence: %+v", d)
 			}
 			if d.InventoryProbe && (d.ExpectedGainSat != estimateTargetGainForConfig(cfg, plan.Candidates[0].Channel, d.AmountSat) || d.BudgetCostSat >= 120) {

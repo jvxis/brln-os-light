@@ -6835,7 +6835,20 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 			}
 		}
 
-		routes, err := s.lnd.QueryRoutesToChannel(attemptCtx, selfPubkey, amountTry, source.ChannelID, targetSnapshot.RemotePubkey, targetChannelID, feeLimitMsat, 5, ignoredEdges, ignoredPairs)
+		queryResult, err := queryRebalanceRoutesWithAmountFallback(attemptCtx, amountTry, feeLimitMsat, feeCfg, targetPolicy, &sourcePolicy,
+			func(queryCtx context.Context, queryAmount, queryFee int64) ([]*lnrpc.Route, error) {
+				return s.lnd.QueryRoutesToChannel(queryCtx, selfPubkey, queryAmount, source.ChannelID, targetSnapshot.RemotePubkey, targetChannelID, queryFee, 5, ignoredEdges, ignoredPairs)
+			}, func(from, to int64) {
+				if s.logger != nil {
+					s.logger.Printf("rebalance job=%d: no-route amount fallback source=%d target=%d amount=%d->%d", jobID, source.ChannelID, targetChannelID, from, to)
+				}
+			})
+		// Only the exhausted search is a pair/structural failure. A miss at a
+		// larger amount must not quarantine this source before smaller queries.
+		amountFallbackUsed := queryResult.AmountSat < amountTry
+		amountTry, feeLimitMsat = queryResult.AmountSat, queryResult.FeeLimitMsat
+		feeLimitPpm = feeMsatToPpm(feeLimitMsat, amountTry)
+		routes := queryResult.Routes
 		routeMaxSat := int64(0)
 		if err != nil {
 			cancelAttempt()
@@ -6904,6 +6917,9 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 						continue
 					}
 					maxFeeMsat, err := calcFeeLimitMsat(routeAmount*1000, targetPolicy, &sourcePolicy, feeCfg)
+					if amountFallbackUsed {
+						maxFeeMsat = rebalanceResizedFeeLimit(routeAmount, queryResult.AmountSat, queryResult.FeeLimitMsat, maxFeeMsat)
+					}
 					if err != nil || maxFeeMsat <= 0 {
 						if err == nil {
 							err = errors.New("invalid fee limit")
@@ -7027,6 +7043,9 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 							continue
 						}
 						retryFeeMsat, retryErr := calcFeeLimitMsat(maxAmount*1000, targetPolicy, &sourcePolicy, feeCfg)
+						if amountFallbackUsed {
+							retryFeeMsat = rebalanceResizedFeeLimit(maxAmount, queryResult.AmountSat, queryResult.FeeLimitMsat, retryFeeMsat)
+						}
 						if retryErr == nil && retryFeeMsat > 0 {
 							retryFeePpm := feeMsatToPpm(retryFeeMsat, maxAmount)
 							_, retryHash, retryAddr, retryInvErr := s.createRebalanceInvoice(attemptCtx, maxAmount, jobID, source.ChannelID, targetChannelID)
@@ -8077,7 +8096,19 @@ func (m *rebalanceMppPrepassContext) attemptShard(roundCtx context.Context, sour
 	defer cancelAttempt()
 
 	ignoredEdgeSnapshot, ignoredPairSnapshot := m.snapshotIgnoredRoutes()
-	routes, err := s.lnd.QueryRoutesToChannel(attemptCtx, m.selfPubkey, amountTry, source.ChannelID, st.targetSnapshot.RemotePubkey, r.targetChannelID, feeLimitMsat, 3, ignoredEdgeSnapshot, ignoredPairSnapshot)
+	queryResult, err := queryRebalanceRoutesWithAmountFallback(attemptCtx, amountTry, feeLimitMsat, feeCfg, m.targetPolicy, &sourcePolicy,
+		func(queryCtx context.Context, queryAmount, queryFee int64) ([]*lnrpc.Route, error) {
+			return s.lnd.QueryRoutesToChannel(queryCtx, m.selfPubkey, queryAmount, source.ChannelID, st.targetSnapshot.RemotePubkey, r.targetChannelID, queryFee, 3, ignoredEdgeSnapshot, ignoredPairSnapshot)
+		}, func(from, to int64) {
+			if s.logger != nil {
+				s.logger.Printf("rebalance job=%d: mpp no-route amount fallback source=%d target=%d amount=%d->%d", r.jobID, source.ChannelID, r.targetChannelID, from, to)
+			}
+		})
+	amountFallbackUsed := queryResult.AmountSat < amountTry
+	amountTry, feeLimitMsat = queryResult.AmountSat, queryResult.FeeLimitMsat
+	result.AmountSent = amountTry
+	result.FeeLimitPpm = feeMsatToPpm(feeLimitMsat, amountTry)
+	routes := queryResult.Routes
 	if err != nil {
 		if ctx.Err() != nil {
 			result.Fatal = true
@@ -8139,6 +8170,9 @@ func (m *rebalanceMppPrepassContext) attemptShard(roundCtx context.Context, sour
 		route = rebuilt
 		result.AmountSent = routeAmount
 		feeLimitMsat, feeErr = calcFeeLimitMsat(routeAmount*1000, m.targetPolicy, &sourcePolicy, feeCfg)
+		if amountFallbackUsed {
+			feeLimitMsat = rebalanceResizedFeeLimit(routeAmount, queryResult.AmountSat, queryResult.FeeLimitMsat, feeLimitMsat)
+		}
 		if feeErr != nil || feeLimitMsat <= 0 {
 			result.FailReason = "fee cap zero"
 			return result

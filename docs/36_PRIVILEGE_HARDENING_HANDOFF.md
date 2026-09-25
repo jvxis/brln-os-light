@@ -677,15 +677,15 @@ the disposable Ubuntu 26.04 VM. Evidence:
 and
 `docs/baselines/privilege-hardening-phase2-bark-wallet-reauth-2026-08-13.json`.
 
-The BR⚡LN Community test app (app release 0.1.35 in the 0.5.34 series; first
+The BR⚡LN Community test app (app release 0.1.36 in the 0.5.34 series; first
 shipped as 0.1.11 in the 0.5.29 series) follows the Bark Wallet
 pattern. Six typed operations (`app.brlncommunity.status`, `.ensure`,
 `.lifecycle`, `.remove`, `.firewall`, `.password.read`) own its exact runtime,
 lifecycle, data-preserving removal, fixed port 4448 and the signer access
-password read. The chat (`ghcr.io/jvxis/brln-community-web:0.1.35`), the NIP-46
-signer (`ghcr.io/jvxis/brln-signer:0.1.35`) and the Caddy proxy shared with Bark
+password read. The chat (`ghcr.io/jvxis/brln-community-web:0.1.36`), the NIP-46
+signer (`ghcr.io/jvxis/brln-signer:0.1.36`) and the Caddy proxy shared with Bark
 are manifest-digest pinned; the broker probes nginx and Caddy and requires the
-exact `brln-signer 0.1.35` version output before lifecycle execution. All
+exact `brln-signer 0.1.36` version output before lifecycle execution. All
 services are non-root, read-only, capability-free and `no-new-privileges`.
 Only the signer (dedicated UID/GID 65529) mounts
 `apps-data/brln-community/signer`, where the member's Nostr key stays NIP-49

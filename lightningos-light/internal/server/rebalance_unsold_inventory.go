@@ -68,8 +68,8 @@ func sovereignUnsoldInventoryWindow(cfg RebalanceConfig) time.Duration {
 
 // Observation time is not permission to buy another full batch. Both ordinary
 // selection and exploration wait after a paid batch that has not sold. Once
-// observation ends, exploration can test again with at most 10% of a batch
-// (or one configured execution minimum). Explicit operator jobs/guaranteed
+// observation ends, exploration can test again at the operator's start minimum
+// (never below the execution floor or above the original batch). Operator/guaranteed
 // slots do not use this gate.
 func sovereignUnsoldInventoryAllowance(stat sovereignUnsoldLiquidityStat, cfg RebalanceConfig, now time.Time, exploration bool, amount int64) (int64, string) {
 	if stat.Unavailable {
@@ -89,7 +89,7 @@ func sovereignUnsoldInventoryAllowance(stat sovereignUnsoldLiquidityStat, cfg Re
 		return 0, sovereignUnsoldPaidLiquidityReason
 	}
 	if exploration {
-		probe := amount / 10
+		probe := effectiveStartAmountSat(cfg)
 		if minimum := effectiveMinExecuteSat(cfg); probe < minimum {
 			probe = minimum
 		}

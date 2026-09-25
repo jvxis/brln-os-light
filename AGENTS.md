@@ -268,6 +268,7 @@ POST   /api/lnops/autofee/refresh
 GET    /api/lnops/autofee/status
 GET    /api/lnops/autofee/results
 GET    /api/lnops/autofee/outcomes
+GET    /api/lnops/autofee/exposures
 POST   /api/lnops/autofee/outcomes/measure
 GET    /api/lnops/channel-ranking
 GET    /api/lnops/channel-ranking/plan

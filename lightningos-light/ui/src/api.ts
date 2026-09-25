@@ -701,6 +701,36 @@ export const refreshAutofeeReferences = (payload?: {
 }) =>
   request('/api/lnops/autofee/refresh', { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const getAutofeeStatus = () => request('/api/lnops/autofee/status')
+export type AutofeePolicySnapshot = {
+  channel_point: string; channel_id: string
+  started_at: string; observed_at: string; session: string; loss: number
+  fees: { base_msat: number; rate_ppm: number; inbound_base_msat: number; inbound_rate_ppm: number } | null
+  active: boolean; disabled: boolean; local_balance_sat: number; unsettled_balance_sat: number
+}
+export type AutofeePolicyApplication = {
+  started_at: string; completed_at: string; source: string; acknowledged: boolean; failed_updates: number
+  request: {
+    channel_point: string; apply_all: boolean; base_fee_msat: number; fee_rate_ppm: number; time_lock_delta: number
+    inbound_enabled: boolean; inbound_base_msat: number; inbound_fee_rate_ppm: number
+    max_htlc_msat: number | null; min_htlc_msat: number | null; min_htlc_msat_specified: boolean
+  }
+}
+export type AutofeeExposureMetrics = {
+  forward_count: number; forward_amount_msat: number; forward_fee_msat: number
+  incoming_forward_count: number; rebalance_count: number
+}
+export type AutofeePolicyExposure = {
+  start: string; end: string; duration_seconds: number; confidence: 'sampled' | 'unknown'; flags: string[]
+  before: AutofeePolicySnapshot; after: AutofeePolicySnapshot
+  activity: AutofeeExposureMetrics; policy_activity: AutofeeExposureMetrics | null
+  applications: AutofeePolicyApplication[]
+}
+export type AutofeePolicyExposures = {
+  channel_point: string; since: string; until: string; measured_at: string
+  sample_interval_seconds: number; next_until: string | null; limitations: string[]; items: AutofeePolicyExposure[]
+}
+export const getAutofeeExposures = (params: { channel_point: string; since?: string; until?: string; limit?: number }): Promise<AutofeePolicyExposures> =>
+  request(`/api/lnops/autofee/exposures${buildQuery(params)}`)
 export const getAutofeeResults = (params: number | {
   lines?: number
   runs?: number

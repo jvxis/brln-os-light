@@ -1043,3 +1043,71 @@ counters. Pending requests have stable ID ordering.
 `POST /api/apps/los-mesh/action`: `preview` and `invoice` accept optional `request_id` referencing a pending request from the same peer. Kind, amount, address and expiry must match; arbitrary raw transaction replies cannot bypass those terms. The subsequent `send` uses the request binding stored in its owner-bound preview. Successful response enqueue removes the original preparation action. Unlinked calls keep their previous contract.
 
 Action `retry` accepts `id`, `confirm: true`, and `confirm_password`; it requires fresh Mesh reauthentication. Only paused, unexpired in-memory transmissions with fewer than two resumptions are eligible. The operation never creates a new invoice or wallet transaction. Clients should render the action only when `can_retry` is true, while the server rechecks eligibility.
+
+## AutoFee policy exposure observations (0.5.34)
+
+`GET /api/lnops/autofee/exposures` is an authenticated, read-only diagnostic.
+It does not change the existing `/autofee/outcomes` 24-hour measurements or feed
+AutoFee, the interlock, or Sovereign decisions.
+
+Parameters: required `channel_point`; optional RFC3339 `since` and `until`
+(default: the 24 hours ending now); `limit` from 1 to 200 (default 100).
+Require `since < until <= now`, spanning at most 24 hours. When only `until` is
+supplied, `since` defaults to 24 hours before it. Invalid parameters return 400.
+Disabled/unavailable observation or a query timeout returns 503, never zero
+activity masquerading as a successful measurement.
+
+Response: `channel_point`, `since`, `until`, `measured_at`,
+`sample_interval_seconds` (300), `items` newest first, `next_until` (nullable),
+and `limitations`. To page backwards, reuse `since` and pass `next_until` as
+`until`. A non-null cursor can yield an empty final page.
+
+Each item describes a complete `[start,end)` interval between consecutive local
+observations, with `duration_seconds`, `before`, `after`, `confidence`, `flags`,
+`applications`, `activity`, and nullable `policy_activity`. Intervals crossing
+`since` or `until` are not clipped or extrapolated. No historical backfill is
+invented from old outcomes. Absence of intervals means absent coverage.
+
+- Snapshots include acquisition `started_at`, `observed_at`, observer `session`,
+  cumulative observation `loss`, channel point, **string** `channel_id`, local
+  and unsettled balance in sats, active/local-disabled status and nullable
+  `fees` (`base_msat`, `rate_ppm`, `inbound_base_msat`, `inbound_rate_ppm`).
+  Zero fees are valid; missing policies are null. Local-disabled status uses
+  LND's local channel status flags, not a remote gossip propagation claim.
+- `applications` contains Manager RPC attempts overlapping the interval or
+  its initial acquisition: start/end time, `source`, requested policy,
+  `acknowledged` and `failed_updates`. The request includes the final values
+  submitted after any contractual cap, not the evaluator's preliminary target.
+  Acknowledgement is not read-back or propagation proof. Timeouts/partial
+  failures remain uncertain. Calculated decisions remain in `/autofee/results`.
+- `activity` contains `forward_count`, `forward_amount_msat`,
+  `forward_fee_msat`, `incoming_forward_count`, and `rebalance_count`.
+  Incoming/assisted activity adds no revenue to the outgoing fee sum.
+  Successful rebalances in either channel role are flagged. Zero-fee forwards
+  count as movement. Adjacent intervals never count the same forward twice
+  within this channel's exposure series.
+- `confidence=sampled` means matching observed fees, continuous observer
+  session, no recorded loss/gap, and no overlapping recorded application.
+  `policy_activity` then contains the sampled interval's activity, **not a
+  causal reward or proof that no external change occurred between samples**.
+  It is null with `confidence=unknown` for changed/missing policies, restart,
+  observation loss, gaps over ten minutes, identity changes or overlapping
+  applications. Flags also mark manual intervention, inbound/outgoing changes,
+  liquidity changes, unavailable observations and incoming/rebalance movement.
+
+Reads use a consistent database snapshot and a five-second timeout. Immutable
+source observations make reconstruction repeatable; metrics can change when
+late notifications/applications arrive. Completed application events are
+drained before publishing samples; in-flight RPCs or external tools can still
+become visible later. FeeReport/ListChannels acquisition is not atomic, and
+propagation, HTLC-level policy acceptance and changes between samples remain
+unobserved. Reported fees are local observations, not reconstructed exact
+application boundaries.
+
+The independent observer uses two batched read-only LND RPCs every five minutes,
+records at most 256 queued application observations without blocking policy
+RPCs, and retains diagnostic rows for 30 days with bounded cleanup. Migration
+is additive; old outcomes remain untouched. Set the manager environment
+`LIGHTNINGOS_AUTOFEE_EXPOSURE_ENABLED=0` before restart to disable this observer.
+Existing fee/job behavior is unchanged; diagnostic tables can remain in place
+through rollback. See [the measurement contract](AUTOFEE_EXPOSURE.md).

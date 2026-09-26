@@ -677,7 +677,7 @@ the disposable Ubuntu 26.04 VM. Evidence:
 and
 `docs/baselines/privilege-hardening-phase2-bark-wallet-reauth-2026-08-13.json`.
 
-The BR⚡LN Community test app (app release 0.1.41 in the 0.5.34 series; first
+The BR⚡LN Community test app (app release 0.1.41 in the 0.5.35 series; first
 shipped as 0.1.11 in the 0.5.29 series) follows the Bark Wallet
 pattern. Six typed operations (`app.brlncommunity.status`, `.ensure`,
 `.lifecycle`, `.remove`, `.firewall`, `.password.read`) own its exact runtime,

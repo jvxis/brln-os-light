@@ -45,6 +45,12 @@ type rebalanceConfigPayload struct {
 	FailTolerancePpm                       *int64   `json:"fail_tolerance_ppm,omitempty"`
 	ROIMin                                 *float64 `json:"roi_min,omitempty"`
 	DailyBudgetPct                         *float64 `json:"daily_budget_pct,omitempty"`
+	DailyBudgetMinSat                      *int64   `json:"daily_budget_min_sat,omitempty"`
+	DailyBudgetBaseDays                    *int     `json:"daily_budget_base_days,omitempty"`
+	SovereignEfficiencyAutofeeAligned      *bool    `json:"sovereign_budget_efficiency_autofee_aligned,omitempty"`
+	KeepaliveRefillEnabled                 *bool    `json:"keepalive_refill_enabled,omitempty"`
+	KeepaliveRefillAfterHours              *int     `json:"keepalive_refill_after_hours,omitempty"`
+	KeepaliveRefillPct                     *float64 `json:"keepalive_refill_pct,omitempty"`
 	BudgetMode                             *string  `json:"budget_mode,omitempty"`
 	BudgetUnlimited                        *bool    `json:"budget_unlimited,omitempty"`
 	BudgetAutoOnly                         *bool    `json:"budget_auto_only,omitempty"`
@@ -404,6 +410,24 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	if payload.DailyBudgetPct != nil {
 		cfg.DailyBudgetPct = *payload.DailyBudgetPct
 	}
+	if payload.DailyBudgetMinSat != nil {
+		cfg.DailyBudgetMinSat = *payload.DailyBudgetMinSat
+	}
+	if payload.DailyBudgetBaseDays != nil {
+		cfg.DailyBudgetBaseDays = *payload.DailyBudgetBaseDays
+	}
+	if payload.SovereignEfficiencyAutofeeAligned != nil {
+		cfg.SovereignEfficiencyAutofeeAligned = *payload.SovereignEfficiencyAutofeeAligned
+	}
+	if payload.KeepaliveRefillEnabled != nil {
+		cfg.KeepaliveRefillEnabled = *payload.KeepaliveRefillEnabled
+	}
+	if payload.KeepaliveRefillAfterHours != nil {
+		cfg.KeepaliveRefillAfterHours = *payload.KeepaliveRefillAfterHours
+	}
+	if payload.KeepaliveRefillPct != nil {
+		cfg.KeepaliveRefillPct = *payload.KeepaliveRefillPct
+	}
 	if payload.BudgetMode != nil {
 		cfg.BudgetMode = *payload.BudgetMode
 	}
@@ -664,6 +688,18 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 		return err
 	}
 	if err := validateOptionalFloat("daily_budget_pct", payload.DailyBudgetPct, 0, 100); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("daily_budget_min_sat", payload.DailyBudgetMinSat, 0, 10_000_000); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("daily_budget_base_days", payload.DailyBudgetBaseDays, dailyBudgetBaseDaysMin, dailyBudgetBaseDaysMax); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("keepalive_refill_after_hours", payload.KeepaliveRefillAfterHours, keepaliveRefillAfterHoursMin, keepaliveRefillAfterHoursMax); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("keepalive_refill_pct", payload.KeepaliveRefillPct, keepaliveRefillPctMin, keepaliveRefillPctMax); err != nil {
 		return err
 	}
 	if payload.BudgetMode != nil && normalizeRebalanceBudgetMode(*payload.BudgetMode) != strings.TrimSpace(strings.ToLower(*payload.BudgetMode)) {

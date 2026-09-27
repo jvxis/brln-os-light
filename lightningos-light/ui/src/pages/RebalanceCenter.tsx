@@ -231,6 +231,12 @@ export default function RebalanceCenter() {
     sovereign_ev_weighted_scoring: raw.sovereign_ev_weighted_scoring ?? false,
     sovereign_source_opportunity_cost_enabled: raw.sovereign_source_opportunity_cost_enabled ?? true,
     sovereign_slow_seller_enabled: raw.sovereign_slow_seller_enabled ?? true,
+    daily_budget_min_sat: typeof raw.daily_budget_min_sat === 'number' ? raw.daily_budget_min_sat : 0,
+    daily_budget_base_days: typeof raw.daily_budget_base_days === 'number' && raw.daily_budget_base_days > 0 ? raw.daily_budget_base_days : 7,
+    sovereign_budget_efficiency_autofee_aligned: raw.sovereign_budget_efficiency_autofee_aligned ?? false,
+    keepalive_refill_enabled: raw.keepalive_refill_enabled ?? false,
+    keepalive_refill_after_hours: typeof raw.keepalive_refill_after_hours === 'number' && raw.keepalive_refill_after_hours > 0 ? raw.keepalive_refill_after_hours : 48,
+    keepalive_refill_pct: typeof raw.keepalive_refill_pct === 'number' && raw.keepalive_refill_pct > 0 ? raw.keepalive_refill_pct : 5,
     budget_mode: raw.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
     budget_unlimited: raw.budget_unlimited ?? false,
     budget_auto_only: raw.budget_auto_only ?? false,
@@ -309,6 +315,12 @@ export default function RebalanceCenter() {
       sovereign_ev_weighted_scoring: cfg.sovereign_ev_weighted_scoring,
       sovereign_source_opportunity_cost_enabled: cfg.sovereign_source_opportunity_cost_enabled,
       sovereign_slow_seller_enabled: cfg.sovereign_slow_seller_enabled,
+      sovereign_budget_efficiency_autofee_aligned: cfg.sovereign_budget_efficiency_autofee_aligned,
+      keepalive_refill_enabled: cfg.keepalive_refill_enabled,
+      keepalive_refill_after_hours: cfg.keepalive_refill_after_hours,
+      keepalive_refill_pct: cfg.keepalive_refill_pct,
+      daily_budget_min_sat: cfg.daily_budget_min_sat,
+      daily_budget_base_days: cfg.daily_budget_base_days,
       scan_interval_sec: cfg.scan_interval_sec,
       deadband_pct: cfg.deadband_pct,
       source_min_local_pct: cfg.source_min_local_pct,
@@ -388,6 +400,12 @@ export default function RebalanceCenter() {
       sovereign_ev_weighted_scoring: cfg.sovereign_ev_weighted_scoring ?? false,
       sovereign_source_opportunity_cost_enabled: cfg.sovereign_source_opportunity_cost_enabled ?? true,
       sovereign_slow_seller_enabled: cfg.sovereign_slow_seller_enabled ?? true,
+      sovereign_budget_efficiency_autofee_aligned: cfg.sovereign_budget_efficiency_autofee_aligned ?? false,
+      keepalive_refill_enabled: cfg.keepalive_refill_enabled ?? false,
+      keepalive_refill_after_hours: cfg.keepalive_refill_after_hours ?? 48,
+      keepalive_refill_pct: cfg.keepalive_refill_pct ?? 5,
+      daily_budget_min_sat: cfg.daily_budget_min_sat ?? 0,
+      daily_budget_base_days: cfg.daily_budget_base_days ?? 7,
       auto_target_enabled: cfg.auto_target_enabled ?? false,
       auto_target_max_pct: cfg.auto_target_max_pct ?? 50,
       auto_target_min_pct: cfg.auto_target_min_pct ?? 10,
@@ -811,6 +829,12 @@ export default function RebalanceCenter() {
           sovereign_ev_weighted_scoring: config.sovereign_ev_weighted_scoring,
           sovereign_source_opportunity_cost_enabled: config.sovereign_source_opportunity_cost_enabled,
           sovereign_slow_seller_enabled: config.sovereign_slow_seller_enabled,
+          sovereign_budget_efficiency_autofee_aligned: config.sovereign_budget_efficiency_autofee_aligned,
+          keepalive_refill_enabled: config.keepalive_refill_enabled,
+          keepalive_refill_after_hours: Math.max(1, Math.min(720, Number(config.keepalive_refill_after_hours) || 48)),
+          keepalive_refill_pct: Math.max(1, Math.min(25, Number(config.keepalive_refill_pct) || 5)),
+          daily_budget_min_sat: Math.max(0, Math.round(Number(config.daily_budget_min_sat) || 0)),
+          daily_budget_base_days: Math.max(7, Math.min(30, Math.round(Number(config.daily_budget_base_days) || 7))),
           scan_interval_sec: config.scan_interval_sec,
           deadband_pct: config.deadband_pct,
           source_min_local_pct: config.source_min_local_pct,
@@ -985,6 +1009,12 @@ export default function RebalanceCenter() {
         sovereign_ev_weighted_scoring: config.sovereign_ev_weighted_scoring,
         sovereign_source_opportunity_cost_enabled: config.sovereign_source_opportunity_cost_enabled,
         sovereign_slow_seller_enabled: config.sovereign_slow_seller_enabled,
+        sovereign_budget_efficiency_autofee_aligned: config.sovereign_budget_efficiency_autofee_aligned,
+        keepalive_refill_enabled: config.keepalive_refill_enabled,
+        keepalive_refill_after_hours: Math.max(1, Math.min(720, Number(config.keepalive_refill_after_hours) || 48)),
+        keepalive_refill_pct: Math.max(1, Math.min(25, Number(config.keepalive_refill_pct) || 5)),
+        daily_budget_min_sat: Math.max(0, Math.round(Number(config.daily_budget_min_sat) || 0)),
+        daily_budget_base_days: Math.max(7, Math.min(30, Math.round(Number(config.daily_budget_base_days) || 7))),
         auto_target_enabled: config.auto_target_enabled,
         auto_target_max_pct: Math.max(10, Math.min(90, Number(config.auto_target_max_pct) || 50)),
         auto_target_min_pct: Math.max(1, Math.min(89, Number(config.auto_target_min_pct) || 10)),
@@ -1027,6 +1057,12 @@ export default function RebalanceCenter() {
           sovereign_ev_weighted_scoring: normalizedSaved.sovereign_ev_weighted_scoring,
           sovereign_source_opportunity_cost_enabled: normalizedSaved.sovereign_source_opportunity_cost_enabled,
           sovereign_slow_seller_enabled: normalizedSaved.sovereign_slow_seller_enabled,
+          sovereign_budget_efficiency_autofee_aligned: normalizedSaved.sovereign_budget_efficiency_autofee_aligned,
+          keepalive_refill_enabled: normalizedSaved.keepalive_refill_enabled,
+          keepalive_refill_after_hours: normalizedSaved.keepalive_refill_after_hours,
+          keepalive_refill_pct: normalizedSaved.keepalive_refill_pct,
+          daily_budget_min_sat: normalizedSaved.daily_budget_min_sat,
+          daily_budget_base_days: normalizedSaved.daily_budget_base_days,
           auto_target_enabled: normalizedSaved.auto_target_enabled,
           auto_target_max_pct: normalizedSaved.auto_target_max_pct,
           auto_target_min_pct: normalizedSaved.auto_target_min_pct,
@@ -1614,6 +1650,9 @@ export default function RebalanceCenter() {
         )}
         {decision.inventory_probe && (
           <span>{t('rebalanceCenter.autopilot.inventoryProbe', { value: formatSats(decision.amount_sat) })}</span>
+        )}
+        {decision.keepalive_refill && (
+          <span>{t('rebalanceCenter.autopilot.keepaliveRefill', { value: formatSats(decision.amount_sat) })}</span>
         )}
         {decision.recent_rebalance_sent_sat ? (
           <span>
@@ -2741,6 +2780,36 @@ export default function RebalanceCenter() {
                 />
               </div>
               <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.keepaliveRefillAfterHours')}>
+                  {t('rebalanceCenter.settings.keepaliveRefillAfterHours')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  max={720}
+                  step={1}
+                  disabled={config.scheduler_mode === 'rules_auto' || !config.keepalive_refill_enabled}
+                  value={config.keepalive_refill_after_hours}
+                  onChange={(e) => setConfig({ ...config, keepalive_refill_after_hours: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.keepaliveRefillPct')}>
+                  {t('rebalanceCenter.settings.keepaliveRefillPct')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  max={25}
+                  step={1}
+                  disabled={config.scheduler_mode === 'rules_auto' || !config.keepalive_refill_enabled}
+                  value={config.keepalive_refill_pct}
+                  onChange={(e) => setConfig({ ...config, keepalive_refill_pct: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
                 <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignExplorationSlotPct')}>
                   {t('rebalanceCenter.settings.sovereignExplorationSlotPct')}
                 </label>
@@ -2772,6 +2841,24 @@ export default function RebalanceCenter() {
                   onChange={(e) => setConfig({ ...config, sovereign_slow_seller_enabled: e.target.checked })}
                 />
                 <span>{t('rebalanceCenter.settings.sovereignSlowSellerEnabled')}</span>
+              </label>
+              <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.keepaliveRefillEnabled')}>
+                <input
+                  type="checkbox"
+                  checked={config.keepalive_refill_enabled}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  onChange={(e) => setConfig({ ...config, keepalive_refill_enabled: e.target.checked })}
+                />
+                <span>{t('rebalanceCenter.settings.keepaliveRefillEnabled')}</span>
+              </label>
+              <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.sovereignBudgetEfficiencyAutofeeAligned')}>
+                <input
+                  type="checkbox"
+                  checked={config.sovereign_budget_efficiency_autofee_aligned}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  onChange={(e) => setConfig({ ...config, sovereign_budget_efficiency_autofee_aligned: e.target.checked })}
+                />
+                <span>{t('rebalanceCenter.settings.sovereignBudgetEfficiencyAutofeeAligned')}</span>
               </label>
               <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.sovereignEvWeightedScoring')}>
                 <input
@@ -3186,6 +3273,35 @@ export default function RebalanceCenter() {
                     />
                     {t('rebalanceCenter.settings.manualReserveEnabled')}
                   </label>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.dailyBudgetMinSat')}>
+                      {t('rebalanceCenter.settings.dailyBudgetMinSat')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={100}
+                      disabled={config.budget_unlimited}
+                      value={config.daily_budget_min_sat}
+                      onChange={(e) => setConfig({ ...config, daily_budget_min_sat: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.dailyBudgetBaseDays')}>
+                      {t('rebalanceCenter.settings.dailyBudgetBaseDays')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={7}
+                      max={30}
+                      step={1}
+                      disabled={config.budget_unlimited}
+                      value={config.daily_budget_base_days}
+                      onChange={(e) => setConfig({ ...config, daily_budget_base_days: Number(e.target.value) })}
+                    />
+                  </div>
                   <div className="space-y-2">
                     <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.manualReserveMode')}>
                       {t('rebalanceCenter.settings.manualReserveMode')}

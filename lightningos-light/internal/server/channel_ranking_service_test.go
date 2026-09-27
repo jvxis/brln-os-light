@@ -741,3 +741,52 @@ func hasChannelRankingRecommendation(recommendations []ChannelRankingRecommendat
 	}
 	return false
 }
+
+func TestChannelRankingPeerCloseRisk(t *testing.T) {
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-72 * time.Hour)
+	recent := now.Add(-6 * time.Hour)
+	base := ChannelRankingItem{
+		Active:           true,
+		CapacitySat:      10_000_000,
+		LocalBalanceSat:  100_000,
+		LiquidityState:   autofeeLiquidityStateDrained,
+		LiquidityStateAt: &old,
+		ForwardFee30dSat: 2_000,
+		ClassLabel:       "sink",
+	}
+	if !channelRankingPeerCloseRisk(base, now) {
+		t.Fatal("expected drained sink with 30d revenue and 72h state to be flagged")
+	}
+	fresh := base
+	fresh.LiquidityStateAt = &recent
+	if channelRankingPeerCloseRisk(fresh, now) {
+		t.Fatal("drained for only 6h must not be flagged")
+	}
+	healthy := base
+	healthy.LiquidityState = autofeeLiquidityStateOfferReady
+	if channelRankingPeerCloseRisk(healthy, now) {
+		t.Fatal("offer-ready channel must not be flagged")
+	}
+	refilled := base
+	refilled.LocalBalanceSat = 2_000_000
+	if channelRankingPeerCloseRisk(refilled, now) {
+		t.Fatal("channel with 20%% local is no longer at risk")
+	}
+	dead := base
+	dead.ForwardFee30dSat = 0
+	dead.ClassLabel = "router"
+	if channelRankingPeerCloseRisk(dead, now) {
+		t.Fatal("no revenue and not a sink: nothing worth protecting")
+	}
+	inactive := base
+	inactive.Active = false
+	if channelRankingPeerCloseRisk(inactive, now) {
+		t.Fatal("inactive channel must not be flagged")
+	}
+	unknown := base
+	unknown.LiquidityStateAt = nil
+	if channelRankingPeerCloseRisk(unknown, now) {
+		t.Fatal("unknown state age must not be flagged")
+	}
+}

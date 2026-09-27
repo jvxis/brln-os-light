@@ -817,6 +817,14 @@ POST /api/reports/reconciliation
 
 ## Rebalance channel automation
 
+GET /api/rebalance/config
+POST /api/rebalance/config
+- Since 0.5.36, optional configuration updates include `daily_budget_min_sat` (0–10,000,000, default 0), an absolute floor for the revenue-derived daily budget, and `daily_budget_base_days` (7–30, default 7), the revenue averaging window.
+- `sovereign_budget_efficiency_autofee_aligned` (default false) optionally caps the required budget-efficiency ratio at the ratio attainable at the AutoFee economic floor. The overview exposes `sovereign_budget_efficiency_effective_ratio` and `sovereign_budget_efficiency_aligned_ceiling`.
+- `keepalive_refill_enabled` (default false), `keepalive_refill_after_hours` (1–720, default 48), and `keepalive_refill_pct` (1–25, default 5) configure small Sovereign refills for eligible long-drained AutoFee refill intents. Sovereign decisions expose optional `keepalive_refill: true`. This is not a guarantee that a peer will keep a channel open.
+- New controls preserve prior defaults. Independently of these opt-ins, Sovereign cost estimates for targets without reliable history can use paid node-wide 7-day rebalance cost plus a 20% margin, capped by the fee budget; without that reference, the previous full-cap estimate remains.
+- Channel ranking may include reason `peer_close_risk` and recommendation `keepalive_refill` for economically relevant, active public channels observed drained for at least 48 hours. These are advisory signals, not predictions or automatic channel operations.
+
 GET /api/rebalance/channels
 - Returns live channel balances, local/peer policies, targets, eligibility and recent economics.
 - Economic diagnostics include `initiator`, `peer_policy_known`, `effective_econ_ratio`, `fee_budget_ppm`, `economic_fee_floor_ppm`, `economic_required_cost_ppm`, `economic_reference_amount_sat`, `economic_floor_reason`, and `economic_blocked_reason`.

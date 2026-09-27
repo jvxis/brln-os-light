@@ -127,6 +127,15 @@ executável. Stats antigos sem o campo mantêm o comportamento anterior.
 
 Sem knob novo.
 
+## 0.5.38: knob `source_routeability_quarantine_hours`
+
+A quarentena de routeability da source ganha um knob (padrão 6 = comportamento
+anterior; faixa 1-48). Ele define a janela e o TTL da quarentena
+(`sourceRouteabilityTTLForConfig`) e também o backoff do keepalive por alvo.
+Aparece no Rebalance Center ao lado de "Quarentena target→source (h)", que é
+outra proteção (canal recém-rebalanceado não vira source). No Friendspool o
+valor recomendado é 2.
+
 ## O que acompanhar na semana
 
 - Orçamento zerando em > 30% dos scans = virou o limitador (bom sinal; subir o

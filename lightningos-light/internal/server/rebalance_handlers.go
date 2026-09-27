@@ -51,6 +51,7 @@ type rebalanceConfigPayload struct {
 	KeepaliveRefillEnabled                 *bool    `json:"keepalive_refill_enabled,omitempty"`
 	KeepaliveRefillAfterHours              *int     `json:"keepalive_refill_after_hours,omitempty"`
 	KeepaliveRefillPct                     *float64 `json:"keepalive_refill_pct,omitempty"`
+	SourceRouteabilityQuarantineHours      *int     `json:"source_routeability_quarantine_hours,omitempty"`
 	BudgetMode                             *string  `json:"budget_mode,omitempty"`
 	BudgetUnlimited                        *bool    `json:"budget_unlimited,omitempty"`
 	BudgetAutoOnly                         *bool    `json:"budget_auto_only,omitempty"`
@@ -428,6 +429,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	if payload.KeepaliveRefillPct != nil {
 		cfg.KeepaliveRefillPct = *payload.KeepaliveRefillPct
 	}
+	if payload.SourceRouteabilityQuarantineHours != nil {
+		cfg.SourceRouteabilityQuarantineHours = *payload.SourceRouteabilityQuarantineHours
+	}
 	if payload.BudgetMode != nil {
 		cfg.BudgetMode = *payload.BudgetMode
 	}
@@ -700,6 +704,9 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 		return err
 	}
 	if err := validateOptionalFloat("keepalive_refill_pct", payload.KeepaliveRefillPct, keepaliveRefillPctMin, keepaliveRefillPctMax); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("source_routeability_quarantine_hours", payload.SourceRouteabilityQuarantineHours, sourceRouteabilityHoursMin, sourceRouteabilityHoursMax); err != nil {
 		return err
 	}
 	if payload.BudgetMode != nil && normalizeRebalanceBudgetMode(*payload.BudgetMode) != strings.TrimSpace(strings.ToLower(*payload.BudgetMode)) {

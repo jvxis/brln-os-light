@@ -226,6 +226,7 @@ export default function RebalanceCenter() {
     sovereign_attribution_window_hours: raw.sovereign_attribution_window_hours || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS,
     sovereign_slow_seller_window_hours: raw.sovereign_slow_seller_window_hours || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS,
     sovereign_target_source_quarantine_hours: typeof raw.sovereign_target_source_quarantine_hours === 'number' ? raw.sovereign_target_source_quarantine_hours : REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
+    source_routeability_quarantine_hours: typeof raw.source_routeability_quarantine_hours === 'number' && raw.source_routeability_quarantine_hours > 0 ? raw.source_routeability_quarantine_hours : 6,
     sovereign_structural_cooldown_repeat_hours: typeof raw.sovereign_structural_cooldown_repeat_hours === 'number' && raw.sovereign_structural_cooldown_repeat_hours > 0 ? raw.sovereign_structural_cooldown_repeat_hours : REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS,
     sovereign_exploration_slot_pct: typeof raw.sovereign_exploration_slot_pct === 'number' ? raw.sovereign_exploration_slot_pct : 0,
     sovereign_ev_weighted_scoring: raw.sovereign_ev_weighted_scoring ?? false,
@@ -310,6 +311,7 @@ export default function RebalanceCenter() {
       sovereign_attribution_window_hours: cfg.sovereign_attribution_window_hours,
       sovereign_slow_seller_window_hours: cfg.sovereign_slow_seller_window_hours,
       sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours,
+      source_routeability_quarantine_hours: cfg.source_routeability_quarantine_hours,
       sovereign_structural_cooldown_repeat_hours: cfg.sovereign_structural_cooldown_repeat_hours,
       sovereign_exploration_slot_pct: cfg.sovereign_exploration_slot_pct,
       sovereign_ev_weighted_scoring: cfg.sovereign_ev_weighted_scoring,
@@ -395,6 +397,7 @@ export default function RebalanceCenter() {
       sovereign_attribution_window_hours: cfg.sovereign_attribution_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS,
       sovereign_slow_seller_window_hours: cfg.sovereign_slow_seller_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS,
       sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
+      source_routeability_quarantine_hours: cfg.source_routeability_quarantine_hours ?? 6,
       sovereign_structural_cooldown_repeat_hours: cfg.sovereign_structural_cooldown_repeat_hours ?? REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS,
       sovereign_exploration_slot_pct: cfg.sovereign_exploration_slot_pct ?? 0,
       sovereign_ev_weighted_scoring: cfg.sovereign_ev_weighted_scoring ?? false,
@@ -824,6 +827,7 @@ export default function RebalanceCenter() {
           sovereign_attribution_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_attribution_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS)),
           sovereign_slow_seller_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_slow_seller_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS)),
           sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
+          source_routeability_quarantine_hours: Math.max(1, Math.min(48, Math.round(Number(config.source_routeability_quarantine_hours) || 6))),
           sovereign_structural_cooldown_repeat_hours: Math.max(1, Math.min(REBALANCE_MAX_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS, Number(config.sovereign_structural_cooldown_repeat_hours) || REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS)),
           sovereign_exploration_slot_pct: Math.max(0, Math.min(REBALANCE_MAX_SOVEREIGN_EXPLORATION_SLOT_PCT, Number(config.sovereign_exploration_slot_pct) || 0)),
           sovereign_ev_weighted_scoring: config.sovereign_ev_weighted_scoring,
@@ -1004,6 +1008,7 @@ export default function RebalanceCenter() {
         sovereign_attribution_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_attribution_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS)),
         sovereign_slow_seller_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_slow_seller_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS)),
         sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
+        source_routeability_quarantine_hours: Math.max(1, Math.min(48, Math.round(Number(config.source_routeability_quarantine_hours) || 6))),
         sovereign_structural_cooldown_repeat_hours: Math.max(1, Math.min(REBALANCE_MAX_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS, Number(config.sovereign_structural_cooldown_repeat_hours) || REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS)),
         sovereign_exploration_slot_pct: Math.max(0, Math.min(REBALANCE_MAX_SOVEREIGN_EXPLORATION_SLOT_PCT, Number(config.sovereign_exploration_slot_pct) || 0)),
         sovereign_ev_weighted_scoring: config.sovereign_ev_weighted_scoring,
@@ -1052,6 +1057,7 @@ export default function RebalanceCenter() {
           sovereign_attribution_window_hours: normalizedSaved.sovereign_attribution_window_hours,
           sovereign_slow_seller_window_hours: normalizedSaved.sovereign_slow_seller_window_hours,
           sovereign_target_source_quarantine_hours: normalizedSaved.sovereign_target_source_quarantine_hours,
+          source_routeability_quarantine_hours: normalizedSaved.source_routeability_quarantine_hours,
           sovereign_structural_cooldown_repeat_hours: normalizedSaved.sovereign_structural_cooldown_repeat_hours,
           sovereign_exploration_slot_pct: normalizedSaved.sovereign_exploration_slot_pct,
           sovereign_ev_weighted_scoring: normalizedSaved.sovereign_ev_weighted_scoring,
@@ -2762,6 +2768,20 @@ export default function RebalanceCenter() {
                   disabled={config.scheduler_mode === 'rules_auto'}
                   value={config.sovereign_target_source_quarantine_hours}
                   onChange={(e) => setConfig({ ...config, sovereign_target_source_quarantine_hours: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sourceRouteabilityQuarantine')}>
+                  {t('rebalanceCenter.settings.sourceRouteabilityQuarantine')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  max={48}
+                  step={1}
+                  value={config.source_routeability_quarantine_hours}
+                  onChange={(e) => setConfig({ ...config, source_routeability_quarantine_hours: Number(e.target.value) })}
                 />
               </div>
               <div className="space-y-2">

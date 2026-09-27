@@ -65,16 +65,22 @@ const (
 	// Cooldown windows protect targets/sources from repeated no-path attempts.
 	// The short recent window catches immediate retries; target-specific
 	// variants use the max cooldown for stronger structural signals.
-	rebalanceMaxCooldown                = time.Hour
-	recentCooldownWindow                = 30 * time.Minute
-	recentCooldownTTL                   = 30 * time.Minute
-	targetNoAttemptCooldownWindow       = rebalanceMaxCooldown
-	targetFailedCooldownWindow          = rebalanceMaxCooldown
-	targetDistinctSourceCooldownWindow  = rebalanceMaxCooldown
-	sourceCooldownMinAttempts           = 25
-	sourceCooldownMaxSuccess            = 1
-	sourceRouteabilityWindow            = 6 * time.Hour
-	sourceRouteabilityTTL               = 6 * time.Hour
+	rebalanceMaxCooldown               = time.Hour
+	recentCooldownWindow               = 30 * time.Minute
+	recentCooldownTTL                  = 30 * time.Minute
+	targetNoAttemptCooldownWindow      = rebalanceMaxCooldown
+	targetFailedCooldownWindow         = rebalanceMaxCooldown
+	targetDistinctSourceCooldownWindow = rebalanceMaxCooldown
+	sourceCooldownMinAttempts          = 25
+	sourceCooldownMaxSuccess           = 1
+	sourceRouteabilityWindow           = 6 * time.Hour
+	sourceRouteabilityTTL              = 6 * time.Hour
+	// source_routeability_quarantine_hours: operator knob for the window/TTL
+	// above. 6 = legacy. Lightning routing is dynamic; a source that could
+	// not route an hour ago often can now.
+	sourceRouteabilityHoursDefault      = 6
+	sourceRouteabilityHoursMin          = 1
+	sourceRouteabilityHoursMax          = 48
 	sourceRouteabilityMinAttempts       = 12
 	sourceRouteabilityMinTargets        = 4
 	targetCooldownMinAttempts           = 25
@@ -299,11 +305,9 @@ const (
 	// sellers and, when they are route-dead, burns the routeability of every
 	// source (see shouldQuarantineBroadSourceFailures).
 	sovereignKeepaliveMaxPerCycle = 1
-	// sovereignKeepaliveFailureBackoff: after a keepalive/auto job on the
-	// target failed without a later success, wait this long before probing
-	// again. Mirrors the source routeability quarantine so a dead target
-	// cannot re-trigger it every scan.
-	sovereignKeepaliveFailureBackoff             = sourceRouteabilityTTL
+	// Keepalive failure backoff follows source_routeability_quarantine_hours
+	// (sourceRouteabilityTTLForConfig) so a dead target cannot re-trigger the
+	// source quarantine every scan.
 	sovereignUnsoldPaidLiquidityReason           = "paid_liquidity_unsold_cooldown"
 	sovereignUnsoldPaidLiquidityPenaltyReason    = "paid_liquidity_unsold_penalty"
 	sovereignUnsoldPaidLiquidityLookback         = 24 * time.Hour
@@ -393,6 +397,7 @@ type RebalanceConfig struct {
 	KeepaliveRefillEnabled                bool    `json:"keepalive_refill_enabled"`
 	KeepaliveRefillAfterHours             int     `json:"keepalive_refill_after_hours"`
 	KeepaliveRefillPct                    float64 `json:"keepalive_refill_pct"`
+	SourceRouteabilityQuarantineHours     int     `json:"source_routeability_quarantine_hours"`
 	BudgetMode                            string  `json:"budget_mode"`
 	BudgetUnlimited                       bool    `json:"budget_unlimited"`
 	BudgetAutoOnly                        bool    `json:"budget_auto_only"`
@@ -1716,6 +1721,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		KeepaliveRefillEnabled:                 false,
 		KeepaliveRefillAfterHours:              keepaliveRefillAfterHoursDefault,
 		KeepaliveRefillPct:                     keepaliveRefillPctDefault,
+		SourceRouteabilityQuarantineHours:      sourceRouteabilityHoursDefault,
 		BudgetMode:                             rebalanceBudgetModeHybridRevenue,
 		BudgetUnlimited:                        false,
 		BudgetAutoOnly:                         true,
@@ -2354,6 +2360,9 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.KeepaliveRefillPct < keepaliveRefillPctMin || cfg.KeepaliveRefillPct > keepaliveRefillPctMax {
 		cfg.KeepaliveRefillPct = keepaliveRefillPctDefault
+	}
+	if cfg.SourceRouteabilityQuarantineHours < sourceRouteabilityHoursMin || cfg.SourceRouteabilityQuarantineHours > sourceRouteabilityHoursMax {
+		cfg.SourceRouteabilityQuarantineHours = sourceRouteabilityHoursDefault
 	}
 	cfg.SovereignLowSuccessMinRate = normalizeRatioConfig(cfg.SovereignLowSuccessMinRate, def.SovereignLowSuccessMinRate, 1)
 	cfg.SovereignLowSuccessMinProfitCostRatio = normalizeRatioConfig(cfg.SovereignLowSuccessMinProfitCostRatio, def.SovereignLowSuccessMinProfitCostRatio, 0)
@@ -3377,6 +3386,21 @@ func shouldCooldownDistinctSourceFailures(stat recentCooldownStat, minSources in
 // about the source, and punishing every source at once left the node with
 // zero executable sources for 6h (Friendspool, 2026-09-27).
 func shouldQuarantineBroadSourceFailures(stat recentCooldownStat, now time.Time) bool {
+	return shouldQuarantineBroadSourceFailuresWithTTL(stat, now, sourceRouteabilityTTL)
+}
+
+func sourceRouteabilityTTLForConfig(cfg RebalanceConfig) time.Duration {
+	hours := cfg.SourceRouteabilityQuarantineHours
+	if hours < sourceRouteabilityHoursMin || hours > sourceRouteabilityHoursMax {
+		hours = sourceRouteabilityHoursDefault
+	}
+	return time.Duration(hours) * time.Hour
+}
+
+func shouldQuarantineBroadSourceFailuresWithTTL(stat recentCooldownStat, now time.Time, ttl time.Duration) bool {
+	if ttl <= 0 {
+		ttl = sourceRouteabilityTTL
+	}
 	if stat.Attempts < sourceRouteabilityMinAttempts || stat.Failures < sourceRouteabilityMinAttempts || stat.DistinctTargets < sourceRouteabilityMinTargets {
 		return false
 	}
@@ -3393,7 +3417,7 @@ func shouldQuarantineBroadSourceFailures(stat recentCooldownStat, now time.Time)
 	if now.IsZero() {
 		now = time.Now()
 	}
-	return now.Sub(lastFailureAt) <= sourceRouteabilityTTL
+	return now.Sub(lastFailureAt) <= ttl
 }
 
 func shouldCooldownTargetRecentFailures(attemptStat recentCooldownStat, noAttemptStat recentCooldownStat, failedStat recentCooldownStat, distinctSourceStat recentCooldownStat, now time.Time) bool {
@@ -4481,7 +4505,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		// bounded top-up that bypasses the empirical-history gates (like an
 		// exploration probe). Losing the peer costs far more than the probe.
 		keepalive := sovereignKeepaliveRefillEligible(target, targetCfg, scanAt)
-		if keepalive && (keepaliveQueued >= sovereignKeepaliveMaxPerCycle || sovereignKeepaliveRecentlyFailed(target, scanAt)) {
+		if keepalive && (keepaliveQueued >= sovereignKeepaliveMaxPerCycle || sovereignKeepaliveRecentlyFailed(target, targetCfg, scanAt)) {
 			keepalive = false
 		}
 		if keepalive {
@@ -6271,13 +6295,14 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	sources := filterSources(channelSnapshots, targetChannelID)
 	if useRecentFailureCache {
 		sourceCooldowns := s.loadRecentSourceCooldowns(ctx, time.Now().Add(-recentCooldownWindow))
-		sourceRouteability := s.loadSourceRouteabilityCooldowns(ctx, time.Now().Add(-sourceRouteabilityWindow))
+		routeabilityTTL := sourceRouteabilityTTLForConfig(cfg)
+		sourceRouteability := s.loadSourceRouteabilityCooldowns(ctx, time.Now().Add(-routeabilityTTL))
 		if len(sourceCooldowns) > 0 || len(sourceRouteability) > 0 {
 			filteredSources := make([]RebalanceChannel, 0, len(sources))
 			now := time.Now()
 			for _, source := range sources {
 				if shouldCooldownRecentFailures(sourceCooldowns[source.ChannelID], sourceCooldownMinAttempts, sourceCooldownMaxSuccess, now) ||
-					shouldQuarantineBroadSourceFailures(sourceRouteability[source.ChannelID], now) {
+					shouldQuarantineBroadSourceFailuresWithTTL(sourceRouteability[source.ChannelID], now, routeabilityTTL) {
 					continue
 				}
 				filteredSources = append(filteredSources, source)
@@ -11873,11 +11898,11 @@ func sovereignKeepaliveRefillEligible(target rebalanceTarget, cfg RebalanceConfi
 }
 
 // sovereignKeepaliveRecentlyFailed reports whether the target had a failed
-// job (structural or pair-level) inside sovereignKeepaliveFailureBackoff
+// job (structural or pair-level) inside the source routeability window
 // with no later success. Keepalive must not re-probe such a target every
 // scan: each failed probe walks every source and feeds the source
 // routeability quarantine.
-func sovereignKeepaliveRecentlyFailed(target rebalanceTarget, now time.Time) bool {
+func sovereignKeepaliveRecentlyFailed(target rebalanceTarget, cfg RebalanceConfig, now time.Time) bool {
 	lastFail := target.StructuralCooldown.LastFailureAt
 	if target.PairStats.RecentLastFailAt.After(lastFail) {
 		lastFail = target.PairStats.RecentLastFailAt
@@ -11895,7 +11920,7 @@ func sovereignKeepaliveRecentlyFailed(target rebalanceTarget, now time.Time) boo
 	if now.IsZero() {
 		now = time.Now()
 	}
-	return now.Sub(lastFail) < sovereignKeepaliveFailureBackoff
+	return now.Sub(lastFail) < sourceRouteabilityTTLForConfig(cfg)
 }
 
 func isKeepaliveRefillIntentReason(reason string) bool {
@@ -12777,6 +12802,7 @@ end $$;
     keepalive_refill_enabled boolean not null default false,
     keepalive_refill_after_hours integer not null default 48,
     keepalive_refill_pct double precision not null default 5,
+    source_routeability_quarantine_hours integer not null default 6,
     updated_at timestamptz not null default now()
   );
 
@@ -12920,6 +12946,8 @@ end $$;
     add column if not exists keepalive_refill_after_hours integer not null default 48;
   alter table rebalance_config
     add column if not exists keepalive_refill_pct double precision not null default 5;
+  alter table rebalance_config
+    add column if not exists source_routeability_quarantine_hours integer not null default 6;
 
   alter table rebalance_config
     alter column scheduler_mode set default 'rules_auto';
@@ -13419,7 +13447,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile,
     auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier,
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
-    daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct
+    daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -13520,6 +13548,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.KeepaliveRefillEnabled,
 		&cfg.KeepaliveRefillAfterHours,
 		&cfg.KeepaliveRefillPct,
+		&cfg.SourceRouteabilityQuarantineHours,
 	)
 	if err != nil {
 		return cfg, err
@@ -13546,9 +13575,9 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile,
     auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier,
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
-    daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct,
+    daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours,
     updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,$98,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -13646,12 +13675,13 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     keepalive_refill_enabled = excluded.keepalive_refill_enabled,
     keepalive_refill_after_hours = excluded.keepalive_refill_after_hours,
     keepalive_refill_pct = excluded.keepalive_refill_pct,
+    source_routeability_quarantine_hours = excluded.source_routeability_quarantine_hours,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates, cfg.Profile,
 		cfg.AutoTargetEnabled, cfg.AutoTargetMaxPct, cfg.AutoTargetMinPct, cfg.AutoTargetStepPct, cfg.AutoTargetEvalIntervalHours, cfg.AutoTargetMaxUpsPerCycle, cfg.AutoTargetMaxLocalSat, cfg.AutoTargetMinDrainRateSatPerHr, cfg.AutoTargetMinRevenue7dSat, cfg.AutoTargetUpSuccessThreshold, cfg.AutoTargetDownSuccessThreshold, cfg.AutoTargetDrainFirstMultiplier,
 		cfg.AutoTargetUpSellThroughFactor, cfg.AutoTargetDownSellThroughFactor, cfg.AutoTargetMaxDownsPerCycle,
-		cfg.DailyBudgetMinSat, cfg.DailyBudgetBaseDays, cfg.SovereignEfficiencyAutofeeAligned, cfg.KeepaliveRefillEnabled, cfg.KeepaliveRefillAfterHours, cfg.KeepaliveRefillPct,
+		cfg.DailyBudgetMinSat, cfg.DailyBudgetBaseDays, cfg.SovereignEfficiencyAutofeeAligned, cfg.KeepaliveRefillEnabled, cfg.KeepaliveRefillAfterHours, cfg.KeepaliveRefillPct, cfg.SourceRouteabilityQuarantineHours,
 	)
 	if err != nil {
 		return err

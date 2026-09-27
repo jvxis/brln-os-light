@@ -283,16 +283,27 @@ const (
 	// (outgoing fee >= rebalance cost x 1.10, see autofee_service.go). Used to
 	// derive a budget-efficiency ceiling that a channel priced exactly at the
 	// AutoFee floor can still satisfy.
-	autofeeRebalanceCostFloorMult                = 1.10
-	dailyBudgetBaseDaysDefault                   = 7
-	dailyBudgetBaseDaysMin                       = 7
-	dailyBudgetBaseDaysMax                       = 30
-	keepaliveRefillAfterHoursDefault             = 48
-	keepaliveRefillAfterHoursMin                 = 1
-	keepaliveRefillAfterHoursMax                 = 720
-	keepaliveRefillPctDefault                    = 5.0
-	keepaliveRefillPctMin                        = 1.0
-	keepaliveRefillPctMax                        = 25.0
+	autofeeRebalanceCostFloorMult    = 1.10
+	dailyBudgetBaseDaysDefault       = 7
+	dailyBudgetBaseDaysMin           = 7
+	dailyBudgetBaseDaysMax           = 30
+	keepaliveRefillAfterHoursDefault = 48
+	keepaliveRefillAfterHoursMin     = 1
+	keepaliveRefillAfterHoursMax     = 720
+	keepaliveRefillPctDefault        = 5.0
+	keepaliveRefillPctMin            = 1.0
+	keepaliveRefillPctMax            = 25.0
+	// sovereignKeepaliveMaxPerCycle bounds how many keepalive probes one scan
+	// may queue. Keepalive targets are, by definition, channels nothing else
+	// wanted to refill; letting them take every slot starves the real
+	// sellers and, when they are route-dead, burns the routeability of every
+	// source (see shouldQuarantineBroadSourceFailures).
+	sovereignKeepaliveMaxPerCycle = 1
+	// sovereignKeepaliveFailureBackoff: after a keepalive/auto job on the
+	// target failed without a later success, wait this long before probing
+	// again. Mirrors the source routeability quarantine so a dead target
+	// cannot re-trigger it every scan.
+	sovereignKeepaliveFailureBackoff             = sourceRouteabilityTTL
 	sovereignUnsoldPaidLiquidityReason           = "paid_liquidity_unsold_cooldown"
 	sovereignUnsoldPaidLiquidityPenaltyReason    = "paid_liquidity_unsold_penalty"
 	sovereignUnsoldPaidLiquidityLookback         = 24 * time.Hour
@@ -1360,9 +1371,14 @@ type recentCooldownStat struct {
 	Successes       int
 	DistinctSources int
 	DistinctTargets int
-	LastAttemptAt   time.Time
-	LastFailureAt   time.Time
-	LastSuccessAt   time.Time
+	// ReachableFailedTargets: distinct targets this source failed on that some
+	// source did reach (a success in the same window). Only the routeability
+	// loader fills it; ReachabilityKnown says whether it was computed.
+	ReachableFailedTargets int
+	ReachabilityKnown      bool
+	LastAttemptAt          time.Time
+	LastFailureAt          time.Time
+	LastSuccessAt          time.Time
 }
 
 type sovereignTargetStructuralCooldownStat struct {
@@ -3354,8 +3370,17 @@ func shouldCooldownDistinctSourceFailures(stat recentCooldownStat, minSources in
 	return now.Sub(lastFailureAt) <= recentCooldownTTL
 }
 
+// shouldQuarantineBroadSourceFailures: a source that keeps failing across
+// many targets is set aside for sourceRouteabilityTTL. When the loader
+// computed reachability, the failures must be against targets some source
+// DID reach in the window: failing on targets nobody can reach says nothing
+// about the source, and punishing every source at once left the node with
+// zero executable sources for 6h (Friendspool, 2026-09-27).
 func shouldQuarantineBroadSourceFailures(stat recentCooldownStat, now time.Time) bool {
 	if stat.Attempts < sourceRouteabilityMinAttempts || stat.Failures < sourceRouteabilityMinAttempts || stat.DistinctTargets < sourceRouteabilityMinTargets {
+		return false
+	}
+	if stat.ReachabilityKnown && stat.ReachableFailedTargets < sourceRouteabilityMinTargets {
 		return false
 	}
 	lastFailureAt := stat.LastFailureAt
@@ -4416,6 +4441,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		candidates = injectSovereignExplorationSlots(candidates, maxJobs, cfg.SovereignExplorationSlotPct, burnoutFn, structuralFn)
 	}
 
+	keepaliveQueued := 0
 	for _, target := range candidates {
 		targetCfg := effectiveConfigForTarget(cfg, settings[target.Channel.ChannelID])
 		targetPolicy := lndclient.ChannelPolicySnapshot{
@@ -4455,6 +4481,9 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		// bounded top-up that bypasses the empirical-history gates (like an
 		// exploration probe). Losing the peer costs far more than the probe.
 		keepalive := sovereignKeepaliveRefillEligible(target, targetCfg, scanAt)
+		if keepalive && (keepaliveQueued >= sovereignKeepaliveMaxPerCycle || sovereignKeepaliveRecentlyFailed(target, scanAt)) {
+			keepalive = false
+		}
 		if keepalive {
 			if keepaliveAmount := sovereignKeepaliveRefillAmount(target.Channel, targetCfg); keepaliveAmount > 0 && keepaliveAmount < targetAmount {
 				targetAmount = keepaliveAmount
@@ -4464,7 +4493,11 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 				target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
 			}
 		}
-		bypassEmpirical := target.ExplorationSlot || keepalive
+		// Keepalive bypasses only the economics gates (budget efficiency and the
+		// profit minimum, with profit >= 0). The route gates (route-dead source
+		// share, low-success dead ban) stay in force: a keepalive probe against
+		// a target nothing can reach only quarantines the sources.
+		bypassEconomics := target.ExplorationSlot || keepalive
 		historicalSuccessRate, historicalAttempts := sovereignHistoricalSuccessRate(target.PairStats)
 		expectedProfit := target.ExpectedGainSat - estimatedCost
 		decision := RebalanceSovereignDecision{
@@ -4547,10 +4580,10 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		case inventoryProbe && targetCfg.ROIMin > 0 && decision.ExpectedROIValid && decision.ExpectedROI < targetCfg.ROIMin:
 			decision.Reason = "roi_guardrail"
 			noteSkip(decision.Reason)
-		case !bypassEmpirical && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
+		case !target.ExplorationSlot && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
 			decision.Reason = sovereignRouteDeadOpportunityReason
 			noteSkip(decision.Reason)
-		case !bypassEmpirical && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, estimatedCost, budgetCost, cfg, scanAt):
+		case !target.ExplorationSlot && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, estimatedCost, budgetCost, cfg, scanAt):
 			decision.Reason = sovereignLowSuccessOpportunityReason
 			noteSkip(decision.Reason)
 		case result.Selected >= maxJobs:
@@ -4563,10 +4596,10 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		// antes da lógica de exploration ter efeito visível. Resultado: pool
 		// efetivo travado nos top-score targets, que se queimam em
 		// target_structural_cooldown e somem do scan por 6h.
-		case !(bypassEmpirical && expectedProfit >= 0) && expectedProfit < cfg.SovereignMinExpectedProfitSat:
+		case !(bypassEconomics && expectedProfit >= 0) && expectedProfit < cfg.SovereignMinExpectedProfitSat:
 			decision.Reason = "expected_profit_below_min"
 			noteSkip(decision.Reason)
-		case !bypassEmpirical && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
+		case !bypassEconomics && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
 			decision.Reason = sovereignBudgetEfficiencyOpportunityReason
 			noteSkip(decision.Reason)
 		case s.isChannelBusy(target.Channel.ChannelID):
@@ -4620,7 +4653,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					appendDecision(decision)
 					continue
 				}
-				if !(bypassEmpirical && decision.ExpectedProfitSat >= 0) && decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
+				if !(bypassEconomics && decision.ExpectedProfitSat >= 0) && decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
 					decision.Reason = "expected_profit_below_min"
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -4631,19 +4664,19 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 				// the same ExplorationSlot bypass policy used by the outer
 				// switch so an exploration candidate is not silently re-gated
 				// after a budget-driven resize.
-				if !bypassEmpirical && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
+				if !bypassEconomics && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
 					decision.Reason = sovereignBudgetEfficiencyOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
 				}
-				if !bypassEmpirical && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, plan.EligibleSources, cfg) {
+				if !target.ExplorationSlot && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, plan.EligibleSources, cfg) {
 					decision.Reason = sovereignRouteDeadOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
 				}
-				if !bypassEmpirical && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.EstimatedCostSat, decision.BudgetCostSat, cfg, scanAt) {
+				if !target.ExplorationSlot && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.EstimatedCostSat, decision.BudgetCostSat, cfg, scanAt) {
 					decision.Reason = sovereignLowSuccessOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -4677,6 +4710,9 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 				decision.Reason = "would_queue"
 			}
 			result.Selected++
+			if keepalive {
+				keepaliveQueued++
+			}
 			result.ExpectedProfitSat += decision.ExpectedProfitSat
 			if budgetEnforced {
 				remaining -= budgetCost
@@ -9123,6 +9159,9 @@ last_success as (
   select source_channel_id, max(occurred_at) as last_success_at
   from events where status='succeeded' group by source_channel_id
 ),
+reachable as (
+  select distinct target_channel_id from events where status='succeeded'
+),
 pressure as (
   select e.*, ls.last_success_at from events e
   left join last_success ls using (source_channel_id)
@@ -9133,6 +9172,7 @@ select source_channel_id,
   coalesce(sum(case when status='succeeded' then 1 else 0 end), 0) as successes,
   coalesce(sum(case when status<>'succeeded' then 1 else 0 end), 0) as failures,
   count(distinct target_channel_id) as distinct_targets,
+  count(distinct case when status<>'succeeded' and target_channel_id in (select target_channel_id from reachable) then target_channel_id end) as reachable_failed_targets,
   max(occurred_at) as last_attempt_at,
   max(case when status<>'succeeded' then occurred_at else null end) as last_failure_at,
   max(last_success_at) as last_success_at
@@ -9146,13 +9186,14 @@ from pressure group by source_channel_id
 		var channelID int64
 		var stat recentCooldownStat
 		var lastAttempt, lastFailure, lastSuccess pgtype.Timestamptz
-		if err := rows.Scan(&channelID, &stat.Attempts, &stat.Successes, &stat.Failures, &stat.DistinctTargets, &lastAttempt, &lastFailure, &lastSuccess); err != nil {
+		if err := rows.Scan(&channelID, &stat.Attempts, &stat.Successes, &stat.Failures, &stat.DistinctTargets, &stat.ReachableFailedTargets, &lastAttempt, &lastFailure, &lastSuccess); err != nil {
 			return stats
 		}
 		if channelID <= 0 {
 			continue
 		}
 		stat.ChannelID = uint64(channelID)
+		stat.ReachabilityKnown = true
 		if lastAttempt.Valid {
 			stat.LastAttemptAt = lastAttempt.Time
 		}
@@ -11829,6 +11870,32 @@ func sovereignKeepaliveRefillEligible(target rebalanceTarget, cfg RebalanceConfi
 	}
 	localPct := float64(target.Channel.LocalBalanceSat) * 100 / float64(capacity)
 	return localPct < keepaliveRefillPctForConfig(cfg)
+}
+
+// sovereignKeepaliveRecentlyFailed reports whether the target had a failed
+// job (structural or pair-level) inside sovereignKeepaliveFailureBackoff
+// with no later success. Keepalive must not re-probe such a target every
+// scan: each failed probe walks every source and feeds the source
+// routeability quarantine.
+func sovereignKeepaliveRecentlyFailed(target rebalanceTarget, now time.Time) bool {
+	lastFail := target.StructuralCooldown.LastFailureAt
+	if target.PairStats.RecentLastFailAt.After(lastFail) {
+		lastFail = target.PairStats.RecentLastFailAt
+	}
+	if lastFail.IsZero() {
+		return false
+	}
+	lastSuccess := target.StructuralCooldown.LastSuccessAt
+	if target.PairStats.RecentLastSuccessAt.After(lastSuccess) {
+		lastSuccess = target.PairStats.RecentLastSuccessAt
+	}
+	if !lastSuccess.IsZero() && !lastSuccess.Before(lastFail) {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return now.Sub(lastFail) < sovereignKeepaliveFailureBackoff
 }
 
 func isKeepaliveRefillIntentReason(reason string) bool {

@@ -268,12 +268,31 @@ const (
 	// without any success, the target is excluded from the exploration pool
 	// for `BurnoutDuration`. Any successful exploration job for that target
 	// clears the burnout state.
-	sovereignExplorationBurnoutMinAttempts       = 5
-	sovereignExplorationBurnoutWindow            = 24 * time.Hour
-	sovereignExplorationBurnoutDuration          = 12 * time.Hour
-	sovereignExplorationBurnoutReason            = "exploration_burnout"
-	sovereignCostReliableHistoryPct              = int64(100)
-	sovereignCostConservativeBudgetPct           = int64(100)
+	sovereignExplorationBurnoutMinAttempts = 5
+	sovereignExplorationBurnoutWindow      = 24 * time.Hour
+	sovereignExplorationBurnoutDuration    = 12 * time.Hour
+	sovereignExplorationBurnoutReason      = "exploration_burnout"
+	sovereignCostReliableHistoryPct        = int64(100)
+	sovereignCostConservativeBudgetPct     = int64(100)
+	// sovereignCostReferenceMarginPct: when a target has no reliable cost
+	// history, estimate its cost from the node-wide realized rebalance ppm
+	// (7d) plus this margin instead of assuming the full fee cap. The full cap
+	// made every cold-start channel fail budget_efficiency by construction.
+	sovereignCostReferenceMarginPct = int64(120)
+	// autofeeRebalanceCostFloorMult mirrors the AutoFee economic floor
+	// (outgoing fee >= rebalance cost x 1.10, see autofee_service.go). Used to
+	// derive a budget-efficiency ceiling that a channel priced exactly at the
+	// AutoFee floor can still satisfy.
+	autofeeRebalanceCostFloorMult                = 1.10
+	dailyBudgetBaseDaysDefault                   = 7
+	dailyBudgetBaseDaysMin                       = 7
+	dailyBudgetBaseDaysMax                       = 30
+	keepaliveRefillAfterHoursDefault             = 48
+	keepaliveRefillAfterHoursMin                 = 1
+	keepaliveRefillAfterHoursMax                 = 720
+	keepaliveRefillPctDefault                    = 5.0
+	keepaliveRefillPctMin                        = 1.0
+	keepaliveRefillPctMax                        = 25.0
 	sovereignUnsoldPaidLiquidityReason           = "paid_liquidity_unsold_cooldown"
 	sovereignUnsoldPaidLiquidityPenaltyReason    = "paid_liquidity_unsold_penalty"
 	sovereignUnsoldPaidLiquidityLookback         = 24 * time.Hour
@@ -357,6 +376,12 @@ type RebalanceConfig struct {
 	FailTolerancePpm                      int64   `json:"fail_tolerance_ppm"`
 	ROIMin                                float64 `json:"roi_min"`
 	DailyBudgetPct                        float64 `json:"daily_budget_pct"`
+	DailyBudgetMinSat                     int64   `json:"daily_budget_min_sat"`
+	DailyBudgetBaseDays                   int     `json:"daily_budget_base_days"`
+	SovereignEfficiencyAutofeeAligned     bool    `json:"sovereign_budget_efficiency_autofee_aligned"`
+	KeepaliveRefillEnabled                bool    `json:"keepalive_refill_enabled"`
+	KeepaliveRefillAfterHours             int     `json:"keepalive_refill_after_hours"`
+	KeepaliveRefillPct                    float64 `json:"keepalive_refill_pct"`
 	BudgetMode                            string  `json:"budget_mode"`
 	BudgetUnlimited                       bool    `json:"budget_unlimited"`
 	BudgetAutoOnly                        bool    `json:"budget_auto_only"`
@@ -517,6 +542,8 @@ type RebalanceOverview struct {
 	SovereignRebalanceAmount7dSat       int64                         `json:"sovereign_rebalance_amount_7d_sat"`
 	SovereignRebalanceCost7dSat         int64                         `json:"sovereign_rebalance_cost_7d_sat"`
 	SovereignRebalanceCost7dPpm         int64                         `json:"sovereign_rebalance_cost_7d_ppm"`
+	SovereignEfficiencyEffectiveRatio   float64                       `json:"sovereign_budget_efficiency_effective_ratio"`
+	SovereignEfficiencyAlignedCeiling   float64                       `json:"sovereign_budget_efficiency_aligned_ceiling"`
 	SovereignForwardAmount7dSat         int64                         `json:"sovereign_forward_amount_7d_sat"`
 	SovereignForwardFee7dSat            int64                         `json:"sovereign_forward_fee_7d_sat"`
 	SovereignForwardFee7dPpm            int64                         `json:"sovereign_forward_fee_7d_ppm"`
@@ -1020,6 +1047,7 @@ type RebalanceSovereignDecision struct {
 	InventoryProbe              bool    `json:"inventory_probe,omitempty"`
 	RealizedEconomicsMultiplier float64 `json:"realized_economics_multiplier,omitempty"`
 	ExplorationSlot             bool    `json:"exploration_slot,omitempty"`
+	KeepaliveRefill             bool    `json:"keepalive_refill,omitempty"`
 	IntentKind                  string  `json:"intent_kind,omitempty"`
 	IntentReason                string  `json:"intent_reason,omitempty"`
 	IntentConfidence            float64 `json:"intent_confidence,omitempty"`
@@ -1666,6 +1694,12 @@ func defaultRebalanceConfig() RebalanceConfig {
 		FailTolerancePpm:                       500,
 		ROIMin:                                 1.0,
 		DailyBudgetPct:                         50,
+		DailyBudgetMinSat:                      0,
+		DailyBudgetBaseDays:                    dailyBudgetBaseDaysDefault,
+		SovereignEfficiencyAutofeeAligned:      false,
+		KeepaliveRefillEnabled:                 false,
+		KeepaliveRefillAfterHours:              keepaliveRefillAfterHoursDefault,
+		KeepaliveRefillPct:                     keepaliveRefillPctDefault,
 		BudgetMode:                             rebalanceBudgetModeHybridRevenue,
 		BudgetUnlimited:                        false,
 		BudgetAutoOnly:                         true,
@@ -2292,6 +2326,18 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.SovereignMinExpectedProfitSat < 0 {
 		cfg.SovereignMinExpectedProfitSat = 0
+	}
+	if cfg.DailyBudgetMinSat < 0 {
+		cfg.DailyBudgetMinSat = 0
+	}
+	if cfg.DailyBudgetBaseDays < dailyBudgetBaseDaysMin || cfg.DailyBudgetBaseDays > dailyBudgetBaseDaysMax {
+		cfg.DailyBudgetBaseDays = dailyBudgetBaseDaysDefault
+	}
+	if cfg.KeepaliveRefillAfterHours < keepaliveRefillAfterHoursMin || cfg.KeepaliveRefillAfterHours > keepaliveRefillAfterHoursMax {
+		cfg.KeepaliveRefillAfterHours = keepaliveRefillAfterHoursDefault
+	}
+	if cfg.KeepaliveRefillPct < keepaliveRefillPctMin || cfg.KeepaliveRefillPct > keepaliveRefillPctMax {
+		cfg.KeepaliveRefillPct = keepaliveRefillPctDefault
 	}
 	cfg.SovereignLowSuccessMinRate = normalizeRatioConfig(cfg.SovereignLowSuccessMinRate, def.SovereignLowSuccessMinRate, 1)
 	cfg.SovereignLowSuccessMinProfitCostRatio = normalizeRatioConfig(cfg.SovereignLowSuccessMinProfitCostRatio, def.SovereignLowSuccessMinProfitCostRatio, 0)
@@ -3951,6 +3997,7 @@ func (s *RebalanceService) runAutoScan() {
 			AutofeeRecentAdjustments:      autofeeAdjustments,
 			AutomationIntentConfig:        intentCfg,
 			AutomationIntents:             automationIntents,
+			ReferenceCostPpm:              nodeRebalanceReferencePpm(costByChannel),
 		})
 		// AutoTarget runs together with the round's candidates (opt-in): it can
 		// raise the target of the strong sellers among them (supply-limited by
@@ -4399,10 +4446,25 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		if inventoryProbe {
 			targetAmount = inventoryAmount
 			budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
-			estimatedCost = estimateSovereignTargetCost(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, targetCfg)
+			estimatedCost = estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg)
 			target.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
 			target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
 		}
+		// Keepalive refill (anti-churn): a sink that AutoFee has flagged as
+		// drained for longer than keepalive_refill_after_hours gets a small,
+		// bounded top-up that bypasses the empirical-history gates (like an
+		// exploration probe). Losing the peer costs far more than the probe.
+		keepalive := sovereignKeepaliveRefillEligible(target, targetCfg, scanAt)
+		if keepalive {
+			if keepaliveAmount := sovereignKeepaliveRefillAmount(target.Channel, targetCfg); keepaliveAmount > 0 && keepaliveAmount < targetAmount {
+				targetAmount = keepaliveAmount
+				budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
+				estimatedCost = estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg)
+				target.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
+				target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
+			}
+		}
+		bypassEmpirical := target.ExplorationSlot || keepalive
 		historicalSuccessRate, historicalAttempts := sovereignHistoricalSuccessRate(target.PairStats)
 		expectedProfit := target.ExpectedGainSat - estimatedCost
 		decision := RebalanceSovereignDecision{
@@ -4450,6 +4512,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			InventoryProbe:              inventoryProbe,
 			RealizedEconomicsMultiplier: target.RealizedEconomicsMultiplier,
 			ExplorationSlot:             target.ExplorationSlot,
+			KeepaliveRefill:             keepalive,
 		}
 		if target.AutomationIntent != nil {
 			decision.IntentKind = target.AutomationIntent.Kind
@@ -4484,10 +4547,10 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		case inventoryProbe && targetCfg.ROIMin > 0 && decision.ExpectedROIValid && decision.ExpectedROI < targetCfg.ROIMin:
 			decision.Reason = "roi_guardrail"
 			noteSkip(decision.Reason)
-		case !target.ExplorationSlot && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
+		case !bypassEmpirical && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
 			decision.Reason = sovereignRouteDeadOpportunityReason
 			noteSkip(decision.Reason)
-		case !target.ExplorationSlot && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, estimatedCost, budgetCost, cfg, scanAt):
+		case !bypassEmpirical && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, estimatedCost, budgetCost, cfg, scanAt):
 			decision.Reason = sovereignLowSuccessOpportunityReason
 			noteSkip(decision.Reason)
 		case result.Selected >= maxJobs:
@@ -4500,10 +4563,10 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		// antes da lógica de exploration ter efeito visível. Resultado: pool
 		// efetivo travado nos top-score targets, que se queimam em
 		// target_structural_cooldown e somem do scan por 6h.
-		case !(target.ExplorationSlot && expectedProfit >= 0) && expectedProfit < cfg.SovereignMinExpectedProfitSat:
+		case !(bypassEmpirical && expectedProfit >= 0) && expectedProfit < cfg.SovereignMinExpectedProfitSat:
 			decision.Reason = "expected_profit_below_min"
 			noteSkip(decision.Reason)
-		case !target.ExplorationSlot && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
+		case !bypassEmpirical && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
 			decision.Reason = sovereignBudgetEfficiencyOpportunityReason
 			noteSkip(decision.Reason)
 		case s.isChannelBusy(target.Channel.ChannelID):
@@ -4545,7 +4608,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					continue
 				}
 				decision.AmountSat = targetAmount
-				resizedEstimatedCost := estimateSovereignTargetCost(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, targetCfg)
+				resizedEstimatedCost := estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg)
 				decision.EstimatedCostSat = resizedEstimatedCost
 				decision.BudgetCostSat = budgetCost
 				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
@@ -4557,7 +4620,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					appendDecision(decision)
 					continue
 				}
-				if !(target.ExplorationSlot && decision.ExpectedProfitSat >= 0) && decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
+				if !(bypassEmpirical && decision.ExpectedProfitSat >= 0) && decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
 					decision.Reason = "expected_profit_below_min"
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -4568,19 +4631,19 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 				// the same ExplorationSlot bypass policy used by the outer
 				// switch so an exploration candidate is not silently re-gated
 				// after a budget-driven resize.
-				if !target.ExplorationSlot && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
+				if !bypassEmpirical && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
 					decision.Reason = sovereignBudgetEfficiencyOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
 				}
-				if !target.ExplorationSlot && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, plan.EligibleSources, cfg) {
+				if !bypassEmpirical && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, plan.EligibleSources, cfg) {
 					decision.Reason = sovereignRouteDeadOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
 				}
-				if !target.ExplorationSlot && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.EstimatedCostSat, decision.BudgetCostSat, cfg, scanAt) {
+				if !bypassEmpirical && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.EstimatedCostSat, decision.BudgetCostSat, cfg, scanAt) {
 					decision.Reason = sovereignLowSuccessOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -4883,10 +4946,14 @@ type rebalanceAutoScanCandidateInput struct {
 	AutofeeRecentAdjustments map[uint64]time.Time
 	AutomationIntentConfig   AutomationIntentConfig
 	AutomationIntents        map[uint64][]AutomationIntent
+	// ReferenceCostPpm: node-wide realized rebalance ppm (7d) used to price
+	// targets without reliable per-channel cost history. 0 = legacy (full cap).
+	ReferenceCostPpm int64
 }
 
 type rebalanceAutoScanCandidatePlan struct {
 	Candidates             []rebalanceTarget
+	ReferenceCostPpm       int64
 	SkippedDetails         []RebalanceSkipDetail
 	SkipReasons            map[string]int
 	EligibleSources        int
@@ -4905,9 +4972,10 @@ type rebalanceAutoScanCandidatePlan struct {
 
 func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) rebalanceAutoScanCandidatePlan {
 	plan := rebalanceAutoScanCandidatePlan{
-		Candidates:     []rebalanceTarget{},
-		SkippedDetails: []RebalanceSkipDetail{},
-		SkipReasons:    map[string]int{},
+		ReferenceCostPpm: input.ReferenceCostPpm,
+		Candidates:       []rebalanceTarget{},
+		SkippedDetails:   []RebalanceSkipDetail{},
+		SkipReasons:      map[string]int{},
 	}
 	noteSkip := func(reason string) {
 		if reason != "" {
@@ -5019,7 +5087,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		budgetCost := estimateMaxCost(targetAmount, targetPolicy, targetCfg)
 		estimatedCost := int64(0)
 		if input.SovereignRanking {
-			estimatedCost = estimateSovereignTargetCost(targetAmount, snapshot.RebalanceCost7dPpm, snapshot.RebalanceAmount7dSat, budgetCost, targetCfg)
+			estimatedCost = estimateSovereignTargetCostWithReference(targetAmount, snapshot.RebalanceCost7dPpm, snapshot.RebalanceAmount7dSat, budgetCost, input.ReferenceCostPpm, targetCfg)
 		} else {
 			estimatedCost = estimateHistoricalCost(targetAmount, snapshot.RebalanceCost7dPpm)
 		}
@@ -10636,6 +10704,14 @@ func estimateHistoricalCost(amountSat int64, feePpm int64) int64 {
 }
 
 func estimateSovereignTargetCost(amountSat int64, historicalFeePpm int64, historicalAmountSat int64, budgetCostSat int64, cfg RebalanceConfig) int64 {
+	return estimateSovereignTargetCostWithReference(amountSat, historicalFeePpm, historicalAmountSat, budgetCostSat, 0, cfg)
+}
+
+// estimateSovereignTargetCostWithReference prices a target without reliable
+// per-channel cost history from the node-wide realized rebalance ppm
+// (referencePpm, 7d) plus a margin, capped at the fee cap. referencePpm <= 0
+// keeps the legacy behavior (assume the full cap).
+func estimateSovereignTargetCostWithReference(amountSat int64, historicalFeePpm int64, historicalAmountSat int64, budgetCostSat int64, referencePpm int64, cfg RebalanceConfig) int64 {
 	historicalCost := estimateHistoricalCost(amountSat, historicalFeePpm)
 	floorCost := estimateHistoricalCost(amountSat, cfg.RebalanceCostFloorPpm)
 	estimatedCost := historicalCost
@@ -10643,9 +10719,19 @@ func estimateSovereignTargetCost(amountSat int64, historicalFeePpm int64, histor
 		estimatedCost = floorCost
 	}
 	if !hasReliableSovereignCostHistory(amountSat, historicalAmountSat) {
-		conservativeCost := (budgetCostSat * sovereignCostConservativeBudgetPct) / 100
-		if conservativeCost > estimatedCost {
-			estimatedCost = conservativeCost
+		if referencePpm > 0 {
+			referenceCost := estimateHistoricalCost(amountSat, (referencePpm*sovereignCostReferenceMarginPct+99)/100)
+			if referenceCost > estimatedCost {
+				estimatedCost = referenceCost
+			}
+			if budgetCostSat > 0 && estimatedCost > budgetCostSat {
+				estimatedCost = budgetCostSat
+			}
+		} else {
+			conservativeCost := (budgetCostSat * sovereignCostConservativeBudgetPct) / 100
+			if conservativeCost > estimatedCost {
+				estimatedCost = conservativeCost
+			}
 		}
 	}
 	if estimatedCost <= 0 {
@@ -11691,6 +11777,92 @@ func clampInt64(value int64, min int64, max int64) int64 {
 	return value
 }
 
+// nodeRebalanceReferencePpm aggregates the realized 7d rebalance cost across
+// all channels into a single node-wide ppm. 0 when nothing was paid.
+func nodeRebalanceReferencePpm(costs map[uint64]rebalanceCost7dStat) int64 {
+	var fee, amount int64
+	for _, stat := range costs {
+		if stat.AmountSat <= 0 || stat.FeeSat <= 0 {
+			continue
+		}
+		fee += stat.FeeSat
+		amount += stat.AmountSat
+	}
+	if amount <= 0 || fee <= 0 {
+		return 0
+	}
+	return (fee*1_000_000 + amount - 1) / amount
+}
+
+// sovereignKeepaliveRefillEligible: opt-in anti-churn probe. Requires an
+// admitted AutoFee refill intent whose reason says the channel is drained,
+// aged past keepalive_refill_after_hours, and a local balance still below
+// keepalive_refill_pct of capacity. Exploration slots already bypass the
+// same gates, so they are not double-marked.
+func sovereignKeepaliveRefillEligible(target rebalanceTarget, cfg RebalanceConfig, now time.Time) bool {
+	if !cfg.KeepaliveRefillEnabled || target.ExplorationSlot || target.CooldownProbe {
+		return false
+	}
+	intent := target.AutomationIntent
+	if intent == nil || intent.Kind != automationIntentKindRefillTarget {
+		return false
+	}
+	if !isKeepaliveRefillIntentReason(intent.ReasonCode) {
+		return false
+	}
+	if intent.FirstSeenAt.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	hours := cfg.KeepaliveRefillAfterHours
+	if hours < keepaliveRefillAfterHoursMin || hours > keepaliveRefillAfterHoursMax {
+		hours = keepaliveRefillAfterHoursDefault
+	}
+	if now.Sub(intent.FirstSeenAt) < time.Duration(hours)*time.Hour {
+		return false
+	}
+	capacity := target.Channel.CapacitySat
+	if capacity <= 0 {
+		return false
+	}
+	localPct := float64(target.Channel.LocalBalanceSat) * 100 / float64(capacity)
+	return localPct < keepaliveRefillPctForConfig(cfg)
+}
+
+func isKeepaliveRefillIntentReason(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case "autofee_drained_target", "autofee_extreme_drained_target":
+		return true
+	default:
+		return false
+	}
+}
+
+func keepaliveRefillPctForConfig(cfg RebalanceConfig) float64 {
+	if cfg.KeepaliveRefillPct < keepaliveRefillPctMin || cfg.KeepaliveRefillPct > keepaliveRefillPctMax {
+		return keepaliveRefillPctDefault
+	}
+	return cfg.KeepaliveRefillPct
+}
+
+// sovereignKeepaliveRefillAmount is keepalive_refill_pct of capacity, never
+// below the execution minimum. 0 when the channel has no capacity.
+func sovereignKeepaliveRefillAmount(channel RebalanceChannel, cfg RebalanceConfig) int64 {
+	if channel.CapacitySat <= 0 {
+		return 0
+	}
+	amount := int64(math.Round(float64(channel.CapacitySat) * keepaliveRefillPctForConfig(cfg) / 100))
+	if minimum := effectiveMinExecuteSat(cfg); minimum > 0 && amount < minimum {
+		amount = minimum
+	}
+	if amount <= 0 {
+		return 0
+	}
+	return amount
+}
+
 func sovereignProfitCostRatio(expectedProfitSat int64, budgetCostSat int64) (float64, bool) {
 	if expectedProfitSat <= 0 {
 		return 0, true
@@ -11714,7 +11886,31 @@ func sovereignLowSuccessProfitCostRatioForConfig(cfg RebalanceConfig) float64 {
 }
 
 func sovereignBudgetEfficiencyMinRatioForConfig(cfg RebalanceConfig) float64 {
-	return normalizeRatioConfig(cfg.SovereignBudgetEfficiencyMinRatio, sovereignBudgetEfficiencyProfitCostRatio, 0)
+	configured := normalizeRatioConfig(cfg.SovereignBudgetEfficiencyMinRatio, sovereignBudgetEfficiencyProfitCostRatio, 0)
+	if !cfg.SovereignEfficiencyAutofeeAligned {
+		return configured
+	}
+	ceiling := sovereignBudgetEfficiencyAutofeeAlignedCeiling(cfg)
+	if ceiling > 0 && ceiling < configured {
+		return ceiling
+	}
+	return configured
+}
+
+// sovereignBudgetEfficiencyAutofeeAlignedCeiling is the highest
+// profit/budget_cost ratio a channel priced exactly at the AutoFee economic
+// floor (fee = cost x 1.10) can reach: (1 - 1/1.10) / econ_ratio. Any
+// configured floor above it silently excludes every floor-priced channel.
+func sovereignBudgetEfficiencyAutofeeAlignedCeiling(cfg RebalanceConfig) float64 {
+	econ := cfg.EconRatio
+	if econ <= 0 {
+		econ = defaultRebalanceConfig().EconRatio
+	}
+	if econ <= 0 {
+		return 0
+	}
+	ceiling := (1 - 1/autofeeRebalanceCostFloorMult) / econ
+	return math.Round(ceiling*1000) / 1000
 }
 
 func sovereignBudgetEfficiencyHighSuccessRatioForConfig(cfg RebalanceConfig) float64 {
@@ -12508,6 +12704,12 @@ end $$;
     autofee_settling_multiplier double precision not null default 0.75,
     delegated_fast_path_enabled boolean not null default true,
     delegated_fast_path_strict_payback boolean not null default true,
+    daily_budget_min_sat bigint not null default 0,
+    daily_budget_base_days integer not null default 7,
+    sovereign_budget_efficiency_autofee_aligned boolean not null default false,
+    keepalive_refill_enabled boolean not null default false,
+    keepalive_refill_after_hours integer not null default 48,
+    keepalive_refill_pct double precision not null default 5,
     updated_at timestamptz not null default now()
   );
 
@@ -12639,6 +12841,18 @@ end $$;
     add column if not exists delegated_fast_path_enabled boolean not null default true;
   alter table rebalance_config
     add column if not exists delegated_fast_path_strict_payback boolean not null default true;
+  alter table rebalance_config
+    add column if not exists daily_budget_min_sat bigint not null default 0;
+  alter table rebalance_config
+    add column if not exists daily_budget_base_days integer not null default 7;
+  alter table rebalance_config
+    add column if not exists sovereign_budget_efficiency_autofee_aligned boolean not null default false;
+  alter table rebalance_config
+    add column if not exists keepalive_refill_enabled boolean not null default false;
+  alter table rebalance_config
+    add column if not exists keepalive_refill_after_hours integer not null default 48;
+  alter table rebalance_config
+    add column if not exists keepalive_refill_pct double precision not null default 5;
 
   alter table rebalance_config
     alter column scheduler_mode set default 'rules_auto';
@@ -13137,7 +13351,8 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
     sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile,
     auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier,
-    auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle
+    auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
+    daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -13232,6 +13447,12 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.AutoTargetUpSellThroughFactor,
 		&cfg.AutoTargetDownSellThroughFactor,
 		&cfg.AutoTargetMaxDownsPerCycle,
+		&cfg.DailyBudgetMinSat,
+		&cfg.DailyBudgetBaseDays,
+		&cfg.SovereignEfficiencyAutofeeAligned,
+		&cfg.KeepaliveRefillEnabled,
+		&cfg.KeepaliveRefillAfterHours,
+		&cfg.KeepaliveRefillPct,
 	)
 	if err != nil {
 		return cfg, err
@@ -13258,8 +13479,9 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile,
     auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier,
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
+    daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct,
     updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -13351,11 +13573,18 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     auto_target_up_sellthrough_factor = excluded.auto_target_up_sellthrough_factor,
     auto_target_down_sellthrough_factor = excluded.auto_target_down_sellthrough_factor,
     auto_target_max_downs_per_cycle = excluded.auto_target_max_downs_per_cycle,
+    daily_budget_min_sat = excluded.daily_budget_min_sat,
+    daily_budget_base_days = excluded.daily_budget_base_days,
+    sovereign_budget_efficiency_autofee_aligned = excluded.sovereign_budget_efficiency_autofee_aligned,
+    keepalive_refill_enabled = excluded.keepalive_refill_enabled,
+    keepalive_refill_after_hours = excluded.keepalive_refill_after_hours,
+    keepalive_refill_pct = excluded.keepalive_refill_pct,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates, cfg.Profile,
 		cfg.AutoTargetEnabled, cfg.AutoTargetMaxPct, cfg.AutoTargetMinPct, cfg.AutoTargetStepPct, cfg.AutoTargetEvalIntervalHours, cfg.AutoTargetMaxUpsPerCycle, cfg.AutoTargetMaxLocalSat, cfg.AutoTargetMinDrainRateSatPerHr, cfg.AutoTargetMinRevenue7dSat, cfg.AutoTargetUpSuccessThreshold, cfg.AutoTargetDownSuccessThreshold, cfg.AutoTargetDrainFirstMultiplier,
 		cfg.AutoTargetUpSellThroughFactor, cfg.AutoTargetDownSellThroughFactor, cfg.AutoTargetMaxDownsPerCycle,
+		cfg.DailyBudgetMinSat, cfg.DailyBudgetBaseDays, cfg.SovereignEfficiencyAutofeeAligned, cfg.KeepaliveRefillEnabled, cfg.KeepaliveRefillAfterHours, cfg.KeepaliveRefillPct,
 	)
 	if err != nil {
 		return err
@@ -13829,7 +14058,8 @@ func (s *RebalanceService) ensureDailyBudget(ctx context.Context, cfg RebalanceC
 	if err != nil {
 		return err
 	}
-	avgRevenue7d, err := s.fetchAvgRevenue7d(ctx, now.AddDate(0, 0, -6))
+	baseDays := dailyBudgetBaseDaysForConfig(cfg)
+	avgRevenue7d, err := s.fetchAvgRevenueDays(ctx, now.AddDate(0, 0, -(baseDays-1)), baseDays)
 	if err != nil && s.logger != nil {
 		s.logger.Printf("rebalance avg revenue 7d unavailable: %v", err)
 	}
@@ -13845,7 +14075,25 @@ func (s *RebalanceService) ensureDailyBudget(ctx context.Context, cfg RebalanceC
 	return err
 }
 
+// computeDailyBudgetFromRevenue applies the operator floor (daily_budget_min_sat)
+// on top of the revenue-derived budget. Without a floor, a revenue dip shrinks
+// the budget, which starves refills, which shrinks revenue further.
 func computeDailyBudgetFromRevenue(cfg RebalanceConfig, revenue24h int64, avgRevenue7d int64) (int64, int64, int64) {
+	total, base, shortTerm := computeDailyBudgetFromRevenueRaw(cfg, revenue24h, avgRevenue7d)
+	if cfg.DailyBudgetMinSat > 0 && total < cfg.DailyBudgetMinSat {
+		total = cfg.DailyBudgetMinSat
+	}
+	return total, base, shortTerm
+}
+
+func dailyBudgetBaseDaysForConfig(cfg RebalanceConfig) int {
+	if cfg.DailyBudgetBaseDays < dailyBudgetBaseDaysMin || cfg.DailyBudgetBaseDays > dailyBudgetBaseDaysMax {
+		return dailyBudgetBaseDaysDefault
+	}
+	return cfg.DailyBudgetBaseDays
+}
+
+func computeDailyBudgetFromRevenueRaw(cfg RebalanceConfig, revenue24h int64, avgRevenue7d int64) (int64, int64, int64) {
 	if revenue24h < 0 {
 		revenue24h = 0
 	}
@@ -13983,9 +14231,12 @@ func int64Value(ptr *int64) int64 {
 	return *ptr
 }
 
-func (s *RebalanceService) fetchAvgRevenue7d(ctx context.Context, start time.Time) (int64, error) {
+func (s *RebalanceService) fetchAvgRevenueDays(ctx context.Context, start time.Time, days int) (int64, error) {
 	if s.db == nil {
 		return 0, nil
+	}
+	if days <= 0 {
+		days = dailyBudgetBaseDaysDefault
 	}
 	startDate := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
 	var total int64
@@ -13997,7 +14248,7 @@ where report_date >= $1
 	if err != nil {
 		return 0, err
 	}
-	return total / 7, nil
+	return total / int64(days), nil
 }
 
 func (s *RebalanceService) fetchForwardRevenue24h(ctx context.Context, now time.Time) (int64, error) {
@@ -15311,7 +15562,8 @@ func (s *RebalanceService) Overview(ctx context.Context) (RebalanceOverview, err
 	budget, spentAuto, spentManual, spent := s.getDailyBudget(ctx)
 	now := time.Now().In(time.Local)
 	revenue24h, _ := s.fetchForwardRevenue24h(ctx, now)
-	avgRevenue7d, _ := s.fetchAvgRevenue7d(ctx, now.AddDate(0, 0, -6))
+	budgetBaseDays := dailyBudgetBaseDaysForConfig(cfg)
+	avgRevenue7d, _ := s.fetchAvgRevenueDays(ctx, now.AddDate(0, 0, -(budgetBaseDays-1)), budgetBaseDays)
 	_, baseBudget, shortTermBudget := computeDailyBudgetFromRevenue(cfg, revenue24h, avgRevenue7d)
 	manualReserveSat := computeManualReserveSat(cfg, budget)
 	remainingTotal := computeRemainingTotalBudget(budget, spent)
@@ -15538,6 +15790,8 @@ where report_date >= current_date - interval '6 days'
 		SovereignRebalanceAmount7dSat:       sovereignEconomics7d.Total.RebalanceAmountSat,
 		SovereignRebalanceCost7dSat:         sovereignEconomics7d.Total.RebalanceCostSat,
 		SovereignRebalanceCost7dPpm:         sovereignEconomics7d.Total.RebalanceCostPpm,
+		SovereignEfficiencyEffectiveRatio:   sovereignBudgetEfficiencyMinRatioForConfig(cfg),
+		SovereignEfficiencyAlignedCeiling:   sovereignBudgetEfficiencyAutofeeAlignedCeiling(cfg),
 		SovereignForwardAmount7dSat:         sovereignEconomics7d.Total.ForwardAmountSat,
 		SovereignForwardFee7dSat:            sovereignEconomics7d.Total.ForwardFeeSat,
 		SovereignForwardFee7dPpm:            sovereignEconomics7d.Total.ForwardFeePpm,

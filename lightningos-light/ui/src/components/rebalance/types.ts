@@ -31,6 +31,12 @@ export type RebalanceConfig = {
   fail_tolerance_ppm: number
   roi_min: number
   daily_budget_pct: number
+  daily_budget_min_sat: number
+  daily_budget_base_days: number
+  sovereign_budget_efficiency_autofee_aligned: boolean
+  keepalive_refill_enabled: boolean
+  keepalive_refill_after_hours: number
+  keepalive_refill_pct: number
   budget_mode: string
   budget_unlimited: boolean
   budget_auto_only: boolean
@@ -148,6 +154,7 @@ export type RebalanceSovereignDecision = {
   unsold_oldest_at?: string
   unsold_last_paid_at?: string
   inventory_probe?: boolean
+  keepalive_refill?: boolean
   realized_economics_multiplier?: number
 	intent_kind?: string
 	intent_reason?: string

@@ -5376,3 +5376,31 @@ func TestSovereignKeepaliveRefillEligibility(t *testing.T) {
 		t.Fatalf("expected keepalive amount raised to min_execute 10k, got %d", got)
 	}
 }
+
+func TestSovereignKeepaliveRecentlyFailedBackoff(t *testing.T) {
+	now := time.Date(2026, 9, 27, 18, 0, 0, 0, time.UTC)
+	clean := rebalanceTarget{}
+	if sovereignKeepaliveRecentlyFailed(clean, now) {
+		t.Fatal("target without failures must not be in backoff")
+	}
+	structural := rebalanceTarget{StructuralCooldown: sovereignTargetStructuralCooldownStat{Failures: 1, LastFailureAt: now.Add(-2 * time.Hour)}}
+	if !sovereignKeepaliveRecentlyFailed(structural, now) {
+		t.Fatal("structural failure 2h ago must hold keepalive back")
+	}
+	old := rebalanceTarget{StructuralCooldown: sovereignTargetStructuralCooldownStat{Failures: 1, LastFailureAt: now.Add(-7 * time.Hour)}}
+	if sovereignKeepaliveRecentlyFailed(old, now) {
+		t.Fatal("failure older than the backoff must not hold keepalive back")
+	}
+	recovered := rebalanceTarget{StructuralCooldown: sovereignTargetStructuralCooldownStat{Failures: 1, LastFailureAt: now.Add(-2 * time.Hour), LastSuccessAt: now.Add(-1 * time.Hour)}}
+	if sovereignKeepaliveRecentlyFailed(recovered, now) {
+		t.Fatal("a success after the failure clears the backoff")
+	}
+	pair := rebalanceTarget{PairStats: rebalanceTargetPairStats{RecentLastFailAt: now.Add(-30 * time.Minute)}}
+	if !sovereignKeepaliveRecentlyFailed(pair, now) {
+		t.Fatal("recent pair-level failure must hold keepalive back")
+	}
+	pairRecovered := rebalanceTarget{PairStats: rebalanceTargetPairStats{RecentLastFailAt: now.Add(-30 * time.Minute), RecentLastSuccessAt: now.Add(-10 * time.Minute)}}
+	if sovereignKeepaliveRecentlyFailed(pairRecovered, now) {
+		t.Fatal("pair-level success after the failure clears the backoff")
+	}
+}

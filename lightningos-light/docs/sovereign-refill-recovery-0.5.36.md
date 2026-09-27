@@ -99,6 +99,28 @@ e o movimento de 100%+ da liquidez para 18-23%. Quatro causas, em ordem de peso:
 
 Mantidos: `roi_min` 1,0 e `sovereign_min_expected_profit_sat` 5 (nunca EV < 0).
 
+## Hotfix 0.5.36 (mesmo dia): keepalive limitado
+
+Observado em produção 2h após ligar o keepalive: os 6 sinks drenados sem rota
+(Bank The Planet, Alex71btc, Unwetter, Ripio, ln.coinos, 0217…) eram
+enfileirados a cada scan, ocupavam os 6 slots, e cada rajada de "all sources
+failed" (loop legado percorrendo as 34 sources) acionava a quarentena de
+routeability das sources (`shouldQuarantineBroadSourceFailures`, 12 falhas em 4+
+alvos → 6h). Resultado: todos os jobs seguintes caíam em "no executable
+sources" — inclusive os dos vendedores reais.
+
+Correção:
+
+- Keepalive passa a bypassar **só** os gates econômicos (`budget_efficiency` e
+  o mínimo de lucro, com lucro ≥ 0). Os gates de rota (`route_dead`,
+  `low_success`) voltam a valer para ele.
+- No máximo **1** job keepalive por scan (`sovereignKeepaliveMaxPerCycle`).
+- Backoff de **6h** por alvo após falha sem sucesso posterior
+  (`sovereignKeepaliveRecentlyFailed`, usa cooldown estrutural e pair stats).
+
+Sem knob novo. A quarentena de sources em curso expira sozinha 6h após a última
+falha real (não é renovada por jobs "skipped").
+
 ## O que acompanhar na semana
 
 - Orçamento zerando em > 30% dos scans = virou o limitador (bom sinal; subir o

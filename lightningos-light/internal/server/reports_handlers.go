@@ -71,7 +71,7 @@ func (s *Server) handleReportsCustom(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	items, err := svc.CustomRange(ctx, startDate, endDate)
+	items, err := svc.CustomRange(ctx, startDate, endDate, loc)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load reports")
 		return
@@ -104,7 +104,7 @@ func (s *Server) handleReportsSummaryCustom(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	summary, err := svc.CustomSummary(ctx, startDate, endDate)
+	summary, err := svc.CustomSummary(ctx, startDate, endDate, loc)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load report summary")
 		return

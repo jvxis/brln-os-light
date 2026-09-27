@@ -225,6 +225,7 @@ func runReportsBackfill(args []string) {
 	toStr := fs.String("to", "", "End date (YYYY-MM-DD)")
 	maxDays := fs.Int("max-days", 0, "Override max range in days (0 uses default limit)")
 	dryRun := fs.Bool("dry-run", false, "Recompute and compare against the stored rows without writing anything")
+	deriveOnly := fs.Bool("derive-only", false, "Rebuild only stored report nets from persisted components and classifications, without LND")
 	_ = fs.Parse(args)
 
 	if strings.TrimSpace(*fromStr) == "" || strings.TrimSpace(*toStr) == "" {
@@ -248,15 +249,6 @@ func runReportsBackfill(args []string) {
 	}
 	defer pool.Close()
 
-	lnd := lndclient.New(cfg, logger)
-	svc := reports.NewService(pool, lnd, logger)
-	schemaCtx, schemaCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := svc.EnsureSchema(schemaCtx); err != nil {
-		schemaCancel()
-		logger.Fatalf("reports-backfill failed: %v", err)
-	}
-	schemaCancel()
-
 	loc := resolveReportsLocation(logger)
 	startDate, err := reports.ParseDate(*fromStr, loc)
 	if err != nil {
@@ -279,6 +271,33 @@ func runReportsBackfill(args []string) {
 	}
 
 	logger.Printf("reports: backfill %s -> %s", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+
+	if *deriveOnly {
+		ctx, cancel := context.WithTimeout(context.Background(), reportsRunTimeout())
+		defer cancel()
+		changes, err := reports.RepairDerived(ctx, pool, startDate, endDate, loc, *dryRun)
+		if err != nil {
+			logger.Fatalf("reports derive-only failed: %v", err)
+		}
+		for _, change := range changes {
+			logger.Printf("reports derive-only %s: routing msat %d -> %d; with-keysend msat %d -> %d; total msat %d -> %d; routing sats %d -> %d; with-keysend sats %d -> %d; total sats %d -> %d",
+				change.Date.Format("2006-01-02"), change.Before.NetRoutingProfitMsat, change.After.NetRoutingProfitMsat,
+				change.Before.NetWithKeysendMsat, change.After.NetWithKeysendMsat, change.Before.NetTotalMsat, change.After.NetTotalMsat,
+				change.Before.NetRoutingProfitSat, change.After.NetRoutingProfitSat, change.Before.NetWithKeysendSat, change.After.NetWithKeysendSat,
+				change.Before.NetTotalSat, change.After.NetTotalSat)
+		}
+		logger.Printf("reports derive-only: changed days=%d dry-run=%t; absent days skipped; source metrics untouched", len(changes), *dryRun)
+		return
+	}
+
+	lnd := lndclient.New(cfg, logger)
+	svc := reports.NewService(pool, lnd, logger)
+	schemaCtx, schemaCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := svc.EnsureSchema(schemaCtx); err != nil {
+		schemaCancel()
+		logger.Fatalf("reports-backfill failed: %v", err)
+	}
+	schemaCancel()
 
 	startLocal := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, loc)
 	endLocal := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 0, loc)

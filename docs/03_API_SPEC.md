@@ -795,6 +795,18 @@ POST /api/notifications/backup/telegram/test
 
 ## Reports
 
+Historical series and summaries derive net figures from the stored daily components
+and current activity classifications in one read-only database snapshot. They do
+not query LND or rewrite historical rows. Classifications are grouped by the
+Reports timezone (SQL dates remain calendar dates); missing daily rows are not
+invented. Totals, averages and monthly Telegram summaries use the same daily
+figures. Legacy sat-only components are normalized in memory.
+
+Classification edits via `POST /api/wallet/activity/mark` atomically refresh only
+the derived fields of affected existing daily rows. Live snapshots reapply current
+classifications without recollecting LND data. Classification query errors are
+reported, not treated as zero revenue/cost. Response fields remain unchanged.
+
 GET /api/reports/range?range=d-1|month|3m|6m|12m|all
 - Returns a daily series. Sat values are floats for msat precision.
 

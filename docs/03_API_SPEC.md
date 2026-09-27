@@ -476,6 +476,15 @@ Body:
 
 GET /api/lnops/autofee/results?runs=4
 - Returns the selected structured run `items` and rendered `lines`.
+- From 0.5.35, newly evaluated channel items optionally include `cost_evidence`:
+  `{source, kind, reference_ppm, effective_ppm, min_adjusted, margin_actionable, forward_count, negative_margin_guard}`.
+  This records the input used to compute margin, independently of the final floor.
+  `kind` distinguishes `channel_rebalance`, `historical_channel_rebalance`,
+  `global_rebalance_reference`, `blended_rebalance_reference`, `outgoing_reference`,
+  `market_reference`, `configured_minimum`, and `unknown`. Reference values are
+  not realized channel costs/profit. The guard flag records an evaluation tag,
+  not exclusive attribution of the final decision. Older/skipped records may
+  omit the object. This is diagnostics only; see `docs/AUTOFEE_EXPOSURE.md`.
 - Also returns `latest_calibration`, containing the most recent structured node calibration from the complete AutoFee history, or `null` when no calibration has been recorded. This field is independent of the selected run window so channel reference refreshes do not hide the last valid node calibration.
 
 POST /api/lnops/autofee/refresh
@@ -1081,6 +1090,11 @@ invented from old outcomes. Absence of intervals means absent coverage.
   submitted after any contractual cap, not the evaluator's preliminary target.
   Acknowledgement is not read-back or propagation proof. Timeouts/partial
   failures remain uncertain. Calculated decisions remain in `/autofee/results`.
+  From 0.5.35, optional `failure_reasons` contains bounded counts keyed by
+  `unknown`, `pending`, `not_found`, `internal`, and `invalid_parameter`.
+  No raw daemon error text is included. Legacy records lack the reason counts.
+  The policy wrapper now returns an error for any `FailedUpdates`, including
+  partial global failure; already applied channels are not rolled back.
 - `activity` contains `forward_count`, `forward_amount_msat`,
   `forward_fee_msat`, `incoming_forward_count`, and `rebalance_count`.
   Incoming/assisted activity adds no revenue to the outgoing fee sum.

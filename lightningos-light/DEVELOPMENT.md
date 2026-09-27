@@ -29,6 +29,44 @@ go build -o bin/lightningos-manager ./cmd/lightningos-manager
 
 By default, the manager binds to `0.0.0.0:8443` so you can access it from another machine on the same LAN. Use your server's LAN IP, for example: `https://192.168.1.10:8443`.
 
+## Reports: conservative historical net repair
+
+The scheduled reconciliation and ordinary `reports-backfill` still collect from
+LND. Do not use a full backfill solely to update an old net formula: LND may no
+longer retain all of the underlying events.
+
+To compare stored nets with current formulas using only persisted LOS data:
+
+```bash
+./bin/lightningos-manager reports-backfill --config /etc/lightningos/config.yaml \
+  --from 2026-08-01 --to 2026-08-31 --derive-only --dry-run
+```
+
+Review and retain the comparison before applying. Removing `--dry-run` applies
+the repair in one transaction, updating only the six net fields and `updated_at`.
+Source metrics, balances and provenance are untouched; absent days are skipped.
+Repeated application is idempotent. The existing range limit/`--max-days` and
+`REPORTS_RUN_TIMEOUT_SEC` apply. Dry-run uses a read-only snapshot, performs no
+schema setup, and never initializes an LND client.
+
+This corrects arithmetic from available components, not missing historical
+events. It does not reconstruct channel sales/keysend data never captured.
+Report/mark writers serialize the short persistence phase (not LND collection);
+daily row locks protect repairs from concurrent component updates.
+
+Optional PostgreSQL integration tests require a LOCAL disposable database:
+
+```bash
+REPORTS_TEST_PG_DSN='postgres://postgres@127.0.0.1:55496/postgres?sslmode=disable' \
+  go test ./internal/reports -run 'TestDerived|TestReportCalendar' -v
+```
+
+These tests create and remove uniquely named schemas. Never use an operational
+node database. They cover historical reads, dry-run/apply, source preservation,
+marks added/edited/moved/removed, rollback on failure, concurrent daily writes,
+live cached classifications and calendar dates. Without this variable they skip
+the database tests; formula/timezone unit tests still run.
+
 ## UI version label
 The sidebar version label is read from `ui/public/version.txt`.
 

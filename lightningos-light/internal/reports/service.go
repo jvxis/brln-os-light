@@ -85,13 +85,8 @@ func (s *Service) RunDaily(ctx context.Context, reportDate time.Time, loc *time.
 		metrics = s.attachProvenanceHealth(ctx, metrics)
 	}
 	metrics = s.attachMagmaSales(ctx, metrics, tr)
-	metrics = s.attachActivityMarks(ctx, metrics, tr)
-
 	row := Row{ReportDate: dateOnly(reportDate, loc), Metrics: metrics}
-	if err := UpsertDaily(ctx, s.db, row); err != nil {
-		return Row{}, err
-	}
-	return row, nil
+	return upsertDailyWithMarks(ctx, s.db, row, loc)
 }
 
 func (s *Service) Range(ctx context.Context, key string, now time.Time, loc *time.Location) ([]Row, DateRange, error) {
@@ -99,11 +94,7 @@ func (s *Service) Range(ctx context.Context, key string, now time.Time, loc *tim
 	if err != nil {
 		return nil, dr, err
 	}
-	if dr.All {
-		items, err := FetchAll(ctx, s.db)
-		return items, dr, err
-	}
-	items, err := FetchRange(ctx, s.db, dr.StartDate, dr.EndDate)
+	items, err := s.historicalRows(ctx, dr.StartDate, dr.EndDate, dr.All, loc)
 	return items, dr, err
 }
 
@@ -112,24 +103,17 @@ func (s *Service) Summary(ctx context.Context, key string, now time.Time, loc *t
 	if err != nil {
 		return Summary{}, dr, err
 	}
-	if dr.All {
-		summary, err := FetchSummaryAll(ctx, s.db)
-		if err != nil {
-			return Summary{}, dr, err
-		}
-		targetSat, err := FetchMovementTargetAllSum(ctx, s.db)
-		if err != nil {
-			return Summary{}, dr, err
-		}
-		summary.MovementTargetSat = targetSat
-		summary.MovementPct = movementPct(summary.Totals, targetSat)
-		return summary, dr, nil
-	}
-	summary, err := FetchSummaryRange(ctx, s.db, dr.StartDate, dr.EndDate)
+	items, err := s.historicalRows(ctx, dr.StartDate, dr.EndDate, dr.All, loc)
 	if err != nil {
 		return Summary{}, dr, err
 	}
-	targetSat, err := FetchMovementTargetRangeSum(ctx, s.db, dr.StartDate, dr.EndDate)
+	summary := summarizeRows(items)
+	var targetSat int64
+	if dr.All {
+		targetSat, err = FetchMovementTargetAllSum(ctx, s.db)
+	} else {
+		targetSat, err = FetchMovementTargetRangeSum(ctx, s.db, dr.StartDate, dr.EndDate)
+	}
 	if err != nil {
 		return Summary{}, dr, err
 	}
@@ -138,15 +122,16 @@ func (s *Service) Summary(ctx context.Context, key string, now time.Time, loc *t
 	return summary, dr, nil
 }
 
-func (s *Service) CustomRange(ctx context.Context, startDate, endDate time.Time) ([]Row, error) {
-	return FetchRange(ctx, s.db, startDate, endDate)
+func (s *Service) CustomRange(ctx context.Context, startDate, endDate time.Time, loc *time.Location) ([]Row, error) {
+	return s.historicalRows(ctx, startDate, endDate, false, loc)
 }
 
-func (s *Service) CustomSummary(ctx context.Context, startDate, endDate time.Time) (Summary, error) {
-	summary, err := FetchSummaryRange(ctx, s.db, startDate, endDate)
+func (s *Service) CustomSummary(ctx context.Context, startDate, endDate time.Time, loc *time.Location) (Summary, error) {
+	items, err := s.CustomRange(ctx, startDate, endDate, loc)
 	if err != nil {
 		return Summary{}, err
 	}
+	summary := summarizeRows(items)
 	targetSat, err := FetchMovementTargetRangeSum(ctx, s.db, startDate, endDate)
 	if err != nil {
 		return Summary{}, err
@@ -164,7 +149,7 @@ func (s *Service) Live(ctx context.Context, now time.Time, loc *time.Location, l
 	requestRange := BuildTimeRangeForLookback(now, loc, lookbackHours)
 	key := liveSnapshotKey(loc, lookbackHours)
 	if cached, ok := s.memoryLiveSnapshot(key); ok {
-		return cached.Range, cached.Metrics, nil
+		return s.liveWithCurrentMarks(ctx, cached)
 	}
 
 	call, leader := s.ensureLiveCall(key)
@@ -173,19 +158,19 @@ func (s *Service) Live(ctx context.Context, now time.Time, loc *time.Location, l
 	}
 
 	if fallback, ok := s.usablePersistedLiveSnapshot(ctx, now, requestRange, loc, lookbackHours); ok {
-		return fallback.Range, fallback.Metrics, nil
+		return s.liveWithCurrentMarks(ctx, fallback)
 	}
 
 	select {
 	case <-call.done:
 		if call.err == nil {
-			return call.snapshot.Range, call.snapshot.Metrics, nil
+			return s.liveWithCurrentMarks(ctx, call.snapshot)
 		}
 		if fallback, ok := s.usablePersistedLiveSnapshot(ctx, now, requestRange, loc, lookbackHours); ok {
 			if s.logger != nil {
 				s.logger.Printf("reports: live build failed, using persisted snapshot fallback: %v", call.err)
 			}
-			return fallback.Range, fallback.Metrics, nil
+			return s.liveWithCurrentMarks(ctx, fallback)
 		}
 		return TimeRange{}, Metrics{}, call.err
 	case <-ctx.Done():
@@ -193,7 +178,7 @@ func (s *Service) Live(ctx context.Context, now time.Time, loc *time.Location, l
 			if s.logger != nil {
 				s.logger.Printf("reports: live request timed out, using persisted snapshot fallback: %v", ctx.Err())
 			}
-			return fallback.Range, fallback.Metrics, nil
+			return s.liveWithCurrentMarks(ctx, fallback)
 		}
 		return TimeRange{}, Metrics{}, ctx.Err()
 	}
@@ -335,15 +320,29 @@ func (s *Service) attachMagmaSales(ctx context.Context, metrics Metrics, tr Time
 
 // attachActivityMarks folds in the operator's classifications. A node where
 // nothing was ever marked reports exactly what it reported before.
-func (s *Service) attachActivityMarks(ctx context.Context, metrics Metrics, tr TimeRange) Metrics {
+func (s *Service) attachActivityMarks(ctx context.Context, metrics Metrics, tr TimeRange) (Metrics, error) {
 	totals, err := FetchActivityMarkTotals(ctx, s.db, tr.StartUTC, tr.EndUTC)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Printf("reports: activity marks unavailable: %v", err)
 		}
-		return metrics
+		return Metrics{}, err
 	}
-	return metrics.WithActivityMarks(totals)
+	return metrics.WithActivityMarks(totals).WithDerivedTotals(), nil
+}
+
+// Refresh only operator classifications on every cache path. This neither
+// recollects LND data nor lets an in-flight computation resurrect an old mark.
+func (s *Service) liveWithCurrentMarks(ctx context.Context, snapshot liveSnapshot) (TimeRange, Metrics, error) {
+	// The persisted-fallback path deliberately survives a timed-out LND wait.
+	// Give this small DB-only refresh the same bounded grace as snapshot lookup.
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+	}
+	metrics, err := s.attachActivityMarks(ctx, snapshot.Metrics, snapshot.Range)
+	return snapshot.Range, metrics, err
 }
 
 func (s *Service) computeOutboundTarget(ctx context.Context) (int64, error) {
@@ -454,7 +453,10 @@ func (s *Service) computeLiveSnapshot(ctx context.Context, now time.Time, loc *t
 	}
 	metrics = s.attachBalances(ctx, metrics)
 	metrics = s.attachMagmaSales(ctx, metrics, tr)
-	metrics = s.attachActivityMarks(ctx, metrics, tr)
+	metrics, err = s.attachActivityMarks(ctx, metrics, tr)
+	if err != nil {
+		return liveSnapshot{}, err
+	}
 
 	builtAt := time.Now()
 	return liveSnapshot{

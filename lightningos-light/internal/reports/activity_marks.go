@@ -2,10 +2,12 @@ package reports
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -66,7 +68,7 @@ func ValidMarkClassification(value string) bool {
 
 // SetActivityMark records or clears the operator's classification. An empty
 // classification removes the mark, which is how a mistake is undone.
-func SetActivityMark(ctx context.Context, db *pgxpool.Pool, paymentHash, classification string, amountMsat int64, occurredAt time.Time) error {
+func SetActivityMark(ctx context.Context, db *pgxpool.Pool, paymentHash, classification string, amountMsat int64, occurredAt time.Time, locations ...*time.Location) error {
 	hash := strings.TrimSpace(paymentHash)
 	if hash == "" {
 		return fmt.Errorf("payment hash required")
@@ -75,20 +77,36 @@ func SetActivityMark(ctx context.Context, db *pgxpool.Pool, paymentHash, classif
 		return fmt.Errorf("database unavailable")
 	}
 	classification = strings.TrimSpace(classification)
-	if classification == "" {
-		_, err := db.Exec(ctx, `delete from report_activity_marks where payment_hash=$1`, hash)
-		return err
-	}
-	if !ValidMarkClassification(classification) {
+	if classification != "" && !ValidMarkClassification(classification) {
 		return fmt.Errorf("classification must be %q or %q", MarkRevenue, MarkCost)
 	}
 	if amountMsat < 0 {
 		return fmt.Errorf("amount must be zero or positive")
 	}
-	if occurredAt.IsZero() {
+	if classification != "" && occurredAt.IsZero() {
 		return fmt.Errorf("the payment timestamp is required so the mark lands on the right day")
 	}
-	_, err := db.Exec(ctx, `
+	loc := time.Local
+	if len(locations) > 0 && locations[0] != nil {
+		loc = locations[0]
+	}
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.Background())
+	if err = lockDerivedWrites(ctx, tx); err != nil {
+		return err
+	}
+	var oldTime time.Time
+	err = tx.QueryRow(ctx, "select occurred_at from report_activity_marks where payment_hash=$1", hash).Scan(&oldTime)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if classification == "" {
+		_, err = tx.Exec(ctx, "delete from report_activity_marks where payment_hash=$1", hash)
+	} else {
+		_, err = tx.Exec(ctx, `
 insert into report_activity_marks (payment_hash, classification, amount_msat, occurred_at)
 values ($1,$2,$3,$4)
 on conflict (payment_hash) do update set
@@ -96,7 +114,38 @@ on conflict (payment_hash) do update set
   amount_msat = excluded.amount_msat,
   occurred_at = excluded.occurred_at,
   updated_at = now()`, hash, classification, amountMsat, occurredAt.UTC())
-	return err
+	}
+	if err != nil {
+		return err
+	}
+	dates := map[string]time.Time{}
+	stamps := []time.Time{oldTime}
+	if classification != "" {
+		stamps = append(stamps, occurredAt)
+	}
+	for _, stamp := range stamps {
+		if stamp.IsZero() {
+			continue
+		}
+		day := dateOnly(stamp, loc)
+		dates[day.Format("2006-01-02")] = day
+	}
+	for _, day := range dates {
+		items, err := fetchRange(ctx, tx, day, day, true)
+		if err != nil {
+			return err
+		}
+		// A mark must not fabricate a historical row without source data.
+		if err = deriveRows(ctx, tx, items, loc); err != nil {
+			return err
+		}
+		for _, row := range items {
+			if err = updateDerived(ctx, tx, row); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // ListActivityMarks returns the classification for a set of payment hashes, so
@@ -128,10 +177,9 @@ func FetchActivityMarkTotals(ctx context.Context, db *pgxpool.Pool, start, end t
 	if db == nil {
 		return totals, nil
 	}
-	var exists bool
-	if err := db.QueryRow(ctx,
-		`select to_regclass('report_activity_marks') is not null`).Scan(&exists); err != nil || !exists {
-		return totals, nil
+	exists, err := activityMarksExist(ctx, db)
+	if err != nil || !exists {
+		return totals, err
 	}
 	rows, err := db.Query(ctx, `
 select classification, coalesce(sum(amount_msat), 0), count(*)
@@ -146,7 +194,7 @@ group by classification`, start, end)
 		var classification string
 		var amount, count int64
 		if err := rows.Scan(&classification, &amount, &count); err != nil {
-			continue
+			return totals, err
 		}
 		switch classification {
 		case MarkRevenue:
@@ -158,4 +206,10 @@ group by classification`, start, end)
 		}
 	}
 	return totals, rows.Err()
+}
+
+func activityMarksExist(ctx context.Context, db reportQuery) (bool, error) {
+	var exists bool
+	err := db.QueryRow(ctx, "select to_regclass('report_activity_marks') is not null").Scan(&exists)
+	return exists, err
 }

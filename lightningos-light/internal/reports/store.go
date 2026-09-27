@@ -160,11 +160,7 @@ order by expected.report_date
 }
 
 func UpsertDaily(ctx context.Context, db *pgxpool.Pool, row Row) error {
-	if db == nil {
-		return nil
-	}
-	query, args := buildUpsertDaily(row)
-	_, err := db.Exec(ctx, query, args...)
+	_, err := upsertDailyWithMarks(ctx, db, row, time.Local)
 	return err
 }
 
@@ -477,6 +473,14 @@ func FetchRange(ctx context.Context, db *pgxpool.Pool, startDate, endDate time.T
 	if db == nil {
 		return nil, nil
 	}
+	return fetchRange(ctx, db, startDate, endDate)
+}
+
+func fetchRange(ctx context.Context, db reportQuery, startDate, endDate time.Time, forUpdate ...bool) ([]Row, error) {
+	lockClause := ""
+	if len(forUpdate) > 0 && forUpdate[0] {
+		lockClause = " for update"
+	}
 	rows, err := db.Query(ctx, `
 select report_date,
   forward_fee_revenue_sats,
@@ -525,7 +529,7 @@ select report_date,
 from reports_daily
 where report_date >= $1 and report_date <= $2
 order by report_date asc
-`, normalizeReportDate(startDate), normalizeReportDate(endDate))
+`+lockClause, normalizeReportDate(startDate), normalizeReportDate(endDate))
 	if err != nil {
 		return nil, err
 	}
@@ -546,6 +550,10 @@ func FetchAll(ctx context.Context, db *pgxpool.Pool) ([]Row, error) {
 	if db == nil {
 		return nil, nil
 	}
+	return fetchAll(ctx, db)
+}
+
+func fetchAll(ctx context.Context, db reportQuery) ([]Row, error) {
 	rows, err := db.Query(ctx, `
 select report_date,
   forward_fee_revenue_sats,
@@ -802,6 +810,15 @@ func averageMetrics(totals Metrics, days int64) Metrics {
 		return Metrics{}
 	}
 	return Metrics{
+		KeysendSentSat:             totals.KeysendSentSat / days,
+		KeysendSentMsat:            totals.KeysendSentMsat / days,
+		KeysendSentCount:           totals.KeysendSentCount / days,
+		MarkedRevenueSat:           totals.MarkedRevenueSat / days,
+		MarkedRevenueMsat:          totals.MarkedRevenueMsat / days,
+		MarkedRevenueCount:         totals.MarkedRevenueCount / days,
+		MarkedCostSat:              totals.MarkedCostSat / days,
+		MarkedCostMsat:             totals.MarkedCostMsat / days,
+		MarkedCostCount:            totals.MarkedCostCount / days,
 		ForwardFeeRevenueSat:       totals.ForwardFeeRevenueSat / days,
 		ForwardFeeRevenueMsat:      totals.ForwardFeeRevenueMsat / days,
 		RebalanceFeeCostSat:        totals.RebalanceFeeCostSat / days,
@@ -929,7 +946,6 @@ func scanRow(scanner rowScanner) (Row, error) {
 		val := provenanceLastError.String
 		metrics.ProvenanceLastError = &val
 	}
-	fillMsatFromSat(&metrics)
 	return Row{ReportDate: reportDate, Metrics: metrics}, nil
 }
 
@@ -975,6 +991,12 @@ func normalizeReportDate(value time.Time) time.Time {
 func fillMsatFromSat(metrics *Metrics) {
 	if metrics == nil {
 		return
+	}
+	if metrics.KeysendSentMsat == 0 && metrics.KeysendSentSat != 0 {
+		metrics.KeysendSentMsat = metrics.KeysendSentSat * 1000
+	}
+	if metrics.SalesRevenueMsat == 0 && metrics.SalesRevenueSat != 0 {
+		metrics.SalesRevenueMsat = metrics.SalesRevenueSat * 1000
 	}
 	if metrics.ForwardFeeRevenueMsat == 0 && metrics.ForwardFeeRevenueSat != 0 {
 		metrics.ForwardFeeRevenueMsat = metrics.ForwardFeeRevenueSat * 1000

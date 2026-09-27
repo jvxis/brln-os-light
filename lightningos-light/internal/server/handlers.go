@@ -4544,7 +4544,7 @@ func (s *Server) handleWalletActivityMark(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := reports.SetActivityMark(ctx, s.db, req.PaymentHash, classification,
-		req.AmountSat*1000, occurredAt); err != nil {
+		req.AmountSat*1000, occurredAt, s.reportsLocation()); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -667,6 +667,7 @@ export const updateAutofeeConfig = (payload: {
   htlc_liquidity_fail_rate_override?: number
   rebal_cost_mode?: string
   native_seed_enabled?: boolean
+  native_seed_v2_enabled?: boolean
   amboss_enabled?: boolean
   amboss_token?: string
   inbound_passive_enabled?: boolean
@@ -1164,6 +1165,7 @@ export const updateRebalanceConfig = (payload: {
   keepalive_refill_enabled?: boolean
   keepalive_refill_after_hours?: number
   keepalive_refill_pct?: number
+  source_routeability_quarantine_hours?: number
   budget_mode?: string
   budget_unlimited?: boolean
   budget_auto_only?: boolean

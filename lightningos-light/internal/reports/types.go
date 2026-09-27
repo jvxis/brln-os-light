@@ -100,6 +100,17 @@ func (m Metrics) withNetTotal() Metrics {
 	return m
 }
 
+// WithDerivedTotals uses only captured components, never a previously stored
+// net. Legacy sat-only components are normalized in this copy, not in storage.
+func (m Metrics) WithDerivedTotals() Metrics {
+	fillMsatFromSat(&m)
+	m.NetRoutingProfitMsat = m.ForwardFeeRevenueMsat - m.RebalanceFeeCostMsat
+	m.NetRoutingProfitSat = m.NetRoutingProfitMsat / 1000
+	m.NetWithKeysendMsat = m.NetRoutingProfitMsat + m.KeysendReceivedMsat
+	m.NetWithKeysendSat = m.NetWithKeysendMsat / 1000
+	return m.withNetTotal()
+}
+
 func (m Metrics) TotalFeeCostSat() int64 {
 	return m.OffchainFeeCostSat()
 }

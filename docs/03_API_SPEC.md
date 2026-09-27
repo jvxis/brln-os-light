@@ -474,6 +474,11 @@ Body:
 
 ### AutoFee results and refresh auditing
 
+GET /api/lnops/autofee/config
+POST /api/lnops/autofee/config
+- Since 0.5.38, `native_seed_v2_enabled` (boolean, default false) opts into corrected native-graph sampling when `native_seed_enabled` is enabled and the sample is sufficient. Otherwise the existing seed selection remains in use.
+- With native seed enabled, v2 is also calculated for comparison. Channel results can expose `seed_v2`, `seed_v2_ok`, `seed_v2_days`, `seed_v2_channels`, `seed_v2_self_excluded`, and `seed_v2_delta_pct`; optional zero-valued fields may be omitted.
+
 GET /api/lnops/autofee/results?runs=4
 - Returns the selected structured run `items` and rendered `lines`.
 - From 0.5.35, newly evaluated channel items optionally include `cost_evidence`:
@@ -795,6 +800,18 @@ POST /api/notifications/backup/telegram/test
 
 ## Reports
 
+Historical series and summaries derive net figures from the stored daily components
+and current activity classifications in one read-only database snapshot. They do
+not query LND or rewrite historical rows. Classifications are grouped by the
+Reports timezone (SQL dates remain calendar dates); missing daily rows are not
+invented. Totals, averages and monthly Telegram summaries use the same daily
+figures. Legacy sat-only components are normalized in memory.
+
+Classification edits via `POST /api/wallet/activity/mark` atomically refresh only
+the derived fields of affected existing daily rows. Live snapshots reapply current
+classifications without recollecting LND data. Classification query errors are
+reported, not treated as zero revenue/cost. Response fields remain unchanged.
+
 GET /api/reports/range?range=d-1|month|3m|6m|12m|all
 - Returns a daily series. Sat values are floats for msat precision.
 
@@ -819,6 +836,7 @@ POST /api/reports/reconciliation
 
 GET /api/rebalance/config
 POST /api/rebalance/config
+- Since 0.5.38, `source_routeability_quarantine_hours` (integer 1-48, default 6) controls the source routeability observation window, quarantine duration, and per-target keepalive failure backoff. It is distinct from target-to-source liquidity quarantine.
 - Since 0.5.36, optional configuration updates include `daily_budget_min_sat` (0–10,000,000, default 0), an absolute floor for the revenue-derived daily budget, and `daily_budget_base_days` (7–30, default 7), the revenue averaging window.
 - `sovereign_budget_efficiency_autofee_aligned` (default false) optionally caps the required budget-efficiency ratio at the ratio attainable at the AutoFee economic floor. The overview exposes `sovereign_budget_efficiency_effective_ratio` and `sovereign_budget_efficiency_aligned_ceiling`.
 - `keepalive_refill_enabled` (default false), `keepalive_refill_after_hours` (1–720, default 48), and `keepalive_refill_pct` (1–25, default 5) configure small Sovereign refills for eligible long-drained AutoFee refill intents. Sovereign decisions expose optional `keepalive_refill: true`. This is not a guarantee that a peer will keep a channel open.
@@ -851,7 +869,7 @@ POST /api/rebalance/channel/guaranteed
 GET /api/rebalance/history
 - Returns completed jobs and attempts from the last 24 hours.
 - Sovereign jobs include their planned economics and realized forwarding attribution. Jobs selected through the adaptive exploration path expose `exploration_slot: true`; the field is omitted for regular jobs.
-- Source routeability is also learned across targets: a source with at least 12 consecutive failed attempts spanning at least four different targets in six hours is quarantined for six hours. It becomes eligible for a recovery probe after the quarantine expires, and any success resets the failure pressure.
+- Source routeability is also learned across targets: a source with at least 12 failed attempts after its last success, spanning at least four targets reached successfully by some source in the configured window, can be quarantined. The observation window and quarantine duration follow `source_routeability_quarantine_hours` (default six hours). It becomes eligible for a recovery probe after the quarantine expires, and any success resets the failure pressure.
 
 GET /api/rebalance/overview
 - Includes separate 7-day exploration counters and realized economics under the `sovereign_exploration_*_7d` fields. `sovereign_jobs_7d` and `sovereign_exploration_share_7d` expose the actual completed-job mix so operators can compare the effective exploration share with the configured per-cycle slot percentage.

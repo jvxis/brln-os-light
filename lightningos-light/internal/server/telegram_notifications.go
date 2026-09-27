@@ -1004,7 +1004,7 @@ func reportMonthWindowMetrics(ctx context.Context, svc *reports.Service, now tim
 	}
 	summaryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	summary, err := svc.CustomSummary(summaryCtx, from, to)
+	summary, err := svc.CustomSummary(summaryCtx, from, to, loc)
 	if err != nil {
 		return "", reports.Metrics{}, false
 	}

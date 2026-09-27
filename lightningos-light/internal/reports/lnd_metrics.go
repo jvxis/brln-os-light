@@ -193,7 +193,7 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 		RoutedVolumeSat:  routedVolumeMsat / 1000,
 		RoutedVolumeMsat: routedVolumeMsat,
 	}
-	return metrics.withNetTotal(), nil
+	return metrics.WithDerivedTotals(), nil
 }
 
 func fetchForwardingMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64) (int64, int64, int64, error) {

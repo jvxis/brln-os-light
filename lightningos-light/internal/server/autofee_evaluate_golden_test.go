@@ -208,6 +208,12 @@ func runGoldenScenario(t *testing.T, sc goldenScenario) {
 	if d == nil {
 		t.Fatalf("%s: decision is nil", sc.name)
 	}
+	if d.CostEvidence == nil || d.CostEvidence.Source == "" ||
+		d.Margin != d.OutPpm7d-int(float64(d.CostEvidence.EffectivePpm)*1.10) ||
+		d.CostEvidence.ForwardCount != d.FwdCount ||
+		d.CostEvidence.NegativeMarginGuard != containsTag(d.Tags, "no-down-neg-margin") {
+		t.Fatalf("%s: evidence does not describe the actual margin input: %+v", sc.name, d.CostEvidence)
+	}
 
 	switch sc.expectedTrend {
 	case "up":

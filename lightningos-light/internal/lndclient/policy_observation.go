@@ -11,12 +11,13 @@ import (
 // or proof that the requested policy was applied. FailedUpdates is significant
 // even when the transport returned no error. Never include raw RPC errors here.
 type PolicyApplicationObservation struct {
-	StartedAt     time.Time                 `json:"started_at"`
-	CompletedAt   time.Time                 `json:"completed_at"`
-	Source        string                    `json:"source"`
-	Request       UpdateChannelPolicyParams `json:"request"`
-	Acknowledged  bool                      `json:"acknowledged"`
-	FailedUpdates int                       `json:"failed_updates"`
+	StartedAt      time.Time                 `json:"started_at"`
+	CompletedAt    time.Time                 `json:"completed_at"`
+	Source         string                    `json:"source"`
+	Request        UpdateChannelPolicyParams `json:"request"`
+	Acknowledged   bool                      `json:"acknowledged"`
+	FailedUpdates  int                       `json:"failed_updates"`
+	FailureReasons map[string]int            `json:"failure_reasons,omitempty"`
 }
 
 type policyObservationSourceKey struct{}
@@ -58,8 +59,9 @@ func (c *Client) observePolicyApplication(ctx context.Context, params UpdateChan
 	}
 	event := PolicyApplicationObservation{
 		StartedAt: started, CompletedAt: time.Now().UTC(), Source: source, Request: params,
-		Acknowledged:  err == nil && resp != nil && len(resp.GetFailedUpdates()) == 0,
-		FailedUpdates: len(resp.GetFailedUpdates()),
+		Acknowledged:   err == nil && resp != nil && len(resp.GetFailedUpdates()) == 0,
+		FailedUpdates:  len(resp.GetFailedUpdates()),
+		FailureReasons: policyUpdateFailureReasons(resp),
 	}
 	c.policyObservationMu.Lock()
 	defer c.policyObservationMu.Unlock()

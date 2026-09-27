@@ -5380,27 +5380,27 @@ func TestSovereignKeepaliveRefillEligibility(t *testing.T) {
 func TestSovereignKeepaliveRecentlyFailedBackoff(t *testing.T) {
 	now := time.Date(2026, 9, 27, 18, 0, 0, 0, time.UTC)
 	clean := rebalanceTarget{}
-	if sovereignKeepaliveRecentlyFailed(clean, now) {
+	if sovereignKeepaliveRecentlyFailed(clean, defaultRebalanceConfig(), now) {
 		t.Fatal("target without failures must not be in backoff")
 	}
 	structural := rebalanceTarget{StructuralCooldown: sovereignTargetStructuralCooldownStat{Failures: 1, LastFailureAt: now.Add(-2 * time.Hour)}}
-	if !sovereignKeepaliveRecentlyFailed(structural, now) {
+	if !sovereignKeepaliveRecentlyFailed(structural, defaultRebalanceConfig(), now) {
 		t.Fatal("structural failure 2h ago must hold keepalive back")
 	}
 	old := rebalanceTarget{StructuralCooldown: sovereignTargetStructuralCooldownStat{Failures: 1, LastFailureAt: now.Add(-7 * time.Hour)}}
-	if sovereignKeepaliveRecentlyFailed(old, now) {
+	if sovereignKeepaliveRecentlyFailed(old, defaultRebalanceConfig(), now) {
 		t.Fatal("failure older than the backoff must not hold keepalive back")
 	}
 	recovered := rebalanceTarget{StructuralCooldown: sovereignTargetStructuralCooldownStat{Failures: 1, LastFailureAt: now.Add(-2 * time.Hour), LastSuccessAt: now.Add(-1 * time.Hour)}}
-	if sovereignKeepaliveRecentlyFailed(recovered, now) {
+	if sovereignKeepaliveRecentlyFailed(recovered, defaultRebalanceConfig(), now) {
 		t.Fatal("a success after the failure clears the backoff")
 	}
 	pair := rebalanceTarget{PairStats: rebalanceTargetPairStats{RecentLastFailAt: now.Add(-30 * time.Minute)}}
-	if !sovereignKeepaliveRecentlyFailed(pair, now) {
+	if !sovereignKeepaliveRecentlyFailed(pair, defaultRebalanceConfig(), now) {
 		t.Fatal("recent pair-level failure must hold keepalive back")
 	}
 	pairRecovered := rebalanceTarget{PairStats: rebalanceTargetPairStats{RecentLastFailAt: now.Add(-30 * time.Minute), RecentLastSuccessAt: now.Add(-10 * time.Minute)}}
-	if sovereignKeepaliveRecentlyFailed(pairRecovered, now) {
+	if sovereignKeepaliveRecentlyFailed(pairRecovered, defaultRebalanceConfig(), now) {
 		t.Fatal("pair-level success after the failure clears the backoff")
 	}
 }
@@ -5430,5 +5430,40 @@ func TestShouldQuarantineBroadSourceFailuresRequiresReachableTargets(t *testing.
 	few.ReachableFailedTargets = sourceRouteabilityMinTargets - 1
 	if shouldQuarantineBroadSourceFailures(few, now) {
 		t.Fatal("below the reachable-target threshold must not quarantine")
+	}
+}
+
+func TestSourceRouteabilityQuarantineHoursKnob(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	if got := sourceRouteabilityTTLForConfig(cfg); got != sourceRouteabilityTTL {
+		t.Fatalf("default knob must equal the legacy TTL, got %v", got)
+	}
+	cfg.SourceRouteabilityQuarantineHours = 2
+	if got := sourceRouteabilityTTLForConfig(cfg); got != 2*time.Hour {
+		t.Fatalf("expected 2h TTL, got %v", got)
+	}
+	cfg.SourceRouteabilityQuarantineHours = 0
+	if got := normalizeRebalanceConfig(cfg).SourceRouteabilityQuarantineHours; got != sourceRouteabilityHoursDefault {
+		t.Fatalf("expected out-of-range knob reset to default, got %d", got)
+	}
+	cfg.SourceRouteabilityQuarantineHours = 99
+	if got := normalizeRebalanceConfig(cfg).SourceRouteabilityQuarantineHours; got != sourceRouteabilityHoursDefault {
+		t.Fatalf("expected out-of-range knob reset to default, got %d", got)
+	}
+
+	now := time.Now()
+	stat := recentCooldownStat{Attempts: 40, Failures: 40, DistinctTargets: 8, ReachabilityKnown: true, ReachableFailedTargets: 8, LastFailureAt: now.Add(-3 * time.Hour)}
+	if !shouldQuarantineBroadSourceFailuresWithTTL(stat, now, 6*time.Hour) {
+		t.Fatal("failure 3h ago is inside a 6h TTL")
+	}
+	if shouldQuarantineBroadSourceFailuresWithTTL(stat, now, 2*time.Hour) {
+		t.Fatal("failure 3h ago is outside a 2h TTL")
+	}
+	// Keepalive backoff follows the same knob.
+	short := defaultRebalanceConfig()
+	short.SourceRouteabilityQuarantineHours = 1
+	target := rebalanceTarget{StructuralCooldown: sovereignTargetStructuralCooldownStat{Failures: 1, LastFailureAt: now.Add(-2 * time.Hour)}}
+	if sovereignKeepaliveRecentlyFailed(target, short, now) {
+		t.Fatal("2h-old failure must not hold keepalive back with a 1h window")
 	}
 }

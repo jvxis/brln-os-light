@@ -1164,6 +1164,7 @@ export const updateRebalanceConfig = (payload: {
   keepalive_refill_enabled?: boolean
   keepalive_refill_after_hours?: number
   keepalive_refill_pct?: number
+  source_routeability_quarantine_hours?: number
   budget_mode?: string
   budget_unlimited?: boolean
   budget_auto_only?: boolean

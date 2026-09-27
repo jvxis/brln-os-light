@@ -3809,6 +3809,8 @@
     "autofeeControlsSignalsSubtitle": "Controle como o autofee reage aos padrões de falha observados.",
     "autofeeNativeSeed": "Seed nativa do grafo",
     "autofeeNativeSeedHint": "Usa o histórico público do Graph Explorer quando houver cobertura suficiente; se Amboss também estiver habilitado, ele vira fallback.",
+    "autofeeNativeSeedV2": "Seed nativa v2 (amostragem corrigida)",
+    "autofeeNativeSeedV2Hint": "Aplica a referência do grafo corrigida: exclui a política do próprio nó, uma amostra por canal por dia, carrega políticas sem mudança adiante, ignora direções desabilitadas e canais fechados. Desligado = a seed antiga é aplicada e a v2 só é registrada por canal (seed_v2, seed_v2_delta_pct) para comparação. Requer a seed nativa.",
     "autofeeAmboss": "Referência fee Amboss",
     "autofeeAmbossHint": "Usa métricas do Amboss como referência externa opcional de mercado.",
     "autofeeAmbossToken": "Token da API do Amboss",

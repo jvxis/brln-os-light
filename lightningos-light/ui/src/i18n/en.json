@@ -3809,6 +3809,8 @@
     "autofeeControlsSignalsSubtitle": "Control how autofee reacts to observed failure patterns.",
     "autofeeNativeSeed": "Native graph seed",
     "autofeeNativeSeedHint": "Uses local Graph Explorer public history when coverage is sufficient; if Amboss is also enabled, it becomes the fallback.",
+    "autofeeNativeSeedV2": "Native seed v2 (corrected sampling)",
+    "autofeeNativeSeedV2Hint": "Applies the corrected graph reference: excludes this node's own policy, one sample per channel per day, carries unchanged policies forward, ignores disabled directions and closed channels. Off = legacy seed is applied and v2 is only logged per channel (seed_v2, seed_v2_delta_pct) for comparison. Requires the native seed.",
     "autofeeAmboss": "Amboss fee reference",
     "autofeeAmbossHint": "Uses Amboss metrics as an optional external market reference.",
     "autofeeAmbossToken": "Amboss API token",

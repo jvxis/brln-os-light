@@ -1998,6 +1998,36 @@ type channelRankingAutofeeLiquiditySnapshot struct {
 	AutofeeOutRatioEffective *float64
 }
 
+// channelRankingPeerCloseRiskHours: how long a channel can sit drained before
+// the peer is likely to give up on it. Observed on this node: sinks that
+// stayed near 0% local for weeks were cooperatively closed by the peer.
+const channelRankingPeerCloseRiskHours = 48
+
+// channelRankingPeerCloseRisk flags an active channel that AutoFee has seen
+// drained (or extreme-drained) for longer than the risk window and that still
+// has economic value worth protecting: it earned outbound fees in the last 30
+// days or is classified as a sink (its value is precisely the outbound side).
+func channelRankingPeerCloseRisk(item ChannelRankingItem, now time.Time) bool {
+	if !item.Active || item.Private {
+		return false
+	}
+	switch normalizeAutofeeLiquidityState(item.LiquidityState) {
+	case autofeeLiquidityStateDrained, autofeeLiquidityStateExtremeDrained:
+	default:
+		return false
+	}
+	if item.LiquidityStateAt == nil || item.LiquidityStateAt.IsZero() {
+		return false
+	}
+	if now.Sub(*item.LiquidityStateAt) < channelRankingPeerCloseRiskHours*time.Hour {
+		return false
+	}
+	if item.CapacitySat > 0 && item.LocalBalanceSat*100 > item.CapacitySat*5 {
+		return false
+	}
+	return item.ForwardFee30dSat >= 500 || strings.EqualFold(strings.TrimSpace(item.ClassLabel), "sink")
+}
+
 func (s *ChannelRankingService) applyAutofeeLiquiditySnapshots(ctx context.Context, items []ChannelRankingItem) error {
 	if s == nil || s.db == nil || len(items) == 0 {
 		return nil
@@ -2070,6 +2100,10 @@ from latest
 			stateAt := snapshot.LiquidityStateAt
 			item.LiquidityStateAt = &stateAt
 			item.AutofeeOutRatioEffective = snapshot.AutofeeOutRatioEffective
+			if channelRankingPeerCloseRisk(*item, time.Now().UTC()) {
+				item.Reasons = appendUniqueReason(item.Reasons, ChannelRankingReason{Code: "peer_close_risk"})
+				item.Recommendations = appendUniqueRecommendation(item.Recommendations, ChannelRankingRecommendation{Code: "keepalive_refill", TargetModule: "rebalance"})
+			}
 		}
 	}
 	return nil

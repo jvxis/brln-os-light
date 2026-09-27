@@ -5202,3 +5202,177 @@ func TestBuildAndOrderRebalanceCandidatesUsesEVScoreWhenEnabled(t *testing.T) {
 		t.Fatalf("expected dead candidate non-positive EV score, got %d", plan.Candidates[1].Score)
 	}
 }
+
+func TestComputeDailyBudgetFromRevenueAppliesFloor(t *testing.T) {
+	cfg := RebalanceConfig{
+		DailyBudgetPct:    70,
+		BudgetMode:        rebalanceBudgetModeHybridRevenue,
+		DailyBudgetMinSat: 5000,
+	}
+	// 70% of (0.7*2600 + 0.3*2000) = 1694 → floored to 5000.
+	total, base, shortTerm := computeDailyBudgetFromRevenue(cfg, 2000, 2600)
+	if total != 5000 {
+		t.Fatalf("expected floored total 5000, got %d", total)
+	}
+	if base != 1820 || shortTerm != 1400 {
+		t.Fatalf("expected base/short-term untouched (1820/1400), got %d/%d", base, shortTerm)
+	}
+	cfg.DailyBudgetMinSat = 0
+	total, _, _ = computeDailyBudgetFromRevenue(cfg, 2000, 2600)
+	if total != 1694 {
+		t.Fatalf("expected raw total 1694 without floor, got %d", total)
+	}
+	cfg.DailyBudgetMinSat = 1000
+	total, _, _ = computeDailyBudgetFromRevenue(cfg, 2000, 2600)
+	if total != 1694 {
+		t.Fatalf("floor below the raw budget must not change it, got %d", total)
+	}
+}
+
+func TestNormalizeRebalanceConfigClampsBudgetFloorAndKeepalive(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.DailyBudgetMinSat = -5
+	cfg.DailyBudgetBaseDays = 3
+	cfg.KeepaliveRefillAfterHours = 0
+	cfg.KeepaliveRefillPct = 90
+	cfg = normalizeRebalanceConfig(cfg)
+	if cfg.DailyBudgetMinSat != 0 {
+		t.Fatalf("expected negative floor clamped to 0, got %d", cfg.DailyBudgetMinSat)
+	}
+	if cfg.DailyBudgetBaseDays != dailyBudgetBaseDaysDefault {
+		t.Fatalf("expected base days reset to default, got %d", cfg.DailyBudgetBaseDays)
+	}
+	if cfg.KeepaliveRefillAfterHours != keepaliveRefillAfterHoursDefault {
+		t.Fatalf("expected keepalive hours reset to default, got %d", cfg.KeepaliveRefillAfterHours)
+	}
+	if cfg.KeepaliveRefillPct != keepaliveRefillPctDefault {
+		t.Fatalf("expected keepalive pct reset to default, got %v", cfg.KeepaliveRefillPct)
+	}
+}
+
+func TestEstimateSovereignTargetCostUsesNodeReferenceWhenHistoryThin(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.RebalanceCostFloorPpm = 50
+	amount := int64(300_000)
+	budgetCost := int64(400) // fee cap: 1333 ppm
+
+	// No history, node reference 545 ppm → 654 ppm × 300k = 197 sat (< cap).
+	got := estimateSovereignTargetCostWithReference(amount, 0, 0, budgetCost, 545, cfg)
+	if got != 197 {
+		t.Fatalf("expected reference-based cost 197, got %d", got)
+	}
+	// Reference above the cap is capped at the fee cap.
+	got = estimateSovereignTargetCostWithReference(amount, 0, 0, budgetCost, 2000, cfg)
+	if got != budgetCost {
+		t.Fatalf("expected cost capped at budget %d, got %d", budgetCost, got)
+	}
+	// Thin per-channel history above the reference still wins.
+	got = estimateSovereignTargetCostWithReference(amount, 1000, amount/4, budgetCost, 545, cfg)
+	if got != 300 {
+		t.Fatalf("expected historical 1000 ppm cost 300, got %d", got)
+	}
+	// Reliable history ignores the reference entirely.
+	got = estimateSovereignTargetCostWithReference(amount, 100, amount, budgetCost, 545, cfg)
+	if got != 30 {
+		t.Fatalf("expected reliable historical cost 30, got %d", got)
+	}
+	// referencePpm 0 keeps the legacy full-cap behavior.
+	got = estimateSovereignTargetCostWithReference(amount, 0, 0, budgetCost, 0, cfg)
+	if got != budgetCost {
+		t.Fatalf("expected legacy full-cap cost %d, got %d", budgetCost, got)
+	}
+}
+
+func TestNodeRebalanceReferencePpm(t *testing.T) {
+	costs := map[uint64]rebalanceCost7dStat{
+		1: {FeeSat: 100, AmountSat: 200_000},
+		2: {FeeSat: 300, AmountSat: 400_000},
+		3: {FeeSat: 0, AmountSat: 900_000}, // free lot ignored
+	}
+	if got := nodeRebalanceReferencePpm(costs); got != 667 {
+		t.Fatalf("expected 667 ppm (400 sat / 600k, ceil), got %d", got)
+	}
+	if got := nodeRebalanceReferencePpm(nil); got != 0 {
+		t.Fatalf("expected 0 for empty map, got %d", got)
+	}
+}
+
+func TestSovereignBudgetEfficiencyMinRatioAutofeeAligned(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.EconRatio = 0.75
+	cfg.SovereignBudgetEfficiencyMinRatio = 0.20
+	if got := sovereignBudgetEfficiencyMinRatioForConfig(cfg); got != 0.20 {
+		t.Fatalf("alignment off must return configured 0.20, got %v", got)
+	}
+	cfg.SovereignEfficiencyAutofeeAligned = true
+	// (1 - 1/1.10) / 0.75 = 0.1212 → 0.121
+	if got := sovereignBudgetEfficiencyAutofeeAlignedCeiling(cfg); got != 0.121 {
+		t.Fatalf("expected aligned ceiling 0.121, got %v", got)
+	}
+	if got := sovereignBudgetEfficiencyMinRatioForConfig(cfg); got != 0.121 {
+		t.Fatalf("expected configured floor capped at 0.121, got %v", got)
+	}
+	cfg.SovereignBudgetEfficiencyMinRatio = 0.05
+	if got := sovereignBudgetEfficiencyMinRatioForConfig(cfg); got != 0.05 {
+		t.Fatalf("configured floor below the ceiling must be kept, got %v", got)
+	}
+}
+
+func TestSovereignKeepaliveRefillEligibility(t *testing.T) {
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	cfg := defaultRebalanceConfig()
+	cfg.KeepaliveRefillEnabled = true
+	cfg.KeepaliveRefillAfterHours = 48
+	cfg.KeepaliveRefillPct = 5
+	cfg.MinExecuteSat = 10_000
+	cfg.MinSplitEnabled = true
+	target := rebalanceTarget{
+		Channel: RebalanceChannel{CapacitySat: 10_000_000, LocalBalanceSat: 100_000},
+		AutomationIntent: &AutomationIntent{
+			Kind:        automationIntentKindRefillTarget,
+			ReasonCode:  "autofee_drained_target",
+			FirstSeenAt: now.Add(-72 * time.Hour),
+		},
+	}
+	if !sovereignKeepaliveRefillEligible(target, cfg, now) {
+		t.Fatal("expected drained sink with 72h-old intent to be keepalive eligible")
+	}
+	if got := sovereignKeepaliveRefillAmount(target.Channel, cfg); got != 500_000 {
+		t.Fatalf("expected keepalive amount 5%% of 10M = 500k, got %d", got)
+	}
+
+	disabled := cfg
+	disabled.KeepaliveRefillEnabled = false
+	if sovereignKeepaliveRefillEligible(target, disabled, now) {
+		t.Fatal("keepalive must be opt-in")
+	}
+	young := target
+	young.AutomationIntent = &AutomationIntent{Kind: automationIntentKindRefillTarget, ReasonCode: "autofee_drained_target", FirstSeenAt: now.Add(-10 * time.Hour)}
+	if sovereignKeepaliveRefillEligible(young, cfg, now) {
+		t.Fatal("intent younger than keepalive_refill_after_hours must not qualify")
+	}
+	wrongReason := target
+	wrongReason.AutomationIntent = &AutomationIntent{Kind: automationIntentKindRefillTarget, ReasonCode: "autofee_low_outbound_target", FirstSeenAt: now.Add(-72 * time.Hour)}
+	if sovereignKeepaliveRefillEligible(wrongReason, cfg, now) {
+		t.Fatal("only drained/extreme-drained intents qualify")
+	}
+	notDrained := target
+	notDrained.Channel.LocalBalanceSat = 900_000 // 9% > 5%
+	if sovereignKeepaliveRefillEligible(notDrained, cfg, now) {
+		t.Fatal("channel above keepalive pct must not qualify")
+	}
+	exploring := target
+	exploring.ExplorationSlot = true
+	if sovereignKeepaliveRefillEligible(exploring, cfg, now) {
+		t.Fatal("exploration slots already bypass the same gates; no double mark")
+	}
+	noIntent := target
+	noIntent.AutomationIntent = nil
+	if sovereignKeepaliveRefillEligible(noIntent, cfg, now) {
+		t.Fatal("keepalive requires an admitted AutoFee refill intent")
+	}
+	small := rebalanceTarget{Channel: RebalanceChannel{CapacitySat: 100_000, LocalBalanceSat: 0}}
+	if got := sovereignKeepaliveRefillAmount(small.Channel, cfg); got != 10_000 {
+		t.Fatalf("expected keepalive amount raised to min_execute 10k, got %d", got)
+	}
+}

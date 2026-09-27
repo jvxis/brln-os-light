@@ -7403,7 +7403,7 @@ func (c *Client) UpdateChannelPolicy(ctx context.Context, params UpdateChannelPo
 	startedAt := time.Now().UTC()
 	resp, err := client.UpdateChannelPolicy(ctx, req)
 	c.observePolicyApplication(ctx, params, startedAt, resp, err)
-	return err
+	return policyUpdateResult(resp, err)
 }
 
 func (c *Client) UpdateChanStatus(ctx context.Context, channelPoint string, enable bool) error {

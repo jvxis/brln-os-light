@@ -708,6 +708,7 @@ export type AutofeePolicySnapshot = {
   active: boolean; disabled: boolean; local_balance_sat: number; unsettled_balance_sat: number
 }
 export type AutofeePolicyApplication = {
+  failure_reasons?: Partial<Record<'unknown' | 'pending' | 'not_found' | 'internal' | 'invalid_parameter', number>>
   started_at: string; completed_at: string; source: string; acknowledged: boolean; failed_updates: number
   request: {
     channel_point: string; apply_all: boolean; base_fee_msat: number; fee_rate_ppm: number; time_lock_delta: number
@@ -731,12 +732,24 @@ export type AutofeePolicyExposures = {
 }
 export const getAutofeeExposures = (params: { channel_point: string; since?: string; until?: string; limit?: number }): Promise<AutofeePolicyExposures> =>
   request(`/api/lnops/autofee/exposures${buildQuery(params)}`)
+export type AutofeeCostEvidence = {
+  source: string
+  kind: 'channel_rebalance' | 'historical_channel_rebalance' | 'global_rebalance_reference' |
+    'blended_rebalance_reference' | 'outgoing_reference' | 'market_reference' | 'configured_minimum' | 'unknown'
+  reference_ppm: number; effective_ppm: number; min_adjusted: boolean
+  margin_actionable: boolean; forward_count: number; negative_margin_guard: boolean
+}
+export type AutofeeResults = {
+  lines: string[]
+  items: Array<({ cost_evidence?: AutofeeCostEvidence } & Record<string, any>) | null>
+  latest_calibration: Record<string, any> | null
+}
 export const getAutofeeResults = (params: number | {
   lines?: number
   runs?: number
   from?: string
   to?: string
-} = 50) => {
+} = 50): Promise<AutofeeResults> => {
   if (typeof params === 'number') {
     return request(`/api/lnops/autofee/results?lines=${params}`)
   }

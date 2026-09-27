@@ -61,11 +61,13 @@ type policyObservationRPCFixture struct {
 	lnrpc.UnimplementedLightningServer
 	requests      []*lnrpc.PolicyUpdateRequest
 	readOnlyCalls int
+	response      *lnrpc.PolicyUpdateResponse
+	rpcErr        error
 }
 
 func (f *policyObservationRPCFixture) UpdateChannelPolicy(_ context.Context, req *lnrpc.PolicyUpdateRequest) (*lnrpc.PolicyUpdateResponse, error) {
 	f.requests = append(f.requests, req)
-	return &lnrpc.PolicyUpdateResponse{FailedUpdates: []*lnrpc.FailedUpdate{{}}}, nil
+	return f.response, f.rpcErr
 }
 func (f *policyObservationRPCFixture) ListChannels(context.Context, *lnrpc.ListChannelsRequest) (*lnrpc.ListChannelsResponse, error) {
 	f.readOnlyCalls++
@@ -77,7 +79,7 @@ func (f *policyObservationRPCFixture) FeeReport(context.Context, *lnrpc.FeeRepor
 }
 
 func TestPolicyObservationDoesNotChangeRPCRequestOrResult(t *testing.T) {
-	f := &policyObservationRPCFixture{}
+	f := &policyObservationRPCFixture{response: &lnrpc.PolicyUpdateResponse{FailedUpdates: []*lnrpc.FailedUpdate{{Reason: lnrpc.UpdateFailure_UPDATE_FAILURE_INVALID_PARAMETER, UpdateError: "private daemon error"}}}}
 	listener := bufconn.Listen(1024 * 1024)
 	server := grpc.NewServer()
 	lnrpc.RegisterLightningServer(server, f)
@@ -91,17 +93,18 @@ func TestPolicyObservationDoesNotChangeRPCRequestOrResult(t *testing.T) {
 	enabled := true
 	c := &Client{cfg: &config.Config{LND: config.LNDConfig{SharedGRPC: &enabled}}, grpcConns: map[grpcConnRole]*grpc.ClientConn{grpcRoleAdminUnary: conn}}
 	params := UpdateChannelPolicyParams{ChannelPoint: strings.Repeat("0", 64) + ":0", BaseFeeMsat: 123, FeeRatePpm: 400, TimeLockDelta: 144, InboundEnabled: true, InboundFeeRatePpm: -20}
-	if err := c.UpdateChannelPolicy(context.Background(), params); err != nil {
-		t.Fatal(err)
+	var rejected *PolicyUpdateError
+	if err := c.UpdateChannelPolicy(context.Background(), params); !errors.As(err, &rejected) || rejected.FailedUpdates != 1 {
+		t.Fatalf("expected rejection with observer disabled: %v", err)
 	}
 	stream := c.PolicyApplicationObservations()
-	if err := c.UpdateChannelPolicy(WithPolicyObservationSource(context.Background(), "autofee"), params); err != nil {
-		t.Fatal("instrumentation changed existing RPC return", err)
+	if err := c.UpdateChannelPolicy(WithPolicyObservationSource(context.Background(), "autofee"), params); !errors.As(err, &rejected) || rejected.Reasons["invalid_parameter"] != 1 {
+		t.Fatalf("expected rejection with observer enabled: %v", err)
 	}
 	if !reflect.DeepEqual(f.requests[0], f.requests[1]) {
 		t.Fatal("instrumentation changed policy request")
 	}
-	if (<-stream).Acknowledged {
+	if event := <-stream; event.Acknowledged || event.FailureReasons["invalid_parameter"] != 1 {
 		t.Fatal("FailedUpdates must remain visible in diagnostics")
 	}
 	observed, err := c.ObserveLocalPolicies(context.Background())
@@ -110,5 +113,27 @@ func TestPolicyObservationDoesNotChangeRPCRequestOrResult(t *testing.T) {
 	}
 	if len(f.requests) != 2 || f.readOnlyCalls != 2 {
 		t.Fatal("sampler changed a policy or made per-channel RPCs")
+	}
+	// Global rejection is also an error; no rollback or extra RPC is attempted.
+	params.ApplyAll = true
+	if err := c.UpdateChannelPolicy(context.Background(), params); !errors.As(err, &rejected) {
+		t.Fatalf("global failure accepted: %v", err)
+	}
+	if !f.requests[2].GetGlobal() || len(f.requests) != 3 || (<-stream).Acknowledged {
+		t.Fatal("global request retried, changed scope, or acknowledged")
+	}
+	f.response = &lnrpc.PolicyUpdateResponse{}
+	if err := c.UpdateChannelPolicy(context.Background(), params); err != nil {
+		t.Fatal(err)
+	}
+	if !(<-stream).Acknowledged {
+		t.Fatal("successful update not acknowledged")
+	}
+	f.rpcErr = errors.New("transport fixture failure")
+	if err := c.UpdateChannelPolicy(context.Background(), params); err == nil {
+		t.Fatal("transport failure accepted")
+	}
+	if (<-stream).Acknowledged {
+		t.Fatal("transport failure acknowledged")
 	}
 }

@@ -591,6 +591,8 @@ type autofeeLogItem struct {
 	TargetInboundDiscount    int      `json:"target_inbound_discount"`
 	InboundSource            string   `json:"inbound_source,omitempty"`
 	IncludeInbound           bool     `json:"include_inbound"`
+
+	CostEvidence *autofeeCostEvidence `json:"cost_evidence,omitempty"`
 }
 
 type autofeeProfile struct {
@@ -3979,15 +3981,8 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		e.persistState(ctx, decision.State)
 
 		if decision.Apply {
-			summary.applied++
-			if decision.NewPpm > decision.LocalPpm {
-				summary.changedUp++
-			} else if decision.NewPpm < decision.LocalPpm {
-				summary.changedDown++
-			} else {
-				summary.kept++
-			}
 			if dryRun {
+				summary.recordAppliedDecision(decision)
 				changedLines = append(changedLines, buildAutofeeChannelLogEntry(decision, "changed", true, nil))
 				continue
 			}
@@ -4014,6 +4009,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 				st.ApplyErrorAlerted = false
 				e.persistApplyErrorState(ctx, st.ChannelID, 0, "", false)
 			}
+			summary.recordAppliedDecision(decision)
 			changedDecisions = append(changedDecisions, decision)
 			changedLines = append(changedLines, buildAutofeeChannelLogEntry(decision, "changed", dryRun, nil))
 			e.recordOutcome(ctx, runID, decision, e.now)
@@ -8601,6 +8597,7 @@ where channel_id=$1
 // ===== decisions =====
 
 type decision struct {
+	CostEvidence            *autofeeCostEvidence
 	ChannelID               uint64
 	ChannelPoint            string
 	Alias                   string
@@ -9120,6 +9117,7 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		RebalCostMode:           d.RebalCostMode,
 		Margin:                  d.Margin,
 		CostBasisMarginPpm:      d.Margin,
+		CostEvidence:            d.CostEvidence,
 		ProfitFee7dSat:          d.ProfitFee7dSat,
 		RevShare:                d.RevShare,
 		Tags:                    append([]string{}, d.Tags...),
@@ -10357,6 +10355,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			}
 		}
 	}
+	// Preserve provenance before the configured minimum adjusts the reference.
+	// This is diagnostics only; selection and every economic gate stay unchanged.
+	baseCostReferencePpm := baseCostPpm
 	if baseCostPpm <= 0 {
 		baseCostPpm = e.cfg.MinPpm
 		if baseCostSrc == "" || strings.TrimSpace(baseCostSrc) == "rebal-global" {
@@ -10372,6 +10373,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		if recentRebalanceCostPpm > baseCostPpm {
 			baseCostPpm = recentRebalanceCostPpm
 			baseCostSrc = "rebal-recent"
+			baseCostReferencePpm = recentRebalanceCostPpm
 			tags = append(tags, "rebal-recent-floor")
 		}
 		st.LastRebalCost = recentRebalanceCostPpm
@@ -12130,6 +12132,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		RebalPpm:                loggedRebalPpm,
 		Seed:                    int(seed),
 		Margin:                  marginPpm7d,
+		CostEvidence:            newAutofeeCostEvidence(baseCostSrc, baseCostReferencePpm, baseCostPpm, marginActionable, fwdCount, tags),
 		ProfitFee7dSat:          profitFee7dSat,
 		RevShare:                revShare,
 		ClassLabel:              classLabel,
@@ -12842,6 +12845,12 @@ func (e *autofeeEngine) applyChannelFeesWithRetry(ctx context.Context, ch lndcli
 // to import gRPC status here; the strings are stable across Go gRPC versions.
 func isTransientApplyError(err error) bool {
 	if err == nil {
+		return false
+	}
+	var rejected *lndclient.PolicyUpdateError
+	if errors.As(err, &rejected) {
+		// FailedUpdates is an application rejection, not a transient transport
+		// failure. Global requests may already have applied on other channels.
 		return false
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {

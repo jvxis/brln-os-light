@@ -18,10 +18,23 @@ Three concepts remain separate:
    balances actually observed. They cannot prove remote gossip propagation.
 
 Do not describe RPC acknowledgement as successful read-back. In particular,
-the existing LND wrapper returns its transport error and does not convert
-`FailedUpdates` into an error. This delivery exposes that distinction in
-diagnostics while preserving the wrapper's existing return/retry behavior.
-Changing that behavior needs a separate focused correction and regression review.
+the initial 0.5.34 wrapper returned only its transport error. Starting with
+0.5.35, any `FailedUpdates` returns a typed `PolicyUpdateError`; an empty
+response without a transport error is also rejected. Transport errors retain
+their identity. Successful acknowledgements still do not prove read-back or
+gossip propagation. Partial global rejection does not imply rollback of the
+other channels. AutoFee does not immediately retry an application rejection;
+ordinary later automation rounds are unchanged.
+Live AutoFee up/down/applied summary counters now advance only after the
+successful RPC result; dry-run counters still describe simulated decisions.
+Rejections use the existing caller error paths and do not create a successful
+AutoFee outcome. This is not a transactional rollback of evaluator state or
+attempt cooldowns, nor a redesign of those existing persistence semantics.
+
+Application records now include optional `failure_reasons`, bounded counts of
+`unknown`, `pending`, `not_found`, `internal`, and `invalid_parameter`. Raw LND
+`update_error` strings are never stored or exposed by this diagnostic. Old
+records lack these reasons; absence is not proof of successful application.
 
 ## Safety contracts
 
@@ -29,7 +42,7 @@ Changing that behavior needs a separate focused correction and regression review
 | --- | --- |
 | Observation cannot change fees or jobs | Separate worker and tables; no decision reads; RPC on/off equivalence test |
 | New inbound costs, base fees and econ_ratio remain authoritative | Existing AutoFee/interlock golden and safety tests unchanged |
-| Outbound seed/exploration, overrides, off channels and contracts remain intact | No evaluator edits; existing idle-discovery/micro-step and contract tests |
+| Outbound seed/exploration, overrides, off channels and contracts remain intact | Output-only cost evidence; existing idle-discovery/micro-step and contract tests |
 | Sovereign budgets, FIFO and unsold inventory guard remain intact | No selection/execution/attribution edits; existing regressions |
 | Zero-fee forwards are movement; assisted revenue is not added twice | Real PostgreSQL boundary/zero/assisted fixtures |
 | Unknown policy or observation gaps do not imply free/empty channels | Nullable policies; unknown confidence; no policy_activity attribution |
@@ -61,6 +74,40 @@ over disjoint intervals. Acquisition windows and telemetry loss are visible.
 An empty response is lack of coverage, not evidence of zero routing demand.
 
 ## Validation and rollout boundaries
+
+### 0.5.35 margin-input evidence
+
+New evaluated channel results include optional `cost_evidence`, persisted in
+the existing JSON log payload and returned by `/api/lnops/autofee/results`.
+It describes the actual **margin input**, independently of `floor_base_src`
+and `floor_base_ppm`, which can subsequently be softened or replaced:
+
+- `source` is the selected engine source; `kind` separates channel rebalance,
+  historical channel rebalance, global/blended references, outgoing references,
+  market references and the configured minimum. These are not FIFO costs.
+- `reference_ppm` is the selected value before the minimum clamp;
+  `effective_ppm` is the input after it (or the newer rebalance anchor if that
+  supersedes it). `min_adjusted` exposes the difference. Source `seed` describes
+  the engine fallback and does not by itself prove a fresh market sample.
+- `margin_actionable` records the existing gate's decision, **not** proof that
+  the reference represents paid channel cost. `forward_count` is the evaluated
+  count, with the same lookback semantics as the decision.
+- `negative_margin_guard` means the `no-down-neg-margin` tag occurred during
+  evaluation. Later gates may override the target; it is neither exclusive
+  causal attribution nor a simulated alternative price.
+
+No decision reads this object. Prices, discounts, seed selection, rebalance
+selection, budgets and inventory attribution are unchanged. This is provenance
+measurement, **not** the native-seed comparison, a new optimizer or a full
+counterfactual simulation. Legacy results and early skipped decisions may lack
+it; missing evidence is unknown, never zero acquisition cost. No schema
+migration or backfill is required.
+
+After rollout, inspect ordinary automation attempts for failure counts and
+reason codes, then group new cost evidence by source, liquidity, actual policy
+exposure and movement. Compare complete multi-day windows and matured inventory
+cohorts; do not sum assisted revenue into routing profit or interpret flat fees
+as proof of absent demand. Local tests are not production performance evidence.
 
 Run the ordinary Go tests and UI build. PostgreSQL integration tests use only
 an explicitly named disposable database:

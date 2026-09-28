@@ -891,6 +891,7 @@ func parseBitcoindRPCConfigFromLNDConf(raw string) (bitcoinRPCConfig, bool) {
 		ZMQBlock: "tcp://127.0.0.1:28332",
 		ZMQTx:    "tcp://127.0.0.1:28333",
 	}
+	cookiePath := ""
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -920,6 +921,8 @@ func parseBitcoindRPCConfigFromLNDConf(raw string) (bitcoinRPCConfig, bool) {
 			cfg.User = val
 		case "bitcoind.rpcpass":
 			cfg.Pass = val
+		case "bitcoind.rpccookie":
+			cookiePath = val
 		case "bitcoind.zmqpubrawblock":
 			cfg.ZMQBlock = normalizeLocalZMQ(val, cfg.ZMQBlock)
 		case "bitcoind.zmqpubrawtx":
@@ -930,10 +933,55 @@ func parseBitcoindRPCConfigFromLNDConf(raw string) (bitcoinRPCConfig, bool) {
 	if strings.TrimSpace(cfg.Host) == "" {
 		return bitcoinRPCConfig{}, false
 	}
+	// LND falls back to bitcoind's cookie file when rpcuser/rpcpass are unset.
+	// Read it on every call: bitcoind writes a new cookie on each restart.
+	// Only for a local rpchost: lnd.conf is writable by the lnd user, so a
+	// remote host plus an arbitrary path would ship local files off the box.
+	if (strings.TrimSpace(cfg.User) == "" || strings.TrimSpace(cfg.Pass) == "") && cookiePath != "" && isLocalRPCHost(cfg.Host) {
+		if user, pass, ok := readBitcoinRPCCookie(cookiePath); ok {
+			cfg.User, cfg.Pass = user, pass
+		}
+	}
 	if strings.TrimSpace(cfg.User) == "" || strings.TrimSpace(cfg.Pass) == "" {
 		return bitcoinRPCConfig{}, false
 	}
 	return cfg, true
+}
+
+// readBitcoinRPCCookie reads a bitcoind cookie file. The path comes from
+// lnd.conf, so it must be a small regular file named .cookie, never a symlink.
+// The checks mirror readRegularFile in internal/privileged.
+func readBitcoinRPCCookie(path string) (string, string, bool) {
+	const maxCookieBytes = 1024
+	if filepath.Base(path) != ".cookie" {
+		return "", "", false
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > maxCookieBytes {
+		return "", "", false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", "", false
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return "", "", false
+	}
+	data := make([]byte, info.Size())
+	if _, err := io.ReadFull(file, data); err != nil {
+		return "", "", false
+	}
+	finalInfo, err := file.Stat()
+	if err != nil || !os.SameFile(openedInfo, finalInfo) || finalInfo.Size() != info.Size() {
+		return "", "", false
+	}
+	user, pass, ok := strings.Cut(strings.TrimSpace(string(data)), ":")
+	if !ok || user == "" || pass == "" {
+		return "", "", false
+	}
+	return user, pass, true
 }
 
 func readBitcoinTaggedRPCConfigFromLNDConf(tag string) (bitcoinRPCConfig, bool) {

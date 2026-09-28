@@ -127,6 +127,14 @@ executável. Stats antigos sem o campo mantêm o comportamento anterior.
 
 Sem knob novo.
 
+## 0.5.39: `peer_close_risk` usa a idade do intent de refill
+
+`liquidity_state_at` é atualizado a cada run do AutoFee (a cada 2h), então
+nunca chegava a 48h e o alerta C4 não disparava. Agora o ranking lê o
+`first_seen_at` do intent `refill_target` ativo (drained/extreme-drained) do
+canal, exposto como `drained_since`, e usa `liquidity_state_at` só como
+fallback. Mesma janela de 48h e mesmos critérios de valor econômico.
+
 ## 0.5.38: knob `source_routeability_quarantine_hours`
 
 A quarentena de routeability da source ganha um knob (padrão 6 = comportamento

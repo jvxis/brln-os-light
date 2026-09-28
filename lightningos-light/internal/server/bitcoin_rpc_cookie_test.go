@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -46,16 +47,11 @@ func TestParseBitcoindRPCConfigFromLNDConfPrefersExplicitCredentialsOverCookie(t
 
 func TestParseBitcoindRPCConfigFromLNDConfRejectsUnsafeCookie(t *testing.T) {
 	secret := writeTestFile(t, "secrets.env", "LND_PG_DSN=postgres://user:pass@127.0.0.1/lnd\n")
-	symlink := filepath.Join(t.TempDir(), ".cookie")
-	if err := os.Symlink(secret, symlink); err != nil {
-		t.Fatal(err)
-	}
 	for name, path := range map[string]string{
 		"missing":       filepath.Join(t.TempDir(), ".cookie"),
 		"malformed":     writeTestCookie(t, "no-separator"),
 		"empty":         writeTestCookie(t, "__cookie__:"),
 		"not a .cookie": secret,
-		"symlink":       symlink,
 		"oversized":     writeTestCookie(t, "__cookie__:"+strings.Repeat("a", 2048)),
 	} {
 		raw := "[Bitcoind]\nbitcoind.rpccookie=" + path + "\n"
@@ -63,6 +59,19 @@ func TestParseBitcoindRPCConfigFromLNDConfRejectsUnsafeCookie(t *testing.T) {
 			t.Fatalf("%s cookie: expected no config, got %+v", name, cfg)
 		}
 	}
+	t.Run("symlink", func(t *testing.T) {
+		symlink := filepath.Join(t.TempDir(), ".cookie")
+		if err := os.Symlink(secret, symlink); err != nil {
+			if runtime.GOOS == "windows" {
+				t.Skipf("symlink fixture unavailable: %v", err)
+			}
+			t.Fatal(err)
+		}
+		raw := "[Bitcoind]\nbitcoind.rpccookie=" + symlink + "\n"
+		if _, ok := parseBitcoindRPCConfigFromLNDConf(raw); ok {
+			t.Fatal("symlink cookie must be rejected")
+		}
+	})
 }
 
 func TestParseBitcoindRPCConfigFromLNDConfIgnoresCookieForRemoteHost(t *testing.T) {

@@ -560,6 +560,7 @@ type autofeeLogItem struct {
 	SeedV2Channels           int      `json:"seed_v2_channels,omitempty"`
 	SeedV2SelfExcluded       int      `json:"seed_v2_self_excluded,omitempty"`
 	SeedV2DeltaPct           float64  `json:"seed_v2_delta_pct,omitempty"`
+	SeedNativeRaw            int      `json:"seed_native_raw,omitempty"`
 	Floor                    int      `json:"floor,omitempty"`
 	FloorSrc                 string   `json:"floor_src,omitempty"`
 	FloorBasePpm             int      `json:"floor_base_ppm,omitempty"`
@@ -8667,6 +8668,7 @@ type decision struct {
 	SeedV2Channels          int
 	SeedV2SelfExcluded      int
 	SeedV2DeltaPct          float64
+	SeedNativeRaw           int
 	Margin                  int
 	ProfitFee7dSat          int64
 	RevShare                float64
@@ -9161,6 +9163,7 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		SeedV2Channels:          d.SeedV2Channels,
 		SeedV2SelfExcluded:      d.SeedV2SelfExcluded,
 		SeedV2DeltaPct:          d.SeedV2DeltaPct,
+		SeedNativeRaw:           d.SeedNativeRaw,
 		Floor:                   d.Floor,
 		FloorSrc:                d.FloorSrc,
 		FloorBasePpm:            d.FloorBasePpm,
@@ -12158,8 +12161,16 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	tags = append(tags, seedTags...)
 	seedV2 := e.nativeSeedV2Cache[ch.RemotePubkey]
+	// Compare v2 with the legacy native seed BEFORE the local caps (outrate,
+	// rebal floor, super-source), otherwise a capped seed of 1 ppm would show
+	// a meaningless +80000% delta. Falls back to the applied seed when the
+	// legacy native seed was not available for this peer.
+	seedNativeRaw := seed
+	if legacy, ok := e.nativeSeedCache[ch.RemotePubkey]; ok && legacy.Ok && legacy.Seed > 0 {
+		seedNativeRaw = legacy.Seed
+	}
 	if seedV2.Ok {
-		tags = append(tags, fmt.Sprintf("seed:v2≈%d(%+.0f%%)", int(math.Round(seedV2.Seed)), nativeSeedV2DeltaPct(seed, seedV2.Seed)))
+		tags = append(tags, fmt.Sprintf("seed:v2≈%d(%+.0f%%)", int(math.Round(seedV2.Seed)), nativeSeedV2DeltaPct(seedNativeRaw, seedV2.Seed)))
 	}
 	return &decision{
 		ChannelID:               ch.ChannelID,
@@ -12191,7 +12202,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		SeedV2Days:              seedV2.Stats.Days,
 		SeedV2Channels:          seedV2.Stats.Channels,
 		SeedV2SelfExcluded:      seedV2.Stats.SelfExcluded,
-		SeedV2DeltaPct:          nativeSeedV2DeltaPct(seed, seedV2.Seed),
+		SeedV2DeltaPct:          nativeSeedV2DeltaPct(seedNativeRaw, seedV2.Seed),
+		SeedNativeRaw:           int(math.Round(seedNativeRaw)),
 		Margin:                  marginPpm7d,
 		CostEvidence:            newAutofeeCostEvidence(baseCostSrc, baseCostReferencePpm, baseCostPpm, marginActionable, fwdCount, tags),
 		ProfitFee7dSat:          profitFee7dSat,
@@ -12378,7 +12390,8 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 		// v2 always runs for comparison (logged per channel); it replaces the
 		// legacy native seed only when native_seed_v2_enabled is on and the
 		// corrected sample is sufficient. Otherwise the legacy path is untouched.
-		if v2 := e.fetchNativeSeedV2(pubkey); e.cfg.NativeSeedV2Enabled && v2.Ok {
+		v2 := e.fetchNativeSeedV2(pubkey)
+		if e.cfg.NativeSeedV2Enabled && v2.Ok {
 			seed := v2.Seed
 			tags = append(tags, v2.Tags...)
 			if st != nil && st.LastSeed > 0 && e.profile.SeedGuardMaxJump > 0 {
@@ -12391,6 +12404,13 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 			}
 			tags = append(tags, "seed:native-v2-applied")
 			return seed, v2.SeedP95, v2.PeerMarketSkew, tags
+		}
+		// Comparative mode: one marker tag so the run summary can count how
+		// many channels the corrected sample would cover.
+		if v2.Ok {
+			tags = append(tags, "seed:native-v2")
+		} else if len(v2.Tags) > 0 {
+			tags = append(tags, v2.Tags[0])
 		}
 		nativeAttempted = true
 		seed, seedP95, peerMarketSkew, nativeTags, ok, err := e.fetchNativeSeed(pubkey)

@@ -789,4 +789,18 @@ func TestChannelRankingPeerCloseRisk(t *testing.T) {
 	if channelRankingPeerCloseRisk(unknown, now) {
 		t.Fatal("unknown state age must not be flagged")
 	}
+	// LiquidityStateAt is refreshed every AutoFee run; the intent age is the
+	// real "drained since" and must win when present.
+	intentAged := base
+	intentAged.LiquidityStateAt = &recent
+	intentAged.DrainedSince = &old
+	if !channelRankingPeerCloseRisk(intentAged, now) {
+		t.Fatal("72h-old drained intent must flag even when the state was observed 6h ago")
+	}
+	intentFresh := base
+	intentFresh.LiquidityStateAt = &old
+	intentFresh.DrainedSince = &recent
+	if channelRankingPeerCloseRisk(intentFresh, now) {
+		t.Fatal("a fresh drained intent means the drain is recent; must not flag")
+	}
 }

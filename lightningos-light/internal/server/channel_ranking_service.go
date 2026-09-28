@@ -151,13 +151,17 @@ type ChannelRankingItem struct {
 	CloseCandidate           bool                           `json:"close_candidate,omitempty"`
 	LiquidityState           string                         `json:"liquidity_state,omitempty"`
 	LiquidityStateAt         *time.Time                     `json:"liquidity_state_at,omitempty"`
-	AutofeeOutRatioEffective *float64                       `json:"autofee_out_ratio_effective,omitempty"`
-	AutomationMode           string                         `json:"automation_mode,omitempty"`
-	FixedFeePPM              *int64                         `json:"fixed_fee_ppm,omitempty"`
-	ReviewAt                 *time.Time                     `json:"review_at,omitempty"`
-	AutomationNote           string                         `json:"automation_note,omitempty"`
-	ParkedAt                 *time.Time                     `json:"parked_at,omitempty"`
-	ComputedAt               time.Time                      `json:"computed_at"`
+	// DrainedSince: first_seen_at of the active AutoFee refill intent that
+	// reports the channel drained. LiquidityStateAt is refreshed every
+	// AutoFee run, so it cannot say how long the channel has been drained.
+	DrainedSince             *time.Time `json:"drained_since,omitempty"`
+	AutofeeOutRatioEffective *float64   `json:"autofee_out_ratio_effective,omitempty"`
+	AutomationMode           string     `json:"automation_mode,omitempty"`
+	FixedFeePPM              *int64     `json:"fixed_fee_ppm,omitempty"`
+	ReviewAt                 *time.Time `json:"review_at,omitempty"`
+	AutomationNote           string     `json:"automation_note,omitempty"`
+	ParkedAt                 *time.Time `json:"parked_at,omitempty"`
+	ComputedAt               time.Time  `json:"computed_at"`
 }
 
 type ChannelRankingStatus struct {
@@ -2016,16 +2020,53 @@ func channelRankingPeerCloseRisk(item ChannelRankingItem, now time.Time) bool {
 	default:
 		return false
 	}
-	if item.LiquidityStateAt == nil || item.LiquidityStateAt.IsZero() {
+	since := item.DrainedSince
+	if since == nil || since.IsZero() {
+		since = item.LiquidityStateAt
+	}
+	if since == nil || since.IsZero() {
 		return false
 	}
-	if now.Sub(*item.LiquidityStateAt) < channelRankingPeerCloseRiskHours*time.Hour {
+	if now.Sub(*since) < channelRankingPeerCloseRiskHours*time.Hour {
 		return false
 	}
 	if item.CapacitySat > 0 && item.LocalBalanceSat*100 > item.CapacitySat*5 {
 		return false
 	}
 	return item.ForwardFee30dSat >= 500 || strings.EqualFold(strings.TrimSpace(item.ClassLabel), "sink")
+}
+
+// loadDrainedSinceByChannelPoint reads, per channel, the oldest active AutoFee
+// refill intent that reports it drained. Its first_seen_at survives across
+// runs (the upsert keeps it while the intent stays active), so it measures
+// how long the channel has been drained.
+func (s *ChannelRankingService) loadDrainedSinceByChannelPoint(ctx context.Context, points []string) map[string]time.Time {
+	out := map[string]time.Time{}
+	if s == nil || s.db == nil || len(points) == 0 {
+		return out
+	}
+	rows, err := s.db.Query(ctx, `
+select channel_point, min(first_seen_at)
+from automation_channel_intents
+where active
+  and kind = 'refill_target'
+  and reason_code in ('autofee_drained_target', 'autofee_extreme_drained_target')
+  and channel_point = any($1)
+group by channel_point
+`, points)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var point string
+		var since time.Time
+		if err := rows.Scan(&point, &since); err != nil {
+			return out
+		}
+		out[strings.TrimSpace(point)] = since.UTC()
+	}
+	return out
 }
 
 func (s *ChannelRankingService) applyAutofeeLiquiditySnapshots(ctx context.Context, items []ChannelRankingItem) error {
@@ -2093,6 +2134,7 @@ from latest
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	drainedSince := s.loadDrainedSinceByChannelPoint(ctx, points)
 	for idx := range items {
 		item := &items[idx]
 		if snapshot, ok := snapshots[strings.TrimSpace(item.ChannelPoint)]; ok {
@@ -2100,6 +2142,10 @@ from latest
 			stateAt := snapshot.LiquidityStateAt
 			item.LiquidityStateAt = &stateAt
 			item.AutofeeOutRatioEffective = snapshot.AutofeeOutRatioEffective
+			if since, ok := drainedSince[strings.TrimSpace(item.ChannelPoint)]; ok && !since.IsZero() {
+				sinceCopy := since
+				item.DrainedSince = &sinceCopy
+			}
 			if channelRankingPeerCloseRisk(*item, time.Now().UTC()) {
 				item.Reasons = appendUniqueReason(item.Reasons, ChannelRankingReason{Code: "peer_close_risk"})
 				item.Recommendations = appendUniqueRecommendation(item.Recommendations, ChannelRankingRecommendation{Code: "keepalive_refill", TargetModule: "rebalance"})

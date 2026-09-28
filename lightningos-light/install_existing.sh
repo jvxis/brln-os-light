@@ -1608,9 +1608,21 @@ main() {
       die "Automatic privilege cutover supports the canonical lightningos manager user only; use a guided migration for this layout."
     fi
     ensure_go
-    bash "$REPO_ROOT/internal/server/assets/upgrade-app.sh" --prepare-cutover-only
+    # Existing LND does not imply an existing LOS manager. Only defer the
+    # snapshot when BOTH manager artifacts are absent (not dangling symlinks).
+    # Existing/partial installs still pass the original guard before overwrite.
+    local prepare_after_install=0
+    if [[ ! -e /opt/lightningos/manager/lightningos-manager && ! -L /opt/lightningos/manager/lightningos-manager &&
+          ! -e /etc/systemd/system/lightningos-manager.service && ! -L /etc/systemd/system/lightningos-manager.service ]]; then
+      prepare_after_install=1
+    else
+      bash "$REPO_ROOT/internal/server/assets/upgrade-app.sh" --prepare-cutover-only
+    fi
     build_manager
     ensure_manager_service "$manager_user" "$manager_group"
+    if [[ "$prepare_after_install" == 1 ]]; then
+      bash "$REPO_ROOT/internal/server/assets/upgrade-app.sh" --prepare-cutover-only
+    fi
     ensure_privileged_broker_units "$manager_user"
     systemctl daemon-reload
     systemctl enable --now lightningos-privileged.socket

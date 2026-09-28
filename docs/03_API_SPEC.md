@@ -478,6 +478,7 @@ GET /api/lnops/autofee/config
 POST /api/lnops/autofee/config
 - Since 0.5.38, `native_seed_v2_enabled` (boolean, default false) opts into corrected native-graph sampling when `native_seed_enabled` is enabled and the sample is sufficient. Otherwise the existing seed selection remains in use.
 - With native seed enabled, v2 is also calculated for comparison. Channel results can expose `seed_v2`, `seed_v2_ok`, `seed_v2_days`, `seed_v2_channels`, `seed_v2_self_excluded`, and `seed_v2_delta_pct`; optional zero-valued fields may be omitted.
+- Since 0.5.39, `seed_native_raw` exposes the legacy native reference before local caps when available. `seed_v2_delta_pct` compares against that reference, falling back to the applied seed when the legacy reference is unavailable. Comparative-mode samples also contribute to the v2 run counters.
 
 GET /api/lnops/autofee/results?runs=4
 - Returns the selected structured run `items` and rendered `lines`.
@@ -842,6 +843,7 @@ POST /api/rebalance/config
 - `keepalive_refill_enabled` (default false), `keepalive_refill_after_hours` (1–720, default 48), and `keepalive_refill_pct` (1–25, default 5) configure small Sovereign refills for eligible long-drained AutoFee refill intents. Sovereign decisions expose optional `keepalive_refill: true`. This is not a guarantee that a peer will keep a channel open.
 - New controls preserve prior defaults. Independently of these opt-ins, Sovereign cost estimates for targets without reliable history can use paid node-wide 7-day rebalance cost plus a 20% margin, capped by the fee budget; without that reference, the previous full-cap estimate remains.
 - Channel ranking may include reason `peer_close_risk` and recommendation `keepalive_refill` for economically relevant, active public channels observed drained for at least 48 hours. These are advisory signals, not predictions or automatic channel operations.
+- Since 0.5.39, ranking items can expose `drained_since`, the first observation of the active drained/extreme-drained refill intent. The age check uses this timestamp when available, falling back to `liquidity_state_at`.
 
 GET /api/rebalance/channels
 - Returns live channel balances, local/peer policies, targets, eligibility and recent economics.

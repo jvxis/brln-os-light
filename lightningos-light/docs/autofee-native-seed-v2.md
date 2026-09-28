@@ -34,7 +34,9 @@ amboss no mesmo contador (`amboss=`), o que escondia isso.
 
 - Com `native_seed_enabled` ligado, a v2 é sempre calculada e registrada por canal
   no resultado do run: `seed_v2`, `seed_v2_ok`, `seed_v2_days`, `seed_v2_channels`,
-  `seed_v2_self_excluded`, `seed_v2_delta_pct` (v2 vs seed aplicada) e a tag
+  `seed_v2_self_excluded`, `seed_native_raw` (seed nativa antiga antes dos caps
+  locais) e `seed_v2_delta_pct` (v2 vs `seed_native_raw`; comparar com a seed
+  final, que passa por outrate/rebal/super-source, distorcia o delta) e a tag
   `seed:v2≈N(±x%)`. A linha de resumo ganha
   `native=N v2_ok=N v2_insufficient=N v2_applied=N`.
 - `native_seed_v2_enabled` (novo, padrão **false**): quando ligado, a v2

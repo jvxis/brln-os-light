@@ -69,6 +69,7 @@ export type ChannelRankingItem = {
   recommendations?: ChannelRankingRecommendation[]
   liquidity_state?: 'offer-ready' | 'low' | 'drained' | 'extreme-drained'
   liquidity_state_at?: string
+  drained_since?: string
   autofee_out_ratio_effective?: number
   automation_mode?: 'normal' | 'parked' | 'close_candidate'
   fixed_fee_ppm?: number

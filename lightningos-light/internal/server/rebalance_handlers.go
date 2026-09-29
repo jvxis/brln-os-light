@@ -1133,6 +1133,10 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, errChannelAutomationParked), errors.Is(err, errManualRestartCooldown), errors.Is(err, errManualBudgetExhausted), errors.Is(err, errManualBudgetInsufficient):
 			writeError(w, http.StatusConflict, err.Error())
+		case err.Error() == "channel busy":
+			// Not a server fault: the operator asked for a second job on a channel
+			// that already has one queued or running. Say so instead of a raw 500.
+			writeError(w, http.StatusConflict, "channel busy: this channel already has a rebalance job queued or running; wait for it to finish before starting another")
 		default:
 			writeError(w, http.StatusInternalServerError, err.Error())
 		}

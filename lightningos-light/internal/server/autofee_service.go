@@ -4101,12 +4101,12 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		summary.htlcClassifiedTotal, summary.htlcAttemptsTotal, summary.htlcUnclassifiedTotal,
 	)
 	seedText := fmt.Sprintf(
-		"🌱 seed amboss=%d missing=%d err=%d empty=%d outrate=%d mem=%d default=%d",
-		summary.seedAmboss+summary.seedNative, summary.seedAmbossMissing+summary.seedNativeInsufficient, summary.seedAmbossError+summary.seedNativeError, summary.seedAmbossEmpty,
+		"🌱 seed native=%d amboss=%d insufficient=%d missing=%d err=%d empty=%d outrate=%d mem=%d default=%d",
+		summary.seedNative, summary.seedAmboss, summary.seedNativeInsufficient, summary.seedAmbossMissing, summary.seedAmbossError+summary.seedNativeError, summary.seedAmbossEmpty,
 		summary.seedOutrate, summary.seedMem, summary.seedDefault,
 	)
 	if e.cfg.NativeSeedEnabled {
-		seedText += fmt.Sprintf(" | native=%d v2_ok=%d v2_insufficient=%d v2_applied=%d", summary.seedNative, summary.seedNativeV2, summary.seedNativeV2Insufficient, summary.seedNativeV2Applied)
+		seedText += fmt.Sprintf(" | v2_ok=%d v2_insufficient=%d v2_applied=%d", summary.seedNativeV2, summary.seedNativeV2Insufficient, summary.seedNativeV2Applied)
 	}
 	if e.ignoreCooldown {
 		seedText = seedText + " | cooldown_ignored=1"

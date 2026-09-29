@@ -1,7 +1,7 @@
 # Development (local)
 
 ## Prerequisites
-- Go 1.24+ to compile the 0.5.40 bridge; installers/upgrader prepare Go 1.26.8
+- Go 1.26+ to compile 0.5.41; the declared toolchain and installers/upgrader use Go 1.26.8
 - Node.js 20+
 
 ## Quick start

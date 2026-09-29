@@ -21,7 +21,7 @@ func normalizeBitcoinRPCHostPort(value string, defaultPort int) (string, int) {
 	if strings.HasPrefix(lower, "tcp://") {
 		trimmed = strings.TrimSpace(trimmed[len("tcp://"):])
 	} else if strings.Contains(trimmed, "://") {
-		if parsed, err := url.Parse(trimmed); err == nil && parsed.Host != "" {
+		if parsed, err := url.Parse(repairDuplicateBitcoinRPCURLPort(trimmed)); err == nil && parsed.Host != "" {
 			trimmed = parsed.Host
 		}
 	}
@@ -40,6 +40,33 @@ func normalizeBitcoinRPCHostPort(value string, defaultPort int) (string, int) {
 	}
 
 	return strings.Trim(trimmed, "[]"), defaultPort
+}
+
+// Older configurations may contain the RPC port twice. Go 1.26 rejects that
+// authority, so repair only an identical, valid repeated port before parsing.
+// Keep URL validation enabled and leave paths, queries and IPv6 literals intact.
+func repairDuplicateBitcoinRPCURLPort(value string) string {
+	scheme, rest, ok := strings.Cut(value, "://")
+	if !ok {
+		return value
+	}
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	authority := rest[:end]
+	lastColon := strings.LastIndexByte(authority, ':')
+	if lastColon < 0 {
+		return value
+	}
+	host, port, err := net.SplitHostPort(authority[:lastColon])
+	if err != nil || host == "" || port != authority[lastColon+1:] {
+		return value
+	}
+	if _, valid := validBitcoinPort(port); !valid {
+		return value
+	}
+	return scheme + "://" + net.JoinHostPort(host, port) + rest[end:]
 }
 
 func bitcoinRPCHostPort(value string, defaultPort int) string {

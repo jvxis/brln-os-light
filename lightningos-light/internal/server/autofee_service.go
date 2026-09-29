@@ -29,6 +29,7 @@ const (
 	autofeeMaxLookbackDays       = 21
 	autofeeMinCooldownSec        = 3600
 	autofeeNativeSeedMinDays     = 3
+	autofeeChannelMinPpmMax      = 10000
 	autofeeNativeSeedMinSamples  = 6
 	autofeeIdleRefreshWindowDays = 7
 	autofeeRefreshRebalMarkup    = 0.10
@@ -396,6 +397,9 @@ type AutofeeChannelSettingEntry struct {
 	ChannelID    uint64
 	ChannelPoint string
 	Enabled      bool
+	// MinPpm: operator floor for this channel's outbound fee (0 = none). The
+	// engine never publishes below it, even when the market seed says so.
+	MinPpm int
 }
 
 type AutofeeRefreshItem struct {
@@ -1352,8 +1356,10 @@ create table if not exists autofee_channel_settings (
   channel_id bigint primary key,
   channel_point text not null,
   enabled boolean not null default true,
+  min_ppm integer not null default 0,
   updated_at timestamptz not null default now()
 );
+alter table autofee_channel_settings add column if not exists min_ppm integer not null default 0;
 
 create table if not exists autofee_state (
   channel_id bigint primary key,
@@ -2224,6 +2230,73 @@ on conflict (channel_id) do update set enabled=excluded.enabled, channel_point=e
 	return err
 }
 
+// SetChannelMinPpm stores the operator floor for one channel (0 clears it).
+// A missing row is created enabled, matching the default for new channels.
+func (s *AutofeeService) SetChannelMinPpm(ctx context.Context, channelID uint64, channelPoint string, minPpm int) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	if minPpm < 0 || minPpm > autofeeChannelMinPpmMax {
+		return fmt.Errorf("min_ppm must be between 0 and %d", autofeeChannelMinPpmMax)
+	}
+	trimmedPoint := strings.TrimSpace(channelPoint)
+	if trimmedPoint != "" && s.lnd != nil {
+		if resolved, ok := s.resolveChannelID(ctx, trimmedPoint); ok {
+			channelID = resolved
+		} else if channelID == 0 {
+			return errors.New("channel_id lookup failed")
+		}
+	}
+	if channelID == 0 && trimmedPoint == "" {
+		return errors.New("channel_id or channel_point required")
+	}
+	_, err := s.db.Exec(ctx, `
+insert into autofee_channel_settings (channel_id, channel_point, enabled, min_ppm, updated_at)
+values ($1, $2, true, $3, now())
+on conflict (channel_id) do update set min_ppm=excluded.min_ppm, channel_point=case when excluded.channel_point <> '' then excluded.channel_point else autofee_channel_settings.channel_point end, updated_at=excluded.updated_at
+`, int64(channelID), trimmedPoint, minPpm)
+	return err
+}
+
+// loadChannelMinPpm returns only the channels with a floor set.
+func (s *AutofeeService) loadChannelMinPpm(ctx context.Context) map[uint64]int {
+	out := map[uint64]int{}
+	if s == nil || s.db == nil {
+		return out
+	}
+	rows, err := s.db.Query(ctx, `select channel_id, min_ppm from autofee_channel_settings where coalesce(min_ppm, 0) > 0`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var minPpm int
+		if err := rows.Scan(&channelID, &minPpm); err != nil {
+			return out
+		}
+		if channelID > 0 && minPpm > 0 {
+			out[uint64(channelID)] = minPpm
+		}
+	}
+	return out
+}
+
+// applyChannelMinPpm raises the final outbound fee to the operator floor.
+// Raising to the floor is a hard constraint, so it also overrides holds and
+// cooldowns that would otherwise leave the channel below it. Lowering is
+// never touched here.
+func applyChannelMinPpm(finalPpm int, localPpm int, minPpm int, apply bool) (int, bool, bool) {
+	if minPpm <= 0 || finalPpm >= minPpm {
+		return finalPpm, apply, false
+	}
+	if localPpm >= minPpm && !apply {
+		// Already at or above the floor and nothing to apply: leave as is.
+		return finalPpm, apply, false
+	}
+	return minPpm, true, true
+}
+
 func (s *AutofeeService) resolveChannelID(ctx context.Context, channelPoint string) (uint64, bool) {
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
@@ -2746,6 +2819,7 @@ func (s *AutofeeService) Run(ctx context.Context, dryRun bool, reason string) er
 	}
 
 	engine := newAutofeeEngine(s, cfg)
+	engine.channelMinPpm = s.loadChannelMinPpm(ctx)
 	if reason == "manual" {
 		engine.ignoreCooldown = true
 	}
@@ -2789,6 +2863,7 @@ type autofeeEngine struct {
 	nativeSeedCache        map[string]autofeeSeedResult
 	nativeSeedV2Cache      map[string]autofeeSeedV2Result
 	selfPubkey             string
+	channelMinPpm          map[uint64]int
 	policyCache            map[string]lndclient.ChannelPolicy
 	ambossToken            string
 	ambossTokenErr         error
@@ -3226,7 +3301,7 @@ func (s *AutofeeService) LoadChannelSettingsDetailed(ctx context.Context) ([]Aut
 	if s.db == nil {
 		return entries, errors.New("db unavailable")
 	}
-	rows, err := s.db.Query(ctx, `select channel_id, channel_point, enabled from autofee_channel_settings`)
+	rows, err := s.db.Query(ctx, `select channel_id, channel_point, enabled, coalesce(min_ppm, 0) from autofee_channel_settings`)
 	if err != nil {
 		return entries, err
 	}
@@ -3235,13 +3310,15 @@ func (s *AutofeeService) LoadChannelSettingsDetailed(ctx context.Context) ([]Aut
 		var channelID int64
 		var channelPoint string
 		var enabled bool
-		if err := rows.Scan(&channelID, &channelPoint, &enabled); err != nil {
+		var minPpm int
+		if err := rows.Scan(&channelID, &channelPoint, &enabled, &minPpm); err != nil {
 			return entries, err
 		}
 		entries = append(entries, AutofeeChannelSettingEntry{
 			ChannelID:    uint64(channelID),
 			ChannelPoint: strings.TrimSpace(channelPoint),
 			Enabled:      enabled,
+			MinPpm:       minPpm,
 		})
 	}
 	return entries, rows.Err()
@@ -3312,6 +3389,7 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 		return result, err
 	}
 	engine := newAutofeeEngine(s, cfg)
+	engine.channelMinPpm = s.loadChannelMinPpm(ctx)
 
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
@@ -11962,6 +12040,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			st.BaselineFwd7d = int(math.Round(0.7*float64(st.BaselineFwd7d) + 0.3*float64(fwdCount)))
 		} else {
 			st.BaselineFwd7d = fwdCount
+		}
+	}
+	if channelMin := e.channelMinPpm[ch.ChannelID]; channelMin > 0 {
+		var raised bool
+		finalPpm, apply, raised = applyChannelMinPpm(finalPpm, localPpm, channelMin, apply)
+		if raised {
+			tags = append(tags, "channel-min")
 		}
 	}
 	applyOutbound := apply && finalPpm != localPpm

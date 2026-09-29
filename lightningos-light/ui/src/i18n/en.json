@@ -3936,6 +3936,8 @@
     "autofeeBulkDone": "Bulk update complete.",
     "autofeeBulkFailed": "Bulk update failed.",
     "autofeeLabel": "Autofee",
+    "autofeeMinPpmLabel": "Min fee (ppm)",
+    "autofeeMinPpmHint": "Operator floor for this channel's outbound fee. AutoFee never publishes below it, even when the market seed is lower (e.g. a reopened channel whose peer paid more in the past). 0 = no floor.",
     "autofeeHistoryTitle": "Last 2 rounds",
     "autofeeHistoryLoading": "Loading channel rounds...",
     "autofeeHistoryEmpty": "No recent non-dry-run rounds for this channel.",

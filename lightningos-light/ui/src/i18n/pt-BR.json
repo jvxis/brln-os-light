@@ -3936,6 +3936,8 @@
     "autofeeBulkDone": "Atualização em lote concluída.",
     "autofeeBulkFailed": "Falha na atualização em lote.",
     "autofeeLabel": "Autofee",
+    "autofeeMinPpmLabel": "Fee mínima (ppm)",
+    "autofeeMinPpmHint": "Piso do operador para a fee de saída deste canal. O AutoFee nunca publica abaixo dele, mesmo que a seed de mercado seja menor (ex.: canal reaberto cujo peer pagava mais no passado). 0 = sem piso.",
     "autofeeHistoryTitle": "Últimas 2 rodadas",
     "autofeeHistoryLoading": "Carregando rodadas do canal...",
     "autofeeHistoryEmpty": "Sem rodadas recentes sem dry-run para este canal.",

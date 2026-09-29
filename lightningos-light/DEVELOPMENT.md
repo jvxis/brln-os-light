@@ -1,7 +1,7 @@
 # Development (local)
 
 ## Prerequisites
-- Go 1.24+
+- Go 1.24+ to compile the 0.5.40 bridge; installers/upgrader prepare Go 1.26.8
 - Node.js 20+
 
 ## Quick start
@@ -86,14 +86,14 @@ Run the commands below from the `lightningos-light/` application directory.
 
 Rebuild manager:
 ```bash
-sudo /usr/local/go/bin/go build -o dist/lightningos-manager ./cmd/lightningos-manager
+sudo env GOTOOLCHAIN=local /opt/lightningos/toolchains/go1.26.8.linux-amd64/bin/go build -o dist/lightningos-manager ./cmd/lightningos-manager
 sudo install -m 0755 dist/lightningos-manager /opt/lightningos/manager/lightningos-manager
 ```
 
 Rebuild and reinstall the privileged broker before restarting a manually
 rebuilt manager:
 ```bash
-sudo /usr/local/go/bin/go build -o dist/lightningos-privileged ./cmd/lightningos-privileged
+sudo env GOTOOLCHAIN=local /opt/lightningos/toolchains/go1.26.8.linux-amd64/bin/go build -o dist/lightningos-privileged ./cmd/lightningos-privileged
 sudo install -d -o root -g root -m 0755 /usr/local/libexec /etc/tmpfiles.d
 sudo install -d -o root -g root -m 0750 /var/log/lightningos-privileged /run/lock/lightningos
 sudo install -o root -g root -m 0644 templates/lightningos-privileged.tmpfiles.conf /etc/tmpfiles.d/lightningos-privileged.conf
@@ -107,6 +107,11 @@ sudo systemctl is-active lightningos-privileged.socket
 sudo test -S /run/lightningos-privileged/broker.sock
 sudo systemctl restart lightningos-manager
 ```
+
+For arm64, use the corresponding `linux-arm64` toolchain directory. On an
+older installation that has not prepared this toolchain, use its existing Go
+for the bridge build or the normal UI upgrade; see
+[the Go transition](../docs/GO_UPGRADE_0.5.40.md).
 
 These commands assume that the LightningOS system users and groups already
 exist; they are not a replacement for an initial installer or full upgrade.

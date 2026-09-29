@@ -254,7 +254,6 @@ fi
 mkdir -p /var/log /var/lib/lightningos /opt/lightningos/manager /opt/lightningos/ui
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-GO_BIN="$(resolve_bin go /usr/local/go/bin/go /usr/bin/go /bin/go)" || die "Required command missing: go"
 NPM_BIN="$(resolve_bin npm /usr/bin/npm /usr/local/bin/npm /bin/npm)" || die "Required command missing: npm"
 SYSTEMCTL_BIN="$(resolve_bin systemctl /usr/bin/systemctl /bin/systemctl)" || die "Required command missing: systemctl"
 INSTALL_BIN="$(resolve_bin install /usr/bin/install /bin/install)" || die "Required command missing: install"
@@ -1013,6 +1012,17 @@ if [[ "${source_version#v}" != "${VERSION,,}" ]]; then
   die "Release source version does not match the requested version."
 fi
 print_ok "Using authenticated project directory: $project_dir"
+
+# Load preparation code only after authenticating the target release. This is
+# intentionally before identity migration, compilation and application cutover.
+print_step "Preparing the release Go toolchain"
+for go_prepare_file in scripts/install-artifact-verification.sh scripts/prepare-go-toolchain.sh scripts/go-toolchain.conf; do
+  validate_root_regular_file "$project_dir/$go_prepare_file" || die "Go preparation asset is missing or unsafe."
+done
+source "$project_dir/scripts/install-artifact-verification.sh"
+source "$project_dir/scripts/prepare-go-toolchain.sh"
+lightningos_prepare_go "$project_dir" || die "Go preparation failed; application was not replaced."
+print_ok "Go toolchain ready"
 
 normalize_legacy_manager_identity
 

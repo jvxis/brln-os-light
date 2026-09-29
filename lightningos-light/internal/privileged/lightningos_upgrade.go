@@ -12,7 +12,7 @@ const (
 	lightningOSUpgradeHelperPath   = "/usr/local/sbin/lightningos-upgrade-app"
 	lightningOSUpgradeUnit         = "lightningos-app-upgrade"
 	lightningOSVerifyUnit          = "lightningos-app-verify"
-	lightningOSUpgradeHelperSHA256 = "13fe2c7bd4fe55bb72eeb57923eeb8b4062dae482f4b771c760da47326dd19de"
+	lightningOSUpgradeHelperSHA256 = "d6fe92b0e689ff59ec8993d9f906373c56e365538bc42928ea3ceda012decc2f"
 	// The exact shipped 0.5.33--0.5.39 helper. Recovery never accepts arbitrary
 	// older scripts or disables the digest check. This exception only reaches
 	// the 0.5.40 bridge; subsequent upgrades must use the new Manager's helper.

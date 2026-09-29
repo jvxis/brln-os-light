@@ -13,10 +13,26 @@ Install and configure the LightningOS stack:
 - Ubuntu Server 22.04 or 24.04
 
 ## Pinned installer defaults
-- LND_VERSION (default 0.21.2-beta)
-- GO_VERSION (default 1.24.12)
-- NODE_VERSION (default current, fallback 20)
-- GOTTY_VERSION (default 1.0.1)
+- LND_VERSION (default 0.21.3-beta)
+- Go 1.26.8, with Linux amd64/arm64 SHA-256 checksums in
+  `lightningos-light/scripts/go-toolchain.conf`
+- NODE_VERSION (default 24)
+- GOTTY_VERSION (default 1.8.0)
+
+The three installers and the internal application upgrade share
+`scripts/prepare-go-toolchain.sh`. Go is verified and staged under
+`/opt/lightningos/toolchains/go<version>.linux-<arch>`; `/usr/local/go` and
+distribution-managed Go installations are preserved. Builds explicitly use the
+prepared compiler with automatic toolchain switching disabled. An existing
+managed compiler is reused only after validating its ownership, permissions,
+archive identity, version and architecture. Downloads are required on first use.
+
+Release 0.5.40 retains its Go 1.24/module and Go 1.24.12/toolchain declarations
+so that older installed updaters can compile the bridge release. Its new updater
+prepares the target release's Go before building the next release. Installing
+0.5.40 through an older updater does not itself execute the new preparation
+step. See [the Go upgrade transition](GO_UPGRADE_0.5.40.md) for testing and release
+constraints.
 
 LND version and download origin are closed release inputs. Fresh installs use
 the authenticated official LND artifact selected by the LightningOS release;

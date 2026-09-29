@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"lightningos-light/internal/privileged"
 	"lightningos-light/internal/system"
 )
 
@@ -174,7 +175,7 @@ func (s *Server) handleAppUpgradeStart(w http.ResponseWriter, r *http.Request) {
 			if s.logger != nil {
 				s.logger.Printf("app upgrade start failed: %v", err)
 			}
-			writeError(w, http.StatusInternalServerError, "failed to start app upgrade (check logs)")
+			writeAppUpgradeStartError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -185,7 +186,15 @@ func (s *Server) handleAppUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeError(w, http.StatusServiceUnavailable, "privileged broker is required for LightningOS upgrades")
+	writeAppUpgradeStartError(w, privileged.ErrBrokerUnavailable)
+}
+
+func writeAppUpgradeStartError(w http.ResponseWriter, err error) {
+	if errors.Is(err, privileged.ErrBrokerUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "Privileged upgrade service is unavailable. The upgrade did not start. Recover the broker using docs/UPGRADE_RECOVERY.md, then retry; reinstalling LOS is not required.")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "Failed to start app upgrade. Check the lightningos-manager service journal; the upgrade log may be empty because the upgrade did not start.")
 }
 
 func currentAppVersion(staticDir string) string {

@@ -4,8 +4,6 @@ package privileged
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,8 +13,7 @@ import (
 )
 
 func (manager *NativeLightningOSUpgradeManager) start(ctx context.Context, params LightningOSUpgradeStartParams, dryRun bool) (LightningOSUpgradeState, error) {
-	digest := sha256.Sum256([]byte(params.HelperContent))
-	if hex.EncodeToString(digest[:]) != lightningOSUpgradeHelperSHA256 {
+	if !trustedLightningOSUpgradeHelper(params.HelperContent, params.Version) {
 		return LightningOSUpgradeState{}, errors.New("LightningOS upgrade helper is not trusted")
 	}
 	if err := validateRuntimeParent(filepath.Dir(lightningOSUpgradeHelperPath)); err != nil {

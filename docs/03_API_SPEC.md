@@ -2,6 +2,16 @@
 
 Base URL: https://127.0.0.1:8443
 
+## Application upgrade start failures
+
+`POST /api/app/upgrade/start` retains the `{ "target_version": "..." }` request
+and existing success response. A missing/unreachable privileged broker now returns
+HTTP `503` in the normal error envelope, explaining that no upgrade started and
+pointing to [manual upgrade recovery](UPGRADE_RECOVERY.md). Other broker start
+failures return `500` and direct the operator to the Manager service journal;
+there may be no log from the upgrade process if that process never started.
+Underlying transport errors and credential contents are not returned to the UI.
+
 ## Auth
 - Session auth with secure HTTP-only cookie when `features.enable_login=true`.
 - Public auth endpoints:

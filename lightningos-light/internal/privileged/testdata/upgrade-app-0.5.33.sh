@@ -306,17 +306,12 @@ owned_by_root() {
   return 0
 }
 
-rollback_privilege_cutover() {
-  cutover_prepared=0
-  /usr/local/sbin/lightningos-rollback-privilege-cutover
-}
-
 cleanup() {
   local exit_status=$?
   trap - EXIT
   if [[ "$exit_status" -ne 0 && "$cutover_prepared" -eq 1 && -x /usr/local/sbin/lightningos-rollback-privilege-cutover ]]; then
     print_warn "Upgrade failed after preparing the transaction; restoring Manager, UI, and privilege boundary"
-    rollback_privilege_cutover || true
+    /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   fi
   if [[ "$exit_status" -ne 0 && "$legacy_identity_normalized" -eq 1 && -n "$legacy_migrator" ]]; then
     print_warn "Upgrade failed after normalizing a legacy Manager; restoring its previous identity"
@@ -491,6 +486,28 @@ capture_lnd_manager_credential_boundary() {
   fi
 }
 
+upgrade_lnd_manager_credential_rollback_state() {
+  local state_root="$1"
+  local source=""
+  local name=""
+
+  for entry in \
+    "/var/lib/lightningos-credentials/lnd/manager.macaroon:lnd-manager-macaroon" \
+    "/var/lib/lightningos-credentials/lnd/manager-state.json:lnd-manager-state"; do
+    source="${entry%%:*}"
+    name="${entry#*:}"
+    if [[ -f "$state_root/${name}.existed" && ! -L "$state_root/${name}.existed" ]]; then
+      if [[ ! -f "$state_root/$name" ]]; then
+        [[ -f "$source" && ! -L "$source" ]] || return 1
+        "$CP_BIN" -a -- "$source" "$state_root/$name" || return 1
+      fi
+      [[ -f "$state_root/$name" && ! -L "$state_root/$name" ]] || return 1
+    elif [[ -e "$state_root/$name" ]]; then
+      return 1
+    fi
+  done
+}
+
 capture_manager_ui_boundary() {
   local state_root="$1"
   local ui_root="/opt/lightningos/ui"
@@ -529,21 +546,35 @@ prepare_privilege_cutover() {
   fi
   "$INSTALL_BIN" -d -o root -g root -m 0700 "$state_root"
   "$INSTALL_BIN" -d -o root -g root -m 0755 "$dropin_dir"
-  if [[ -e "$state_root/transaction-state" || -L "$state_root/transaction-state" ]]; then
-    validate_root_regular_file "$state_root/transaction-state" || return 1
-    case "$(< "$state_root/transaction-state")" in
-      committed|rolled_back) ;;
-      *) die "An interrupted privilege cutover must be rolled back before retrying the upgrade." ;;
-    esac
-  fi
-  # Never reuse a historical bundle: it may predate the installed broker,
-  # Manager or credential. Preserve it for operator recovery, then snapshot the
-  # actual current installation. The fixed upgrade lock serializes prepare.
-  if [[ -n "$("$FIND_BIN" "$state_root" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
-    local archive_root=""
-    archive_root="$(mktemp -d "${state_root}.previous.XXXXXX")" || return 1
-    "$MV_BIN" -T -- "$state_root" "$archive_root" || return 1
-    "$INSTALL_BIN" -d -o root -g root -m 0700 "$state_root"
+  if [[ -f "$state_root/prepared" && ! -L "$state_root/prepared" ]]; then
+    validate_root_regular_file "$state_root/prepared" || return 1
+    if [[ ! -f "$state_root/schema-v2" || -L "$state_root/schema-v2" ]]; then
+      die "Legacy privilege rollback state requires operator review before the final cutover."
+    fi
+    validate_root_regular_file "$state_root/schema-v2" || return 1
+    if [[ ! -f "$state_root/schema-v3" ]]; then
+      capture_lnd_manager_credential_boundary "$state_root" || return 1
+      : > "$state_root/schema-v3"
+    fi
+    validate_root_regular_file "$state_root/schema-v3" || return 1
+    if [[ ! -f "$state_root/schema-v4" ]]; then
+      capture_manager_ui_boundary "$state_root" || return 1
+      : > "$state_root/schema-v4"
+    fi
+    validate_root_regular_file "$state_root/schema-v4" || return 1
+    validate_root_regular_file "$state_root/manager-ui.tar" || return 1
+    if [[ ! -f "$state_root/schema-v5" ]]; then
+      upgrade_lnd_manager_credential_rollback_state "$state_root" || return 1
+      : > "$state_root/schema-v5"
+    fi
+    validate_root_regular_file "$state_root/schema-v5" || return 1
+    if [[ ! -f "$state_root/schema-v6" ]]; then
+      capture_optional_file "/opt/lightningos/manager/.build_stamp" "$state_root" "manager-build-stamp" || return 1
+      : > "$state_root/schema-v6"
+    fi
+    validate_root_regular_file "$state_root/schema-v6" || return 1
+    "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
+    return 0
   fi
 
   validate_legacy_manager_sudoers "$sudoers_path" "$manager_user" || die "Unrecognized manager sudoers policy; refusing privilege cutover."
@@ -584,7 +615,6 @@ prepare_privilege_cutover() {
   : > "$state_root/schema-v6"
   : > "$state_root/prepared"
   "$INSTALL_BIN" -o root -g root -m 0755 "$rollback_src" "$rollback_bin"
-  printf '%s\n' pending > "$state_root/transaction-state"
   print_ok "Root-only privilege rollback bundle prepared"
 }
 
@@ -712,11 +742,11 @@ if [[ -n "$CUTOVER_ONLY_MODE" ]]; then
       ;;
     stage)
       if ! stage_privilege_cutover; then
-        rollback_privilege_cutover || true
+        /usr/local/sbin/lightningos-rollback-privilege-cutover || true
         die "Existing-node privilege cutover could not be staged safely."
       fi
       if ! "$SYSTEMCTL_BIN" restart lightningos-manager; then
-        rollback_privilege_cutover || true
+        /usr/local/sbin/lightningos-rollback-privilege-cutover || true
         die "Manager restart failed after existing-node privilege cutover."
       fi
       ready=0
@@ -728,10 +758,9 @@ if [[ -n "$CUTOVER_ONLY_MODE" ]]; then
         sleep 1
       done
       if [[ "$ready" != 1 ]] || ! "$RUNUSER_BIN" -u lightningos -- /opt/lightningos/manager/lightningos-manager broker-self-test >/dev/null; then
-        rollback_privilege_cutover || true
+        /usr/local/sbin/lightningos-rollback-privilege-cutover || true
         die "Existing-node privilege cutover health gate failed and was rolled back."
       fi
-      printf '%s\n' committed > /var/lib/lightningos/rollback/0.5.3-privilege-cutover/transaction-state
       print_ok "Existing-node privilege cutover committed"
       ;;
   esac
@@ -1052,10 +1081,6 @@ publish_ui_tree() {
   "$CHOWN_BIN" -R root:root "$target"
 }
 
-print_step "Checking LND manager credential prerequisites before cutover"
-"$project_dir/dist/lightningos-privileged" --check-lnd-manager-credential \
-  || die "LND credential preflight failed; installed Manager, broker and privileges were not replaced."
-
 print_step "Preparing reversible privilege cutover"
 prepare_privilege_cutover
 cutover_prepared=1
@@ -1089,7 +1114,7 @@ done
 "$INSTALL_BIN" -o root -g root -m 0644 "$project_dir/templates/systemd/lightningos-privileged@.service" /etc/systemd/system/lightningos-privileged@.service
 broker_response="$(printf '%s\n' '{"version":1,"request_id":"upgrade_self_test","operation":"self_test","params":{}}' | env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$PRIVILEGED_BROKER")"
 if [[ "$broker_response" != *'"request_id":"upgrade_self_test"'* || "$broker_response" != *'"ok":true'* || "$broker_response" != *'"ready":true'* ]]; then
-  rollback_privilege_cutover || true
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "Privileged broker direct-root self-test failed"
 fi
 "$SYSTEMCTL_BIN" daemon-reload
@@ -1105,7 +1130,7 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 if [[ "$broker_ready" -ne 1 ]]; then
-  rollback_privilege_cutover || true
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "Privileged broker service-user self-test failed"
 fi
 print_ok "Manager and privileged broker transport installed and self-tested"
@@ -1119,21 +1144,21 @@ configure_manager_firewall
 print_step "Staging privilege cutover"
 if ! stage_privilege_cutover; then
   print_warn "Privilege cutover staging failed; restoring the previous boundary"
-  rollback_privilege_cutover || true
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "Privilege cutover could not be staged safely"
 fi
 
 print_step "Converging the restricted LND manager credential"
 if ! lnd_manager_credential_state="$("$RUNUSER_BIN" -u lightningos -- /opt/lightningos/manager/lightningos-manager lnd-manager-credential-ensure)"; then
   print_warn "LND manager credential migration failed; restoring the previous boundary"
-  rollback_privilege_cutover || true
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "Restricted LND manager credential could not be prepared safely"
 fi
 case "$lnd_manager_credential_state" in
   status=ready\ *|status=pending\ *) ;;
   *)
     print_warn "LND manager credential migration returned an invalid state; restoring the previous boundary"
-    rollback_privilege_cutover || true
+    /usr/local/sbin/lightningos-rollback-privilege-cutover || true
     die "Restricted LND manager credential returned an invalid state"
     ;;
 esac
@@ -1155,18 +1180,17 @@ if [[ "$manager_ready" -eq 1 ]]; then
   print_ok "lightningos-manager is active"
 else
   print_warn "Manager failed after privilege cutover; restoring the previous boundary"
-  rollback_privilege_cutover || true
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "lightningos-manager failed to start after cutover"
 fi
 
 if ! write_manager_build_stamp; then
   print_warn "Manager build provenance could not be recorded; restoring the previous boundary"
-  rollback_privilege_cutover || true
+  /usr/local/sbin/lightningos-rollback-privilege-cutover || true
   die "lightningos-manager build provenance could not be recorded"
 fi
 
 finalize_legacy_manager_identity
 
-printf '%s\n' committed > /var/lib/lightningos/rollback/0.5.3-privilege-cutover/transaction-state
 cutover_prepared=0
 print_ok "App upgrade complete to ${VERSION} (${TAG})"

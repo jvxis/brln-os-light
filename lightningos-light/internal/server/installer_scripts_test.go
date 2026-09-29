@@ -828,7 +828,7 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 		`capture_lnd_manager_credential_boundary`,
 		`capture_optional_file "$credential_path" "$state_root" "lnd-manager-macaroon"`,
 		`capture_optional_file "$credential_state_path" "$state_root" "lnd-manager-state"`,
-		`upgrade_lnd_manager_credential_rollback_state`,
+		`An interrupted privilege cutover must be rolled back before retrying the upgrade.`,
 		`: > "$state_root/schema-v3"`,
 		`: > "$state_root/schema-v4"`,
 		`: > "$state_root/schema-v5"`,
@@ -838,7 +838,7 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 		`capture_manager_ui_boundary`,
 		`manager-ui.tar`,
 		`lightningos-manager lnd-manager-credential-ensure`,
-		`/usr/local/sbin/lightningos-rollback-privilege-cutover || true`,
+		`rollback_privilege_cutover || true`,
 	} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("app upgrade privilege cutover is missing %q", expected)
@@ -952,7 +952,7 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		`restore_or_remove "lightningos-privileged" "$BROKER_BIN"`,
 		`restore_or_remove "lightningos-privileged.socket" "$SOCKET_UNIT"`,
 		`systemctl cat lightningos-privileged.socket`,
-		`restore_or_remove "rollback-command" "$ROLLBACK_BIN"`,
+		`printf '%s\n' rolled_back > "$STATE_ROOT/transaction-state"`,
 		`restore_file "$STATE_ROOT/sudoers" "$sudoers_path"`,
 		`rm -f -- "$sudoers_path"`,
 		`usermod -a -G docker "$manager_user"`,

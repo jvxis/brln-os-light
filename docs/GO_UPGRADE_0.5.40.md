@@ -67,6 +67,11 @@ the full old-version -> 0.5.40 -> 0.5.41 path have been validated.
 
 ## Validation
 
+The original [Dependabot review plan](DEPENDABOT_REVIEW_PLAN_2026-09-28.md)
+records the initial analysis and the 0.5.40/0.5.41 delivery split. Its dated
+checklists are historical; the execution results and current exceptions below
+take precedence when assessing this PR.
+
 Run `go test ./...` and `go vet ./...` from `lightningos-light/`. On Linux,
 `TestGoToolchainPreparationFixtures` executes the real preparation functions
 with local fake archives and a substituted downloader. The same fixture is

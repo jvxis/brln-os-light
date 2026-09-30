@@ -101,5 +101,11 @@ Validation performed for this PR on 2026-09-28:
   standard-library smoke program. No installed compiler or application was
   replaced. Manager, broker socket and LND remained active.
 
-Full privileged installation, native arm64 execution and the UI upgrade chain
-have not been exercised by these checks and remain release gates.
+Those initial checks did not exercise privileged installation or the installed
+old-updater transition. Subsequent disposable VirtualBox validation on
+2026-09-30 exercised real systemd installation/recovery, the installed 0.5.39
+Manager's authenticated API upgrade/failure/retry, and a following upgrade
+requiring Go 1.26. See the [integration report](baselines/go-upgrade-0.5.40-virtualbox-2026-09-30.md)
+for exact baselines, transport fixtures, harness corrections and remaining
+release gates. Native arm64 and browser/live-wallet validation remain pending;
+the PR is still draft.

@@ -62,6 +62,44 @@ after restarting the Manager. Independent subsequent CA-verified API checks
 passed. UFW was inactive in the template, and the installers reported that
 condition. Neither warning was silently counted as a functional pass.
 
+### Pristine clean-OS rerun with the corrected harness
+
+A second full clone, `los-disposable-0540-fresh` (UUID
+`c1e5b07e-1738-4f1f-8847-ec57a1da1ac7`), started from the unchanged, powered-off
+template with Ubuntu 24.04.3/amd64, four vCPUs, 4 GiB RAM and no swap. The
+previous disposable clone was shut down normally with the owner's exact-VM
+authorization; its disks and results were preserved. LOS-TEST2 stayed running.
+The new clone initially had no LOS, LND, Go, Node or PostgreSQL and approximately
+88 GiB free. Console-verified SSH identity and the dedicated test key were used.
+
+The same candidate archive had SHA-256
+`e6dc7d1acef69db634a0cea645016b93f9bcc3c1d93c9b61625579ffb9ed7cab`
+on both the host and guest. The first installer invocation used `umask 022`,
+explicit checkout/license acceptance and a transient systemd unit with
+`--uid=root`, so HOME was defined. It completed with exit 0 without repeating
+installation, manually fixing permissions or preinstalling product prerequisites.
+
+Independent post-install checks passed:
+
+- Manager directory and executable were 0755, executable owner root.
+- Manager, broker socket and PostgreSQL 18-main were active. The broker probe
+  ran successfully as the unprivileged `lightningos` service user.
+- Managed Go and the installed Manager's build metadata both reported 1.26.8;
+  no `/usr/local/go` tree was created. Node was 24.21.0, PostgreSQL 18.6 and LND
+  0.21.3-beta.
+- First authentication setup and all seven authenticated API checks returned
+  HTTP 200 using verified TLS. Upgrade status reported current 0.5.40-beta.
+- Both application/admin notification PostgreSQL credentials authenticated
+  through libpq, without logging credentials or passing them in process args.
+- LND stayed enabled but inactive, awaiting the intended Bitcoin/wallet wizard;
+  no wallet or Bitcoin backend was initialized by the test.
+
+The installer waited for an initial APT lock and completed its package work.
+Its immediate listener check again emitted the previously observed port/health
+warnings. Subsequent independent checks above succeeded without service repair
+or another installer run. This closes the pristine **amd64** installation gate;
+it does not validate wallet initialization or native arm64 installation.
+
 ### First LOS installation on an existing native-LND fixture
 
 After the upgrade tests below, the guest's LOS Manager, UI, configuration,
@@ -209,14 +247,52 @@ The temporary GitHub host mappings, loopback service and added CA trust were
 removed after these tests. The final existing-node installer tests again used
 the ordinary public network and candidate 0.5.40 source.
 
+## Browser regression and LOS-TEST2 baseline
+
+Firefox 141.0 (the Ubuntu template's installed Snap browser) ran headlessly
+through geckodriver 0.36.0 inside the disposable guest. Its isolated profile
+trusted the node CA, with `acceptInsecureCerts=false`. No host trust store was
+changed. Browser credentials were supplied in memory; password saving was
+disabled.
+
+- Real 0.5.40 login page rendered, rejected an incorrect password with a visible
+  error, accepted the test password and opened the welcome wizard for the
+  uninitialized node. Real logout returned to the login page.
+- For dashboard-only UI checks, a browser `fetch` wrapper changed only the
+  wizard's `wallet_exists` response. The installed application and backend
+  remained unchanged. The real release response displayed current 0.5.40 and
+  public latest 0.5.39, with no upgrade available.
+- Browser-only future-release metadata enabled the upgrade button. Clicking it
+  opened a confirmation naming 0.5.41. Cancelling sent no upgrade request.
+  Confirming once received an intentionally simulated HTTP 503, displayed the
+  error and left the modal closable. These are UI fixture tests, not another
+  successful backend upgrade. The backend transitions are documented above.
+- The same browser then logged into the actual LOS-TEST2 over CA-verified TLS,
+  rendered its real dashboard, confirmed that its 0.5.39/public-0.5.39 state
+  disabled the upgrade button, and logged out. No upgrade or service action was
+  submitted to LOS-TEST2.
+- The separate authenticated LOS-TEST2 baseline returned HTTP 200 for health,
+  upgrade status, wizard status, LND, wallet summary, Bitcoin source and apps.
+  Its wallet existed and was unlocked; LND was synced to chain and graph, with
+  three active channels. Its active Bitcoin source was remote. Manager, broker
+  socket and LND were active. The post-browser check again confirmed health OK,
+  Bitcoin RPC reachable, LND active/unlocked/synced and the same three active
+  channels. This node was not used for fault injection.
+
+The harness initially selected I2P's occupied port 4444 and a directory outside
+the Firefox Snap's writable profile area. It was corrected to loopback port
+4445 and an isolated profile under the Snap common directory before successful
+browser execution. An incorrect heading selector was also corrected to the
+rendered `App upgrade` label; application assertions were not weakened.
+Screenshots were visually inspected; the browser session was closed afterward.
+
 ## Remaining release gates
 
 - Native arm64 `install_existing_pi.sh` and upgrade execution. Cross-compilation
   and amd64 shell fixtures are not substitutes.
-- A pristine clean-OS `install.sh` rerun under the corrected harness, without
-  manually normalizing paths left by the restrictive-umask attempt.
-- Browser-rendered dashboard/button/error flows. The real authenticated API
-  used by the panel was tested; these were not browser clicks.
+- Browser-observed successful upgrade through Manager restart/reconnection.
+  Login/dashboard and confirmation/cancel/error flows now have browser coverage;
+  successful backend upgrade transitions above used the authenticated API.
 - Initialized-wallet credential baking/verification and an assisted upgrade
   of the actual LOS-TEST2 installation. Fault injection must stay in disposable,
   unfunded environments. The direct starting-version test here was 0.5.39,

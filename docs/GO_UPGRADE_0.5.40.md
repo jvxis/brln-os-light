@@ -107,5 +107,9 @@ old-updater transition. Subsequent disposable VirtualBox validation on
 Manager's authenticated API upgrade/failure/retry, and a following upgrade
 requiring Go 1.26. See the [integration report](baselines/go-upgrade-0.5.40-virtualbox-2026-09-30.md)
 for exact baselines, transport fixtures, harness corrections and remaining
-release gates. Native arm64 and browser/live-wallet validation remain pending;
-the PR is still draft.
+release gates. A second pristine Ubuntu/amd64 clone passed its first complete
+`install.sh` invocation and independent permission/authentication/broker/database
+checks without manual repair. Browser login/dashboard checks passed on the disposable node and
+LOS-TEST2; confirmation/cancel/error rendering passed with explicitly scoped
+browser fixtures. Native arm64, initialized-wallet convergence and a successful
+upgrade observed in the browser remain pending; the PR is still draft.

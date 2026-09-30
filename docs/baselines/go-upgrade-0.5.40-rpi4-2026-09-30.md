@@ -49,6 +49,13 @@ binary or executed on this node during this baseline.
 
 ## Remaining coverage
 
+**Owner decision, 2026-09-30:** skip native ARM validation for this delivery and
+verify that changes to `install_existing.sh` also apply to
+`install_existing_pi.sh`. That [parity review](../GO_UPGRADE_0.5.40.md#existing-node-installer-parity-review--2026-09-30)
+and focused Linux regression checks passed; native ARM execution is explicitly
+waived, not passed. No additional access to this node was made for that review.
+The following describes future coverage, not a current request for hardware.
+
 The RPi4 provides real ARM64 hardware for an assisted existing-installation
 upgrade, after the candidate and transition are ready. Its live channels must
 not be used for failure injection or destructive installer fixtures.

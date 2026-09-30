@@ -290,11 +290,13 @@ Screenshots were visually inspected; the browser session was closed afterward.
 
 A subsequent [RPi4 read-only baseline](go-upgrade-0.5.40-rpi4-2026-09-30.md)
 identified an existing native ARM64 node on 0.5.28 with two active channels.
-Its published updater asset matches the tested legacy helper. Hardware is now
-identified, but native installation/upgrade execution is still pending.
+Its published updater asset matches the tested legacy helper. The owner then
+explicitly waived native ARM installation/upgrade validation for this delivery
+and requested installer parity review instead. The [parity review and focused
+Linux tests](../GO_UPGRADE_0.5.40.md#existing-node-installer-parity-review--2026-09-30)
+passed. Native ARM execution remains untested, not passed, and is no longer a
+required gate for this delivery under that explicit instruction.
 
-- Native arm64 `install_existing_pi.sh` and upgrade execution. Cross-compilation
-  and amd64 shell fixtures are not substitutes.
 - Browser-observed successful upgrade through Manager restart/reconnection.
   Login/dashboard and confirmation/cancel/error flows now have browser coverage;
   successful backend upgrade transitions above used the authenticated API.

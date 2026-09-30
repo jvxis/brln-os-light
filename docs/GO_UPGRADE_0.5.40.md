@@ -111,5 +111,31 @@ release gates. A second pristine Ubuntu/amd64 clone passed its first complete
 `install.sh` invocation and independent permission/authentication/broker/database
 checks without manual repair. Browser login/dashboard checks passed on the disposable node and
 LOS-TEST2; confirmation/cancel/error rendering passed with explicitly scoped
-browser fixtures. Native arm64, initialized-wallet convergence and a successful
-upgrade observed in the browser remain pending; the PR is still draft.
+browser fixtures. Native arm64 execution was explicitly waived by the owner on
+2026-09-30 for this delivery; it is not a passed test. Initialized-wallet
+convergence and a successful upgrade observed in the browser remain pending;
+the PR is still draft for the remaining gates.
+
+### Existing-node installer parity review — 2026-09-30
+
+Compared both installer changes against `agent/0.5.40-release`. All added lines
+in `install_existing.sh` and `install_existing_pi.sh` are identical. Their Go
+library-loading block, `install_go`, `ensure_go` and Manager cutover orchestration
+match. Both use the shared preparer and preserve the system Go. The preparer
+selects `linux-arm64` and its separate pinned checksum for `aarch64`/`arm64`.
+Pi-specific architecture checks, GoTTY artifact and PostgreSQL SSD handling remain
+intact. No installer code change was needed for this review.
+
+On the disposable Ubuntu/amd64 VM with Go 1.26.8, `bash -n` passed for both
+installers and the shared preparer. The 23 selected top-level regression tests
+passed, including both installers' first-install/existing-state/failure cutover
+fixtures, shared Go preparation and authenticated artifact handling:
+
+```bash
+go test -p 2 ./internal/server -run 'Test(Installer|Installers|ExistingInstaller|ExistingInstallers|InstallAndUpgrade|ManagedInstaller|GoToolchainPreparation|BridgeRelease|AppUpgradePreparesGo)' -count=1 -v
+```
+
+Installer/preparer hashes matched the reviewed checkout; the policy content
+matched after Windows CRLF normalization. These checks establish parity for the
+changes in this PR and exercise Linux fixtures; they do not claim native ARM
+installation or upgrade execution. No further RPi4 access was made for this review.

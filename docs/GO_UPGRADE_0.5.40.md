@@ -113,8 +113,10 @@ checks without manual repair. Browser login/dashboard checks passed on the dispo
 LOS-TEST2; confirmation/cancel/error rendering passed with explicitly scoped
 browser fixtures. Native arm64 execution was explicitly waived by the owner on
 2026-09-30 for this delivery; it is not a passed test. Initialized-wallet
-convergence and a successful upgrade observed in the browser remain pending;
-the PR is still draft for the remaining gates.
+convergence and a successful upgrade observed in the browser remain pending.
+The owner explicitly requested opening PR #211 for review on 2026-09-30. This
+changes the draft status only; the remaining validation/release gates are not
+waived and must be addressed before merge/release.
 
 ### Existing-node installer parity review — 2026-09-30
 

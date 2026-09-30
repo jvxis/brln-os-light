@@ -307,5 +307,7 @@ required gate for this delivery under that explicit instruction.
 - Public release/catalog enforcement of the mandatory 0.5.40 bridge. Local
   fixture ordering does not prove old clients will be prevented from skipping it.
 
-PR #211 remains draft. These tests do not add a PostgreSQL major-version
-migration or change the requirement to validate one separately.
+On 2026-09-30 the owner explicitly requested opening PR #211 for review.
+Removing draft status does not mark the outstanding checks as passed or waive
+the remaining pre-merge/release gates. These tests do not add a PostgreSQL
+major-version migration or change the requirement to validate one separately.

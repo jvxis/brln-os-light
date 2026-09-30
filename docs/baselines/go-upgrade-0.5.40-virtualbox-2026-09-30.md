@@ -288,6 +288,11 @@ Screenshots were visually inspected; the browser session was closed afterward.
 
 ## Remaining release gates
 
+A subsequent [RPi4 read-only baseline](go-upgrade-0.5.40-rpi4-2026-09-30.md)
+identified an existing native ARM64 node on 0.5.28 with two active channels.
+Its published updater asset matches the tested legacy helper. Hardware is now
+identified, but native installation/upgrade execution is still pending.
+
 - Native arm64 `install_existing_pi.sh` and upgrade execution. Cross-compilation
   and amd64 shell fixtures are not substitutes.
 - Browser-observed successful upgrade through Manager restart/reconnection.

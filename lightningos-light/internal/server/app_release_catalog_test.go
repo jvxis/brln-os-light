@@ -1,13 +1,37 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/privileged"
 )
+
+func TestCatalogUpgradeHelperFitsBrokerRequest(t *testing.T) {
+	params, err := json.Marshal(privileged.LightningOSUpgradeStartParams{
+		Version: "0.5.41-beta", Tag: "0.5.41-Beta", Commit: strings.Repeat("a", 40),
+		HelperContent: strings.ReplaceAll(embeddedAppUpgradeScript, "\r\n", "\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := json.Marshal(privileged.Request{
+		Version: privileged.ProtocolVersion, RequestID: "catalog_upgrade_test",
+		Operation: privileged.OperationLightningOSUpgradeStart, Params: params,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := privileged.DecodeRequest(bytes.NewReader(wire)); err != nil {
+		t.Fatalf("actual embedded helper cannot traverse broker protocol: %v", err)
+	}
+}
 
 func TestAppCatalogMandatoryBridgeSelection(t *testing.T) {
 	for _, test := range []struct{ current, catalog string }{

@@ -20,7 +20,7 @@ func TestAppUpgradeHelperSelectsSameImmutableSourceCatalog(t *testing.T) {
 		{"0.5.100", appModernCatalog}, {"1.0.0", appModernCatalog},
 	} {
 		t.Run(test.version, func(t *testing.T) {
-			script := "set -euo pipefail\nVERSION=$1\nREPO_URL=https://github.com/" + appLegacyCatalog + ".git\nRELEASE_TAG_API_BASE=https://api.github.com/repos/" + appLegacyCatalog + "/releases/tags\n" + embeddedAppUpgradeScript[start:end] + "\nprintf '%s\\n%s\\n' \"$REPO_URL\" \"$RELEASE_TAG_API_BASE\"\n"
+			script := "set -euo pipefail\nVERSION=$1\nCUTOVER_ONLY_MODE=\nREPO_URL=https://github.com/" + appLegacyCatalog + ".git\nRELEASE_TAG_API_BASE=https://api.github.com/repos/" + appLegacyCatalog + "/releases/tags\n" + embeddedAppUpgradeScript[start:end] + "\nprintf '%s\\n%s\\n' \"$REPO_URL\" \"$RELEASE_TAG_API_BASE\"\n"
 			output, err := exec.Command("bash", "-c", script, "--", test.version).CombinedOutput()
 			if err != nil {
 				t.Fatalf("helper routing failed: %v: %s", err, output)

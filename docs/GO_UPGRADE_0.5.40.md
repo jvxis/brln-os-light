@@ -118,7 +118,13 @@ checks without manual repair. Browser login/dashboard checks passed on the dispo
 LOS-TEST2; confirmation/cancel/error rendering passed with explicitly scoped
 browser fixtures. Native arm64 execution was explicitly waived by the owner on
 2026-09-30 for this delivery; it is not a passed test. Initialized-wallet
-convergence and a successful upgrade observed in the browser remain pending.
+convergence and a successful upgrade observed in the browser were pending in
+that September baseline. The [October 2 follow-up](baselines/go-upgrade-0.5.40-virtualbox-2026-10-02.md)
+completed the installed 0.5.33 browser transition and the assisted LOS-TEST2
+upgrade, with real restricted-credential verification/reuse and preserved
+LND/PostgreSQL processes. It also documents the root archive permission fix and
+its red/green Linux regression. Public mandatory-bridge publication remains
+separate from those completed installation checks.
 The owner explicitly requested opening PR #211 for review on 2026-09-30. This
 changes the draft status only; the remaining validation/release gates are not
 waived and must be addressed before merge/release.

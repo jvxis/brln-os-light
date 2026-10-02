@@ -288,6 +288,12 @@ Screenshots were visually inspected; the browser session was closed afterward.
 
 ## Remaining release gates
 
+Historical status as of September 30. The [October 2 follow-up](go-upgrade-0.5.40-virtualbox-2026-10-02.md)
+subsequently completed the successful browser upgrade, installed 0.5.33
+transition and assisted LOS-TEST2 upgrade with real credential verification and
+reuse. First-time credential baking was not forced on the existing wallet.
+The public mandatory-bridge publication arrangement remains pending separately.
+
 A subsequent [RPi4 read-only baseline](go-upgrade-0.5.40-rpi4-2026-09-30.md)
 identified an existing native ARM64 node on 0.5.28 with two active channels.
 Its published updater asset matches the tested legacy helper. The owner then

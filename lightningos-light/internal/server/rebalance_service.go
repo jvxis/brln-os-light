@@ -398,6 +398,12 @@ type RebalanceConfig struct {
 	KeepaliveRefillAfterHours             int     `json:"keepalive_refill_after_hours"`
 	KeepaliveRefillPct                    float64 `json:"keepalive_refill_pct"`
 	SourceRouteabilityQuarantineHours     int     `json:"source_routeability_quarantine_hours"`
+	StockGateEnabled                      bool    `json:"stock_gate_enabled"`
+	StockGateMinStockPct                  float64 `json:"stock_gate_min_stock_pct"`
+	StockGateCoverDays                    int     `json:"stock_gate_cover_days"`
+	DiscoverySteps                        int     `json:"discovery_steps"`
+	DiscoveryCeilingPct                   int     `json:"discovery_ceiling_pct"`
+	DiscoveryDailyBudgetSat               int64   `json:"discovery_daily_budget_sat"`
 	BudgetMode                            string  `json:"budget_mode"`
 	BudgetUnlimited                       bool    `json:"budget_unlimited"`
 	BudgetAutoOnly                        bool    `json:"budget_auto_only"`
@@ -1064,6 +1070,12 @@ type RebalanceSovereignDecision struct {
 	RealizedEconomicsMultiplier float64 `json:"realized_economics_multiplier,omitempty"`
 	ExplorationSlot             bool    `json:"exploration_slot,omitempty"`
 	KeepaliveRefill             bool    `json:"keepalive_refill,omitempty"`
+	StockUnsoldSat              int64   `json:"stock_unsold_sat,omitempty"`
+	StockAllowedSat             int64   `json:"stock_allowed_sat,omitempty"`
+	StockDemandSat              int64   `json:"stock_demand_sat,omitempty"`
+	Discovery                   bool    `json:"discovery,omitempty"`
+	DiscoveryStep               int     `json:"discovery_step,omitempty"`
+	DiscoveryFeeCapPpm          int64   `json:"discovery_fee_cap_ppm,omitempty"`
 	IntentKind                  string  `json:"intent_kind,omitempty"`
 	IntentReason                string  `json:"intent_reason,omitempty"`
 	IntentConfidence            float64 `json:"intent_confidence,omitempty"`
@@ -1722,6 +1734,12 @@ func defaultRebalanceConfig() RebalanceConfig {
 		KeepaliveRefillAfterHours:              keepaliveRefillAfterHoursDefault,
 		KeepaliveRefillPct:                     keepaliveRefillPctDefault,
 		SourceRouteabilityQuarantineHours:      sourceRouteabilityHoursDefault,
+		StockGateEnabled:                       false,
+		StockGateMinStockPct:                   stockGateMinStockPctDefault,
+		StockGateCoverDays:                     stockGateCoverDaysDefault,
+		DiscoverySteps:                         0,
+		DiscoveryCeilingPct:                    discoveryCeilingPctDefault,
+		DiscoveryDailyBudgetSat:                discoveryDailyBudgetSatDefault,
 		BudgetMode:                             rebalanceBudgetModeHybridRevenue,
 		BudgetUnlimited:                        false,
 		BudgetAutoOnly:                         true,
@@ -2363,6 +2381,21 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.SourceRouteabilityQuarantineHours < sourceRouteabilityHoursMin || cfg.SourceRouteabilityQuarantineHours > sourceRouteabilityHoursMax {
 		cfg.SourceRouteabilityQuarantineHours = sourceRouteabilityHoursDefault
+	}
+	if cfg.StockGateMinStockPct < stockGateMinStockPctMin || cfg.StockGateMinStockPct > stockGateMinStockPctMax {
+		cfg.StockGateMinStockPct = stockGateMinStockPctDefault
+	}
+	if cfg.StockGateCoverDays < 0 || cfg.StockGateCoverDays > stockGateCoverDaysMax {
+		cfg.StockGateCoverDays = stockGateCoverDaysDefault
+	}
+	if cfg.DiscoverySteps < 0 || cfg.DiscoverySteps > discoveryStepsMax {
+		cfg.DiscoverySteps = 0
+	}
+	if cfg.DiscoveryCeilingPct < discoveryCeilingPctMin || cfg.DiscoveryCeilingPct > discoveryCeilingPctMax {
+		cfg.DiscoveryCeilingPct = discoveryCeilingPctDefault
+	}
+	if cfg.DiscoveryDailyBudgetSat < 0 || cfg.DiscoveryDailyBudgetSat > discoveryDailyBudgetSatMax {
+		cfg.DiscoveryDailyBudgetSat = discoveryDailyBudgetSatDefault
 	}
 	cfg.SovereignLowSuccessMinRate = normalizeRatioConfig(cfg.SovereignLowSuccessMinRate, def.SovereignLowSuccessMinRate, 1)
 	cfg.SovereignLowSuccessMinProfitCostRatio = normalizeRatioConfig(cfg.SovereignLowSuccessMinProfitCostRatio, def.SovereignLowSuccessMinProfitCostRatio, 0)
@@ -4048,6 +4081,7 @@ func (s *RebalanceService) runAutoScan() {
 			AutomationIntents:             automationIntents,
 			ReferenceCostPpm:              nodeRebalanceReferencePpm(costByChannel),
 		})
+		sovereignPlan.StockLevels = s.loadSovereignStockLevels(ctx, cfg, snapshots, sovereignTargetIDs, scanAt)
 		// AutoTarget runs together with the round's candidates (opt-in): it can
 		// raise the target of the strong sellers among them (supply-limited by
 		// construction) and lower channels that stopped selling. Reuses the
@@ -4466,6 +4500,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 	}
 
 	keepaliveQueued := 0
+	discoveryRun := &sovereignDiscoveryRun{}
 	for _, target := range candidates {
 		targetCfg := effectiveConfigForTarget(cfg, settings[target.Channel.ChannelID])
 		targetPolicy := lndclient.ChannelPolicySnapshot{
@@ -4493,6 +4528,10 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		}
 		inventoryAmount, inventoryReason := sovereignUnsoldInventoryAllowance(target.UnsoldLiquidity, targetCfg, scanAt, target.ExplorationSlot, targetAmount)
 		inventoryProbe := inventoryReason == "" && inventoryAmount < targetAmount
+		// Stock gate: paid liquidity already bought for this peer must sell
+		// before more is bought. The working stock is always allowed.
+		stockLevel := plan.StockLevels[target.Channel.ChannelID]
+		stockBlocked := sovereignStockGateBlocks(stockLevel, target.Channel.CapacitySat, targetCfg)
 		if inventoryProbe {
 			targetAmount = inventoryAmount
 			budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
@@ -4571,6 +4610,11 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			ExplorationSlot:             target.ExplorationSlot,
 			KeepaliveRefill:             keepalive,
 		}
+		if targetCfg.StockGateEnabled && stockLevel.Known {
+			decision.StockUnsoldSat = stockLevel.UnsoldSat
+			decision.StockAllowedSat = sovereignStockGateAllowedSat(stockLevel, target.Channel.CapacitySat, targetCfg)
+			decision.StockDemandSat = stockLevel.DemandSat
+		}
 		if target.AutomationIntent != nil {
 			decision.IntentKind = target.AutomationIntent.Kind
 			decision.IntentReason = target.AutomationIntent.ReasonCode
@@ -4600,6 +4644,9 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			noteSkip(decision.Reason)
 		case inventoryReason != "":
 			decision.Reason = inventoryReason
+			noteSkip(decision.Reason)
+		case stockBlocked:
+			decision.Reason = sovereignStockGateReason
 			noteSkip(decision.Reason)
 		case inventoryProbe && targetCfg.ROIMin > 0 && decision.ExpectedROIValid && decision.ExpectedROI < targetCfg.ROIMin:
 			decision.Reason = "roi_guardrail"
@@ -4745,6 +4792,11 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 				}
 				result.BudgetRemainingSat = remaining
 			}
+		}
+		// Discovery ladder: a drained target the normal fee cap cannot reach
+		// gets one probe above the cap, from its own budget.
+		if s.maybeQueueSovereignDiscovery(ctx, &decision, target, targetCfg, targetPolicy, discoveryRun, scanAt, live) {
+			noteSkip(decision.Reason)
 		}
 		appendDecision(decision)
 	}
@@ -5028,6 +5080,9 @@ type rebalanceAutoScanCandidatePlan struct {
 	AutofeeDampened int
 	TopScore        int64
 	TopScoreSet     bool
+	// StockLevels: per-peer unsold paid stock for the stock gate, keyed by
+	// target channel. Nil when the gate is off.
+	StockLevels map[uint64]sovereignStockLevel
 }
 
 func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) rebalanceAutoScanCandidatePlan {
@@ -5670,6 +5725,7 @@ type rebalanceJobRunState struct {
 	useRecentFailureCache  bool
 	cooldownProbeJob       bool
 	shadowRecorded         bool
+	fastPathAttempted      bool
 	floorBlockedSources    map[uint64]struct{}
 	pairStats              map[uint64]pairStat
 	targetSnapshot         RebalanceChannel
@@ -5811,6 +5867,10 @@ func (r *rebalanceJobRunner) run() {
 	if r.runDelegatedFastPath(st) {
 		return
 	}
+	if isSovereignDiscoveryJob(r.jobSource, r.jobReason) {
+		r.finishDiscoveryWithoutRoute(st)
+		return
+	}
 	r.runLegacyLoop(st)
 }
 
@@ -5910,6 +5970,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	}
 
 	s.markFastPathAttempted(r.jobID)
+	st.fastPathAttempted = true
 	broadTimeoutSec := timeoutSec
 
 	preferredCount := preferredFastPathSourceCount(len(sourceIDs), maxParts)
@@ -9167,6 +9228,9 @@ group by source_channel_id
 	return stats
 }
 
+// Discovery probes are left out: a target reached only above the fee cap is
+// not "reachable" at the normal price, so failing against it at the normal
+// cap says nothing about the source.
 func (s *RebalanceService) loadSourceRouteabilityCooldowns(ctx context.Context, since time.Time) map[uint64]recentCooldownStat {
 	stats := map[uint64]recentCooldownStat{}
 	if s == nil || s.db == nil {
@@ -9179,6 +9243,7 @@ with events as (
   from rebalance_attempts a
   join rebalance_jobs j on j.id=a.job_id
   where coalesce(a.finished_at, a.started_at) >= $1
+    and coalesce(j.trigger_reason, '') <> '`+sovereignDiscoveryReason+`'
 ),
 last_success as (
   select source_channel_id, max(occurred_at) as last_success_at
@@ -9534,6 +9599,8 @@ group by target_channel_id
 	return stats
 }
 
+// Discovery probes are left out: a success above the fee cap must not clear
+// the cooldown the target earned at the normal cap.
 func (s *RebalanceService) loadSovereignTargetStructuralCooldowns(ctx context.Context, targetIDs []uint64, cfg RebalanceConfig, now time.Time) map[uint64]sovereignTargetStructuralCooldownStat {
 	stats := map[uint64]sovereignTargetStructuralCooldownStat{}
 	if s.db == nil || len(targetIDs) == 0 {
@@ -9575,6 +9642,7 @@ jobs as (
   where j.completed_at >= $2
     and j.completed_at is not null
     and j.status in ('succeeded','partial','failed')
+    and coalesce(j.trigger_reason, '') <> '`+sovereignDiscoveryReason+`'
 ),
 last_success as (
   select target_channel_id, max(completed_at) as last_success_at
@@ -12474,6 +12542,8 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int, qu
 		{key: sovereignUnsoldPaidLiquidityPenaltyReason, label: "paid liquidity unsold penalty"},
 		{key: sovereignRouteDeadOpportunityReason, label: "route dead opportunity below floor"},
 		{key: sovereignLowSuccessOpportunityReason, label: "low success opportunity below floor"},
+		{key: sovereignStockGateReason, label: "paid stock waiting for sales"},
+		{key: sovereignDiscoveryQueuedReason, label: "discovery probe queued"},
 		{key: sovereignBudgetEfficiencyOpportunityReason, label: "budget efficiency below floor"},
 		{key: "below_execute_min", label: "below execute min amount"},
 		{key: "budget_below_min", label: "budget below min amount"},
@@ -12803,6 +12873,12 @@ end $$;
     keepalive_refill_after_hours integer not null default 48,
     keepalive_refill_pct double precision not null default 5,
     source_routeability_quarantine_hours integer not null default 6,
+    stock_gate_enabled boolean not null default false,
+    stock_gate_min_stock_pct double precision not null default 10,
+    stock_gate_cover_days integer not null default 3,
+    discovery_steps integer not null default 0,
+    discovery_ceiling_pct integer not null default 150,
+    discovery_daily_budget_sat bigint not null default 300,
     updated_at timestamptz not null default now()
   );
 
@@ -12948,6 +13024,18 @@ end $$;
     add column if not exists keepalive_refill_pct double precision not null default 5;
   alter table rebalance_config
     add column if not exists source_routeability_quarantine_hours integer not null default 6;
+  alter table rebalance_config
+    add column if not exists stock_gate_enabled boolean not null default false;
+  alter table rebalance_config
+    add column if not exists stock_gate_min_stock_pct double precision not null default 10;
+  alter table rebalance_config
+    add column if not exists stock_gate_cover_days integer not null default 3;
+  alter table rebalance_config
+    add column if not exists discovery_steps integer not null default 0;
+  alter table rebalance_config
+    add column if not exists discovery_ceiling_pct integer not null default 150;
+  alter table rebalance_config
+    add column if not exists discovery_daily_budget_sat bigint not null default 300;
 
   alter table rebalance_config
     alter column scheduler_mode set default 'rules_auto';
@@ -13447,7 +13535,8 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile,
     auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier,
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
-    daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours
+    daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours,
+    stock_gate_enabled, stock_gate_min_stock_pct, stock_gate_cover_days, discovery_steps, discovery_ceiling_pct, discovery_daily_budget_sat
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -13549,6 +13638,12 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.KeepaliveRefillAfterHours,
 		&cfg.KeepaliveRefillPct,
 		&cfg.SourceRouteabilityQuarantineHours,
+		&cfg.StockGateEnabled,
+		&cfg.StockGateMinStockPct,
+		&cfg.StockGateCoverDays,
+		&cfg.DiscoverySteps,
+		&cfg.DiscoveryCeilingPct,
+		&cfg.DiscoveryDailyBudgetSat,
 	)
 	if err != nil {
 		return cfg, err
@@ -13576,8 +13671,9 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier,
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
     daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours,
+    stock_gate_enabled, stock_gate_min_stock_pct, stock_gate_cover_days, discovery_steps, discovery_ceiling_pct, discovery_daily_budget_sat,
     updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,$98,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,$98,$99,$100,$101,$102,$103,$104,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -13676,12 +13772,19 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     keepalive_refill_after_hours = excluded.keepalive_refill_after_hours,
     keepalive_refill_pct = excluded.keepalive_refill_pct,
     source_routeability_quarantine_hours = excluded.source_routeability_quarantine_hours,
+    stock_gate_enabled = excluded.stock_gate_enabled,
+    stock_gate_min_stock_pct = excluded.stock_gate_min_stock_pct,
+    stock_gate_cover_days = excluded.stock_gate_cover_days,
+    discovery_steps = excluded.discovery_steps,
+    discovery_ceiling_pct = excluded.discovery_ceiling_pct,
+    discovery_daily_budget_sat = excluded.discovery_daily_budget_sat,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates, cfg.Profile,
 		cfg.AutoTargetEnabled, cfg.AutoTargetMaxPct, cfg.AutoTargetMinPct, cfg.AutoTargetStepPct, cfg.AutoTargetEvalIntervalHours, cfg.AutoTargetMaxUpsPerCycle, cfg.AutoTargetMaxLocalSat, cfg.AutoTargetMinDrainRateSatPerHr, cfg.AutoTargetMinRevenue7dSat, cfg.AutoTargetUpSuccessThreshold, cfg.AutoTargetDownSuccessThreshold, cfg.AutoTargetDrainFirstMultiplier,
 		cfg.AutoTargetUpSellThroughFactor, cfg.AutoTargetDownSellThroughFactor, cfg.AutoTargetMaxDownsPerCycle,
 		cfg.DailyBudgetMinSat, cfg.DailyBudgetBaseDays, cfg.SovereignEfficiencyAutofeeAligned, cfg.KeepaliveRefillEnabled, cfg.KeepaliveRefillAfterHours, cfg.KeepaliveRefillPct, cfg.SourceRouteabilityQuarantineHours,
+		cfg.StockGateEnabled, cfg.StockGateMinStockPct, cfg.StockGateCoverDays, cfg.DiscoverySteps, cfg.DiscoveryCeilingPct, cfg.DiscoveryDailyBudgetSat,
 	)
 	if err != nil {
 		return err

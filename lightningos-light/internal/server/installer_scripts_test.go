@@ -98,32 +98,24 @@ func TestInstallersRepairOnlyKnownChatStoragePaths(t *testing.T) {
 	}
 }
 
-func TestInstallersVerifyPinnedGoAndGoTTYBeforeExtraction(t *testing.T) {
+func TestInstallersShareGoPreparationAndVerifyGoTTYBeforeExtraction(t *testing.T) {
 	tests := []struct {
 		name        string
-		goArtifact  string
-		goChecksum  string
 		gottyAsset  string
 		gottyDigest string
 	}{
 		{
 			name:        "install.sh",
-			goArtifact:  "go${GO_VERSION}.linux-amd64.tar.gz",
-			goChecksum:  "bddf8e653c82429aea7aec2520774e79925d4bb929fe20e67ecc00dd5af44c50",
 			gottyAsset:  "gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz",
 			gottyDigest: "9cf032e1f3a49d33da3ba32c79f49892aad94e52edc6417524a76b623ced2f5f",
 		},
 		{
 			name:        "install_existing.sh",
-			goArtifact:  "go${GO_VERSION}.linux-amd64.tar.gz",
-			goChecksum:  "bddf8e653c82429aea7aec2520774e79925d4bb929fe20e67ecc00dd5af44c50",
 			gottyAsset:  "gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz",
 			gottyDigest: "9cf032e1f3a49d33da3ba32c79f49892aad94e52edc6417524a76b623ced2f5f",
 		},
 		{
 			name:        "install_existing_pi.sh",
-			goArtifact:  "go${GO_VERSION}.linux-arm64.tar.gz",
-			goChecksum:  "4e02e2979e53b40f3666bba9f7e5ea0b99ea5156e0824b343fd054742c25498d",
 			gottyAsset:  "gotty_v${GOTTY_VERSION}_linux_arm64.tar.gz",
 			gottyDigest: "fcef4efcf6cbdf81540c765ebdfd533ada86f7d58322b4f831573d098712b0dd",
 		},
@@ -137,9 +129,8 @@ func TestInstallersVerifyPinnedGoAndGoTTYBeforeExtraction(t *testing.T) {
 			content := strings.ReplaceAll(string(raw), "\r\n", "\n")
 			for _, expected := range []string{
 				`source "$ARTIFACT_VERIFY_SCRIPT"`,
-				`GO_VERSION="1.24.12"`,
-				`GO_ARTIFACT="` + test.goArtifact + `"`,
-				`GO_TARBALL_SHA256="` + test.goChecksum + `"`,
+				`source "$GO_PREPARE_SCRIPT"`,
+				`lightningos_prepare_go "$REPO_ROOT"`,
 				`GOTTY_VERSION="1.8.0"`,
 				`GOTTY_ARTIFACT="` + test.gottyAsset + `"`,
 				`GOTTY_SHA256="` + test.gottyDigest + `"`,
@@ -149,13 +140,10 @@ func TestInstallersVerifyPinnedGoAndGoTTYBeforeExtraction(t *testing.T) {
 				}
 			}
 
-			goVerify := strings.Index(content, `lightningos_download_verified_artifact "$GO_TARBALL_URL"`)
-			goInspect := strings.Index(content, `tar -tzf "$archive"`)
-			goReplace := strings.Index(content, `rm -rf /usr/local/go`)
 			gottyVerify := strings.Index(content, `lightningos_download_verified_artifact "$GOTTY_URL"`)
 			gottyExtract := strings.Index(content, `tar -xzf "$tmp/$GOTTY_ARTIFACT"`)
-			if goVerify < 0 || goInspect < goVerify || goReplace < goInspect {
-				t.Fatalf("%s must authenticate and inspect Go before replacing the installed toolchain", test.name)
+			if strings.Contains(content, "rm -rf /usr/local/go") || strings.Contains(content, "GO_VERSION=") {
+				t.Fatalf("%s must use the shared, non-destructive Go preparation", test.name)
 			}
 			if gottyVerify < 0 || gottyExtract < gottyVerify {
 				t.Fatalf("%s must authenticate GoTTY before extraction", test.name)
@@ -784,7 +772,9 @@ func TestAppUpgradeTrustedCheckoutIsRootOnlyAndCommitPinned(t *testing.T) {
 		`Trusted checkout HEAD does not match --commit.`,
 		`diff --quiet --no-ext-diff --`,
 		`diff --cached --quiet --no-ext-diff --`,
-		`archive "$EXPECTED_COMMIT" | "$TAR_BIN" -x`,
+		`archive "$EXPECTED_COMMIT" | (`,
+		`umask 022`,
+		`"$TAR_BIN" --no-same-owner --no-same-permissions -x`,
 		`"$INSTALL_BIN" -d -o root -g root -m 0700 "$worktree_dir"`,
 		`available_kib < 3145728`,
 	} {
@@ -828,7 +818,7 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 		`capture_lnd_manager_credential_boundary`,
 		`capture_optional_file "$credential_path" "$state_root" "lnd-manager-macaroon"`,
 		`capture_optional_file "$credential_state_path" "$state_root" "lnd-manager-state"`,
-		`upgrade_lnd_manager_credential_rollback_state`,
+		`An interrupted privilege cutover must be rolled back before retrying the upgrade.`,
 		`: > "$state_root/schema-v3"`,
 		`: > "$state_root/schema-v4"`,
 		`: > "$state_root/schema-v5"`,
@@ -838,7 +828,7 @@ func TestAppUpgradeStagesReversiblePrivilegeCutoverBeforeRestart(t *testing.T) {
 		`capture_manager_ui_boundary`,
 		`manager-ui.tar`,
 		`lightningos-manager lnd-manager-credential-ensure`,
-		`/usr/local/sbin/lightningos-rollback-privilege-cutover || true`,
+		`rollback_privilege_cutover || true`,
 	} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("app upgrade privilege cutover is missing %q", expected)
@@ -952,7 +942,7 @@ func TestPrivilegeCutoverRollbackRestoresOnlyAccessBoundary(t *testing.T) {
 		`restore_or_remove "lightningos-privileged" "$BROKER_BIN"`,
 		`restore_or_remove "lightningos-privileged.socket" "$SOCKET_UNIT"`,
 		`systemctl cat lightningos-privileged.socket`,
-		`restore_or_remove "rollback-command" "$ROLLBACK_BIN"`,
+		`printf '%s\n' rolled_back > "$STATE_ROOT/transaction-state"`,
 		`restore_file "$STATE_ROOT/sudoers" "$sudoers_path"`,
 		`rm -f -- "$sudoers_path"`,
 		`usermod -a -G docker "$manager_user"`,

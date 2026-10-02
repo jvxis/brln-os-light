@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"lightningos-light/internal/privileged"
 	"lightningos-light/internal/system"
 )
 
@@ -21,8 +21,6 @@ const (
 	appUpgradeUnitName  = "lightningos-app-upgrade"
 	appReleaseCachePath = "/var/lib/lightningos/app-release.json"
 	appReleaseCacheTTL  = 24 * time.Hour
-	appReleaseAPIURL    = "https://api.github.com/repos/jvxis/brln-os-light/releases?per_page=10"
-	appCommitAPIBaseURL = "https://api.github.com/repos/jvxis/brln-os-light/commits/"
 )
 
 var (
@@ -40,11 +38,13 @@ type appReleaseInfo struct {
 	ReleasePage string `json:"release_page"`
 	CheckedAt   string `json:"checked_at"`
 	Commit      string `json:"commit"`
+	Repository  string `json:"repository,omitempty"`
 }
 
 type appReleaseCache struct {
 	CheckedAt string         `json:"checked_at"`
 	Info      appReleaseInfo `json:"info"`
+	Catalog   string         `json:"catalog,omitempty"`
 }
 
 type appUpgradeStatusResponse struct {
@@ -68,6 +68,7 @@ type appGHRelease struct {
 	Name       string `json:"name"`
 	Draft      bool   `json:"draft"`
 	Prerelease bool   `json:"prerelease"`
+	Immutable  bool   `json:"immutable"`
 	HtmlURL    string `json:"html_url"`
 }
 
@@ -80,7 +81,7 @@ func (s *Server) startAppUpgradeChecker() {
 		refresh := func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			if _, err := getAppReleaseInfo(ctx, true); err != nil && s.logger != nil {
+			if _, err := getAppReleaseInfo(ctx, true, currentAppVersion(s.cfg.UI.StaticDir)); err != nil && s.logger != nil {
 				s.logger.Printf("app upgrade check failed: %v", err)
 			}
 		}
@@ -106,7 +107,7 @@ func (s *Server) handleAppUpgradeStatus(w http.ResponseWriter, r *http.Request) 
 		currentDisplay = strings.TrimSpace(currentVersion)
 	}
 	running := appUpgradeRunning(ctx)
-	info, err := getAppReleaseInfo(ctx, force)
+	info, err := getAppReleaseInfo(ctx, force, currentVersion)
 
 	resp := appUpgradeStatusResponse{
 		CurrentVersion: currentDisplay,
@@ -147,7 +148,7 @@ func (s *Server) handleAppUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := getAppReleaseInfo(ctx, true)
+	info, err := getAppReleaseInfo(ctx, true, currentAppVersion(s.cfg.UI.StaticDir))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("failed to resolve latest release: %v", err))
 		return
@@ -174,7 +175,7 @@ func (s *Server) handleAppUpgradeStart(w http.ResponseWriter, r *http.Request) {
 			if s.logger != nil {
 				s.logger.Printf("app upgrade start failed: %v", err)
 			}
-			writeError(w, http.StatusInternalServerError, "failed to start app upgrade (check logs)")
+			writeAppUpgradeStartError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -185,7 +186,15 @@ func (s *Server) handleAppUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeError(w, http.StatusServiceUnavailable, "privileged broker is required for LightningOS upgrades")
+	writeAppUpgradeStartError(w, privileged.ErrBrokerUnavailable)
+}
+
+func writeAppUpgradeStartError(w http.ResponseWriter, err error) {
+	if errors.Is(err, privileged.ErrBrokerUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "Privileged upgrade service is unavailable. The upgrade did not start. Recover the broker using docs/UPGRADE_RECOVERY.md, then retry; reinstalling LOS is not required.")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "Failed to start app upgrade. Check the lightningos-manager service journal; the upgrade log may be empty because the upgrade did not start.")
 }
 
 func currentAppVersion(staticDir string) string {
@@ -259,13 +268,14 @@ func normalizeAppVersion(value string) string {
 	return ""
 }
 
-func getAppReleaseInfo(ctx context.Context, force bool) (appReleaseInfo, error) {
-	cached, checkedAt, ok := readAppReleaseCache()
+func getAppReleaseInfo(ctx context.Context, force bool, currentVersion string) (appReleaseInfo, error) {
+	catalog := appCatalogForVersion(currentVersion)
+	cached, checkedAt, ok := readAppReleaseCache(catalog)
 	if ok && !force && time.Since(checkedAt) < appReleaseCacheTTL {
 		return cached, nil
 	}
 
-	info, err := fetchLatestAppRelease(ctx)
+	info, err := fetchAppReleaseForVersion(ctx, currentVersion)
 	if err != nil {
 		if ok {
 			return cached, err
@@ -273,69 +283,8 @@ func getAppReleaseInfo(ctx context.Context, force bool) (appReleaseInfo, error) 
 		return appReleaseInfo{}, err
 	}
 
-	_ = writeAppReleaseCache(info)
+	_ = writeAppReleaseCache(info, catalog)
 	return info, nil
-}
-
-func fetchLatestAppRelease(ctx context.Context) (appReleaseInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, appReleaseAPIURL, nil)
-	if err != nil {
-		return appReleaseInfo{}, err
-	}
-	req.Header.Set("User-Agent", "lightningos-light")
-	client := &http.Client{Timeout: 6 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return appReleaseInfo{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return appReleaseInfo{}, fmt.Errorf("github api returned %s", resp.Status)
-	}
-
-	var releases []appGHRelease
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-		return appReleaseInfo{}, err
-	}
-
-	for _, rel := range releases {
-		if rel.Draft {
-			continue
-		}
-		version := normalizeAppVersion(rel.TagName)
-		if version == "" {
-			version = normalizeAppVersion(rel.Name)
-		}
-		if version == "" {
-			continue
-		}
-		channel := "stable"
-		if rel.Prerelease || strings.Contains(strings.ToLower(version), "beta") || strings.Contains(strings.ToLower(version), "rc") {
-			channel = "beta"
-		}
-		tag := strings.TrimSpace(rel.TagName)
-		if tag == "" {
-			tag = version
-		}
-		if !appReleaseTagMatchesVersion(tag, version) {
-			continue
-		}
-		commit, err := fetchAppReleaseCommit(ctx, tag)
-		if err != nil {
-			return appReleaseInfo{}, fmt.Errorf("failed to resolve release commit: %w", err)
-		}
-		return appReleaseInfo{
-			Version:     version,
-			Tag:         tag,
-			Channel:     channel,
-			ReleasePage: rel.HtmlURL,
-			CheckedAt:   time.Now().UTC().Format(time.RFC3339),
-			Commit:      commit,
-		}, nil
-	}
-
-	return appReleaseInfo{}, errors.New("no suitable app release found")
 }
 
 func appReleaseTagMatchesVersion(tag, version string) bool {
@@ -347,39 +296,16 @@ func appReleaseTagMatchesVersion(tag, version string) bool {
 	return strings.EqualFold(candidate, version)
 }
 
-func fetchAppReleaseCommit(ctx context.Context, tag string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, appCommitAPIBaseURL+url.PathEscape(tag), nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "lightningos-light")
-	client := &http.Client{Timeout: 6 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("github commit api returned %s", resp.Status)
-	}
-	var commit appGHCommit
-	if err := json.NewDecoder(resp.Body).Decode(&commit); err != nil {
-		return "", err
-	}
-	commit.SHA = strings.ToLower(strings.TrimSpace(commit.SHA))
-	if !appCommitPattern.MatchString(commit.SHA) {
-		return "", errors.New("github commit api returned an invalid commit")
-	}
-	return commit.SHA, nil
-}
-
-func readAppReleaseCache() (appReleaseInfo, time.Time, bool) {
+func readAppReleaseCache(catalog string) (appReleaseInfo, time.Time, bool) {
 	data, err := os.ReadFile(appReleaseCachePath)
 	if err != nil {
 		return appReleaseInfo{}, time.Time{}, false
 	}
 	var cache appReleaseCache
 	if err := json.Unmarshal(data, &cache); err != nil {
+		return appReleaseInfo{}, time.Time{}, false
+	}
+	if cache.Catalog != catalog || !appCatalogAllowsRelease(cache.Info.Repository, cache.Info.Version) {
 		return appReleaseInfo{}, time.Time{}, false
 	}
 	checkedAt, err := time.Parse(time.RFC3339, cache.CheckedAt)
@@ -390,13 +316,14 @@ func readAppReleaseCache() (appReleaseInfo, time.Time, bool) {
 	return cache.Info, checkedAt, true
 }
 
-func writeAppReleaseCache(info appReleaseInfo) error {
+func writeAppReleaseCache(info appReleaseInfo, catalog string) error {
 	if info.CheckedAt == "" {
 		info.CheckedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	cache := appReleaseCache{
 		CheckedAt: info.CheckedAt,
 		Info:      info,
+		Catalog:   catalog,
 	}
 	data, err := json.Marshal(cache)
 	if err != nil {

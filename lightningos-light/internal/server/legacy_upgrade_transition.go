@@ -49,7 +49,7 @@ func (s *Server) startLegacyPrivilegeTransitionReconciler() {
 				}
 				continue
 			}
-			info, err := getAppReleaseInfo(ctx, true)
+			info, err := getAppReleaseInfo(ctx, true, currentAppVersion(s.cfg.UI.StaticDir))
 			if err == nil {
 				var state legacyTransitionState
 				state, err = startLegacyPrivilegeTransition(ctx, s.cfg, info, embeddedAppUpgradeScript)

@@ -145,7 +145,7 @@ func (manager *NativeLNDManagerCredentialManager) validate(ctx context.Context) 
 	}
 	lndUID, lndGID, err := manager.resolveLNDServiceIdentity(ctx)
 	if err != nil || lndUID < 1 || lndGID < 1 {
-		return 0, 0, 0, 0, errors.New("LND service identity is unavailable")
+		return 0, 0, 0, 0, lndCredentialError("lnd_unit_identity")
 	}
 	return managerUID, managerGID, lndUID, lndGID, nil
 }

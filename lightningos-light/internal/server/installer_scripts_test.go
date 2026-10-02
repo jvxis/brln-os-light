@@ -772,7 +772,9 @@ func TestAppUpgradeTrustedCheckoutIsRootOnlyAndCommitPinned(t *testing.T) {
 		`Trusted checkout HEAD does not match --commit.`,
 		`diff --quiet --no-ext-diff --`,
 		`diff --cached --quiet --no-ext-diff --`,
-		`archive "$EXPECTED_COMMIT" | "$TAR_BIN" -x`,
+		`archive "$EXPECTED_COMMIT" | (`,
+		`umask 022`,
+		`"$TAR_BIN" --no-same-owner --no-same-permissions -x`,
 		`"$INSTALL_BIN" -d -o root -g root -m 0700 "$worktree_dir"`,
 		`available_kib < 3145728`,
 	} {

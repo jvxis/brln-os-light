@@ -945,7 +945,13 @@ if [[ "$TRUSTED_CHECKOUT" -eq 1 ]]; then
     || die "Trusted checkout has staged changes."
   worktree_dir="${worktree_root}/app-upgrade-trusted-$($DATE_BIN +%Y%m%d%H%M%S)"
   "$INSTALL_BIN" -d -o root -g root -m 0700 "$worktree_dir"
-  "$GIT_BIN" -C "$source_repo_dir" archive "$EXPECTED_COMMIT" | "$TAR_BIN" -x -C "$worktree_dir"
+  # Git archives default to group-writable entries. Root tar otherwise retains
+  # those modes, which fail the preparation asset checks. Extract as root using
+  # fixed safe permissions even when the invoking operator uses umask 077.
+  "$GIT_BIN" -C "$source_repo_dir" archive "$EXPECTED_COMMIT" | (
+    umask 022
+    "$TAR_BIN" --no-same-owner --no-same-permissions -x -C "$worktree_dir"
+  )
   TAG="trusted-checkout"
 else
   print_step "Preparing repository mirror"

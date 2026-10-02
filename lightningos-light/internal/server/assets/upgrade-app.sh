@@ -172,6 +172,16 @@ if [[ -z "$CUTOVER_ONLY_MODE" ]]; then
 fi
 
 LOCK_FILE="/var/lib/lightningos/app-upgrade.lock"
+# Releases after the mandatory bridge are immutable in a separate catalog.
+# The legacy catalog remains capped at 0.5.40 for already-installed Managers.
+# Repository selection is derived from the validated version, never a caller URL.
+release_core="${VERSION%%-*}"
+IFS=. read -r release_major release_minor release_patch <<<"$release_core"
+if [[ -n "$VERSION" ]] && (( 10#$release_major > 0 || 10#$release_minor > 5 || (10#$release_minor == 5 && 10#$release_patch > 40) )); then
+  REPO_URL="https://github.com/jvxis/brln-os-light-updates.git"
+  RELEASE_TAG_API_BASE="https://api.github.com/repos/jvxis/brln-os-light-updates/releases/tags"
+fi
+
 PRIVILEGED_BROKER="/usr/local/libexec/lightningos-privileged"
 PRIVILEGED_TMPFILES_CONFIG="/etc/tmpfiles.d/lightningos-privileged.conf"
 GIT_BIN="$(resolve_bin git /usr/bin/git /bin/git)" || die "Required command missing: git"

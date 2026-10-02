@@ -238,6 +238,12 @@ export default function RebalanceCenter() {
     keepalive_refill_enabled: raw.keepalive_refill_enabled ?? false,
     keepalive_refill_after_hours: typeof raw.keepalive_refill_after_hours === 'number' && raw.keepalive_refill_after_hours > 0 ? raw.keepalive_refill_after_hours : 48,
     keepalive_refill_pct: typeof raw.keepalive_refill_pct === 'number' && raw.keepalive_refill_pct > 0 ? raw.keepalive_refill_pct : 5,
+    stock_gate_enabled: raw.stock_gate_enabled ?? false,
+    stock_gate_min_stock_pct: typeof raw.stock_gate_min_stock_pct === 'number' && raw.stock_gate_min_stock_pct > 0 ? raw.stock_gate_min_stock_pct : 10,
+    stock_gate_cover_days: typeof raw.stock_gate_cover_days === 'number' && raw.stock_gate_cover_days >= 0 ? raw.stock_gate_cover_days : 3,
+    discovery_steps: typeof raw.discovery_steps === 'number' && raw.discovery_steps > 0 ? raw.discovery_steps : 0,
+    discovery_ceiling_pct: typeof raw.discovery_ceiling_pct === 'number' && raw.discovery_ceiling_pct > 0 ? raw.discovery_ceiling_pct : 150,
+    discovery_daily_budget_sat: typeof raw.discovery_daily_budget_sat === 'number' && raw.discovery_daily_budget_sat >= 0 ? raw.discovery_daily_budget_sat : 300,
     budget_mode: raw.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
     budget_unlimited: raw.budget_unlimited ?? false,
     budget_auto_only: raw.budget_auto_only ?? false,
@@ -321,6 +327,12 @@ export default function RebalanceCenter() {
       keepalive_refill_enabled: cfg.keepalive_refill_enabled,
       keepalive_refill_after_hours: cfg.keepalive_refill_after_hours,
       keepalive_refill_pct: cfg.keepalive_refill_pct,
+      stock_gate_enabled: cfg.stock_gate_enabled,
+      stock_gate_min_stock_pct: cfg.stock_gate_min_stock_pct,
+      stock_gate_cover_days: cfg.stock_gate_cover_days,
+      discovery_steps: cfg.discovery_steps,
+      discovery_ceiling_pct: cfg.discovery_ceiling_pct,
+      discovery_daily_budget_sat: cfg.discovery_daily_budget_sat,
       daily_budget_min_sat: cfg.daily_budget_min_sat,
       daily_budget_base_days: cfg.daily_budget_base_days,
       scan_interval_sec: cfg.scan_interval_sec,
@@ -407,6 +419,12 @@ export default function RebalanceCenter() {
       keepalive_refill_enabled: cfg.keepalive_refill_enabled ?? false,
       keepalive_refill_after_hours: cfg.keepalive_refill_after_hours ?? 48,
       keepalive_refill_pct: cfg.keepalive_refill_pct ?? 5,
+      stock_gate_enabled: cfg.stock_gate_enabled ?? false,
+      stock_gate_min_stock_pct: cfg.stock_gate_min_stock_pct ?? 10,
+      stock_gate_cover_days: cfg.stock_gate_cover_days ?? 3,
+      discovery_steps: cfg.discovery_steps ?? 0,
+      discovery_ceiling_pct: cfg.discovery_ceiling_pct ?? 150,
+      discovery_daily_budget_sat: cfg.discovery_daily_budget_sat ?? 300,
       daily_budget_min_sat: cfg.daily_budget_min_sat ?? 0,
       daily_budget_base_days: cfg.daily_budget_base_days ?? 7,
       auto_target_enabled: cfg.auto_target_enabled ?? false,
@@ -837,6 +855,12 @@ export default function RebalanceCenter() {
           keepalive_refill_enabled: config.keepalive_refill_enabled,
           keepalive_refill_after_hours: Math.max(1, Math.min(720, Number(config.keepalive_refill_after_hours) || 48)),
           keepalive_refill_pct: Math.max(1, Math.min(25, Number(config.keepalive_refill_pct) || 5)),
+          stock_gate_enabled: config.stock_gate_enabled,
+          stock_gate_min_stock_pct: Math.max(1, Math.min(50, Number(config.stock_gate_min_stock_pct) || 10)),
+          stock_gate_cover_days: Math.max(0, Math.min(14, Math.round(Number(config.stock_gate_cover_days) || 0))),
+          discovery_steps: Math.max(0, Math.min(4, Math.round(Number(config.discovery_steps) || 0))),
+          discovery_ceiling_pct: Math.max(110, Math.min(200, Math.round(Number(config.discovery_ceiling_pct) || 150))),
+          discovery_daily_budget_sat: Math.max(0, Math.min(100000, Math.round(Number(config.discovery_daily_budget_sat) || 0))),
           daily_budget_min_sat: Math.max(0, Math.round(Number(config.daily_budget_min_sat) || 0)),
           daily_budget_base_days: Math.max(7, Math.min(30, Math.round(Number(config.daily_budget_base_days) || 7))),
           scan_interval_sec: config.scan_interval_sec,
@@ -1018,6 +1042,12 @@ export default function RebalanceCenter() {
         keepalive_refill_enabled: config.keepalive_refill_enabled,
         keepalive_refill_after_hours: Math.max(1, Math.min(720, Number(config.keepalive_refill_after_hours) || 48)),
         keepalive_refill_pct: Math.max(1, Math.min(25, Number(config.keepalive_refill_pct) || 5)),
+        stock_gate_enabled: config.stock_gate_enabled,
+        stock_gate_min_stock_pct: Math.max(1, Math.min(50, Number(config.stock_gate_min_stock_pct) || 10)),
+        stock_gate_cover_days: Math.max(0, Math.min(14, Math.round(Number(config.stock_gate_cover_days) || 0))),
+        discovery_steps: Math.max(0, Math.min(4, Math.round(Number(config.discovery_steps) || 0))),
+        discovery_ceiling_pct: Math.max(110, Math.min(200, Math.round(Number(config.discovery_ceiling_pct) || 150))),
+        discovery_daily_budget_sat: Math.max(0, Math.min(100000, Math.round(Number(config.discovery_daily_budget_sat) || 0))),
         daily_budget_min_sat: Math.max(0, Math.round(Number(config.daily_budget_min_sat) || 0)),
         daily_budget_base_days: Math.max(7, Math.min(30, Math.round(Number(config.daily_budget_base_days) || 7))),
         auto_target_enabled: config.auto_target_enabled,
@@ -1067,6 +1097,12 @@ export default function RebalanceCenter() {
           keepalive_refill_enabled: normalizedSaved.keepalive_refill_enabled,
           keepalive_refill_after_hours: normalizedSaved.keepalive_refill_after_hours,
           keepalive_refill_pct: normalizedSaved.keepalive_refill_pct,
+          stock_gate_enabled: normalizedSaved.stock_gate_enabled,
+          stock_gate_min_stock_pct: normalizedSaved.stock_gate_min_stock_pct,
+          stock_gate_cover_days: normalizedSaved.stock_gate_cover_days,
+          discovery_steps: normalizedSaved.discovery_steps,
+          discovery_ceiling_pct: normalizedSaved.discovery_ceiling_pct,
+          discovery_daily_budget_sat: normalizedSaved.discovery_daily_budget_sat,
           daily_budget_min_sat: normalizedSaved.daily_budget_min_sat,
           daily_budget_base_days: normalizedSaved.daily_budget_base_days,
           auto_target_enabled: normalizedSaved.auto_target_enabled,
@@ -1518,6 +1554,12 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonTargetStructuralCooldown')
       case 'paid_liquidity_unsold_cooldown':
         return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldCooldown')
+      case 'paid_stock_gate':
+        return t('rebalanceCenter.overview.scanReasonPaidStockGate')
+      case 'discovery_queued':
+        return t('rebalanceCenter.overview.scanReasonDiscoveryQueued')
+      case 'would_discover':
+        return t('rebalanceCenter.overview.scanReasonDiscoveryQueued')
       case 'paid_liquidity_inventory_unavailable':
         return t('rebalanceCenter.overview.scanReasonInventoryUnavailable')
       case 'paid_liquidity_unsold_penalty':
@@ -1578,6 +1620,12 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonTargetStructuralCooldown')
       case 'paid_liquidity_unsold_cooldown':
         return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldCooldown')
+      case 'paid_stock_gate':
+        return t('rebalanceCenter.overview.scanReasonPaidStockGate')
+      case 'discovery_queued':
+        return t('rebalanceCenter.overview.scanReasonDiscoveryQueued')
+      case 'would_discover':
+        return t('rebalanceCenter.overview.scanReasonDiscoveryQueued')
       case 'paid_liquidity_inventory_unavailable':
         return t('rebalanceCenter.overview.scanReasonInventoryUnavailable')
       case 'paid_liquidity_unsold_penalty':
@@ -1660,6 +1708,23 @@ export default function RebalanceCenter() {
         {decision.keepalive_refill && (
           <span>{t('rebalanceCenter.autopilot.keepaliveRefill', { value: formatSats(decision.amount_sat) })}</span>
         )}
+        {decision.stock_allowed_sat !== undefined && (
+          <span>
+            {t('rebalanceCenter.autopilot.stockGate', {
+              unsold: formatSats(decision.stock_unsold_sat ?? 0),
+              allowed: formatSats(decision.stock_allowed_sat)
+            })}
+          </span>
+        )}
+        {decision.discovery && (
+          <span>
+            {t('rebalanceCenter.autopilot.discovery', {
+              step: decision.discovery_step ?? 1,
+              ppm: decision.discovery_fee_cap_ppm ?? 0,
+              value: formatSats(decision.amount_sat)
+            })}
+          </span>
+        )}
         {decision.recent_rebalance_sent_sat ? (
           <span>
             {t('rebalanceCenter.autopilot.unsoldPayback', {
@@ -1676,7 +1741,7 @@ export default function RebalanceCenter() {
     const reasons = overview.last_scan_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length > 0) {
-      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_structural_cooldown', 'paid_liquidity_unsold_cooldown', 'paid_liquidity_unsold_penalty', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'expected_profit_below_min', 'cycle_limit', 'cooldown_probe_not_sovereign', 'route_dead_opportunity_below_floor', 'low_success_opportunity_below_floor', 'budget_efficiency_below_floor', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_structural_cooldown', 'paid_liquidity_unsold_cooldown', 'paid_liquidity_unsold_penalty', 'paid_stock_gate', 'discovery_queued', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'expected_profit_below_min', 'cycle_limit', 'cooldown_probe_not_sovereign', 'route_dead_opportunity_below_floor', 'low_success_opportunity_below_floor', 'budget_efficiency_below_floor', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
       entries.sort((a, b) => {
         const ai = ordered.indexOf(a[0])
         const bi = ordered.indexOf(b[0])
@@ -1710,7 +1775,7 @@ export default function RebalanceCenter() {
     const reasons = overview.last_manual_restart_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length === 0) return ''
-    const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'target_cooldown', 'target_structural_cooldown', 'paid_liquidity_unsold_cooldown', 'paid_liquidity_unsold_penalty', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+    const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'target_cooldown', 'target_structural_cooldown', 'paid_liquidity_unsold_cooldown', 'paid_liquidity_unsold_penalty', 'paid_stock_gate', 'discovery_queued', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
     entries.sort((a, b) => {
       const ai = ordered.indexOf(a[0])
       const bi = ordered.indexOf(b[0])
@@ -2830,6 +2895,36 @@ export default function RebalanceCenter() {
                 />
               </div>
               <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.stockGateMinStockPct')}>
+                  {t('rebalanceCenter.settings.stockGateMinStockPct')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  max={50}
+                  step={1}
+                  disabled={config.scheduler_mode === 'rules_auto' || !config.stock_gate_enabled}
+                  value={config.stock_gate_min_stock_pct}
+                  onChange={(e) => setConfig({ ...config, stock_gate_min_stock_pct: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.stockGateCoverDays')}>
+                  {t('rebalanceCenter.settings.stockGateCoverDays')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={0}
+                  max={14}
+                  step={1}
+                  disabled={config.scheduler_mode === 'rules_auto' || !config.stock_gate_enabled}
+                  value={config.stock_gate_cover_days}
+                  onChange={(e) => setConfig({ ...config, stock_gate_cover_days: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
                 <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignExplorationSlotPct')}>
                   {t('rebalanceCenter.settings.sovereignExplorationSlotPct')}
                 </label>
@@ -2870,6 +2965,15 @@ export default function RebalanceCenter() {
                   onChange={(e) => setConfig({ ...config, keepalive_refill_enabled: e.target.checked })}
                 />
                 <span>{t('rebalanceCenter.settings.keepaliveRefillEnabled')}</span>
+              </label>
+              <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.stockGateEnabled')}>
+                <input
+                  type="checkbox"
+                  checked={config.stock_gate_enabled}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  onChange={(e) => setConfig({ ...config, stock_gate_enabled: e.target.checked })}
+                />
+                <span>{t('rebalanceCenter.settings.stockGateEnabled')}</span>
               </label>
               <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.sovereignBudgetEfficiencyAutofeeAligned')}>
                 <input
@@ -3654,6 +3758,50 @@ export default function RebalanceCenter() {
                       min={1}
                       value={config.fee_ladder_steps}
                       onChange={(e) => setConfig({ ...config, fee_ladder_steps: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.discoverySteps')}>
+                      {t('rebalanceCenter.settings.discoverySteps')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      max={4}
+                      step={1}
+                      value={config.discovery_steps}
+                      onChange={(e) => setConfig({ ...config, discovery_steps: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.discoveryCeilingPct')}>
+                      {t('rebalanceCenter.settings.discoveryCeilingPct')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={110}
+                      max={200}
+                      step={5}
+                      disabled={!config.discovery_steps}
+                      value={config.discovery_ceiling_pct}
+                      onChange={(e) => setConfig({ ...config, discovery_ceiling_pct: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.discoveryDailyBudgetSat')}>
+                      {t('rebalanceCenter.settings.discoveryDailyBudgetSat')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      max={100000}
+                      step={50}
+                      disabled={!config.discovery_steps}
+                      value={config.discovery_daily_budget_sat}
+                      onChange={(e) => setConfig({ ...config, discovery_daily_budget_sat: Number(e.target.value) })}
                     />
                   </div>
                   <div className="space-y-2">

@@ -3684,6 +3684,17 @@
     "chanHealStatusUnavailable": "Auto-reparo de canais indisponível.",
     "chanHealSubtitle": "Tenta reconectar peers de canais inativos e reabilita canais desativados localmente.",
     "chanHealTitle": "Auto-reparo de canais",
+    "chanHealRecoveryPolicy": "Peers conectados com canais persistentemente inativos: observar por {{minutes}} min, até 2 tentativas por peer em 24h, separadas por pelo menos 1h. O LND faz a reconexão; o resultado é verificado nos ciclos seguintes.",
+    "chanHealRecoveryAttempts": "Tentativas em 24h: {{count}} / 2",
+    "chanHealRecoveryTitle": "Recuperação de canais",
+    "chanHealRecoveryStates": {
+      "observing": "Observando canais inativos",
+      "verifying": "Aguardando recuperação pelo LND",
+      "recovered": "Canais recuperados",
+      "failed": "Recuperação falhou — verificar manualmente",
+      "exhausted": "Limite de tentativas atingido — verificar manualmente",
+      "cancelled": "Recuperação cancelada com segurança"
+    },
     "macaroonTitle": "Macaroon customizado",
     "macaroonSubtitle": "Gere um macaroon LND customizado com permissões selecionadas.",
     "macaroonLoading": "Carregando permissões de macaroon...",

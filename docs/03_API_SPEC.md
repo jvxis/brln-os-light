@@ -2,6 +2,48 @@
 
 Base URL: https://127.0.0.1:8443
 
+## Channel auto-heal: connected-peer recovery (0.5.41)
+
+`GET/POST /api/lnops/channel/auto-heal` preserve existing fields and POST
+parameters (`enabled`, `interval_sec`). Responses add `recovery_wait_sec` and
+`recovery_peers`: entries contain `pubkey`, `state`, `detail`, `attempts` (UTC
+timestamps), `channel_points` and `verify_until`. States are `observing`,
+`verifying`, `recovered`, `failed`, `exhausted`, `cancelled`. Unused timestamps
+may be the Go zero timestamp. `status` becomes `warn` for failed/exhausted peers.
+
+When auto-heal is enabled, connected peers with only inactive channels are
+observed for 900 seconds by default. The manager environment/secrets setting
+`LND_CHAN_HEAL_RECOVERY_WAIT_SEC` may select 60–86400 seconds (read on manager
+startup; absent/invalid values use 900). This is a persistence threshold, not
+the configurable check interval. Observation resets after process restart,
+disable/re-enable, RPC errors, channel-set changes or a gap over two intervals.
+
+All channels and pending channels are re-read before disconnecting. Any active
+channel, pending HTLC, unsettled balance, missing channel point, non-default
+channel-status flag, pending opening/closing or unknown pending peer blocks the
+action. Uncertain RPC results fail closed. LND still arbitrates concurrent state
+changes; these separate RPC reads cannot form an atomic LND snapshot.
+
+At most one peer is disconnected per cycle, twice per rolling 24h, separated by
+at least one hour. Attempt reservations are written before the disconnect RPC
+to `/var/lib/lightningos/channel-peer-recovery.json` (manager-owned, mode 0600).
+Invalid/unreadable state or a failed reservation write blocks new recovery;
+do not delete the file to reset the safety budget. Observation timestamps are
+not restored; attempt budgets and pending verification survive restart.
+
+The new recovery path never calls ConnectPeer: LND performs reconnection. Its
+peer is excluded from legacy reconnect during verification. Verification runs
+on subsequent auto-heal cycles for up to two check intervals (minimum 120s),
+ending successfully only when all observed channels are active and the peer is
+connected. Changed channel sets or an active sibling cancel further recovery.
+Failures do not escalate to restarts, channel closes or force-closes. Disabling
+auto-heal pauses verification and prevents further recovery disconnects.
+
+Transitions appear in manager logs and the existing auto-heal card. Recovery,
+failure and exhausted-budget events use the existing notification mechanism when
+available (`type=channel`, `action=recovery`, explanatory `memo`). No new route,
+broker permission, LND configuration or separate automation menu is introduced.
+
 ## Application upgrade start failures
 
 `POST /api/app/upgrade/start` retains the `{ "target_version": "..." }` request

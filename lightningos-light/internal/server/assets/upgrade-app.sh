@@ -172,6 +172,14 @@ if [[ -z "$CUTOVER_ONLY_MODE" ]]; then
 fi
 
 LOCK_FILE="/var/lib/lightningos/app-upgrade.lock"
+# Keep the legacy catalog capped at the bridge.
+release_core="${VERSION%%-*}"
+IFS=. read -r major minor patch <<<"$release_core"
+if [[ -z "$CUTOVER_ONLY_MODE" && -n "$VERSION" ]] && (( 10#$major > 0 || 10#$minor > 5 || (10#$minor == 5 && 10#$patch > 40) )); then
+  REPO_URL="${REPO_URL%.git}-updates.git"
+  RELEASE_TAG_API_BASE="${RELEASE_TAG_API_BASE%/releases/tags}-updates/releases/tags"
+fi
+
 PRIVILEGED_BROKER="/usr/local/libexec/lightningos-privileged"
 PRIVILEGED_TMPFILES_CONFIG="/etc/tmpfiles.d/lightningos-privileged.conf"
 GIT_BIN="$(resolve_bin git /usr/bin/git /bin/git)" || die "Required command missing: git"

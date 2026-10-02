@@ -79,3 +79,45 @@ Users do not rerun `install.sh` or either existing-node installer.
 
 Local transport fixtures and unit tests validate routing logic. They do not
 constitute public release/catalog validation before these steps are performed.
+
+## Regression validation — 2026-10-02
+
+Ubuntu 24.04/amd64, native Linux/root, Go 1.26.8: `go test -p 2 ./... -count=1`,
+`go vet -p 2 ./...`, Manager build and shell syntax checks passed. Python's
+three release-destination tests passed. No installer source was changed.
+
+Coverage includes below-bridge/current/future version routing, immutable-only
+selection, draft and wrong-catalog rejection, commit resolution in the same
+repository, absent-catalog fallback and propagation of server failures. A Linux
+test executes the actual helper's source/attestation selection for 0.5.33,
+0.5.40, 0.5.41, 0.5.100 and 1.0.0, plus the empty cutover argument case.
+
+The first integrated catalog attempt correctly discovered 0.5.41, but the
+broker rejected the expanded helper before starting the upgrade: its content
+exceeded the existing 48 KiB protocol bound. A new test serializes the actual
+embedded helper and passes the complete request through `DecodeRequest`; it
+failed before the fix and passed afterward. The selection block was shortened,
+retaining the existing protocol bounds and fixed-repository policy. Commit
+`8bc2c565` includes that correction and the updated helper digest.
+
+The corrected candidate then completed an actual upgrade in the disposable VM:
+
+- Installed catalog-aware 0.5.40 from the pinned reviewed checkout.
+- The unchanged old-client `/releases?per_page=10` endpoint exposed only
+  0.5.40 while the separate catalog simultaneously exposed 0.5.41.
+- The authenticated 0.5.40 Manager selected 0.5.41 and started the real helper
+  through the broker. The helper fetched source and release attestation from
+  the new fixed repository, checked tag/commit/version, prepared Go 1.26.8,
+  built and installed the components, and completed 0.5.41.
+- Post-upgrade status reported current/latest 0.5.41, no further upgrade,
+  no running job and no error. The broker self-test passed. PostgreSQL's
+  activation timestamp and the system Go 1.24.12 were preserved.
+
+The 0.5.41 fixture commit `42a2d363` differs from the reviewed `8bc2c565`
+only in `ui/public/version.txt`. Both repositories and release attestations
+were served solely by the disposable VM's loopback HTTPS fixture. This is
+local integration evidence, not a published release. A stale 0.5.41 tag from
+the previous September fixture initially caused Git's expected tag-clobber
+rejection; only that identified local cache ref was removed before retrying.
+No product fetch/verification rule was weakened. The VM was then restored to
+the PR #211 0.5.40 candidate and the temporary transport removed.

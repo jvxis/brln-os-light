@@ -4073,3 +4073,26 @@ func TestIsTransientApplyError(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyChannelMinPpm(t *testing.T) {
+	// No floor: untouched.
+	if got, apply, raised := applyChannelMinPpm(500, 600, 0, false); got != 500 || apply || raised {
+		t.Fatalf("no floor must be a no-op, got %d %v %v", got, apply, raised)
+	}
+	// Engine wants 700 and the floor is 1000: raise and force apply.
+	if got, apply, raised := applyChannelMinPpm(700, 1250, 1000, true); got != 1000 || !apply || !raised {
+		t.Fatalf("expected raise to floor 1000 with apply, got %d %v %v", got, apply, raised)
+	}
+	// Held (apply=false) but local already above the floor: leave as is.
+	if got, apply, raised := applyChannelMinPpm(700, 1250, 1000, false); got != 700 || apply || raised {
+		t.Fatalf("held channel above floor must stay untouched, got %d %v %v", got, apply, raised)
+	}
+	// Held and local below the floor: raising is a hard constraint, apply anyway.
+	if got, apply, raised := applyChannelMinPpm(800, 800, 1000, false); got != 1000 || !apply || !raised {
+		t.Fatalf("local below floor must be raised even when held, got %d %v %v", got, apply, raised)
+	}
+	// Above the floor: no change.
+	if got, apply, raised := applyChannelMinPpm(1200, 1100, 1000, true); got != 1200 || !apply || raised {
+		t.Fatalf("above floor must not change, got %d %v %v", got, apply, raised)
+	}
+}

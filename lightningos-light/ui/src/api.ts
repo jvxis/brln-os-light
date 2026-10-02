@@ -688,6 +688,7 @@ export const getAutofeeChannels = () => request('/api/lnops/autofee/channels')
 export const updateAutofeeChannels = (payload: {
   apply_all?: boolean
   enabled?: boolean
+  min_ppm?: number
   channel_id?: number
   channel_point?: string
 }) => request('/api/lnops/autofee/channels', { method: 'POST', body: JSON.stringify(payload) })

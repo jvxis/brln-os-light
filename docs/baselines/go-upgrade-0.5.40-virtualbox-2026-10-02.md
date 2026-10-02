@@ -125,5 +125,11 @@ The mandatory bridge still requires a publication arrangement that old,
 already-installed Managers understand. They read the original repository's
 release list directly. Tests against a private transport do not prove behavior
 of a public 0.5.40 release that has not yet been published. The proposed catalog
-change is isolated from PR #211; repository organization awaits the owner's
-choice. No repository, public tag or release was created during this audit.
+change was initially isolated in PR #219. After the owner's follow-up confirming
+the requirement for already-installed old clients, the public updates catalog
+was created with immutable releases enabled and the implementation integrated
+into PR #211. Both public endpoints were checked without authentication: the
+legacy catalog still exposes 0.5.39 as its newest release and the new catalog
+is empty. No version tag or release was published. The final 0.5.40 assembly
+must include the catalog-aware implementation before publication; public bridge
+selection must then be checked. See [the publication sequence](../MANDATORY_0.5.40_CATALOG.md).

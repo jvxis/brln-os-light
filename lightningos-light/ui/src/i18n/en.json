@@ -3684,6 +3684,17 @@
     "chanHealStatusUnavailable": "Channel auto-heal unavailable.",
     "chanHealSubtitle": "Reconnects peers for inactive channels and re-enables locally disabled channels.",
     "chanHealTitle": "Channel auto-heal",
+    "chanHealRecoveryPolicy": "Connected peers with persistently inactive channels: observe for {{minutes}} min, up to 2 recovery attempts per peer in 24h, at least 1h apart. LND handles reconnection; results are checked on subsequent cycles.",
+    "chanHealRecoveryAttempts": "Attempts in 24h: {{count}} / 2",
+    "chanHealRecoveryTitle": "Channel recovery",
+    "chanHealRecoveryStates": {
+      "observing": "Observing inactive channels",
+      "verifying": "Waiting for LND recovery",
+      "recovered": "Channels recovered",
+      "failed": "Recovery failed — review required",
+      "exhausted": "Attempt limit reached — review required",
+      "cancelled": "Recovery cancelled safely"
+    },
     "macaroonTitle": "Custom macaroon",
     "macaroonSubtitle": "Generate a custom LND macaroon with selected permissions.",
     "macaroonLoading": "Loading macaroon permissions...",

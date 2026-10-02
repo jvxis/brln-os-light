@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -249,6 +250,18 @@ func (s *Server) Run() error {
 		s.amboss.Start()
 	}
 	if s.chanHealer != nil {
+		if s.chanHealer.recovery != nil && s.notifier != nil {
+			s.chanHealer.recovery.notify = func(pubkey, state, detail string, at time.Time) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_, err := s.notifier.upsertNotification(ctx, fmt.Sprintf("channel:recovery:%s:%s:%d", pubkey, state, at.UnixNano()), Notification{
+					OccurredAt: at, Type: "channel", Action: "recovery", Direction: "neutral", Status: strings.ToUpper(state), PeerPubkey: pubkey, Memo: detail,
+				})
+				if err != nil {
+					s.logger.Printf("chan-heal: recovery notification failed: %v", err)
+				}
+			}
+		}
 		s.chanHealer.Start()
 	}
 	if s.rebalance != nil {

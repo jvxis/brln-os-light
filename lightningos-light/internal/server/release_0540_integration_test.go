@@ -33,6 +33,9 @@ func TestRelease0540PostgresCompatibility(t *testing.T) {
 	}
 	rb := NewRebalanceService(db, nil, nil)
 	af := &AutofeeService{db: db}
+	if err := (&Notifier{db: db}).ensureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 2; i++ {
 		if err := rb.ensureSchema(ctx); err != nil {
 			t.Fatal(err)
@@ -54,7 +57,8 @@ func TestRelease0540PostgresCompatibility(t *testing.T) {
 	if err := rb.upsertConfig(ctx, rc); err != nil {
 		t.Fatal(err)
 	}
-	got, err = rb.loadConfig(ctx)
+	// Read through a fresh service so this checks persistence, not its cache.
+	got, err = NewRebalanceService(db, nil, nil).loadConfig(ctx)
 	if err != nil || !got.StockGateEnabled || got.StockGateMinStockPct != 12 || got.StockGateCoverDays != 4 || got.DiscoverySteps != 2 || got.DiscoveryCeilingPct != 150 || got.DiscoveryDailyBudgetSat != 300 {
 		t.Fatalf("configuration roundtrip: %+v %v", got, err)
 	}

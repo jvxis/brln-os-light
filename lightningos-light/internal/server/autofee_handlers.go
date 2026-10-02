@@ -163,6 +163,7 @@ func (s *Server) handleAutofeeChannelsGet(w http.ResponseWriter, r *http.Request
 			"channel_id_str": strconv.FormatUint(entry.ChannelID, 10),
 			"channel_point":  entry.ChannelPoint,
 			"enabled":        entry.Enabled,
+			"min_ppm":        entry.MinPpm,
 		})
 	}
 
@@ -182,6 +183,7 @@ func (s *Server) handleAutofeeChannelsPost(w http.ResponseWriter, r *http.Reques
 	var req struct {
 		ApplyAll     bool    `json:"apply_all"`
 		Enabled      *bool   `json:"enabled"`
+		MinPpm       *int    `json:"min_ppm"`
 		ChannelID    *uint64 `json:"channel_id"`
 		ChannelPoint string  `json:"channel_point"`
 	}
@@ -189,8 +191,12 @@ func (s *Server) handleAutofeeChannelsPost(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if req.Enabled == nil {
-		writeError(w, http.StatusBadRequest, "enabled required")
+	if req.Enabled == nil && req.MinPpm == nil {
+		writeError(w, http.StatusBadRequest, "enabled or min_ppm required")
+		return
+	}
+	if req.MinPpm != nil && (*req.MinPpm < 0 || *req.MinPpm > autofeeChannelMinPpmMax) {
+		writeError(w, http.StatusBadRequest, "min_ppm must be between 0 and 10000")
 		return
 	}
 
@@ -198,6 +204,10 @@ func (s *Server) handleAutofeeChannelsPost(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 
 	if req.ApplyAll {
+		if req.Enabled == nil {
+			writeError(w, http.StatusBadRequest, "apply_all requires enabled")
+			return
+		}
 		if err := svc.SetAllChannelsEnabled(ctx, *req.Enabled); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -214,13 +224,21 @@ func (s *Server) handleAutofeeChannelsPost(w http.ResponseWriter, r *http.Reques
 	if req.ChannelID != nil {
 		channelID = *req.ChannelID
 	}
-	if err := svc.SetChannelEnabled(ctx, channelID, req.ChannelPoint, *req.Enabled); err != nil {
-		if errors.Is(err, errChannelAutomationParked) {
-			writeError(w, http.StatusConflict, err.Error())
+	if req.MinPpm != nil {
+		if err := svc.SetChannelMinPpm(ctx, channelID, req.ChannelPoint, *req.MinPpm); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+	}
+	if req.Enabled != nil {
+		if err := svc.SetChannelEnabled(ctx, channelID, req.ChannelPoint, *req.Enabled); err != nil {
+			if errors.Is(err, errChannelAutomationParked) {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

@@ -38,6 +38,12 @@ export type RebalanceConfig = {
   keepalive_refill_after_hours: number
   keepalive_refill_pct: number
   source_routeability_quarantine_hours: number
+  stock_gate_enabled: boolean
+  stock_gate_min_stock_pct: number
+  stock_gate_cover_days: number
+  discovery_steps: number
+  discovery_ceiling_pct: number
+  discovery_daily_budget_sat: number
   budget_mode: string
   budget_unlimited: boolean
   budget_auto_only: boolean
@@ -156,6 +162,12 @@ export type RebalanceSovereignDecision = {
   unsold_last_paid_at?: string
   inventory_probe?: boolean
   keepalive_refill?: boolean
+  stock_unsold_sat?: number
+  stock_allowed_sat?: number
+  stock_demand_sat?: number
+  discovery?: boolean
+  discovery_step?: number
+  discovery_fee_cap_ppm?: number
   realized_economics_multiplier?: number
 	intent_kind?: string
 	intent_reason?: string

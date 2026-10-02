@@ -102,6 +102,24 @@ validated or ready to merge/release. Complete the missing checks before changing
 that status. Never silently drop a failing test or dismiss a failure as unrelated
 without evidence.
 
+## Release Catalogs: Mandatory 0.5.40 Bridge
+
+Already-installed Managers below 0.5.40 read the original repository's release
+list directly. To preserve the mandatory bridge, 0.5.40 must be the last release
+published in `jvxis/brln-os-light`. Never publish a release above 0.5.40 there,
+including prereleases: old clients do not ignore prereleases.
+
+Publish 0.5.41 and later in `jvxis/brln-os-light-updates`, mirroring the exact
+reviewed source tag/commit and keeping immutable releases enabled. Development,
+issues and PRs remain in the original repository. Use
+`scripts/prepare-release-draft.py` to derive the destination and prepare a draft;
+it does not publish. Source tags alone may also exist in the original repository.
+
+Before publishing 0.5.40, integrate the catalog-aware Manager/helper and validate
+the final release assembly. After publication, verify actual old clients offer
+the bridge. See `docs/MANDATORY_0.5.40_CATALOG.md` for the publication sequence
+and the distinction between completed lab tests and public release validation.
+
 ## Architecture Notes
 
 - Go entry point: `lightningos-light/cmd/lightningos-manager/main.go`.

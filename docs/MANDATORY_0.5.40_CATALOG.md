@@ -1,8 +1,11 @@
-# Mandatory 0.5.40 bridge: catalog proposal
+# Mandatory 0.5.40 upgrade bridge
 
-Status: implementation prepared for review; repository organization awaiting
-the owner's choice. No public repository, tag or release was created by this
-work. The 0.5.40 release itself is still unpublished.
+Status: implementation and native regression tests complete. After the owner
+confirmed that the rule must also apply to already-installed old clients, the
+modern catalog was created at `jvxis/brln-os-light-updates`, with immutable
+releases enabled and a README explaining its purpose. No version tag or release
+has been published there. The 0.5.40 bridge itself remains unpublished and must
+include this implementation before release.
 
 ## Why a client-only condition is insufficient
 
@@ -14,7 +17,7 @@ their behavior before they install it. Prerelease markers do not hide releases
 from these clients. Merely marking 0.5.40 as GitHub's latest release is also
 insufficient because they use the list endpoint.
 
-## Proposed publication arrangement
+## Publication arrangement
 
 - Continue development, issues and PRs in `jvxis/brln-os-light`.
 - Publish 0.5.40 as the last release in that repository's legacy catalog.
@@ -68,13 +71,13 @@ Users do not rerun `install.sh` or either existing-node installer.
 
 ## Publication prerequisites
 
-1. Obtain the owner's choice of catalog organization.
-2. Create the modern public release repository and enable immutable releases.
-3. Merge and validate the catalog-aware Manager/helper into the final 0.5.40
+1. Modern public catalog created; immutable releases verified enabled on
+   2026-10-02. The catalog initially has no releases.
+2. Merge and validate the catalog-aware Manager/helper into the final 0.5.40
    integration branch, alongside the other approved release PRs.
-4. Publish the reviewed immutable 0.5.40 release in the legacy repository.
-5. Confirm with actual old clients that only the bridge is offered.
-6. Prepare 0.5.41 in the modern repository, validate both catalogs, then publish
+3. Publish the reviewed immutable 0.5.40 release in the legacy repository.
+4. Confirm with actual old clients that only the bridge is offered.
+5. Prepare 0.5.41 in the modern repository, validate both catalogs, then publish
    the reviewed draft. Do not publish 0.5.41 in the legacy catalog.
 
 Local transport fixtures and unit tests validate routing logic. They do not

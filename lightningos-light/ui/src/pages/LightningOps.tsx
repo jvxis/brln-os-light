@@ -579,6 +579,7 @@ type AutofeeChannelSetting = {
   channel_id_str?: string
   channel_point?: string
   enabled: boolean
+  min_ppm?: number
 }
 
 type AutofeeEconomicFloorDetail = {
@@ -1271,6 +1272,7 @@ export default function LightningOps() {
   const [autofeeConfig, setAutofeeConfig] = useState<AutofeeConfig | null>(null)
   const [autofeeStatus, setAutofeeStatus] = useState<AutofeeStatus | null>(null)
   const [autofeeSettings, setAutofeeSettings] = useState<Record<string, boolean>>({})
+  const [autofeeChannelMinPpm, setAutofeeChannelMinPpm] = useState<Record<string, number>>({})
   // Sold channels still under an Amboss commitment. Keyed by lowercased channel
   // point, which is the one identifier available before the channel confirms.
   const [magmaCommitments, setMagmaCommitments] = useState<Record<string, MagmaChannelCommitment>>({})
@@ -3387,6 +3389,7 @@ export default function LightningOps() {
     if (autofeeChannelsResult.status === 'fulfilled') {
       const settingsPayload = (autofeeChannelsResult.value as any)?.settings as AutofeeChannelSetting[] | undefined
       const map: Record<string, boolean> = {}
+      const minMap: Record<string, number> = {}
       const keyByChannelID: Record<string, string> = {}
       try {
         const channelsRes = await channelsRequest as any
@@ -3406,15 +3409,18 @@ export default function LightningOps() {
           const pointKey = autofeeChannelKey(entry?.channel_point, entry?.channel_id)
           if (pointKey) {
             map[pointKey] = Boolean(entry.enabled)
+            minMap[pointKey] = Number(entry.min_ppm) || 0
             return
           }
           const id = normalizeAutofeeChannelID(entry?.channel_id_str || entry?.channel_id)
           if (id && keyByChannelID[id]) {
             map[keyByChannelID[id]] = Boolean(entry.enabled)
+            minMap[keyByChannelID[id]] = Number(entry.min_ppm) || 0
           }
         })
       }
       setAutofeeSettings(map)
+      setAutofeeChannelMinPpm(minMap)
     }
     if (autofeeResultsResult.status === 'fulfilled') {
       const payload = autofeeResultsResult.value as any
@@ -4988,6 +4994,17 @@ export default function LightningOps() {
       setAutofeeResults(Array.isArray(payload?.lines) ? payload.lines : [])
       setAutofeeResultItems(Array.isArray(payload?.items) ? payload.items : [])
       setAutofeeResultsStatus('')
+    } catch (err: any) {
+      setAutofeeResultsStatus(err?.message || t('lightningOps.autofeeResultsUnavailable'))
+    }
+  }
+
+  const handleAutofeeChannelMinPpm = async (channel: Channel, minPpm: number) => {
+    const value = Math.max(0, Math.min(10000, Math.round(Number(minPpm) || 0)))
+    const key = autofeeChannelKey(channel.channel_point, channel.channel_id)
+    try {
+      await updateAutofeeChannels({ channel_id: channel.channel_id, channel_point: channel.channel_point, min_ppm: value })
+      if (key) setAutofeeChannelMinPpm((prev) => ({ ...prev, [key]: value }))
     } catch (err: any) {
       setAutofeeResultsStatus(err?.message || t('lightningOps.autofeeResultsUnavailable'))
     }
@@ -7878,6 +7895,21 @@ export default function LightningOps() {
                                 handleAutofeeChannelToggle(ch, e.target.checked)
                               }}
                             />
+                            <input
+                              type="number"
+                              min={0}
+                              max={10000}
+                              className="input-field ml-2 inline-block w-20 px-2 py-1 text-xs"
+                              title={t('lightningOps.autofeeMinPpmHint')}
+                              aria-label={t('lightningOps.autofeeMinPpmLabel')}
+                              placeholder={t('lightningOps.autofeeMinPpmLabel')}
+                              defaultValue={autofeeHistoryKey ? (autofeeChannelMinPpm[autofeeHistoryKey] || '') : ''}
+                              onBlur={(e) => {
+                                const next = Number(e.target.value) || 0
+                                const current = autofeeHistoryKey ? (autofeeChannelMinPpm[autofeeHistoryKey] || 0) : 0
+                                if (next !== current) handleAutofeeChannelMinPpm(ch, next)
+                              }}
+                            />
                           </td>
                         </tr>
                         {pendingHtlcOpen && hasPendingHtlcs && (
@@ -8140,6 +8172,21 @@ export default function LightningOps() {
                           </svg>
                         </a>
                         <div className="flex items-center gap-2 text-[11px] text-fog/70">
+                          <input
+                            type="number"
+                            min={0}
+                            max={10000}
+                            className="input-field w-20 px-2 py-1 text-xs"
+                            title={t('lightningOps.autofeeMinPpmHint')}
+                            aria-label={t('lightningOps.autofeeMinPpmLabel')}
+                            placeholder={t('lightningOps.autofeeMinPpmLabel')}
+                            defaultValue={autofeeHistoryKey ? (autofeeChannelMinPpm[autofeeHistoryKey] || '') : ''}
+                            onBlur={(e) => {
+                              const next = Number(e.target.value) || 0
+                              const current = autofeeHistoryKey ? (autofeeChannelMinPpm[autofeeHistoryKey] || 0) : 0
+                              if (next !== current) handleAutofeeChannelMinPpm(ch, next)
+                            }}
+                          />
                           <input
                             type="checkbox"
                             checked={autofeeChecked}

@@ -31,6 +31,25 @@ if [[ "$state_owner" != "0:0:700" ]]; then
   exit 1
 fi
 
+# Validate the complete bundle before stopping transport or restoring anything.
+# A marker without its backup must never silently leave a mixed installation.
+for required in config.yaml manager-ui.tar; do
+  [[ -f "$STATE_ROOT/$required" && ! -L "$STATE_ROOT/$required" ]] || {
+    echo "Privilege rollback bundle is incomplete or unsafe." >&2; exit 1;
+  }
+done
+for name in lightningos-manager.service 30-privilege-hardening.conf lightningos-manager \
+  manager-build-stamp lightningos-privileged lightningos-mesh lightningos-privileged.conf \
+  lightningos-privileged.socket lightningos-privileged@.service auth-enable-sudoers \
+  sudoers lnd-manager-macaroon lnd-manager-state; do
+  if [[ -e "$STATE_ROOT/$name.existed" || -L "$STATE_ROOT/$name.existed" ]]; then
+    [[ -f "$STATE_ROOT/$name.existed" && ! -L "$STATE_ROOT/$name.existed" \
+      && -f "$STATE_ROOT/$name" && ! -L "$STATE_ROOT/$name" ]] || {
+      echo "Privilege rollback backup is missing or unsafe: $name" >&2; exit 1;
+    }
+  fi
+done
+
 restore_file() {
   local backup="$1"
   local target="$2"
@@ -95,9 +114,44 @@ restore_lnd_manager_credential_boundary() {
   fi
 }
 
-if systemctl is-active --quiet lightningos-privileged.socket 2>/dev/null \
+# A credential that existed before this attempt remains valid: revoking its
+# root key and then restoring its bytes would silently break LND authentication.
+if [[ ! -f "$STATE_ROOT/lnd-manager-state.existed" ]] \
+  && systemctl is-active --quiet lightningos-privileged.socket 2>/dev/null \
   && [[ -x "$MANAGER_BIN" && ! -L "$MANAGER_BIN" ]]; then
   runuser -u lightningos -- "$MANAGER_BIN" lnd-manager-credential-rollback >/dev/null 2>&1 || true
+fi
+
+# Legacy rollback bundles have no broker. Preserve a healthy recovery-capable
+# broker as a complete transport (binary, tmpfiles and both units), rather than
+# leaving a broker-only Manager unable to retry. Existing brokers are restored
+# together with their matching Manager, exactly as before.
+retain_broker=0
+if [[ ! -e "$STATE_ROOT/lightningos-privileged.existed" ]]; then
+  recovery_files_ok=1
+  for recovery_path in "$BROKER_BIN" "$TMPFILES_PATH" "$SOCKET_UNIT" "$BROKER_UNIT"; do
+    if [[ ! -f "$recovery_path" || -L "$recovery_path" ]]; then
+      recovery_files_ok=0
+      break
+    fi
+    recovery_metadata="$(stat -c '%u:%g:%a' "$recovery_path")"
+    if [[ ! "$recovery_metadata" =~ ^0:0:([0-7]{3,4})$ ]] \
+      || (( (8#${BASH_REMATCH[1]} & 0022) != 0 )); then
+      recovery_files_ok=0
+      break
+    fi
+  done
+  if [[ "$recovery_files_ok" == 1 && -x "$BROKER_BIN" ]] \
+    && systemctl is-active --quiet lightningos-privileged.socket; then
+    recovery_response="$(printf '%s\n' '{"version":1,"request_id":"rollback_recovery_self_test","operation":"self_test","params":{}}' \
+      | env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$BROKER_BIN" 2>/dev/null || true)"
+    if [[ "$recovery_response" == *'"request_id":"rollback_recovery_self_test"'* \
+      && "$recovery_response" == *'"ok":true'* \
+      && "$recovery_response" == *'"ready":true'* \
+      && "$recovery_response" == *'"upgrade_recovery":true'* ]]; then
+      retain_broker=1
+    fi
+  fi
 fi
 
 systemctl stop lightningos-privileged.socket >/dev/null 2>&1 || true
@@ -108,13 +162,15 @@ restore_or_remove "lightningos-manager.service" "$SERVICE_PATH"
 restore_or_remove "30-privilege-hardening.conf" "$DROPIN_PATH"
 restore_or_remove "lightningos-manager" "$MANAGER_BIN"
 restore_or_remove "manager-build-stamp" "$BUILD_STAMP"
-restore_or_remove "lightningos-privileged" "$BROKER_BIN"
+if [[ "$retain_broker" == 0 ]]; then
+  restore_or_remove "lightningos-privileged" "$BROKER_BIN"
+  restore_or_remove "lightningos-privileged.conf" "$TMPFILES_PATH"
+  restore_or_remove "lightningos-privileged.socket" "$SOCKET_UNIT"
+  restore_or_remove "lightningos-privileged@.service" "$BROKER_UNIT"
+fi
 if [[ -f "$STATE_ROOT/mesh-snapshot" && ! -L "$STATE_ROOT/mesh-snapshot" ]]; then
   restore_or_remove "lightningos-mesh" /usr/local/libexec/lightningos-mesh
 fi
-restore_or_remove "lightningos-privileged.conf" "$TMPFILES_PATH"
-restore_or_remove "lightningos-privileged.socket" "$SOCKET_UNIT"
-restore_or_remove "lightningos-privileged@.service" "$BROKER_UNIT"
 restore_or_remove "auth-enable-sudoers" "$AUTH_SUDOERS_PATH"
 if [[ -f "$STATE_ROOT/manager-ui.tar" && ! -L "$STATE_ROOT/manager-ui.tar" && -d /opt/lightningos/ui && ! -L /opt/lightningos/ui ]]; then
   find /opt/lightningos/ui -mindepth 1 -depth -delete
@@ -162,8 +218,26 @@ if [[ -f "$STATE_ROOT/socket-active" && ! -L "$STATE_ROOT/socket-active" ]] \
 else
   systemctl stop lightningos-privileged.socket >/dev/null 2>&1 || true
 fi
+recovery_ready=1
+if [[ "$retain_broker" == 1 ]]; then
+  if ! systemctl enable --now lightningos-privileged.socket \
+    || ! runuser -u "$manager_user" -- "$MANAGER_BIN" broker-self-test; then
+    recovery_ready=0
+    echo "The restored Manager cannot reach the recovery broker; see docs/UPGRADE_RECOVERY.md." >&2
+  fi
+  # Root-only informational marker; never a substitute for a transport check.
+  [[ ! -L "$STATE_ROOT/broker-recovery-pending" ]] || exit 1
+  : > "$STATE_ROOT/broker-recovery-pending"
+  if [[ "$recovery_ready" == 1 ]]; then
+    echo "Recovery broker retained. Resolve the reported prerequisite failure and retry the upgrade."
+  fi
+fi
 systemctl restart lightningos-manager
 systemctl is-active --quiet lightningos-manager
 wait_manager_ready
-restore_or_remove "rollback-command" "$ROLLBACK_BIN"
+# Keep this recovery-aware helper: an old updater may call rollback again from
+# its EXIT trap, or reuse the legacy bundle on a subsequent attempt.
+[[ ! -L "$STATE_ROOT/transaction-state" ]] || exit 1
+printf '%s\n' rolled_back > "$STATE_ROOT/transaction-state"
+[[ "$recovery_ready" == 1 ]] || exit 1
 echo "LightningOS privilege cutover rolled back. Bitcoin, wallet, channel, and app data were preserved."

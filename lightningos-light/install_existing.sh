@@ -17,10 +17,13 @@ if [[ ! -r "$ARTIFACT_VERIFY_SCRIPT" ]]; then
 fi
 source "$ARTIFACT_VERIFY_SCRIPT"
 
-GO_VERSION="1.24.12"
-GO_ARTIFACT="go${GO_VERSION}.linux-amd64.tar.gz"
-GO_TARBALL_URL="https://go.dev/dl/${GO_ARTIFACT}"
-GO_TARBALL_SHA256="bddf8e653c82429aea7aec2520774e79925d4bb929fe20e67ecc00dd5af44c50"
+GO_PREPARE_SCRIPT="$REPO_ROOT/scripts/prepare-go-toolchain.sh"
+if [[ ! -r "$GO_PREPARE_SCRIPT" || -L "$GO_PREPARE_SCRIPT" ]]; then
+  echo "Missing or unsafe Go preparation library: $GO_PREPARE_SCRIPT" >&2
+  exit 1
+fi
+source "$GO_PREPARE_SCRIPT"
+
 NODE_VERSION="24"
 NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
 NODESOURCE_KEY_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
@@ -379,41 +382,9 @@ fix_lightningos_storage_permissions() {
 }
 
 install_go() {
-  print_step "Installing Go ${GO_VERSION}"
-  local go_bin
-  go_bin=$(detect_go_binary || true)
-  if [[ -n "$go_bin" ]]; then
-    local current major minor
-    current=$("$go_bin" version | awk '{print $3}' | sed 's/go//')
-    major=$(echo "$current" | cut -d. -f1)
-    minor=$(echo "$current" | cut -d. -f2)
-    if [[ "$major" -gt 1 || ( "$major" -eq 1 && "$minor" -ge 24 ) ]]; then
-      export PATH="/usr/local/go/bin:$PATH"
-      print_ok "Go already installed ($current)"
-      return
-    fi
-  fi
-
-  local tmp archive
-  tmp=$(mktemp -d)
-  archive="$tmp/$GO_ARTIFACT"
-  if ! lightningos_download_verified_artifact "$GO_TARBALL_URL" "$archive" "$GO_TARBALL_SHA256" "Go ${GO_VERSION} linux-amd64"; then
-    rm -rf -- "$tmp"
-    return 1
-  fi
-  if ! tar -tzf "$archive" >/dev/null 2>&1; then
-    rm -rf -- "$tmp"
-    print_warn "Verified Go archive is not a valid gzip tarball"
-    return 1
-  fi
-  rm -rf /usr/local/go
-  if ! tar -C /usr/local -xzf "$archive"; then
-    rm -rf -- "$tmp"
-    return 1
-  fi
-  rm -rf -- "$tmp"
-  export PATH="/usr/local/go/bin:$PATH"
-  print_ok "Go installed"
+  print_step "Preparing the release Go toolchain"
+  lightningos_prepare_go "$REPO_ROOT"
+  print_ok "Go toolchain ready"
 }
 
 install_node() {
@@ -455,18 +426,6 @@ EOF
   apt-get update
   apt-get install -y nodejs >/dev/null
   print_ok "Node.js installed"
-}
-
-detect_go_binary() {
-  if command -v go >/dev/null 2>&1; then
-    command -v go
-    return 0
-  fi
-  if [[ -x /usr/local/go/bin/go ]]; then
-    echo "/usr/local/go/bin/go"
-    return 0
-  fi
-  return 1
 }
 
 install_gotty() {
@@ -653,28 +612,7 @@ resolve_data_dir() {
 }
 
 ensure_go() {
-  local go_ok="0"
-  local go_bin
-  go_bin=$(detect_go_binary || true)
-  if [[ -n "$go_bin" ]]; then
-    export PATH="$(dirname "$go_bin"):$PATH"
-    local current major minor
-    current=$("$go_bin" version | awk '{print $3}' | sed 's/go//')
-    major=$(echo "$current" | cut -d. -f1)
-    minor=$(echo "$current" | cut -d. -f2)
-    if [[ "$major" -gt 1 || ( "$major" -eq 1 && "$minor" -ge 24 ) ]]; then
-      go_ok="1"
-    fi
-  fi
-  if [[ "$go_ok" != "1" ]]; then
-    print_warn "Go 1.24+ required"
-    if prompt_yes_no "Install Go ${GO_VERSION} now?" "y"; then
-      install_go
-    else
-      print_warn "Go is required to build the manager"
-      exit 1
-    fi
-  fi
+  install_go
 }
 
 ensure_node() {

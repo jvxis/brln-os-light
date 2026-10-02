@@ -2,6 +2,16 @@
 
 Base URL: https://127.0.0.1:8443
 
+## Application upgrade start failures
+
+`POST /api/app/upgrade/start` retains the `{ "target_version": "..." }` request
+and existing success response. A missing/unreachable privileged broker now returns
+HTTP `503` in the normal error envelope, explaining that no upgrade started and
+pointing to [manual upgrade recovery](UPGRADE_RECOVERY.md). Other broker start
+failures return `500` and direct the operator to the Manager service journal;
+there may be no log from the upgrade process if that process never started.
+Underlying transport errors and credential contents are not returned to the UI.
+
 ## Auth
 - Session auth with secure HTTP-only cookie when `features.enable_login=true`.
 - Public auth endpoints:
@@ -472,6 +482,15 @@ Body:
 - Parking a channel disables Autofee for that channel, disables rebalance auto and manual restart, and excludes the channel as a rebalance source.
 - Unparking with `restore_previous=false` keeps Autofee and rebalance automations disabled until the operator explicitly enables them again.
 
+### AutoFee per-channel settings
+
+GET /api/lnops/autofee/channels
+POST /api/lnops/autofee/channels
+- Since 0.5.40, settings include `min_ppm` (integer 0-10000; 0 disables the operator floor).
+- A single-channel update accepts `enabled`, `min_ppm`, or both, identified by `channel_id` or `channel_point`. Setting only the floor preserves an existing enabled/disabled setting; a missing setting is created enabled.
+- `apply_all` still requires `enabled` and only changes enabled state, not per-channel floors.
+- The floor applies to AutoFee outbound decisions and can override a hold/cooldown when the current fee is below it. It does not enable AutoFee globally or change manual fee updates.
+
 ### AutoFee results and refresh auditing
 
 GET /api/lnops/autofee/config
@@ -837,6 +856,8 @@ POST /api/reports/reconciliation
 
 GET /api/rebalance/config
 POST /api/rebalance/config
+- Since 0.5.40, optional stock controls are `stock_gate_enabled` (default false), `stock_gate_min_stock_pct` (1-50, default 10), and `stock_gate_cover_days` (0-14, default 3). Sovereign decisions can expose `stock_unsold_sat`, `stock_allowed_sat`, `stock_demand_sat` and reason `paid_stock_gate`.
+- Optional discovery controls are `discovery_steps` (0-4, default 0/off), `discovery_ceiling_pct` (110-200, default 150), and `discovery_daily_budget_sat` (0-100000, default 300; 0 disables discovery). Discovery uses a separate daily fee budget and requires the delegated fast path plus an eligible long-drained refill intent. Decisions can expose `discovery`, `discovery_step`, `discovery_fee_cap_ppm` and reason `discovery_queued` or `would_discover` in shadow mode.
 - Since 0.5.38, `source_routeability_quarantine_hours` (integer 1-48, default 6) controls the source routeability observation window, quarantine duration, and per-target keepalive failure backoff. It is distinct from target-to-source liquidity quarantine.
 - Since 0.5.36, optional configuration updates include `daily_budget_min_sat` (0–10,000,000, default 0), an absolute floor for the revenue-derived daily budget, and `daily_budget_base_days` (7–30, default 7), the revenue averaging window.
 - `sovereign_budget_efficiency_autofee_aligned` (default false) optionally caps the required budget-efficiency ratio at the ratio attainable at the AutoFee economic floor. The overview exposes `sovereign_budget_efficiency_effective_ratio` and `sovereign_budget_efficiency_aligned_ceiling`.
@@ -858,6 +879,7 @@ POST /api/rebalance/run/preview
 
 POST /api/rebalance/run
 - Starts an operator-triggered Manual Rebal In.
+- Returns HTTP 409 with an explanatory message if the channel already has a queued or running rebalance job.
 - Accepts the same optional `amount_sat` and `fee_limit_ppm` fields as the preview endpoint. Explicit values override global amount/fee mechanics for this job only and do not persist to the channel, Rebalance config, or AutoFee.
 - Without overrides, behavior remains unchanged: the job uses the current deficit capped by `max_amount_sat` and derives its fee cap from `fee_limit_ppm` or outgoing policy × effective economic ratio.
 - One-job overrides cannot be combined with `auto_restart`.

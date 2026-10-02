@@ -51,6 +51,75 @@ openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
   -out configs/tls/server.crt
 ```
 
+## Regression Testing (Mandatory)
+
+Every change must include regression validation appropriate to its impact. A new
+feature working is not sufficient: previously supported behavior must continue
+to work, including callers and workflows that share the changed code.
+
+Before editing, identify the affected workflows, their existing behavior and
+the relevant tests. Run a baseline when behavior is changing; distinguish
+pre-existing failures from regressions introduced by the change. After editing,
+run the focused regression checks and the broader checks required for the
+affected subsystem. Documentation-only changes still require checking the
+affected commands, paths, links and claims against the implementation; do not
+add artificial tests merely to assert documentation text.
+
+For bug fixes, reproduce the failure and add a focused regression test where
+feasible. Demonstrate that it fails for the original bug and passes after the
+fix. Test observable behavior and preserved invariants, rather than copying the
+implementation into a test or weakening assertions to make a change pass.
+
+Required coverage for installation and upgrade changes:
+
+- Validate first installation with `install.sh`, first LOS installation on an
+  existing node with `install_existing.sh`, and the corresponding arm64 path
+  with `install_existing_pi.sh` whenever their shared code or requirements change.
+- Validate internal UI upgrades separately, starting from the supported old
+  installation and its actual updater. Running a new helper against an old
+  source checkout does not validate the old updater's transition.
+- Cover the affected existing-state scenarios: absent/present prerequisites,
+  existing configuration and services, legacy layouts, repeated execution,
+  interrupted/failed steps, retry and rollback. Preserve node data, permissions
+  and unrelated services.
+- Use disposable Linux environments for privileged integration tests. Windows
+  unit tests, shell text assertions, cross-compilation and mocked fixtures are
+  useful checks but do not replace actual Linux installation/upgrade validation.
+  Cross-compilation alone does not validate native arm64 behavior.
+- Do not use production nodes or funds-bearing services as regression fixtures.
+
+For backend changes, run the relevant tests plus `go test ./...` and
+`go vet ./...` as applicable. For frontend changes, run `npm run build` and
+exercise the affected user flows and shared components. For cross-layer changes,
+validate both sides and their integration. A successful build alone is not a
+functional regression test.
+
+Every PR must report the scenarios tested, platform/architecture, baseline,
+commands/results and remaining gaps. Skipped tests are not passed tests.
+If critical affected workflows have not been exercised, keep the PR in draft
+and explicitly list the missing validation; do not describe it as fully
+validated or ready to merge/release. Complete the missing checks before changing
+that status. Never silently drop a failing test or dismiss a failure as unrelated
+without evidence.
+
+## Release Catalogs: Mandatory 0.5.40 Bridge
+
+Already-installed Managers below 0.5.40 read the original repository's release
+list directly. To preserve the mandatory bridge, 0.5.40 must be the last release
+published in `jvxis/brln-os-light`. Never publish a release above 0.5.40 there,
+including prereleases: old clients do not ignore prereleases.
+
+Publish 0.5.41 and later in `jvxis/brln-os-light-updates`, mirroring the exact
+reviewed source tag/commit and keeping immutable releases enabled. Development,
+issues and PRs remain in the original repository. Use
+`scripts/prepare-release-draft.py` to derive the destination and prepare a draft;
+it does not publish. Source tags alone may also exist in the original repository.
+
+Before publishing 0.5.40, integrate the catalog-aware Manager/helper and validate
+the final release assembly. After publication, verify actual old clients offer
+the bridge. See `docs/MANDATORY_0.5.40_CATALOG.md` for the publication sequence
+and the distinction between completed lab tests and public release validation.
+
 ## Architecture Notes
 
 - Go entry point: `lightningos-light/cmd/lightningos-manager/main.go`.

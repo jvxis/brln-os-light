@@ -20,6 +20,8 @@ const (
 	BrokerSocketPath     = "/run/lightningos-privileged/broker.sock"
 )
 
+var ErrBrokerUnavailable = errors.New("privileged broker connection failed")
+
 type Mode string
 
 const (
@@ -1487,7 +1489,7 @@ func (transport *SocketTransport) Do(ctx context.Context, request Request) (Resp
 	}
 	connection, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
 	if err != nil {
-		return response, fmt.Errorf("privileged broker connection failed: %w", err)
+		return response, fmt.Errorf("%w: %w", ErrBrokerUnavailable, err)
 	}
 	defer connection.Close()
 	if deadline, ok := ctx.Deadline(); ok {

@@ -52,6 +52,12 @@ type rebalanceConfigPayload struct {
 	KeepaliveRefillAfterHours              *int     `json:"keepalive_refill_after_hours,omitempty"`
 	KeepaliveRefillPct                     *float64 `json:"keepalive_refill_pct,omitempty"`
 	SourceRouteabilityQuarantineHours      *int     `json:"source_routeability_quarantine_hours,omitempty"`
+	StockGateEnabled                       *bool    `json:"stock_gate_enabled,omitempty"`
+	StockGateMinStockPct                   *float64 `json:"stock_gate_min_stock_pct,omitempty"`
+	StockGateCoverDays                     *int     `json:"stock_gate_cover_days,omitempty"`
+	DiscoverySteps                         *int     `json:"discovery_steps,omitempty"`
+	DiscoveryCeilingPct                    *int     `json:"discovery_ceiling_pct,omitempty"`
+	DiscoveryDailyBudgetSat                *int64   `json:"discovery_daily_budget_sat,omitempty"`
 	BudgetMode                             *string  `json:"budget_mode,omitempty"`
 	BudgetUnlimited                        *bool    `json:"budget_unlimited,omitempty"`
 	BudgetAutoOnly                         *bool    `json:"budget_auto_only,omitempty"`
@@ -432,6 +438,24 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	if payload.SourceRouteabilityQuarantineHours != nil {
 		cfg.SourceRouteabilityQuarantineHours = *payload.SourceRouteabilityQuarantineHours
 	}
+	if payload.StockGateEnabled != nil {
+		cfg.StockGateEnabled = *payload.StockGateEnabled
+	}
+	if payload.StockGateMinStockPct != nil {
+		cfg.StockGateMinStockPct = *payload.StockGateMinStockPct
+	}
+	if payload.StockGateCoverDays != nil {
+		cfg.StockGateCoverDays = *payload.StockGateCoverDays
+	}
+	if payload.DiscoverySteps != nil {
+		cfg.DiscoverySteps = *payload.DiscoverySteps
+	}
+	if payload.DiscoveryCeilingPct != nil {
+		cfg.DiscoveryCeilingPct = *payload.DiscoveryCeilingPct
+	}
+	if payload.DiscoveryDailyBudgetSat != nil {
+		cfg.DiscoveryDailyBudgetSat = *payload.DiscoveryDailyBudgetSat
+	}
 	if payload.BudgetMode != nil {
 		cfg.BudgetMode = *payload.BudgetMode
 	}
@@ -707,6 +731,21 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 		return err
 	}
 	if err := validateOptionalInt("source_routeability_quarantine_hours", payload.SourceRouteabilityQuarantineHours, sourceRouteabilityHoursMin, sourceRouteabilityHoursMax); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("stock_gate_min_stock_pct", payload.StockGateMinStockPct, stockGateMinStockPctMin, stockGateMinStockPctMax); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("stock_gate_cover_days", payload.StockGateCoverDays, 0, stockGateCoverDaysMax); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("discovery_steps", payload.DiscoverySteps, 0, discoveryStepsMax); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("discovery_ceiling_pct", payload.DiscoveryCeilingPct, discoveryCeilingPctMin, discoveryCeilingPctMax); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("discovery_daily_budget_sat", payload.DiscoveryDailyBudgetSat, 0, discoveryDailyBudgetSatMax); err != nil {
 		return err
 	}
 	if payload.BudgetMode != nil && normalizeRebalanceBudgetMode(*payload.BudgetMode) != strings.TrimSpace(strings.ToLower(*payload.BudgetMode)) {
@@ -1133,6 +1172,10 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, errChannelAutomationParked), errors.Is(err, errManualRestartCooldown), errors.Is(err, errManualBudgetExhausted), errors.Is(err, errManualBudgetInsufficient):
 			writeError(w, http.StatusConflict, err.Error())
+		case err.Error() == "channel busy":
+			// Not a server fault: the operator asked for a second job on a channel
+			// that already has one queued or running. Say so instead of a raw 500.
+			writeError(w, http.StatusConflict, "channel busy: this channel already has a rebalance job queued or running; wait for it to finish before starting another")
 		default:
 			writeError(w, http.StatusInternalServerError, err.Error())
 		}

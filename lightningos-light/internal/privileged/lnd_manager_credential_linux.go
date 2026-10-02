@@ -27,6 +27,15 @@ func (manager *NativeLNDManagerCredentialManager) ensure(ctx context.Context, ma
 	}
 	adminMetadata, adminPresent, err := inspectLNDManagerFile(manager.adminPath, lndUID, lndGID, 0o600, 0o640)
 	if err != nil {
+		var fileError lndCredentialFileError
+		if errors.As(err, &fileError) {
+			switch fileError {
+			case "mode":
+				return LNDManagerCredentialState{}, lndCredentialError("admin_macaroon_mode")
+			case "owner":
+				return LNDManagerCredentialState{}, lndCredentialError("admin_macaroon_owner")
+			}
+		}
 		return LNDManagerCredentialState{}, err
 	}
 	if !adminPresent {
@@ -42,13 +51,18 @@ func (manager *NativeLNDManagerCredentialManager) ensure(ctx context.Context, ma
 		return LNDManagerCredentialState{}, err
 	}
 	if recordPresent != credentialPresent {
-		return LNDManagerCredentialState{}, errors.New("LND manager credential transaction is incomplete")
+		return LNDManagerCredentialState{}, lndCredentialError("transaction_incomplete")
 	}
 	if configuredPath == manager.credentialPath && !recordPresent {
-		return LNDManagerCredentialState{}, errors.New("configured LND manager credential has no trusted state")
+		return LNDManagerCredentialState{}, lndCredentialError("transaction_incomplete")
 	}
 	if configuredPath != manager.adminPath && configuredPath != manager.credentialPath {
-		return LNDManagerCredentialState{}, errors.New("configured LND macaroon path is unsupported")
+		return LNDManagerCredentialState{}, lndCredentialError("macaroon_path_unsupported")
+	}
+	if recordPresent {
+		if err := validateLNDManagerMigrationRecord(record, manager, lndUID, lndGID); err != nil {
+			return LNDManagerCredentialState{}, lndCredentialError("transaction_incomplete")
+		}
 	}
 
 	changed := configuredPath != manager.credentialPath || os.FileMode(adminMetadata.Mode).Perm() != 0o600 || !recordPresent || (recordPresent && record.Phase != "committed")
@@ -114,7 +128,7 @@ func (manager *NativeLNDManagerCredentialManager) ensure(ctx context.Context, ma
 		return LNDManagerCredentialState{}, errors.New("LND manager credential disappeared")
 	}
 	if err := manager.rpc.Verify(ctx, manager.credentialPath, record.RootKeyID); err != nil {
-		return LNDManagerCredentialState{}, errors.New("LND manager credential verification failed")
+		return LNDManagerCredentialState{}, lndCredentialError("rpc_failed")
 	}
 	if _, err := manager.config.SetLNDMacaroonPath(ctx, manager.credentialPath, false); err != nil {
 		return LNDManagerCredentialState{}, err
@@ -230,7 +244,10 @@ func inspectLNDManagerFile(path string, uid, gid int, modes ...os.FileMode) (uni
 	if err := unix.Fstat(fd, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG {
 		return unix.Stat_t{}, false, errors.New("LND manager credential file is unsafe")
 	}
-	if stat.Uid != uint32(uid) || stat.Gid != uint32(gid) || stat.Size < 1 || stat.Size > maxLNDManagerCredentialBytes {
+	if stat.Uid != uint32(uid) || stat.Gid != uint32(gid) {
+		return unix.Stat_t{}, false, lndCredentialFileError("owner")
+	}
+	if stat.Size < 1 || stat.Size > maxLNDManagerCredentialBytes {
 		return unix.Stat_t{}, false, errors.New("LND manager credential metadata is unsafe")
 	}
 	modeOK := false
@@ -241,7 +258,7 @@ func inspectLNDManagerFile(path string, uid, gid int, modes ...os.FileMode) (uni
 		}
 	}
 	if !modeOK {
-		return unix.Stat_t{}, false, errors.New("LND manager credential mode is unsafe")
+		return unix.Stat_t{}, false, lndCredentialFileError("mode")
 	}
 	return stat, true, nil
 }

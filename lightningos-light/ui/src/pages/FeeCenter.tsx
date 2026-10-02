@@ -89,6 +89,7 @@ type AutofeeChannelSetting = {
   channel_id_str?: string
   channel_point?: string
   enabled?: boolean
+  min_ppm?: number
 }
 
 type AutofeeEconomicFloorDetail = {

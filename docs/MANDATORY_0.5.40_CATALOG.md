@@ -1,0 +1,126 @@
+# Mandatory 0.5.40 upgrade bridge
+
+Status: implementation and native regression tests complete. After the owner
+confirmed that the rule must also apply to already-installed old clients, the
+modern catalog was created at `jvxis/brln-os-light-updates`, with immutable
+releases enabled and a README explaining its purpose. No version tag or release
+has been published there. The 0.5.40 bridge itself remains unpublished and must
+include this implementation before release.
+
+## Why a client-only condition is insufficient
+
+Managers already shipped through 0.5.39 call
+`https://api.github.com/repos/jvxis/brln-os-light/releases?per_page=10` and
+select the first non-draft release with a recognized tag. They do not read a
+minimum-version field. A condition added to the 0.5.40 binary cannot change
+their behavior before they install it. Prerelease markers do not hide releases
+from these clients. Merely marking 0.5.40 as GitHub's latest release is also
+insufficient because they use the list endpoint.
+
+## Publication arrangement
+
+- Continue development, issues and PRs in `jvxis/brln-os-light`.
+- Publish 0.5.40 as the last release in that repository's legacy catalog.
+  Keep it available permanently. Never publish a later release there.
+- Publish 0.5.41 and later in `jvxis/brln-os-light-updates`, with release
+  immutability enabled before the first publication. Mirror the exact source
+  tag/commit there so existing source verification also binds the immutable
+  release to its source tree. This is not a separately maintained codebase.
+- Source tags may also exist in the development repository. A tag alone is
+  not an entry in the releases list consumed by old clients.
+
+The distinction between catalogs must be part of every future publication.
+The release preparation script derives the destination from the version and
+creates drafts only; publishing still requires review of the release contents.
+
+With a clean checkout and an existing reviewed source tag:
+
+```sh
+# Read-only destination/source check; no remote mutation.
+python3 scripts/prepare-release-draft.py --tag 0.5.41-Beta --notes-file release-notes.md
+# After review and repository setup, push that tag and create a draft only.
+python3 scripts/prepare-release-draft.py --tag 0.5.41-Beta --notes-file release-notes.md --execute
+```
+
+Use the actual release notes path. The script refuses a source-version mismatch
+or a destination with release immutability disabled. It never force-pushes tags,
+changes a branch or publishes a release.
+
+## Client behavior
+
+| Installed version | Catalog consulted | Offered version |
+| --- | --- | --- |
+| Published old Manager, e.g. 0.5.33 or 0.5.39 | Legacy repository, unchanged code | 0.5.40, because no newer releases are published there |
+| Updated Manager reporting a version below 0.5.40 | Legacy catalog capped at 0.5.40 | Highest published immutable version through the bridge |
+| 0.5.40 or later | Modern catalog | Highest published immutable version after 0.5.40 |
+| 0.5.40 while modern catalog is absent or empty | Legacy fallback | 0.5.40, with no upgrade available |
+
+Network, authentication and server errors in the modern catalog are surfaced;
+they do not silently fall back. Cache entries are scoped to the selected catalog
+so an upgrade cannot reuse a previous catalog's discovery result. Upgrade start
+resolves the eligible target again and rejects a different requested version.
+
+The upgrade helper chooses one of the two fixed source/attestation repositories
+from the validated target version. It retains the immutable-release, exact tag,
+commit, source version, root-owned source and helper-digest checks. There is no
+caller-supplied repository URL.
+
+The existing first-install bootstrap still enters through the legacy 0.5.40
+release; the newly installed Manager then offers modern releases internally.
+Users do not rerun `install.sh` or either existing-node installer.
+
+## Publication prerequisites
+
+1. Modern public catalog created; immutable releases verified enabled on
+   2026-10-02. The catalog initially has no releases.
+2. Merge and validate the catalog-aware Manager/helper into the final 0.5.40
+   integration branch, alongside the other approved release PRs.
+3. Publish the reviewed immutable 0.5.40 release in the legacy repository.
+4. Confirm with actual old clients that only the bridge is offered.
+5. Prepare 0.5.41 in the modern repository, validate both catalogs, then publish
+   the reviewed draft. Do not publish 0.5.41 in the legacy catalog.
+
+Local transport fixtures and unit tests validate routing logic. They do not
+constitute public release/catalog validation before these steps are performed.
+
+## Regression validation — 2026-10-02
+
+Ubuntu 24.04/amd64, native Linux/root, Go 1.26.8: `go test -p 2 ./... -count=1`,
+`go vet -p 2 ./...`, Manager build and shell syntax checks passed. Python's
+three release-destination tests passed. No installer source was changed.
+
+Coverage includes below-bridge/current/future version routing, immutable-only
+selection, draft and wrong-catalog rejection, commit resolution in the same
+repository, absent-catalog fallback and propagation of server failures. A Linux
+test executes the actual helper's source/attestation selection for 0.5.33,
+0.5.40, 0.5.41, 0.5.100 and 1.0.0, plus the empty cutover argument case.
+
+The first integrated catalog attempt correctly discovered 0.5.41, but the
+broker rejected the expanded helper before starting the upgrade: its content
+exceeded the existing 48 KiB protocol bound. A new test serializes the actual
+embedded helper and passes the complete request through `DecodeRequest`; it
+failed before the fix and passed afterward. The selection block was shortened,
+retaining the existing protocol bounds and fixed-repository policy. Commit
+`8bc2c565` includes that correction and the updated helper digest.
+
+The corrected candidate then completed an actual upgrade in the disposable VM:
+
+- Installed catalog-aware 0.5.40 from the pinned reviewed checkout.
+- The unchanged old-client `/releases?per_page=10` endpoint exposed only
+  0.5.40 while the separate catalog simultaneously exposed 0.5.41.
+- The authenticated 0.5.40 Manager selected 0.5.41 and started the real helper
+  through the broker. The helper fetched source and release attestation from
+  the new fixed repository, checked tag/commit/version, prepared Go 1.26.8,
+  built and installed the components, and completed 0.5.41.
+- Post-upgrade status reported current/latest 0.5.41, no further upgrade,
+  no running job and no error. The broker self-test passed. PostgreSQL's
+  activation timestamp and the system Go 1.24.12 were preserved.
+
+The 0.5.41 fixture commit `42a2d363` differs from the reviewed `8bc2c565`
+only in `ui/public/version.txt`. Both repositories and release attestations
+were served solely by the disposable VM's loopback HTTPS fixture. This is
+local integration evidence, not a published release. A stale 0.5.41 tag from
+the previous September fixture initially caused Git's expected tag-clobber
+rejection; only that identified local cache ref was removed before retrying.
+No product fetch/verification rule was weakened. The VM was then restored to
+the PR #211 0.5.40 candidate and the temporary transport removed.

@@ -338,6 +338,7 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 		return map[string]any{
 			"protocol_version": ProtocolVersion,
 			"ready":            true,
+			"upgrade_recovery": true,
 		}, "", nil
 	case OperationServiceStatus:
 		var params ServiceStatusParams
@@ -658,7 +659,8 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			state, err = broker.LNDManagerCredential.Rollback(ctx, request.DryRun)
 		}
 		if err != nil {
-			return nil, "lnd_manager_credential_failed", errors.New("LND manager credential operation failed")
+			code, message := LNDManagerCredentialDiagnostic(err)
+			return nil, code, errors.New(message)
 		}
 		return state, "", nil
 	case OperationAppLifecycle:

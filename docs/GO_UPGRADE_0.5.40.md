@@ -67,6 +67,11 @@ the full old-version -> 0.5.40 -> 0.5.41 path have been validated.
 
 ## Validation
 
+The original [Dependabot review plan](DEPENDABOT_REVIEW_PLAN_2026-09-28.md)
+records the initial analysis and the 0.5.40/0.5.41 delivery split. Its dated
+checklists are historical; the execution results and current exceptions below
+take precedence when assessing this PR.
+
 Run `go test ./...` and `go vet ./...` from `lightningos-light/`. On Linux,
 `TestGoToolchainPreparationFixtures` executes the real preparation functions
 with local fake archives and a substituted downloader. The same fixture is
@@ -101,5 +106,49 @@ Validation performed for this PR on 2026-09-28:
   standard-library smoke program. No installed compiler or application was
   replaced. Manager, broker socket and LND remained active.
 
-Full privileged installation, native arm64 execution and the UI upgrade chain
-have not been exercised by these checks and remain release gates.
+Those initial checks did not exercise privileged installation or the installed
+old-updater transition. Subsequent disposable VirtualBox validation on
+2026-09-30 exercised real systemd installation/recovery, the installed 0.5.39
+Manager's authenticated API upgrade/failure/retry, and a following upgrade
+requiring Go 1.26. See the [integration report](baselines/go-upgrade-0.5.40-virtualbox-2026-09-30.md)
+for exact baselines, transport fixtures, harness corrections and remaining
+release gates. A second pristine Ubuntu/amd64 clone passed its first complete
+`install.sh` invocation and independent permission/authentication/broker/database
+checks without manual repair. Browser login/dashboard checks passed on the disposable node and
+LOS-TEST2; confirmation/cancel/error rendering passed with explicitly scoped
+browser fixtures. Native arm64 execution was explicitly waived by the owner on
+2026-09-30 for this delivery; it is not a passed test. Initialized-wallet
+convergence and a successful upgrade observed in the browser were pending in
+that September baseline. The [October 2 follow-up](baselines/go-upgrade-0.5.40-virtualbox-2026-10-02.md)
+completed the installed 0.5.33 browser transition and the assisted LOS-TEST2
+upgrade, with real restricted-credential verification/reuse and preserved
+LND/PostgreSQL processes. It also documents the root archive permission fix and
+its red/green Linux regression. Public mandatory-bridge publication remains
+separate from those completed installation checks.
+The owner explicitly requested opening PR #211 for review on 2026-09-30. This
+changes the draft status only; the remaining validation/release gates are not
+waived and must be addressed before merge/release.
+
+### Existing-node installer parity review — 2026-09-30
+
+Compared both installer changes against `agent/0.5.40-release`. All added lines
+in `install_existing.sh` and `install_existing_pi.sh` are identical. Their Go
+library-loading block, `install_go`, `ensure_go` and Manager cutover orchestration
+match. Both use the shared preparer and preserve the system Go. The preparer
+selects `linux-arm64` and its separate pinned checksum for `aarch64`/`arm64`.
+Pi-specific architecture checks, GoTTY artifact and PostgreSQL SSD handling remain
+intact. No installer code change was needed for this review.
+
+On the disposable Ubuntu/amd64 VM with Go 1.26.8, `bash -n` passed for both
+installers and the shared preparer. The 23 selected top-level regression tests
+passed, including both installers' first-install/existing-state/failure cutover
+fixtures, shared Go preparation and authenticated artifact handling:
+
+```bash
+go test -p 2 ./internal/server -run 'Test(Installer|Installers|ExistingInstaller|ExistingInstallers|InstallAndUpgrade|ManagedInstaller|GoToolchainPreparation|BridgeRelease|AppUpgradePreparesGo)' -count=1 -v
+```
+
+Installer/preparer hashes matched the reviewed checkout; the policy content
+matched after Windows CRLF normalization. These checks establish parity for the
+changes in this PR and exercise Linux fixtures; they do not claim native ARM
+installation or upgrade execution. No further RPi4 access was made for this review.

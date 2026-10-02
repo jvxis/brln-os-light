@@ -12,6 +12,25 @@ import (
 )
 
 func main() {
+	// The authenticated upgrade checkout runs this candidate binary as root
+	// before replacing any installed binary/unit. It does not need a broker
+	// socket and performs no credential writes or LND RPCs.
+	if len(os.Args) == 2 && os.Args[1] == "--check-lnd-manager-credential" {
+		if os.Geteuid() != 0 {
+			os.Stderr.WriteString("LND credential preflight requires root\n")
+			os.Exit(1)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		manager := privileged.NewNativeLNDManagerCredentialManager(
+			privileged.NewAtomicConfigFiles(privileged.DefaultManagerConfigPath), &privileged.ExecCommandRunner{})
+		if _, err := manager.Ensure(ctx, true); err != nil {
+			code, message := privileged.LNDManagerCredentialDiagnostic(err)
+			os.Stderr.WriteString(code + ": " + message + "\n")
+			os.Exit(1)
+		}
+		return
+	}
 	if filepath.Base(os.Args[0]) == "lightningos-mesh" {
 		if os.Geteuid() == 0 {
 			os.Exit(1)

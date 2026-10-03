@@ -577,6 +577,9 @@ type RebalanceOverview struct {
 	SovereignSellThroughSlow7d          float64                       `json:"sovereign_sellthrough_slow_7d"`
 	SovereignSellThroughWindowHours     int                           `json:"sovereign_sellthrough_window_hours"`
 	SovereignSellThroughSlowWindowHours int                           `json:"sovereign_sellthrough_slow_window_hours"`
+	SovereignSellThroughMature7d        float64                       `json:"sovereign_sellthrough_mature_7d"`
+	SovereignSellThroughMatureJobs7d    int64                         `json:"sovereign_sellthrough_mature_jobs_7d"`
+	SovereignSellThroughToDate7d        float64                       `json:"sovereign_sellthrough_to_date_7d"`
 	SovereignJobs7d                     int64                         `json:"sovereign_jobs_7d"`
 	SovExploreJobs7d                    int64                         `json:"sovereign_exploration_jobs_7d"`
 	SovExploreShare7d                   float64                       `json:"sovereign_exploration_share_7d"`
@@ -1479,6 +1482,18 @@ type rebalanceAutopilotEconomics7d struct {
 	ForwardFeeSlowPpm    int64
 	RealizedNetSlowSat   int64
 	SellThroughSlow      float64
+	// "Maduro": so lotes cuja janela de atribuicao ja fechou. SellThrough
+	// puro poe no denominador lotes comprados ha minutos, que ainda nao
+	// tiveram tempo de vender, e por isso le baixo demais logo depois de
+	// uma rajada de compras.
+	MatureJobCount           int64
+	MatureRebalanceAmountSat int64
+	MatureForwardAmountSat   int64
+	SellThroughMature        float64
+	// "Ate hoje": forward atribuido sem janela; venda depois da janela
+	// slow-seller continua contando.
+	ForwardAmountToDateSat int64
+	SellThroughToDate      float64
 	// Janelas usadas (vindas da config/UI), pra label dos indicadores.
 	AttributionWindowHours int
 	SlowSellerWindowHours  int
@@ -15362,6 +15377,14 @@ func sovereignAutopilotEconomicsFromSnapshot(snapshot sovereignAttributionSnapsh
 	var forwardFeeMsat int64
 	var forwardSlowSat int64
 	var forwardSlowFeeMsat int64
+	var matureJobs int64
+	var matureSentSat int64
+	var matureForwardSat int64
+	var forwardToDateSat int64
+	now := snapshot.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
 	for _, lot := range snapshot.Lots {
 		if lot.TriggerReason != rebalanceSovereignReason || lot.CompletedAt.Before(snapshot.MetricSince) {
 			continue
@@ -15378,28 +15401,42 @@ func sovereignAutopilotEconomicsFromSnapshot(snapshot sovereignAttributionSnapsh
 		slow := snapshot.Slow[lot.JobID]
 		forwardSlowSat += slow.ForwardAmountSat
 		forwardSlowFeeMsat += slow.ForwardFeeMsat
+		forwardToDateSat += snapshot.ToDate[lot.JobID].ForwardAmountSat
+		if !lot.CompletedAt.Add(time.Duration(attributionHours) * time.Hour).After(now) {
+			matureJobs++
+			matureSentSat += lot.SentSat
+			matureForwardSat += fast.ForwardAmountSat
+		}
 	}
 	forwardFeeSat := forwardFeeMsat / 1000
 	forwardSlowFeeSat := forwardSlowFeeMsat / 1000
 	result := rebalanceAutopilotEconomics7d{
-		JobCount:               jobCount,
-		RebalanceAmountSat:     sentSat,
-		RebalanceCostSat:       costSat,
-		RebalanceCostPpm:       satToPpm(costSat, sentSat),
-		ForwardAmountSat:       forwardSat,
-		ForwardFeeSat:          forwardFeeSat,
-		ForwardFeePpm:          satToPpm(forwardFeeSat, forwardSat),
-		RealizedNetSat:         forwardFeeSat - costSat,
-		ForwardAmountSlowSat:   forwardSlowSat,
-		ForwardFeeSlowSat:      forwardSlowFeeSat,
-		ForwardFeeSlowPpm:      satToPpm(forwardSlowFeeSat, forwardSlowSat),
-		RealizedNetSlowSat:     forwardSlowFeeSat - costSat,
-		AttributionWindowHours: attributionHours,
-		SlowSellerWindowHours:  slowHours,
+		JobCount:                 jobCount,
+		RebalanceAmountSat:       sentSat,
+		RebalanceCostSat:         costSat,
+		RebalanceCostPpm:         satToPpm(costSat, sentSat),
+		ForwardAmountSat:         forwardSat,
+		ForwardFeeSat:            forwardFeeSat,
+		ForwardFeePpm:            satToPpm(forwardFeeSat, forwardSat),
+		RealizedNetSat:           forwardFeeSat - costSat,
+		ForwardAmountSlowSat:     forwardSlowSat,
+		ForwardFeeSlowSat:        forwardSlowFeeSat,
+		ForwardFeeSlowPpm:        satToPpm(forwardSlowFeeSat, forwardSlowSat),
+		RealizedNetSlowSat:       forwardSlowFeeSat - costSat,
+		MatureJobCount:           matureJobs,
+		MatureRebalanceAmountSat: matureSentSat,
+		MatureForwardAmountSat:   matureForwardSat,
+		ForwardAmountToDateSat:   forwardToDateSat,
+		AttributionWindowHours:   attributionHours,
+		SlowSellerWindowHours:    slowHours,
 	}
 	if sentSat > 0 {
 		result.SellThrough = float64(forwardSat) / float64(sentSat)
 		result.SellThroughSlow = float64(forwardSlowSat) / float64(sentSat)
+		result.SellThroughToDate = float64(forwardToDateSat) / float64(sentSat)
+	}
+	if matureSentSat > 0 {
+		result.SellThroughMature = float64(matureForwardSat) / float64(matureSentSat)
 	}
 	return result
 }
@@ -16003,6 +16040,9 @@ where report_date >= current_date - interval '6 days'
 		SovereignSellThroughSlow7d:          sovereignEconomics7d.Total.SellThroughSlow,
 		SovereignSellThroughWindowHours:     sovereignEconomics7d.Total.AttributionWindowHours,
 		SovereignSellThroughSlowWindowHours: sovereignEconomics7d.Total.SlowSellerWindowHours,
+		SovereignSellThroughMature7d:        sovereignEconomics7d.Total.SellThroughMature,
+		SovereignSellThroughMatureJobs7d:    sovereignEconomics7d.Total.MatureJobCount,
+		SovereignSellThroughToDate7d:        sovereignEconomics7d.Total.SellThroughToDate,
 		SovereignJobs7d:                     sovereignEconomics7d.Total.JobCount,
 		SovExploreJobs7d:                    sovereignEconomics7d.Exploration.JobCount,
 		SovExploreShare7d:                   sovereignExplorationShare7d,

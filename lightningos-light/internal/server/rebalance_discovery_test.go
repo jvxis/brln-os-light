@@ -136,6 +136,15 @@ func TestDiscoveryAmountIsTheOperatorMinimum(t *testing.T) {
 	if got := sovereignDiscoveryAmount(cfg, RebalanceChannel{TargetAmountSat: 2_000_000}); got != 50_000 {
 		t.Fatalf("lowering the minimum lowers the probe, got %d", got)
 	}
+	// A 1,000-sat probe measures base fees, not the route: the floor holds.
+	cfg.MinAmountSat = 1_000
+	cfg.MinExecuteSat = 1_000
+	if got := sovereignDiscoveryAmount(cfg, RebalanceChannel{TargetAmountSat: 2_000_000}); got != sovereignDiscoveryMinAmountSat {
+		t.Fatalf("the probe must not go below %d sats, got %d", sovereignDiscoveryMinAmountSat, got)
+	}
+	if got := sovereignDiscoveryAmount(cfg, RebalanceChannel{TargetAmountSat: 15_000}); got != 0 {
+		t.Fatalf("a deficit below the floor cannot be probed, got %d", got)
+	}
 }
 
 func TestDiscoveryJobIdentityAndReasons(t *testing.T) {
@@ -223,6 +232,9 @@ func TestDiscoveryNeverQueuesWithoutKnownState(t *testing.T) {
 			tg.AutomationIntent = &AutomationIntent{Kind: automationIntentKindRefillTarget, ReasonCode: "autofee_drained_target", FirstSeenAt: now.Add(-time.Hour)}
 		}},
 		"discovery off": {sovereignTargetStructuralCooldownReason, func(_ *sovereignDiscoveryRun, _ *rebalanceTarget, c *RebalanceConfig) { c.DiscoverySteps = 0 }},
+		"parallel channels": {sovereignTargetStructuralCooldownReason, func(_ *sovereignDiscoveryRun, tg *rebalanceTarget, _ *RebalanceConfig) {
+			tg.PeerHasParallelChannels = true
+		}},
 	} {
 		r := known()
 		tg := target

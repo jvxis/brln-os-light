@@ -5028,12 +5028,16 @@ type rebalanceTarget struct {
 	// ExplorationSlot marks targets promoted via the epsilon-greedy
 	// exploration mechanism. These bypassed the score sort to give a
 	// historically-deprioritized candidate a chance to be tried.
-	ExplorationSlot   bool
-	AutomationIntent  *AutomationIntent
-	IntentApplied     bool
-	IntentShadow      bool
-	IntentScoreBefore int64
-	IntentScoreAfter  int64
+	ExplorationSlot bool
+	// PeerHasParallelChannels: the peer has another channel with us. The
+	// delegated fast path cannot pin the incoming channel then, so a
+	// discovery probe (fast path only) would be skipped before trying.
+	PeerHasParallelChannels bool
+	AutomationIntent        *AutomationIntent
+	IntentApplied           bool
+	IntentShadow            bool
+	IntentScoreBefore       int64
+	IntentScoreAfter        int64
 }
 
 type rebalanceAutoScanCandidateInput struct {
@@ -5264,18 +5268,19 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			score = expectedGain - estimatedCost
 		}
 		plan.Candidates = append(plan.Candidates, rebalanceTarget{
-			Channel:            snapshot,
-			ExpectedGainSat:    expectedGain,
-			EstimatedCostSat:   estimatedCost,
-			BudgetCostSat:      budgetCost,
-			ExpectedROI:        expectedROI,
-			ExpectedROIValid:   roiValid,
-			Score:              score,
-			LastAutoAt:         input.LastAutoByTarget[snapshot.ChannelID],
-			PairStats:          pairStats,
-			StructuralCooldown: input.SovereignStructuralCooldowns[snapshot.ChannelID],
-			UnsoldLiquidity:    input.SovereignUnsoldLiquidity[snapshot.ChannelID],
-			TargetClass:        classifySovereignTarget(pairStats, input.Cfg),
+			Channel:                 snapshot,
+			ExpectedGainSat:         expectedGain,
+			EstimatedCostSat:        estimatedCost,
+			BudgetCostSat:           budgetCost,
+			ExpectedROI:             expectedROI,
+			ExpectedROIValid:        roiValid,
+			Score:                   score,
+			LastAutoAt:              input.LastAutoByTarget[snapshot.ChannelID],
+			PairStats:               pairStats,
+			StructuralCooldown:      input.SovereignStructuralCooldowns[snapshot.ChannelID],
+			UnsoldLiquidity:         input.SovereignUnsoldLiquidity[snapshot.ChannelID],
+			TargetClass:             classifySovereignTarget(pairStats, input.Cfg),
+			PeerHasParallelChannels: rebalancePeerHasParallelChannels(snapshot, input.Channels),
 		})
 		if !plan.TopScoreSet || score > plan.TopScore {
 			plan.TopScore = score

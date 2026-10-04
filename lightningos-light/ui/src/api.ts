@@ -571,9 +571,39 @@ export const getLnMacaroonOptions = () =>
   request('/api/lnops/macaroon/options') as Promise<LnMacaroonOptions>
 export const bakeLnMacaroon = (payload: BakeLnMacaroonPayload) =>
   request('/api/lnops/macaroon/bake', { method: 'POST', body: JSON.stringify(payload) }) as Promise<LnMacaroonBakeResult>
-export const getLnChanHeal = () => request('/api/lnops/channel/auto-heal')
+export type ChanHealRecoveryPeer = {
+  pubkey: string
+  state: 'observing' | 'verifying' | 'recovered' | 'failed' | 'exhausted' | 'cancelled'
+  detail: string
+  attempts: string[]
+  verify_until?: string
+  channel_points?: string[]
+}
+export type ChanHealRecoveryStatus = {
+  recovery_wait_sec?: number
+  recovery_peers?: ChanHealRecoveryPeer[]
+}
+export type ChanHealResponse = ChanHealRecoveryStatus & {
+  enabled: boolean
+  status: string
+  interval_sec: number
+  last_ok_at?: string
+  last_attempt_at?: string
+  last_error?: string
+  last_error_at?: string
+  last_updated?: number
+  last_reconnect_attempted?: number
+  last_reconnected?: number
+  last_reconnect_failed?: number
+  last_reconnect_details?: {
+    alias?: string; pubkey?: string; pubkey_short?: string; channel_points?: string[]
+    status?: string; socket?: string; sockets?: string[]; error_summary?: string; raw_error?: string
+    socket_attempts?: { socket?: string; network?: string; status?: string; error_summary?: string; raw_error?: string }[]
+  }[]
+}
+export const getLnChanHeal = () => request('/api/lnops/channel/auto-heal') as Promise<ChanHealResponse>
 export const updateLnChanHeal = (payload: { enabled?: boolean; interval_sec?: number }) =>
-  request('/api/lnops/channel/auto-heal', { method: 'POST', body: JSON.stringify(payload) })
+  request('/api/lnops/channel/auto-heal', { method: 'POST', body: JSON.stringify(payload) }) as Promise<ChanHealResponse>
 export const getLnHtlcManager = () => request('/api/lnops/channel/htlc-manager')
 export const updateLnHtlcManager = (payload: {
   enabled?: boolean

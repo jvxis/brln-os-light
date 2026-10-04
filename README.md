@@ -1,5 +1,13 @@
 # LightningOS
 
+## Latest release and official repository
+
+[**Latest LightningOS release**](https://github.com/jvxis/brln-os-light-updates/releases/latest)
+
+The official project remains [jvxis/brln-os-light](https://github.com/jvxis/brln-os-light): source code, `main`, development branches, issues and pull requests stay here. The [updates repository](https://github.com/jvxis/brln-os-light-updates/releases) is only the release catalog for versions **0.5.41 and later**, with the exact reviewed source tag/commit mirrored for download and verification; it is not an independently developed fork.
+
+Releases in this repository stop at **0.5.40** to preserve the mandatory upgrade bridge for older installations. This does not mean the project or its source code stopped receiving updates. Nodes below 0.5.40 must upgrade to 0.5.40 first; from there, the UI discovers subsequent releases in the updates catalog. Keep using this repository for installation instructions, development and support.
+
 > [!IMPORTANT]
 > LightningOS is a local node-control plane and is **not designed for direct public Internet exposure**. Run it only on a trusted LAN or through a private VPN such as Tailscale, behind a host or network firewall. Never forward port `8443` or App Store ports from the public Internet. The installers restrict `8443` to the detected LAN and `tailscale0` only when UFW is already installed and active; they do not enable UFW automatically. Always verify `sudo ufw status` or provide an equivalent external firewall before using the node.
 
@@ -1006,7 +1014,10 @@ go test ./internal/server -run TestValidateAppRegistry
 
 ## Changelog
 Release-by-release notes are tracked in GitHub Releases:
-- https://github.com/jvxis/brln-os-light/releases
+
+- [Latest release](https://github.com/jvxis/brln-os-light-updates/releases/latest)
+- [Releases from 0.5.41 onward](https://github.com/jvxis/brln-os-light-updates/releases)
+- [Historical releases through 0.5.40](https://github.com/jvxis/brln-os-light/releases)
 
 ## Development
 See `DEVELOPMENT.md` for local dev setup and build instructions.

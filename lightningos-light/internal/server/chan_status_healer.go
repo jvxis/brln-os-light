@@ -34,6 +34,8 @@ type chanStatusHealPayload struct {
 	LastReconnected        int                       `json:"last_reconnected,omitempty"`
 	LastReconnectFailed    int                       `json:"last_reconnect_failed,omitempty"`
 	LastReconnectDetails   []chanHealReconnectDetail `json:"last_reconnect_details,omitempty"`
+	RecoveryWaitSec        int                       `json:"recovery_wait_sec"`
+	RecoveryPeers          []chanRecoveryPeer        `json:"recovery_peers,omitempty"`
 }
 
 type chanHealReconnectDetail struct {
@@ -74,8 +76,11 @@ type chanHealRunStats struct {
 }
 
 type ChanStatusHealer struct {
-	lnd    chanStatusLND
-	logger *log.Logger
+	lnd           chanStatusLND
+	logger        *log.Logger
+	recovery      *chanPeerRecovery
+	recoveryPeers []chanRecoveryPeer
+	recoveryReset bool
 
 	mu                     sync.Mutex
 	enabled                bool
@@ -104,6 +109,7 @@ func NewChanStatusHealer(lnd *lndclient.Client, logger *log.Logger) *ChanStatusH
 		logger:   logger,
 		enabled:  enabled,
 		interval: interval,
+		recovery: newChanPeerRecovery(lnd, logger, chanRecoveryStatePath, readChanRecoveryWait()),
 	}
 }
 
@@ -147,6 +153,9 @@ func (c *ChanStatusHealer) SetEnabled(enabled bool) error {
 	}
 	c.mu.Lock()
 	c.enabled = enabled
+	if !enabled {
+		c.recoveryReset = true
+	}
 	c.mu.Unlock()
 	if enabled {
 		c.trigger()
@@ -188,6 +197,7 @@ func (c *ChanStatusHealer) Snapshot() chanStatusHealPayload {
 	lastReconnected := c.lastReconnected
 	lastReconnectFailed := c.lastReconnectFailed
 	lastReconnectDetails := append([]chanHealReconnectDetail{}, c.lastReconnectDetails...)
+	recoveryPeers := append([]chanRecoveryPeer{}, c.recoveryPeers...)
 	c.mu.Unlock()
 
 	if interval <= 0 {
@@ -211,10 +221,17 @@ func (c *ChanStatusHealer) Snapshot() chanStatusHealPayload {
 			if lastError == "" && lastReconnectFailed > 0 {
 				status = "unreachable"
 			}
+			for _, peer := range recoveryPeers {
+				if peer.State == "failed" || peer.State == "exhausted" {
+					status = "warn"
+					break
+				}
+			}
 		}
 	}
 
 	payload := chanStatusHealPayload{
+		RecoveryPeers:          recoveryPeers,
 		Enabled:                enabled,
 		Status:                 status,
 		IntervalSec:            int(interval.Seconds()),
@@ -223,6 +240,9 @@ func (c *ChanStatusHealer) Snapshot() chanStatusHealPayload {
 		LastReconnected:        lastReconnected,
 		LastReconnectFailed:    lastReconnectFailed,
 		LastReconnectDetails:   lastReconnectDetails,
+	}
+	if c.recovery != nil {
+		payload.RecoveryWaitSec = int(c.recovery.wait.Seconds())
 	}
 	if !lastAttempt.IsZero() {
 		payload.LastAttemptAt = lastAttempt.UTC().Format(time.RFC3339)
@@ -299,7 +319,12 @@ func (c *ChanStatusHealer) tick() {
 	c.lastReconnected = 0
 	c.lastReconnectFailed = 0
 	c.lastReconnectDetails = nil
+	resetRecovery := c.recoveryReset
+	c.recoveryReset = false
 	c.mu.Unlock()
+	if resetRecovery && c.recovery != nil {
+		c.recovery.resetObservation()
+	}
 
 	defer func() {
 		c.mu.Lock()
@@ -311,17 +336,38 @@ func (c *ChanStatusHealer) tick() {
 	channels, err := c.lnd.ListChannels(ctx)
 	cancel()
 	if err != nil {
+		if c.recovery != nil {
+			c.recovery.resetObservation()
+		}
 		c.recordFailure(err, chanHealRunStats{})
 		return
 	}
 
+	blocked := map[string]bool{}
+	var recoveryErr error
+	if c.recovery != nil {
+		var details []chanRecoveryPeer
+		blocked, details, err = c.recovery.step(time.Now().UTC(), c.currentInterval(), channels, func() bool {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			return c.enabled
+		})
+		c.mu.Lock()
+		c.recoveryPeers = details
+		c.mu.Unlock()
+		recoveryErr = err
+	}
 	if len(channels) == 0 {
+		if recoveryErr != nil {
+			c.recordFailure(recoveryErr, chanHealRunStats{})
+			return
+		}
 		c.recordSuccess(chanHealRunStats{})
 		return
 	}
 
 	stats := chanHealRunStats{}
-	var lastErr error
+	lastErr := recoveryErr
 	if hasInactiveReconnectCandidates(channels) {
 		peersCtx, peersCancel := context.WithTimeout(context.Background(), lndRPCTimeout)
 		peers, err := c.lnd.ListPeers(peersCtx)
@@ -343,6 +389,9 @@ func (c *ChanStatusHealer) tick() {
 				}
 				pubkey := normalizeChanHealPubkey(ch.RemotePubkey)
 				if pubkey == "" {
+					continue
+				}
+				if blocked[pubkey] {
 					continue
 				}
 				if _, ok := connected[pubkey]; ok {

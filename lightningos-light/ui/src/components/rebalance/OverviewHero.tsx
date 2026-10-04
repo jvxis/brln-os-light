@@ -108,6 +108,9 @@ export default function OverviewHero({
   const sellThroughSlow = (overview.sovereign_sellthrough_slow_7d ?? 0) * 100
   const sellThroughWindowH = overview.sovereign_sellthrough_window_hours ?? 72
   const sellThroughSlowWindowH = overview.sovereign_sellthrough_slow_window_hours ?? 168
+  const sellThroughMature = (overview.sovereign_sellthrough_mature_7d ?? 0) * 100
+  const sellThroughMatureJobs = overview.sovereign_sellthrough_mature_jobs_7d ?? 0
+  const sellThroughToDate = (overview.sovereign_sellthrough_to_date_7d ?? 0) * 100
 
   // Windowed values for the toggleable gauges (7d ⇄ 30d). Separate from the
   // card values above so the toggle only moves the Health Signals panel.
@@ -378,6 +381,14 @@ export default function OverviewHero({
               tone={sellThroughSlow >= 70 ? 'ok' : sellThroughSlow >= 50 ? 'warn' : 'danger'}
               hint={t('rebalanceCenter.heroes.hintSellThroughSlow')}
             />
+            <p className="text-[11px] text-fog/55" title={t('rebalanceCenter.heroes.hintSellThroughMature')}>
+              {t('rebalanceCenter.heroes.sellThroughMature', {
+                mature: formatPct(sellThroughMature, 1),
+                jobs: sellThroughMatureJobs,
+                hours: sellThroughWindowH,
+                toDate: formatPct(sellThroughToDate, 1)
+              })}
+            </p>
           </div>
           <HealthGauge
             label={t('rebalanceCenter.heroes.gaugePaybackRebal')}

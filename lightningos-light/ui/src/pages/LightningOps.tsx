@@ -387,7 +387,7 @@ type AmbossHealthStatus = {
   consecutive_failures?: number
 }
 
-type ChanHealStatus = {
+type ChanHealStatus = import('../api').ChanHealRecoveryStatus & {
   enabled: boolean
   status: string
   last_ok_at?: string
@@ -10235,6 +10235,19 @@ export default function LightningOps() {
             })}
           </div>
         ) : null}
+        {(chanHeal?.recovery_wait_sec ?? 0) > 0 && (
+          <p className="text-xs text-fog/60">{t('lightningOps.chanHealRecoveryPolicy', { minutes: Math.round((chanHeal?.recovery_wait_sec ?? 900) / 60) })}</p>
+        )}
+        {chanHeal?.recovery_peers?.map(peer => (
+          <div key={peer.pubkey} className="rounded border border-white/10 px-3 py-2 text-xs">
+            <p className="text-fog/80">{peer.pubkey.slice(0, 12)}… — {t(`lightningOps.chanHealRecoveryStates.${peer.state}`)}</p>
+            <p className="text-fog/50">{t('lightningOps.chanHealRecoveryAttempts', { count: peer.attempts.length })}</p>
+            <details className="mt-1 text-fog/50">
+              <summary className="cursor-pointer">{t('lightningOps.chanHealReconnectTechnical')}</summary>
+              <p className="[overflow-wrap:anywhere]">{peer.detail}</p>
+            </details>
+          </div>
+        ))}
         {chanHeal?.last_error && (
           <p className="text-xs text-amber-200">
             {t('lightningOps.chanHealLastError')}: {chanHeal.last_error}

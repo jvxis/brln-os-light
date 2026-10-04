@@ -102,7 +102,11 @@ Quem entra (`maybeQueueSovereignDiscovery`):
 
 Limites fixos:
 
-- Valor = valor mínimo de rebalance (`min_amount_sat`). Nada fixo no código.
+- Valor = valor mínimo de rebalance (`min_amount_sat`), nunca abaixo de 20k sats
+  (0.5.41): abaixo disso a sonda mede base fee, não o preço da rota (1 sat em
+  1.000 sats já são 1.000 ppm).
+- Peer com canal paralelo não entra (0.5.41): o fast-path não consegue fixar o
+  canal de entrada e a sonda só seria pulada, gastando um degrau.
 - 1 sonda por scan e 1 em voo por vez.
 - 1 escada por canal a cada 24h: cada job é um degrau, a escada sobe entre
   scans e para no primeiro sucesso.

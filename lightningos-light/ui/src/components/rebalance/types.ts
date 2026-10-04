@@ -264,6 +264,9 @@ export type RebalanceOverview = {
   sovereign_sellthrough_slow_7d?: number
   sovereign_sellthrough_window_hours?: number
   sovereign_sellthrough_slow_window_hours?: number
+  sovereign_sellthrough_mature_7d?: number
+  sovereign_sellthrough_mature_jobs_7d?: number
+  sovereign_sellthrough_to_date_7d?: number
   sovereign_jobs_7d?: number
   sovereign_exploration_jobs_7d?: number
   sovereign_exploration_share_7d?: number

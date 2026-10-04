@@ -335,7 +335,7 @@ export type AmbossHealthStatus = {
   consecutive_failures?: number
 }
 
-export type ChanHealStatus = {
+export type ChanHealStatus = import('../../api').ChanHealRecoveryStatus & {
   enabled?: boolean
   status?: string
   last_ok_at?: string

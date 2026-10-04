@@ -1206,6 +1206,13 @@ func uniqueStrings(values []string) []string {
 }
 
 func telegramActivityMirrorMessage(evt Notification) string {
+	if evt.Type == "channel" && evt.Action == "recovery" {
+		msg := fmt.Sprintf("Channel recovery: %s | peer %s | %s", evt.Status, shortIdentifier(evt.PeerPubkey), evt.Memo)
+		if len(msg) > 3900 {
+			msg = msg[:3897] + "..."
+		}
+		return msg
+	}
 	typeLabel := telegramNotificationTypeLabel(evt.Type)
 	if evt.Type == "channel" && evt.ChannelPrivate != nil && *evt.ChannelPrivate {
 		typeLabel = "Private channel"

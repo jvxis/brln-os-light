@@ -177,6 +177,8 @@ export default function Notifications() {
         return t('notifications.action.forwarded')
       case 'rebalanced':
         return t('notifications.action.rebalanced')
+      case 'recovery':
+        return t('lightningOps.chanHealRecoveryTitle')
       case 'spending_guard_blocked':
         return t('notifications.action.spendingGuardBlocked')
       default:

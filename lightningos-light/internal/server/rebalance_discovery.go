@@ -30,6 +30,11 @@ const (
 	// One ladder per channel per window, whatever its outcome.
 	sovereignDiscoveryWindow = 24 * time.Hour
 
+	// A probe below this amount measures base fees, not the route price:
+	// 1 sat on 1,000 sats is already 1,000 ppm. Operators with a smaller
+	// min_amount_sat still probe at this floor.
+	sovereignDiscoveryMinAmountSat = int64(20_000)
+
 	sovereignDiscoveryNoRouteJobReason     = "discovery: no route up to "
 	sovereignDiscoveryUnavailableJobReason = "discovery: fast path unavailable"
 )
@@ -130,13 +135,16 @@ func sovereignDiscoveryDrained(target rebalanceTarget, cfg RebalanceConfig, now 
 	return now.Sub(intent.FirstSeenAt) >= time.Duration(hours)*time.Hour
 }
 
-// sovereignDiscoveryAmount is the operator's minimum rebalance amount: nothing
-// fixed in code. Below it the peer's base fee distorts the measured ppm. Zero
-// when the channel's deficit is smaller than that minimum.
+// sovereignDiscoveryAmount is the operator's minimum rebalance amount, never
+// below sovereignDiscoveryMinAmountSat: below that the peer's base fee
+// distorts the measured ppm. Zero when the channel's deficit is smaller.
 func sovereignDiscoveryAmount(cfg RebalanceConfig, channel RebalanceChannel) int64 {
 	amount := effectiveStartAmountSat(cfg)
 	if minimum := effectiveMinExecuteSat(cfg); amount < minimum {
 		amount = minimum
+	}
+	if amount < sovereignDiscoveryMinAmountSat {
+		amount = sovereignDiscoveryMinAmountSat
 	}
 	if amount <= 0 || channel.TargetAmountSat < amount {
 		return 0
@@ -237,6 +245,11 @@ func (s *RebalanceService) maybeQueueSovereignDiscovery(ctx context.Context, dec
 		return false
 	}
 	if !sovereignDiscoveryDrained(target, targetCfg, now) {
+		return false
+	}
+	// The fast path refuses peers with parallel channels (it cannot pin the
+	// incoming channel), so the probe would only be skipped and burn a step.
+	if target.PeerHasParallelChannels {
 		return false
 	}
 	amount := sovereignDiscoveryAmount(targetCfg, target.Channel)

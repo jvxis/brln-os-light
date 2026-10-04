@@ -261,15 +261,24 @@ order by occurred_at, id
 	return lots, forwards, nil
 }
 
+// sovereignAttributionToDateWindow is "ever": long enough that no lot in the
+// metric horizon can age out of it.
+const sovereignAttributionToDateWindow = 365 * 24 * time.Hour
+
 type sovereignAttributionSnapshot struct {
 	MetricSince time.Time
+	Now         time.Time
 	Lots        []rebalanceAttributionLot
 	Fast        map[int64]rebalanceAttributionResult
 	Slow        map[int64]rebalanceAttributionResult
+	// ToDate: forwards attributed with no window, so a lot that sold after
+	// the slow window still counts as sold.
+	ToDate map[int64]rebalanceAttributionResult
 }
 
 func (s *RebalanceService) loadSovereignAttributionSnapshot(ctx context.Context, cfg RebalanceConfig) (sovereignAttributionSnapshot, error) {
-	metricSince := time.Now().Add(-7 * 24 * time.Hour)
+	now := time.Now()
+	metricSince := now.Add(-7 * 24 * time.Hour)
 	fastWindow := time.Duration(sovereignAttributionWindowHoursForConfig(cfg)) * time.Hour
 	slowWindow := time.Duration(sovereignSlowSellerWindowHoursForConfig(cfg)) * time.Hour
 	contextWindow := slowWindow
@@ -282,8 +291,10 @@ func (s *RebalanceService) loadSovereignAttributionSnapshot(ctx context.Context,
 	}
 	return sovereignAttributionSnapshot{
 		MetricSince: metricSince,
+		Now:         now,
 		Lots:        lots,
 		Fast:        attributeRebalanceForwardsFIFO(lots, forwards, fastWindow),
 		Slow:        attributeRebalanceForwardsFIFO(lots, forwards, slowWindow),
+		ToDate:      attributeRebalanceForwardsFIFO(lots, forwards, sovereignAttributionToDateWindow),
 	}, nil
 }

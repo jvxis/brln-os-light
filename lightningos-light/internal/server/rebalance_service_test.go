@@ -1247,6 +1247,39 @@ func TestSovereignExplorationEconomicsAreSeparatedFromTotal(t *testing.T) {
 	}
 }
 
+// Sell-through over every 7d lot reads low right after a burst of purchases:
+// a lot bought minutes ago cannot have sold yet. The mature figure keeps only
+// lots whose attribution window already closed; "to date" keeps a sale that
+// landed after the slow window.
+func TestSovereignSellThroughMatureAndToDate(t *testing.T) {
+	now := time.Date(2026, time.October, 3, 12, 0, 0, 0, time.UTC)
+	snapshot := sovereignAttributionSnapshot{
+		MetricSince: now.Add(-7 * 24 * time.Hour),
+		Now:         now,
+		Lots: []rebalanceAttributionLot{
+			// Mature (bought 6 days ago): sold 90% inside 72h.
+			{JobID: 1, TriggerReason: rebalanceSovereignReason, CompletedAt: now.Add(-6 * 24 * time.Hour), SentSat: 100_000, FeePaidSat: 100},
+			// Mature (bought 5 days ago): nothing in 72h, everything after 168h.
+			{JobID: 2, TriggerReason: rebalanceSovereignReason, CompletedAt: now.Add(-5 * 24 * time.Hour), SentSat: 100_000, FeePaidSat: 100},
+			// Fresh (bought 1h ago): window still open, nothing sold yet.
+			{JobID: 3, TriggerReason: rebalanceSovereignReason, CompletedAt: now.Add(-time.Hour), SentSat: 200_000, FeePaidSat: 200},
+		},
+		Fast:   map[int64]rebalanceAttributionResult{1: {ForwardAmountSat: 90_000, ForwardFeeMsat: 90_000}},
+		Slow:   map[int64]rebalanceAttributionResult{1: {ForwardAmountSat: 90_000, ForwardFeeMsat: 90_000}},
+		ToDate: map[int64]rebalanceAttributionResult{1: {ForwardAmountSat: 90_000, ForwardFeeMsat: 90_000}, 2: {ForwardAmountSat: 100_000, ForwardFeeMsat: 100_000}},
+	}
+	got := sovereignAutopilotEconomicsFromSnapshot(snapshot, 72, 168, false)
+	if got.SellThrough != 0.225 || got.SellThroughSlow != 0.225 {
+		t.Fatalf("plain sell-through must divide by every lot: %+v", got)
+	}
+	if got.MatureJobCount != 2 || got.MatureRebalanceAmountSat != 200_000 || got.SellThroughMature != 0.45 {
+		t.Fatalf("mature sell-through must ignore the fresh lot: %+v", got)
+	}
+	if got.ForwardAmountToDateSat != 190_000 || got.SellThroughToDate != 0.475 {
+		t.Fatalf("to-date must include the sale after the slow window: %+v", got)
+	}
+}
+
 // ExplorationSlot=true must let the autopilot skip the structural_cooldown
 // gate. Without the bypass the only candidate is blocked and nothing runs.
 func TestExecuteSovereignAutopilotExplorationBypassesStructuralCooldown(t *testing.T) {

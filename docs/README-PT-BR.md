@@ -1,4 +1,10 @@
-# LightningOS
+# LightningOS
+
+Upgrade parado na preparação do Go na 0.5.40/0.5.41? Consulte o
+[diagnóstico e recuperação opcional do proprietário legado](GO_PARENT_OWNER_RECOVERY.md#português).
+Se o upgrade funciona normalmente, nenhuma ação é necessária.
+
+
 
 > [!IMPORTANT]
 > O LightningOS é um painel local de controle do node e **não foi projetado para exposição direta à Internet pública**. Use-o somente em uma LAN confiável ou por uma VPN privada, como o Tailscale, sempre protegido por firewall no host ou na rede. Nunca encaminhe a porta `8443` nem as portas da App Store para a Internet. Os instaladores restringem a `8443` à LAN detectada e à interface `tailscale0` somente quando o UFW já está instalado e ativo; eles não ativam o UFW automaticamente. Confirme sempre com `sudo ufw status` ou configure um firewall externo equivalente antes de usar o node.

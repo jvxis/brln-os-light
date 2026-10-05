@@ -102,6 +102,13 @@ def scenario(name, parent_namespace):
             (target / "ui/version.txt").unlink()
             (target / "ui/version.txt").symlink_to(target / "sentinel")
             expected_error = "Too many levels"
+        elif name == "version_fifo":
+            (target / "ui/version.txt").unlink()
+            os.mkfifo(target / "ui/version.txt")
+            expected_error = "small regular file"
+        elif name == "version_big":
+            (target / "ui/version.txt").write_text("0.5.40-Beta" + " " * 100)
+            expected_error = "small regular file"
         elif name == "acl":
             import struct
             # Linux POSIX access ACL: owner rwx, named uid 65534 r-x,
@@ -145,7 +152,8 @@ class RecoveryTests(unittest.TestCase):
     def test_real_filesystem_scenarios(self):
         for name in ("legacy", "healthy", "chown_failure", "foreign_owner", "wrong_group", "writable",
                      "unsafe_ancestor", "unsupported_version", "missing_binary", "symlink",
-                     "ui_symlink", "version_symlink", "acl", "mountpoint", "missing"):
+                     "ui_symlink", "version_symlink", "version_fifo", "version_big",
+                     "acl", "mountpoint", "missing"):
             with self.subTest(name=name):
                 result = subprocess.run(["unshare", "--mount", "--propagation", "private",
                     sys.executable, "-I", str(Path(__file__).resolve()), "--scenario", name,

@@ -1,5 +1,9 @@
 # LightningOS
 
+Upgrade stopped at Go preparation on 0.5.40/0.5.41? See the
+[optional legacy-owner diagnosis and recovery guide](docs/GO_PARENT_OWNER_RECOVERY.md).
+No action is needed when upgrades work normally.
+
 > [!IMPORTANT]
 > LightningOS is a local node-control plane and is **not designed for direct public Internet exposure**. Run it only on a trusted LAN or through a private VPN such as Tailscale, behind a host or network firewall. Never forward port `8443` or App Store ports from the public Internet. The installers restrict `8443` to the detected LAN and `tailscale0` only when UFW is already installed and active; they do not enable UFW automatically. Always verify `sudo ufw status` or provide an equivalent external firewall before using the node.
 

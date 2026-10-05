@@ -74,18 +74,40 @@ lightningos_go_check_module() {
 # Check each existing ancestor before creating or using a managed path. This
 # also refuses a symlink in /opt/lightningos, not just at the final directory.
 lightningos_go_safe_directory() {
-  local path="$1" mode owner
-  [[ "$path" == /* && "$path" != *'/../'* && "$path" != */.. ]] || return 1
+  local path="$1" mode owner display_path expected_owner
+  # Quote paths for single-line diagnostics; never print configuration contents
+  # or attempt to repair an existing installation's ownership/permissions.
+  printf -v display_path '%q' "$path"
+  [[ "$path" == /* && "$path" != *'/../'* && "$path" != */.. ]] || {
+    lightningos_go_error "directory ${display_path}: expected an absolute path without parent traversal"; return 1;
+  }
   if [[ "$path" != / ]]; then
     lightningos_go_safe_directory "$(dirname -- "$path")" || return 1
   fi
-  [[ -d "$path" && ! -L "$path" ]] || return 1
-  owner=$(stat -c '%u' -- "$path") || return 1
-  mode=$(stat -c '%a' -- "$path") || return 1
+  [[ ! -L "$path" ]] || {
+    lightningos_go_error "directory ${display_path}: symbolic links are not allowed"; return 1;
+  }
+  [[ -d "$path" ]] || {
+    lightningos_go_error "directory ${display_path}: directory is missing or is not a directory"; return 1;
+  }
+  owner=$(stat -c '%u' -- "$path" 2>/dev/null) || {
+    lightningos_go_error "directory ${display_path}: unable to read owner UID"; return 1;
+  }
+  mode=$(stat -c '%a' -- "$path" 2>/dev/null) || {
+    lightningos_go_error "directory ${display_path}: unable to read permission mode"; return 1;
+  }
   # Root-owned sticky /tmp is permitted as an ancestor for isolated fixtures.
-  [[ "$owner" == "$EUID" || "$owner" == 0 ]] || return 1
-  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
-  (( (8#$mode & 0022) == 0 )) || [[ "$path" == /tmp && "$owner" == 0 && "$mode" == 1777 ]]
+  expected_owner=0
+  [[ "$EUID" == 0 ]] || expected_owner="0 or ${EUID}"
+  [[ "$owner" == "$EUID" || "$owner" == 0 ]] || {
+    lightningos_go_error "directory ${display_path}: owner UID ${owner} is not allowed (expected UID ${expected_owner})"; return 1;
+  }
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || {
+    lightningos_go_error "directory ${display_path}: unable to validate permission mode"; return 1;
+  }
+  (( (8#$mode & 0022) == 0 )) || [[ "$path" == /tmp && "$owner" == 0 && "$mode" == 1777 ]] || {
+    lightningos_go_error "directory ${display_path}: mode ${mode} permits group or other users to write"; return 1;
+  }
 }
 
 lightningos_go_check_tree() {

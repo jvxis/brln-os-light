@@ -38,6 +38,61 @@ printf 'module fixture\ngo 1.24\ntoolchain default\n' >"$fixture/go.mod"
 lightningos_go_check_module "$fixture/go.mod" 1.26.8
 echo 'PASS: strict policy and module requirements'
 
+# Diagnostic failures must identify the actual rejected ancestor without
+# changing its ownership/mode or emitting unescaped path control characters.
+directory_error() {
+  local path="$1" offending="$2" reason="$3" output quoted
+  if output=$(lightningos_go_safe_directory "$path" 2>&1); then
+    fail "unsafe directory accepted: $path"
+  fi
+  printf -v quoted '%q' "$offending"
+  [[ "$output" == *"directory ${quoted}: ${reason}"* ]] || fail "missing directory diagnostic: $output"
+  [[ "$output" != *$'\n'* ]] || fail 'multiline directory diagnostic'
+}
+lightningos_go_safe_directory "$fixture/store"
+directory_error relative relative 'expected an absolute path without parent traversal'
+directory_error "$fixture/../invalid" "$fixture/../invalid" 'expected an absolute path without parent traversal'
+directory_error "$fixture/missing" "$fixture/missing" 'directory is missing or is not a directory'
+directory_error "$fixture/system-go" "$fixture/system-go" 'directory is missing or is not a directory'
+ln -s "$fixture/store" "$fixture/directory-link"
+directory_error "$fixture/directory-link" "$fixture/directory-link" 'symbolic links are not allowed'
+ln -s "$fixture/missing" "$fixture/broken-link"
+directory_error "$fixture/broken-link" "$fixture/broken-link" 'symbolic links are not allowed'
+mkdir -p "$fixture/unsafe-parent/child"
+chmod 0775 "$fixture/unsafe-parent"
+directory_error "$fixture/unsafe-parent/child" "$fixture/unsafe-parent" 'mode 775 permits group or other users to write'
+[[ "$(stat -c '%a' "$fixture/unsafe-parent")" == 775 ]] || fail 'permissions were repaired'
+chmod 0755 "$fixture/unsafe-parent"
+lightningos_go_safe_directory "$fixture/unsafe-parent/child"
+directory_error "$fixture/line"$'\n'"break" "$fixture/line"$'\n'"break" 'directory is missing or is not a directory'
+if [[ "$EUID" == 0 ]]; then
+  mkdir -p "$fixture/foreign-parent/child"
+  chown 65534:65534 "$fixture/foreign-parent"
+  for attempt in 1 2; do
+    directory_error "$fixture/foreign-parent/child" "$fixture/foreign-parent" 'owner UID 65534 is not allowed (expected UID 0)'
+  done
+  (
+    lightningos_download_verified_artifact() { fail 'download reached with unsafe ancestor'; }
+    reject lightningos_go_install "$fixture/foreign-parent/child" 1.26.8 amd64 "$(printf '%064d' 0)"
+    [[ -z "$(find "$fixture/foreign-parent/child" -mindepth 1 -print -quit)" ]] || fail 'unsafe ancestor allowed store writes'
+  )
+  [[ "$(stat -c '%u:%g:%a' "$fixture/foreign-parent")" == 65534:65534:755 ]] || fail 'ownership was repaired'
+  chown 0:0 "$fixture/foreign-parent"
+  lightningos_go_safe_directory "$fixture/foreign-parent/child"
+else
+  echo 'SKIP: foreign-owner diagnostic requires root'
+fi
+# Simulate metadata read failures only; normal cases above use real Linux stat.
+(
+  stat() { return 1; }
+  directory_error / / 'unable to read owner UID'
+)
+(
+  stat() { [[ "$2" != '%a' ]] || return 1; command stat "$@"; }
+  directory_error / / 'unable to read permission mode'
+)
+echo 'PASS: directory diagnostics, unchanged permissions and retry after operator repair'
+
 # Only the downloader is replaced. Production checksum, tar, permissions,
 # executable validation, locking and rename code all run unchanged.
 curl() {

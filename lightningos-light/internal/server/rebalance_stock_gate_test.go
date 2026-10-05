@@ -157,7 +157,7 @@ func TestStockGateScopeAndDefaults(t *testing.T) {
 	channels := []sovereignStockChannel{{ChannelID: 1, PeerPubkey: "peer-a", LocalBalanceSat: 5_000_000}}
 	manual := stockGateLot(1, 1, now.Add(-9*time.Hour), 600_000)
 	manual.TriggerReason = ""
-	old := stockGateLot(2, 1, now.Add(-9*24*time.Hour), 600_000)
+	old := stockGateLot(2, 1, now.Add(-16*24*time.Hour), 600_000)
 	lots := []rebalanceAttributionLot{manual, old,
 		stockGateLot(3, 1, now.Add(-8*time.Hour), 300_000),
 		stockGateLot(4, 1, now.Add(-7*time.Hour), 300_000),
@@ -165,7 +165,7 @@ func TestStockGateScopeAndDefaults(t *testing.T) {
 	cfg := stockGateTestConfig()
 	level := buildSovereignStockLevels(lots, nil, channels, cfg, now)[1]
 	if level.UnsoldSat != 600_000 || level.UnsoldLots != 2 {
-		t.Fatalf("only Sovereign lots inside the window count: %+v", level)
+		t.Fatalf("only Sovereign lots inside the gate window count: %+v", level)
 	}
 	if !sovereignStockGateBlocks(level, 5_000_000, cfg) {
 		t.Fatal("expected the gate to hold with it enabled")
@@ -231,5 +231,39 @@ func TestExecuteSovereignStockGateWaitsForSales(t *testing.T) {
 	result = svc.executeSovereignAutopilot(context.Background(), base, nil, newPlan(full), now, false)
 	if len(result.Decisions) != 1 || !result.Decisions[0].Selected || result.Decisions[0].StockUnsoldSat != 0 {
 		t.Fatalf("with the gate off nothing may change: %+v", result.Decisions)
+	}
+}
+
+func TestStockGateRemembersStockOlderThanTheInventoryWindow(t *testing.T) {
+	cfg := stockGateTestConfig()
+	cfg.StockGateCoverDays = 0
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	channels := []sovereignStockChannel{{ChannelID: 1, PeerPubkey: "lqwd", LocalBalanceSat: 2_400_000}}
+	// Bought 9 and 10 days ago, never sold, still in the channel: with a 7-day
+	// memory the gate forgot it and let the autopilot buy again.
+	lots := []rebalanceAttributionLot{
+		stockGateLot(1, 1, now.Add(-10*24*time.Hour), 600_000),
+		stockGateLot(2, 1, now.Add(-9*24*time.Hour), 600_000),
+	}
+	level := buildSovereignStockLevels(lots, nil, channels, cfg, now)[1]
+	if level.UnsoldSat != 1_200_000 || level.UnsoldLots != 2 {
+		t.Fatalf("stock from 9-10 days ago must still count: %+v", level)
+	}
+	if !sovereignStockGateBlocks(level, 10_000_000, cfg) {
+		t.Fatal("1.2M unsold over a 1M working stock must block")
+	}
+	// A sale 8 days after the purchase still clears that old lot.
+	forwards := []rebalanceAttributionForward{{ID: 1, TargetChannelID: 1, OccurredAt: now.Add(-2 * 24 * time.Hour), AmountSat: 600_000, FeeMsat: 1}}
+	sold := buildSovereignStockLevels(lots, forwards, channels, cfg, now)[1]
+	if sold.UnsoldSat != 600_000 || sold.UnsoldLots != 1 {
+		t.Fatalf("the late sale must consume the oldest lot: %+v", sold)
+	}
+	if sovereignStockGateBlocks(sold, 10_000_000, cfg) {
+		t.Fatal("one unsold lot never blocks")
+	}
+	// Beyond twice the inventory window the lot is out of scope.
+	stale := []rebalanceAttributionLot{stockGateLot(3, 1, now.Add(-15*24*time.Hour), 600_000), stockGateLot(4, 1, now.Add(-16*24*time.Hour), 600_000)}
+	if got := buildSovereignStockLevels(stale, nil, channels, cfg, now)[1]; got.UnsoldSat != 0 {
+		t.Fatalf("lots older than the gate window must not count: %+v", got)
 	}
 }

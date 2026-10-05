@@ -38,8 +38,11 @@ Opt-in. Com `stock_gate_enabled` desligado nada muda.
 Como mede (`buildSovereignStockLevels`):
 
 - Usa a mesma atribuição FIFO do guard existente
-  (`attributeRebalanceForwardsFIFO`) e a mesma janela
-  (`sovereignUnsoldInventoryWindow`, a janela slow-seller, 7 dias por padrão).
+  (`attributeRebalanceForwardsFIFO`). Desde a 0.5.42 a trava lembra os lotes por
+  o dobro da janela slow-seller (14 dias por padrão): com 7 dias, estoque
+  comprado há 8 dias sumia da conta enquanto continuava no canal e o autopilot
+  comprava de novo em cima dele. A demanda (vendas por dia) continua na janela
+  de 7 dias.
 - Estoque não vendido = soma do que sobrou de cada lote Sovereign da janela.
   Lotes manuais e lotes de descoberta consomem vendas na fila, mas não contam
   como estoque do autopilot, igual ao guard existente.

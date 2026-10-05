@@ -21,6 +21,12 @@ const (
 	stockGateCoverDaysMax       = 14
 	sovereignStockGateMinLots   = 2
 	sovereignStockGateReason    = "paid_stock_gate"
+	// The gate remembers lots for twice the inventory window. With the 7-day
+	// window alone, stock bought eight days ago vanished from the count while
+	// it was still sitting in the channel, and the gate let the autopilot buy
+	// again on top of it (LQWD-Australia, 2026-10-04: 2.4M unsold, 7 sats
+	// sold in a week, and 0.5M more bought).
+	sovereignStockGateWindowFactor = 2
 )
 
 // sovereignStockLevel is the paid liquidity the Sovereign autopilot bought for
@@ -39,6 +45,13 @@ type sovereignStockChannel struct {
 	ChannelID       uint64
 	PeerPubkey      string
 	LocalBalanceSat int64
+}
+
+// sovereignStockGateWindow: how far back paid lots count as stock. Demand
+// (sales per day) keeps the inventory window so cover_days means what the
+// label says.
+func sovereignStockGateWindow(cfg RebalanceConfig) time.Duration {
+	return sovereignStockGateWindowFactor * sovereignUnsoldInventoryWindow(cfg)
 }
 
 func stockGateMinStockPctForConfig(cfg RebalanceConfig) float64 {
@@ -63,6 +76,7 @@ func buildSovereignStockLevels(lots []rebalanceAttributionLot, forwards []rebala
 	}
 	window := sovereignUnsoldInventoryWindow(cfg)
 	since := now.Add(-window)
+	stockSince := now.Add(-sovereignStockGateWindow(cfg))
 	validLots := make([]rebalanceAttributionLot, 0, len(lots))
 	for _, lot := range lots {
 		if !lot.CompletedAt.After(now) {
@@ -75,7 +89,10 @@ func buildSovereignStockLevels(lots []rebalanceAttributionLot, forwards []rebala
 			validForwards = append(validForwards, forward)
 		}
 	}
-	attributed := attributeRebalanceForwardsFIFO(validLots, validForwards, window)
+	// A lot stays eligible for sales for as long as the gate remembers it,
+	// otherwise a sale against 10-day-old stock would be attributed to a
+	// newer lot and the old one would look unsold forever.
+	attributed := attributeRebalanceForwardsFIFO(validLots, validForwards, sovereignStockGateWindow(cfg))
 
 	peerOf := make(map[uint64]string, len(channels))
 	peerLocal := map[string]int64{}
@@ -110,7 +127,7 @@ func buildSovereignStockLevels(lots []rebalanceAttributionLot, forwards []rebala
 		return peers[peer]
 	}
 	for _, lot := range validLots {
-		if lot.JobID <= 0 || lot.SentSat <= 0 || !lot.CompletedAt.After(since) || lot.TriggerReason != rebalanceSovereignReason {
+		if lot.JobID <= 0 || lot.SentSat <= 0 || !lot.CompletedAt.After(stockSince) || lot.TriggerReason != rebalanceSovereignReason {
 			continue
 		}
 		stock := stockOf(lot.TargetChannelID)
@@ -230,7 +247,7 @@ func (s *RebalanceService) loadSovereignStockLevels(ctx context.Context, cfg Reb
 	if now.IsZero() {
 		now = time.Now()
 	}
-	lots, forwards, err := s.loadRebalanceAttributionInputs(ctx, now.Add(-2*sovereignUnsoldInventoryWindow(cfg)), ids)
+	lots, forwards, err := s.loadRebalanceAttributionInputs(ctx, now.Add(-2*sovereignStockGateWindow(cfg)), ids)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Printf("rebalance stock gate unavailable: %v", err)

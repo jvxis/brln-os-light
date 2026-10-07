@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -100,9 +101,16 @@ type htlcManagerTrigger struct {
 	force bool
 }
 
+type htlcManagerLND interface {
+	ListChannels(context.Context) ([]lndclient.ChannelInfo, error)
+	GetChannelPolicy(context.Context, string) (lndclient.ChannelPolicy, error)
+	UpdateChannelPolicy(context.Context, lndclient.UpdateChannelPolicyParams) error
+	BorrowLightning(context.Context, bool) (*grpc.ClientConn, func(), error)
+}
+
 type HtlcManager struct {
 	db     *pgxpool.Pool
-	lnd    *lndclient.Client
+	lnd    htlcManagerLND
 	logger *log.Logger
 
 	mu               sync.Mutex
@@ -734,7 +742,9 @@ func (m *HtlcManager) tick(force bool) {
 
 		effectiveCapSat := maxHTLCUpperBoundSat(ch)
 		volatileBalance := ch.PendingHtlcCount > 0 || ch.UnsettledBalanceSat > 0
-		if policy.MinHtlcMsat == targetMinMsat && withinMaxHTLCHysteresis(policy.MaxHtlcMsat, targetMaxMsat, effectiveCapSat, volatileBalance) {
+		maxWithinBounds := policy.MaxHtlcMsat >= targetMinMsat &&
+			(ch.LocalHTLCBounds == nil || policy.MaxHtlcMsat <= ch.LocalHTLCBounds.MaxMsat)
+		if maxWithinBounds && policy.MinHtlcMsat == targetMinMsat && withinMaxHTLCHysteresis(policy.MaxHtlcMsat, targetMaxMsat, effectiveCapSat, volatileBalance) {
 			continue
 		}
 
@@ -813,8 +823,19 @@ func computeHTLCTargets(ch lndclient.ChannelInfo, cfg HtlcManagerConfig) (uint64
 	if capMsat == 0 {
 		return 0, 0, errors.New("effective capacity unavailable")
 	}
+	// LND validates outgoing policy updates against local_constraints. A peer
+	// may require a higher minimum or a lower in-flight maximum than our
+	// configured floor and balance-based target. Do not round these msat bounds.
+	if bounds := ch.LocalHTLCBounds; bounds != nil {
+		if bounds.MinMsat > minMsat {
+			minMsat = bounds.MinMsat
+		}
+		if bounds.MaxMsat < capMsat {
+			capMsat = bounds.MaxMsat
+		}
+	}
 	if minMsat > capMsat {
-		return 0, 0, fmt.Errorf("min_htlc (%d msat) above effective channel capacity (%d msat)", minMsat, capMsat)
+		return 0, 0, fmt.Errorf("min_htlc (%d msat) above channel HTLC upper bound (%d msat)", minMsat, capMsat)
 	}
 
 	localSat := spendableLocalSat(ch)
@@ -834,6 +855,9 @@ func computeHTLCTargets(ch lndclient.ChannelInfo, cfg HtlcManagerConfig) (uint64
 	maxMsat, err := satToMsat(rawMaxSat)
 	if err != nil {
 		return 0, 0, fmt.Errorf("max_htlc conversion failed: %w", err)
+	}
+	if maxMsat > capMsat {
+		maxMsat = capMsat
 	}
 	if maxMsat < minMsat {
 		maxMsat = minMsat

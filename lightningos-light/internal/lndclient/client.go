@@ -5486,6 +5486,13 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 		var peerBaseMsat *int64
 		localDisabled := isLocalChanDisabledFlags(ch.ChanStatusFlags)
 		localReserveSat := ch.LocalChanReserveSat
+		var htlcBounds *ChannelHTLCBounds
+		if constraints := ch.LocalConstraints; constraints != nil {
+			htlcBounds = &ChannelHTLCBounds{
+				MinMsat: constraints.MinHtlcMsat,
+				MaxMsat: constraints.MaxPendingAmtMsat,
+			}
+		}
 		if localReserveSat <= 0 && ch.LocalConstraints != nil {
 			if reserve := int64(ch.LocalConstraints.GetChanReserveSat()); reserve > 0 {
 				localReserveSat = reserve
@@ -5581,6 +5588,7 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 			LocalBalanceSat:     ch.LocalBalance,
 			RemoteBalanceSat:    ch.RemoteBalance,
 			LocalChanReserveSat: localReserveSat,
+			LocalHTLCBounds:     htlcBounds,
 			UnsettledBalanceSat: ch.UnsettledBalance,
 			PendingHtlcCount:    len(ch.PendingHtlcs),
 			PendingHtlcs:        pendingHtlcs,
@@ -7762,7 +7770,16 @@ type ChannelMovement7d struct {
 	LightningInAmountSat  int64 `json:"lightning_in_amount_sat"`
 }
 
+// ChannelHTLCBounds contains the negotiated outgoing limits from LND's
+// local_constraints, not the peer's advertised routing policy. Keep msat
+// precision, including peers that advertise an unlimited uint64 maximum.
+type ChannelHTLCBounds struct {
+	MinMsat uint64
+	MaxMsat uint64
+}
+
 type ChannelInfo struct {
+	LocalHTLCBounds     *ChannelHTLCBounds       `json:"-"`
 	ChannelPoint        string                   `json:"channel_point"`
 	ChannelID           uint64                   `json:"channel_id"`
 	ChannelIDString     string                   `json:"channel_id_str"`

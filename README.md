@@ -7,6 +7,8 @@
 
 [Join the LightningOS Signal group](https://signal.group/#CjQKIEMiPq5Dy_s5RlfF4fZBhT7_2mqlWHlzEbcQUS20bOGHEhCWL0uFC3ebHZ3W3pAs8Hox)
 
+A project of the [BR⚡LN Club](https://br-ln.com), the Brazilian community of Bitcoin and Lightning Network node operators · [Blog](https://blog.br-ln.com) · [Free Lightning tools](https://br-ln.com/ferramentas/)
+
 <img width="1920" height="1080" alt="BRLN-logo" src="https://github.com/user-attachments/assets/7394bf7b-2515-461a-8b80-7488531c7f40" />
 
 [Clique aqui](https://github.com/jvxis/brln-os-light/blob/main/docs/README-PT-BR.md) para ver a versão em PT-BR

@@ -61,6 +61,7 @@ type AutofeeConfig = {
   max_ppm?: number
   native_seed_enabled?: boolean
   native_seed_v2_enabled?: boolean
+  stale_stock_down_enabled?: boolean
   amboss_enabled?: boolean
   amboss_token_set?: boolean
   inbound_passive_enabled?: boolean
@@ -416,6 +417,7 @@ export default function FeeCenter() {
   const [maxPpm, setMaxPpm] = useState('2000')
   const [nativeSeedEnabled, setNativeSeedEnabled] = useState(false)
   const [nativeSeedV2Enabled, setNativeSeedV2Enabled] = useState(false)
+  const [staleStockDownEnabled, setStaleStockDownEnabled] = useState(false)
   const [ambossEnabled, setAmbossEnabled] = useState(false)
   const [ambossToken, setAmbossToken] = useState('')
   const [refreshIncludeInbound, setRefreshIncludeInbound] = useState(true)
@@ -457,6 +459,7 @@ export default function FeeCenter() {
     setMaxPpm(String(cfg.max_ppm ?? 2000))
     setNativeSeedEnabled(Boolean(cfg.native_seed_enabled))
     setNativeSeedV2Enabled(Boolean(cfg.native_seed_v2_enabled))
+    setStaleStockDownEnabled(Boolean(cfg.stale_stock_down_enabled))
     setAmbossEnabled(Boolean(cfg.amboss_enabled))
     setInboundPassive(Boolean(cfg.inbound_passive_enabled))
     setDiscovery(Boolean(cfg.discovery_enabled))
@@ -857,6 +860,7 @@ export default function FeeCenter() {
         max_ppm: maxPpmValue,
         native_seed_enabled: nativeSeedEnabled,
         native_seed_v2_enabled: nativeSeedV2Enabled,
+        stale_stock_down_enabled: staleStockDownEnabled,
         amboss_enabled: ambossEnabled,
         inbound_passive_enabled: inboundPassive,
         discovery_enabled: discovery,
@@ -1425,6 +1429,10 @@ export default function FeeCenter() {
                   <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
                     {renderToggle(t('lightningOps.autofeeNativeSeedV2'), nativeSeedV2Enabled, setNativeSeedV2Enabled, !nativeSeedEnabled, t('lightningOps.autofeeNativeSeedV2Hint'))}
                     <p className="mt-3 text-xs leading-5 text-fog/55">{t('lightningOps.autofeeNativeSeedV2Hint')}</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                    {renderToggle(t('lightningOps.autofeeStaleStockDown'), staleStockDownEnabled, setStaleStockDownEnabled, false, t('lightningOps.autofeeStaleStockDownHint'))}
+                    <p className="mt-3 text-xs leading-5 text-fog/55">{t('lightningOps.autofeeStaleStockDownHint')}</p>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
                     {renderToggle(t('lightningOps.autofeeAmboss'), ambossEnabled, setAmbossEnabled, false, t('lightningOps.autofeeAmbossHint'))}

@@ -3822,6 +3822,8 @@
     "autofeeNativeSeedHint": "Usa o histórico público do Graph Explorer quando houver cobertura suficiente; se Amboss também estiver habilitado, ele vira fallback.",
     "autofeeNativeSeedV2": "Seed nativa v2 (amostragem corrigida)",
     "autofeeNativeSeedV2Hint": "Aplica a referência do grafo corrigida: exclui a política do próprio nó, uma amostra por canal por dia, carrega políticas sem mudança adiante, ignora direções desabilitadas e canais fechados. Desligado = a seed antiga é aplicada e a v2 só é registrada por canal (seed_v2, seed_v2_delta_pct) para comparação. Requer a seed nativa.",
+    "autofeeStaleStockDown": "Estoque pago parado desce em degraus",
+    "autofeeStaleStockDownHint": "Liquidez comprada pelo autopilot de rebalance que não vende há 7 dias, com o canal ainda com pelo menos 10% local e fee 25% ou mais acima da seed de mercado, desce uma vez por dia (8% da fee, 20 a 120 ppm) em direção à seed. Ignora o piso de rebalance e o lock global de margem negativa só nesse canal. Feita para rodar com a trava de estoque do autopilot ligada, para o preço menor não disparar recompra. Desligada por padrão.",
     "autofeeAmboss": "Referência fee Amboss",
     "autofeeAmbossHint": "Usa métricas do Amboss como referência externa opcional de mercado.",
     "autofeeAmbossToken": "Token da API do Amboss",

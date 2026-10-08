@@ -4096,3 +4096,65 @@ func TestApplyChannelMinPpm(t *testing.T) {
 		t.Fatalf("above floor must not change, got %d %v %v", got, apply, raised)
 	}
 }
+
+// Stale paid stock (0.5.42): a channel holding liquidity the autopilot bought,
+// with no sale for a week and a fee well above the market seed, steps down
+// once a day toward the seed. Everything else leaves the price alone.
+func TestDeriveStalePaidStockAnchor(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	base := func() *autofeeChannelState {
+		return &autofeeChannelState{LastRebalCostTs: now.Add(-10 * 24 * time.Hour), LastTs: now.Add(-48 * time.Hour)}
+	}
+	// LQWD-Canada on Friendspool: fee 1697, seed 777, 11% local, nothing sold.
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0); !ok || anchor != 1697-120 {
+		t.Fatalf("expected one capped step of 120 ppm down, got %d %v", anchor, ok)
+	}
+	// A small fee steps by the 20 ppm minimum.
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 200, 100, 0.5, 0); !ok || anchor != 180 {
+		t.Fatalf("expected the 20 ppm minimum step, got %d %v", anchor, ok)
+	}
+	// Never below the seed.
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 790, 777, 0.11, 0); ok || anchor != 0 {
+		t.Fatalf("a fee less than 25%% above the seed is not stale pricing, got %d %v", anchor, ok)
+	}
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 1000, 950, 0.11, 0); ok || anchor != 0 {
+		t.Fatalf("below the 1.25x seed trigger nothing happens, got %d %v", anchor, ok)
+	}
+	// Sold something this week: not stale.
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 3); ok {
+		t.Fatal("a channel with sales must not be treated as stale stock")
+	}
+	// No stock to liquidate.
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.05, 0); ok {
+		t.Fatal("below 10%% local there is no stock to move")
+	}
+	// Bought two days ago: give it the week.
+	fresh := base()
+	fresh.LastRebalCostTs = now.Add(-2 * 24 * time.Hour)
+	if _, ok := deriveStalePaidStockAnchor(now, fresh, 1697, 777, 0.11, 0); ok {
+		t.Fatal("stock bought two days ago is not stale yet")
+	}
+	// Never bought: nothing is paid stock.
+	never := base()
+	never.LastRebalCostTs = time.Time{}
+	if _, ok := deriveStalePaidStockAnchor(now, never, 1697, 777, 0.11, 0); ok {
+		t.Fatal("a channel with no rebalance history has no paid stock")
+	}
+	// Stepped 6 hours ago: one step per day.
+	recent := base()
+	recent.LastTs = now.Add(-6 * time.Hour)
+	if _, ok := deriveStalePaidStockAnchor(now, recent, 1697, 777, 0.11, 0); ok {
+		t.Fatal("at most one step per day")
+	}
+	for _, src := range []string{"rebal", "rebal-sink", "seed-sink", "outrate", "peg"} {
+		if !shouldRelaxFloorForStalePaidStock(src) {
+			t.Fatalf("floor source %q must yield to the stale-stock anchor", src)
+		}
+	}
+	if shouldRelaxFloorForStalePaidStock("channel-min") || shouldRelaxFloorForStalePaidStock("seed") {
+		t.Fatal("operator and market floors are not relaxed")
+	}
+	if (&AutofeeService{}).defaultConfig().StaleStockDownEnabled {
+		t.Fatal("stale stock liquidation must be opt-in")
+	}
+}

@@ -1869,6 +1869,69 @@
     "wearWarn": "Desgaste alto"
   },
   "logs": {
+    "explorer": {
+      "subtitle": "Consulte os logs disponíveis por período, nível e evento do LND e exporte os resultados exibidos.",
+      "service": "Serviço",
+      "source": "Fonte",
+      "timezone": "Fuso da exibição",
+      "period": "Período",
+      "recent": "Logs recentes",
+      "customPeriod": "Escolher data e hora",
+      "level": "Nível",
+      "event": "Evento LND",
+      "all": "Todos",
+      "search": "Buscar texto",
+      "searchPlaceholder": "Texto, pubkey, channel point ou txid",
+      "limit": "Limite de resultados",
+      "query": "Consultar logs",
+      "since": "De",
+      "until": "Até",
+      "export": "Exportar resultados (.txt)",
+      "exportUTC": "horários do arquivo em UTC",
+      "queriedAt": "Consultado em",
+      "results": "Resultados dos logs",
+      "context": "Ver contexto",
+      "contextHint": "Até 3 registros anteriores e posteriores, da mesma consulta e dentro do período selecionado. Horários do contexto em UTC.",
+      "invalidPeriod": "Escolha início e fim válidos, em ordem, com intervalo máximo de 7 dias.",
+      "retention": "A consulta abrange apenas os logs ainda armazenados. Histórico removido ou rotacionado não pode ser reconstruído; nenhum resultado não comprova ausência de eventos.",
+      "recentOnly": "Esta fonte Docker permite apenas logs recentes e exportação (até 500 linhas, sujeitos ao limite de tamanho da fonte). Período e filtros de busca estão indisponíveis.",
+      "classification": "As categorias LND são inferidas das mensagens, incluindo tentativas e falhas. Elas não confirmam uma operação de canal. Use Todos ou a busca textual para mensagens não classificadas.",
+      "pending": "Filtros alterados. Consulte novamente para atualizar os resultados e habilitar a exportação.",
+      "count": "{{count}} exibidos · {{matched}} correspondências em {{scanned}} registros lidos",
+      "resultLimited": "São exibidos apenas os resultados correspondentes mais recentes que cabem no limite de quantidade/tamanho. Reduza o período ou refine os filtros para ver mais.",
+      "exportScope": "Escopo da exportação: apenas os registros correspondentes exibidos; o contexto expandido não está incluído.",
+      "presets": {
+        "0": "Hoje",
+        "15": "Últimos 15 minutos",
+        "60": "Última hora",
+        "1440": "Últimas 24 horas"
+      },
+      "levels": {
+        "error": "Erro",
+        "warning": "Aviso",
+        "info": "Informação",
+        "debug": "Depuração / trace",
+        "unknown": "Desconhecido"
+      },
+      "events": {
+        "connection": "Conexões",
+        "channel_open": "Aberturas de canais",
+        "cooperative_close": "Fechamentos cooperativos",
+        "force_close": "Force closes",
+        "lifecycle": "Inicialização / encerramento",
+        "sync": "Sincronização",
+        "other": "Outros / não classificados"
+      },
+      "reasons": {
+        "source_tail": "Apenas uma amostra recente; linhas anteriores podem estar ausentes ou truncadas pela fonte.",
+        "scan_limit": "Consulta parcial: a leitura atingiu 50.000 registros. Reduza o período.",
+        "byte_limit": "Consulta parcial: a leitura atingiu o limite de tamanho. Reduza o período.",
+        "record_limit": "Consulta parcial: um registro muito grande foi truncado ou não pôde ser lido.",
+        "unreadable_record": "Consulta parcial: alguns registros não puderam ser interpretados.",
+        "timeout": "Consulta parcial: o limite de tempo foi atingido. Reduza o período e tente novamente."
+      }
+    },
+
     "fetchFailed": "Falha ao buscar logs.",
     "linesOption": "{{count}} linhas",
     "loading": "Carregando logs...",

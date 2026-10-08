@@ -1869,6 +1869,69 @@
     "wearWarn": "High wear"
   },
   "logs": {
+    "explorer": {
+      "subtitle": "Search retained logs by time, severity and LND event, then export the displayed results.",
+      "service": "Service",
+      "source": "Source",
+      "timezone": "Display timezone",
+      "period": "Period",
+      "recent": "Recent logs",
+      "customPeriod": "Choose date and time",
+      "level": "Level",
+      "event": "LND event",
+      "all": "All",
+      "search": "Search text",
+      "searchPlaceholder": "Text, pubkey, channel point or txid",
+      "limit": "Result limit",
+      "query": "Search logs",
+      "since": "From",
+      "until": "To",
+      "export": "Export results (.txt)",
+      "exportUTC": "file timestamps in UTC",
+      "queriedAt": "Queried at",
+      "results": "Log results",
+      "context": "View context",
+      "contextHint": "Up to 3 records before and after, from this query snapshot and inside the selected period. Context timestamps are UTC.",
+      "invalidPeriod": "Choose a valid start and end time, in order, with a maximum interval of 7 days.",
+      "retention": "Only retained logs can be searched. Missing or rotated history cannot be reconstructed; no results does not prove there were no events.",
+      "recentOnly": "This Docker source supports recent logs and export only (up to 500 lines, subject to the source's size limit). Period and search filters are unavailable.",
+      "classification": "LND categories are inferred from messages, including attempts and failures. They do not confirm a channel operation. Use All or text search for unclassified messages.",
+      "pending": "Filters changed. Search again to update the results and enable export.",
+      "count": "{{count}} displayed · {{matched}} matches in {{scanned}} scanned records",
+      "resultLimited": "Only the most recent matching results that fit the result/size limit are displayed. Narrow the period or filters to see more.",
+      "exportScope": "Export scope: displayed matching records only; expanded context is not included.",
+      "presets": {
+        "0": "Today",
+        "15": "Last 15 minutes",
+        "60": "Last hour",
+        "1440": "Last 24 hours"
+      },
+      "levels": {
+        "error": "Error",
+        "warning": "Warning",
+        "info": "Information",
+        "debug": "Debug / trace",
+        "unknown": "Unknown"
+      },
+      "events": {
+        "connection": "Connections",
+        "channel_open": "Channel openings",
+        "cooperative_close": "Cooperative closes",
+        "force_close": "Force closes",
+        "lifecycle": "Startup / shutdown",
+        "sync": "Synchronization",
+        "other": "Other / unclassified"
+      },
+      "reasons": {
+        "source_tail": "Recent snapshot only; earlier lines may be absent or truncated by the source.",
+        "scan_limit": "Partial query: the scan reached 50,000 records. Narrow the period.",
+        "byte_limit": "Partial query: the scan reached its size limit. Narrow the period.",
+        "record_limit": "Partial query: an oversized record was truncated or could not be read.",
+        "unreadable_record": "Partial query: some records could not be decoded.",
+        "timeout": "Partial query: the time limit was reached. Narrow the period and try again."
+      }
+    },
+
     "fetchFailed": "Log fetch failed.",
     "linesOption": "{{count}} lines",
     "loading": "Loading logs...",

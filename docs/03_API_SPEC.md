@@ -339,6 +339,23 @@ GET /api/logs?service=lnd&lines=200
 - Returns a list of log lines.
 - `service=bitcoin` returns local Bitcoin logs from the LightningOS Docker app when installed, otherwise from a local bitcoind systemd unit.
 
+GET /api/logs/query?service=lnd&limit=200&since=2026-10-08T17:00:00Z&until=2026-10-08T18:00:00Z&level=error&event=connection&q=peer
+- Authenticated under the same login rules as `/api/logs`; responds with `Cache-Control: no-store`.
+- Separate structured query contract; the original `/api/logs` tail, `lines` and relative `since` behavior used by restart/upgrade views is unchanged.
+- `service`: the existing log service allowlist, including Bitcoin aliases and installed Fedimint apps.
+- `limit`: integer 1–1000, default 200. The newest matching records are selected **after** filtering and returned chronologically.
+- Optional `since` and `until` must be supplied together as RFC3339 timestamps with timezone. Bounds are inclusive and the maximum interval is seven days. Without them, search recent retained records up to the request time. Journal timestamps have microsecond precision.
+- Optional `level`: `error`, `warning`, `info`, `debug` (includes trace), `unknown`. Recognized application severity overrides journal priority; journal priority is the fallback. Empty means all.
+- Optional `event` (LND only): `connection`, `channel_open`, `cooperative_close`, `force_close`, `lifecycle`, `sync`, `other`. These are heuristic message categories, including attempts/failures, not confirmed channel state transitions. Unrecognized messages remain accessible via all/other or text search.
+- Optional `q`: case-insensitive literal substring, up to 256 UTF-8 bytes. Filters combine with AND and operate on sanitized/redacted messages; regular expressions are not accepted.
+- Journal and Autofee support period/text/level filters. Autofee preserves grouped summary+seed records, filters by the run's maximum timestamp and returns chronological results. Docker Bitcoin/Fedimint retain recent-only behavior, up to 500 lines and the existing broker size budget; period or search filters on these sources return 400 rather than silently searching an incomplete tail.
+- Response: `{query, source, entries, capabilities, scanned, matched, partial, reason?, result_limited, queried_at}`. `query` echoes normalized parameters (`since` is the zero timestamp for recent mode); timestamps are UTC. Each entry has `{time?, message, level, event, context?}`. Source-provided Docker timestamps stay in the original message, so `time` may be absent.
+- `capabilities` contains booleans `period`, `filters`, `events`, `context`. Events and context are enabled for LND. Context includes up to three neighboring retained records on either side plus the selected record, inside the chosen interval and from the same redacted query snapshot. Neighbors need not match the filters; boundary/scan limits can shorten context.
+- Scans are bounded to 50,000 records, approximately 16 MiB and a 12-second I/O deadline. Messages above 8 KiB are truncated; results (including context) have a 4 MiB text/metadata budget. `scanned`/`matched` refer to the scanned snapshot, not all historical records.
+- `partial` discloses incomplete source reads. `reason` is `scan_limit`, `byte_limit`, `record_limit`, `unreadable_record`, `timeout`, or `source_tail` (always set for Docker's recent-only snapshot). `result_limited` separately indicates that matching results exceeded the output count/size budget. Narrow the interval or filters to investigate further.
+- Only retained records are searchable. The API does not claim retention coverage or distinguish no events from removed historical records. Source failures return 503; invalid or unsupported query parameters return 400.
+- The Logs UI exports the **displayed matching records** to UTF-8 TXT, with service, source, normalized period, timezone, filters, query time, counts and partial-result notices. Expanded context is excluded and this scope is declared in the file. Export uses the existing redacted response without repeating the query; changing filters disables export until a new successful query.
+
 ## Wallet
 
 GET /api/wallet/summary

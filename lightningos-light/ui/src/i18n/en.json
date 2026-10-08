@@ -3823,7 +3823,7 @@
     "autofeeNativeSeedV2": "Native seed v2 (corrected sampling)",
     "autofeeNativeSeedV2Hint": "Applies the corrected graph reference: excludes this node's own policy, one sample per channel per day, carries unchanged policies forward, ignores disabled directions and closed channels. Off = legacy seed is applied and v2 is only logged per channel (seed_v2, seed_v2_delta_pct) for comparison. Requires the native seed.",
     "autofeeStaleStockDown": "Stale paid stock steps down",
-    "autofeeStaleStockDownHint": "Liquidity bought by the rebalance autopilot that has not sold for 7 days, while the channel still holds at least 10% local and its fee sits 25% or more above the market seed, steps down once a day (8% of the fee, 20 to 120 ppm) toward the seed. It bypasses the rebalance floor and the global negative-margin lock for that channel only. Meant to run with the autopilot stock gate on, so the lower price does not trigger a rebuy. Off by default.",
+    "autofeeStaleStockDownHint": "Liquidity bought by the rebalance autopilot that has not sold for 7 days, while the channel still holds at least 10% local and its fee sits 25% or more above the market seed, is cut 20% once, then 8% a day (20 to 150 ppm) down to half the seed. A route is only picked when it is cheaper than what other nodes charge to reach the peer, so the market seed itself is not the clearing price. It bypasses the rebalance floor and the global negative-margin lock for that channel only. Meant to run with the autopilot stock gate on, so the lower price does not trigger a rebuy. Off by default.",
     "autofeeAmboss": "Amboss fee reference",
     "autofeeAmbossHint": "Uses Amboss metrics as an optional external market reference.",
     "autofeeAmbossToken": "Amboss API token",

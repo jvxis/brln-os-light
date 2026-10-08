@@ -7549,17 +7549,22 @@ func deriveMatureEmptySinkHistoryAnchor(profile autofeeProfile, localPpm int, ou
 
 // Stale paid stock: liquidity bought for a channel that sold nothing for
 // staleStockIdleDays while holding at least staleStockMinOutRatio of its
-// capacity, priced at or above staleStockSeedMult times the market seed.
-// One step per staleStockStepMinHours, a share of the current fee bounded
-// in ppm, never below the seed.
+// capacity, priced above staleStockFloorSeedFrac of the market seed. One step
+// per staleStockStepMinHours: the first one is large, because the market seed
+// is what other nodes charge to reach the peer and a route only gets picked
+// when it is cheaper than that. On Friendspool (2026-10-08) Open_Hand sold 33
+// sats in 30 days at 713 ppm (seed 644) and 1.23M three minutes after being
+// cut to 322. The floor is therefore half the seed, not the seed.
 const (
-	staleStockMinOutRatio  = 0.10
-	staleStockIdleDays     = 7
-	staleStockSeedMult     = 1.25
-	staleStockStepFrac     = 0.08
-	staleStockMinStepPpm   = 20
-	staleStockMaxStepPpm   = 120
-	staleStockStepMinHours = 24
+	staleStockMinOutRatio   = 0.10
+	staleStockIdleDays      = 7
+	staleStockSeedMult      = 1.25
+	staleStockFloorSeedFrac = 0.50
+	staleStockFirstStepFrac = 0.20
+	staleStockStepFrac      = 0.08
+	staleStockMinStepPpm    = 20
+	staleStockMaxStepPpm    = 150
+	staleStockStepMinHours  = 24
 )
 
 func deriveStalePaidStockAnchor(now time.Time, st *autofeeChannelState, localPpm int, seed float64, outRatio float64, fwdCount int) (int, bool) {
@@ -7569,20 +7574,27 @@ func deriveStalePaidStockAnchor(now time.Time, st *autofeeChannelState, localPpm
 	if st.LastRebalCostTs.IsZero() || now.Sub(st.LastRebalCostTs) < staleStockIdleDays*24*time.Hour {
 		return 0, false
 	}
-	if float64(localPpm) < seed*staleStockSeedMult {
+	floor := int(math.Ceil(seed * staleStockFloorSeedFrac))
+	if localPpm <= floor {
 		return 0, false
 	}
 	if !st.LastTs.IsZero() && now.Sub(st.LastTs) < staleStockStepMinHours*time.Hour {
 		return 0, false
 	}
-	step := int(math.Round(float64(localPpm) * staleStockStepFrac))
+	// First step: still priced at or above the trigger, so no step has been
+	// taken yet; cut hard. Later steps walk down toward the floor.
+	frac := staleStockStepFrac
+	if float64(localPpm) >= seed*staleStockSeedMult {
+		frac = staleStockFirstStepFrac
+	}
+	step := int(math.Round(float64(localPpm) * frac))
 	if step < staleStockMinStepPpm {
 		step = staleStockMinStepPpm
 	}
-	if step > staleStockMaxStepPpm {
+	if step > staleStockMaxStepPpm && frac == staleStockStepFrac {
 		step = staleStockMaxStepPpm
 	}
-	anchor := maxInt(localPpm-step, int(math.Ceil(seed)))
+	anchor := maxInt(localPpm-step, floor)
 	if anchor >= localPpm {
 		return 0, false
 	}

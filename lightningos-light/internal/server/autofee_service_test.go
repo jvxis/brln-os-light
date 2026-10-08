@@ -4106,19 +4106,28 @@ func TestDeriveStalePaidStockAnchor(t *testing.T) {
 		return &autofeeChannelState{LastRebalCostTs: now.Add(-10 * 24 * time.Hour), LastTs: now.Add(-48 * time.Hour)}
 	}
 	// LQWD-Canada on Friendspool: fee 1697, seed 777, 11% local, nothing sold.
-	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0); !ok || anchor != 1697-120 {
-		t.Fatalf("expected one capped step of 120 ppm down, got %d %v", anchor, ok)
+	// First step is the hard one: 20% of the fee.
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0); !ok || anchor != 1697-339 {
+		t.Fatalf("expected a first step of 20%% (339 ppm), got %d %v", anchor, ok)
+	}
+	// Below the 1.25x trigger the walk continues at 8%, capped at 150 ppm.
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 900, 777, 0.11, 0); !ok || anchor != 900-72 {
+		t.Fatalf("expected an 8%% follow-up step (72 ppm), got %d %v", anchor, ok)
+	}
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 2300, 2000, 0.11, 0); !ok || anchor != 2300-150 {
+		t.Fatalf("follow-up steps are capped at 150 ppm, got %d %v", anchor, ok)
 	}
 	// A small fee steps by the 20 ppm minimum.
-	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 200, 100, 0.5, 0); !ok || anchor != 180 {
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 120, 100, 0.5, 0); !ok || anchor != 100 {
 		t.Fatalf("expected the 20 ppm minimum step, got %d %v", anchor, ok)
 	}
-	// Never below the seed.
-	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 790, 777, 0.11, 0); ok || anchor != 0 {
-		t.Fatalf("a fee less than 25%% above the seed is not stale pricing, got %d %v", anchor, ok)
+	// The floor is half the seed, not the seed: Open_Hand only sold at 322 with
+	// a seed of 644. From 340 the next step lands on the floor.
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 340, 644, 0.11, 0); !ok || anchor != 322 {
+		t.Fatalf("expected the walk to reach half the seed (322), got %d %v", anchor, ok)
 	}
-	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 1000, 950, 0.11, 0); ok || anchor != 0 {
-		t.Fatalf("below the 1.25x seed trigger nothing happens, got %d %v", anchor, ok)
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 322, 644, 0.11, 0); ok || anchor != 0 {
+		t.Fatalf("at the floor nothing happens, got %d %v", anchor, ok)
 	}
 	// Sold something this week: not stale.
 	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 3); ok {

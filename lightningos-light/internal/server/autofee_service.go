@@ -2258,28 +2258,33 @@ on conflict (channel_id) do update set min_ppm=excluded.min_ppm, channel_point=c
 	return err
 }
 
-// loadChannelMinPpm returns only the channels with a floor set.
-func (s *AutofeeService) loadChannelMinPpm(ctx context.Context) map[uint64]int {
+// loadChannelMinPpm returns only the channels with a floor set. A floor is a
+// hard constraint the operator set, so a failed or partial read is an error:
+// the callers must not publish fees as if no floor existed (#235).
+func (s *AutofeeService) loadChannelMinPpm(ctx context.Context) (map[uint64]int, error) {
 	out := map[uint64]int{}
 	if s == nil || s.db == nil {
-		return out
+		return out, nil
 	}
 	rows, err := s.db.Query(ctx, `select channel_id, min_ppm from autofee_channel_settings where coalesce(min_ppm, 0) > 0`)
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("load channel fee floors: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var channelID int64
 		var minPpm int
 		if err := rows.Scan(&channelID, &minPpm); err != nil {
-			return out
+			return nil, fmt.Errorf("load channel fee floors: %w", err)
 		}
 		if channelID > 0 && minPpm > 0 {
 			out[uint64(channelID)] = minPpm
 		}
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load channel fee floors: %w", err)
+	}
+	return out, nil
 }
 
 // applyChannelMinPpm raises the final outbound fee to the operator floor.
@@ -2287,12 +2292,22 @@ func (s *AutofeeService) loadChannelMinPpm(ctx context.Context) map[uint64]int {
 // cooldowns that would otherwise leave the channel below it. Lowering is
 // never touched here.
 func applyChannelMinPpm(finalPpm int, localPpm int, minPpm int, apply bool) (int, bool, bool) {
-	if minPpm <= 0 || finalPpm >= minPpm {
+	if minPpm <= 0 {
 		return finalPpm, apply, false
 	}
-	if localPpm >= minPpm && !apply {
-		// Already at or above the floor and nothing to apply: leave as is.
-		return finalPpm, apply, false
+	if apply {
+		if finalPpm >= minPpm {
+			return finalPpm, true, false
+		}
+		return minPpm, true, true
+	}
+	// Held (settling, hold, cooldown): the target will not be published, so
+	// only the fee peers currently see matters. Leave it if it already meets
+	// the floor; otherwise raise it to exactly the floor, even when the held
+	// target is above it. The hold keeps governing everything above the floor
+	// (#235).
+	if localPpm >= minPpm {
+		return finalPpm, false, false
 	}
 	return minPpm, true, true
 }
@@ -2819,7 +2834,10 @@ func (s *AutofeeService) Run(ctx context.Context, dryRun bool, reason string) er
 	}
 
 	engine := newAutofeeEngine(s, cfg)
-	engine.channelMinPpm = s.loadChannelMinPpm(ctx)
+	if engine.channelMinPpm, err = s.loadChannelMinPpm(ctx); err != nil {
+		s.setLastError(err)
+		return err
+	}
 	if reason == "manual" {
 		engine.ignoreCooldown = true
 	}
@@ -3389,7 +3407,9 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 		return result, err
 	}
 	engine := newAutofeeEngine(s, cfg)
-	engine.channelMinPpm = s.loadChannelMinPpm(ctx)
+	if engine.channelMinPpm, err = s.loadChannelMinPpm(ctx); err != nil {
+		return result, err
+	}
 
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {

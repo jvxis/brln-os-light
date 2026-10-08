@@ -466,6 +466,12 @@ func (s *ChannelRankingService) Refresh(ctx context.Context) error {
 	}
 
 	now := time.Now().UTC()
+	// Channel age comes from the SCID block height. Without it the age is
+	// unknown and the close guards below do not fire.
+	blockHeight := int64(0)
+	if status, statusErr := s.lnd.GetStatus(ctx); statusErr == nil && status.BlockHeight > 0 {
+		blockHeight = status.BlockHeight
+	}
 	if err := s.capturePeerSamples(ctx, now, channels, peers); err != nil && s.logger != nil {
 		s.logger.Printf("channel ranking peer samples capture failed: %v", err)
 	}
@@ -501,6 +507,7 @@ func (s *ChannelRankingService) Refresh(ctx context.Context) error {
 			movementStats7d[ch.ChannelID],
 			peerAggregates[strings.TrimSpace(ch.RemotePubkey)],
 			htlcAggregates[ch.ChannelID],
+			blockHeight,
 		)
 		if err := s.applyClosePersistenceGuard(ctx, &item); err != nil {
 			return err
@@ -982,6 +989,7 @@ func buildChannelRankingItem(
 	movement7d lndclient.ChannelMovement7d,
 	peerAggregate channelPeerAggregate,
 	htlcAggregate channelHTLCAggregate,
+	blockHeight int64,
 ) ChannelRankingItem {
 	capacity := rankingMaxInt64(0, ch.CapacitySat)
 	localBalance := rankingMaxInt64(0, ch.LocalBalanceSat)
@@ -1057,6 +1065,7 @@ func buildChannelRankingItem(
 		noEconomicMovement30d,
 		rebalanceOnly30d,
 	)
+	state, reasons, recommendations = applyChannelRankingCloseGuards(state, reasons, recommendations, ch, channelRankingChannelAgeHours(ch.ChannelID, blockHeight))
 
 	return ChannelRankingItem{
 		ChannelPoint:             strings.TrimSpace(ch.ChannelPoint),
@@ -1357,6 +1366,90 @@ func channelRankingHTLCOperationalRiskHigh(aggregate channelHTLCAggregate) bool 
 	return rankingMaxInt(0, aggregate.Policy) >= channelRankingHTLCPolicyHigh30d ||
 		rankingMaxInt(0, aggregate.Liquidity) >= channelRankingHTLCLiquidityHigh30d ||
 		linkFailures >= channelRankingHTLCLinkHigh30d
+}
+
+// channelRankingChannelAgeHours estimates how long the channel has been open
+// from the SCID block height, at ten minutes per block. 0 when unknown.
+func channelRankingChannelAgeHours(channelID uint64, blockHeight int64) float64 {
+	openHeight := int64(channelID >> 40)
+	if channelID == 0 || blockHeight <= 0 || openHeight <= 0 || openHeight > blockHeight {
+		return 0
+	}
+	return float64(blockHeight-openHeight) * 10 / 60
+}
+
+// channelRankingMinCloseAgeHours: the 7- and 30-day idle signals are measured
+// against peer samples, which exist for a peer long before a channel with it
+// does. A channel opened three days ago therefore read as "no economic
+// movement in 30 days" and went straight to close (1sats on Friendspool,
+// 2026-10-08). Nothing younger than this is a close candidate.
+const channelRankingMinCloseAgeHours = 7 * 24
+
+func channelRankingCloseRecommendation(code string) bool {
+	switch code {
+	case "prepare_close_candidate", "prepare_coop_close", "review_with_close_manager", "observe_30d_before_close":
+		return true
+	default:
+		return false
+	}
+}
+
+// applyChannelRankingCloseGuards keeps two kinds of channel out of the close
+// state regardless of their economics: one too young for the idle windows to
+// mean anything, and one sold on Magma whose commitment has not ended, which
+// cannot be closed without breaking the contract with the buyer.
+func applyChannelRankingCloseGuards(state string, reasons []ChannelRankingReason, recommendations []ChannelRankingRecommendation, ch lndclient.ChannelInfo, channelAgeHours float64) (string, []ChannelRankingReason, []ChannelRankingRecommendation) {
+	young := channelAgeHours > 0 && channelAgeHours < channelRankingMinCloseAgeHours
+	commitmentActive := false
+	if commitment, ok := magmaCommitmentForChannel(ch.ChannelID, ch.ChannelPoint); ok {
+		commitmentActive = commitment.BlocksRemaining == nil || *commitment.BlocksRemaining > 0
+	}
+	if !young && !commitmentActive {
+		return state, reasons, recommendations
+	}
+	if young {
+		kept := reasons[:0]
+		for _, reason := range reasons {
+			if reason.Code == "no_economic_movement_30d" || reason.Code == "close_candidate_pending_30d" {
+				continue
+			}
+			kept = append(kept, reason)
+		}
+		reasons = appendUniqueReason(kept, ChannelRankingReason{Code: "channel_too_young_for_close"})
+	}
+	if commitmentActive {
+		reasons = appendUniqueReason(reasons, ChannelRankingReason{Code: "magma_commitment_active"})
+	}
+	if state != "close" && !hasChannelRankingCloseRecommendation(recommendations) {
+		return state, reasons, recommendations
+	}
+	kept := recommendations[:0]
+	for _, rec := range recommendations {
+		if channelRankingCloseRecommendation(rec.Code) {
+			continue
+		}
+		kept = append(kept, rec)
+	}
+	recommendations = kept
+	if young {
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "observe_7d_before_close", TargetModule: "lightning-ops"})
+	}
+	if commitmentActive {
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "hold_until_magma_commitment_ends", TargetModule: "lightning-ops"})
+	}
+	if state == "close" {
+		state = "monitor"
+	}
+	return state, reasons, recommendations
+}
+
+func hasChannelRankingCloseRecommendation(recommendations []ChannelRankingRecommendation) bool {
+	for _, rec := range recommendations {
+		if channelRankingCloseRecommendation(rec.Code) {
+			return true
+		}
+	}
+	return false
 }
 
 func classifyChannelRanking(

@@ -5924,7 +5924,9 @@
       "assisted_revenue_support": "Canal relevante como entrada de forwards",
       "source_liquidity_underused": "Papel source útil, mas com baixo giro do capital local",
       "capital_efficiency_high": "Boa eficiência de capital",
-      "capital_efficiency_low": "Eficiência de capital baixa"
+      "capital_efficiency_low": "Eficiência de capital baixa",
+      "channel_too_young_for_close": "Canal com menos de 7 dias: os sinais de ociosidade ainda não valem",
+      "magma_commitment_active": "Vendido no Magma: compromisso em andamento, não pode ser fechado"
     },
     "recommendations": {
       "consider_more_capacity": "Considerar mais capacidade neste peer/canal",
@@ -5932,6 +5934,7 @@
       "keep_autofee_active": "Manter autofee ativo",
       "keep_current_policy": "Manter política atual",
       "reduce_rebalance_priority": "Reduzir prioridade de rebalance",
+      "hold_until_magma_commitment_ends": "Manter o canal até o fim do compromisso do Magma",
       "keepalive_refill": "Manter um saldo local mínimo (refill keepalive) para evitar churn do peer",
       "review_autofee_bounds": "Revisar limites e reação do autofee",
       "check_peer_stability": "Validar estabilidade do peer",

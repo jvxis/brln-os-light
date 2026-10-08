@@ -4107,53 +4107,66 @@ func TestDeriveStalePaidStockAnchor(t *testing.T) {
 	}
 	// LQWD-Canada on Friendspool: fee 1697, seed 777, 11% local, nothing sold.
 	// First step is the hard one: 20% of the fee.
-	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0); !ok || anchor != 1697-339 {
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0, "router", 0); !ok || anchor != 1697-339 {
 		t.Fatalf("expected a first step of 20%% (339 ppm), got %d %v", anchor, ok)
 	}
 	// Below the 1.25x trigger the walk continues at 8%, capped at 150 ppm.
-	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 900, 777, 0.11, 0); !ok || anchor != 900-72 {
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 900, 777, 0.11, 0, "router", 0); !ok || anchor != 900-72 {
 		t.Fatalf("expected an 8%% follow-up step (72 ppm), got %d %v", anchor, ok)
 	}
-	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 2300, 2000, 0.11, 0); !ok || anchor != 2300-150 {
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 2300, 2000, 0.11, 0, "router", 0); !ok || anchor != 2300-150 {
 		t.Fatalf("follow-up steps are capped at 150 ppm, got %d %v", anchor, ok)
 	}
 	// A small fee steps by the 20 ppm minimum.
-	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 120, 100, 0.5, 0); !ok || anchor != 100 {
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 120, 100, 0.5, 0, "router", 0); !ok || anchor != 100 {
 		t.Fatalf("expected the 20 ppm minimum step, got %d %v", anchor, ok)
 	}
 	// The floor is half the seed, not the seed: Open_Hand only sold at 322 with
 	// a seed of 644. From 340 the next step lands on the floor.
-	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 340, 644, 0.11, 0); !ok || anchor != 322 {
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 340, 644, 0.11, 0, "router", 0); !ok || anchor != 322 {
 		t.Fatalf("expected the walk to reach half the seed (322), got %d %v", anchor, ok)
 	}
-	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 322, 644, 0.11, 0); ok || anchor != 0 {
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 322, 644, 0.11, 0, "router", 0); ok || anchor != 0 {
 		t.Fatalf("at the floor nothing happens, got %d %v", anchor, ok)
 	}
 	// Sold something this week: not stale.
-	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 3); ok {
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 3, "router", 0); ok {
 		t.Fatal("a channel with sales must not be treated as stale stock")
 	}
 	// No stock to liquidate.
-	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.05, 0); ok {
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.05, 0, "router", 0); ok {
 		t.Fatal("below 10%% local there is no stock to move")
 	}
 	// Bought two days ago: give it the week.
 	fresh := base()
 	fresh.LastRebalCostTs = now.Add(-2 * 24 * time.Hour)
-	if _, ok := deriveStalePaidStockAnchor(now, fresh, 1697, 777, 0.11, 0); ok {
+	if _, ok := deriveStalePaidStockAnchor(now, fresh, 1697, 777, 0.11, 0, "router", 0); ok {
 		t.Fatal("stock bought two days ago is not stale yet")
 	}
 	// Never bought: nothing is paid stock.
 	never := base()
 	never.LastRebalCostTs = time.Time{}
-	if _, ok := deriveStalePaidStockAnchor(now, never, 1697, 777, 0.11, 0); ok {
+	if _, ok := deriveStalePaidStockAnchor(now, never, 1697, 777, 0.11, 0, "router", 0); ok {
 		t.Fatal("a channel with no rebalance history has no paid stock")
 	}
 	// Stepped 6 hours ago: one step per day.
 	recent := base()
 	recent.LastTs = now.Add(-6 * time.Hour)
-	if _, ok := deriveStalePaidStockAnchor(now, recent, 1697, 777, 0.11, 0); ok {
+	if _, ok := deriveStalePaidStockAnchor(now, recent, 1697, 777, 0.11, 0, "router", 0); ok {
 		t.Fatal("at most one step per day")
+	}
+	// Channel type matters: a sink with no inbound flow only refills by
+	// rebalance, at the replenishment cost, so its stock is not liquidated
+	// below that; the ranking's close path handles it. A sink that received
+	// forwards this week refills on its own and qualifies.
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0, "sink", 0); ok {
+		t.Fatal("a sink without inbound flow must keep its price")
+	}
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0, "sink", 3); !ok {
+		t.Fatal("a sink with inbound forwards refills on its own and qualifies")
+	}
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0, "source", 0); !ok {
+		t.Fatal("a source qualifies by class")
 	}
 	for _, src := range []string{"rebal", "rebal-sink", "seed-sink", "outrate", "peg"} {
 		if !shouldRelaxFloorForStalePaidStock(src) {

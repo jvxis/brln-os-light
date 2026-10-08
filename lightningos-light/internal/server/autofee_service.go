@@ -7555,6 +7555,11 @@ func deriveMatureEmptySinkHistoryAnchor(profile autofeeProfile, localPpm int, ou
 // when it is cheaper than that. On Friendspool (2026-10-08) Open_Hand sold 33
 // sats in 30 days at 713 ppm (seed 644) and 1.23M three minutes after being
 // cut to 322. The floor is therefore half the seed, not the seed.
+//
+// Only channels that refill on their own qualify: routers and sources, or any
+// channel with inbound forwards this week. A pure sink has no inbound flow, so
+// whatever is sold below the replenishment cost never comes back; there the
+// price stays and the channel ranking's close path applies.
 const (
 	staleStockMinOutRatio   = 0.10
 	staleStockIdleDays      = 7
@@ -7567,8 +7572,11 @@ const (
 	staleStockStepMinHours  = 24
 )
 
-func deriveStalePaidStockAnchor(now time.Time, st *autofeeChannelState, localPpm int, seed float64, outRatio float64, fwdCount int) (int, bool) {
+func deriveStalePaidStockAnchor(now time.Time, st *autofeeChannelState, localPpm int, seed float64, outRatio float64, fwdCount int, classLabel string, inboundCount int64) (int, bool) {
 	if st == nil || localPpm <= 0 || seed <= 0 || fwdCount > 0 || outRatio < staleStockMinOutRatio {
+		return 0, false
+	}
+	if !staleStockRefillsOnItsOwn(classLabel, inboundCount) {
 		return 0, false
 	}
 	if st.LastRebalCostTs.IsZero() || now.Sub(st.LastRebalCostTs) < staleStockIdleDays*24*time.Hour {
@@ -7599,6 +7607,18 @@ func deriveStalePaidStockAnchor(now time.Time, st *autofeeChannelState, localPpm
 		return 0, false
 	}
 	return anchor, true
+}
+
+// staleStockRefillsOnItsOwn: a router or source refills through its own
+// inbound flow; so does any channel that received forwards this week. A
+// sink without inbound only refills by rebalance, at the replenishment
+// cost, so selling its stock below that cost is a loss, not a liquidation.
+func staleStockRefillsOnItsOwn(classLabel string, inboundCount int64) bool {
+	switch strings.ToLower(strings.TrimSpace(classLabel)) {
+	case "router", "source":
+		return true
+	}
+	return inboundCount > 0
 }
 
 func shouldRelaxFloorForStalePaidStock(floorSrc string) bool {
@@ -10662,7 +10682,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	stalePaidStockActive := false
 	stalePaidStockAnchorPpm := 0
 	if e.cfg.StaleStockDownEnabled && !marketRefillMode && !matureEmptySinkDownAnchorActive && !rebalExecutionDownAnchorActive && hasRebalSignal {
-		if anchor, ok := deriveStalePaidStockAnchor(e.now, st, localPpm, seed, outRatio, fwdCount); ok {
+		if anchor, ok := deriveStalePaidStockAnchor(e.now, st, localPpm, seed, outRatio, fwdCount, classLabel, inb.Count); ok {
 			target = minInt(target, anchor)
 			stalePaidStockActive = true
 			stalePaidStockAnchorPpm = anchor

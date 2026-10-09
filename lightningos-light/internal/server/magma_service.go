@@ -536,6 +536,15 @@ func (s *MagmaService) syncLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Sold channels stay under contract whether or not we are still selling.
+	// AutoFee's fee clamp and the channel ranking's close guard read the
+	// commitment cache, so it is refreshed even with sales disabled; before
+	// this, a restart with the app off left the cache empty until the operator
+	// re-enabled sales (Friendspool, 2026-10-09: five channels under
+	// commitment ranked as close candidates).
+	if installed {
+		s.refreshCommitmentCache(ctx)
+	}
 	if !installed || !enabled {
 		return nil
 	}

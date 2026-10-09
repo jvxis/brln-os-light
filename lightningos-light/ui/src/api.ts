@@ -709,6 +709,7 @@ export const updateAutofeeConfig = (payload: {
   rebal_cost_mode?: string
   native_seed_enabled?: boolean
   native_seed_v2_enabled?: boolean
+  stale_stock_down_enabled?: boolean
   amboss_enabled?: boolean
   amboss_token?: string
   inbound_passive_enabled?: boolean

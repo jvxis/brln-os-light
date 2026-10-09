@@ -1,9 +1,25 @@
-# LightningOS
+# LightningOS
+
+## Última release e repositório oficial
+
+[**Última release do LightningOS**](https://github.com/jvxis/brln-os-light-updates/releases/latest)
+
+O projeto oficial continua em [jvxis/brln-os-light](https://github.com/jvxis/brln-os-light): código-fonte, `main`, branches de desenvolvimento, issues e pull requests permanecem aqui. O [repositório de updates](https://github.com/jvxis/brln-os-light-updates/releases) serve somente como catálogo das releases **0.5.41 em diante**, com cópia da mesma tag/commit revisada para download e verificação; não é um fork com desenvolvimento independente.
+
+As releases publicadas no repositório principal terminam na **0.5.40** para preservar a etapa obrigatória de upgrade das instalações antigas. Isso não significa que o projeto ou seu código-fonte deixaram de receber atualizações. Nodes anteriores à 0.5.40 devem atualizar primeiro para a 0.5.40; a partir dela, a UI encontra as próximas releases no catálogo de updates. Continue usando este repositório para instruções de instalação, desenvolvimento e suporte.
+
+Upgrade parado na preparação do Go na 0.5.40/0.5.41? Consulte o
+[diagnóstico e recuperação opcional do proprietário legado](GO_PARENT_OWNER_RECOVERY.md#português).
+Se o upgrade funciona normalmente, nenhuma ação é necessária.
+
+
 
 > [!IMPORTANT]
 > O LightningOS é um painel local de controle do node e **não foi projetado para exposição direta à Internet pública**. Use-o somente em uma LAN confiável ou por uma VPN privada, como o Tailscale, sempre protegido por firewall no host ou na rede. Nunca encaminhe a porta `8443` nem as portas da App Store para a Internet. Os instaladores restringem a `8443` à LAN detectada e à interface `tailscale0` somente quando o UFW já está instalado e ativo; eles não ativam o UFW automaticamente. Confirme sempre com `sudo ufw status` ou configure um firewall externo equivalente antes de usar o node.
 
 [Arquitetura de segurança](#arquitetura-de-segurança) · [Relato privado de vulnerabilidades](../SECURITY.md)
+
+Um projeto do [BR⚡LN Club](https://br-ln.com), a comunidade brasileira de operadores de nodes Bitcoin e Lightning Network · [Blog](https://blog.br-ln.com) · [Ferramentas Lightning grátis](https://br-ln.com/ferramentas/)
 
 <img width="1920" height="1080" alt="logo" src="https://github.com/user-attachments/assets/504ec23e-31f8-407a-a848-3fa4ce3ec1f9" />
 
@@ -998,7 +1014,9 @@ go test ./internal/server -run TestValidateAppRegistry
 
 ## Changelog
 Notas por versão são mantidas no GitHub Releases:
-- https://github.com/jvxis/brln-os-light/releases
+- [Última release](https://github.com/jvxis/brln-os-light-updates/releases/latest)
+- [Releases da 0.5.41 em diante](https://github.com/jvxis/brln-os-light-updates/releases)
+- [Releases anteriores, até a 0.5.40](https://github.com/jvxis/brln-os-light/releases)
 
 ## Desenvolvimento
 Veja `DEVELOPMENT.md` para setup local e instruções de build.

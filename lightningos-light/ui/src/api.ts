@@ -343,6 +343,17 @@ export const runSystemAction = (payload: { action: 'reboot' | 'shutdown' }) =>
 export const getLogs = (service: string, lines: number, since?: string) =>
   request(`/api/logs${buildQuery({ service, lines, since })}`)
 
+export type LogQuery = { service: string; limit: number; since?: string; until?: string; level?: string; event?: string; q?: string }
+export type LogEntry = { time?: string; message: string; level: string; event: string; context?: LogEntry[] }
+export type LogQueryResult = {
+  query: LogQuery; source: string; entries: LogEntry[]
+  capabilities: { period: boolean; filters: boolean; events: boolean; context: boolean }
+  scanned: number; matched: number; partial: boolean; reason?: string
+  result_limited: boolean; queried_at: string
+}
+export const queryLogs = (query: LogQuery, signal?: AbortSignal): Promise<LogQueryResult> =>
+  request(`/api/logs/query${buildQuery(query)}`, { signal })
+
 export const updateLndConfig = (payload: {
   alias?: string
   color?: string
@@ -698,6 +709,7 @@ export const updateAutofeeConfig = (payload: {
   rebal_cost_mode?: string
   native_seed_enabled?: boolean
   native_seed_v2_enabled?: boolean
+  stale_stock_down_enabled?: boolean
   amboss_enabled?: boolean
   amboss_token?: string
   inbound_passive_enabled?: boolean

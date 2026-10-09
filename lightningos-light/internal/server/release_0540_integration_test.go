@@ -72,14 +72,14 @@ func TestRelease0540PostgresCompatibility(t *testing.T) {
 	if err != nil || len(settings) != 1 || settings[0].Enabled || settings[0].MinPpm != 1200 || settings[0].ChannelPoint != "fixture:0" {
 		t.Fatalf("floor must preserve disabled state and point: %+v %v", settings, err)
 	}
-	if floor := af.loadChannelMinPpm(ctx)[101]; floor != 1200 {
-		t.Fatalf("loaded floor: %d", floor)
+	if floors, err := af.loadChannelMinPpm(ctx); err != nil || floors[101] != 1200 {
+		t.Fatalf("loaded floor: %v %v", floors, err)
 	}
 	if err := af.SetChannelMinPpm(ctx, 101, "", 0); err != nil {
 		t.Fatal(err)
 	}
-	if floor := af.loadChannelMinPpm(ctx)[101]; floor != 0 {
-		t.Fatalf("cleared floor: %d", floor)
+	if floors, err := af.loadChannelMinPpm(ctx); err != nil || floors[101] != 0 {
+		t.Fatalf("cleared floor: %v %v", floors, err)
 	}
 
 	now := time.Now()

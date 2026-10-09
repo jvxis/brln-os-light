@@ -310,6 +310,7 @@ type AutofeeConfig struct {
 	RebalCostMode                                string                            `json:"rebal_cost_mode"`
 	NativeSeedEnabled                            bool                              `json:"native_seed_enabled"`
 	NativeSeedV2Enabled                          bool                              `json:"native_seed_v2_enabled"`
+	StaleStockDownEnabled                        bool                              `json:"stale_stock_down_enabled"`
 	AmbossEnabled                                bool                              `json:"amboss_enabled"`
 	AmbossTokenSet                               bool                              `json:"amboss_token_set"`
 	InboundPassiveEnabled                        bool                              `json:"inbound_passive_enabled"`
@@ -369,6 +370,7 @@ type AutofeeConfigUpdate struct {
 	RebalCostMode                                *string  `json:"rebal_cost_mode,omitempty"`
 	NativeSeedEnabled                            *bool    `json:"native_seed_enabled,omitempty"`
 	NativeSeedV2Enabled                          *bool    `json:"native_seed_v2_enabled,omitempty"`
+	StaleStockDownEnabled                        *bool    `json:"stale_stock_down_enabled,omitempty"`
 	AmbossEnabled                                *bool    `json:"amboss_enabled,omitempty"`
 	AmbossToken                                  *string  `json:"amboss_token,omitempty"`
 	InboundPassiveEnabled                        *bool    `json:"inbound_passive_enabled,omitempty"`
@@ -1333,6 +1335,7 @@ create table if not exists autofee_config (
   rebal_cost_mode text not null default 'blend',
   native_seed_enabled boolean not null default false,
   native_seed_v2_enabled boolean not null default false,
+  stale_stock_down_enabled boolean not null default false,
   amboss_enabled boolean not null default false,
   amboss_token text,
   inbound_passive_enabled boolean not null default false,
@@ -1477,6 +1480,7 @@ alter table autofee_config add column if not exists htlc_policy_fail_rate_overri
 alter table autofee_config add column if not exists htlc_liquidity_fail_rate_override double precision not null default 0;
 alter table autofee_config add column if not exists native_seed_enabled boolean not null default false;
 alter table autofee_config add column if not exists native_seed_v2_enabled boolean not null default false;
+alter table autofee_config add column if not exists stale_stock_down_enabled boolean not null default false;
 alter table autofee_config add column if not exists idle_refresh_enabled boolean not null default false;
 alter table autofee_state add column if not exists ss_active boolean;
 alter table autofee_state add column if not exists ss_ok_since timestamptz;
@@ -1528,6 +1532,7 @@ func (s *AutofeeService) defaultConfig() AutofeeConfig {
 		RebalCostMode:                   rebalCostModeDefault,
 		NativeSeedEnabled:               true,
 		NativeSeedV2Enabled:             false,
+		StaleStockDownEnabled:           false,
 		AmbossEnabled:                   false,
 		AmbossTokenSet:                  false,
 		InboundPassiveEnabled:           false,
@@ -1590,7 +1595,7 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
   htlc_policy_fail_rate_override, htlc_liquidity_fail_rate_override,
   rebal_cost_mode, native_seed_enabled, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled, idle_refresh_enabled,
   super_source_enabled, super_source_base_fee_msat, revfloor_enabled, circuit_breaker_enabled, extreme_drain_enabled,
-  htlc_signal_enabled, htlc_mode, min_ppm, max_ppm, native_seed_v2_enabled
+  htlc_signal_enabled, htlc_mode, min_ppm, max_ppm, native_seed_v2_enabled, stale_stock_down_enabled
 from autofee_config where id=$1
 `, autofeeConfigID).Scan(
 		&cfg.Enabled,
@@ -1630,6 +1635,7 @@ from autofee_config where id=$1
 		&cfg.MinPpm,
 		&cfg.MaxPpm,
 		&cfg.NativeSeedV2Enabled,
+		&cfg.StaleStockDownEnabled,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1772,6 +1778,9 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	if req.NativeSeedV2Enabled != nil {
 		current.NativeSeedV2Enabled = *req.NativeSeedV2Enabled
 	}
+	if req.StaleStockDownEnabled != nil {
+		current.StaleStockDownEnabled = *req.StaleStockDownEnabled
+	}
 
 	if current.LookbackDays < autofeeMinLookbackDays {
 		current.LookbackDays = autofeeMinLookbackDays
@@ -1912,6 +1921,7 @@ set enabled=$2,
   min_ppm=$36,
   max_ppm=$37,
   native_seed_v2_enabled=$38,
+  stale_stock_down_enabled=$39,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
@@ -1952,6 +1962,7 @@ where id=$1
 		current.MinPpm,
 		current.MaxPpm,
 		current.NativeSeedV2Enabled,
+		current.StaleStockDownEnabled,
 	)
 	if err != nil {
 		return autofeeConfigWithProfileDefaults(current), err
@@ -2258,28 +2269,33 @@ on conflict (channel_id) do update set min_ppm=excluded.min_ppm, channel_point=c
 	return err
 }
 
-// loadChannelMinPpm returns only the channels with a floor set.
-func (s *AutofeeService) loadChannelMinPpm(ctx context.Context) map[uint64]int {
+// loadChannelMinPpm returns only the channels with a floor set. A floor is a
+// hard constraint the operator set, so a failed or partial read is an error:
+// the callers must not publish fees as if no floor existed (#235).
+func (s *AutofeeService) loadChannelMinPpm(ctx context.Context) (map[uint64]int, error) {
 	out := map[uint64]int{}
 	if s == nil || s.db == nil {
-		return out
+		return out, nil
 	}
 	rows, err := s.db.Query(ctx, `select channel_id, min_ppm from autofee_channel_settings where coalesce(min_ppm, 0) > 0`)
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("load channel fee floors: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var channelID int64
 		var minPpm int
 		if err := rows.Scan(&channelID, &minPpm); err != nil {
-			return out
+			return nil, fmt.Errorf("load channel fee floors: %w", err)
 		}
 		if channelID > 0 && minPpm > 0 {
 			out[uint64(channelID)] = minPpm
 		}
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load channel fee floors: %w", err)
+	}
+	return out, nil
 }
 
 // applyChannelMinPpm raises the final outbound fee to the operator floor.
@@ -2287,12 +2303,22 @@ func (s *AutofeeService) loadChannelMinPpm(ctx context.Context) map[uint64]int {
 // cooldowns that would otherwise leave the channel below it. Lowering is
 // never touched here.
 func applyChannelMinPpm(finalPpm int, localPpm int, minPpm int, apply bool) (int, bool, bool) {
-	if minPpm <= 0 || finalPpm >= minPpm {
+	if minPpm <= 0 {
 		return finalPpm, apply, false
 	}
-	if localPpm >= minPpm && !apply {
-		// Already at or above the floor and nothing to apply: leave as is.
-		return finalPpm, apply, false
+	if apply {
+		if finalPpm >= minPpm {
+			return finalPpm, true, false
+		}
+		return minPpm, true, true
+	}
+	// Held (settling, hold, cooldown): the target will not be published, so
+	// only the fee peers currently see matters. Leave it if it already meets
+	// the floor; otherwise raise it to exactly the floor, even when the held
+	// target is above it. The hold keeps governing everything above the floor
+	// (#235).
+	if localPpm >= minPpm {
+		return finalPpm, false, false
 	}
 	return minPpm, true, true
 }
@@ -2819,7 +2845,10 @@ func (s *AutofeeService) Run(ctx context.Context, dryRun bool, reason string) er
 	}
 
 	engine := newAutofeeEngine(s, cfg)
-	engine.channelMinPpm = s.loadChannelMinPpm(ctx)
+	if engine.channelMinPpm, err = s.loadChannelMinPpm(ctx); err != nil {
+		s.setLastError(err)
+		return err
+	}
 	if reason == "manual" {
 		engine.ignoreCooldown = true
 	}
@@ -3389,7 +3418,9 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 		return result, err
 	}
 	engine := newAutofeeEngine(s, cfg)
-	engine.channelMinPpm = s.loadChannelMinPpm(ctx)
+	if engine.channelMinPpm, err = s.loadChannelMinPpm(ctx); err != nil {
+		return result, err
+	}
 
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
@@ -7536,6 +7567,89 @@ func deriveMatureEmptySinkHistoryAnchor(profile autofeeProfile, localPpm int, ou
 	return anchor, anchor < localPpm
 }
 
+// Stale paid stock: liquidity bought for a channel that sold nothing for
+// staleStockIdleDays while holding at least staleStockMinOutRatio of its
+// capacity, priced above staleStockFloorSeedFrac of the market seed. One step
+// per staleStockStepMinHours: the first one is large, because the market seed
+// is what other nodes charge to reach the peer and a route only gets picked
+// when it is cheaper than that. On Friendspool (2026-10-08) Open_Hand sold 33
+// sats in 30 days at 713 ppm (seed 644) and 1.23M three minutes after being
+// cut to 322. The floor is therefore half the seed, not the seed.
+//
+// Only channels that refill on their own qualify: routers and sources, or any
+// channel with inbound forwards this week. A pure sink has no inbound flow, so
+// whatever is sold below the replenishment cost never comes back; there the
+// price stays and the channel ranking's close path applies.
+const (
+	staleStockMinOutRatio   = 0.10
+	staleStockIdleDays      = 7
+	staleStockSeedMult      = 1.25
+	staleStockFloorSeedFrac = 0.50
+	staleStockFirstStepFrac = 0.20
+	staleStockStepFrac      = 0.08
+	staleStockMinStepPpm    = 20
+	staleStockMaxStepPpm    = 150
+	staleStockStepMinHours  = 24
+)
+
+func deriveStalePaidStockAnchor(now time.Time, st *autofeeChannelState, localPpm int, seed float64, outRatio float64, fwdCount int, classLabel string, inboundCount int64) (int, bool) {
+	if st == nil || localPpm <= 0 || seed <= 0 || fwdCount > 0 || outRatio < staleStockMinOutRatio {
+		return 0, false
+	}
+	if !staleStockRefillsOnItsOwn(classLabel, inboundCount) {
+		return 0, false
+	}
+	if st.LastRebalCostTs.IsZero() || now.Sub(st.LastRebalCostTs) < staleStockIdleDays*24*time.Hour {
+		return 0, false
+	}
+	floor := int(math.Ceil(seed * staleStockFloorSeedFrac))
+	if localPpm <= floor {
+		return 0, false
+	}
+	if !st.LastTs.IsZero() && now.Sub(st.LastTs) < staleStockStepMinHours*time.Hour {
+		return 0, false
+	}
+	// First step: still priced at or above the trigger, so no step has been
+	// taken yet; cut hard. Later steps walk down toward the floor.
+	frac := staleStockStepFrac
+	if float64(localPpm) >= seed*staleStockSeedMult {
+		frac = staleStockFirstStepFrac
+	}
+	step := int(math.Round(float64(localPpm) * frac))
+	if step < staleStockMinStepPpm {
+		step = staleStockMinStepPpm
+	}
+	if step > staleStockMaxStepPpm && frac == staleStockStepFrac {
+		step = staleStockMaxStepPpm
+	}
+	anchor := maxInt(localPpm-step, floor)
+	if anchor >= localPpm {
+		return 0, false
+	}
+	return anchor, true
+}
+
+// staleStockRefillsOnItsOwn: a router or source refills through its own
+// inbound flow; so does any channel that received forwards this week. A
+// sink without inbound only refills by rebalance, at the replenishment
+// cost, so selling its stock below that cost is a loss, not a liquidation.
+func staleStockRefillsOnItsOwn(classLabel string, inboundCount int64) bool {
+	switch strings.ToLower(strings.TrimSpace(classLabel)) {
+	case "router", "source":
+		return true
+	}
+	return inboundCount > 0
+}
+
+func shouldRelaxFloorForStalePaidStock(floorSrc string) bool {
+	switch strings.TrimSpace(floorSrc) {
+	case "rebal", "rebal-sink", "rebal-hold", "seed-sink", "outrate", "outrate-sink", "peg", "no-signal", "seed-soft":
+		return true
+	default:
+		return false
+	}
+}
+
 func shouldRelaxFloorForMatureEmptySinkAnchor(floorSrc string) bool {
 	switch strings.TrimSpace(floorSrc) {
 	case "rebal", "rebal-sink", "rebal-hold", "outrate", "outrate-sink", "peg", "no-signal", "seed-soft":
@@ -10579,6 +10693,22 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	hasRebalSignal := !marketRefillMode && (observedRebalSignal || rebalFrom21dFallback || slowCycle30dRebalApplied || rebalMemoryActive)
 	strongOutSignal := observedOutSignal || (outrateMemoryActive && e.now.Sub(st.LastOutrateTs) <= 7*24*time.Hour)
 	strongRebalSignal := !marketRefillMode && (observedRebalSignal || (rebalMemoryActive && e.now.Sub(st.LastRebalCostTs) <= 7*24*time.Hour))
+	// Stale paid stock (opt-in): liquidity the autopilot bought that has not
+	// sold for a week sits above what the market charges, held there by the
+	// rebalance floor and the global negative-margin lock. The cost is sunk;
+	// the only thing that moves the stock is a lower price. With the
+	// autopilot's stock gate on, a lower price does not trigger a rebuy: its
+	// fee cap falls below the paid cost. Step down once a day toward the seed.
+	stalePaidStockActive := false
+	stalePaidStockAnchorPpm := 0
+	if e.cfg.StaleStockDownEnabled && !marketRefillMode && !matureEmptySinkDownAnchorActive && !rebalExecutionDownAnchorActive && hasRebalSignal {
+		if anchor, ok := deriveStalePaidStockAnchor(e.now, st, localPpm, seed, outRatio, fwdCount, classLabel, inb.Count); ok {
+			target = minInt(target, anchor)
+			stalePaidStockActive = true
+			stalePaidStockAnchorPpm = anchor
+			tags = append(tags, "stale-stock-down")
+		}
+	}
 	noSignalNoUpActive := false
 	if shouldBlockAutofeeIdleUpwardPressure(
 		marketRefillMode,
@@ -11084,6 +11214,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 					lockSkipTag = "empty-sink-global-relax"
 				} else if rebalExecutionDownAnchorActive {
 					lockSkipTag = "rebal-exec-global-relax"
+				} else if stalePaidStockActive {
+					lockSkipTag = "stale-stock-global-relax"
 				} else if allowSoften {
 					if outPpm7d > 0 {
 						pegFloor := int(math.Round(float64(outPpm7d) * softenMaxDropToPegFrac))
@@ -11457,6 +11589,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floor = rebalExecutionDownAnchorPpm
 		floorSrc = "rebal-exec-anchor"
 		tags = append(tags, "rebal-exec-floor-anchor")
+	}
+	if stalePaidStockActive && stalePaidStockAnchorPpm > 0 && floor > stalePaidStockAnchorPpm && shouldRelaxFloorForStalePaidStock(floorSrc) {
+		floor = stalePaidStockAnchorPpm
+		floorSrc = "stale-stock-anchor"
+		tags = append(tags, "stale-stock-floor-anchor")
 	}
 	staleNoFlowFloorRelaxed := false
 	if relaxedFloor, relaxedSrc, relaxTags := relaxStaleNoFlowAdvisoryFloor(

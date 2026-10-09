@@ -367,6 +367,7 @@ func TestBuildChannelRankingItemIncludesForwardMovement7d(t *testing.T) {
 		movement,
 		channelPeerAggregate{Score30d: 70, SampleCount: 336},
 		channelHTLCAggregate{},
+		0,
 	)
 
 	if item.ForwardInCount7d != movement.ForwardInCount {
@@ -409,6 +410,7 @@ func TestBuildChannelRankingItemTreatsIdlePostRebalanceAsCloseCandidate(t *testi
 		lndclient.ChannelMovement7d{},
 		channelPeerAggregate{Score30d: 51, SampleCount: 719},
 		channelHTLCAggregate{},
+		0,
 	)
 
 	if item.TrendDirection != "worsening" {
@@ -457,6 +459,7 @@ func TestBuildChannelRankingItemDoesNotFlagRebalanceNoPaybackWithoutFull7dObserv
 		lndclient.ChannelMovement7d{},
 		channelPeerAggregate{Score30d: 51, SampleCount: 48},
 		channelHTLCAggregate{},
+		0,
 	)
 
 	if item.State == "close" {
@@ -496,6 +499,7 @@ func TestBuildChannelRankingItemTreatsNoMovement30dAsCloseCandidate(t *testing.T
 		lndclient.ChannelMovement7d{},
 		channelPeerAggregate{Score30d: 75, SampleCount: 720},
 		channelHTLCAggregate{},
+		0,
 	)
 
 	if item.Score7d >= 24 {
@@ -538,6 +542,7 @@ func TestBuildChannelRankingItemDoesNotCloseIdleChannelWithoutFull30dObservation
 		lndclient.ChannelMovement7d{},
 		channelPeerAggregate{Score30d: 75, SampleCount: 48},
 		channelHTLCAggregate{},
+		0,
 	)
 
 	if item.State == "close" {
@@ -580,6 +585,7 @@ func TestBuildChannelRankingItemPenalizesIdleChannelAfterFull7dObservation(t *te
 		lndclient.ChannelMovement7d{},
 		channelPeerAggregate{Score30d: 52, SampleCount: 698},
 		channelHTLCAggregate{},
+		0,
 	)
 
 	if item.Score7d != 10 {
@@ -628,6 +634,7 @@ func TestBuildChannelRankingItemTreatsRebalanceOnly30dAsCloseCandidate(t *testin
 		lndclient.ChannelMovement7d{},
 		channelPeerAggregate{Score30d: 75, SampleCount: 720},
 		channelHTLCAggregate{},
+		0,
 	)
 
 	if item.Score7d >= 24 {
@@ -802,5 +809,97 @@ func TestChannelRankingPeerCloseRisk(t *testing.T) {
 	intentFresh.DrainedSince = &recent
 	if channelRankingPeerCloseRisk(intentFresh, now) {
 		t.Fatal("a fresh drained intent means the drain is recent; must not flag")
+	}
+}
+
+func TestChannelRankingChannelAgeHours(t *testing.T) {
+	// SCID block 900000 at height 900144: 144 blocks, one day.
+	id := uint64(900000) << 40
+	if got := channelRankingChannelAgeHours(id, 900144); got != 24 {
+		t.Fatalf("expected 24h, got %v", got)
+	}
+	if got := channelRankingChannelAgeHours(id, 0); got != 0 {
+		t.Fatalf("unknown height must give unknown age, got %v", got)
+	}
+	if got := channelRankingChannelAgeHours(0, 900144); got != 0 {
+		t.Fatalf("no channel id must give unknown age, got %v", got)
+	}
+}
+
+// A channel opened three days ago read as "no economic movement in 30 days"
+// because the idle windows count peer samples, not channel age, and went
+// straight to close (1sats on Friendspool, 2026-10-08).
+func TestChannelRankingCloseGuardsYoungChannel(t *testing.T) {
+	ch := lndclient.ChannelInfo{ChannelID: uint64(900000) << 40, ChannelPoint: "young:0", RemotePubkey: "peer-young"}
+	reasons := []ChannelRankingReason{{Code: "low_usage"}, {Code: "no_economic_movement_30d"}}
+	recs := []ChannelRankingRecommendation{{Code: "prepare_close_candidate", TargetModule: "lightning-ops"}, {Code: "review_with_close_manager", TargetModule: "close-manager"}}
+	state, gotReasons, gotRecs := applyChannelRankingCloseGuards("close", reasons, recs, ch, 72)
+	if state != "monitor" {
+		t.Fatalf("a 3-day-old channel must not be a close candidate, got %q", state)
+	}
+	codes := func(rs []ChannelRankingReason) []string {
+		out := []string{}
+		for _, r := range rs {
+			out = append(out, r.Code)
+		}
+		return out
+	}
+	if got := codes(gotReasons); len(got) != 2 || got[0] != "low_usage" || got[1] != "channel_too_young_for_close" {
+		t.Fatalf("idle-30d reason must be replaced by the age reason: %v", got)
+	}
+	if len(gotRecs) != 1 || gotRecs[0].Code != "observe_7d_before_close" {
+		t.Fatalf("close recommendations must become observe_7d_before_close: %+v", gotRecs)
+	}
+	// Old enough, no commitment: untouched.
+	state, gotReasons, gotRecs = applyChannelRankingCloseGuards("close", reasons, recs, ch, 30*24)
+	if state != "close" || len(gotReasons) != 2 || len(gotRecs) != 2 {
+		t.Fatalf("a mature channel keeps its close verdict: %s %+v %+v", state, gotReasons, gotRecs)
+	}
+	// Unknown age: untouched.
+	if state, _, _ := applyChannelRankingCloseGuards("close", reasons, recs, ch, 0); state != "close" {
+		t.Fatalf("unknown age must not change the verdict, got %q", state)
+	}
+}
+
+// A channel sold on Magma cannot be closed while its commitment runs, whatever
+// its economics say.
+func TestChannelRankingCloseGuardsMagmaCommitment(t *testing.T) {
+	ch := lndclient.ChannelInfo{ChannelID: 4242, ChannelPoint: "sold:1", RemotePubkey: "buyer"}
+	remaining := int64(2330)
+	magmaCommitments.mu.Lock()
+	prevPoint, prevChannel := magmaCommitments.byPoint, magmaCommitments.byChannel
+	magmaCommitments.byPoint = map[string]MagmaChannelCommitment{"sold:1": {OrderID: "o1", ChannelPoint: "sold:1", BlocksRemaining: &remaining, CommitmentBlocks: 8640}}
+	magmaCommitments.byChannel = map[uint64]MagmaChannelCommitment{4242: magmaCommitments.byPoint["sold:1"]}
+	magmaCommitments.mu.Unlock()
+	t.Cleanup(func() {
+		magmaCommitments.mu.Lock()
+		magmaCommitments.byPoint, magmaCommitments.byChannel = prevPoint, prevChannel
+		magmaCommitments.mu.Unlock()
+	})
+	reasons := []ChannelRankingReason{{Code: "no_economic_movement_30d"}}
+	recs := []ChannelRankingRecommendation{{Code: "prepare_close_candidate", TargetModule: "lightning-ops"}, {Code: "review_fee_positioning", TargetModule: "autofee"}}
+	state, gotReasons, gotRecs := applyChannelRankingCloseGuards("close", reasons, recs, ch, 60*24)
+	if state != "monitor" {
+		t.Fatalf("a channel under Magma commitment must not be a close candidate, got %q", state)
+	}
+	if len(gotReasons) != 2 || gotReasons[1].Code != "magma_commitment_active" {
+		t.Fatalf("expected the commitment reason to be added: %+v", gotReasons)
+	}
+	if len(gotRecs) != 2 || gotRecs[0].Code != "review_fee_positioning" || gotRecs[1].Code != "hold_until_magma_commitment_ends" {
+		t.Fatalf("close recommendations must be replaced by the hold: %+v", gotRecs)
+	}
+	// Commitment over: the verdict stands.
+	done := int64(0)
+	magmaCommitments.mu.Lock()
+	magmaCommitments.byPoint["sold:1"] = MagmaChannelCommitment{OrderID: "o1", ChannelPoint: "sold:1", BlocksRemaining: &done}
+	magmaCommitments.byChannel[4242] = magmaCommitments.byPoint["sold:1"]
+	magmaCommitments.mu.Unlock()
+	if state, _, _ := applyChannelRankingCloseGuards("close", reasons, recs, ch, 60*24); state != "close" {
+		t.Fatalf("an ended commitment must not block the close, got %q", state)
+	}
+	// A monitor channel under commitment only gains the reason.
+	state, gotReasons, gotRecs = applyChannelRankingCloseGuards("monitor", []ChannelRankingReason{{Code: "low_usage"}}, []ChannelRankingRecommendation{{Code: "keep_current_policy"}}, lndclient.ChannelInfo{ChannelID: 9, ChannelPoint: "none:0"}, 60*24)
+	if state != "monitor" || len(gotReasons) != 1 || len(gotRecs) != 1 {
+		t.Fatalf("a channel with no commitment and no close verdict is untouched: %s %+v %+v", state, gotReasons, gotRecs)
 	}
 }

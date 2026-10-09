@@ -38,8 +38,21 @@ type rebalanceAttributionResult struct {
 // lots, but every sat and its proportional fee are attributed at most once for
 // a given measurement window.
 func attributeRebalanceForwardsFIFO(lots []rebalanceAttributionLot, forwards []rebalanceAttributionForward, window time.Duration) map[int64]rebalanceAttributionResult {
+	if window <= 0 {
+		return map[int64]rebalanceAttributionResult{}
+	}
+	return attributeRebalanceForwardsFIFOWindows(lots, forwards, func(rebalanceAttributionLot) time.Duration { return window })
+}
+
+// attributeRebalanceForwardsFIFOWindows is the same FIFO with a per-lot
+// eligibility window. It lets "sold to date" keep an unbounded window for
+// the lots being measured while older context lots still expire after the
+// slow-seller window, exactly as they do for the slow figure. Otherwise a
+// weeks-old lot would keep absorbing sales forever and the to-date figure
+// could fall below the 72h one.
+func attributeRebalanceForwardsFIFOWindows(lots []rebalanceAttributionLot, forwards []rebalanceAttributionForward, windowFor func(rebalanceAttributionLot) time.Duration) map[int64]rebalanceAttributionResult {
 	result := make(map[int64]rebalanceAttributionResult, len(lots))
-	if window <= 0 || len(lots) == 0 || len(forwards) == 0 {
+	if windowFor == nil || len(lots) == 0 || len(forwards) == 0 {
 		return result
 	}
 
@@ -95,7 +108,8 @@ func attributeRebalanceForwardsFIFO(lots []rebalanceAttributionLot, forwards []r
 			assignedFromEventSat := int64(0)
 			for unassignedSat > 0 && lotIndex < len(targetLots) {
 				lot := targetLots[lotIndex]
-				if remaining[lotIndex] <= 0 || !forward.OccurredAt.Before(lot.CompletedAt.Add(window)) {
+				window := windowFor(lot)
+				if remaining[lotIndex] <= 0 || window <= 0 || !forward.OccurredAt.Before(lot.CompletedAt.Add(window)) {
 					lotIndex++
 					continue
 				}
@@ -295,6 +309,11 @@ func (s *RebalanceService) loadSovereignAttributionSnapshot(ctx context.Context,
 		Lots:        lots,
 		Fast:        attributeRebalanceForwardsFIFO(lots, forwards, fastWindow),
 		Slow:        attributeRebalanceForwardsFIFO(lots, forwards, slowWindow),
-		ToDate:      attributeRebalanceForwardsFIFO(lots, forwards, sovereignAttributionToDateWindow),
+		ToDate: attributeRebalanceForwardsFIFOWindows(lots, forwards, func(lot rebalanceAttributionLot) time.Duration {
+			if lot.CompletedAt.Before(metricSince) {
+				return slowWindow
+			}
+			return sovereignAttributionToDateWindow
+		}),
 	}, nil
 }

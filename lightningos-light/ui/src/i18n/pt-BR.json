@@ -1869,6 +1869,69 @@
     "wearWarn": "Desgaste alto"
   },
   "logs": {
+    "explorer": {
+      "subtitle": "Consulte os logs disponíveis por período, nível e evento do LND e exporte os resultados exibidos.",
+      "service": "Serviço",
+      "source": "Fonte",
+      "timezone": "Fuso da exibição",
+      "period": "Período",
+      "recent": "Logs recentes",
+      "customPeriod": "Escolher data e hora",
+      "level": "Nível",
+      "event": "Evento LND",
+      "all": "Todos",
+      "search": "Buscar texto",
+      "searchPlaceholder": "Texto, pubkey, channel point ou txid",
+      "limit": "Limite de resultados",
+      "query": "Consultar logs",
+      "since": "De",
+      "until": "Até",
+      "export": "Exportar resultados (.txt)",
+      "exportUTC": "horários do arquivo em UTC",
+      "queriedAt": "Consultado em",
+      "results": "Resultados dos logs",
+      "context": "Ver contexto",
+      "contextHint": "Até 3 registros anteriores e posteriores, da mesma consulta e dentro do período selecionado. Horários do contexto em UTC.",
+      "invalidPeriod": "Escolha início e fim válidos, em ordem, com intervalo máximo de 7 dias.",
+      "retention": "A consulta abrange apenas os logs ainda armazenados. Histórico removido ou rotacionado não pode ser reconstruído; nenhum resultado não comprova ausência de eventos.",
+      "recentOnly": "Esta fonte Docker permite apenas logs recentes e exportação (até 500 linhas, sujeitos ao limite de tamanho da fonte). Período e filtros de busca estão indisponíveis.",
+      "classification": "As categorias LND são inferidas das mensagens, incluindo tentativas e falhas. Elas não confirmam uma operação de canal. Use Todos ou a busca textual para mensagens não classificadas.",
+      "pending": "Filtros alterados. Consulte novamente para atualizar os resultados e habilitar a exportação.",
+      "count": "{{count}} exibidos · {{matched}} correspondências em {{scanned}} registros lidos",
+      "resultLimited": "São exibidos apenas os resultados correspondentes mais recentes que cabem no limite de quantidade/tamanho. Reduza o período ou refine os filtros para ver mais.",
+      "exportScope": "Escopo da exportação: apenas os registros correspondentes exibidos; o contexto expandido não está incluído.",
+      "presets": {
+        "0": "Hoje",
+        "15": "Últimos 15 minutos",
+        "60": "Última hora",
+        "1440": "Últimas 24 horas"
+      },
+      "levels": {
+        "error": "Erro",
+        "warning": "Aviso",
+        "info": "Informação",
+        "debug": "Depuração / trace",
+        "unknown": "Desconhecido"
+      },
+      "events": {
+        "connection": "Conexões",
+        "channel_open": "Aberturas de canais",
+        "cooperative_close": "Fechamentos cooperativos",
+        "force_close": "Force closes",
+        "lifecycle": "Inicialização / encerramento",
+        "sync": "Sincronização",
+        "other": "Outros / não classificados"
+      },
+      "reasons": {
+        "source_tail": "Apenas uma amostra recente; linhas anteriores podem estar ausentes ou truncadas pela fonte.",
+        "scan_limit": "Consulta parcial: a leitura atingiu 50.000 registros. Reduza o período.",
+        "byte_limit": "Consulta parcial: a leitura atingiu o limite de tamanho. Reduza o período.",
+        "record_limit": "Consulta parcial: um registro muito grande foi truncado ou não pôde ser lido.",
+        "unreadable_record": "Consulta parcial: alguns registros não puderam ser interpretados.",
+        "timeout": "Consulta parcial: o limite de tempo foi atingido. Reduza o período e tente novamente."
+      }
+    },
+
     "fetchFailed": "Falha ao buscar logs.",
     "linesOption": "{{count}} linhas",
     "loading": "Carregando logs...",
@@ -3822,6 +3885,8 @@
     "autofeeNativeSeedHint": "Usa o histórico público do Graph Explorer quando houver cobertura suficiente; se Amboss também estiver habilitado, ele vira fallback.",
     "autofeeNativeSeedV2": "Seed nativa v2 (amostragem corrigida)",
     "autofeeNativeSeedV2Hint": "Aplica a referência do grafo corrigida: exclui a política do próprio nó, uma amostra por canal por dia, carrega políticas sem mudança adiante, ignora direções desabilitadas e canais fechados. Desligado = a seed antiga é aplicada e a v2 só é registrada por canal (seed_v2, seed_v2_delta_pct) para comparação. Requer a seed nativa.",
+    "autofeeStaleStockDown": "Estoque pago parado desce em degraus",
+    "autofeeStaleStockDownHint": "Liquidez comprada pelo autopilot de rebalance que não vende há 7 dias, com o canal ainda com pelo menos 10% local e fee 25% ou mais acima da seed de mercado, cai 20% uma vez e depois 8% por dia (20 a 150 ppm) até metade da seed. Uma rota só é escolhida quando é mais barata do que os outros nós cobram para chegar ao peer, então a própria seed não é o preço que escoa. Só entram canais que se repõem sozinhos: routers, sources ou qualquer canal com forwards de entrada nesta semana. Sink sem fluxo de entrada mantém o preço, porque o que ele vende abaixo do custo de reposição não volta; para ele vale o caminho de fechamento do channel ranking. Ignora o piso de rebalance e o lock global de margem negativa só nesse canal. Feita para rodar com a trava de estoque do autopilot ligada. Desligada por padrão.",
     "autofeeAmboss": "Referência fee Amboss",
     "autofeeAmbossHint": "Usa métricas do Amboss como referência externa opcional de mercado.",
     "autofeeAmbossToken": "Token da API do Amboss",
@@ -5924,7 +5989,9 @@
       "assisted_revenue_support": "Canal relevante como entrada de forwards",
       "source_liquidity_underused": "Papel source útil, mas com baixo giro do capital local",
       "capital_efficiency_high": "Boa eficiência de capital",
-      "capital_efficiency_low": "Eficiência de capital baixa"
+      "capital_efficiency_low": "Eficiência de capital baixa",
+      "channel_too_young_for_close": "Canal com menos de 7 dias: os sinais de ociosidade ainda não valem",
+      "magma_commitment_active": "Vendido no Magma: compromisso em andamento, não pode ser fechado"
     },
     "recommendations": {
       "consider_more_capacity": "Considerar mais capacidade neste peer/canal",
@@ -5932,6 +5999,7 @@
       "keep_autofee_active": "Manter autofee ativo",
       "keep_current_policy": "Manter política atual",
       "reduce_rebalance_priority": "Reduzir prioridade de rebalance",
+      "hold_until_magma_commitment_ends": "Manter o canal até o fim do compromisso do Magma",
       "keepalive_refill": "Manter um saldo local mínimo (refill keepalive) para evitar churn do peer",
       "review_autofee_bounds": "Revisar limites e reação do autofee",
       "check_peer_stability": "Validar estabilidade do peer",

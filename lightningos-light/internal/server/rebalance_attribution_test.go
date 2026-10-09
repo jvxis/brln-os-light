@@ -71,3 +71,27 @@ func TestAttributeRebalanceForwardsFIFOHonorsExpiryAndTarget(t *testing.T) {
 		t.Fatalf("target-isolated job 3 attribution = %+v, want amount=60", got[3])
 	}
 }
+
+// "Sold to date" must not let a lot older than the metric window absorb a sale
+// forever: context lots expire after the slow window, metric lots never do.
+func TestAttributeRebalanceForwardsFIFOWindowsPerLot(t *testing.T) {
+	base := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
+	lots := []rebalanceAttributionLot{
+		{JobID: 1, TargetChannelID: 1, CompletedAt: base.Add(-20 * 24 * time.Hour), SentSat: 100_000},
+		{JobID: 2, TargetChannelID: 1, CompletedAt: base, SentSat: 100_000},
+	}
+	forwards := []rebalanceAttributionForward{{ID: 1, TargetChannelID: 1, OccurredAt: base.Add(10 * 24 * time.Hour), AmountSat: 100_000, FeeMsat: 1}}
+	unbounded := attributeRebalanceForwardsFIFO(lots, forwards, 365*24*time.Hour)
+	if unbounded[1].ForwardAmountSat != 100_000 || unbounded[2].ForwardAmountSat != 0 {
+		t.Fatalf("a single unbounded window lets the old lot take the sale: %+v", unbounded)
+	}
+	perLot := attributeRebalanceForwardsFIFOWindows(lots, forwards, func(lot rebalanceAttributionLot) time.Duration {
+		if lot.CompletedAt.Before(base.Add(-7 * 24 * time.Hour)) {
+			return 168 * time.Hour
+		}
+		return 365 * 24 * time.Hour
+	})
+	if perLot[1].ForwardAmountSat != 0 || perLot[2].ForwardAmountSat != 100_000 {
+		t.Fatalf("the expired context lot must step aside for the measured lot: %+v", perLot)
+	}
+}

@@ -549,6 +549,7 @@ type AutofeeConfig = {
     rebal_cost_mode?: string
     native_seed_enabled: boolean
     native_seed_v2_enabled?: boolean
+    stale_stock_down_enabled?: boolean
     amboss_enabled: boolean
     amboss_token_set: boolean
     inbound_passive_enabled: boolean
@@ -1303,6 +1304,7 @@ export default function LightningOps() {
   const [autofeeMaxPpm, setAutofeeMaxPpm] = useState('2000')
   const [autofeeNativeSeedEnabled, setAutofeeNativeSeedEnabled] = useState(false)
   const [autofeeNativeSeedV2Enabled, setAutofeeNativeSeedV2Enabled] = useState(false)
+  const [autofeeStaleStockDownEnabled, setAutofeeStaleStockDownEnabled] = useState(false)
   const [autofeeAmbossEnabled, setAutofeeAmbossEnabled] = useState(false)
   const [autofeeAmbossToken, setAutofeeAmbossToken] = useState('')
   const [autofeeRefreshIncludeInbound, setAutofeeRefreshIncludeInbound] = useState(true)
@@ -3362,6 +3364,7 @@ export default function LightningOps() {
       setAutofeeMaxPpm(String(cfg.max_ppm ?? 2000))
       setAutofeeNativeSeedEnabled(Boolean(cfg.native_seed_enabled))
       setAutofeeNativeSeedV2Enabled(Boolean(cfg.native_seed_v2_enabled))
+      setAutofeeStaleStockDownEnabled(Boolean(cfg.stale_stock_down_enabled))
       setAutofeeAmbossEnabled(Boolean(cfg.amboss_enabled))
       setAutofeeInboundPassive(Boolean(cfg.inbound_passive_enabled))
       setAutofeeDiscovery(Boolean(cfg.discovery_enabled))
@@ -4934,6 +4937,7 @@ export default function LightningOps() {
         max_ppm: maxPpmRaw,
         native_seed_enabled: autofeeNativeSeedEnabled,
         native_seed_v2_enabled: autofeeNativeSeedV2Enabled,
+        stale_stock_down_enabled: autofeeStaleStockDownEnabled,
         amboss_enabled: autofeeAmbossEnabled,
         inbound_passive_enabled: autofeeInboundPassive,
         discovery_enabled: autofeeDiscovery,

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"lightningos-light/internal/lndclient"
 )
 
@@ -4094,5 +4096,123 @@ func TestApplyChannelMinPpm(t *testing.T) {
 	// Above the floor: no change.
 	if got, apply, raised := applyChannelMinPpm(1200, 1100, 1000, true); got != 1200 || !apply || raised {
 		t.Fatalf("above floor must not change, got %d %v %v", got, apply, raised)
+	}
+	// #235: held with a target above the floor but a published fee below it.
+	// The target will not be published, so the published fee is what counts:
+	// raise to exactly the floor, not to the held target.
+	if got, apply, raised := applyChannelMinPpm(1100, 800, 1000, false); got != 1000 || !apply || !raised {
+		t.Fatalf("held channel published below the floor must be raised to the floor, got %d %v %v", got, apply, raised)
+	}
+	// Held, published exactly at the floor: the hold stands.
+	if got, apply, raised := applyChannelMinPpm(1100, 1000, 1000, false); got != 1100 || apply || raised {
+		t.Fatalf("held channel already at the floor must stay untouched, got %d %v %v", got, apply, raised)
+	}
+}
+
+// #235: a floor set that cannot be read must stop the run, not publish fees
+// as if no floor existed.
+func TestLoadChannelMinPpmFailsClosedOnDatabaseError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, "postgres://nobody:nobody@127.0.0.1:1/unreachable?connect_timeout=1&sslmode=disable")
+	if err != nil {
+		t.Fatalf("pool config: %v", err)
+	}
+	defer pool.Close()
+	svc := &AutofeeService{db: pool}
+	floors, err := svc.loadChannelMinPpm(ctx)
+	if err == nil {
+		t.Fatalf("expected an error from an unreachable database, got floors %v", floors)
+	}
+	if floors != nil {
+		t.Fatalf("a failed read must not return a usable map: %v", floors)
+	}
+	// No database at all is not an error: there is nothing to read.
+	if floors, err := (&AutofeeService{}).loadChannelMinPpm(ctx); err != nil || len(floors) != 0 {
+		t.Fatalf("no database must mean no floors and no error, got %v %v", floors, err)
+	}
+}
+
+// Stale paid stock (0.5.42): a channel holding liquidity the autopilot bought,
+// with no sale for a week and a fee well above the market seed, steps down
+// once a day toward the seed. Everything else leaves the price alone.
+func TestDeriveStalePaidStockAnchor(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	base := func() *autofeeChannelState {
+		return &autofeeChannelState{LastRebalCostTs: now.Add(-10 * 24 * time.Hour), LastTs: now.Add(-48 * time.Hour)}
+	}
+	// LQWD-Canada on Friendspool: fee 1697, seed 777, 11% local, nothing sold.
+	// First step is the hard one: 20% of the fee.
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0, "router", 0); !ok || anchor != 1697-339 {
+		t.Fatalf("expected a first step of 20%% (339 ppm), got %d %v", anchor, ok)
+	}
+	// Below the 1.25x trigger the walk continues at 8%, capped at 150 ppm.
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 900, 777, 0.11, 0, "router", 0); !ok || anchor != 900-72 {
+		t.Fatalf("expected an 8%% follow-up step (72 ppm), got %d %v", anchor, ok)
+	}
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 2300, 2000, 0.11, 0, "router", 0); !ok || anchor != 2300-150 {
+		t.Fatalf("follow-up steps are capped at 150 ppm, got %d %v", anchor, ok)
+	}
+	// A small fee steps by the 20 ppm minimum.
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 120, 100, 0.5, 0, "router", 0); !ok || anchor != 100 {
+		t.Fatalf("expected the 20 ppm minimum step, got %d %v", anchor, ok)
+	}
+	// The floor is half the seed, not the seed: Open_Hand only sold at 322 with
+	// a seed of 644. From 340 the next step lands on the floor.
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 340, 644, 0.11, 0, "router", 0); !ok || anchor != 322 {
+		t.Fatalf("expected the walk to reach half the seed (322), got %d %v", anchor, ok)
+	}
+	if anchor, ok := deriveStalePaidStockAnchor(now, base(), 322, 644, 0.11, 0, "router", 0); ok || anchor != 0 {
+		t.Fatalf("at the floor nothing happens, got %d %v", anchor, ok)
+	}
+	// Sold something this week: not stale.
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 3, "router", 0); ok {
+		t.Fatal("a channel with sales must not be treated as stale stock")
+	}
+	// No stock to liquidate.
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.05, 0, "router", 0); ok {
+		t.Fatal("below 10%% local there is no stock to move")
+	}
+	// Bought two days ago: give it the week.
+	fresh := base()
+	fresh.LastRebalCostTs = now.Add(-2 * 24 * time.Hour)
+	if _, ok := deriveStalePaidStockAnchor(now, fresh, 1697, 777, 0.11, 0, "router", 0); ok {
+		t.Fatal("stock bought two days ago is not stale yet")
+	}
+	// Never bought: nothing is paid stock.
+	never := base()
+	never.LastRebalCostTs = time.Time{}
+	if _, ok := deriveStalePaidStockAnchor(now, never, 1697, 777, 0.11, 0, "router", 0); ok {
+		t.Fatal("a channel with no rebalance history has no paid stock")
+	}
+	// Stepped 6 hours ago: one step per day.
+	recent := base()
+	recent.LastTs = now.Add(-6 * time.Hour)
+	if _, ok := deriveStalePaidStockAnchor(now, recent, 1697, 777, 0.11, 0, "router", 0); ok {
+		t.Fatal("at most one step per day")
+	}
+	// Channel type matters: a sink with no inbound flow only refills by
+	// rebalance, at the replenishment cost, so its stock is not liquidated
+	// below that; the ranking's close path handles it. A sink that received
+	// forwards this week refills on its own and qualifies.
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0, "sink", 0); ok {
+		t.Fatal("a sink without inbound flow must keep its price")
+	}
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0, "sink", 3); !ok {
+		t.Fatal("a sink with inbound forwards refills on its own and qualifies")
+	}
+	if _, ok := deriveStalePaidStockAnchor(now, base(), 1697, 777, 0.11, 0, "source", 0); !ok {
+		t.Fatal("a source qualifies by class")
+	}
+	for _, src := range []string{"rebal", "rebal-sink", "seed-sink", "outrate", "peg"} {
+		if !shouldRelaxFloorForStalePaidStock(src) {
+			t.Fatalf("floor source %q must yield to the stale-stock anchor", src)
+		}
+	}
+	if shouldRelaxFloorForStalePaidStock("channel-min") || shouldRelaxFloorForStalePaidStock("seed") {
+		t.Fatal("operator and market floors are not relaxed")
+	}
+	if (&AutofeeService{}).defaultConfig().StaleStockDownEnabled {
+		t.Fatal("stale stock liquidation must be opt-in")
 	}
 }

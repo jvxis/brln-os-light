@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"lightningos-light/internal/lndclient"
 )
 
@@ -4094,5 +4096,39 @@ func TestApplyChannelMinPpm(t *testing.T) {
 	// Above the floor: no change.
 	if got, apply, raised := applyChannelMinPpm(1200, 1100, 1000, true); got != 1200 || !apply || raised {
 		t.Fatalf("above floor must not change, got %d %v %v", got, apply, raised)
+	}
+	// #235: held with a target above the floor but a published fee below it.
+	// The target will not be published, so the published fee is what counts:
+	// raise to exactly the floor, not to the held target.
+	if got, apply, raised := applyChannelMinPpm(1100, 800, 1000, false); got != 1000 || !apply || !raised {
+		t.Fatalf("held channel published below the floor must be raised to the floor, got %d %v %v", got, apply, raised)
+	}
+	// Held, published exactly at the floor: the hold stands.
+	if got, apply, raised := applyChannelMinPpm(1100, 1000, 1000, false); got != 1100 || apply || raised {
+		t.Fatalf("held channel already at the floor must stay untouched, got %d %v %v", got, apply, raised)
+	}
+}
+
+// #235: a floor set that cannot be read must stop the run, not publish fees
+// as if no floor existed.
+func TestLoadChannelMinPpmFailsClosedOnDatabaseError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, "postgres://nobody:nobody@127.0.0.1:1/unreachable?connect_timeout=1&sslmode=disable")
+	if err != nil {
+		t.Fatalf("pool config: %v", err)
+	}
+	defer pool.Close()
+	svc := &AutofeeService{db: pool}
+	floors, err := svc.loadChannelMinPpm(ctx)
+	if err == nil {
+		t.Fatalf("expected an error from an unreachable database, got floors %v", floors)
+	}
+	if floors != nil {
+		t.Fatalf("a failed read must not return a usable map: %v", floors)
+	}
+	// No database at all is not an error: there is nothing to read.
+	if floors, err := (&AutofeeService{}).loadChannelMinPpm(ctx); err != nil || len(floors) != 0 {
+		t.Fatalf("no database must mean no floors and no error, got %v %v", floors, err)
 	}
 }

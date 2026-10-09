@@ -5989,7 +5989,9 @@
       "assisted_revenue_support": "Channel is relevant as a forward entry path",
       "source_liquidity_underused": "Useful source role, but local capital turnover is low",
       "capital_efficiency_high": "High capital efficiency",
-      "capital_efficiency_low": "Low capital efficiency"
+      "capital_efficiency_low": "Low capital efficiency",
+      "channel_too_young_for_close": "Channel younger than 7 days: idle signals are not meaningful yet",
+      "magma_commitment_active": "Sold on Magma: commitment still running, cannot be closed"
     },
     "recommendations": {
       "consider_more_capacity": "Consider adding more capacity",
@@ -5997,6 +5999,7 @@
       "keep_autofee_active": "Keep autofee active",
       "keep_current_policy": "Keep the current policy",
       "reduce_rebalance_priority": "Reduce rebalance priority",
+      "hold_until_magma_commitment_ends": "Hold the channel until the Magma commitment ends",
       "keepalive_refill": "Keep a small local balance (keepalive refill) to avoid peer churn",
       "review_autofee_bounds": "Review autofee bounds and reaction",
       "check_peer_stability": "Check peer stability",

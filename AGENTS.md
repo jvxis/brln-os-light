@@ -205,6 +205,7 @@ POST   /api/actions/restart
 POST   /api/actions/system
 GET    /api/audit/events
 GET    /api/logs
+GET    /api/logs/query
 ```
 
 ### Bitcoin, Elements, Mempool, LND, Upgrades

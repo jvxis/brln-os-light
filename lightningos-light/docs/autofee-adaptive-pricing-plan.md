@@ -92,6 +92,63 @@ venda/dia e estoque médio antes e durante, veredicto).
 - **Knobs:** `price_experiments_enabled` (padrão desligado), canais simultâneos,
   dias de teste, piso do corte em % da seed.
 
+### Implementação (0.5.43, `autofee_price_experiments.go`)
+
+Knobs em `autofee_config`: `price_experiments_mode` (`off` | `shadow` |
+`enforce`, padrão `off`), `price_experiments_max_active` (1–10, padrão 2),
+`price_experiments_days` (3–14, padrão 7), `price_experiments_floor_seed_pct`
+(20–90, padrão 50). Tabela `autofee_price_experiments`; leitura em
+`GET /api/lnops/autofee/price-experiments`.
+
+Gatilho, por canal e por run do AutoFee, depois do `evaluateChannel` e do
+idle refresh:
+
+- fee atual ≥ 20 ppm e acima do mínimo global; não é super source; não é
+  corredor de loop; canal com ≥ 7 dias;
+- estoque: `out_ratio` ≥ 10%;
+- venda: zero forwards de saída em 7 dias, ou volume/dia abaixo de 25% da
+  mediana diária do canal nos últimos 30 dias (dias sem venda contam zero,
+  medidos desde a primeira venda do canal na janela);
+- sem experimento concluído há menos de 14 dias (30 dias depois de
+  `no_demand`); vaga livre (`max_active`).
+
+Corte: `max(seed × piso%, mínimo global, mínimo do canal)`. Em sink, também
+`custo de rebalance × 1,10`; sink sem custo conhecido e sem entrada na semana
+não entra (`sink_no_cost_reference`): vender abaixo de um preço de reposição
+desconhecido é prejuízo, e o caminho é o ranking. O corte precisa ser de pelo
+menos 15%; senão não há experimento.
+
+Durante a janela, em `enforce`, a decisão do motor é sobrescrita para a fee de
+teste (holds, cooldowns e pisos ficam suspensos só nesse canal; o desconto de
+entrada decidido pelo motor é mantido). A cada run o experimento acumula
+`runs_total`, `runs_stocked` (out_ratio ≥ 10%) e a venda desde o início
+(`notifications`, forwards de saída do canal). Termina no fim da janela ou,
+em `enforce`, quando a venda passa de metade do saldo inicial.
+
+Veredicto: `sold` quando vendeu ≥ 2% da capacidade **e** a venda por dia com
+estoque é ≥ 1,5× a baseline dos 7 dias anteriores; `inconclusive` quando o
+canal ficou sem estoque em mais de 70% dos runs; `no_demand` nos demais.
+`sold` mantém a fee de teste e grava a memória de outrate nela (o motor segue
+dali, e o surge sobe se a venda acelerar). `no_demand` volta à fee de partida.
+Canal fechado ou tirado do AutoFee no meio: `aborted`. Mudança de modo com
+experimento ativo: `aborted` (a fee volta ao motor).
+
+**Modo sombra** abre o mesmo experimento, com a fee de teste que aplicaria,
+mas não muda nada; mede o canal na fee atual. O veredicto sai com prefixo
+`shadow_`. Leitura: `shadow_no_demand` confirma que o canal não vendeu sozinho
+no preço antigo (o gatilho estava certo); `shadow_sold` diz que teria vendido
+de qualquer jeito (o gatilho foi cedo). Uma semana de sombra nos dois nós antes
+de ligar `enforce`.
+
+Corredor de loop (antecipa a fase 3): par de canais A↔B em que ≥ 50% do que
+sai por B entrou por A e ≥ 50% do que sai por A entrou por B, com ≥ 100k sats
+por ponta em 7 dias. Marca a tag `loop-corridor` e nunca entra em
+experimento. A política completa por tipo (router/source, sink com rota, sink
+de mão única) continua na fase 3.
+
+Fora desta entrega: ponto na curva do canal visível no detalhe (UI); lista
+"sem demanda" lida pelo ranking (só faz sentido com veredictos de `enforce`).
+
 ## Fase 3: política por tipo de canal (0.5.43)
 
 - **Corredor de loop:** par de canais com volume de entrada e saída cruzado

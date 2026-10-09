@@ -62,6 +62,10 @@ type AutofeeConfig = {
   native_seed_enabled?: boolean
   native_seed_v2_enabled?: boolean
   stale_stock_down_enabled?: boolean
+  price_experiments_mode?: string
+  price_experiments_max_active?: number
+  price_experiments_days?: number
+  price_experiments_floor_seed_pct?: number
   amboss_enabled?: boolean
   amboss_token_set?: boolean
   inbound_passive_enabled?: boolean
@@ -418,6 +422,10 @@ export default function FeeCenter() {
   const [nativeSeedEnabled, setNativeSeedEnabled] = useState(false)
   const [nativeSeedV2Enabled, setNativeSeedV2Enabled] = useState(false)
   const [staleStockDownEnabled, setStaleStockDownEnabled] = useState(false)
+  const [priceExperimentsMode, setPriceExperimentsMode] = useState('off')
+  const [priceExperimentsMaxActive, setPriceExperimentsMaxActive] = useState('2')
+  const [priceExperimentsDays, setPriceExperimentsDays] = useState('7')
+  const [priceExperimentsFloorSeedPct, setPriceExperimentsFloorSeedPct] = useState('50')
   const [ambossEnabled, setAmbossEnabled] = useState(false)
   const [ambossToken, setAmbossToken] = useState('')
   const [refreshIncludeInbound, setRefreshIncludeInbound] = useState(true)
@@ -460,6 +468,10 @@ export default function FeeCenter() {
     setNativeSeedEnabled(Boolean(cfg.native_seed_enabled))
     setNativeSeedV2Enabled(Boolean(cfg.native_seed_v2_enabled))
     setStaleStockDownEnabled(Boolean(cfg.stale_stock_down_enabled))
+    setPriceExperimentsMode(cfg.price_experiments_mode || 'off')
+    setPriceExperimentsMaxActive(String(cfg.price_experiments_max_active ?? 2))
+    setPriceExperimentsDays(String(cfg.price_experiments_days ?? 7))
+    setPriceExperimentsFloorSeedPct(String(cfg.price_experiments_floor_seed_pct ?? 50))
     setAmbossEnabled(Boolean(cfg.amboss_enabled))
     setInboundPassive(Boolean(cfg.inbound_passive_enabled))
     setDiscovery(Boolean(cfg.discovery_enabled))
@@ -861,6 +873,10 @@ export default function FeeCenter() {
         native_seed_enabled: nativeSeedEnabled,
         native_seed_v2_enabled: nativeSeedV2Enabled,
         stale_stock_down_enabled: staleStockDownEnabled,
+        price_experiments_mode: priceExperimentsMode,
+        price_experiments_max_active: Math.min(10, Math.max(1, Math.round(Number(priceExperimentsMaxActive) || 2))),
+        price_experiments_days: Math.min(14, Math.max(3, Math.round(Number(priceExperimentsDays) || 7))),
+        price_experiments_floor_seed_pct: Math.min(90, Math.max(20, Math.round(Number(priceExperimentsFloorSeedPct) || 50))),
         amboss_enabled: ambossEnabled,
         inbound_passive_enabled: inboundPassive,
         discovery_enabled: discovery,
@@ -1433,6 +1449,24 @@ export default function FeeCenter() {
                   <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
                     {renderToggle(t('lightningOps.autofeeStaleStockDown'), staleStockDownEnabled, setStaleStockDownEnabled, false, t('lightningOps.autofeeStaleStockDownHint'))}
                     <p className="mt-3 text-xs leading-5 text-fog/55">{t('lightningOps.autofeeStaleStockDownHint')}</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                    <label className="block text-sm text-fog/70">
+                      {t('lightningOps.autofeePriceExperimentsMode')}
+                      <select className="input-field mt-2" value={priceExperimentsMode} onChange={(event) => setPriceExperimentsMode(event.target.value)}>
+                        <option value="off">{t('lightningOps.autofeePriceExperimentsModeOff')}</option>
+                        <option value="shadow">{t('lightningOps.autofeePriceExperimentsModeShadow')}</option>
+                        <option value="enforce">{t('lightningOps.autofeePriceExperimentsModeEnforce')}</option>
+                      </select>
+                    </label>
+                    <p className="mt-3 text-xs leading-5 text-fog/55">{t('lightningOps.autofeePriceExperimentsHint')}</p>
+                    {priceExperimentsMode !== 'off' && (
+                      <div className="mt-4 grid gap-4 md:grid-cols-3">
+                        <label className="text-sm text-fog/70">{t('lightningOps.autofeePriceExperimentsMaxActive')}<input className="input-field mt-2" type="number" min={1} max={10} value={priceExperimentsMaxActive} onChange={(event) => setPriceExperimentsMaxActive(event.target.value)} /></label>
+                        <label className="text-sm text-fog/70">{t('lightningOps.autofeePriceExperimentsDays')}<input className="input-field mt-2" type="number" min={3} max={14} value={priceExperimentsDays} onChange={(event) => setPriceExperimentsDays(event.target.value)} /></label>
+                        <label className="text-sm text-fog/70">{t('lightningOps.autofeePriceExperimentsFloorSeedPct')}<input className="input-field mt-2" type="number" min={20} max={90} value={priceExperimentsFloorSeedPct} onChange={(event) => setPriceExperimentsFloorSeedPct(event.target.value)} /></label>
+                      </div>
+                    )}
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
                     {renderToggle(t('lightningOps.autofeeAmboss'), ambossEnabled, setAmbossEnabled, false, t('lightningOps.autofeeAmbossHint'))}

@@ -15,6 +15,18 @@ ASSUME_YES=0
 AUTO_CONFIGURE_REPO=0
 AUTO_RESTART=0
 VERIFY_ONLY=0
+ONION_RECOVERY_NEEDED=0
+
+recover_lnd_onion() {
+  [[ "$ONION_RECOVERY_NEEDED" -eq 1 ]] || return 0
+  ONION_RECOVERY_NEEDED=0
+  if ! /usr/local/libexec/lightningos-lnd-onion recover; then
+    print_warn "LND onion recovery needs attention. LND was not restarted; inspect the warning above."
+  fi
+}
+
+# APT may restart Tor even if a later package step fails.
+trap recover_lnd_onion EXIT
 
 print_step() {
   echo ""
@@ -466,6 +478,8 @@ main() {
     exit 0
   fi
 
+  [[ -x /usr/local/libexec/lightningos-lnd-onion ]] || die "LND onion recovery helper is missing; use the installed broker or scripts/check-tor-update.sh."
+
   print_step "Checking Tor package source"
   if official_repo_configured; then
     print_ok "Official Tor Project repository is configured; re-authenticating it."
@@ -504,6 +518,7 @@ main() {
 
   if [[ -z "$installed" ]]; then
     if confirm "Tor is not installed. Install ${candidate}?"; then
+      ONION_RECOVERY_NEEDED=1
       if [[ "$repo_ready" -eq 1 ]]; then
         apt-get install -y tor tor-geoipdb deb.torproject.org-keyring
       else
@@ -516,6 +531,7 @@ main() {
     fi
   elif dpkg --compare-versions "$installed" lt "$candidate"; then
     if confirm "Update Tor from ${installed} to ${candidate}?"; then
+      ONION_RECOVERY_NEEDED=1
       if [[ "$repo_ready" -eq 1 ]]; then
         apt-get install -y tor tor-geoipdb deb.torproject.org-keyring
       else
@@ -569,6 +585,7 @@ main() {
   fi
   print_ok "${unit} is active."
 
+  recover_lnd_onion
   wait_for_bootstrap "$unit" "$restart_since" || true
   print_ok "Tor update complete."
 }

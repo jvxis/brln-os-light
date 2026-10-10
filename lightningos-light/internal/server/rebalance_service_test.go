@@ -1993,6 +1993,28 @@ func TestDeriveRebalanceEconomicEnvelope(t *testing.T) {
 	}
 }
 
+func TestDeriveRebalanceEconomicEnvelopeIgnoresPeerCostWithoutDeficit(t *testing.T) {
+	cfg := RebalanceConfig{DeadbandPct: 3, EconRatio: 0.8, MinAmountSat: 100_000, MinSplitEnabled: true, MinExecuteSat: 10_000}
+	setting := channelSetting{AutoEnabled: true, UseDefaultEconRatio: true}
+	// Strike, 2026-10-07: 40% local against a 35% target, a 225 ppm lot paid
+	// in the window and the peer at 1000 ppm. No refill is coming, so the
+	// floor protects the paid lot only.
+	got := deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 40, 35, 578, 0, 1000, 0, 225)
+	if got.RequiredCostPpm != 225 || got.FeeFloorPpm != 282 || got.FloorReason != "rebalance_cost_budget" {
+		t.Fatalf("expected paid-cost floor 282 without deficit, got %+v", got)
+	}
+	// Below target the next refill is real and the peer price is back.
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 20, 35, 578, 0, 1000, 0, 225)
+	if got.RequiredCostPpm != 1000 || got.FeeFloorPpm != 1250 || got.FloorReason != "peer_fee_budget" {
+		t.Fatalf("expected peer floor 1250 with deficit, got %+v", got)
+	}
+	// Without a paid lot and without a deficit there is no floor at all.
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 40, 35, 578, 0, 1000, 0, 0)
+	if got.FeeFloorPpm != 0 || got.RequiredCostPpm != 0 {
+		t.Fatalf("expected no floor, got %+v", got)
+	}
+}
+
 func TestApplyAutofeeSettlingPenaltyDampensRecentTargets(t *testing.T) {
 	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
 	cfg := defaultRebalanceConfig()

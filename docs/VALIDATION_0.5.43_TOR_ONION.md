@@ -1,7 +1,8 @@
 # 0.5.43: LND onion recovery after Tor restart (#245)
 
-Status: implementation for review; **draft, not ready to merge/release**. Full
-installation/upgrade and real LND reachability acceptance remain outstanding.
+Status: implementation for review; **draft, not ready to merge/release**. Real
+unfunded LND/Tor upgrade and release-hook acceptance passed on Ubuntu amd64;
+the full installation/old-updater/architecture matrix remains outstanding.
 
 ## Behavior and boundaries
 
@@ -174,11 +175,87 @@ Linux/POSIX-only); it is not counted as passed in this follow-up. Its helper
 code was not changed. No follow-up artifacts were deployed to LOS-TEST2 and
 no second Tor upgrade or LND restart was attempted.
 
+## 2026-10-11: unfunded real LND and delayed UI start
+
+Source: `4230a2d5bc38ab9bb1238eb959fa5b906383665a`. Reused the disposable
+`los-disposable-0542-logs` (same UUID above), Ubuntu 24.04.3 amd64, 2 vCPU,
+4 GiB RAM. Preserved its old synthetic journal fixtures before replacing the
+fake LND service. Official LND 0.21.4-beta was checked against its release
+SHA-256 manifest. The real daemon used an explicit custom lnddir, mainnet
+`nochainbackend`, `noseedbackup`, **zero funds and zero channels**. It had a
+real listener, RPC and v3 onion, but no chain synchronization; this is not an
+installer-parity or normal Bitcoin-backend acceptance test.
+
+The candidate Manager, broker and UI were installed with the repository's
+hardened systemd units. The Manager ran as `lightningos`, with login enabled,
+a read-only macaroon and the short three-second default broker timeout.
+Authentication used the real browser UI, verified TLS and CSRF handling.
+SSH identity was verified through the local VM console. Temporary trust for
+the lab's public HTTPS certificate was removed after each browser test.
+
+Native Linux checks, executed from the corresponding source/package directory:
+
+```bash
+python3 -m unittest discover -s scripts -p test_lnd_onion.py -v
+python3 scripts/test_tor_upgrade_exit.py -v
+LOS_ONION_DISPOSABLE=1 python3 scripts/test_lnd_onion_tor.py
+# Go test binaries cross-built from the exact commit and executed on Linux:
+(cd internal/privileged && /home/admin/los0543-tor-privileged.test -test.run 'TestTor|TestClientTor' -test.v)
+(cd internal/server && /home/admin/los0543-tor-server.test -test.run 'TestTor|TestExtractTor|TestAptPolicy' -test.v)
+```
+
+All passed: 19 Python onion tests, four shell-trap regressions, real private-Tor
+protocol lifecycle and focused Go suites. The complete combined-source Windows
+`go test ./...`, `go vet ./...` and `npm.cmd run build` also passed; the existing
+Vite chunk-size warning remains.
+
+### Partial package failure with a real Tor restart
+
+Ran the **unchanged production helper** inside a private mount namespace. Only
+that namespace replaced `apt-get install` with a fixture that restarted the
+real `tor@default` service and exited 42. Repository authentication, metadata
+refresh, EXIT trap, onion helper, systemd hook and LND were real. Host APT was
+byte-identical afterwards; no Tor downgrade was needed.
+
+- Exit 42 was preserved; recovery executed exactly once after repository setup.
+- LND PID, advertised onion, configuration, TLS certificate/private key and
+  onion key hashes were unchanged. The original onion was registered detached.
+- **Limitation:** the already-running independent Tor client did not reconnect
+  within the initial approximately 110-second probe window. Further probes also
+  timed out. Restarting only this test client reached the original onion in
+  12.6 seconds. This is consistent with client/descriptor propagation effects,
+  but does not prove that explanation or meet a two-minute existing-client
+  recovery guarantee. Native Tor and LND were not restarted for that probe.
+
+### Real authenticated UI upgrade with slow broker activation
+
+A disposable-only systemd override added six seconds before broker activation;
+the default configured client budget remained three seconds. Edge clicked the
+real upgrade confirmation once. The start returned **HTTP 200 in 6732 ms**,
+with exactly one POST. Tor upgraded from 0.4.9.11 to 0.4.9.14 through the official
+repository and the actual broker/systemd path. The modal showed recovery and
+completion logs, with no onion warning. Final status was healthy, SOCKS/control
+ready and `running=false`.
+
+The existing independent Tor process then reached the same LND onion in 12.1
+seconds. LND PID and all protected file hashes remained unchanged. After an
+explicit restart of **only this unfunded disposable LND**, the actual
+`ExecStartPre` release hook consumed the recovery record; LND started without
+an address collision and advertised the same onion. Independent connectivity
+succeeded in one second. The PID changed only at this intentional LND restart.
+
+Captured journals and helper output were checked in memory for exact private
+onion/TLS material and the test UI credential; none was present. This check
+complements, rather than replaces, the protocol/output unit tests. Root-only
+baselines, logs and results were preserved under
+`/var/lib/los0543-tor-validation`. The injected broker delay was removed and
+the installed service-user broker self-test passed again. The VM was then
+given a normal ACPI shutdown, without deleting disks or test records.
+
 ## Required before marking ready
 
-- Real LND without funds: UI-triggered Tor update, externally reachable same
-  onion within approximately two minutes, unchanged LND PID, then successful
-  `systemctl restart lnd` through the actual drop-in.
+- Investigate or explicitly accept the observed existing-client reconnection
+  delay after the partial-failure scenario; do not promise a two-minute bound.
 - Real LND with encrypted key, a pre-existing attached descriptor returning
   `250`, custom paths/CLI overrides, and actual listener/target mappings.
 - Full fresh `install.sh`, first LOS `install_existing.sh`, and native arm64
@@ -187,10 +264,9 @@ no second Tor upgrade or LND restart was attempted.
 - Actual UI upgrade from supported 0.5.42 using its installed updater to this
   candidate, followed by a Tor update. A new helper against old sources does
   not substitute for that transition.
-- Privileged systemd hook integration, concurrent real LND restart, failed or
-  interrupted APT steps, retry and rollback under the installed unit hardening.
-- Journal/Manager/broker inspection with the real LND fixture to prove no key
-  output, beyond the helper/protocol tests already performed.
+- Concurrent real LND restart, interrupted package steps, full retry and rollback
+  under installed unit hardening. A partial failure and a subsequent successful
+  real upgrade were exercised above, but not the complete fault matrix.
 
 ## Rollback considerations
 

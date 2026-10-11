@@ -1,8 +1,11 @@
 # 0.5.43: LND onion recovery after Tor restart (#245)
 
-Status: implementation for review; **draft, not ready to merge/release**. Real
-unfunded LND/Tor upgrade and release-hook acceptance passed on Ubuntu amd64;
-the full installation/old-updater/architecture matrix remains outstanding.
+Status: **owner-authorized release with documented validation exceptions** on
+2026-10-11. After receiving the completed test report and remaining gaps, the
+owner explicitly requested removing the draft status and publishing 0.5.43.
+Real unfunded LND/Tor upgrade and release-hook acceptance passed on Ubuntu
+amd64. The full installation/old-updater/architecture matrix remains
+outstanding: authorization to release does not turn skipped checks into passes.
 
 ## Behavior and boundaries
 
@@ -252,7 +255,7 @@ baselines, logs and results were preserved under
 the installed service-user broker self-test passed again. The VM was then
 given a normal ACPI shutdown, without deleting disks or test records.
 
-## Required before marking ready
+## Remaining validation (release exception authorized by owner)
 
 - Investigate or explicitly accept the observed existing-client reconnection
   delay after the partial-failure scenario; do not promise a two-minute bound.

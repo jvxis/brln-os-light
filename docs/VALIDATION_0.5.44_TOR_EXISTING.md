@@ -1,7 +1,8 @@
 # 0.5.44: Tor recovery on existing LND layouts
 
 Status: focused regressions passed; PR remains draft pending release-path
-integration coverage. No production deployment or production service restart.
+integration coverage. No production application deployment or service restart;
+owner-authorized incident recovery is recorded separately below.
 
 ## Scope and cause
 
@@ -102,6 +103,44 @@ fixture is under `/var/lib/los0544-validation`; the local driver is
 `D:/Cache/Temp/los0544-native.py`. This is not a real APT/UI upgrade test or a
 public-network inbound reachability test.
 
+## Owner-authorized incident recovery (2026-10-11)
+
+After the isolated lab validation above, the owner authorized recovery of an
+already-unreachable onion on an Ubuntu 24.04 amd64 existing installation. This
+was incident remediation, not use of a production node as a regression fixture.
+
+The 0.5.43 Tor update log reported `explicit absolute lnddir required`. LND was
+still synchronized and had outbound Tor peers, but its own advertised onion
+failed a SOCKS5 TCP connect (reply 4). Read-only preflight with the reviewed
+helper confirmed the default-home layout, an unencrypted supported onion key,
+the already-loaded release hook, no pending recovery record and no local
+service descriptor (551).
+
+The exact helper from commit `be148660` was executed in memory with its normal
+`main()` locking, deadline and recovery safeguards. No Manager, broker or
+installed helper binary was replaced. Recovery re-registered the existing onion
+and retained the normal root-only pending record for the existing release hook.
+This record is intentional: do not remove it while the detached service exists.
+
+After recovery, the same onion was present in `onions/detached`, the descriptor
+query returned 250 and a SOCKS5 TCP connect to its Lightning port succeeded
+(reply 0; 21.2 seconds for that probe). This used the node's Tor client over the
+public Tor network, not an independent external monitor or a Lightning
+handshake; it does not measure total descriptor propagation time. The external
+BRLN Services alert still needs its next independent check.
+A second TCP probe also succeeded (0.9 seconds); the final LND check remained
+chain/graph synchronized, with 103 active channels, one inactive and 115 peers.
+
+All service PIDs/start times/states were unchanged (LND, Bitcoin, Tor, Manager
+and broker socket). Configuration, TLS certificate/key and onion-key contents
+were compared before/after in memory and remained unchanged; no private hashes
+or contents are included here. No channel/fund operations were performed.
+
+This incident was resolved by the existing PR code; no additional runtime fix
+was required. The installed application is still 0.5.43: this one-shot recovery
+does not upgrade its old automatic helper for a future Tor update. Delivery
+through the full candidate UI upgrade remains a separate validation gap.
+
 ## Remaining validation / limitations
 
 - Full 0.5.43 -> candidate UI upgrade and subsequent Tor package-update flow
@@ -112,7 +151,9 @@ public-network inbound reachability test.
   were not tested; unsupported/ambiguous resolution is intentionally refused.
 - The helper reconstructs configuration from the current file, as before; it
   cannot prove that an operator has not edited it since starting LND.
-- Public-network onion reconnection timing was not measured in this test.
+- The private lab did not measure public-network reconnection timing. The
+  incident recovery above adds two successful public-network TCP observations,
+  not a repeatable timing guarantee or independent monitoring confirmation.
 
 Keep the PR in draft until critical integration gaps are completed or the owner
 explicitly decides on this PR's exceptions. Earlier release exceptions are not

@@ -311,6 +311,10 @@ type AutofeeConfig struct {
 	NativeSeedEnabled                            bool                              `json:"native_seed_enabled"`
 	NativeSeedV2Enabled                          bool                              `json:"native_seed_v2_enabled"`
 	StaleStockDownEnabled                        bool                              `json:"stale_stock_down_enabled"`
+	PriceExperimentsMode                         string                            `json:"price_experiments_mode"`
+	PriceExperimentsMaxActive                    int                               `json:"price_experiments_max_active"`
+	PriceExperimentsDays                         int                               `json:"price_experiments_days"`
+	PriceExperimentsFloorSeedPct                 int                               `json:"price_experiments_floor_seed_pct"`
 	AmbossEnabled                                bool                              `json:"amboss_enabled"`
 	AmbossTokenSet                               bool                              `json:"amboss_token_set"`
 	InboundPassiveEnabled                        bool                              `json:"inbound_passive_enabled"`
@@ -371,6 +375,10 @@ type AutofeeConfigUpdate struct {
 	NativeSeedEnabled                            *bool    `json:"native_seed_enabled,omitempty"`
 	NativeSeedV2Enabled                          *bool    `json:"native_seed_v2_enabled,omitempty"`
 	StaleStockDownEnabled                        *bool    `json:"stale_stock_down_enabled,omitempty"`
+	PriceExperimentsMode                         *string  `json:"price_experiments_mode,omitempty"`
+	PriceExperimentsMaxActive                    *int     `json:"price_experiments_max_active,omitempty"`
+	PriceExperimentsDays                         *int     `json:"price_experiments_days,omitempty"`
+	PriceExperimentsFloorSeedPct                 *int     `json:"price_experiments_floor_seed_pct,omitempty"`
 	AmbossEnabled                                *bool    `json:"amboss_enabled,omitempty"`
 	AmbossToken                                  *string  `json:"amboss_token,omitempty"`
 	InboundPassiveEnabled                        *bool    `json:"inbound_passive_enabled,omitempty"`
@@ -1481,6 +1489,42 @@ alter table autofee_config add column if not exists htlc_liquidity_fail_rate_ove
 alter table autofee_config add column if not exists native_seed_enabled boolean not null default false;
 alter table autofee_config add column if not exists native_seed_v2_enabled boolean not null default false;
 alter table autofee_config add column if not exists stale_stock_down_enabled boolean not null default false;
+alter table autofee_config add column if not exists price_experiments_mode text not null default 'off';
+alter table autofee_config add column if not exists price_experiments_max_active integer not null default 2;
+alter table autofee_config add column if not exists price_experiments_days integer not null default 7;
+alter table autofee_config add column if not exists price_experiments_floor_seed_pct integer not null default 50;
+
+create table if not exists autofee_price_experiments (
+  id bigserial primary key,
+  channel_id bigint not null,
+  channel_point text not null,
+  alias text,
+  mode text not null,
+  status text not null default 'active',
+  started_at timestamptz not null,
+  ends_at timestamptz not null,
+  concluded_at timestamptz,
+  start_ppm integer not null,
+  test_ppm integer not null,
+  seed_ppm integer not null default 0,
+  class_label text,
+  capacity_sat bigint not null default 0,
+  start_local_sat bigint not null default 0,
+  baseline_sale_sat_per_day double precision not null default 0,
+  baseline_fee_sat_per_day double precision not null default 0,
+  median_sale_sat_per_day double precision not null default 0,
+  runs_total integer not null default 0,
+  runs_stocked integer not null default 0,
+  out_ratio_sum double precision not null default 0,
+  sold_sat bigint not null default 0,
+  sold_fee_sat bigint not null default 0,
+  verdict text,
+  verdict_note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists autofee_price_experiments_channel_idx on autofee_price_experiments (channel_id, started_at desc);
+create index if not exists autofee_price_experiments_status_idx on autofee_price_experiments (status, started_at desc);
 alter table autofee_config add column if not exists idle_refresh_enabled boolean not null default false;
 alter table autofee_state add column if not exists ss_active boolean;
 alter table autofee_state add column if not exists ss_ok_since timestamptz;
@@ -1533,6 +1577,10 @@ func (s *AutofeeService) defaultConfig() AutofeeConfig {
 		NativeSeedEnabled:               true,
 		NativeSeedV2Enabled:             false,
 		StaleStockDownEnabled:           false,
+		PriceExperimentsMode:            autofeePriceExperimentModeOff,
+		PriceExperimentsMaxActive:       autofeePriceExperimentMaxActiveDefault,
+		PriceExperimentsDays:            autofeePriceExperimentDaysDefault,
+		PriceExperimentsFloorSeedPct:    autofeePriceExperimentFloorSeedPctDefault,
 		AmbossEnabled:                   false,
 		AmbossTokenSet:                  false,
 		InboundPassiveEnabled:           false,
@@ -1595,7 +1643,8 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
   htlc_policy_fail_rate_override, htlc_liquidity_fail_rate_override,
   rebal_cost_mode, native_seed_enabled, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled, idle_refresh_enabled,
   super_source_enabled, super_source_base_fee_msat, revfloor_enabled, circuit_breaker_enabled, extreme_drain_enabled,
-  htlc_signal_enabled, htlc_mode, min_ppm, max_ppm, native_seed_v2_enabled, stale_stock_down_enabled
+  htlc_signal_enabled, htlc_mode, min_ppm, max_ppm, native_seed_v2_enabled, stale_stock_down_enabled,
+  price_experiments_mode, price_experiments_max_active, price_experiments_days, price_experiments_floor_seed_pct
 from autofee_config where id=$1
 `, autofeeConfigID).Scan(
 		&cfg.Enabled,
@@ -1636,6 +1685,10 @@ from autofee_config where id=$1
 		&cfg.MaxPpm,
 		&cfg.NativeSeedV2Enabled,
 		&cfg.StaleStockDownEnabled,
+		&cfg.PriceExperimentsMode,
+		&cfg.PriceExperimentsMaxActive,
+		&cfg.PriceExperimentsDays,
+		&cfg.PriceExperimentsFloorSeedPct,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1648,6 +1701,7 @@ from autofee_config where id=$1
 	cfg.OperationMode = normalizeAutofeeOperationMode(cfg.OperationMode)
 	cfg.RebalCostMode = normalizeRebalCostMode(cfg.RebalCostMode)
 	cfg.HTLCMode = normalizeHTLCMode(cfg.HTLCMode)
+	normalizeAutofeePriceExperimentConfig(&cfg)
 	if cfg.LookbackDays < autofeeMinLookbackDays {
 		cfg.LookbackDays = autofeeMinLookbackDays
 	}
@@ -1781,6 +1835,19 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	if req.StaleStockDownEnabled != nil {
 		current.StaleStockDownEnabled = *req.StaleStockDownEnabled
 	}
+	if req.PriceExperimentsMode != nil {
+		current.PriceExperimentsMode = *req.PriceExperimentsMode
+	}
+	if req.PriceExperimentsMaxActive != nil {
+		current.PriceExperimentsMaxActive = *req.PriceExperimentsMaxActive
+	}
+	if req.PriceExperimentsDays != nil {
+		current.PriceExperimentsDays = *req.PriceExperimentsDays
+	}
+	if req.PriceExperimentsFloorSeedPct != nil {
+		current.PriceExperimentsFloorSeedPct = *req.PriceExperimentsFloorSeedPct
+	}
+	normalizeAutofeePriceExperimentConfig(&current)
 
 	if current.LookbackDays < autofeeMinLookbackDays {
 		current.LookbackDays = autofeeMinLookbackDays
@@ -1922,6 +1989,10 @@ set enabled=$2,
   max_ppm=$37,
   native_seed_v2_enabled=$38,
   stale_stock_down_enabled=$39,
+  price_experiments_mode=$40,
+  price_experiments_max_active=$41,
+  price_experiments_days=$42,
+  price_experiments_floor_seed_pct=$43,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
@@ -1963,6 +2034,10 @@ where id=$1
 		current.MaxPpm,
 		current.NativeSeedV2Enabled,
 		current.StaleStockDownEnabled,
+		current.PriceExperimentsMode,
+		current.PriceExperimentsMaxActive,
+		current.PriceExperimentsDays,
+		current.PriceExperimentsFloorSeedPct,
 	)
 	if err != nil {
 		return autofeeConfigWithProfileDefaults(current), err
@@ -2893,6 +2968,7 @@ type autofeeEngine struct {
 	nativeSeedV2Cache      map[string]autofeeSeedV2Result
 	selfPubkey             string
 	channelMinPpm          map[uint64]int
+	priceExperiments       *autofeePriceExperimentRuntime
 	policyCache            map[string]lndclient.ChannelPolicy
 	ambossToken            string
 	ambossTokenErr         error
@@ -4024,6 +4100,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	negMarginGlobal := rebalGlobalPpm > 0 && outPpmTotal > 0 && outPpmTotal < rebalGlobalPpm
 	e.calibrateNode(channels, state, forwardStats)
 	htlcSignals, htlcMeta := e.buildHTLCFailureSignals(channels)
+	e.loadPriceExperimentRuntime(ctx, dryRun)
 
 	runID := fmt.Sprintf("%d", time.Now().UnixNano())
 	header := fmt.Sprintf("⚡ Autofee %s [%s] | %s", strings.ToUpper(reason), strings.ToUpper(e.cfg.OperationMode), e.now.UTC().Format(time.RFC3339))
@@ -4094,6 +4171,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 				rebalStats21d.ByChannel[ch.ChannelID],
 			)
 		}
+		decision = e.applyPriceExperiment(ctx, ch, decision, forwardStats7d[ch.ChannelID], inboundStats7d[ch.ChannelID], dryRun)
 		summary.eligible++
 		summary.addTags(decision.Tags)
 		if !dryRun && e.automationIntentConfig.Mode != automationIntentModeOff {
@@ -4186,6 +4264,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			}
 		}
 	}
+	e.finishOrphanPriceExperiments(ctx, channels, settings, dryRun)
 	if !dryRun && e.svc.automationIntents != nil && e.automationIntentConfig.Mode != automationIntentModeOff {
 		if err := e.svc.automationIntents.SyncProducerKind(ctx,
 			automationIntentProducerAutofee, automationIntentProducerRebalance,
@@ -8892,6 +8971,7 @@ type decision struct {
 	IntentEffectAfter       int
 	Error                   error
 	State                   *autofeeChannelState
+	PriceExperiment         *autofeePriceExperiment
 }
 
 func rescueCandidate(r autofeeRankingSnapshot, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool, slowCycleProtected bool) (bool, bool) {

@@ -710,6 +710,10 @@ export const updateAutofeeConfig = (payload: {
   native_seed_enabled?: boolean
   native_seed_v2_enabled?: boolean
   stale_stock_down_enabled?: boolean
+  price_experiments_mode?: string
+  price_experiments_max_active?: number
+  price_experiments_days?: number
+  price_experiments_floor_seed_pct?: number
   amboss_enabled?: boolean
   amboss_token?: string
   inbound_passive_enabled?: boolean
@@ -727,6 +731,7 @@ export const updateAutofeeConfig = (payload: {
   max_ppm?: number
 }) => request('/api/lnops/autofee/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getAutofeeChannels = () => request('/api/lnops/autofee/channels')
+export const getAutofeePriceExperiments = (limit = 100) => request('/api/lnops/autofee/price-experiments?limit=' + limit)
 export const updateAutofeeChannels = (payload: {
   apply_all?: boolean
   enabled?: boolean

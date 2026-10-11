@@ -9,7 +9,7 @@ const (
 	torUpgradeHelperPath   = "/usr/local/sbin/lightningos-check-tor-update"
 	torUpgradeUnit         = "lightningos-tor-upgrade"
 	torVerifyUnit          = "lightningos-tor-verify"
-	torUpgradeHelperSHA256 = "583c22363e74c8ea4b694e1b816c8db4f8db09f607decd16bfc771961c770141"
+	torUpgradeHelperSHA256 = "68198b00b188504e96827c1d6966253c09460ebb8d16e4171948995b79271039"
 	torAptGetPath          = "/usr/bin/apt-get"
 )
 

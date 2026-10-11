@@ -1,1 +1,2 @@
 *.sh text eol=lf
+lightningos-light/internal/privileged/assets/*.py text eol=lf

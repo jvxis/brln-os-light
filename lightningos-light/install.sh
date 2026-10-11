@@ -783,6 +783,7 @@ configure_tor() {
       ss -ltnp | grep -E '9050|9051' || true
     fi
   fi
+  /usr/local/libexec/lightningos-lnd-onion recover || print_warn "LND onion recovery needs attention; LND was not restarted"
   print_ok "Tor configured"
 }
 
@@ -1641,6 +1642,8 @@ main() {
   require_root
   print_step "LightningOS installation starting"
   ensure_operator_user
+  bash "$REPO_ROOT/scripts/install-lnd-onion-recovery.sh"
+  trap '/usr/local/libexec/lightningos-lnd-onion recover || true' EXIT
   install_packages
   configure_tor
   create_lnd_user

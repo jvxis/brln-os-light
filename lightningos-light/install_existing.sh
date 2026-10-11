@@ -1379,6 +1379,7 @@ main() {
   show_welcome_and_license
   require_root
   print_step "LightningOS existing node setup"
+  bash "$REPO_ROOT/scripts/install-lnd-onion-recovery.sh"
   ensure_acl_support || print_warn "Lightning Loop installation will require the acl package"
 
   local lnd_dir

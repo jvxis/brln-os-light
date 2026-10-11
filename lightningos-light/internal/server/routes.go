@@ -261,6 +261,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/autofee/results", s.handleAutofeeResults)
 		r.Get("/autofee/outcomes", s.handleAutofeeOutcomesGet)
 		r.Get("/autofee/exposures", s.handleAutofeeExposuresGet)
+		r.Get("/autofee/price-experiments", s.handleAutofeePriceExperimentsGet)
 		r.Post("/autofee/outcomes/measure", s.handleAutofeeOutcomesMeasureNow)
 		r.Get("/automation-intents/config", s.handleAutomationIntentConfigGet)
 		r.Post("/automation-intents/config", s.handleAutomationIntentConfigPost)

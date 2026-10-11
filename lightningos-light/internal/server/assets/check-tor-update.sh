@@ -15,6 +15,18 @@ ASSUME_YES=0
 AUTO_CONFIGURE_REPO=0
 AUTO_RESTART=0
 VERIFY_ONLY=0
+ONION_RECOVERY_NEEDED=0
+
+recover_lnd_onion() {
+  [[ "$ONION_RECOVERY_NEEDED" -eq 1 ]] || return 0
+  ONION_RECOVERY_NEEDED=0
+  if ! /usr/local/libexec/lightningos-lnd-onion recover; then
+    print_warn "LND onion recovery needs attention. LND was not restarted; inspect the warning above."
+  fi
+}
+
+# APT may restart Tor even if a later package step fails.
+trap recover_lnd_onion EXIT
 
 print_step() {
   echo ""
@@ -301,7 +313,9 @@ if __name__ == '__main__':
 TOR_SOURCES_PY
 }
 
-configure_official_repo() {
+# Keep temporary-key cleanup in a subshell. It must not replace the parent
+# EXIT trap which recovers the LND onion after a partially failed APT upgrade.
+configure_official_repo() (
   local architecture codename tmp_dir key_file keyring_file inrelease_file imported_fingerprint
 
   require_command curl
@@ -319,7 +333,7 @@ configure_official_repo() {
 
   tmp_dir=$(mktemp -d)
   chmod 0700 "$tmp_dir"
-  trap 'rm -rf "${tmp_dir:-}"' RETURN EXIT
+  trap 'rm -rf -- "${tmp_dir:?}"' EXIT
   key_file="$tmp_dir/tor-project.asc"
   keyring_file="$tmp_dir/tor-project.gpg"
   inrelease_file="$tmp_dir/InRelease"
@@ -345,17 +359,13 @@ configure_official_repo() {
 
   if [[ "$VERIFY_ONLY" -eq 1 ]]; then
     print_ok "Tor Project repository and pinned signing key verified; no system state was changed."
-    rm -rf "$tmp_dir"
-    trap - RETURN EXIT
     return 0
   fi
 
   reconcile_tor_sources "$keyring_file" "$codename" "$architecture"
-  rm -rf "$tmp_dir"
-  trap - RETURN EXIT
 
   print_ok "Official Tor Project repository configured (${codename}/${architecture})."
-}
+)
 
 installed_package_version() {
   local status version
@@ -466,6 +476,8 @@ main() {
     exit 0
   fi
 
+  [[ -x /usr/local/libexec/lightningos-lnd-onion ]] || die "LND onion recovery helper is missing; use the installed broker or scripts/check-tor-update.sh."
+
   print_step "Checking Tor package source"
   if official_repo_configured; then
     print_ok "Official Tor Project repository is configured; re-authenticating it."
@@ -504,6 +516,7 @@ main() {
 
   if [[ -z "$installed" ]]; then
     if confirm "Tor is not installed. Install ${candidate}?"; then
+      ONION_RECOVERY_NEEDED=1
       if [[ "$repo_ready" -eq 1 ]]; then
         apt-get install -y tor tor-geoipdb deb.torproject.org-keyring
       else
@@ -516,6 +529,7 @@ main() {
     fi
   elif dpkg --compare-versions "$installed" lt "$candidate"; then
     if confirm "Update Tor from ${installed} to ${candidate}?"; then
+      ONION_RECOVERY_NEEDED=1
       if [[ "$repo_ready" -eq 1 ]]; then
         apt-get install -y tor tor-geoipdb deb.torproject.org-keyring
       else
@@ -569,6 +583,7 @@ main() {
   fi
   print_ok "${unit} is active."
 
+  recover_lnd_onion
   wait_for_bootstrap "$unit" "$restart_since" || true
   print_ok "Tor update complete."
 }

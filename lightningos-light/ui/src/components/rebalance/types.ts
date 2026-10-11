@@ -39,6 +39,7 @@ export type RebalanceConfig = {
   keepalive_refill_pct: number
   source_routeability_quarantine_hours: number
   stock_gate_enabled: boolean
+  realized_price_cap_enabled: boolean
   stock_gate_min_stock_pct: number
   stock_gate_cover_days: number
   discovery_steps: number

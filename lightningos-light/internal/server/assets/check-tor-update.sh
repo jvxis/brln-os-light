@@ -313,7 +313,9 @@ if __name__ == '__main__':
 TOR_SOURCES_PY
 }
 
-configure_official_repo() {
+# Keep temporary-key cleanup in a subshell. It must not replace the parent
+# EXIT trap which recovers the LND onion after a partially failed APT upgrade.
+configure_official_repo() (
   local architecture codename tmp_dir key_file keyring_file inrelease_file imported_fingerprint
 
   require_command curl
@@ -331,7 +333,7 @@ configure_official_repo() {
 
   tmp_dir=$(mktemp -d)
   chmod 0700 "$tmp_dir"
-  trap 'rm -rf "${tmp_dir:-}"' RETURN EXIT
+  trap 'rm -rf -- "${tmp_dir:?}"' EXIT
   key_file="$tmp_dir/tor-project.asc"
   keyring_file="$tmp_dir/tor-project.gpg"
   inrelease_file="$tmp_dir/InRelease"
@@ -357,17 +359,13 @@ configure_official_repo() {
 
   if [[ "$VERIFY_ONLY" -eq 1 ]]; then
     print_ok "Tor Project repository and pinned signing key verified; no system state was changed."
-    rm -rf "$tmp_dir"
-    trap - RETURN EXIT
     return 0
   fi
 
   reconcile_tor_sources "$keyring_file" "$codename" "$architecture"
-  rm -rf "$tmp_dir"
-  trap - RETURN EXIT
 
   print_ok "Official Tor Project repository configured (${codename}/${architecture})."
-}
+)
 
 installed_package_version() {
   local status version

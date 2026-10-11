@@ -3066,6 +3066,7 @@
     "completed": "Upgrade completed successfully."
   },
   "torUpgrade": {
+    "onionRecoveryWarning": "The LND onion was not recovered automatically. Check the update log. With an encrypted onion key, schedule an LND restart when convenient; LightningOS will not restart it automatically.",
     "title": "Tor status and upgrade",
     "subtitle": "Monitor the native Tor service and keep it on the latest package available from the official repository.",
     "current": "Current version",

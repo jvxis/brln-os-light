@@ -37,6 +37,7 @@ export default function TorUpgradeCard() {
   const [locked, setLocked] = useState(false)
   const [complete, setComplete] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [onionWarning, setOnionWarning] = useState(false)
   const [logs, setLogs] = useState<string[]>([])
   const [logsStatus, setLogsStatus] = useState('')
   const [logSince, setLogSince] = useState('')
@@ -99,6 +100,7 @@ export default function TorUpgradeCard() {
         const nextLogs: string[] = Array.isArray(res?.lines) ? res.lines : []
         setLogs(formatJournalLogLines(nextLogs, locale))
         setLogsStatus('')
+        setOnionWarning(nextLogs.some((line) => line.includes('[WARN] LND onion')))
 
         const completed = nextLogs.some((line) => line.includes('Tor update complete.'))
         const errorLine = [...nextLogs].reverse().find((line) =>
@@ -169,6 +171,7 @@ export default function TorUpgradeCard() {
     setLocked(Boolean(status?.running))
     setComplete(false)
     setError(null)
+    setOnionWarning(false)
     setLogs([])
     setLogsStatus('')
     setStarted(Boolean(status?.running))
@@ -277,6 +280,7 @@ export default function TorUpgradeCard() {
             <p className="mt-3 text-xs text-rose-200">{t('torUpgrade.confirmWarning')}</p>
             {message && <p className="mt-3 text-sm text-brass">{message}</p>}
             {error && <p className="mt-2 text-sm text-rose-200">{error}</p>}
+            {onionWarning && <p role="alert" className="mt-2 text-sm text-amber-200">{t('torUpgrade.onionRecoveryWarning')}</p>}
             {complete && !error && <p className="mt-2 text-sm text-emerald-200">{t('torUpgrade.completed')}</p>}
 
             <div className="mt-4">

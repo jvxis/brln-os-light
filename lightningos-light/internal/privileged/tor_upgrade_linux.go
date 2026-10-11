@@ -5,6 +5,7 @@ package privileged
 import (
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"errors"
 	"os"
@@ -13,6 +14,43 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+//go:embed assets/lnd-onion.py
+var lndOnionHelper string
+
+const lndOnionHelperPath = "/usr/local/libexec/lightningos-lnd-onion"
+const lndOnionDropIn = "/etc/systemd/system/lnd.service.d/50-lightningos-onion.conf"
+const lndOnionDropInContent = "[Service]\nExecStartPre=-+/usr/local/libexec/lightningos-lnd-onion release\n"
+
+// Install before apt can restart Tor. This also covers upgrades from an older
+// LOS updater: the new broker carries the helper, independent of installer hooks.
+func (manager *NativeTorUpgradeManager) prepareOnionRecovery(ctx context.Context) error {
+	if _, err := os.Stat("/usr/bin/python3"); err != nil {
+		return errors.New("Python 3 is required for LND onion recovery")
+	}
+	for _, parent := range []string{"/usr/local/libexec", "/etc/systemd/system"} {
+		if err := validateRuntimeParent(parent); err != nil {
+			return err
+		}
+	}
+	dir := filepath.Dir(lndOnionDropIn)
+	if err := os.Mkdir(dir, 0o755); err != nil && !os.IsExist(err) {
+		return err
+	}
+	if err := validateRuntimeParent(dir); err != nil {
+		return err
+	}
+	if err := installTrustedTorFile(lndOnionHelperPath, lndOnionHelper, 0o755); err != nil {
+		return err
+	}
+	if err := installTrustedTorFile(lndOnionDropIn, lndOnionDropInContent, 0o644); err != nil {
+		return err
+	}
+	if _, err := manager.runner.Run(ctx, "/usr/bin/systemctl", "daemon-reload"); err != nil {
+		return errors.New("LND onion release hook could not be loaded")
+	}
+	return nil
+}
 
 func (manager *NativeTorUpgradeManager) start(ctx context.Context, params TorUpgradeStartParams, dryRun bool) (TorUpgradeState, error) {
 	digest := sha256.Sum256([]byte(params.HelperContent))
@@ -32,6 +70,11 @@ func (manager *NativeTorUpgradeManager) start(ctx context.Context, params TorUpg
 	state := TorUpgradeState{Status: "validated", Unit: unit, VerifyOnly: params.VerifyOnly}
 	if dryRun {
 		return state, nil
+	}
+	if !params.VerifyOnly {
+		if err := manager.prepareOnionRecovery(ctx); err != nil {
+			return TorUpgradeState{}, err
+		}
 	}
 	if err := installTorUpgradeHelper(params.HelperContent); err != nil {
 		return TorUpgradeState{}, err
@@ -65,7 +108,14 @@ func validateExistingTorUpgradeHelper(path string) error {
 }
 
 func installTorUpgradeHelper(content string) error {
-	parent := filepath.Dir(torUpgradeHelperPath)
+	return installTrustedTorFile(torUpgradeHelperPath, content, 0o755)
+}
+
+func installTrustedTorFile(path, content string, mode os.FileMode) error {
+	parent := filepath.Dir(path)
+	if err := validateRuntimeParent(parent); err != nil {
+		return err
+	}
 	temporary, err := os.CreateTemp(parent, ".lightningos-check-tor-update-")
 	if err != nil {
 		return errors.New("create Tor upgrade helper failed")
@@ -78,7 +128,7 @@ func installTorUpgradeHelper(content string) error {
 			_ = os.Remove(temporaryPath)
 		}
 	}()
-	if err := temporary.Chmod(0o755); err != nil {
+	if err := temporary.Chmod(mode); err != nil {
 		return errors.New("set Tor upgrade helper mode failed")
 	}
 	if err := temporary.Chown(0, 0); err != nil {
@@ -93,10 +143,10 @@ func installTorUpgradeHelper(content string) error {
 	if err := temporary.Close(); err != nil {
 		return errors.New("close Tor upgrade helper failed")
 	}
-	if err := validateExistingTorUpgradeHelper(torUpgradeHelperPath); err != nil {
+	if err := validateExistingTorUpgradeHelper(path); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, torUpgradeHelperPath); err != nil {
+	if err := os.Rename(temporaryPath, path); err != nil {
 		return errors.New("commit Tor upgrade helper failed")
 	}
 	committed = true

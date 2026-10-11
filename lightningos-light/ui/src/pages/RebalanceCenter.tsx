@@ -239,6 +239,7 @@ export default function RebalanceCenter() {
     keepalive_refill_after_hours: typeof raw.keepalive_refill_after_hours === 'number' && raw.keepalive_refill_after_hours > 0 ? raw.keepalive_refill_after_hours : 48,
     keepalive_refill_pct: typeof raw.keepalive_refill_pct === 'number' && raw.keepalive_refill_pct > 0 ? raw.keepalive_refill_pct : 5,
     stock_gate_enabled: raw.stock_gate_enabled ?? false,
+    realized_price_cap_enabled: raw.realized_price_cap_enabled ?? false,
     stock_gate_min_stock_pct: typeof raw.stock_gate_min_stock_pct === 'number' && raw.stock_gate_min_stock_pct > 0 ? raw.stock_gate_min_stock_pct : 10,
     stock_gate_cover_days: typeof raw.stock_gate_cover_days === 'number' && raw.stock_gate_cover_days >= 0 ? raw.stock_gate_cover_days : 3,
     discovery_steps: typeof raw.discovery_steps === 'number' && raw.discovery_steps > 0 ? raw.discovery_steps : 0,
@@ -328,6 +329,7 @@ export default function RebalanceCenter() {
       keepalive_refill_after_hours: cfg.keepalive_refill_after_hours,
       keepalive_refill_pct: cfg.keepalive_refill_pct,
       stock_gate_enabled: cfg.stock_gate_enabled,
+      realized_price_cap_enabled: cfg.realized_price_cap_enabled,
       stock_gate_min_stock_pct: cfg.stock_gate_min_stock_pct,
       stock_gate_cover_days: cfg.stock_gate_cover_days,
       discovery_steps: cfg.discovery_steps,
@@ -420,6 +422,7 @@ export default function RebalanceCenter() {
       keepalive_refill_after_hours: cfg.keepalive_refill_after_hours ?? 48,
       keepalive_refill_pct: cfg.keepalive_refill_pct ?? 5,
       stock_gate_enabled: cfg.stock_gate_enabled ?? false,
+      realized_price_cap_enabled: cfg.realized_price_cap_enabled ?? false,
       stock_gate_min_stock_pct: cfg.stock_gate_min_stock_pct ?? 10,
       stock_gate_cover_days: cfg.stock_gate_cover_days ?? 3,
       discovery_steps: cfg.discovery_steps ?? 0,
@@ -856,6 +859,7 @@ export default function RebalanceCenter() {
           keepalive_refill_after_hours: Math.max(1, Math.min(720, Number(config.keepalive_refill_after_hours) || 48)),
           keepalive_refill_pct: Math.max(1, Math.min(25, Number(config.keepalive_refill_pct) || 5)),
           stock_gate_enabled: config.stock_gate_enabled,
+          realized_price_cap_enabled: config.realized_price_cap_enabled,
           stock_gate_min_stock_pct: Math.max(1, Math.min(50, Number(config.stock_gate_min_stock_pct) || 10)),
           stock_gate_cover_days: Math.max(0, Math.min(14, Math.round(Number(config.stock_gate_cover_days) || 0))),
           discovery_steps: Math.max(0, Math.min(4, Math.round(Number(config.discovery_steps) || 0))),
@@ -1043,6 +1047,7 @@ export default function RebalanceCenter() {
         keepalive_refill_after_hours: Math.max(1, Math.min(720, Number(config.keepalive_refill_after_hours) || 48)),
         keepalive_refill_pct: Math.max(1, Math.min(25, Number(config.keepalive_refill_pct) || 5)),
         stock_gate_enabled: config.stock_gate_enabled,
+        realized_price_cap_enabled: config.realized_price_cap_enabled,
         stock_gate_min_stock_pct: Math.max(1, Math.min(50, Number(config.stock_gate_min_stock_pct) || 10)),
         stock_gate_cover_days: Math.max(0, Math.min(14, Math.round(Number(config.stock_gate_cover_days) || 0))),
         discovery_steps: Math.max(0, Math.min(4, Math.round(Number(config.discovery_steps) || 0))),
@@ -1098,6 +1103,7 @@ export default function RebalanceCenter() {
           keepalive_refill_after_hours: normalizedSaved.keepalive_refill_after_hours,
           keepalive_refill_pct: normalizedSaved.keepalive_refill_pct,
           stock_gate_enabled: normalizedSaved.stock_gate_enabled,
+          realized_price_cap_enabled: normalizedSaved.realized_price_cap_enabled,
           stock_gate_min_stock_pct: normalizedSaved.stock_gate_min_stock_pct,
           stock_gate_cover_days: normalizedSaved.stock_gate_cover_days,
           discovery_steps: normalizedSaved.discovery_steps,
@@ -2974,6 +2980,15 @@ export default function RebalanceCenter() {
                   onChange={(e) => setConfig({ ...config, stock_gate_enabled: e.target.checked })}
                 />
                 <span>{t('rebalanceCenter.settings.stockGateEnabled')}</span>
+              </label>
+              <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.realizedPriceCapEnabled')}>
+                <input
+                  type="checkbox"
+                  checked={config.realized_price_cap_enabled}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  onChange={(e) => setConfig({ ...config, realized_price_cap_enabled: e.target.checked })}
+                />
+                <span>{t('rebalanceCenter.settings.realizedPriceCapEnabled')}</span>
               </label>
               <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.sovereignBudgetEfficiencyAutofeeAligned')}>
                 <input

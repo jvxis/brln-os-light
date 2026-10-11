@@ -269,6 +269,7 @@ POST /api/tor/upgrade/start
 - The embedded helper configures the official Tor Project repository when missing, upgrades `tor`, `tor-geoipdb`, and the repository keyring, restarts Tor, and waits for bootstrap.
 - After authenticating the pinned key and repository signature, it backs up and reconciles active Tor entries for the current OS suite in `.list` and `.sources` files. Unrelated repositories and disabled entries are preserved; mixed URI/suite stanzas are refused before writes. Reconciliation also handles a recognized conflict that left the APT candidate unavailable. It does not force a package downgrade or a service restart when no package update occurs.
 - Returns `409` when an upgrade is already running or the official candidate is already installed.
+- Broker preparation has a 30-second minimum budget, within a 45-second request budget. If the start reply times out, the manager performs a separate bounded service-state check, never a second start. A confirmed running unit returns the normal success response; an unconfirmed timeout returns `504` and asks the operator to check status/logs before retrying. Explicit broker rejections remain errors.
 
 ## Wizard
 

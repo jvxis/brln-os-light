@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -66,7 +68,8 @@ func (s *Server) handleTorUpgradeStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleTorUpgradeStart(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	// Leave room for status discovery before the broker's 30s start budget.
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 
 	if torUpgradeRunning(ctx) {
@@ -84,11 +87,17 @@ func (s *Server) handleTorUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if handled, unit, err := system.StartTorUpgradeWithBroker(ctx, embeddedTorUpgradeScript, false); handled {
+	if handled, unit, err := startTorUpgradeWithConfirmation(ctx, func(ctx context.Context) (bool, string, error) {
+		return system.StartTorUpgradeWithBroker(ctx, embeddedTorUpgradeScript, false)
+	}, torUpgradeRunning); handled {
 		if err != nil {
 			details := err.Error()
 			if s.logger != nil {
 				s.logger.Printf("Tor update start failed: %s", details)
+			}
+			if torStartConfirmationNeeded(err) {
+				writeError(w, http.StatusGatewayTimeout, "Tor update start could not be confirmed; check upgrade status and logs before retrying")
+				return
 			}
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to start Tor update: %s", details))
 			return
@@ -102,6 +111,25 @@ func (s *Server) handleTorUpgradeStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeError(w, http.StatusServiceUnavailable, "privileged broker is required for Tor upgrades")
+}
+
+// A lost broker reply does not mean the unit failed to start. Confirm the
+// observable state with a fresh bounded read, never by repeating the mutation.
+// Without positive confirmation, preserve the original error (fail closed).
+func startTorUpgradeWithConfirmation(ctx context.Context, start func(context.Context) (bool, string, error), running func(context.Context) bool) (bool, string, error) {
+	handled, unit, err := start(ctx)
+	if handled && torStartConfirmationNeeded(err) {
+		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if running(checkCtx) {
+			return true, torUpgradeUnitName, nil
+		}
+	}
+	return handled, unit, err
+}
+
+func torStartConfirmationNeeded(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || os.IsTimeout(err)
 }
 
 func torUpgradeStatus(ctx context.Context) torUpgradeStatusResponse {

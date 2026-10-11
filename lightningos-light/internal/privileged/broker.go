@@ -300,6 +300,12 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		return configured
 	}
 	switch operation {
+	case OperationTorUpgradeStart:
+		// Preparation includes durable helper/drop-in writes and daemon-reload.
+		// This only starts the background unit; APT is not run in this request.
+		if configured < 30*time.Second {
+			return 30 * time.Second
+		}
 	case OperationCatalogStorageEnsure:
 		if configured < privilegedStorageMigrationTimeout {
 			return privilegedStorageMigrationTimeout

@@ -115,6 +115,65 @@ Portuguese: normal completion has no warning; encrypted-key failure remains
 visible as an alert alongside Tor package completion. Production UI build
 passed. The smoke renders the real TorUpgradeCard, not a duplicate component.
 
+## 2026-10-11: operational result and follow-up regressions
+
+The integrated `504fe032` candidate was deployed to LOS-TEST2 (Ubuntu 24.04
+amd64). The owner subsequently authorized a normal UI Tor upgrade from
+0.4.9.11 to 0.4.9.14. Package installation and bootstrap completed, with the
+same LND process, configuration/TLS/onion-key hashes and advertised onion.
+The original onion accepted a TCP connection through the host's Tor proxy.
+Docker states/images and Manager/Bitcoin/LND health were preserved. This was
+an authorized operational upgrade on a funds-bearing node, **not** a disposable
+failure-injection test or an independent external onion reachability test.
+
+The start request nevertheless returned HTTP 500: the broker completed its
+preparation in 4682 ms, after the client's short socket deadline. Follow-up
+review also found that repository configuration replaced/removed the parent's
+onion-recovery EXIT trap. The normal success path recovered the onion, but a
+partial APT failure would bypass the fallback.
+
+The follow-up correction:
+
+- Gives both broker and client a 30-second minimum Tor-start preparation
+  budget, leaving dry-run and explicit caller deadlines intact. The HTTP
+  request allows 45 seconds for discovery plus preparation.
+- On a start timeout/cancellation, checks the fixed upgrade unit with a fresh
+  bounded read and never retries the mutation. A running unit is confirmed;
+  otherwise HTTP 504 explains the uncertainty and asks for a status/log check.
+  Explicit broker rejections are not converted into success.
+- Scopes repository-key cleanup to a subshell, preserving the parent EXIT
+  recovery trap, original failure status and verification-only behavior.
+- Updates the broker's pinned helper digest; arbitrary helpers remain rejected.
+
+Baseline and red/green validation on Windows amd64:
+
+```powershell
+go test ./internal/privileged ./internal/server -run 'TestTor|TestExtractTor|TestAptPolicy|TestClientTor' -count=1
+$env:TEST_BASH='C:/Program Files/Git/bin/bash.exe'
+python -X utf8 scripts/test_tor_upgrade_exit.py -v
+go test ./internal/privileged -run TestTorStart -count=1
+go test ./...
+go vet ./...
+```
+
+Existing focused tests passed before changes. The new delayed-client and
+preparation-budget tests failed on the original code. The new shell harness
+ran the production main/configuration/recovery functions with external tools
+stubbed: both partial-APT-failure cases failed because recovery was not called;
+success and pre-package/verify cases already passed. All these tests pass after
+the correction. Added tests cover the broker-side budget, cancelled callers,
+socket timeouts, one-shot state confirmation and explicit rejection handling.
+Full Go tests and vet passed; `bash -n` passed for the embedded helper.
+
+The shell harness verifies successful recovery exactly once, recovery failure
+without masking the APT exit code, temporary-key cleanup, verification-only,
+repository failure and metadata failure. It performs no real package, network,
+systemd or LND actions. It is **not** Linux privileged integration coverage.
+The existing `test_lnd_onion.py` suite could not run on Windows (`fcntl` is
+Linux/POSIX-only); it is not counted as passed in this follow-up. Its helper
+code was not changed. No follow-up artifacts were deployed to LOS-TEST2 and
+no second Tor upgrade or LND restart was attempted.
+
 ## Required before marking ready
 
 - Real LND without funds: UI-triggered Tor update, externally reachable same

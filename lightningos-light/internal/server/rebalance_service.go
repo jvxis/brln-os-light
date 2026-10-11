@@ -404,6 +404,7 @@ type RebalanceConfig struct {
 	DiscoverySteps                        int     `json:"discovery_steps"`
 	DiscoveryCeilingPct                   int     `json:"discovery_ceiling_pct"`
 	DiscoveryDailyBudgetSat               int64   `json:"discovery_daily_budget_sat"`
+	RealizedPriceCapEnabled               bool    `json:"realized_price_cap_enabled"`
 	BudgetMode                            string  `json:"budget_mode"`
 	BudgetUnlimited                       bool    `json:"budget_unlimited"`
 	BudgetAutoOnly                        bool    `json:"budget_auto_only"`
@@ -1180,6 +1181,9 @@ type RebalanceChannel struct {
 	TimeToPaybackValid    bool    `json:"time_to_payback_valid"`
 	MaxSourceSat          int64   `json:"max_source_sat"`
 	Revenue7dSat          int64   `json:"revenue_7d_sat"`
+	SalePricePpm          int64   `json:"sale_price_ppm"`
+	SalePriceSource       string  `json:"sale_price_source,omitempty"`
+	FeeCapReferencePpm    int64   `json:"fee_cap_reference_ppm"`
 	DrainRateSatPerHour   int64   `json:"drain_rate_sat_per_hour"`
 	PendingOutgoingHtlcs  int     `json:"pending_outgoing_htlcs"`
 	RebalanceCost7dSat    int64   `json:"rebalance_cost_7d_sat"`
@@ -1755,6 +1759,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		DiscoverySteps:                         0,
 		DiscoveryCeilingPct:                    discoveryCeilingPctDefault,
 		DiscoveryDailyBudgetSat:                discoveryDailyBudgetSatDefault,
+		RealizedPriceCapEnabled:                false,
 		BudgetMode:                             rebalanceBudgetModeHybridRevenue,
 		BudgetUnlimited:                        false,
 		BudgetAutoOnly:                         true,
@@ -3708,7 +3713,16 @@ func deriveRebalanceEconomicEnvelope(
 		return envelope
 	}
 
-	envelope.RequiredCostPpm = envelope.PeerCostPpm
+	// The peer's fee is the price of the next refill. A channel at or above
+	// its target is not going to be refilled, so that price must not set the
+	// fee it sells its current stock at: Strike at 40% local with a 35%
+	// target jumped 578 → 1250 the moment the peer went to 1000 ppm and sold
+	// nothing after. Only liquidity actually paid for keeps its floor there;
+	// the peer cost comes back the moment the channel drains below target.
+	envelope.RequiredCostPpm = 0
+	if needsRefill {
+		envelope.RequiredCostPpm = envelope.PeerCostPpm
+	}
 	if rebalanceCostPpm > envelope.RequiredCostPpm {
 		envelope.RequiredCostPpm = rebalanceCostPpm
 	}
@@ -3878,6 +3892,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 	ledger, _ := s.loadLedger(ctx, cfg)
 	_ = s.applyForwardDeltas(ctx, ledger)
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
+	salePriceByChannel := s.loadSalePricesForSnapshots(ctx, cfg)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
 	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 	targetCooldowns := s.loadRecentTargetCooldownSet(ctx, defaultRecentTargetCooldownWindows(scanAt))
@@ -3902,7 +3917,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 			noteManualSkip("channel_busy")
 			continue
 		}
-		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		if ok, reason := manualRestartWatchEligibility(snapshot, cfg); !ok {
 			noteManualSkip(reason)
 			continue
@@ -3998,6 +4013,7 @@ func (s *RebalanceService) runAutoScan() {
 	}()
 
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
+	salePriceByChannel := s.loadSalePricesForSnapshots(ctx, cfg)
 	costByChannel, costByChannelErr := s.fetchChannelRebalanceCost7d(ctx)
 	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 	autofeeAdjustments := s.fetchRecentAutofeeAdjustments(ctx, scanAt, time.Duration(cfg.AutofeeSettlingWindowSec)*time.Second)
@@ -4041,7 +4057,7 @@ func (s *RebalanceService) runAutoScan() {
 	snapshots := make([]RebalanceChannel, 0, len(channels))
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		snapshots = append(snapshots, snapshot)
 	}
 	if costByChannelErr == nil && intentCfg.Mode != automationIntentModeOff {
@@ -4258,10 +4274,7 @@ func (s *RebalanceService) runAutoScan() {
 			break
 		}
 		targetCfg := effectiveConfigForTarget(cfg, settings[target.Channel.ChannelID])
-		targetPolicy := lndclient.ChannelPolicySnapshot{
-			FeeRatePpm:  target.Channel.OutgoingFeePpm,
-			BaseFeeMsat: target.Channel.OutgoingBaseMsat,
-		}
+		targetPolicy := realizedFeeCapPolicy(target.Channel, targetCfg)
 		maxFeeMsat, err := calcFeeLimitMsat(target.Channel.TargetAmountSat*1000, targetPolicy, nil, targetCfg)
 		if err != nil || maxFeeMsat <= 0 {
 			noteSkip("fee_cap_zero")
@@ -4518,10 +4531,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 	discoveryRun := &sovereignDiscoveryRun{}
 	for _, target := range candidates {
 		targetCfg := effectiveConfigForTarget(cfg, settings[target.Channel.ChannelID])
-		targetPolicy := lndclient.ChannelPolicySnapshot{
-			FeeRatePpm:  target.Channel.OutgoingFeePpm,
-			BaseFeeMsat: target.Channel.OutgoingBaseMsat,
-		}
+		targetPolicy := realizedFeeCapPolicy(target.Channel, targetCfg)
 		targetAmount := target.Channel.TargetAmountSat
 		// Cap at max_amount so the decision amount, the budget-refit ceiling and
 		// the fallback cost estimates match the real per-job chunk. The candidate
@@ -5214,10 +5224,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			})
 			continue
 		}
-		targetPolicy := lndclient.ChannelPolicySnapshot{
-			FeeRatePpm:  snapshot.OutgoingFeePpm,
-			BaseFeeMsat: snapshot.OutgoingBaseMsat,
-		}
+		targetPolicy := realizedFeeCapPolicy(snapshot, targetCfg)
 		budgetCost := estimateMaxCost(targetAmount, targetPolicy, targetCfg)
 		estimatedCost := int64(0)
 		if input.SovereignRanking {
@@ -5954,10 +5961,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 
 	// Fee limit — mesmo cálculo do loop legado.
 	feeCfg := st.feeCfg
-	targetPolicy := lndclient.ChannelPolicySnapshot{
-		FeeRatePpm:  targetSnapshot.OutgoingFeePpm,
-		BaseFeeMsat: targetSnapshot.OutgoingBaseMsat,
-	}
+	targetPolicy := realizedFeeCapPolicy(targetSnapshot, feeCfg)
 	maxFeeMsat, feeErr := calcFeeLimitMsat(st.amount*1000, targetPolicy, nil, feeCfg)
 	maxFeePpm := feeMsatToPpm(maxFeeMsat, st.amount)
 	if feeErr != nil || maxFeeMsat <= 0 || maxFeePpm <= 0 {
@@ -6277,6 +6281,7 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	// corrupting ROI estimation and target eligibility (zero spread/cost makes
 	// any target appear free to rebalance).
 	revenueByChannel, revErr := s.fetchChannelRevenue7d(ctx)
+	salePriceByChannel := s.loadSalePricesForSnapshots(ctx, cfg)
 	costByChannel, costErr := s.fetchChannelRebalanceCost7d(ctx)
 	if revErr != nil || costErr != nil {
 		if s.logger != nil {
@@ -6291,7 +6296,7 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	channelSnapshots := []RebalanceChannel{}
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		if ch.ChannelID == targetChannelID {
 			targetFound = true
 			snapshot.TargetOutboundPct = targetPct
@@ -6676,10 +6681,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		}
 	}
 
-	targetPolicy := lndclient.ChannelPolicySnapshot{
-		FeeRatePpm:  targetSnapshot.OutgoingFeePpm,
-		BaseFeeMsat: targetSnapshot.OutgoingBaseMsat,
-	}
+	targetPolicy := realizedFeeCapPolicy(targetSnapshot, feeCfg)
 	maxFeeMsat, feeErr := calcFeeLimitMsat(amount*1000, targetPolicy, nil, feeCfg)
 	maxFeePpm := feeMsatToPpm(maxFeeMsat, amount)
 	if feeErr != nil || maxFeeMsat <= 0 || maxFeePpm <= 0 {
@@ -10235,6 +10237,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	exclusions, _ := s.loadExclusions(restartCtx)
 	ledger, _ := s.loadLedger(restartCtx, cfg)
 	revenueByChannel, _ := s.fetchChannelRevenue7d(restartCtx)
+	salePriceByChannel := s.loadSalePricesForSnapshots(restartCtx, cfg)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(restartCtx)
 	drainRateByChannel := s.fetchChannelDrainRate24h(restartCtx)
 	targetCooldowns := s.loadRecentTargetCooldownSet(restartCtx, defaultRecentTargetCooldownWindows(time.Now()))
@@ -10264,7 +10267,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	if shouldCooldownTargetRecentFailures(targetCooldowns.Recent[target.ChannelID], targetCooldowns.NoAttempt[target.ChannelID], targetCooldowns.Failed[target.ChannelID], targetCooldowns.DistinctSource[target.ChannelID], time.Now()) {
 		return
 	}
-	snapshot := s.buildChannelSnapshot(restartCtx, cfg, false, target, setting, ledger[target.ChannelID], revenueByChannel[target.ChannelID], costByChannel[target.ChannelID], drainRateByChannel[target.ChannelID], exclusions[target.ChannelID])
+	snapshot := s.buildChannelSnapshot(restartCtx, cfg, false, target, setting, ledger[target.ChannelID], revenueByChannel[target.ChannelID], salePriceByChannel[target.ChannelID], costByChannel[target.ChannelID], drainRateByChannel[target.ChannelID], exclusions[target.ChannelID])
 	if ok, _ := manualRestartWatchEligibility(snapshot, cfg); !ok {
 		return
 	}
@@ -10329,7 +10332,7 @@ where status in ('running','queued')`)
 	return int(result.RowsAffected())
 }
 
-func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg RebalanceConfig, criticalActive bool, ch lndclient.ChannelInfo, setting channelSetting, ledger *channelLedger, revenue7dSat int64, cost7d rebalanceCost7dStat, drainRateSatPerHour int64, excluded bool) RebalanceChannel {
+func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg RebalanceConfig, criticalActive bool, ch lndclient.ChannelInfo, setting channelSetting, ledger *channelLedger, revenue7dSat int64, salePrice channelSalePrice, cost7d rebalanceCost7dStat, drainRateSatPerHour int64, excluded bool) RebalanceChannel {
 	setting = normalizeChannelSetting(setting)
 	parked := isChannelAutomationParked(setting.AutomationMode)
 	capacity := float64(ch.CapacitySat)
@@ -10393,9 +10396,14 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	if expectedCostPpm <= 0 {
 		expectedCostPpm = cfg.RebalanceCostFloorPpm
 	}
+	// The route budget is priced on what the channel really sells for when
+	// the realized price cap is on; the floor the envelope solves for stays
+	// in advertised-fee terms.
+	salePricePpm, salePriceSource := salePrice.referencePpm()
+	feeCapReference := feeCapReferencePpm(cfg, outgoingFee, salePricePpm)
 	economicEnvelope := deriveRebalanceEconomicEnvelope(
 		cfg, setting, ch.Initiator, ch.Active, parked, peerPolicyKnown,
-		localPct, target, outgoingFee, outgoingBaseMsat, peerFeeRate, peerBaseMsat, cost7d.FeePpm,
+		localPct, target, feeCapReference, outgoingBaseMsat, peerFeeRate, peerBaseMsat, cost7d.FeePpm,
 	)
 
 	eligibleTarget := false
@@ -10550,6 +10558,9 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		TimeToPaybackValid:         timeToPaybackValid,
 		MaxSourceSat:               maxSource,
 		Revenue7dSat:               revenue7dSat,
+		SalePricePpm:               salePricePpm,
+		SalePriceSource:            salePriceSource,
+		FeeCapReferencePpm:         feeCapReference,
 		DrainRateSatPerHour:        drainRateSatPerHour,
 		PendingOutgoingHtlcs:       pendingOutgoing,
 		RebalanceCost7dSat:         cost7d.FeeSat,
@@ -12894,6 +12905,7 @@ end $$;
     keepalive_refill_pct double precision not null default 5,
     source_routeability_quarantine_hours integer not null default 6,
     stock_gate_enabled boolean not null default false,
+    realized_price_cap_enabled boolean not null default false,
     stock_gate_min_stock_pct double precision not null default 10,
     stock_gate_cover_days integer not null default 3,
     discovery_steps integer not null default 0,
@@ -13046,6 +13058,8 @@ end $$;
     add column if not exists source_routeability_quarantine_hours integer not null default 6;
   alter table rebalance_config
     add column if not exists stock_gate_enabled boolean not null default false;
+  alter table rebalance_config
+    add column if not exists realized_price_cap_enabled boolean not null default false;
   alter table rebalance_config
     add column if not exists stock_gate_min_stock_pct double precision not null default 10;
   alter table rebalance_config
@@ -13556,7 +13570,8 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier,
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
     daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours,
-    stock_gate_enabled, stock_gate_min_stock_pct, stock_gate_cover_days, discovery_steps, discovery_ceiling_pct, discovery_daily_budget_sat
+    stock_gate_enabled, stock_gate_min_stock_pct, stock_gate_cover_days, discovery_steps, discovery_ceiling_pct, discovery_daily_budget_sat,
+    realized_price_cap_enabled
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -13664,6 +13679,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.DiscoverySteps,
 		&cfg.DiscoveryCeilingPct,
 		&cfg.DiscoveryDailyBudgetSat,
+		&cfg.RealizedPriceCapEnabled,
 	)
 	if err != nil {
 		return cfg, err
@@ -13692,8 +13708,9 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
     daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours,
     stock_gate_enabled, stock_gate_min_stock_pct, stock_gate_cover_days, discovery_steps, discovery_ceiling_pct, discovery_daily_budget_sat,
+    realized_price_cap_enabled,
     updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,$98,$99,$100,$101,$102,$103,$104,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,$98,$99,$100,$101,$102,$103,$104,$105,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -13798,6 +13815,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     discovery_steps = excluded.discovery_steps,
     discovery_ceiling_pct = excluded.discovery_ceiling_pct,
     discovery_daily_budget_sat = excluded.discovery_daily_budget_sat,
+    realized_price_cap_enabled = excluded.realized_price_cap_enabled,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates, cfg.Profile,
@@ -13805,6 +13823,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
 		cfg.AutoTargetUpSellThroughFactor, cfg.AutoTargetDownSellThroughFactor, cfg.AutoTargetMaxDownsPerCycle,
 		cfg.DailyBudgetMinSat, cfg.DailyBudgetBaseDays, cfg.SovereignEfficiencyAutofeeAligned, cfg.KeepaliveRefillEnabled, cfg.KeepaliveRefillAfterHours, cfg.KeepaliveRefillPct, cfg.SourceRouteabilityQuarantineHours,
 		cfg.StockGateEnabled, cfg.StockGateMinStockPct, cfg.StockGateCoverDays, cfg.DiscoverySteps, cfg.DiscoveryCeilingPct, cfg.DiscoveryDailyBudgetSat,
+		cfg.RealizedPriceCapEnabled,
 	)
 	if err != nil {
 		return err
@@ -16140,6 +16159,7 @@ func (s *RebalanceService) Channels(ctx context.Context) ([]RebalanceChannel, er
 	_ = s.applyForwardDeltas(ctx, ledger)
 
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
+	salePriceByChannel := s.loadSalePricesForSnapshots(ctx, cfg)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
 	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 	channels, err := s.lnd.ListChannels(ctx)
@@ -16164,7 +16184,7 @@ func (s *RebalanceService) Channels(ctx context.Context) ([]RebalanceChannel, er
 			seenPoints[point] = true
 		}
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		result = append(result, snapshot)
 	}
 	return result, nil
@@ -16227,6 +16247,7 @@ func (s *RebalanceService) computeEligibilityCounts(ctx context.Context, cfg Reb
 	}
 	s.reconcileNewChannelDefaults(ctx, channels, settings, exclusions)
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
+	salePriceByChannel := s.loadSalePricesForSnapshots(ctx, cfg)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
 	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 
@@ -16238,7 +16259,7 @@ func (s *RebalanceService) computeEligibilityCounts(ctx context.Context, cfg Reb
 	targetsNeeding := 0
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		if snapshot.EligibleAsSource {
 			eligibleSources++
 		}

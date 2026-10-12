@@ -9,6 +9,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import signal
 import socket
@@ -88,6 +89,28 @@ def enabled(cfg, key):
     return value in ('true', '1')
 
 
+def absolute_path(value):
+    # Do not expand using the privileged helper's HOME/environment. Layouts
+    # requiring expansion remain unsupported instead of selecting another key.
+    if not value or not os.path.isabs(value) or '$' in value or '\0' in value:
+        raise RecoveryError('LND onion: absolute unexpanded paths required')
+    return value
+
+
+def default_lnd_directory(pid):
+    # btcutil.AppDataDir (LND's Linux default) uses user.Current().HomeDir.
+    # Resolve the running daemon's real UID, never root/the broker's HOME.
+    status = Path('/proc/%d/status' % pid).read_text()
+    match = re.search(r'^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$', status, re.M)
+    if not match or len(set(match.groups())) != 1:
+        raise RecoveryError('LND onion: running service user could not be determined')
+    try:
+        directory = pwd.getpwuid(int(match[1])).pw_dir
+    except KeyError:
+        raise RecoveryError('LND onion: running service home could not be determined') from None
+    return str(Path(absolute_path(directory)) / '.lnd')
+
+
 def runtime_config(pid):
     # Respect the running daemon's lnddir/configfile and relevant CLI overrides.
     args = Path('/proc/%d/cmdline' % pid).read_bytes().decode().split('\0')[1:]
@@ -96,6 +119,14 @@ def runtime_config(pid):
     while i < len(args):
         arg = args[i]
         i += 1
+        if arg.startswith('-C'):
+            # go-flags accepts -C path, -Cpath and -C=path for configfile.
+            value = arg[2:].removeprefix('=')
+            if not value and i < len(args):
+                value = args[i]
+                i += 1
+            overrides.setdefault('configfile', []).append(value)
+            continue
         if not arg.startswith('--'):
             continue
         key, sep, value = arg[2:].partition('=')
@@ -106,14 +137,14 @@ def runtime_config(pid):
             else:
                 value = 'true'
         overrides.setdefault(key.lower(), []).append(value)
-    # LOS installs use an explicit --lnddir. Refuse to guess a foreign layout.
-    directory = last(overrides, 'lnddir')
-    if not directory or not os.path.isabs(directory):
-        raise RecoveryError('LND onion: explicit absolute lnddir required')
-    conf = last(overrides, 'configfile', str(Path(directory) / 'lnd.conf'))
+    directory = (absolute_path(last(overrides, 'lnddir')) if 'lnddir' in overrides
+                 else default_lnd_directory(pid))
+    conf = absolute_path(last(overrides, 'configfile', str(Path(directory) / 'lnd.conf')))
     cfg = config(Path(conf).read_text())
     cfg.update(overrides)
-    cfg['lnddir'] = [directory]
+    # A file may set lnddir too. CLI overrides win, but do not relocate the
+    # config file after parsing it (the same two-stage selection as LND).
+    cfg['lnddir'] = [absolute_path(last(cfg, 'lnddir', directory))]
     return cfg
 
 

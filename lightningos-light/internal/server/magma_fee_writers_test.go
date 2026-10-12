@@ -20,12 +20,13 @@ import (
 func TestEveryChannelFeeWriterHonoursTheMagmaCeiling(t *testing.T) {
 	// file -> enclosing function -> why this call cannot breach a commitment.
 	allowed := map[string]string{
-		"autofee_service.go:applyChannelFeesWithRetry":     "clamped by magmaClampChannelFees before the call",
-		"autofee_service.go:refreshReferenceFees":          "target and base fee both clamped by magmaClampChannelFees",
-		"autofee_service.go:RestoreMarketRefillFeeSnapshot": "snapshot clamped by magmaClampChannelFees before replay",
-		"handlers.go:handleLNUpdateFees":                   "applies per channel; single refused on breach, apply_all clamped inline",
-		"htlc_manager.go:tick":                             "carries the current policy fee through unchanged; only HTLC bounds move",
-		"magma_fee_guard.go:enforceFeeCaps":                "this is the enforcement itself, and it only lowers",
+		"autofee_service.go:applyChannelFeesWithRetry":              "clamped by magmaClampChannelFees before the call",
+		"autofee_service.go:refreshReferenceFees":                   "target and base fee both clamped by magmaClampChannelFees",
+		"autofee_service.go:RestoreMarketRefillFeeSnapshot":         "snapshot clamped by magmaClampChannelFees before replay",
+		"channel_automation_handlers.go:clearInboundDiscountOnPark": "carries the current outbound fee and base fee through unchanged; only the inbound discount is reset to zero",
+		"handlers.go:handleLNUpdateFees":                            "applies per channel; single refused on breach, apply_all clamped inline",
+		"htlc_manager.go:tick":                                      "carries the current policy fee through unchanged; only HTLC bounds move",
+		"magma_fee_guard.go:enforceFeeCaps":                         "this is the enforcement itself, and it only lowers",
 	}
 
 	writer := regexp.MustCompile(`\.(UpdateChannelFees|UpdateChannelPolicy)\(`)

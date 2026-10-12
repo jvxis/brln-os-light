@@ -760,7 +760,7 @@ func (e *autofeeEngine) fetchDailySaleMedians(ctx context.Context) (map[uint64]f
 	rows, err := e.svc.db.Query(ctx, `
 select coalesce(chan_id_out, channel_id) as chan_id,
   date_trunc('day', occurred_at) as day,
-  coalesce(sum(case when amount_out_msat > 0 then amount_out_msat else amount_sat * 1000 end), 0) / 1000
+  (coalesce(sum(case when amount_out_msat > 0 then amount_out_msat else amount_sat * 1000 end), 0) / 1000)::bigint
 from notifications
 where type='forward' and occurred_at >= now() - ($1 * interval '1 day')
   and coalesce(chan_id_out, channel_id) is not null
@@ -809,7 +809,7 @@ group by 1, 2
 func (e *autofeeEngine) fetchForwardPairs(ctx context.Context, lookback int) (map[[2]uint64]int64, error) {
 	rows, err := e.svc.db.Query(ctx, `
 select chan_id_in, coalesce(chan_id_out, channel_id),
-  coalesce(sum(case when amount_out_msat > 0 then amount_out_msat else amount_sat * 1000 end), 0) / 1000
+  (coalesce(sum(case when amount_out_msat > 0 then amount_out_msat else amount_sat * 1000 end), 0) / 1000)::bigint
 from notifications
 where type='forward' and occurred_at >= now() - ($1 * interval '1 day')
   and chan_id_in is not null and coalesce(chan_id_out, channel_id) is not null

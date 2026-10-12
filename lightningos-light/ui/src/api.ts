@@ -177,8 +177,8 @@ export const getManagerExposure = () => request('/api/security/manager-exposure'
 export const updateManagerExposure = (payload: { mode: 'lan' | 'vpn' | 'unprotected'; lan_cidr?: string; acknowledge_unprotected?: boolean }) =>
   request('/api/security/manager-exposure', { method: 'POST', body: JSON.stringify(payload) }) as Promise<ManagerExposureStatus>
 export const getTLSAccessInfo = () => request('/api/tls/info') as Promise<TLSAccessInfo>
-export const getAuthState = async () => {
-  const data = await request('/api/auth/state') as AuthState
+export const getAuthState = async (signal?: AbortSignal) => {
+  const data = await request('/api/auth/state', { signal, cache: 'no-store' }) as AuthState
   if (data?.authenticated && data?.csrf_token) {
     setCSRFToken(data.csrf_token)
   } else {
@@ -334,8 +334,8 @@ export const initWallet = (payload: { wallet_password: string; seed_words: strin
 export const unlockWallet = (payload: { wallet_password: string }) =>
   request('/api/wizard/lnd/unlock', { method: 'POST', body: JSON.stringify(payload) })
 
-export const restartService = (payload: { service: string }) =>
-  request('/api/actions/restart', { method: 'POST', body: JSON.stringify(payload) })
+export const restartService = (payload: { service: string }, signal?: AbortSignal) =>
+  request('/api/actions/restart', { method: 'POST', body: JSON.stringify(payload), signal })
 
 export const runSystemAction = (payload: { action: 'reboot' | 'shutdown' }) =>
   request('/api/actions/system', { method: 'POST', body: JSON.stringify(payload) })

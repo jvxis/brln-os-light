@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import socket
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +18,106 @@ spec.loader.exec_module(onion)
 runtime_config = onion.runtime_config
 SERVICE = 'a' * 56
 KEY = 'ED25519-V3:' + base64.b64encode(bytes(range(64))).decode()
+
+
+class RuntimeConfigTests(unittest.TestCase):
+    def load(self, args=(), text='tor.active=true\ntor.v3=true\n',
+             account_home='/home/node', status='Uid:\t1001\t1001\t1001\t1001\n'):
+        command = ('/usr/local/bin/lnd\0' + '\0'.join(args) + '\0').encode()
+        self.config_reads = []
+
+        def read(path, *args, **kwargs):
+            if str(path) == '/proc/42/status':
+                return status
+            self.config_reads.append(str(path))
+            return text
+
+        with patch.object(Path, 'read_bytes', return_value=command), \
+                patch.object(Path, 'read_text', read), \
+                patch('pwd.getpwuid', return_value=SimpleNamespace(pw_dir=account_home)) as lookup:
+            result = runtime_config(42)
+            self.lookup_calls = lookup.call_args_list
+            return result
+
+    def test_default_directory_belongs_to_running_lnd_not_root_helper(self):
+        cfg = self.load()
+        self.assertEqual(cfg['lnddir'], ['/home/node/.lnd'])
+        self.assertEqual(self.config_reads, ['/home/node/.lnd/lnd.conf'])
+        self.assertEqual(self.lookup_calls[0].args, (1001,))
+
+    def test_configfile_override_without_lnddir(self):
+        cfg = self.load(['--configfile=/etc/node/lnd.conf'])
+        self.assertEqual(self.config_reads, ['/etc/node/lnd.conf'])
+        self.assertEqual(cfg['lnddir'], ['/home/node/.lnd'])
+
+    def test_short_configfile_option_is_not_silently_ignored(self):
+        for args in (['-C', '/etc/node.conf'], ['-C/etc/node.conf'], ['-C=/etc/node.conf']):
+            with self.subTest(args=args):
+                cfg = self.load(args)
+                self.assertEqual(self.config_reads, ['/etc/node.conf'])
+                self.assertEqual(cfg['lnddir'], ['/home/node/.lnd'])
+
+    def test_root_service_default_uses_its_account_home(self):
+        cfg = self.load(account_home='/root', status='Uid: 0 0 0 0\n')
+        self.assertEqual(cfg['lnddir'], ['/root/.lnd'])
+        self.assertEqual(self.lookup_calls[0].args, (0,))
+
+    def test_config_lnddir_is_honored_after_selecting_config_file(self):
+        cfg = self.load(text='lnddir=/srv/node\ntor.v3=true\n')
+        self.assertEqual(self.config_reads, ['/home/node/.lnd/lnd.conf'])
+        self.assertEqual(cfg['lnddir'], ['/srv/node'])
+
+    def test_explicit_directory_and_cli_options_still_take_precedence(self):
+        cfg = self.load(['--lnddir', '/srv/cli', '--configfile', '/etc/node.conf',
+                         '--tor.v3=false'], text='lnddir=/srv/file\ntor.v3=true\n')
+        self.assertEqual(cfg['lnddir'], ['/srv/cli'])
+        self.assertEqual(cfg['tor.v3'], ['false'])
+        self.assertEqual(self.config_reads, ['/etc/node.conf'])
+        self.assertEqual(self.lookup_calls, [])
+
+    def test_ambiguous_or_missing_process_user_fails_closed(self):
+        for status in ('', 'Uid: bad data\n', 'Uid: 1001 0 0 0\n'):
+            with self.subTest(status=status), self.assertRaises(onion.RecoveryError):
+                self.load(status=status)
+            self.assertEqual(self.config_reads, [])
+
+    def test_unknown_account_does_not_fall_back_to_helpers_home(self):
+        with patch.object(Path, 'read_bytes', return_value=b'lnd\0'), \
+                patch.object(Path, 'read_text', return_value='Uid: 1001 1001 1001 1001\n'), \
+                patch('pwd.getpwuid', side_effect=KeyError):
+            with self.assertRaises(onion.RecoveryError):
+                runtime_config(42)
+
+    def test_relative_or_unexpanded_paths_are_not_guessed(self):
+        for args in (['--lnddir=relative'], ['--configfile=relative'],
+                     ['--lnddir=/srv/$USER/lnd']):
+            with self.subTest(args=args), self.assertRaises(onion.RecoveryError):
+                self.load(args)
+        for account_home in ('', 'relative'):
+            with self.subTest(home=account_home), self.assertRaises(onion.RecoveryError):
+                self.load(account_home=account_home)
+
+    def test_default_home_symlink_is_read_without_modifying_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            (base / 'data').mkdir()
+            content = 'tor.active=true\ntor.v3=true\n'
+            (base / 'data/lnd.conf').write_text(content)
+            (base / '.lnd').symlink_to(base / 'data', target_is_directory=True)
+            read_text = Path.read_text
+
+            def read(path, *args, **kwargs):
+                if str(path) == '/proc/42/status':
+                    return 'Uid: 1001 1001 1001 1001\n'
+                return read_text(path, *args, **kwargs)
+
+            with patch.object(Path, 'read_bytes', return_value=b'lnd\0'), \
+                    patch.object(Path, 'read_text', read), \
+                    patch('pwd.getpwuid', return_value=SimpleNamespace(pw_dir=temp)):
+                cfg = runtime_config(42)
+            self.assertEqual(cfg['lnddir'], [str(base / '.lnd')])
+            self.assertTrue((base / '.lnd').is_symlink())
+            self.assertEqual((base / 'data/lnd.conf').read_text(), content)
 
 
 class FakeControl:

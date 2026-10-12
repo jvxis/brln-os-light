@@ -42,6 +42,9 @@ export default function TorUpgradeCard() {
   const [logsStatus, setLogsStatus] = useState('')
   const [logSince, setLogSince] = useState('')
   const [started, setStarted] = useState(false)
+  // Freeze the operation's initial versions; background status polling must
+  // not rewrite "old -> new" as "new -> new" after package installation.
+  const [upgradeSource, setUpgradeSource] = useState<TorUpgradeStatus | null>(null)
 
   const loadStatus = async (force = false, silent = false) => {
     if (!silent) {
@@ -166,6 +169,7 @@ export default function TorUpgradeCard() {
   }, [status, t])
 
   const openModal = () => {
+    setUpgradeSource(status?.running ? null : status ? { ...status } : null)
     setModalOpen(true)
     setBusy(false)
     setLocked(Boolean(status?.running))
@@ -185,6 +189,7 @@ export default function TorUpgradeCard() {
 
   const startUpgrade = async () => {
     if (!canConfirm || busy) return
+    setUpgradeSource(status ? { ...status } : null)
     setBusy(true)
     setError(null)
     setComplete(false)
@@ -273,9 +278,11 @@ export default function TorUpgradeCard() {
           >
             <h4 id="tor-upgrade-title" className="text-lg font-semibold">{t('torUpgrade.confirmTitle')}</h4>
             <p className="mt-2 text-sm text-fog/70">
-              {status?.repository_official
-                ? t('torUpgrade.confirmBody', { current: formatVersion(status?.version), latest: candidate })
-                : t('torUpgrade.confirmBodyWithRepository', { current: formatVersion(status?.version) })}
+              {!upgradeSource
+                ? t('torUpgrade.inProgress')
+                : upgradeSource.repository_official
+                  ? t('torUpgrade.confirmBody', { current: formatVersion(upgradeSource.version), latest: formatVersion(upgradeSource.candidate_version) })
+                  : t('torUpgrade.confirmBodyWithRepository', { current: formatVersion(upgradeSource.version) })}
             </p>
             <p className="mt-3 text-xs text-rose-200">{t('torUpgrade.confirmWarning')}</p>
             {message && <p className="mt-3 text-sm text-brass">{message}</p>}

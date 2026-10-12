@@ -44,6 +44,7 @@ import RecentActivityCard from './RecentActivityCard'
 import StatusBadge from './StatusBadge'
 import SystemPulseModal from './SystemPulseModal'
 import TorUpgradeCard from './TorUpgradeCard'
+import useManagerRestart from './useManagerRestart'
 import { toneFromHealthStatus } from './formatters'
 import type {
   AmbossHealthStatus,
@@ -237,6 +238,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const [systemCheckError, setSystemCheckError] = useState<string | null>(null)
   const [systemAction, setSystemAction] = useState<'restart' | 'shutdown' | null>(null)
   const [systemActionBusy, setSystemActionBusy] = useState(false)
+  const managerRestart = useManagerRestart()
   const [systemActionError, setSystemActionError] = useState<string | null>(null)
   const [appUpgrade, setAppUpgrade] = useState<AppUpgradeStatus | null>(null)
   const [appUpgradeChecking, setAppUpgradeChecking] = useState(false)
@@ -664,18 +666,6 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
     }
   }
 
-  const restart = async (service: string) => {
-    try {
-      if (service === 'lnd') {
-        await startLndRestartFlow()
-        return
-      }
-      await restartService({ service })
-    } catch (err) {
-      console.error(`Failed to restart ${service}`, err)
-    }
-  }
-
   const loadSystemCheck = async () => {
     setSystemCheckLoading(true)
     setSystemCheckError(null)
@@ -1031,13 +1021,20 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
               <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap">
                 <button
                   className={`btn-secondary whitespace-nowrap text-xs px-3 py-2 sm:text-sm sm:px-4 ${(lndRestartBusy || lndRestartLocked) ? 'opacity-60 pointer-events-none' : ''}`}
-                  onClick={() => void restart('lnd')}
+                  onClick={() => void startLndRestartFlow()}
                   type="button"
-                  disabled={lndRestartBusy || lndRestartLocked}
+                  disabled={lndRestartBusy || lndRestartLocked || managerRestart.busy}
                 >
                   {t('dashboard.restartLnd')}
                 </button>
-                <button className="btn-secondary whitespace-nowrap text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => void restart('lightningos-manager')} type="button">
+                <button
+                  className="btn-secondary inline-flex items-center gap-2 whitespace-nowrap text-xs px-3 py-2 sm:text-sm sm:px-4 disabled:opacity-60 disabled:cursor-wait"
+                  onClick={managerRestart.start}
+                  type="button"
+                  disabled={managerRestart.busy}
+                  aria-busy={managerRestart.busy}
+                >
+                  {managerRestart.busy && <span aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none" />}
                   {t('dashboard.restartManager')}
                 </button>
               </div>
@@ -1047,6 +1044,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
                   className="btn-secondary whitespace-nowrap text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-amber-200 border-amber-400/30"
                   onClick={() => openSystemAction('restart')}
                   type="button"
+                  disabled={managerRestart.busy}
                 >
                   {t('dashboard.safeRestart')}
                 </button>
@@ -1054,11 +1052,20 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
                   className="btn-secondary whitespace-nowrap text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-rose-200 border-rose-400/30"
                   onClick={() => openSystemAction('shutdown')}
                   type="button"
+                  disabled={managerRestart.busy}
                 >
                   {t('dashboard.safeShutdown')}
                 </button>
               </div>
             </div>
+            {managerRestart.state !== 'idle' && (
+              <p
+                role={managerRestart.state === 'failed' || managerRestart.state === 'timeout' ? 'alert' : 'status'}
+                className={`rounded-xl border px-3 py-2 text-sm ${managerRestart.state === 'failed' || managerRestart.state === 'timeout' ? 'border-rose-400/30 bg-rose-500/10 text-rose-200' : 'border-brass/30 bg-brass/10 text-brass'}`}
+              >
+                {t(`dashboard.managerRestart.${managerRestart.state}`)}
+              </p>
+            )}
             <MarketTape market={bitcoinMarket} locale={locale} />
           </div>
         </div>

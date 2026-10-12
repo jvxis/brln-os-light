@@ -2157,6 +2157,12 @@
     "remainingBudgetLabel": "Orcamento restante",
     "restartLnd": "Reiniciar LND",
     "restartManager": "Reiniciar Manager",
+    "managerRestart": {
+      "restarting": "Reiniciando o Manager… Aguarde enquanto a conexão é restabelecida.",
+      "available": "O Manager está respondendo. Você já pode continuar usando o painel.",
+      "failed": "Não foi possível reiniciar o Manager. Verifique a conexão e tente novamente.",
+      "timeout": "O Manager não respondeu em 90 segundos. Atualize a página ou verifique o estado do serviço antes de tentar novamente."
+    },
     "lndRestartTitle": "Reiniciando o LND",
     "lndRestartBody": "A interface fica bloqueada ate o RPC do LND voltar a responder. Acompanhe os logs abaixo.",
     "lndRestartStarting": "Enviando comando de reinicio para o systemd...",

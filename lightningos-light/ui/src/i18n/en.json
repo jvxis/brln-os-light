@@ -2157,6 +2157,12 @@
     "remainingBudgetLabel": "Remaining budget",
     "restartLnd": "Restart LND",
     "restartManager": "Restart Manager",
+    "managerRestart": {
+      "restarting": "Restarting Manager… Please wait while the connection is restored.",
+      "available": "Manager is responding. You can continue using the dashboard.",
+      "failed": "Could not restart Manager. Check the connection and try again.",
+      "timeout": "Manager did not respond within 90 seconds. Refresh the page or check the service status before trying again."
+    },
     "lndRestartTitle": "Restarting LND",
     "lndRestartBody": "The interface stays blocked until the LND RPC responds again. Follow the service logs below.",
     "lndRestartStarting": "Sending restart command to systemd...",

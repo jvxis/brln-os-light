@@ -33,11 +33,17 @@ type packageFeatureSpec struct {
 	IndexUnit   string
 	InstallUnit string
 	Packages    []string
+	// Equivalents are package sets that already provide the feature on hosts that installed it
+	// from another source. They are only checked, never installed: a host with Docker CE from
+	// Docker's own repository cannot take docker.io (containerd.io conflicts with containerd),
+	// and before this the install unit failed and was rescheduled on every status poll.
+	Equivalents [][]string
 }
 
 var packageFeatureCatalog = map[PackageFeature]packageFeatureSpec{
-	PackageFeatureDockerRuntime: {IndexUnit: dockerIndexUnit, InstallUnit: dockerInstallUnit, Packages: []string{"docker.io", "docker-compose-v2"}},
-	PackageFeatureMDNS:          {IndexUnit: mdnsIndexUnit, InstallUnit: mdnsInstallUnit, Packages: []string{"avahi-daemon", "libnss-mdns"}},
+	PackageFeatureDockerRuntime: {IndexUnit: dockerIndexUnit, InstallUnit: dockerInstallUnit, Packages: []string{"docker.io", "docker-compose-v2"},
+		Equivalents: [][]string{{"docker-ce", "docker-compose-plugin"}}},
+	PackageFeatureMDNS: {IndexUnit: mdnsIndexUnit, InstallUnit: mdnsInstallUnit, Packages: []string{"avahi-daemon", "libnss-mdns"}},
 }
 
 type packageUnitState string
@@ -114,6 +120,11 @@ func (manager *CatalogPackageManager) featureStatus(ctx context.Context, spec pa
 		}
 		return PackageFeatureState{Status: "failed"}, nil
 	case packageUnitFailed:
+		// A failed install does not mean the feature is missing: an equivalent package set may
+		// already provide it. Answer ready so the caller collects the unit instead of retrying.
+		if manager.featureInstalled(ctx, spec) {
+			return PackageFeatureState{Status: "ready"}, nil
+		}
 		return PackageFeatureState{Status: "failed"}, nil
 	}
 	if manager.featureInstalled(ctx, spec) {
@@ -160,8 +171,22 @@ func (manager *CatalogPackageManager) validate(feature PackageFeature) (packageF
 }
 
 func (manager *CatalogPackageManager) featureInstalled(ctx context.Context, spec packageFeatureSpec) bool {
+	if manager.packagesInstalled(ctx, spec.Packages) {
+		return true
+	}
+	// Each set is queried on its own: dpkg-query exits non-zero when any name in the list is
+	// unknown to dpkg, which is the normal case for the set the host does not use.
+	for _, packages := range spec.Equivalents {
+		if len(packages) > 0 && manager.packagesInstalled(ctx, packages) {
+			return true
+		}
+	}
+	return false
+}
+
+func (manager *CatalogPackageManager) packagesInstalled(ctx context.Context, packages []string) bool {
 	args := []string{"-W", "-f=${Package}=${db:Status-Status}\\n"}
-	args = append(args, spec.Packages...)
+	args = append(args, packages...)
 	output, err := manager.Runner.Run(ctx, dpkgQueryPath, args...)
 	if err != nil {
 		return false
@@ -173,7 +198,7 @@ func (manager *CatalogPackageManager) featureInstalled(ctx context.Context, spec
 			installed[name] = true
 		}
 	}
-	for _, packageName := range spec.Packages {
+	for _, packageName := range packages {
 		if !installed[packageName] {
 			return false
 		}

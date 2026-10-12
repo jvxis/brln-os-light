@@ -188,12 +188,88 @@ func TestCatalogPackageEnsureRetriesOnlyFailedFixedInstallStage(t *testing.T) {
 	if err != nil || state.Status != "installing" {
 		t.Fatalf("state/error=%#v/%v", state, err)
 	}
-	if len(runner.commands) != 4 || !reflect.DeepEqual(runner.commands[2], recordedCommand{path: systemctlPath, args: []string{"stop", dockerInstallUnit}}) {
+	// show(failed), dpkg-query for docker.io and for the Docker CE set (neither installed),
+	// then the retry: show, stop, schedule.
+	if len(runner.commands) != 6 || runner.commands[1].path != dpkgQueryPath || runner.commands[2].path != dpkgQueryPath ||
+		!reflect.DeepEqual(runner.commands[4], recordedCommand{path: systemctlPath, args: []string{"stop", dockerInstallUnit}}) {
 		t.Fatalf("unexpected retry commands: %#v", runner.commands)
 	}
-	last := runner.commands[3]
+	last := runner.commands[5]
 	if last.path != systemdRunPath || !hasArgsSuffix(last.args, aptGetPath, "-o", "DPkg::Lock::Timeout=300", "install", "-y", "docker.io", "docker-compose-v2") {
 		t.Fatalf("unexpected retry schedule: %#v", last)
+	}
+}
+
+// dockerCEHost answers dpkg-query like a host with Docker CE from Docker's repository: docker.io
+// is unknown to dpkg (non-zero exit), docker-ce and docker-compose-plugin are installed.
+func dockerCEHost(args []string) (string, error) {
+	if containsArg(args, "docker.io") {
+		return "docker-compose-v2=not-installed\n", errors.New("dpkg-query: no packages found matching docker.io")
+	}
+	if containsArg(args, "docker-ce") && containsArg(args, "docker-compose-plugin") {
+		return "docker-ce=installed\ndocker-compose-plugin=installed\n", nil
+	}
+	return "", errors.New("unexpected dpkg-query")
+}
+
+func TestCatalogPackageDockerReadyWithDockerCEPackages(t *testing.T) {
+	runner := &packageRecordingRunner{hook: func(path string, args []string) (string, error) {
+		if path == systemctlPath {
+			return "LoadState=not-found\nActiveState=inactive\n", errors.New("not found")
+		}
+		if path == dpkgQueryPath {
+			return dockerCEHost(args)
+		}
+		return "", errors.New("unexpected command")
+	}}
+	manager := newPackageManager(t, runner, "ID=ubuntu\nVERSION_ID=24.04\n")
+	state, err := manager.EnsureFeature(context.Background(), PackageFeatureDockerRuntime, false)
+	if err != nil || state.Status != "ready" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	for _, command := range runner.commands {
+		if command.path == systemdRunPath {
+			t.Fatalf("Docker CE host must not schedule apt: %#v", runner.commands)
+		}
+	}
+}
+
+func TestCatalogPackageFailedInstallIsCollectedWhenDockerCEProvidesDocker(t *testing.T) {
+	// The loop seen on a production node (12/10/2026): the docker.io install failed against
+	// Docker CE and was rescheduled every second. Now the failed unit is collected and the
+	// feature is ready.
+	stopped := false
+	runner := &packageRecordingRunner{hook: func(path string, args []string) (string, error) {
+		if path == systemctlPath && len(args) > 0 && args[0] == "show" && args[len(args)-1] == dockerInstallUnit {
+			if stopped {
+				return "LoadState=not-found\nActiveState=inactive\n", errors.New("not found")
+			}
+			return "LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=exit-code\n", errors.New("failed")
+		}
+		if path == systemctlPath && len(args) > 0 && args[0] == "show" {
+			return "LoadState=not-found\nActiveState=inactive\n", errors.New("not found")
+		}
+		if path == systemctlPath && reflect.DeepEqual(args, []string{"stop", dockerInstallUnit}) {
+			stopped = true
+			return "", nil
+		}
+		if path == dpkgQueryPath {
+			return dockerCEHost(args)
+		}
+		return "", errors.New("unexpected command")
+	}}
+	manager := newPackageManager(t, runner, "ID=ubuntu\nVERSION_ID=24.04\n")
+	state, err := manager.EnsureFeature(context.Background(), PackageFeatureDockerRuntime, false)
+	if err != nil || state.Status != "ready" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	if !stopped {
+		t.Fatalf("failed install unit was not collected: %#v", runner.commands)
+	}
+	for _, command := range runner.commands {
+		if command.path == systemdRunPath {
+			t.Fatalf("must not reschedule apt: %#v", runner.commands)
+		}
 	}
 }
 

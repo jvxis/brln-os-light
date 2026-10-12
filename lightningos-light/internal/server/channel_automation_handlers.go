@@ -70,6 +70,10 @@ func (s *Server) handleLNChannelAutomationPost(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	if mode == channelAutomationModeParked {
+		s.clearInboundDiscountOnPark(ctx, channel.ChannelPoint)
+	}
+
 	s.recordAuditEvent(r, "channel.automation_mode", channel.ChannelPoint, map[string]any{
 		"channel_id":       channel.ChannelID,
 		"automation_mode":  policy.Mode,
@@ -79,6 +83,41 @@ func (s *Server) handleLNChannelAutomationPost(w http.ResponseWriter, r *http.Re
 		"status":           "success",
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "policy": policy})
+}
+
+// parkedInboundPolicyUpdate: a parked channel leaves AutoFee, so the inbound
+// discount AutoFee negotiated stays frozen in LND at its last value. Parking
+// clears it; the outbound fee is left as it is.
+func parkedInboundPolicyUpdate(policy lndclient.ChannelPolicy) (bool, int64) {
+	if policy.InboundFeeRatePpm >= 0 && policy.InboundBaseMsat >= 0 {
+		return false, 0
+	}
+	return true, 0
+}
+
+func (s *Server) clearInboundDiscountOnPark(ctx context.Context, channelPoint string) {
+	if s == nil || s.lnd == nil || strings.TrimSpace(channelPoint) == "" {
+		return
+	}
+	policy, err := s.lnd.GetChannelPolicy(ctx, channelPoint)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("channel automation: park %s: policy unavailable, inbound discount kept: %v", channelPoint, err)
+		}
+		return
+	}
+	update, inboundRate := parkedInboundPolicyUpdate(policy)
+	if !update {
+		return
+	}
+	timeLock := policy.TimeLockDelta
+	if timeLock <= 0 {
+		timeLock = 144
+	}
+	ctx = lndclient.WithPolicyObservationSource(ctx, "channel-automation")
+	if err := s.lnd.UpdateChannelFees(ctx, channelPoint, false, policy.BaseFeeMsat, policy.FeeRatePpm, timeLock, true, 0, inboundRate); err != nil && s.logger != nil {
+		s.logger.Printf("channel automation: park %s: inbound discount reset failed: %v", channelPoint, err)
+	}
 }
 
 func (s *Server) resolveLNChannelForAutomation(ctx context.Context, channelID uint64, channelPoint string) (lndclient.ChannelInfo, error) {

@@ -34,7 +34,10 @@ const (
 	autofeePriceExperimentModeShadow  = "shadow"
 	autofeePriceExperimentModeEnforce = "enforce"
 
-	autofeePriceExperimentMaxActiveDefault    = 2
+	autofeePriceExperimentMaxActiveDefault = 2
+	// Shadow records what it would do; the operator audits the trigger from
+	// that list, so it is allowed more channels at once than enforce.
+	autofeePriceExperimentShadowMaxActive     = 10
 	autofeePriceExperimentDaysDefault         = 7
 	autofeePriceExperimentFloorSeedPctDefault = 50
 
@@ -370,6 +373,9 @@ func (e *autofeeEngine) loadPriceExperimentRuntime(ctx context.Context, dryRun b
 	if rt.maxActive <= 0 {
 		rt.maxActive = autofeePriceExperimentMaxActiveDefault
 	}
+	if rt.mode == autofeePriceExperimentModeShadow && rt.maxActive < autofeePriceExperimentShadowMaxActive {
+		rt.maxActive = autofeePriceExperimentShadowMaxActive
+	}
 	if rt.days <= 0 {
 		rt.days = autofeePriceExperimentDaysDefault
 	}
@@ -402,6 +408,12 @@ func (e *autofeeEngine) loadPriceExperimentRuntime(ctx context.Context, dryRun b
 			}
 			rt.active[x.ChannelID] = &x
 		case autofeePriceExperimentStatusConcluded:
+			// A shadow verdict measured the channel at its old fee; it must
+			// not put the channel in cooldown once enforce starts, and an
+			// enforce verdict is not re-read by shadow.
+			if x.Mode != rt.mode {
+				continue
+			}
 			if prev, ok := rt.lastConcluded[x.ChannelID]; !ok || x.ConcludedAt.After(prev.ConcludedAt) {
 				rt.lastConcluded[x.ChannelID] = x
 			}

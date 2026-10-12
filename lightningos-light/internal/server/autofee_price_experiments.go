@@ -34,7 +34,10 @@ const (
 	autofeePriceExperimentModeShadow  = "shadow"
 	autofeePriceExperimentModeEnforce = "enforce"
 
-	autofeePriceExperimentMaxActiveDefault    = 2
+	autofeePriceExperimentMaxActiveDefault = 2
+	// Shadow records what it would do; the operator audits the trigger from
+	// that list, so it is allowed more channels at once than enforce.
+	autofeePriceExperimentShadowMaxActive     = 10
 	autofeePriceExperimentDaysDefault         = 7
 	autofeePriceExperimentFloorSeedPctDefault = 50
 
@@ -370,6 +373,9 @@ func (e *autofeeEngine) loadPriceExperimentRuntime(ctx context.Context, dryRun b
 	if rt.maxActive <= 0 {
 		rt.maxActive = autofeePriceExperimentMaxActiveDefault
 	}
+	if rt.mode == autofeePriceExperimentModeShadow && rt.maxActive < autofeePriceExperimentShadowMaxActive {
+		rt.maxActive = autofeePriceExperimentShadowMaxActive
+	}
 	if rt.days <= 0 {
 		rt.days = autofeePriceExperimentDaysDefault
 	}
@@ -402,6 +408,12 @@ func (e *autofeeEngine) loadPriceExperimentRuntime(ctx context.Context, dryRun b
 			}
 			rt.active[x.ChannelID] = &x
 		case autofeePriceExperimentStatusConcluded:
+			// A shadow verdict measured the channel at its old fee; it must
+			// not put the channel in cooldown once enforce starts, and an
+			// enforce verdict is not re-read by shadow.
+			if x.Mode != rt.mode {
+				continue
+			}
 			if prev, ok := rt.lastConcluded[x.ChannelID]; !ok || x.ConcludedAt.After(prev.ConcludedAt) {
 				rt.lastConcluded[x.ChannelID] = x
 			}
@@ -760,7 +772,7 @@ func (e *autofeeEngine) fetchDailySaleMedians(ctx context.Context) (map[uint64]f
 	rows, err := e.svc.db.Query(ctx, `
 select coalesce(chan_id_out, channel_id) as chan_id,
   date_trunc('day', occurred_at) as day,
-  coalesce(sum(case when amount_out_msat > 0 then amount_out_msat else amount_sat * 1000 end), 0) / 1000
+  (coalesce(sum(case when amount_out_msat > 0 then amount_out_msat else amount_sat * 1000 end), 0) / 1000)::bigint
 from notifications
 where type='forward' and occurred_at >= now() - ($1 * interval '1 day')
   and coalesce(chan_id_out, channel_id) is not null
@@ -809,7 +821,7 @@ group by 1, 2
 func (e *autofeeEngine) fetchForwardPairs(ctx context.Context, lookback int) (map[[2]uint64]int64, error) {
 	rows, err := e.svc.db.Query(ctx, `
 select chan_id_in, coalesce(chan_id_out, channel_id),
-  coalesce(sum(case when amount_out_msat > 0 then amount_out_msat else amount_sat * 1000 end), 0) / 1000
+  (coalesce(sum(case when amount_out_msat > 0 then amount_out_msat else amount_sat * 1000 end), 0) / 1000)::bigint
 from notifications
 where type='forward' and occurred_at >= now() - ($1 * interval '1 day')
   and chan_id_in is not null and coalesce(chan_id_out, channel_id) is not null

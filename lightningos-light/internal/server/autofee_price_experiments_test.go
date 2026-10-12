@@ -481,3 +481,44 @@ func TestFinishOrphanPriceExperiments(t *testing.T) {
 		t.Fatalf("active=%d", e.priceExperiments.activeCount())
 	}
 }
+
+func TestPriceExperimentCooldownIgnoresOtherModeVerdicts(t *testing.T) {
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	// Two concluded rows for the same channel: one shadow, one enforce.
+	rows := []autofeePriceExperiment{
+		{ID: 1, ChannelID: 7, Mode: autofeePriceExperimentModeShadow, Status: autofeePriceExperimentStatusConcluded, ConcludedAt: now.Add(-24 * time.Hour), Verdict: "shadow_no_demand"},
+		{ID: 2, ChannelID: 7, Mode: autofeePriceExperimentModeEnforce, Status: autofeePriceExperimentStatusConcluded, ConcludedAt: now.Add(-40 * 24 * time.Hour), Verdict: autofeePriceExperimentVerdictNoDemand},
+	}
+	rt := &autofeePriceExperimentRuntime{mode: autofeePriceExperimentModeEnforce, active: map[uint64]*autofeePriceExperiment{}, lastConcluded: map[uint64]autofeePriceExperiment{}}
+	for i := range rows {
+		x := rows[i]
+		if x.Status != autofeePriceExperimentStatusConcluded || x.Mode != rt.mode {
+			continue
+		}
+		rt.lastConcluded[x.ChannelID] = x
+	}
+	if got := rt.lastConcluded[7]; got.ID != 2 {
+		t.Fatalf("enforce must only read enforce verdicts, got %+v", got)
+	}
+}
+
+func TestApplyPriceExperimentShadowAllowsMoreChannels(t *testing.T) {
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	e := testPriceExperimentEngine(now, autofeePriceExperimentModeShadow)
+	e.priceExperiments.maxActive = autofeePriceExperimentShadowMaxActive
+	ctx := context.Background()
+	opened := 0
+	for id := uint64(1); id <= 12; id++ {
+		ch := lndclient.ChannelInfo{ChannelID: id, ChannelPoint: "ab:0", CapacitySat: 5_000_000, LocalBalanceSat: 3_000_000}
+		d := e.applyPriceExperiment(ctx, ch, testPriceExperimentDecision(id), forwardStat{}, inboundStat{Count: 2}, true)
+		if d.PriceExperiment != nil {
+			opened++
+		}
+		if d.Apply {
+			t.Fatalf("shadow must never apply: %+v", d)
+		}
+	}
+	if opened != autofeePriceExperimentShadowMaxActive {
+		t.Fatalf("shadow opened %d experiments, want %d", opened, autofeePriceExperimentShadowMaxActive)
+	}
+}

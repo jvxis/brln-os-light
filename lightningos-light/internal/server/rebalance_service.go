@@ -1183,6 +1183,7 @@ type RebalanceChannel struct {
 	Revenue7dSat          int64   `json:"revenue_7d_sat"`
 	SalePricePpm          int64   `json:"sale_price_ppm"`
 	SalePriceSource       string  `json:"sale_price_source,omitempty"`
+	NoSale30d             bool    `json:"no_sale_30d"`
 	FeeCapReferencePpm    int64   `json:"fee_cap_reference_ppm"`
 	DrainRateSatPerHour   int64   `json:"drain_rate_sat_per_hour"`
 	PendingOutgoingHtlcs  int     `json:"pending_outgoing_htlcs"`
@@ -3917,7 +3918,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 			noteManualSkip("channel_busy")
 			continue
 		}
-		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel.forChannel(ch), costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		if ok, reason := manualRestartWatchEligibility(snapshot, cfg); !ok {
 			noteManualSkip(reason)
 			continue
@@ -4057,7 +4058,7 @@ func (s *RebalanceService) runAutoScan() {
 	snapshots := make([]RebalanceChannel, 0, len(channels))
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel.forChannel(ch), costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		snapshots = append(snapshots, snapshot)
 	}
 	if costByChannelErr == nil && intentCfg.Mode != automationIntentModeOff {
@@ -5135,6 +5136,9 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 
 		setting := input.Settings[snapshot.ChannelID]
 		inScope := setting.AutoEnabled || (input.IncludeManualRestartTargets && setting.ManualRestartEnabled)
+		if inScope && snapshot.NoSale30d {
+			noteSkip("no_sale_30d")
+		}
 		if !inScope || !snapshot.EligibleAsTarget {
 			continue
 		}
@@ -6296,7 +6300,7 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	channelSnapshots := []RebalanceChannel{}
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel.forChannel(ch), costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		if ch.ChannelID == targetChannelID {
 			targetFound = true
 			snapshot.TargetOutboundPct = targetPct
@@ -10267,7 +10271,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	if shouldCooldownTargetRecentFailures(targetCooldowns.Recent[target.ChannelID], targetCooldowns.NoAttempt[target.ChannelID], targetCooldowns.Failed[target.ChannelID], targetCooldowns.DistinctSource[target.ChannelID], time.Now()) {
 		return
 	}
-	snapshot := s.buildChannelSnapshot(restartCtx, cfg, false, target, setting, ledger[target.ChannelID], revenueByChannel[target.ChannelID], salePriceByChannel[target.ChannelID], costByChannel[target.ChannelID], drainRateByChannel[target.ChannelID], exclusions[target.ChannelID])
+	snapshot := s.buildChannelSnapshot(restartCtx, cfg, false, target, setting, ledger[target.ChannelID], revenueByChannel[target.ChannelID], salePriceByChannel.forChannel(target), costByChannel[target.ChannelID], drainRateByChannel[target.ChannelID], exclusions[target.ChannelID])
 	if ok, _ := manualRestartWatchEligibility(snapshot, cfg); !ok {
 		return
 	}
@@ -10401,6 +10405,13 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	// in advertised-fee terms.
 	salePricePpm, salePriceSource := salePrice.referencePpm()
 	feeCapReference := feeCapReferencePpm(cfg, outgoingFee, salePricePpm)
+	// A channel with no sale in 30 days has no price for the autopilot to buy
+	// against. It leaves the automatic target set (manual stays possible)
+	// and the envelope keeps the advertised fee so the floor is unchanged.
+	noSale30d := cfg.RealizedPriceCapEnabled && salePrice.NoSale()
+	if noSale30d {
+		salePriceSource = "no_sale_30d"
+	}
 	economicEnvelope := deriveRebalanceEconomicEnvelope(
 		cfg, setting, ch.Initiator, ch.Active, parked, peerPolicyKnown,
 		localPct, target, feeCapReference, outgoingBaseMsat, peerFeeRate, peerBaseMsat, cost7d.FeePpm,
@@ -10425,6 +10436,9 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		if passesAutoTargetCostGate(setting, expectedCostPpm, economicEnvelope.FeeBudgetPpm) {
 			eligibleTarget = true
 		}
+	}
+	if noSale30d {
+		eligibleTarget = false
 	}
 
 	sourceFloorPct := cfg.SourceMinLocalPct
@@ -10560,6 +10574,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		Revenue7dSat:               revenue7dSat,
 		SalePricePpm:               salePricePpm,
 		SalePriceSource:            salePriceSource,
+		NoSale30d:                  noSale30d,
 		FeeCapReferencePpm:         feeCapReference,
 		DrainRateSatPerHour:        drainRateSatPerHour,
 		PendingOutgoingHtlcs:       pendingOutgoing,
@@ -16184,7 +16199,7 @@ func (s *RebalanceService) Channels(ctx context.Context) ([]RebalanceChannel, er
 			seenPoints[point] = true
 		}
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel.forChannel(ch), costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		result = append(result, snapshot)
 	}
 	return result, nil
@@ -16259,7 +16274,7 @@ func (s *RebalanceService) computeEligibilityCounts(ctx context.Context, cfg Reb
 	targetsNeeding := 0
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel.forChannel(ch), costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		if snapshot.EligibleAsSource {
 			eligibleSources++
 		}

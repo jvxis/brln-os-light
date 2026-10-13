@@ -20,9 +20,16 @@ import (
 // The realized price is the outbound forward ppm of the channel: 7 days
 // when there are enough forwards, 30 days as fallback, otherwise the
 // advertised fee (new channel, nothing sold yet).
+//
+// 0.5.45: any sale in 30 days counts as a price (BitcoinVN 22 sold once at
+// 879 ppm and, with the 5-forward minimum, was refilled at 1034), and a
+// channel older than 30 days with no sale at all has no price to buy
+// against: the autopilot skips it (no_sale_30d) until it sells something.
+// Operator-initiated rebalances are not affected.
 const (
 	realizedPriceCapMinForwards7d  = 3
-	realizedPriceCapMinForwards30d = 5
+	realizedPriceCapMinForwards30d = 1
+	realizedPriceCapNoSaleAgeHours = 30 * 24
 )
 
 type channelSalePrice struct {
@@ -30,6 +37,26 @@ type channelSalePrice struct {
 	Count7d  int64
 	Ppm30d   int64
 	Count30d int64
+	AgeHours float64
+}
+
+// NoSale reports a channel old enough to have a sale history and without
+// any outbound forward in 30 days.
+func (p channelSalePrice) NoSale() bool {
+	return p.Count30d == 0 && p.AgeHours >= realizedPriceCapNoSaleAgeHours
+}
+
+// salePriceSnapshot is what one scan loads: prices per channel plus the
+// block height that turns a short channel id into an age.
+type salePriceSnapshot struct {
+	prices      map[uint64]channelSalePrice
+	blockHeight int64
+}
+
+func (s salePriceSnapshot) forChannel(ch lndclient.ChannelInfo) channelSalePrice {
+	price := s.prices[ch.ChannelID]
+	price.AgeHours = channelRankingChannelAgeHours(ch.ChannelID, s.blockHeight)
+	return price
 }
 
 // referencePpm picks the realized sale price and names its window.
@@ -64,18 +91,27 @@ func realizedFeeCapPolicy(ch RebalanceChannel, cfg RebalanceConfig) lndclient.Ch
 // loadSalePricesForSnapshots reads the sale prices only when the cap is on;
 // with it off the snapshot keeps the advertised fee and no query runs. A
 // failed read logs and leaves every channel on its advertised fee.
-func (s *RebalanceService) loadSalePricesForSnapshots(ctx context.Context, cfg RebalanceConfig) map[uint64]channelSalePrice {
+func (s *RebalanceService) loadSalePricesForSnapshots(ctx context.Context, cfg RebalanceConfig) salePriceSnapshot {
+	snapshot := salePriceSnapshot{prices: map[uint64]channelSalePrice{}}
 	if !cfg.RealizedPriceCapEnabled {
-		return map[uint64]channelSalePrice{}
+		return snapshot
 	}
 	prices, err := s.fetchChannelSalePrices(ctx)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Printf("rebalance: sale prices unavailable, fee cap on advertised fee: %v", err)
 		}
-		return map[uint64]channelSalePrice{}
+		return snapshot
 	}
-	return prices
+	snapshot.prices = prices
+	// Without a height every channel reads as age 0 and no_sale_30d never
+	// fires; that is the safe side.
+	if s.lnd != nil {
+		if status, statusErr := s.lnd.GetStatus(ctx); statusErr == nil && status.BlockHeight > 0 {
+			snapshot.blockHeight = status.BlockHeight
+		}
+	}
+	return snapshot
 }
 
 // fetchChannelSalePrices: outbound forward ppm and count per channel over

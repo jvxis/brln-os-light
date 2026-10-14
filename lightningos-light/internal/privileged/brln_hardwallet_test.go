@@ -20,6 +20,28 @@ import (
 	"time"
 )
 
+func TestHardwalletStatusReportsConfiguredAddress(t *testing.T) {
+	m := testHardwalletManager(t)
+	ctx := context.Background()
+	if _, err := m.Control(ctx, HardwalletControlParams{Action: "ensure", Source: "club"}, false); err != nil {
+		t.Fatal(err)
+	}
+	// Discovery may have changed since installation. Open must use the saved bind.
+	m.BindIP = func() (string, error) { return "100.100.1.2", nil }
+	state, err := m.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(state)
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["bind_ip"] != "100.100.1.1" {
+		t.Fatalf("status omitted configured app address: %s", raw)
+	}
+}
+
 func testHardwalletManager(t *testing.T) *NativeHardwalletManager {
 	t.Helper()
 	if runtime.GOOS == "linux" && os.Geteuid() != 0 {

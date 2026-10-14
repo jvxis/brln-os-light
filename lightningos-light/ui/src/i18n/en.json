@@ -1259,7 +1259,9 @@
     "hardwallet": {
       "description": "Bitcoin coordinator for the BR⚡LN ESP32 signer. Keys stay on the device; LOS queries Electrum and broadcasts signed transactions.",
       "experimental": "Experimental pilot: no real funds until physical review and recovery validation pass.",
-      "access": "Open LOS and the app using the same hostname on your own Tailscale network with trusted HTTPS. Connect USB to your computer. Club tailnet membership is not required.",
+      "access": "Open uses this node's Tailscale address with trusted HTTPS. If prompted, sign in to LOS again; the app will open next. Connect USB to your computer. Club tailnet membership is not required.",
+      "opening": "Opening Hardwallet…",
+      "openFailed": "Could not open Hardwallet. Return to the store, check that the app is running and try again.",
       "source": "Electrum server",
       "local": "My local Electrs (default)",
       "club": "Club Electrs (public server)",

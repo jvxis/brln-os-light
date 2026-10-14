@@ -4,6 +4,46 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Open button from LAN (2026-10-14)
+
+Reproduced the reported failure in Chrome by logging into the Manager via its
+LAN address and clicking the actual Store Open link: it appended port 4449 to
+the LAN host and the new tab failed with `ERR_CONNECTION_REFUSED`. Opening from
+the Tailscale IP worked. Prior direct-navigation tests missed this workflow.
+
+Broker status now returns the saved bind IP, and the catalog returns a validated
+Manager launcher URL on that host. The Store never synthesizes a LAN app URL.
+The launcher passes through normal LOS authentication, verifies the running app
+and configured origin, then opens same-host HTTPS port 4449. No cookies/tokens
+cross hostnames or appear in URLs; app authentication and network binding remain
+unchanged. A stopped app or changed origin shows a recovery action.
+
+The configured-address regression failed before the fix and passes afterward.
+Windows amd64 `go test -p 1 ./...`, `go vet -p 1 ./...` and UI `npm run build`
+passed. Nine native Ubuntu amd64 root fixture tests passed, including the new
+status regression. LOS-TEST2 received backed-up Manager/broker/UI candidates;
+only Manager restarted. LND retained PID 3891 and chain/graph sync; Bitcoin
+remained remote, local Electrs stopped and Hardwallet running on the club source.
+No container, VM or production service was restarted.
+
+`scripts/hardwallet-open-smoke.cjs` uses Playwright and a password on stdin to
+exercise actual popup navigation. With normal CA validation, both flows passed:
+LAN login -> Open -> login on the app host -> coordinator, and tailnet login ->
+Open -> coordinator using the existing session. Secure context/Web Serial,
+authenticated status, anonymous 401 and zero JS errors were verified. A mocked
+stopped-app status showed the recovery message without navigation; the real app
+was not stopped. No USB connection or firmware write was performed.
+
+The smoke script requires `LOS_MANAGER_URLS` (comma-separated HTTPS Manager
+origins), installed `playwright` or `PLAYWRIGHT_MODULE`, and optionally
+`CHROME_PATH`. Supply the password through stdin from private local metadata;
+never place it in a command argument or environment variable. On Windows with
+the LOS CA trusted by the OS, use Node's `--use-system-ca`.
+
+Rollback: `/var/backups/lightningos-hardwallet-pr260/before-open-fix` for binaries
+and `/opt/lightningos/ui-before-open-fix` for UI. Existing physical-signer,
+native-arm64 and certificate lifecycle validation gaps remain; PR stays draft.
+
 ## Public club Electrum correction (2026-10-14)
 
 The original pilot incorrectly made the owner's personal tailnet a requirement

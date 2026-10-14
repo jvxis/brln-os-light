@@ -71,6 +71,7 @@ func (m *NativeHardwalletManager) Status(ctx context.Context) (HardwalletState, 
 		return state, errors.New("Hardwallet settings are invalid")
 	}
 	state.Source = s.Source
+	state.BindIP = s.BindIP
 	out, err := m.Runner.Run(ctx, dockerPath, "ps", "--filter", "label=com.docker.compose.project=brln-hardwallet", "--filter", "label=com.docker.compose.service=proxy", "--filter", "status=running", "--format", "{{.ID}}")
 	if err != nil {
 		state.Status = "unknown"

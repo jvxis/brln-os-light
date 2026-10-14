@@ -27,6 +27,7 @@ import Notifications from './pages/Notifications'
 import AuditLog from './pages/AuditLog'
 import LndConfig from './pages/LndConfig'
 import AppStore from './pages/AppStore'
+import HardwalletOpen from './pages/HardwalletOpen'
 import Terminal from './pages/Terminal'
 import Shortcuts from './pages/Shortcuts'
 import PayBoleto from './pages/PayBoleto'
@@ -554,6 +555,10 @@ export default function App() {
 
   if (authState.enabled && !authState.authenticated) {
     return <AuthScreen state={authState} onAuthenticated={setAuthState} />
+  }
+
+  if (route === 'hardwallet-open') {
+    return <HardwalletOpen />
   }
 
   return (

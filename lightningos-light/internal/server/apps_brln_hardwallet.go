@@ -21,11 +21,21 @@ func (a hardwalletApp) Info(ctx context.Context) (appInfo, error) {
 	info.ElectrumSource = state.Source
 	info.Installed = state.Installed
 	info.Status = state.Status
+	info.ExternalURL = hardwalletLaunchURL(state)
 	if !a.server.auth.Enabled() {
 		info.Available = false
 		info.UnavailableMessage = "Enable LightningOS login before using Hardwallet"
 	}
 	return info, err
+}
+
+// Enter via the Manager on the app's configured host so its host-only session
+// cookie is present before opening the app. LAN and MagicDNS sessions differ.
+func hardwalletLaunchURL(state system.HardwalletBrokerState) string {
+	if !state.Installed || appmanifest.ValidateHardwalletSettings(appmanifest.HardwalletSettings{Source: state.Source, BindIP: state.BindIP}) != nil {
+		return ""
+	}
+	return "https://" + state.BindIP + ":8443/#hardwallet-open"
 }
 func (a hardwalletApp) Install(ctx context.Context) error { return a.server.prepareHardwallet(ctx, "") }
 func (a hardwalletApp) Start(ctx context.Context) error   { return a.server.prepareHardwallet(ctx, "") }

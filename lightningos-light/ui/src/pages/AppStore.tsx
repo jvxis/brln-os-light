@@ -1002,7 +1002,7 @@ export default function AppStore() {
               : app.id === 'magma-sales'
                 ? t('nav.magmaSales')
               : t('appStore.internal')
-          const openUrl = app.external_url || (app.port ? `${app.scheme || 'http'}://${host}:${app.port}` : '')
+          const openUrl = app.external_url || (app.port && app.id !== 'brln-hardwallet' ? `${app.scheme || 'http'}://${host}:${app.port}` : '')
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`
           const publicPoolStratumEndpoint = `${host}:${publicPoolStratumPort}`
           const fedimintGatewayApiUrl = `http://${host}:${fedimintGatewayUIPort}/v1`

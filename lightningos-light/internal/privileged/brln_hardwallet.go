@@ -9,6 +9,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,41 +20,54 @@ import (
 type NativeHardwalletManager struct {
 	Runner       CommandRunner
 	Paths        appmanifest.HardwalletPaths
-	BindIP       func() (string, error)
+	BindIPs      func() ([]string, error)
 	requireFixed bool
 }
 
 func NewNativeHardwalletManager(runner CommandRunner) *NativeHardwalletManager {
 	root := filepath.Join(defaultPrivilegedAppsRoot, appmanifest.HardwalletID)
-	return &NativeHardwalletManager{Runner: runner, BindIP: hardwalletTailnetIP, requireFixed: true, Paths: appmanifest.HardwalletPaths{
+	return &NativeHardwalletManager{Runner: runner, BindIPs: hardwalletPrivateAddresses, requireFixed: true, Paths: appmanifest.HardwalletPaths{
 		Root: root, Compose: filepath.Join(root, "docker-compose.yaml"), Caddy: filepath.Join(root, "Caddyfile"), Token: filepath.Join(root, "proxy_token"), Settings: filepath.Join(root, "settings.json"), Certificate: filepath.Join(root, "server.crt"), PrivateKey: filepath.Join(root, "server.key"), ManagerCA: selectBarkManagerCACertificatePath(defaultManagerCACertificatePath, legacyManagerCACertificatePath),
 	}}
 }
-func hardwalletTailnetIP() (string, error) {
+func hardwalletPrivateAddresses() ([]string, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
+	return hardwalletInterfaceAddresses(interfaces, func(iface net.Interface) ([]net.Addr, error) { return iface.Addrs() })
+}
+
+func hardwalletInterfaceAddresses(interfaces []net.Interface, addrs func(net.Interface) ([]net.Addr, error)) ([]string, error) {
+	seen := map[string]bool{}
 	for _, iface := range interfaces {
-		if iface.Name != "tailscale0" {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || iface.Name == "docker0" || strings.HasPrefix(iface.Name, "br-") || strings.HasPrefix(iface.Name, "veth") {
 			continue
 		}
-		addresses, err := iface.Addrs()
+		addresses, err := addrs(iface)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		for _, a := range addresses {
 			ip, _, err := net.ParseCIDR(a.String())
-			if err == nil && ip.To4() != nil {
-				return ip.String(), nil
+			if err == nil && appmanifest.HardwalletPrivateIPv4(ip.String()) {
+				seen[ip.String()] = true
 			}
 		}
 	}
-	return "", errors.New("Tailscale IPv4 is required for Hardwallet")
+	addresses := make([]string, 0, len(seen))
+	for address := range seen {
+		addresses = append(addresses, address)
+	}
+	sort.Strings(addresses)
+	if len(addresses) == 0 {
+		return nil, errors.New("a private LAN or VPN IPv4 address is required for Hardwallet")
+	}
+	return addresses, nil
 }
 func (m *NativeHardwalletManager) settings() (appmanifest.HardwalletSettings, error) {
 	var s appmanifest.HardwalletSettings
-	b, err := readRegularFile(m.Paths.Settings, 1024)
+	b, err := readRegularFile(m.Paths.Settings, 4096)
 	if err != nil {
 		return s, err
 	}
@@ -71,7 +86,7 @@ func (m *NativeHardwalletManager) Status(ctx context.Context) (HardwalletState, 
 		return state, errors.New("Hardwallet settings are invalid")
 	}
 	state.Source = s.Source
-	state.BindIP = s.BindIP
+	state.BindIPs = appmanifest.HardwalletBindIPs(s)
 	out, err := m.Runner.Run(ctx, dockerPath, "ps", "--filter", "label=com.docker.compose.project=brln-hardwallet", "--filter", "label=com.docker.compose.service=proxy", "--filter", "status=running", "--format", "{{.ID}}")
 	if err != nil {
 		state.Status = "unknown"
@@ -128,7 +143,8 @@ func (m *NativeHardwalletManager) Control(ctx context.Context, p HardwalletContr
 		args := append(prefix, "--project-name", appmanifest.HardwalletID, "--project-directory", m.Paths.Root, "-f", m.Paths.Compose)
 		bridge := ""
 		if p.Action == "start" {
-			args = append(args, "up", "-d", "--remove-orphans")
+			// Recreate to reopen atomically replaced certificate/config mounts.
+			args = append(args, "up", "-d", "--remove-orphans", "--force-recreate")
 		} else {
 			bridge, _ = m.bridge(ctx)
 			args = append(args, "down", "--remove-orphans", "--timeout", "30")
@@ -192,7 +208,7 @@ func (m *NativeHardwalletManager) ensure(ctx context.Context, source string, dry
 	if err := validateManagerCACertificate(m.Paths.ManagerCA, m.requireFixed); err != nil {
 		return HardwalletState{}, err
 	}
-	bind, err := m.BindIP()
+	bind, err := m.BindIPs()
 	if err != nil {
 		return HardwalletState{}, err
 	}
@@ -204,7 +220,7 @@ func (m *NativeHardwalletManager) ensure(ctx context.Context, source string, dry
 			return HardwalletState{}, readErr
 		}
 	}
-	settings := appmanifest.HardwalletSettings{Source: source, BindIP: bind}
+	settings := appmanifest.HardwalletSettings{Source: source, BindIPs: bind}
 	compose, err := appmanifest.HardwalletCompose(m.Paths, settings)
 	if err != nil {
 		return HardwalletState{}, err
@@ -212,9 +228,8 @@ func (m *NativeHardwalletManager) ensure(ctx context.Context, source string, dry
 	if dry {
 		return HardwalletState{Status: "validated", Source: source}, nil
 	}
-	// Stop the old coordinator before publishing a different source selection.
-	// A failed pull/start must not keep serving the previous source as the new one.
-	if previous, readErr := m.settings(); readErr == nil && previous.Source != source {
+	// Do not keep serving an old source/address set after publishing its replacement.
+	if previous, readErr := m.settings(); readErr == nil && (previous.Source != source || !slices.Equal(appmanifest.HardwalletBindIPs(previous), bind)) {
 		if err = stopCatalogApp(ctx, m.Runner, appmanifest.HardwalletID, false); err != nil {
 			return HardwalletState{}, err
 		}
@@ -316,7 +331,7 @@ func (m *NativeHardwalletManager) validate() (appmanifest.HardwalletSettings, er
 	if ce != nil || ke != nil || validateTLSKeyPair(cert, key) != nil {
 		return zero, errors.New("invalid Hardwallet TLS pair")
 	}
-	if !m.tlsCurrent(cert, settings.BindIP, time.Now()) {
+	if !m.tlsCurrent(cert, appmanifest.HardwalletBindIPs(settings), time.Now()) {
 		return zero, errors.New("Hardwallet TLS certificate needs renewal")
 	}
 	return settings, nil
@@ -326,7 +341,7 @@ func hardwalletAllowsElectrsRemoval(ctx context.Context, runner CommandRunner, r
 	if !safeNonEmptyRegularFile(filepath.Join(root, "docker-compose.yaml")) {
 		return nil
 	}
-	raw, err := readRegularFile(filepath.Join(root, "settings.json"), 1024)
+	raw, err := readRegularFile(filepath.Join(root, "settings.json"), 4096)
 	var settings appmanifest.HardwalletSettings
 	if err != nil || decodeStrict(raw, &settings) != nil || appmanifest.ValidateHardwalletSettings(settings) != nil || settings.Source != "club" {
 		return errors.New("remove BRLN Hardwallet or select club Electrum before removing local Electrs")

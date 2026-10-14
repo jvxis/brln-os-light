@@ -25,18 +25,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         const card = page.locator('.section-card').filter({ has: page.getByRole('heading', { name: /Hardwallet/ }) });
         const link = card.getByRole('link', { name: /^Open$|^Abrir$/ });
         await link.waitFor({ timeout: 60000 });
-        const launch = new URL(await link.getAttribute('href'));
+        const launch = new URL(await link.getAttribute('href'), base);
         assert.equal(launch.hash, '#hardwallet-open');
         assert.equal(launch.protocol, 'https:');
+        assert.equal(launch.origin, base, 'Open must keep the Manager host');
         const popupReady = page.waitForEvent('popup');
         await link.click();
         const popup = await popupReady;
-        if (launch.origin !== base) {
-          const input = popup.locator('input[autocomplete="current-password"]');
-          await input.waitFor({ timeout: 60000 });
-          await input.fill(password);
-          await popup.locator('form.auth-form--login button[type="submit"]').click();
-        }
         const app = new URL(launch.origin);
         app.port = '4449';
         await popup.waitForURL(app.href, { timeout: 60000 });
@@ -47,19 +42,26 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         const anonymous = await browser.newContext();
         try {
           assert.equal((await anonymous.request.get(app.origin + '/api/v1/status')).status(), 401);
+          // A saved launcher link goes through the normal login when expired.
+          const expired = await anonymous.newPage();
+          await expired.goto(launch.href);
+          const input = expired.locator('input[autocomplete="current-password"]');
+          await input.waitFor({ timeout: 30000 });
+          await input.fill(password);
+          await expired.locator('form.auth-form--login button[type="submit"]').click();
+          await expired.waitForURL(app.href, { timeout: 60000 });
+          await expired.getByText('Placa · desconectada', { exact: true }).waitFor();
         } finally { await anonymous.close(); }
         // Launcher must display a recovery action instead of redirecting to a stopped app.
         const blocked = await context.newPage();
-        await blocked.route('**/api/apps', async route => {
-          const response = await route.fetch();
-          const apps = await response.json();
-          await route.fulfill({ response, json: apps.map(a => a.id === 'brln-hardwallet' ? { ...a, status: 'stopped' } : a) });
-        });
+        const apps = await (await context.request.get(base + '/api/apps')).json();
+        await blocked.route('**/api/apps', route => route.fulfill({ json: apps.map(a => a.id === 'brln-hardwallet' ? { ...a, status: 'stopped' } : a) }));
         await blocked.goto(launch.href);
         await blocked.getByText(/Could not open Hardwallet|Não foi possível abrir o Hardwallet/).waitFor();
         assert.equal(blocked.url(), launch.href);
-        console.log(JSON.stringify({ manager: base, actualPopup: 'passed', loginOnAppHost: launch.origin !== base, secureWebSerial: true, anonymous: 401, stoppedRecovery: 'passed' }));
+        await blocked.unrouteAll({ behavior: 'wait' });
+        console.log(JSON.stringify({ manager: base, actualPopup: 'passed', sameHostSession: true, expiredSessionLogin: 'passed', secureWebSerial: true, anonymous: 401, stoppedRecovery: 'passed' }));
       } finally { await context.close(); }
     }
   } finally { await browser.close(); }
-})().catch(error => { console.error(error.message); process.exitCode = 1; });
+})().catch(error => { console.error('Hardwallet browser check failed: ' + error.name); process.exitCode = 1; });

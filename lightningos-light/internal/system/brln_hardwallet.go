@@ -6,13 +6,13 @@ import (
 )
 
 type hardwalletPrivilegedClient interface {
-	HardwalletStatus(context.Context) (bool, string, string, string, error)
+	HardwalletStatus(context.Context) (bool, string, string, []string, error)
 	HardwalletControl(context.Context, string, string, bool) error
 }
 type HardwalletBrokerState struct {
 	Installed      bool
 	Status, Source string
-	BindIP         string
+	BindIPs        []string
 }
 
 func HardwalletStatusWithBroker(ctx context.Context) (HardwalletBrokerState, error) {
@@ -26,8 +26,8 @@ func HardwalletStatusWithBroker(ctx context.Context) (HardwalletBrokerState, err
 	if !ok {
 		return HardwalletBrokerState{}, errors.New("broker does not support Hardwallet")
 	}
-	installed, status, source, bindIP, err := c.HardwalletStatus(ctx)
-	return HardwalletBrokerState{Installed: installed, Status: status, Source: source, BindIP: bindIP}, err
+	installed, status, source, bindIPs, err := c.HardwalletStatus(ctx)
+	return HardwalletBrokerState{Installed: installed, Status: status, Source: source, BindIPs: bindIPs}, err
 }
 func HardwalletControlWithBroker(ctx context.Context, action, source string) error {
 	privilegedState.RLock()

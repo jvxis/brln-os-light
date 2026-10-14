@@ -16,7 +16,7 @@ import (
 
 // Recheck trust, expiry and the names used by the manager before reusing a leaf.
 // The caller supplies the evaluation time so ensure can renew before expiry.
-func (m *NativeHardwalletManager) tlsCurrent(raw []byte, bindIP string, at time.Time) bool {
+func (m *NativeHardwalletManager) tlsCurrent(raw []byte, bindIPs []string, at time.Time) bool {
 	block, _ := pem.Decode(raw)
 	if block == nil {
 		return false
@@ -33,8 +33,16 @@ func (m *NativeHardwalletManager) tlsCurrent(raw []byte, bindIP string, at time.
 	if !roots.AppendCertsFromPEM(caRaw) {
 		return false
 	}
-	if _, err = leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: bindIP, CurrentTime: at}); err != nil {
+	if len(bindIPs) == 0 {
 		return false
+	}
+	if _, err = leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: bindIPs[0], CurrentTime: at}); err != nil {
+		return false
+	}
+	for _, ip := range bindIPs {
+		if leaf.VerifyHostname(ip) != nil {
+			return false
+		}
 	}
 	managerRaw, err := readRegularFile(filepath.Join(filepath.Dir(m.Paths.ManagerCA), "server.crt"), 64*1024)
 	if err != nil {
@@ -63,7 +71,7 @@ func (m *NativeHardwalletManager) tlsCurrent(raw []byte, bindIP string, at time.
 
 // A distinct app key, signed by the existing local LOS CA. No CA key or manager
 // private key is ever mounted in a container. Paths are broker-owned constants.
-func (m *NativeHardwalletManager) issueTLS(bindIP string) ([]byte, []byte, error) {
+func (m *NativeHardwalletManager) issueTLS(bindIPs []string) ([]byte, []byte, error) {
 	caRaw, err := readRegularFile(m.Paths.ManagerCA, 64*1024)
 	if err != nil {
 		return nil, nil, err
@@ -135,7 +143,11 @@ func (m *NativeHardwalletManager) issueTLS(bindIP string) ([]byte, []byte, error
 	if ca.NotAfter.Before(expires) {
 		expires = ca.NotAfter
 	}
-	tmpl := x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "BRLN Hardwallet"}, NotBefore: time.Now().Add(-5 * time.Minute), NotAfter: expires, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, DNSNames: managerCert.DNSNames, IPAddresses: append(managerCert.IPAddresses, net.ParseIP(bindIP))}
+	addresses := append([]net.IP(nil), managerCert.IPAddresses...)
+	for _, address := range bindIPs {
+		addresses = append(addresses, net.ParseIP(address))
+	}
+	tmpl := x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "BRLN Hardwallet"}, NotBefore: time.Now().Add(-5 * time.Minute), NotAfter: expires, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, DNSNames: managerCert.DNSNames, IPAddresses: addresses}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, ca, &key.PublicKey, signer)
 	if err != nil {
 		return nil, nil, err

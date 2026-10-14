@@ -9,23 +9,23 @@ import (
 	"time"
 )
 
-func TestHardwalletLaunchUsesConfiguredHost(t *testing.T) {
+func TestHardwalletLaunchPreservesManagerHost(t *testing.T) {
 	for _, tc := range []struct {
 		name, ip, source string
 		installed        bool
 		want             string
 	}{
-		{"configured", "100.100.1.1", "club", true, "https://100.100.1.1:8443/#hardwallet-open"},
-		{"local electrs", "100.100.1.2", "local", true, "https://100.100.1.2:8443/#hardwallet-open"},
+		{"configured", "100.100.1.1", "club", true, "/#hardwallet-open"},
+		{"local electrs", "100.100.1.2", "local", true, "/#hardwallet-open"},
 		{"uninstalled", "100.100.1.1", "club", false, ""},
 		{"missing", "", "club", true, ""},
-		{"lan", "192.168.1.2", "club", true, ""},
+		{"lan", "192.168.1.2", "club", true, "/#hardwallet-open"},
 		{"external", "example.com", "club", true, ""},
 		{"injection", "100.100.1.1@evil.example", "club", true, ""},
 		{"unknown source", "100.100.1.1", "unknown", true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := hardwalletLaunchURL(system.HardwalletBrokerState{Installed: tc.installed, BindIP: tc.ip, Source: tc.source})
+			got := hardwalletLaunchURL(system.HardwalletBrokerState{Installed: tc.installed, BindIPs: []string{tc.ip}, Source: tc.source})
 			if got != tc.want {
 				t.Fatalf("got %q want %q", got, tc.want)
 			}

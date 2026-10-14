@@ -12,7 +12,7 @@ export default function HardwalletOpen() {
     void getApps().then(apps => {
       if (cancelled) return
       const app = apps.find(item => item.id === 'brln-hardwallet')
-      const url = app?.external_url ? new URL(app.external_url) : null
+      const url = app?.external_url ? new URL(app.external_url, window.location.origin) : null
       if (app?.status !== 'running' || !url || url.origin !== window.location.origin || url.hash !== '#hardwallet-open') {
         setFailed(true)
         return

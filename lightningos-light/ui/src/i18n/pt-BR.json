@@ -1259,7 +1259,7 @@
     "hardwallet": {
       "description": "Coordenador Bitcoin para o assinador ESP32 BR⚡LN. As chaves ficam na placa; o LOS consulta o Electrum e transmite transações assinadas.",
       "experimental": "Piloto experimental: sem fundos reais até concluir validação física e recuperação.",
-      "access": "Abrir usa o endereço Tailscale deste node, com HTTPS confiável. Se solicitado, entre novamente no LOS; o app abrirá em seguida. Conecte a placa USB ao seu computador. Não é necessário entrar na Tailscale do clube.",
+      "access": "Abrir usa o mesmo endereço do LOS, pela rede local ou VPN, com HTTPS confiável e sua sessão de login. Tailscale é opcional. Conecte a placa USB ao seu computador.",
       "opening": "Abrindo o Hardwallet…",
       "openFailed": "Não foi possível abrir o Hardwallet. Volte à loja, confira se o app está executando e tente novamente.",
       "source": "Servidor Electrum",

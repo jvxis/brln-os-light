@@ -4,7 +4,61 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
-## Open button from LAN (2026-10-14)
+## LAN and optional VPN access (2026-10-14)
+
+The current implementation supersedes the tailnet-only listener and cross-host
+launcher described in the historical sections below. Tailscale is optional.
+Broker discovery uses active private IPv4 host addresses (RFC1918 and CGNAT),
+excluding loopback/down interfaces and Docker `docker0`, `br-*` and `veth*`.
+Public, wildcard and IPv6 listeners are not created. The Store uses the relative
+`/#hardwallet-open` launcher and preserves the current Manager host/session.
+HTTPS, LOS authentication and per-origin broadcast checks remain mandatory.
+
+The app's separate CA-signed leaf includes all bind addresses and Manager SANs.
+Ensure/start migrates old `bind_ip` settings to `bind_ips`, preserving source and
+proxy identity. Source/address changes stop the old containers before publishing
+new settings; failed stops preserve old settings. Start recreates only this app's
+two containers to reopen atomically replaced config/certificate mounts. Address
+discovery runs on install/start, not continuously; a DHCP/VPN address change
+requires applying/starting the app again. Manager HTTPS must already be trusted
+for the address used to open LOS.
+
+Baseline focused tests passed. A LAN-only compose regression failed with the
+old Tailscale requirement, then passed. Full Windows Go tests/vet and UI build
+passed. Eleven native Ubuntu amd64 root fixture tests passed, including discovery
+with no Tailscale interface, legacy migration, repeated ensure, separate TLS keys,
+certificate coverage/expiry and unchanged token/source. Multi-address manifests
+reject public/wildcard, duplicate, injected and ambiguous legacy/new settings.
+
+LOS-TEST2 deployment backed up binaries, UI and the original app snapshot. The
+authenticated start request was made over LAN and returned 200. Runtime bindings
+matched the discovered LAN, Tailscale and existing WireGuard addresses; no Docker
+bridge/public/wildcard binding and no host port for the backend. The proxy token
+and club source were preserved. No WireGuard/Tailscale settings were changed.
+Only Manager and the two Hardwallet containers restarted; LND retained PID 3891.
+
+Real Chrome popup tests passed from both LAN and Tailscale with the same-host
+session, trusted HTTPS, secure Web Serial context, no JS errors, normal login for
+an expired session and mocked stopped-app recovery. The initial LAN flow passed
+but the harness failed during teardown of an in-flight mock route; the harness
+now avoids that fetch, waits for route cleanup and sanitizes exception output.
+Manager sessions were invalidated before the successful full rerun.
+
+The browser installer passed over LAN: bundled firmware verification, required
+acknowledgement, blocked existing-wallet update, simulated USB cancellation and
+port-open failure cleanup, corrupt download rejection and unsupported-browser
+handling. No external app requests or horizontal overflow. No real USB opened
+or firmware written. Six firmware resources rejected anonymous LAN requests;
+four authenticated binaries matched CI commit `03e9cc3`, and logout revoked
+access. LAN status/fees/mainnet, anonymous 401, invalid-Origin 403 and logout
+checks passed; the same protected coordinator checks also passed via Tailscale.
+
+Rollback binaries and app snapshot:
+`/var/backups/lightningos-hardwallet-pr260/before-lan`.
+Prior UI: `/opt/lightningos/ui-before-lan`. Physical firmware flashing/recovery,
+native arm64 and long-running certificate lifecycle gates remain outstanding.
+
+## Historical: Open button from LAN (2026-10-14)
 
 Reproduced the reported failure in Chrome by logging into the Manager via its
 LAN address and clicking the actual Store Open link: it appended port 4449 to

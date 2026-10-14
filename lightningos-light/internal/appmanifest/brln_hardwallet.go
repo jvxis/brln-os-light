@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"strings"
 )
 
 const (
@@ -22,17 +23,38 @@ const (
 type HardwalletPaths struct{ Root, Compose, Caddy, Token, Settings, Certificate, PrivateKey, ManagerCA string }
 type HardwalletSettings struct {
 	Source string `json:"source"`
-	BindIP string `json:"bind_ip"`
+	// Read the original single-address pilot during migration; new snapshots use BindIPs.
+	BindIP  string   `json:"bind_ip,omitempty"`
+	BindIPs []string `json:"bind_ips,omitempty"`
+}
+
+func HardwalletBindIPs(s HardwalletSettings) []string {
+	if s.BindIP != "" {
+		return []string{s.BindIP}
+	}
+	return s.BindIPs
+}
+
+func HardwalletPrivateIPv4(address string) bool {
+	ip := net.ParseIP(address)
+	_, tailnet, _ := net.ParseCIDR("100.64.0.0/10")
+	return ip != nil && ip.To4() != nil && address == ip.String() && (ip.IsPrivate() || tailnet.Contains(ip))
 }
 
 func ValidateHardwalletSettings(s HardwalletSettings) error {
 	if s.Source != "local" && s.Source != "club" {
 		return errors.New("unknown Electrum source")
 	}
-	ip := net.ParseIP(s.BindIP)
-	_, tailnet, _ := net.ParseCIDR("100.64.0.0/10")
-	if ip == nil || ip.To4() == nil || !tailnet.Contains(ip) {
-		return errors.New("a Tailscale IPv4 bind address is required")
+	addresses := HardwalletBindIPs(s)
+	if len(addresses) == 0 || len(addresses) > 32 || (s.BindIP != "" && len(s.BindIPs) != 0) {
+		return errors.New("private IPv4 bind addresses are required")
+	}
+	seen := map[string]bool{}
+	for _, address := range addresses {
+		if !HardwalletPrivateIPv4(address) || seen[address] {
+			return errors.New("invalid or duplicate private IPv4 bind address")
+		}
+		seen[address] = true
 	}
 	if s.Source == "club" && HardwalletClubAddress == "" {
 		return errors.New("club Electrum transport has not been verified")
@@ -100,6 +122,10 @@ func HardwalletCompose(p HardwalletPaths, s HardwalletSettings) (string, error) 
 		network = ""
 		networks = ""
 	}
+	ports := ""
+	for _, address := range HardwalletBindIPs(s) {
+		ports += fmt.Sprintf("      - \"%s:4449:4449\"\n", address)
+	}
 	return fmt.Sprintf(`services:
   app:
     image: %s
@@ -137,7 +163,7 @@ func HardwalletCompose(p HardwalletPaths, s HardwalletSettings) (string, error) 
         chmod 0500 /run/lightningos-bin/caddy
         exec /run/lightningos-bin/caddy run --config /etc/caddy/Caddyfile
     ports:
-      - "%s:4449:4449"
+%s
     extra_hosts: ["host.docker.internal:host-gateway"]
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
@@ -153,5 +179,5 @@ func HardwalletCompose(p HardwalletPaths, s HardwalletSettings) (string, error) 
 networks:
   default:
     name: brln-hardwallet_default
-%s`, HardwalletImage, address, transport, s.Source, p.Token, network, HardwalletProxyImage, s.BindIP, p.Caddy, p.Certificate, p.PrivateKey, p.ManagerCA, networks), nil
+%s`, HardwalletImage, address, transport, s.Source, p.Token, network, HardwalletProxyImage, strings.TrimSuffix(ports, "\n"), p.Caddy, p.Certificate, p.PrivateKey, p.ManagerCA, networks), nil
 }

@@ -10,6 +10,39 @@ import (
 func testHardwalletPaths() HardwalletPaths {
 	return HardwalletPaths{Root: "/snapshot/hw", Compose: "/snapshot/hw/docker-compose.yaml", Caddy: "/snapshot/hw/Caddyfile", Token: "/snapshot/hw/proxy_token", Settings: "/snapshot/hw/settings.json", Certificate: "/snapshot/hw/server.crt", PrivateKey: "/snapshot/hw/server.key", ManagerCA: "/etc/lightningos/tls/local-ca.crt"}
 }
+func TestHardwalletLANWithoutTailscale(t *testing.T) {
+	raw, err := HardwalletCompose(testHardwalletPaths(), HardwalletSettings{Source: "club", BindIP: "192.168.1.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, "192.168.1.2:4449:4449") {
+		t.Fatal("LAN address missing")
+	}
+}
+func TestHardwalletMultiplePrivateBinds(t *testing.T) {
+	addresses := []string{"192.168.1.2", "10.1.1.2", "100.100.1.1"}
+	raw, err := HardwalletCompose(testHardwalletPaths(), HardwalletSettings{Source: "local", BindIPs: addresses})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range addresses {
+		if !strings.Contains(raw, address+":4449:4449") {
+			t.Fatal("missing address", address)
+		}
+	}
+	for _, settings := range []HardwalletSettings{
+		{Source: "club"},
+		{Source: "club", BindIPs: []string{"192.168.1.2", "192.168.1.2"}},
+		{Source: "club", BindIPs: []string{"192.168.1.2", "0.0.0.0"}},
+		{Source: "club", BindIPs: []string{"8.8.8.8"}},
+		{Source: "club", BindIP: "100.100.1.1", BindIPs: addresses},
+		{Source: "club", BindIPs: []string{"192.168.1.2\nports:"}},
+	} {
+		if _, err := HardwalletCompose(testHardwalletPaths(), settings); err == nil {
+			t.Fatal("unsafe settings accepted", settings)
+		}
+	}
+}
 func TestHardwalletTransportBoundary(t *testing.T) {
 	for _, source := range []string{"local", "club"} {
 		raw, err := HardwalletCompose(testHardwalletPaths(), HardwalletSettings{Source: source, BindIP: "100.100.1.1"})
@@ -32,7 +65,7 @@ func TestHardwalletTransportBoundary(t *testing.T) {
 			t.Fatal("incorrect Electrs network dependency")
 		}
 		if !strings.Contains(raw, "100.100.1.1:4449:4449") {
-			t.Fatal("must bind tailnet only")
+			t.Fatal("must bind only the configured address")
 		}
 		if source == "club" {
 			host, _, err := net.SplitHostPort(HardwalletClubAddress)
@@ -44,7 +77,7 @@ func TestHardwalletTransportBoundary(t *testing.T) {
 			}
 		}
 	}
-	for _, ip := range []string{"127.0.0.1", "0.0.0.0", "192.168.1.2", "8.8.8.8", "100.128.0.1"} {
+	for _, ip := range []string{"127.0.0.1", "0.0.0.0", "8.8.8.8", "100.128.0.1"} {
 		if ValidateHardwalletSettings(HardwalletSettings{Source: "local", BindIP: ip}) == nil {
 			t.Fatal(ip)
 		}

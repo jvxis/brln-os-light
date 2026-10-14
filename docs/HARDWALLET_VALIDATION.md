@@ -33,6 +33,101 @@ build is not native arm64 runtime validation.
 
 ## LOS-TEST2 runtime evidence
 
+### Integrated USB installer (2026-10-14 follow-up)
+
+The companion app now includes initial firmware installation for the original
+ESP32 T-Display (1.14-inch display, two buttons, 4 MB flash). Firmware is built
+first in the same CI run, packaged with its source commit and SHA-256 hashes,
+then included in the immutable app image. The installer and its Espressif stub
+are served locally; no CDN or external installer site is required.
+
+The browser requests the USB port on the member's computer. No new broker
+operation, host USB mount or privilege is added. Firmware routes retain the
+existing LOS session authentication. Local/club Electrum choice is unchanged.
+
+Before writing, the member confirms the physical board model and that there is
+no wallet to preserve, and the installer identifies an original ESP32 with 4 MB
+flash. Identification only uploads a stub into RAM. A separate button authorizes
+flash writes. A chip cannot establish the display model or absence of every
+possible wallet format; the UI explicitly explains that limitation. The
+existing-wallet update option has no installation action.
+
+Only the bootloader, partition table, boot_app0 and application ranges are
+written. Full erase, NVS/SPIFFS writes, eFuse writes, arbitrary binaries/URLs and
+automatic retries are absent. Downloaded bytes undergo SHA-256 verification;
+stub MD5 verifies written ranges before reset. These are integrity checks, not
+an independent firmware signature or an audit of source/build provenance.
+
+Completed on Windows amd64:
+
+- Companion: 74 Vitest tests passed with one worker; Svelte check reported zero
+  errors/warnings and production build passed. Four new Python packaging tests
+  plus the two existing packaging tests passed. New tests cover wrong chip/flash,
+  modified/truncated files, fixed write ranges, failure to verify, no automatic
+  retry, and rejection of modified partition maps before packaging.
+- Chrome against the local production build: first-install acknowledgement,
+  update blocking, cancelled USB selector releasing the coordinator, corrupted
+  file blocking, unsupported-browser blocking, same-origin-only requests, no JS
+  errors and no horizontal overflow at 390 px. The USB selector was simulated;
+  no real port was opened or written.
+- Initial unconstrained local test/build attempts failed due to Windows commit
+  memory pressure. Repeating tests with one worker and bounded Node memory
+  passed; failed attempts are not counted as passing runs.
+
+CI [38599494043](https://github.com/jvxis/brln-hardwallet/actions/runs/38599494043)
+passed the native C++/cryptography and Python tests, compiled the ESP32 firmware,
+passed web tests/check/build and Go tests/vet, and published the amd64/arm64 image.
+The new catalog pin is companion commit `194a1ecf7b419e159c385be6902ec475408c5814`,
+image digest `sha256:4ed6d102c06e6a29637c32ac915fac4f8084c6b573725405d1cc41379026b41b`.
+
+The public OCI index and every downloaded layer digest were verified without
+registry credentials, and both amd64/arm64 platforms were present. All four
+packaged firmware files matched the CI artifact. Chrome checks also passed
+against the static files extracted from that exact published image, including
+loading the bundled esptool module and releasing a simulated failed serial port.
+
+The LOS-TEST2 VM entered VirtualBox `GURU_MEDITATION` with
+`VERR_NEM_GET_REGISTERS_FAILED` before this installer image was deployed. The
+owner explicitly authorized a forced power-off and headless restart of only
+LOS-TEST2. No disks were removed or restored. No causal conclusion about the
+VM failure is established by the concurrent host memory pressure. The manager
+waited for LND during boot, then services recovered normally. That authorized
+VM recovery, unlike the app deployment, restarted the guest's services.
+
+After recovery, the prior manager/broker hashes were verified before replacement
+and backed up in
+`/var/backups/lightningos-hardwallet-pr260/before-installer-194a1ec`.
+Windows `go test -p 1 ./...` and `go vet -p 1 ./...` passed after the catalog pin
+change; all eight Linux root Hardwallet tests and the broker self-test passed.
+The candidate manager/broker were installed and only the manager was restarted.
+The existing authenticated app install operation then returned HTTP 200 and
+started the exact new image with club Electrs selected.
+
+Actual authenticated HTTPS/browser checks on LOS-TEST2 passed:
+
+- All six firmware resources (manifest, four binaries, checksum list) returned
+  401 without a LOS session. Authenticated binaries exactly matched the CI
+  artifact and manifest SHA-256. Logout revoked firmware access.
+- The initial-install acknowledgement and existing-wallet update block worked.
+  Simulated USB-selector cancellation and port-open failure released the
+  coordinator controls. A truncated firmware download and an unsupported
+  browser both blocked installation. No real USB port was opened.
+- The esptool module loaded from the app, with no external requests or JS page
+  errors. Desktop/mobile layouts had no horizontal overflow at 390 px.
+- Authenticated Electrum status/fees returned 200 for club/mainnet; anonymous
+  coordinator routes returned 401, invalid-Origin broadcast returned 403 and
+  logout revoked access. No valid transaction was broadcast.
+- Docker inspection confirmed the new pinned image, unchanged non-root UIDs,
+  read-only root filesystems, dropped capabilities, no app host port, proxy
+  bound only to the Tailscale IP, and no club-mode Electrs network attachment.
+  WireGuard interfaces and the post-recovery LND PID remained unchanged during
+  deployment. Bitcoin source remained remote and local Electrs remained stopped.
+  Final LND status reported both chain and graph synchronization complete.
+
+Physical USB/reset/readback/boot and subsequent signer pairing remain untested.
+
+### Earlier app lifecycle validation
+
 Baseline was LOS `0.5.44-Beta`, Ubuntu 24.04 amd64, Bitcoin source `remote`,
 LND synced to chain and graph, and installed local Electrs stopped. No Bitcoin
 or Electrs indexing was started for this test. Existing WireGuard interfaces,

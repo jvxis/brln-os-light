@@ -83,6 +83,31 @@ a trava de estoque só age depois do segundo lote.
   continua possível. Idade vem do short channel id contra a altura do bloco;
   sem altura (LND indisponível) nada é bloqueado.
 
+### 0.5.45: canal drenado re-mede o preço; escada aceita `low_outbound`
+
+Em 13/10 a escada achou rota pro RA⚡KO a 320 ppm e o AutoFee subiu a fee de
+362 para 455 — mas o teto seguiu olhando o preço real de 332 (× 0,8 = 265),
+e um canal vazio não vende, logo o preço real não sobe. A escada mediu o
+preço e ninguém testou se o canal vende nele; o RA⚡KO, maior vendedor da
+semana, ficou a 1% até aparecer rota abaixo de 265.
+
+- **Canal com menos de 10% de saldo local** (`realizedPriceCapDrainedLocalPct`)
+  volta a precificar o teto pela **fee anunciada**, mas só para **um lote do
+  tamanho do keepalive** (`keepalive_refill_pct` da capacidade, ≥ mínimo de
+  execução): o suficiente para medir o preço, não para reestocar a um preço
+  que o canal talvez não feche. `sale_price_source = "drained_retest"` e
+  `drained_retest: true` em `/api/rebalance/channels`. Se o lote vende, o
+  preço real sobe e o teto normal cuida do próximo; se não vende, a trava de
+  estoque e o `no_sale_30d` seguram. Vale também para a base da sonda da
+  escada (os degraus de 125%/150% partem da fee anunciada no canal drenado).
+- **A escada passa a aceitar o intent `autofee_low_outbound_target`** além
+  de drained/extreme-drained (`isSovereignDiscoveryIntentReason`). Em 14/10
+  PurpleWisteria (6%) e Unwetter (7%) ficaram o dia inteiro em "all sources
+  failed" com esse intent e nunca receberam sonda. O keepalive continua só
+  com drained/extreme-drained.
+- Continua fora da escada: canal com AutoFee desligado (não produz intent) e
+  intent com menos de `keepalive_refill_after_hours` (48h).
+
 ## Compatibilidade
 
 - Uma coluna nova em `rebalance_config` (`add column if not exists`).

@@ -731,6 +731,17 @@ POST /api/lnops/succession/simulate
 
 ## App Store
 
+### BRLN Hardwallet (experimental)
+
+- App ID: `brln-hardwallet`. Uses the standard install/start/stop/uninstall endpoints and requires enabled LOS login, broker enforce mode, and a Tailscale IPv4 address.
+- `POST /api/apps/brln-hardwallet/install` accepts optional JSON `{"electrum_source":"local"}` or `{"electrum_source":"club"}`. Omitting the source preserves the saved selection, or defaults to local on first installation. Calling install again applies the selection and starts the app. Other source values are rejected.
+- `GET /api/apps` includes `electrum_source` for this app. Local uses the managed Electrs Docker network; club uses the fixed club Electrs address over Tailscale. There is no automatic public-server fallback.
+- `GET /api/apps/brln-hardwallet/authorization` is the HTTPS proxy session check: returns 204 only with enabled LOS login and a valid session; otherwise access is denied. It grants no signing authority. Every app route passes this check.
+- The app listens on HTTPS port 4449 bound to the node's Tailscale IPv4 address. Open LOS and the app using the same host so the secure LOS session cookie applies. The browser must trust the LOS CA and support Web Serial; the signer connects to the browser computer by USB.
+- Seeds, wallet passwords and passphrases are entered on the signer. The LOS app handles public account data and transactions, and does not require LND credentials or a USB device mount on the node.
+- Generic Electrs removal is blocked while the installed Hardwallet configuration selects local Electrs. Select club or uninstall Hardwallet first.
+- This integration remains experimental until the runtime lifecycle and physical signer validation recorded in the PR are complete.
+
 GET /api/apps
 - Returns app list with status.
 - Third-party catalog apps, except PeerSwap, may include `available_version`, `installed_version`, and `update_available`. The available release is synchronized to PostgreSQL when the manager starts. The installed release changes only after an existing install or start action succeeds; legacy installations remain with an omitted/unknown `installed_version` until that happens. Version persistence is informational and cannot fail or trigger an app lifecycle operation.

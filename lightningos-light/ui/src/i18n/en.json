@@ -1256,6 +1256,16 @@
     }
   },
   "appStore": {
+    "hardwallet": {
+      "description": "Bitcoin coordinator for the BR⚡LN ESP32 signer. Keys stay on the device; LOS queries Electrum and broadcasts signed transactions.",
+      "experimental": "Experimental pilot: no real funds until physical review and recovery validation pass.",
+      "access": "Open LOS using the same Tailscale hostname and trusted HTTPS. Connect USB to your computer, not the node.",
+      "source": "Electrum server",
+      "local": "My local Electrs (default)",
+      "club": "Club Electrs over Tailscale",
+      "privacy": "No automatic fallback. The club server can observe your queries. Access depends on tailnet permissions.",
+      "apply": "Apply server and start"
+    },
     "bitcoinLegacyMigrationTitle": "Legacy Bitcoin Core migration required",
     "bitcoinLegacyMigrationCard": "This node still uses the historical Store image. Ordinary start and stop controls are disabled until the verified image is adopted safely.",
     "bitcoinLegacyMigrationAction": "Migrate safely",

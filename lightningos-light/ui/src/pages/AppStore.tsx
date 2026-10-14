@@ -16,6 +16,7 @@ import cpuLotteryIcon from '../assets/apps/cpu-lottery.svg'
 import taprootAssetsIcon from '../assets/apps/taproot-assets.svg'
 import barkWalletIcon from '../assets/apps/bark-wallet.svg'
 import brlnCommunityIcon from '../assets/apps/brln-community.svg'
+import hardwalletIcon from '../assets/apps/brln-hardwallet.svg'
 import btcpayIcon from '../assets/apps/btcpay.svg'
 import loopIcon from '../assets/apps/lightning-loop.svg'
 import meshIcon from '../assets/apps/los-mesh.svg'
@@ -50,6 +51,7 @@ type ElectrsStatus = {
 
 type AppAction = 'install' | 'start' | 'stop' | 'uninstall'
 type InstallPayload = {
+  electrum_source?: 'local' | 'club'
   data_dir?: string
   storage_mount?: string
   elements_mode?: 'local' | 'remote'
@@ -89,6 +91,7 @@ const iconMap: Record<string, string> = {
   tapd: taprootAssetsIcon,
   'bark-wallet': barkWalletIcon,
   'brln-community': brlnCommunityIcon,
+  'brln-hardwallet': hardwalletIcon,
   btcpay: btcpayIcon,
   loop: loopIcon,
   'loopout-brln': loopOutBRLNIcon,
@@ -206,6 +209,7 @@ export default function AppStore() {
   const [pendingFedimintGatewayAction, setPendingFedimintGatewayAction] = useState<'install' | 'start' | null>(null)
   const [barkRevealReauthOpen, setBarkRevealReauthOpen] = useState(false)
   const [brlnCommunityInstallOpen, setBrlnCommunityInstallOpen] = useState(false)
+  const [hardwalletSource, setHardwalletSource] = useState<'' | 'local' | 'club'>('')
   const [brlnSignerReauthOpen, setBrlnSignerReauthOpen] = useState(false)
   const [brlnSignerPassword, setBrlnSignerPassword] = useState('')
   const [brlnSignerBusy, setBrlnSignerBusy] = useState(false)
@@ -536,6 +540,9 @@ export default function AppStore() {
       const app = apps.find((candidate) => candidate.id === id)
       if (app) setPendingUninstall(app)
       return
+    }
+    if (id === 'brln-hardwallet' && action === 'install' && !payload) {
+      payload = { electrum_source: hardwalletSource || apps.find(a => a.id === id)?.electrum_source || 'local' }
     }
     if (id === 'bark-wallet' && action === 'install' && !payload) {
       setBarkWalletInstallOpen(true)
@@ -1055,7 +1062,19 @@ export default function AppStore() {
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-fog/60">{app.description}</p>
+                    <p className="text-sm text-fog/60">{app.id === 'brln-hardwallet' ? t('appStore.hardwallet.description') : app.description}</p>
+                    {app.id === 'brln-hardwallet' && <div className="mt-3 space-y-3 text-sm">
+                      <p className="text-brass">{t('appStore.hardwallet.experimental')}</p>
+                      <p>{t('appStore.hardwallet.access')}</p>
+                      <label className="block">{t('appStore.hardwallet.source')}
+                        <select className="input-field mt-2 w-full" disabled={isBusy} value={hardwalletSource || app.electrum_source || 'local'} onChange={event => setHardwalletSource(event.target.value as 'local' | 'club')}>
+                          <option value="local">{t('appStore.hardwallet.local')}</option>
+                          <option value="club">{t('appStore.hardwallet.club')}</option>
+                        </select>
+                      </label>
+                      <p className="text-fog/60">{t('appStore.hardwallet.privacy')}</p>
+                      {app.installed && <button className="btn-secondary" disabled={isBusy} onClick={() => void handleAction(app.id,'install',{electrum_source:hardwalletSource || app.electrum_source || 'local'})}>{t('appStore.hardwallet.apply')}</button>}
+                    </div>}
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">

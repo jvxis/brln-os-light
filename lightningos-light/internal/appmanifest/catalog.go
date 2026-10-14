@@ -114,6 +114,8 @@ func ComposeManifestForApp(appID string) (ComposeManifest, error) {
 			ID: BarkWalletID, Project: BarkWalletProject, ComposeFile: BarkWalletComposeFile,
 			PrimaryService: BarkWalletPrimaryService, StopTimeoutSeconds: BarkWalletStopTimeout,
 		}, nil
+	case HardwalletID:
+		return ComposeManifest{ID: HardwalletID, Project: HardwalletID, ComposeFile: "docker-compose.yaml", PrimaryService: "proxy", StopTimeoutSeconds: 30}, nil
 	case BRLNCommunityID:
 		return ComposeManifest{
 			ID: BRLNCommunityID, Project: BRLNCommunityProject, ComposeFile: BRLNCommunityComposeFile,
@@ -150,6 +152,8 @@ func CatalogImageForVariant(appID string, variant AppImageVariant) (string, erro
 		return PublicPoolImageForVariant(variant)
 	case BarkWalletID:
 		return BarkWalletImageForVariant(variant)
+	case HardwalletID:
+		return HardwalletImageForVariant(variant)
 	case BRLNCommunityID:
 		return BRLNCommunityImageForVariant(variant)
 	default:

@@ -11,6 +11,7 @@ func (s *Server) appRegistry() ([]appHandler, error) {
 		newBitcoinCoreApp(s),
 		newBarkWalletApp(s),
 		newBRLNCommunityApp(s),
+		newHardwalletApp(s),
 		newElectrsApp(s),
 		newMempoolApp(s),
 		newFedimintGuardianApp(s),

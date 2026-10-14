@@ -265,7 +265,7 @@ func (manager *ComposeAppManager) ImageStatus(ctx context.Context, appID string,
 
 func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, variant appmanifest.AppImageVariant, dryRun bool) (AppImageProbe, error) {
 	var probe AppImageProbe
-	if appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID && appID != appmanifest.BarkWalletID && appID != appmanifest.BRLNCommunityID && appID != appmanifest.MempoolID && appID != appmanifest.FedimintGuardianID && appID != appmanifest.FedimintGatewayID {
+	if appID != appmanifest.HardwalletID && appID != appmanifest.CPUMinerID && appID != appmanifest.TapdID && appID != appmanifest.PublicPoolID && appID != appmanifest.BarkWalletID && appID != appmanifest.BRLNCommunityID && appID != appmanifest.MempoolID && appID != appmanifest.FedimintGuardianID && appID != appmanifest.FedimintGatewayID {
 		return probe, errors.New("app image probe is not allowed")
 	}
 	image, _, _, err := validatedCatalogImage(appID, variant)
@@ -348,6 +348,20 @@ func (manager *ComposeAppManager) ProbeImage(ctx context.Context, appID string, 
 		probe.Runnable = runErr == nil && strings.TrimSpace(output) != ""
 		if variant == appmanifest.BarkWalletImageDaemon {
 			probe.Runnable = probe.Runnable && strings.TrimSpace(output) == appmanifest.BarkWalletDaemonVersionOutput
+		}
+		return probe, nil
+	}
+	if appID == appmanifest.HardwalletID {
+		args := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
+		if variant == "app" {
+			args = append(args, "--user", "65527:65527", image, "-version")
+		} else {
+			args = append(args, "--user", "65532:65532", "--tmpfs", "/run/lightningos-bin:rw,exec,nosuid,nodev,size=64m,uid=65532,gid=65532,mode=0700", "--entrypoint", "/bin/sh", image, "-c", "cp /usr/bin/caddy /run/lightningos-bin/caddy && exec /run/lightningos-bin/caddy version")
+		}
+		output, err := manager.Runner.Run(ctx, dockerPath, args...)
+		probe.Runnable = err == nil && strings.TrimSpace(output) != ""
+		if variant == "app" {
+			probe.Runnable = probe.Runnable && strings.TrimSpace(output) == appmanifest.HardwalletVersionOutput
 		}
 		return probe, nil
 	}
@@ -539,6 +553,7 @@ func validatedCatalogImage(appID string, variant appmanifest.AppImageVariant) (s
 			appmanifest.BarkWalletImageDaemon: "lightningos-bark-image-daemon",
 			appmanifest.BarkWalletImageProxy:  "lightningos-bark-image-proxy",
 		},
+		appmanifest.HardwalletID: {"app": "lightningos-hardwallet-image-app", "proxy": "lightningos-hardwallet-image-proxy"},
 		appmanifest.BRLNCommunityID: {
 			appmanifest.BRLNCommunityImageWeb:    "lightningos-brlncommunity-image-web",
 			appmanifest.BRLNCommunityImageSigner: "lightningos-brlncommunity-image-signer",
@@ -926,6 +941,16 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 // fixed Compose down action. The manager remains responsible for deleting its
 // own unprivileged app files only after this method succeeds.
 func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryRun bool) error {
+	if appID == appmanifest.ElectrsID {
+		root := filepath.Join(defaultPrivilegedAppsRoot, appmanifest.HardwalletID)
+		if safeNonEmptyRegularFile(filepath.Join(root, "docker-compose.yaml")) {
+			raw, err := readRegularFile(filepath.Join(root, "settings.json"), 1024)
+			var settings appmanifest.HardwalletSettings
+			if err != nil || decodeStrict(raw, &settings) != nil || settings.Source != "club" {
+				return errors.New("remove BRLN Hardwallet or select club Electrum before removing local Electrs")
+			}
+		}
+	}
 	if manager == nil || manager.Runner == nil {
 		return errors.New("compose app manager is unavailable")
 	}

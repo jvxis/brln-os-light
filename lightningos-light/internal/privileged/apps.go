@@ -941,18 +941,14 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 // fixed Compose down action. The manager remains responsible for deleting its
 // own unprivileged app files only after this method succeeds.
 func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryRun bool) error {
-	if appID == appmanifest.ElectrsID {
-		root := filepath.Join(defaultPrivilegedAppsRoot, appmanifest.HardwalletID)
-		if safeNonEmptyRegularFile(filepath.Join(root, "docker-compose.yaml")) {
-			raw, err := readRegularFile(filepath.Join(root, "settings.json"), 1024)
-			var settings appmanifest.HardwalletSettings
-			if err != nil || decodeStrict(raw, &settings) != nil || settings.Source != "club" {
-				return errors.New("remove BRLN Hardwallet or select club Electrum before removing local Electrs")
-			}
-		}
-	}
 	if manager == nil || manager.Runner == nil {
 		return errors.New("compose app manager is unavailable")
+	}
+	if appID == appmanifest.ElectrsID {
+		root := filepath.Join(defaultPrivilegedAppsRoot, appmanifest.HardwalletID)
+		if err := hardwalletAllowsElectrsRemoval(ctx, manager.Runner, root); err != nil {
+			return err
+		}
 	}
 	manifest, err := appmanifest.ComposeManifestForApp(appID)
 	if err != nil {

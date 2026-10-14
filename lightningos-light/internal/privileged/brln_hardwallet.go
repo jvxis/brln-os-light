@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"lightningos-light/internal/appmanifest"
 )
@@ -186,7 +187,7 @@ func (m *NativeHardwalletManager) firewallRule(ctx context.Context, bridge strin
 	}
 	return nil
 }
-func (m *NativeHardwalletManager) ensure(_ context.Context, source string, dry bool) (HardwalletState, error) {
+func (m *NativeHardwalletManager) ensure(ctx context.Context, source string, dry bool) (HardwalletState, error) {
 	if err := validateManagerCACertificate(m.Paths.ManagerCA, m.requireFixed); err != nil {
 		return HardwalletState{}, err
 	}
@@ -209,6 +210,15 @@ func (m *NativeHardwalletManager) ensure(_ context.Context, source string, dry b
 	}
 	if dry {
 		return HardwalletState{Status: "validated", Source: source}, nil
+	}
+	// Stop the old coordinator before publishing a different source selection.
+	// A failed pull/start must not keep serving the previous source as the new one.
+	if previous, readErr := m.settings(); readErr == nil && previous.Source != source {
+		if err = stopCatalogApp(ctx, m.Runner, appmanifest.HardwalletID, false); err != nil {
+			return HardwalletState{}, err
+		}
+	} else if readErr != nil && !os.IsNotExist(rootCause(readErr)) {
+		return HardwalletState{}, readErr
 	}
 	if err = ensureDirectoryTreeNoSymlink(m.Paths.Root, 0700); err != nil {
 		return HardwalletState{}, err
@@ -236,6 +246,11 @@ func (m *NativeHardwalletManager) ensure(_ context.Context, source string, dry b
 		}
 	} else if ce != nil || ke != nil || validateTLSKeyPair(cert, key) != nil {
 		return HardwalletState{}, errors.New("Hardwallet TLS state invalid")
+	} else if !m.tlsCurrent(cert, bind, time.Now().Add(7*24*time.Hour)) {
+		cert, key, err = m.issueTLS(bind)
+		if err != nil {
+			return HardwalletState{}, err
+		}
 	}
 	config, _ := json.Marshal(settings)
 	for _, file := range []struct {
@@ -300,5 +315,26 @@ func (m *NativeHardwalletManager) validate() (appmanifest.HardwalletSettings, er
 	if ce != nil || ke != nil || validateTLSKeyPair(cert, key) != nil {
 		return zero, errors.New("invalid Hardwallet TLS pair")
 	}
+	if !m.tlsCurrent(cert, settings.BindIP, time.Now()) {
+		return zero, errors.New("Hardwallet TLS certificate needs renewal")
+	}
 	return settings, nil
+}
+
+func hardwalletAllowsElectrsRemoval(ctx context.Context, runner CommandRunner, root string) error {
+	if !safeNonEmptyRegularFile(filepath.Join(root, "docker-compose.yaml")) {
+		return nil
+	}
+	raw, err := readRegularFile(filepath.Join(root, "settings.json"), 1024)
+	var settings appmanifest.HardwalletSettings
+	if err != nil || decodeStrict(raw, &settings) != nil || appmanifest.ValidateHardwalletSettings(settings) != nil || settings.Source != "club" {
+		return errors.New("remove BRLN Hardwallet or select club Electrum before removing local Electrs")
+	}
+	// A failed switch can leave stopped containers attached to the local network.
+	// Check Docker's actual attachments as well as the desired configuration.
+	out, err := runner.Run(ctx, dockerPath, "ps", "-a", "--filter", "label=com.docker.compose.project=brln-hardwallet", "--filter", "network=electrs_default", "--format", "{{.ID}}")
+	if err != nil || strings.TrimSpace(out) != "" {
+		return errors.New("finish the Hardwallet source switch or uninstall Hardwallet before removing local Electrs")
+	}
+	return nil
 }

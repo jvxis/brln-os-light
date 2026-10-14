@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"lightningos-light/internal/appmanifest"
 	"math/big"
 	"os"
@@ -93,6 +94,29 @@ func TestHardwalletDryRunDoesNotWrite(t *testing.T) {
 		t.Fatal("dry run created files")
 	}
 }
+
+func TestHardwalletEnsureRenewsForChangedAddress(t *testing.T) {
+	m := testHardwalletManager(t)
+	ctx := context.Background()
+	if _, err := m.Control(ctx, HardwalletControlParams{Action: "ensure", Source: "club"}, false); err != nil {
+		t.Fatal(err)
+	}
+	token, _ := os.ReadFile(m.Paths.Token)
+	m.BindIP = func() (string, error) { return "100.100.1.2", nil }
+	if _, err := m.Control(ctx, HardwalletControlParams{Action: "ensure"}, false); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(m.Paths.Certificate)
+	block, _ := pem.Decode(raw)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil || cert.VerifyHostname("100.100.1.2") != nil {
+		t.Fatal("app certificate was not renewed for changed Tailscale address")
+	}
+	after, _ := os.ReadFile(m.Paths.Token)
+	if string(after) != string(token) {
+		t.Fatal("certificate renewal changed proxy token")
+	}
+}
 func TestHardwalletClosedProtocol(t *testing.T) {
 	for _, raw := range []string{`{"action":"shell"}`, `{"action":"ensure","source":"https://evil"}`, `{"action":"start","source":"club"}`, `{"action":"ensure","path":"/etc"}`, `{"action":"ensure","image":"evil"}`} {
 		req := Request{Version: 1, RequestID: "test", Operation: OperationHardwalletControl, Params: json.RawMessage(raw)}
@@ -122,5 +146,67 @@ func TestHardwalletFirewallOnlyAuthorizesItsBridge(t *testing.T) {
 	command := strings.Join(r.commands[len(r.commands)-1].args, " ")
 	if command != "allow in on br-0123456789ab to any port 8443 proto tcp" {
 		t.Fatal(command)
+	}
+}
+
+func TestHardwalletFailedSourceStopPreservesSettings(t *testing.T) {
+	m := testHardwalletManager(t)
+	ctx := context.Background()
+	if _, err := m.ensure(ctx, "local", false); err != nil {
+		t.Fatal(err)
+	}
+	r := m.Runner.(*composeRecordingRunner)
+	r.hook = func(path string, args []string) (string, error, bool) {
+		return "", errors.New("Docker unavailable"), true
+	}
+	if _, err := m.ensure(ctx, "club", false); err == nil {
+		t.Fatal("source changed despite failed stop")
+	}
+	s, err := m.settings()
+	if err != nil || s.Source != "local" {
+		t.Fatal("previous source was lost", err)
+	}
+}
+
+func TestHardwalletElectrsRemovalChecksRuntimeAttachments(t *testing.T) {
+	m := testHardwalletManager(t)
+	ctx := context.Background()
+	if _, err := m.ensure(ctx, "club", false); err != nil {
+		t.Fatal(err)
+	}
+	r := m.Runner.(*composeRecordingRunner)
+	for _, tc := range []struct {
+		output  string
+		err     error
+		blocked bool
+	}{
+		{"", nil, false}, {"0123456789ab", nil, true}, {"", errors.New("Docker unavailable"), true},
+	} {
+		r.hook = func(path string, args []string) (string, error, bool) {
+			if !strings.Contains(strings.Join(args, " "), "ps -a --filter label=com.docker.compose.project=brln-hardwallet --filter network=electrs_default") {
+				t.Fatal("runtime lookup does not cover stopped containers")
+			}
+			return tc.output, tc.err, true
+		}
+		err := hardwalletAllowsElectrsRemoval(ctx, r, m.Paths.Root)
+		if (err != nil) != tc.blocked {
+			t.Fatal("incorrect removal decision", err)
+		}
+	}
+}
+
+func TestHardwalletCertificateExpiryIsRejected(t *testing.T) {
+	m := testHardwalletManager(t)
+	if _, err := m.ensure(context.Background(), "club", false); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(m.Paths.Certificate)
+	block, _ := pem.Decode(raw)
+	cert, _ := x509.ParseCertificate(block.Bytes)
+	if !m.tlsCurrent(raw, "100.100.1.1", time.Now()) {
+		t.Fatal("current certificate rejected")
+	}
+	if m.tlsCurrent(raw, "100.100.1.1", cert.NotAfter.Add(time.Second)) {
+		t.Fatal("expired certificate accepted")
 	}
 }

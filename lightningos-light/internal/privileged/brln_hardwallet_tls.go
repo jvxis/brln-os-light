@@ -14,6 +14,53 @@ import (
 	"time"
 )
 
+// Recheck trust, expiry and the names used by the manager before reusing a leaf.
+// The caller supplies the evaluation time so ensure can renew before expiry.
+func (m *NativeHardwalletManager) tlsCurrent(raw []byte, bindIP string, at time.Time) bool {
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return false
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	caRaw, err := readRegularFile(m.Paths.ManagerCA, 64*1024)
+	if err != nil {
+		return false
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caRaw) {
+		return false
+	}
+	if _, err = leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: bindIP, CurrentTime: at}); err != nil {
+		return false
+	}
+	managerRaw, err := readRegularFile(filepath.Join(filepath.Dir(m.Paths.ManagerCA), "server.crt"), 64*1024)
+	if err != nil {
+		return false
+	}
+	managerBlock, _ := pem.Decode(managerRaw)
+	if managerBlock == nil {
+		return false
+	}
+	manager, err := x509.ParseCertificate(managerBlock.Bytes)
+	if err != nil {
+		return false
+	}
+	for _, name := range manager.DNSNames {
+		if leaf.VerifyHostname(name) != nil {
+			return false
+		}
+	}
+	for _, ip := range manager.IPAddresses {
+		if leaf.VerifyHostname(ip.String()) != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // A distinct app key, signed by the existing local LOS CA. No CA key or manager
 // private key is ever mounted in a container. Paths are broker-owned constants.
 func (m *NativeHardwalletManager) issueTLS(bindIP string) ([]byte, []byte, error) {
@@ -28,6 +75,9 @@ func (m *NativeHardwalletManager) issueTLS(bindIP string) ([]byte, []byte, error
 	ca, err := x509.ParseCertificate(caBlock.Bytes)
 	if err != nil || !ca.IsCA {
 		return nil, nil, errors.New("invalid local CA")
+	}
+	if time.Now().Before(ca.NotBefore) || !time.Now().Before(ca.NotAfter) {
+		return nil, nil, errors.New("local CA is not currently valid")
 	}
 	caKeyPath := filepath.Join(filepath.Dir(m.Paths.ManagerCA), "local-ca.key")
 	if filepath.Base(m.Paths.ManagerCA) == "los-local-ca.crt" {

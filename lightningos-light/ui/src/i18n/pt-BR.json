@@ -1259,11 +1259,11 @@
     "hardwallet": {
       "description": "Coordenador Bitcoin para o assinador ESP32 BR⚡LN. As chaves ficam na placa; o LOS consulta o Electrum e transmite transações assinadas.",
       "experimental": "Piloto experimental: sem fundos reais até concluir validação física e recuperação.",
-      "access": "Abra o LOS pelo mesmo nome Tailscale e use HTTPS confiável. A placa USB se conecta ao seu computador, não ao node.",
+      "access": "Abra o LOS e o app pelo mesmo nome na sua própria Tailscale, com HTTPS confiável. Conecte a placa USB ao seu computador. Não é necessário entrar na Tailscale do clube.",
       "source": "Servidor Electrum",
       "local": "Meu Electrs local (padrão)",
-      "club": "Electrs do clube via Tailscale",
-      "privacy": "Sem fallback automático. O servidor do clube pode observar suas consultas. Acesso depende das permissões da tailnet.",
+      "club": "Electrs do clube (servidor público)",
+      "privacy": "Sem fallback automático. O clube usa electrum.br-ln.com:50001 por TCP sem TLS. O servidor e intermediários de rede podem observar suas consultas.",
       "apply": "Aplicar servidor e iniciar"
     },
     "bitcoinLegacyMigrationTitle": "Migração do Bitcoin Core legado necessária",

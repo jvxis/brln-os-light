@@ -4,6 +4,61 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Public club Electrum correction (2026-10-14)
+
+The original pilot incorrectly made the owner's personal tailnet a requirement
+for querying the club Electrs. The current catalog instead selects the public
+`electrum.br-ln.com:50001` endpoint with explicit `tcp` transport. Members do not
+join the club/owner tailnet. Their own node's authenticated HTTPS/Tailscale app
+access remains a separate connection. Source selection and lack of automatic
+fallback are unchanged; local Electrs remains the default.
+
+The owner confirmed the `electrum.br-ln.com` hostname through the Nginx config.
+`electrs.br-ln.com` did not resolve. Public port 50001 answered `server.features`
+with the mainnet genesis and electrs/0.10.8, from both the workstation and
+LOS-TEST2. The VM routed this connection over `enp0s3`, not `tailscale0`.
+The supplied Nginx `location` uses an HTTP proxy to the raw Electrum port; it
+does not translate HTTP/WebSocket to Electrum TCP. A raw Electrum request over
+verified TLS on 443 received HTTP 400; the HTTPS GET timed out, as did TLS on
+50002. The usable public endpoint is therefore TCP without TLS. Store/app copy
+states this and the query privacy implications. No VPS configuration/service
+was changed. Public Electrum TLS would need an actual TCP/TLS endpoint.
+
+Regression tests reproduced both defects before the fix: the backend rejected
+explicit `tcp`, and the catalog used a private tailnet IP. They pass with the
+correction. Tests retain local transport, mainnet/genesis/response-ID validation,
+and TLS certificate verification with no TCP fallback after an untrusted cert.
+Historical runtime evidence below describes the earlier tailnet-based pilot;
+it does not prescribe the current club connection.
+
+Companion commit `03e9cc3346badb10b79c2276cffa4c4d326e390a`, CI
+[38603324950](https://github.com/jvxis/brln-hardwallet/actions/runs/38603324950),
+passed firmware/native/Python checks, web tests/check/build and Go tests/vet.
+The catalog image digest is
+`sha256:df60a615c010f69c5017a9653c8f76b4836d067ed0285c8acb973572628ff57a`.
+Public OCI index/layers and all four bundled firmware hashes were verified.
+On Windows, backend tests/vet, 74 web tests and Svelte check passed. The local
+web build hit WebAssembly memory allocation failure; the CI Linux production
+build passed. LOS full Go tests/vet and UI build passed, followed by catalog
+tests for the final image pin and eight native Linux root tests.
+
+LOS-TEST2 manager/broker/UI were backed up and updated; only the manager was
+restarted. The App Store's Apply server action returned 200. Runtime container
+inspection confirmed the public DNS endpoint, `tcp` transport, `club` source,
+exact image and no local Electrs network attachment. Authenticated status/fees
+returned 200/mainnet; anonymous routes returned 401, invalid Origin returned
+403 and logout revoked access. The six firmware resources denied anonymous
+access; authenticated binaries matched the new CI artifacts byte-for-byte.
+Chrome showed the public-server option, completed the Apply flow and loaded
+the coordinator over verified HTTPS without JS errors or horizontal overflow.
+LND retained PID 3891 and reported chain/graph synced; Bitcoin remained remote,
+local Electrs stopped, and the production VPS was untouched.
+
+Rollback artifacts: manager/broker in
+`/var/backups/lightningos-hardwallet-pr260/before-public-electrum-03e9cc3`, UI in
+`/opt/lightningos/ui-before-public-electrum-03e9cc3`. This correction does not
+resolve the physical signer, native arm64 or long-running TLS/lifecycle gates.
+
 ## Software checks (2026-10-14)
 
 The baseline server, broker, system and catalog tests passed before development.

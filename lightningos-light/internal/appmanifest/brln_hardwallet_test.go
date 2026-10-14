@@ -2,6 +2,7 @@ package appmanifest
 
 import (
 	"gopkg.in/yaml.v3"
+	"net"
 	"strings"
 	"testing"
 )
@@ -32,6 +33,15 @@ func TestHardwalletTransportBoundary(t *testing.T) {
 		}
 		if !strings.Contains(raw, "100.100.1.1:4449:4449") {
 			t.Fatal("must bind tailnet only")
+		}
+		if source == "club" {
+			host, _, err := net.SplitHostPort(HardwalletClubAddress)
+			if err != nil || net.ParseIP(host) != nil {
+				t.Fatal("club access must use its public DNS name, not a personal tailnet IP")
+			}
+			if !strings.Contains(raw, `BRLN_ELECTRUM_TRANSPORT: "tcp"`) || strings.Contains(raw, `BRLN_ELECTRUM_TRANSPORT: "tailscale"`) {
+				t.Fatal("club Electrum must not require tailnet membership")
+			}
 		}
 	}
 	for _, ip := range []string{"127.0.0.1", "0.0.0.0", "192.168.1.2", "8.8.8.8", "100.128.0.1"} {

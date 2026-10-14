@@ -12,7 +12,7 @@ type hardwalletApp struct{ server *Server }
 
 func newHardwalletApp(s *Server) appHandler { return hardwalletApp{s} }
 func (a hardwalletApp) Definition() appDefinition {
-	return appDefinition{ID: appmanifest.HardwalletID, Name: "BR⚡LN Hardwallet", Description: "Experimental Bitcoin coordinator for an ESP32 signer. Device-only secrets, local Electrs or the public club Electrum endpoint. Trusted HTTPS on your own node is required; no club tailnet membership. No real funds until hardware validation.", Port: appmanifest.HardwalletPort}
+	return appDefinition{ID: appmanifest.HardwalletID, Name: "BR⚡LN Hardwallet", Description: "Experimental Bitcoin coordinator for an ESP32 signer. Device-only secrets, local Electrs or the public club Electrum endpoint. Trusted HTTPS on your own node is required. No real funds until hardware validation.", Port: appmanifest.HardwalletPort}
 }
 func (a hardwalletApp) Info(ctx context.Context) (appInfo, error) {
 	info := newAppInfo(a.Definition())

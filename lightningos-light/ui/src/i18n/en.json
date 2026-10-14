@@ -1259,7 +1259,7 @@
     "hardwallet": {
       "description": "Bitcoin coordinator for the BR⚡LN ESP32 signer. Keys stay on the device; LOS queries Electrum and broadcasts signed transactions.",
       "experimental": "Experimental pilot: no real funds until physical review and recovery validation pass.",
-      "access": "Open uses the same address as LOS, over LAN or VPN, with trusted HTTPS and your login session. Tailscale is optional. Connect USB to your computer.",
+      "access": "Open the app using the same address as LOS, with trusted HTTPS and your login session. Connect USB to your computer.",
       "opening": "Opening Hardwallet…",
       "openFailed": "Could not open Hardwallet. Return to the store, check that the app is running and try again.",
       "source": "Electrum server",

@@ -4,6 +4,34 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## UI wording correction (2026-10-14)
+
+Removed the incorrect references to a "club Tailscale/tailnet" from the app,
+Store description and current API/development documentation. The Store access
+copy now only explains same-address LOS access, trusted HTTPS, login and USB.
+The app describes the public Electrum endpoint without referring to a club VPN.
+Earlier sections below retain historical validation context, not current copy.
+
+Companion commit `01f579604bdf0c93ceaefa3fddcde445548ef522`, CI
+[38610174376](https://github.com/jvxis/brln-hardwallet/actions/runs/38610174376),
+passed and published amd64/arm64 images. Current catalog digest:
+`sha256:82620e09493040c41033fa93e7a2827f1c52c5c217a47a58f4ffffad3dd0d946`.
+Anonymous OCI index/layer digests and bundled firmware hashes were verified.
+LOS Go tests/vet and UI build passed, followed by focused registry/catalog tests
+for the new image pin. This changes copy and image packaging, not network or
+authentication behavior.
+
+After eleven Linux root fixtures passed, LOS-TEST2 received backed-up binaries,
+UI and the new pinned app image. Actual Portuguese Store and coordinator copy
+were inspected in Chrome; neither contains Tailscale/tailnet text. Open retains
+the LAN host/session and the browser reports no JS errors. Six firmware assets
+still reject anonymous requests; four authenticated binaries match the new CI
+artifact and logout revokes access. LND stayed on PID 3891, chain/graph synced;
+Bitcoin remained remote and unrelated app containers stayed running. No physical
+USB operation was performed. Rollback binaries/app snapshot are in
+`/var/backups/lightningos-hardwallet-pr260/before-copy-01f5796`, prior UI in
+`/opt/lightningos/ui-before-copy-01f5796`.
+
 ## LAN and optional VPN access (2026-10-14)
 
 The current implementation supersedes the tailnet-only listener and cross-host

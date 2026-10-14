@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-// BR⚡LN Community is the members chat of the BR⚡LN Club (test build). The node
+// BR⚡LN Community is the members chat of the BR⚡LN Club. The node
 // runs a local copy of the chat and the member's Nostr remote signer (NIP-46).
 // The key never leaves the signer data directory; the chat relay is operated by
 // the club and is reached over an outbound WebSocket only.

@@ -54,8 +54,10 @@ func TestBRLNCommunityDefinitionUsesClosedCatalogPortWithoutLNDAccess(t *testing
 	if len(definition.SecurityNotices) != 0 {
 		t.Fatalf("BR⚡LN Community must not declare LND access: %#v", definition.SecurityNotices)
 	}
-	if !strings.Contains(definition.Name, "BR⚡LN") || !strings.Contains(strings.ToLower(definition.Description), "test build") {
-		t.Fatalf("store entry must name BR⚡LN and say it is a test build: %#v", definition)
+	// The test phase ended on 14/10/2026: the store entry no longer calls it a test build.
+	description := strings.ToLower(definition.Description)
+	if !strings.Contains(definition.Name, "BR⚡LN") || !strings.Contains(description, "members chat") || strings.Contains(description, "test") {
+		t.Fatalf("store entry must name BR⚡LN, say it is the members chat and not call it a test: %#v", definition)
 	}
 }
 

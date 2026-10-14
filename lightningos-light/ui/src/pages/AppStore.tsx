@@ -1022,9 +1022,9 @@ export default function AppStore() {
           const readsLndDataDirectory = app.security_notices?.includes(lndDataDirectoryReadNotice) ?? false
           return (
             <div key={app.id} className="section-card space-y-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-4">
-                  <div className="h-12 w-12 rounded-2xl bg-transparent flex items-center justify-center overflow-hidden">
+              <div className={`flex items-start justify-between gap-4 ${app.id === 'brln-hardwallet' ? 'flex-wrap' : ''}`}>
+                <div className={`flex items-start gap-4 ${app.id === 'brln-hardwallet' ? 'w-full min-w-0' : ''}`}>
+                  <div className={`h-12 w-12 rounded-2xl bg-transparent flex items-center justify-center overflow-hidden ${app.id === 'brln-hardwallet' ? 'shrink-0' : ''}`}>
                     {icon ? (
                       <img
                         src={icon}

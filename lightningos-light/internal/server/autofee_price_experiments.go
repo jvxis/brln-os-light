@@ -73,7 +73,11 @@ const (
 
 	// Loop corridor: two channels whose forwards feed each other (speedupln ↔
 	// cyberdyne). Raising or testing the fee on either leg kills the loop.
-	autofeeLoopCorridorMinShareFrac = 0.50
+	// Friendspool, 7 days to 2026-10-12: 52% of speedupln's outbound came
+	// in through cyberdyne and 47% of cyberdyne's through speedupln, 80M
+	// each way; a 50% share on both legs missed it, 35% catches it while a
+	// one-way feeder (Aldebaran: 76% from speedupln, nothing back) does not.
+	autofeeLoopCorridorMinShareFrac = 0.35
 	autofeeLoopCorridorMinVolumeSat = 100_000
 	autofeeLoopCorridorWindowDays   = 7
 )

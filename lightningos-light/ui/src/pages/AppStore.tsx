@@ -322,6 +322,7 @@ export default function AppStore() {
     setLoading(true)
     getApps().then((data: AppInfo[]) => {
       setApps(data || [])
+      window.dispatchEvent(new CustomEvent('apps:changed'))
       setLoading(false)
     }).catch((err: unknown) => {
       setMessage(appRequestErrorMessage(err, 'appStore.loadFailed'))
@@ -388,7 +389,12 @@ export default function AppStore() {
         const operationCount = Object.keys(operations || {}).length
         setApps((current) => current.map((app) => ({ ...app, operation: operations?.[app.id] })))
         if (hasTrackedAppOperation && operationCount === 0) {
-          getApps().then((data: AppInfo[]) => setApps(data || [])).catch(() => undefined)
+          getApps().then((data: AppInfo[]) => {
+            setApps(data || [])
+            // An operation may finish after its original request (or in another
+            // session). Refresh native navigation when the final catalog arrives.
+            window.dispatchEvent(new CustomEvent('apps:changed'))
+          }).catch(() => undefined)
         }
       }).catch(() => undefined)
     }, 2000)

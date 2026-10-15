@@ -32,6 +32,25 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         const card = page.locator('.section-card').filter({ has: page.getByRole('heading', { name: /Hardwallet/ }) });
         const link = card.getByRole('link', { name: /^Open$|^Abrir$/ });
         await link.waitFor({ timeout: 60000 });
+        await page.getByRole('link', { name: 'BRLN Hardwallet', exact: true }).waitFor({ timeout: 10000 });
+        // Simulate completion of an installation started before opening the Store.
+        // No real install/uninstall or wallet mutation is performed.
+        const lifecycle = await context.newPage();
+        const catalog = await (await context.request.get(base + '/api/apps')).json();
+        let completed = false;
+        await lifecycle.route('**/api/apps', route => route.fulfill({ json: catalog.map(a =>
+          a.id === 'brln-hardwallet' ? { ...a, installed: completed,
+            operation: completed ? undefined : { action: 'install', started_at: new Date().toISOString() } } : a) }));
+        await lifecycle.route('**/api/apps/operations', route => {
+          completed = true;
+          return route.fulfill({ json: {} });
+        });
+        await lifecycle.goto(base + '/#apps');
+        await lifecycle.getByRole('link', { name: 'BRLN Hardwallet', exact: true }).waitFor({ timeout: 12000 });
+        assert.equal(new URL(lifecycle.url()).hash, '#apps', 'Installation must update menu without opening the app');
+        await lifecycle.reload();
+        await lifecycle.getByRole('link', { name: 'BRLN Hardwallet', exact: true }).waitFor({ timeout: 12000 });
+        await lifecycle.close();
         const launch = new URL(await link.getAttribute('href'), base);
         assert.equal(launch.hash, '#hardwallet-open');
         assert.equal(launch.protocol, 'https:');
@@ -80,6 +99,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         await blocked.route('**/api/apps', route => route.fulfill({ json: apps.map(a => a.id === 'brln-hardwallet' ? { ...a, status: 'stopped' } : a) }));
         await blocked.goto(launch.href);
         await blocked.getByText(/Could not open Hardwallet|Não foi possível abrir o Hardwallet/).waitFor();
+        await blocked.getByRole('link', { name: 'BRLN Hardwallet', exact: true }).waitFor();
         assert.equal(blocked.url(), launch.href);
         await blocked.unrouteAll({ behavior: 'wait' });
         console.log(JSON.stringify({ manager: base, installedMenu: 'passed', embeddedOpen: 'passed', appearanceTransfer: 'passed', sameHostSession: true, expiredSessionLogin: 'passed', secureWebSerial: true, anonymous: 401, stoppedRecovery: 'passed' }));

@@ -4,6 +4,24 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Menu refresh after installation (2026-10-15)
+
+App Store now notifies native navigation after loading its catalog and after a
+tracked background operation completes. Previously only the action's original
+request notified the menu; completion discovered by polling updated the Store
+card without updating navigation until the next 30-second menu refresh.
+
+Regression: Chrome with authenticated LOS-TEST2 and a browser-only simulated
+installation completion failed before the fix (menu absent for 12 seconds) and
+passed after it, without clicking Open or mutating an actual installation.
+The test also checks an already-installed app before Open, persistence on reload,
+and menu availability for a stopped app. React build passed (existing chunk-size
+advisory). Actual deployed UI passed on LAN and personal VPN, including embedded
+opening, appearance changes, Web Serial policy, expired login and stopped recovery.
+Only UI assets were deployed; rollback directory:
+`/var/backups/lightningos-hardwallet-pr260/ui-before-menu-refresh`.
+Manager/broker/firmware unchanged; health OK, LND chain/graph synced and app running.
+
 ## Retained summary and automatic refresh (2026-10-15)
 
 Coordinator source `b61de2f89c3fc20f60daa5d3378171bed82c02ee` restores the last

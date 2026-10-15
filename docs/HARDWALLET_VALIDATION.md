@@ -39,6 +39,16 @@ privileged fixtures and broker self-test passed. Only the image pin changed in L
 Rollback snapshot: `/var/backups/lightningos-hardwallet-pr260/before-followup-7f5ed21`.
 
 
+Installed-image follow-up passed: normal Store install returned 200, the exact
+pinned image became healthy, and authenticated firmware delivery matched CI.
+Anonymous access/logout revocation/invalid-Origin checks passed, as did actual
+Store popups with theme/session transfer on LAN and the personal VPN. A fresh
+Chrome session then completed public-account discovery without any USB signer:
+40 successful requests in approximately 216 seconds, a visible success message,
+one account section and enabled controls. Post-change Bitcoin/LND/API checks
+passed; LND remained synced with PID 3891 and all unrelated containers retained
+their previous uptime. No production service or VM was restarted.
+
 ## Physical-button device UI and final installer pin (2026-10-15)
 
 Companion source `0fa215122199960ddd771d33ce825a6ac57ea541` replaces the remaining

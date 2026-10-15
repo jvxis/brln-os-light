@@ -3,36 +3,47 @@ import { useTranslation } from 'react-i18next'
 import { getApps } from '../api'
 import { resolveStoredAppearance } from '../theme'
 
-// Mounted only after the normal Manager login. No session or redirect target
-// is passed in a URL, and the app remains protected by forward_auth.
+// Preserve the app origin and public-account storage within the LOS shell.
 export default function HardwalletOpen() {
   const { t } = useTranslation()
-  const [failed, setFailed] = useState(false)
+  const [state, setState] = useState<'loading' | 'ready' | 'unavailable'>('loading')
+  const [source, setSource] = useState('')
   useEffect(() => {
     let cancelled = false
-    void getApps().then(apps => {
-      if (cancelled) return
-      const app = apps.find(item => item.id === 'brln-hardwallet')
-      const url = app?.external_url ? new URL(app.external_url, window.location.origin) : null
-      if (app?.status !== 'running' || !url || url.origin !== window.location.origin || url.hash !== '#hardwallet-open') {
-        setFailed(true)
-        return
-      }
+    const appearance = () => {
       const target = new URL(window.location.origin)
       target.port = '4449'
-      // Appearance only, never authentication material. Ports have separate storage.
+      const root = document.documentElement.dataset
+      let fallback = {visualTheme:'sovereign-grid',palette:'teal',mode:'dark'}
+      try { fallback = resolveStoredAppearance(window.localStorage) } catch { /* Restricted storage must not block the app. */ }
+      target.hash = new URLSearchParams({losTheme: root.visualTheme || fallback.visualTheme,
+        losPalette: root.palette || fallback.palette, losMode: root.theme || fallback.mode}).toString()
+      setSource(target.href)
+    }
+    const check = async () => {
       try {
-        const appearance = resolveStoredAppearance(window.localStorage)
-        target.hash = new URLSearchParams({losTheme: appearance.visualTheme,
-          losPalette: appearance.palette, losMode: appearance.mode}).toString()
-      } catch { /* A restricted storage policy must not block opening the app. */ }
-      window.location.replace(target.href)
-    }).catch(() => { if (!cancelled) setFailed(true) })
-    return () => { cancelled = true }
+        const apps = await getApps()
+        if (cancelled) return
+        const app = apps.find(item => item.id === 'brln-hardwallet')
+        const launch = app?.external_url ? new URL(app.external_url, window.location.origin) : null
+        setState(app?.installed && app.status === 'running' && launch?.origin === window.location.origin && launch.hash === '#hardwallet-open' ? 'ready' : 'unavailable')
+      } catch { if (!cancelled) setState(previous => previous === 'ready' ? previous : 'unavailable') }
+    }
+    appearance()
+    const observer = new MutationObserver(appearance)
+    observer.observe(document.documentElement, {attributes:true, attributeFilter:['data-theme','data-palette','data-visual-theme']})
+    void check()
+    window.addEventListener('apps:changed', check)
+    const timer = window.setInterval(check, 30000)
+    return () => { cancelled=true; observer.disconnect(); clearInterval(timer); window.removeEventListener('apps:changed',check) }
   }, [])
-  return <div className="section-card mx-auto my-10 max-w-xl space-y-4">
-    <h1 className="text-2xl font-semibold">BR⚡LN Hardwallet</h1>
-    <p>{t(failed ? 'appStore.hardwallet.openFailed' : 'appStore.hardwallet.opening')}</p>
+  if (state !== 'ready') return <div className="section-card space-y-4">
+    <h1 className="text-2xl font-semibold">BRLN Hardwallet</h1>
+    <p>{t(state === 'loading' ? 'appStore.hardwallet.opening' : 'appStore.hardwallet.openFailed')}</p>
     <a className="btn-secondary" href="#apps">{t('nav.apps')}</a>
   </div>
+  return <iframe title="BRLN Hardwallet" src={source}
+    allow={`serial ${new URL(source).origin}; clipboard-write ${new URL(source).origin}`}
+    referrerPolicy="no-referrer" className="w-full border-0 rounded-2xl"
+    style={{height:'calc(100vh - 160px)', minHeight:640}} />
 }

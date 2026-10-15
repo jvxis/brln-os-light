@@ -99,6 +99,7 @@ const iconMap: Record<string, string> = {
 }
 
 const internalRoutes: Record<string, string> = {
+  'brln-hardwallet': 'hardwallet-open',
   'los-mesh': 'los-mesh',
   opreturn: 'opreturn',
   bitcoincore: 'bitcoin-local',

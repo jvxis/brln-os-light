@@ -36,18 +36,29 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         assert.equal(launch.hash, '#hardwallet-open');
         assert.equal(launch.protocol, 'https:');
         assert.equal(launch.origin, base, 'Open must keep the Manager host');
-        const popupReady = page.waitForEvent('popup');
         await link.click();
-        const popup = await popupReady;
         const app = new URL(launch.origin);
         app.port = '4449';
-        await popup.waitForURL(app.href, { timeout: 60000 });
-        await popup.getByText('Placa · desconectada', { exact: true }).waitFor({ timeout: 30000 });
-        assert(await popup.evaluate(() => isSecureContext && !!navigator.serial));
-        assert.deepEqual(await popup.evaluate(() => ({theme:document.documentElement.dataset.visualTheme,
+        await page.waitForURL(launch.href, { timeout: 60000 });
+        const wallet = page.frameLocator('iframe[title="BRLN Hardwallet"]');
+        await wallet.getByText('Dispositivo · desconectado', { exact: true }).waitFor({ timeout: 30000 });
+        const frame = page.frames().find(f => f.url().startsWith(app.origin));
+        assert(frame, 'Wallet must be embedded in LOS');
+        assert.equal(context.pages().length,1,'Open must not create a new tab');
+        assert(await page.getByRole('link',{name:'BRLN Hardwallet',exact:true}).count()>0,'Installed app must remain in menu');
+        assert(await frame.evaluate(() => isSecureContext && !!navigator.serial && document.featurePolicy.allowsFeature('serial')));
+        assert(await frame.evaluate(async () => Array.isArray(await navigator.serial.getPorts())), 'Serial access must not be denied by the iframe policy');
+        assert.deepEqual(await frame.evaluate(() => ({theme:document.documentElement.dataset.visualTheme,
           palette:document.documentElement.dataset.palette,mode:document.documentElement.dataset.theme})),
           {theme:'block-zero',palette:'ocean',mode:'light'}, 'LOS appearance must survive the port change');
-        assert.equal(new URL(popup.url()).hash, '', 'Appearance fragment must be consumed');
+        assert.equal(new URL(frame.url()).hash, '', 'Appearance fragment must be consumed');
+        await frame.evaluate(() => { window.__hardwalletNavigationMarker='preserve-session' });
+        await page.evaluate(() => { document.documentElement.dataset.palette='teal' });
+        await frame.waitForFunction(() => document.documentElement.dataset.palette==='teal');
+        assert.equal(await frame.evaluate(() => window.__hardwalletNavigationMarker),'preserve-session','Theme change must not reload the signer context');
+        await page.evaluate(() => { document.documentElement.dataset.palette='ocean' });
+        await frame.waitForFunction(() => document.documentElement.dataset.palette==='ocean');
+        if (process.env.SCREENSHOT_PATH) await page.screenshot({path:process.env.SCREENSHOT_PATH,fullPage:true});
         assert.deepEqual(errors, [], 'Browser JS errors');
         assert.equal((await context.request.get(app.origin + '/api/v1/status')).status(), 200);
         const anonymous = await browser.newContext();
@@ -60,8 +71,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
           await input.waitFor({ timeout: 30000 });
           await input.fill(password);
           await expired.locator('form.auth-form--login button[type="submit"]').click();
-          await expired.waitForURL(app.href, { timeout: 60000 });
-          await expired.getByText('Placa · desconectada', { exact: true }).waitFor();
+          await expired.frameLocator('iframe[title="BRLN Hardwallet"]').getByText('Dispositivo · desconectado', { exact: true }).waitFor({timeout:60000});
+          assert.equal(expired.url(),launch.href);
         } finally { await anonymous.close(); }
         // Launcher must display a recovery action instead of redirecting to a stopped app.
         const blocked = await context.newPage();
@@ -71,7 +82,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         await blocked.getByText(/Could not open Hardwallet|Não foi possível abrir o Hardwallet/).waitFor();
         assert.equal(blocked.url(), launch.href);
         await blocked.unrouteAll({ behavior: 'wait' });
-        console.log(JSON.stringify({ manager: base, actualPopup: 'passed', appearanceTransfer: 'passed', sameHostSession: true, expiredSessionLogin: 'passed', secureWebSerial: true, anonymous: 401, stoppedRecovery: 'passed' }));
+        console.log(JSON.stringify({ manager: base, installedMenu: 'passed', embeddedOpen: 'passed', appearanceTransfer: 'passed', sameHostSession: true, expiredSessionLogin: 'passed', secureWebSerial: true, anonymous: 401, stoppedRecovery: 'passed' }));
       } finally { await context.close(); }
     }
   } finally { await browser.close(); }

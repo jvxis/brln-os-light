@@ -4,6 +4,48 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Installed menu and explicit passphrase (2026-10-15)
+
+The store's Open action now navigates within the LOS shell. Installed Hardwallet
+is listed with the optional apps, including when stopped. The embedded
+coordinator retains its HTTPS origin on the same host, public-account storage,
+LOS session and selected appearance. Broker/container lifecycle remains unchanged.
+No top-level redirect, popup, external website or authentication token in a URL.
+
+Pinned source: `5275570abfb484e7fb6d77ae6a11b1c589219aba`, CI
+https://github.com/jvxis/brln-hardwallet/actions/runs/38773587874.
+Image digest: `sha256:e909fc08c1ea195abefe4dd0d7994fcf5d83fd12b41b21b3ba23168a25ad60b5`.
+Anonymous OCI verification checked amd64/arm64 and four packaged firmware files.
+The coordinator now has Receive/Send/History; public-account controls are
+collapsible. Address QR/copy require the user's full-address comparison checkbox.
+Firmware protocol `brln-2` makes normal unlock explicitly empty-passphrase;
+advanced unlock requires device confirmation and device-only passphrase entry.
+Old firmware is refused to avoid silently mixing unlock semantics.
+
+Deployed to LOS-TEST2 with backup at
+`/var/backups/lightningos-hardwallet-pr260/before-menu-5275570` (Manager, broker,
+UI and app configuration). Broker self-test and 11 Linux Hardwallet fixtures
+passed. LND PID 3891/start time remained unchanged; other containers were retained.
+Manager hash: `dd2a584a81dc73cb2a74ffa48cb8e2a939ed67497b41f5dfcf1f62c5ddc2e4e3`.
+Broker hash: `caa9c3f4f82baa85844de432f9caec72ae9b73a7ffe3977b8a18b64d1269dd07`.
+
+Validation: existing Go tests/vet passed before pin change; appmanifest/server/
+privileged tests passed with the final pin. React build passed (existing chunk
+size advisory). Real Chrome checks passed on LAN and personal VPN: permanent
+menu, same-tab embedded open, selected theme, expired login, stopped-app recovery,
+secure Serial feature policy and getPorts. Unauthenticated app/firmware requests
+are denied, logout revokes access, and four served binaries match CI byte-for-byte.
+The exact published image passed browser scan/cancel/expiry and wallet-tab checks.
+A real public-account scan inside the installed LOS menu completed 40 requests
+in approximately 219 seconds, displayed success and restored controls, with the
+signer disconnected and the existing exported account retained.
+
+Pending: physical Serial picker/flasher within the embedded UI, new firmware
+hash approval, normal/advanced unlock on hardware, full signing and recovery.
+COM5 identity matched the authorized LilyGO, but the port could not be opened;
+no firmware was written in this update attempt. Current wallet storage is intact.
+Keep this PR draft until the remaining physical checks are complete.
+
 ## Discovery progress and setup feedback (2026-10-15)
 
 The owner completed wallet creation and public-account export on 0fa2151. The

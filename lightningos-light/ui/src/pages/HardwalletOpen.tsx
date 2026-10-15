@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getApps } from '../api'
+import { resolveStoredAppearance } from '../theme'
 
 // Mounted only after the normal Manager login. No session or redirect target
 // is passed in a URL, and the app remains protected by forward_auth.
@@ -19,6 +20,12 @@ export default function HardwalletOpen() {
       }
       const target = new URL(window.location.origin)
       target.port = '4449'
+      // Appearance only, never authentication material. Ports have separate storage.
+      try {
+        const appearance = resolveStoredAppearance(window.localStorage)
+        target.hash = new URLSearchParams({losTheme: appearance.visualTheme,
+          losPalette: appearance.palette, losMode: appearance.mode}).toString()
+      } catch { /* A restricted storage policy must not block opening the app. */ }
       window.location.replace(target.href)
     }).catch(() => { if (!cancelled) setFailed(true) })
     return () => { cancelled = true }

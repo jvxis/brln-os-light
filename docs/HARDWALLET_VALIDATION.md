@@ -4,6 +4,48 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## LOS appearance, compact layout and device readability (2026-10-15)
+
+The owner approved the prior firmware hash and manually confirmed matching pair
+code 92AFB in the browser. Local creation reached password repetition and was
+cancelled before seed generation. The small operational font was then enlarged.
+Companion `c1222a8670a34cac85d95bd42341095706c7442e` adds the official BRLN site
+logo to boot/local screens, readable titles/controls and prominent selected input.
+
+The app now collapses first-install preparation after first display, can reopen
+it, and collapses it after connection. The Store launcher transfers only three
+validated appearance enums in a consumed URL fragment. The app uses a bundled
+subset of actual LOS theme CSS and local Space Grotesk fonts, including light,
+dark and dark-only visual themes. No auth token, public account or secret is
+transferred. Reopen from the Store after changing appearance. Preferences remain
+inside the companion's audited storage module with enum/boolean allowlists.
+
+The old appearance failure was reproduced in Chrome. Final app validation passed
+12 visual-theme/mode combinations against the LOS computed colors, background
+and font, first/repeat visits, reopening, acknowledgement guard and mobile width.
+91 companion tests/check/build passed; [CI 38716906395](https://github.com/jvxis/brln-hardwallet/actions/runs/38716906395)
+passed firmware/native/packaging/app builds. Anonymous OCI and firmware hashes
+were checked. Current digest:
+`sha256:9fcdb8fb233716cd429af2684b1cb25d13d5ce8df7848d11c8a1fdcd014d5b66`.
+
+Full LOS Go tests/vet, UI baseline/final builds, Linux builds, eleven privileged
+fixtures and broker self-test passed. Backed-up TEST2 deployment changed only
+Manager/broker/UI and this app. Backup:
+`/var/backups/lightningos-hardwallet-pr260/before-appearance-c1222a8`, prior UI:
+`/opt/lightningos/ui-before-appearance-c1222a8`.
+Actual Store popup tests passed on LAN and optional personal VPN with selected
+light/ocean/block-zero appearance, same-host login, expired login and stopped-app
+recovery. Six firmware assets rejected anonymous access; authenticated binaries
+matched CI; logout, invalid Origin, status/fees and private binds passed. LND
+remained PID 3891, synced, and unrelated containers were preserved.
+
+The new firmware display hash is
+`60db227bb4d2bcdf1653bae3bf8f77329faa972893867bc8d08ba30390df1064`.
+Its physical write was blocked before programming by COM5 being unavailable;
+the owner was asked to disconnect the existing browser serial session. New build
+physical readability/hash approval and full wallet/recovery/signing remain open.
+The earlier sections describe historical versions and their evidence.
+
 ## Physical T-Display and USB startup (2026-10-14 evening)
 
 Companion commit `f60d68b46975d6890070b1f55d0c5b58f94fa4c0`,

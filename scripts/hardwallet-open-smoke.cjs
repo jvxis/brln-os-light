@@ -16,6 +16,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       assert.equal(new URL(base).protocol, 'https:');
       const context = await browser.newContext();
       try {
+        await context.addInitScript(origin => {
+          if (location.origin === origin) {
+            localStorage.setItem('los-visual-theme','block-zero');
+            localStorage.setItem('los-palette','ocean');
+            localStorage.setItem('los-theme','light');
+          }
+        }, base);
         const login = await context.request.post(base + '/api/auth/login', { data: { password }, headers: { Origin: base } });
         assert.equal(login.status(), 200, 'Manager login failed');
         const page = await context.newPage();
@@ -37,6 +44,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         await popup.waitForURL(app.href, { timeout: 60000 });
         await popup.getByText('Placa · desconectada', { exact: true }).waitFor({ timeout: 30000 });
         assert(await popup.evaluate(() => isSecureContext && !!navigator.serial));
+        assert.deepEqual(await popup.evaluate(() => ({theme:document.documentElement.dataset.visualTheme,
+          palette:document.documentElement.dataset.palette,mode:document.documentElement.dataset.theme})),
+          {theme:'block-zero',palette:'ocean',mode:'light'}, 'LOS appearance must survive the port change');
+        assert.equal(new URL(popup.url()).hash, '', 'Appearance fragment must be consumed');
         assert.deepEqual(errors, [], 'Browser JS errors');
         assert.equal((await context.request.get(app.origin + '/api/v1/status')).status(), 200);
         const anonymous = await browser.newContext();
@@ -60,7 +71,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         await blocked.getByText(/Could not open Hardwallet|Não foi possível abrir o Hardwallet/).waitFor();
         assert.equal(blocked.url(), launch.href);
         await blocked.unrouteAll({ behavior: 'wait' });
-        console.log(JSON.stringify({ manager: base, actualPopup: 'passed', sameHostSession: true, expiredSessionLogin: 'passed', secureWebSerial: true, anonymous: 401, stoppedRecovery: 'passed' }));
+        console.log(JSON.stringify({ manager: base, actualPopup: 'passed', appearanceTransfer: 'passed', sameHostSession: true, expiredSessionLogin: 'passed', secureWebSerial: true, anonymous: 401, stoppedRecovery: 'passed' }));
       } finally { await context.close(); }
     }
   } finally { await browser.close(); }

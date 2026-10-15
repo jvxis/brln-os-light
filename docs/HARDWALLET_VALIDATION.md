@@ -4,6 +4,65 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Physical T-Display and USB startup (2026-10-14 evening)
+
+Companion commit `f60d68b46975d6890070b1f55d0c5b58f94fa4c0`,
+[CI 38656838951](https://github.com/jvxis/brln-hardwallet/actions/runs/38656838951),
+builds the revised BRLN branding and fixes two failures reproduced on a real
+original T-Display: Chromium UART framing errors during ESP32 boot and a ping
+sent before storage/RNG startup completed. The client recovers only bounded
+boot framing errors before the first protocol command, waits for the actual
+startup notice after reset, closes failed ports and invalidates sessions after
+reboot. The 86 web tests and Svelte checks passed. Firmware native policy,
+cryptography and packaging checks, ESP32 build and both OCI architectures passed.
+
+The owner confirmed the original 1.14-inch/two-button board with 16 MB flash.
+The installer now accepts original ESP32 with 4 or 16 MB, retaining the fixed
+4 MB layout and binary headers; other capacities/chip families remain rejected.
+CLI erase/write/readback of the earlier `01f5796` build passed on the explicitly
+authorized disposable board. The owner physically formatted storage and checked
+the firmware hash. Real Chrome pairing with the candidate app, live LOS backend
+and that board succeeded after camera comparison of the displayed pairing code;
+BRLN capabilities were verified. No wallet/seed was created and no funds used.
+
+The BRLN firmware excludes the inherited mascot in boot and animation frames.
+The display mark uses equal gaps around the bolt and larger main/status text.
+App and legacy installer favicons use the BRLN mark. Legacy upstream firmware
+is explicitly distinguished from the BRLN installer served by LOS.
+
+Current immutable catalog digest:
+`sha256:16f414010fbe5d93ca9e9dc69b870380d26edbca94e74a9f64efcd6f7f462fbb`.
+Anonymous OCI index/layers and all four packaged firmware hashes were verified.
+The new on-screen ESP image hash (distinct from the whole-file SHA-256) is
+`cbfa386c46b8e5e9de2dec64878e40506582f480c1316ee80ef58ee84c68d695`.
+New firmware approval remains a physical button action; no automated test may
+bypass it. Local seed entry, recovery and transaction signing remain open gates.
+Historical sections below describe earlier builds, not the current catalog pin.
+
+Final runtime validation: full LOS Go tests/vet and Linux amd64 builds passed.
+Eleven privileged fixtures and broker self-test passed on LOS-TEST2. Manager and
+Hardwallet were updated after backup at
+`/var/backups/lightningos-hardwallet-pr260/before-usb-branding-f60d68b`.
+Same-host LAN Store Open passed in real Chrome without JS errors. All six
+firmware resources denied anonymous access; four authenticated binaries matched
+CI byte-for-byte, and logout revoked access. Public Electrum status/fees,
+invalid-Origin rejection, private address bindings and preserved proxy identity
+passed. LND remained PID 3891 and unrelated app containers were unchanged.
+
+The deployed app (no static-asset override) paired with the real disposable
+board; camera comparison confirmed its code and BRLN capabilities were accepted.
+The integrated installer then identified 16 MB and completed all four writes,
+readback verification and reset through real Chrome Web Serial. Only the USB
+identity mapped to the authorized COM5 was selected. Initial native chooser
+automation attempts failed before selection; positioning the dedicated test
+Chrome window on-screen fixed the harness. No device-selection guard was relaxed.
+A bounded camera capture of the next boot confirmed the centered BRLN logo,
+larger subtitle and matching on-screen firmware hash. The board is now waiting
+for the owner's physical approval of that hash. No seed was created, no wallet
+recovery/signing was claimed, and the final firmware was not paired past that
+approval screen. No production VPS change or VM reboot was performed.
+
+
 ## UI wording correction (2026-10-14)
 
 Removed the incorrect references to a "club Tailscale/tailnet" from the app,

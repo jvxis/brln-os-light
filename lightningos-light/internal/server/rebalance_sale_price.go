@@ -26,11 +26,39 @@ import (
 // channel older than 30 days with no sale at all has no price to buy
 // against: the autopilot skips it (no_sale_30d) until it sells something.
 // Operator-initiated rebalances are not affected.
+//
+// Drained retest (0.5.45): a channel that is empty cannot sell, so its
+// realized price cannot move. RA⚡KO, 2026-10-13: the discovery ladder found
+// a route at 320 ppm, AutoFee raised the fee to 455, and the cap kept
+// pricing on the 332 ppm the channel last sold at (0.8 × 332 = 265), so the
+// refill never fit and the channel stayed empty. Below
+// realizedPriceCapDrainedLocalPct the cap goes back to the advertised fee for
+// one small lot (the keepalive size), which is what re-measures the price:
+// if that lot sells, the realized price follows and the normal cap applies
+// to the next one; if it does not, the stock gate and no_sale_30d hold.
 const (
-	realizedPriceCapMinForwards7d  = 3
-	realizedPriceCapMinForwards30d = 1
-	realizedPriceCapNoSaleAgeHours = 30 * 24
+	realizedPriceCapMinForwards7d   = 3
+	realizedPriceCapMinForwards30d  = 1
+	realizedPriceCapNoSaleAgeHours  = 30 * 24
+	realizedPriceCapDrainedLocalPct = 10.0
 )
+
+// realizedPriceCapDrained: nothing left to sell, so the realized price is
+// stale by construction.
+func realizedPriceCapDrained(cfg RebalanceConfig, localPct float64) bool {
+	return cfg.RealizedPriceCapEnabled && localPct < realizedPriceCapDrainedLocalPct
+}
+
+// drainedRetestAmountSat bounds the lot bought at the advertised-fee cap to
+// the keepalive size: enough to measure a price, not enough to restock a
+// channel at a price it may not clear.
+func drainedRetestAmountSat(channel RebalanceChannel, cfg RebalanceConfig, amount int64) int64 {
+	lot := sovereignKeepaliveRefillAmount(channel, cfg)
+	if lot <= 0 || amount <= lot {
+		return amount
+	}
+	return lot
+}
 
 type channelSalePrice struct {
 	Ppm7d    int64
@@ -73,8 +101,11 @@ func (p channelSalePrice) referencePpm() (int64, string) {
 // feeCapReferencePpm is the fee the autopilot prices its purchases against:
 // the advertised fee, or the realized sale price when it is lower and the
 // cap is on.
-func feeCapReferencePpm(cfg RebalanceConfig, advertisedPpm int64, salePricePpm int64) int64 {
+func feeCapReferencePpm(cfg RebalanceConfig, advertisedPpm int64, salePricePpm int64, localPct float64) int64 {
 	if !cfg.RealizedPriceCapEnabled || salePricePpm <= 0 || salePricePpm >= advertisedPpm {
+		return advertisedPpm
+	}
+	if realizedPriceCapDrained(cfg, localPct) {
 		return advertisedPpm
 	}
 	return salePricePpm
@@ -83,7 +114,7 @@ func feeCapReferencePpm(cfg RebalanceConfig, advertisedPpm int64, salePricePpm i
 // realizedFeeCapPolicy builds the target policy used by calcFeeLimitMsat.
 func realizedFeeCapPolicy(ch RebalanceChannel, cfg RebalanceConfig) lndclient.ChannelPolicySnapshot {
 	return lndclient.ChannelPolicySnapshot{
-		FeeRatePpm:  feeCapReferencePpm(cfg, ch.OutgoingFeePpm, ch.SalePricePpm),
+		FeeRatePpm:  feeCapReferencePpm(cfg, ch.OutgoingFeePpm, ch.SalePricePpm, ch.LocalPct),
 		BaseFeeMsat: ch.OutgoingBaseMsat,
 	}
 }

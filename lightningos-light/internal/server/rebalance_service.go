@@ -1184,6 +1184,7 @@ type RebalanceChannel struct {
 	SalePricePpm          int64   `json:"sale_price_ppm"`
 	SalePriceSource       string  `json:"sale_price_source,omitempty"`
 	NoSale30d             bool    `json:"no_sale_30d"`
+	DrainedRetest         bool    `json:"drained_retest"`
 	FeeCapReferencePpm    int64   `json:"fee_cap_reference_ppm"`
 	DrainRateSatPerHour   int64   `json:"drain_rate_sat_per_hour"`
 	PendingOutgoingHtlcs  int     `json:"pending_outgoing_htlcs"`
@@ -5153,6 +5154,11 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		// sellers. The deficit is filled across successive scans.
 		if input.Cfg.MaxAmountSat > 0 && targetAmount > input.Cfg.MaxAmountSat {
 			targetAmount = input.Cfg.MaxAmountSat
+		}
+		// Drained channel priced on its advertised fee: one keepalive-sized
+		// lot to re-measure the price, not a full chunk.
+		if snapshot.DrainedRetest {
+			targetAmount = drainedRetestAmountSat(snapshot, targetCfg, targetAmount)
 		}
 		minExecuteSat := effectiveMinExecuteSat(targetCfg)
 		targetAttemptCooldown := input.TargetCooldowns[snapshot.ChannelID]
@@ -10404,7 +10410,11 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	// the realized price cap is on; the floor the envelope solves for stays
 	// in advertised-fee terms.
 	salePricePpm, salePriceSource := salePrice.referencePpm()
-	feeCapReference := feeCapReferencePpm(cfg, outgoingFee, salePricePpm)
+	feeCapReference := feeCapReferencePpm(cfg, outgoingFee, salePricePpm, localPct)
+	drainedRetest := salePricePpm > 0 && salePricePpm < outgoingFee && realizedPriceCapDrained(cfg, localPct)
+	if drainedRetest {
+		salePriceSource = "drained_retest"
+	}
 	// A channel with no sale in 30 days has no price for the autopilot to buy
 	// against. It leaves the automatic target set (manual stays possible)
 	// and the envelope keeps the advertised fee so the floor is unchanged.
@@ -10575,6 +10585,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		SalePricePpm:               salePricePpm,
 		SalePriceSource:            salePriceSource,
 		NoSale30d:                  noSale30d,
+		DrainedRetest:              drainedRetest,
 		FeeCapReferencePpm:         feeCapReference,
 		DrainRateSatPerHour:        drainRateSatPerHour,
 		PendingOutgoingHtlcs:       pendingOutgoing,

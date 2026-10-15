@@ -119,7 +119,7 @@ func sovereignDiscoveryDrained(target rebalanceTarget, cfg RebalanceConfig, now 
 		return false
 	}
 	intent := target.AutomationIntent
-	if intent == nil || intent.Kind != automationIntentKindRefillTarget || !isKeepaliveRefillIntentReason(intent.ReasonCode) {
+	if intent == nil || intent.Kind != automationIntentKindRefillTarget || !isSovereignDiscoveryIntentReason(intent.ReasonCode) {
 		return false
 	}
 	if intent.FirstSeenAt.IsZero() {
@@ -133,6 +133,18 @@ func sovereignDiscoveryDrained(target rebalanceTarget, cfg RebalanceConfig, now 
 		hours = keepaliveRefillAfterHoursDefault
 	}
 	return now.Sub(intent.FirstSeenAt) >= time.Duration(hours)*time.Hour
+}
+
+// isSovereignDiscoveryIntentReason: the ladder measures a price for a channel
+// that is not refilling. Keepalive only acts on drained/extreme-drained; the
+// ladder also takes low_outbound (PurpleWisteria at 6% local, Unwetter at 7%
+// on 2026-10-14 sat in source failures all day with that intent and never
+// got a probe).
+func isSovereignDiscoveryIntentReason(reason string) bool {
+	if isKeepaliveRefillIntentReason(reason) {
+		return true
+	}
+	return strings.TrimSpace(reason) == "autofee_low_outbound_target"
 }
 
 // sovereignDiscoveryAmount is the operator's minimum rebalance amount, never

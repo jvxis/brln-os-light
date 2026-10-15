@@ -1,6 +1,9 @@
 # BRLN Hardwallet: experimental validation
 
-PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-release`.
+PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.6.0-release`.
+Deferred from 0.5.45 for further validation. The 0.6.0 development base was
+created from 0.5.45 commit `15db737be9c2d333723a207bd8150e34a306f16f`;
+this changes the integration target, not the deployed version or release catalog.
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 

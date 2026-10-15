@@ -5260,6 +5260,7 @@
       "scanReasonTargetStructuralCooldown": "target em cooldown estrutural",
       "scanReasonPaidLiquidityUnsoldCooldown": "liquidez paga não vendida em cooldown",
       "scanReasonPaidStockGate": "estoque pago aguardando venda",
+      "scanReasonNoSale30d": "sem venda em 30 dias, sem preço para comprar",
       "scanReasonDiscoveryQueued": "sonda de descoberta acima do teto de fee",
       "scanReasonInventoryUnavailable": "estoque pago indisponível; reposição pausada",
       "scanReasonPaidLiquidityUnsoldPenalty": "liquidez paga não vendida penalizada",

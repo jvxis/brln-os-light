@@ -5260,6 +5260,7 @@
         "scanReasonTargetStructuralCooldown": "target structural cooldown",
         "scanReasonPaidLiquidityUnsoldCooldown": "unsold paid liquidity cooldown",
         "scanReasonPaidStockGate": "paid stock waiting for sales",
+        "scanReasonNoSale30d": "no sale in 30 days, nothing to price against",
         "scanReasonDiscoveryQueued": "discovery probe above the fee cap",
         "scanReasonInventoryUnavailable": "paid inventory unavailable; replenishment paused",
         "scanReasonPaidLiquidityUnsoldPenalty": "unsold paid liquidity penalty",

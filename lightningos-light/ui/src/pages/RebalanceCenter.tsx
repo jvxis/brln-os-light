@@ -1562,6 +1562,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldCooldown')
       case 'paid_stock_gate':
         return t('rebalanceCenter.overview.scanReasonPaidStockGate')
+      case 'no_sale_30d':
+        return t('rebalanceCenter.overview.scanReasonNoSale30d')
       case 'discovery_queued':
         return t('rebalanceCenter.overview.scanReasonDiscoveryQueued')
       case 'would_discover':
@@ -1628,6 +1630,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldCooldown')
       case 'paid_stock_gate':
         return t('rebalanceCenter.overview.scanReasonPaidStockGate')
+      case 'no_sale_30d':
+        return t('rebalanceCenter.overview.scanReasonNoSale30d')
       case 'discovery_queued':
         return t('rebalanceCenter.overview.scanReasonDiscoveryQueued')
       case 'would_discover':
@@ -1747,7 +1751,7 @@ export default function RebalanceCenter() {
     const reasons = overview.last_scan_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length > 0) {
-      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_structural_cooldown', 'paid_liquidity_unsold_cooldown', 'paid_liquidity_unsold_penalty', 'paid_stock_gate', 'discovery_queued', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'expected_profit_below_min', 'cycle_limit', 'cooldown_probe_not_sovereign', 'route_dead_opportunity_below_floor', 'low_success_opportunity_below_floor', 'budget_efficiency_below_floor', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_structural_cooldown', 'paid_liquidity_unsold_cooldown', 'paid_liquidity_unsold_penalty', 'paid_stock_gate', 'no_sale_30d', 'discovery_queued', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'expected_profit_below_min', 'cycle_limit', 'cooldown_probe_not_sovereign', 'route_dead_opportunity_below_floor', 'low_success_opportunity_below_floor', 'budget_efficiency_below_floor', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
       entries.sort((a, b) => {
         const ai = ordered.indexOf(a[0])
         const bi = ordered.indexOf(b[0])
@@ -1781,7 +1785,7 @@ export default function RebalanceCenter() {
     const reasons = overview.last_manual_restart_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length === 0) return ''
-    const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'target_cooldown', 'target_structural_cooldown', 'paid_liquidity_unsold_cooldown', 'paid_liquidity_unsold_penalty', 'paid_stock_gate', 'discovery_queued', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+    const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'target_cooldown', 'target_structural_cooldown', 'paid_liquidity_unsold_cooldown', 'paid_liquidity_unsold_penalty', 'paid_stock_gate', 'no_sale_30d', 'discovery_queued', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
     entries.sort((a, b) => {
       const ai = ordered.indexOf(a[0])
       const bi = ordered.indexOf(b[0])

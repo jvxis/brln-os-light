@@ -1,6 +1,10 @@
 package server
 
-import "testing"
+import (
+	"testing"
+
+	"lightningos-light/internal/lndclient"
+)
 
 func TestChannelSalePriceReference(t *testing.T) {
 	cases := []struct {
@@ -11,7 +15,7 @@ func TestChannelSalePriceReference(t *testing.T) {
 	}{
 		{name: "7d with enough forwards", price: channelSalePrice{Ppm7d: 860, Count7d: 3, Ppm30d: 900, Count30d: 40}, wantPpm: 860, wantSrc: "7d"},
 		{name: "thin 7d falls back to 30d", price: channelSalePrice{Ppm7d: 1200, Count7d: 2, Ppm30d: 900, Count30d: 12}, wantPpm: 900, wantSrc: "30d"},
-		{name: "thin 30d has no reference", price: channelSalePrice{Ppm7d: 0, Count7d: 0, Ppm30d: 900, Count30d: 4}},
+		{name: "a single sale in 30d is a price", price: channelSalePrice{Ppm30d: 879, Count30d: 1}, wantPpm: 879, wantSrc: "30d"},
 		{name: "nothing sold", price: channelSalePrice{}},
 	}
 	for _, tc := range cases {
@@ -56,5 +60,34 @@ func TestRealizedFeeCapPolicyFeedsFeeLimit(t *testing.T) {
 	feeMsat, _ = calcFeeLimitMsat(300_000*1000, realizedFeeCapPolicy(ch, cfg), nil, cfg)
 	if got := feeMsatToPpm(feeMsat, 300_000); got != 1390 {
 		t.Fatalf("expected cap 1390 ppm (0.8 × 1737) with the flag off, got %d", got)
+	}
+}
+
+func TestChannelSalePriceNoSale(t *testing.T) {
+	old := float64(realizedPriceCapNoSaleAgeHours)
+	if !(channelSalePrice{AgeHours: old}).NoSale() {
+		t.Fatal("30-day-old channel without a sale has no price to buy against")
+	}
+	if (channelSalePrice{AgeHours: old - 1}).NoSale() {
+		t.Fatal("a channel younger than 30 days may simply not have sold yet")
+	}
+	if (channelSalePrice{AgeHours: old * 3, Count30d: 1, Ppm30d: 879}).NoSale() {
+		t.Fatal("one sale is a price")
+	}
+	if (channelSalePrice{}).NoSale() {
+		t.Fatal("unknown age (no block height) must not block")
+	}
+}
+
+func TestSalePriceSnapshotForChannelFillsAge(t *testing.T) {
+	snap := salePriceSnapshot{prices: map[uint64]channelSalePrice{1 << 40: {Ppm30d: 879, Count30d: 1}}, blockHeight: 1 + 6*24*40}
+	price := snap.forChannel(lndclient.ChannelInfo{ChannelID: 1 << 40})
+	if price.Ppm30d != 879 || price.AgeHours < 40*24-1 || price.AgeHours > 40*24+1 {
+		t.Fatalf("unexpected price/age: %+v", price)
+	}
+	// A channel absent from the map sold nothing; it still carries its age,
+	// which is exactly what no_sale_30d needs.
+	if got := snap.forChannel(lndclient.ChannelInfo{ChannelID: 2 << 40}); got.Count30d != 0 || got.AgeHours <= 0 || !got.NoSale() {
+		t.Fatalf("unknown channel: %+v", got)
 	}
 }

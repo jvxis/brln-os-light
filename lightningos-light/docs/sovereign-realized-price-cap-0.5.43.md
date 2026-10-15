@@ -66,6 +66,23 @@ rotas abaixo disso continua passando). Menos compras, mais margem por compra.
 A decisão expõe `sale_price_ppm`, `sale_price_source` e
 `fee_cap_reference_ppm` em `/api/rebalance/channels`.
 
+### 0.5.45: qualquer venda é preço; sem venda em 30 dias não se compra
+
+Dois dias depois de ligar o teto no Friendspool (13/10): 7% do gasto de 7
+dias (440 sats) foi para canais **sem nenhuma venda** (BitcoinVN 22 a 1034
+ppm, YOLOSpirit a 423), e 4% no HUB. O teto não os alcançava: com menos de 5
+forwards em 30 dias não havia preço de venda e o teto caía na fee anunciada;
+a trava de estoque só age depois do segundo lote.
+
+- Com `realized_price_cap_enabled`, **um forward em 30 dias já é preço**
+  (BitcoinVN vendeu uma vez a 879 → teto 703, não 1107).
+- Canal com **mais de 30 dias e zero forwards de saída em 30 dias** sai do
+  conjunto de alvos automáticos: `no_sale_30d` nos `skip_reasons` e
+  `sale_price_source = "no_sale_30d"` em `/api/rebalance/channels`. O piso do
+  Interlock e o envelope continuam na fee anunciada; **Manual Rebal In**
+  continua possível. Idade vem do short channel id contra a altura do bloco;
+  sem altura (LND indisponível) nada é bloqueado.
+
 ## Compatibilidade
 
 - Uma coluna nova em `rebalance_config` (`add column if not exists`).

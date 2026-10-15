@@ -1029,9 +1029,9 @@ export default function AppStore() {
           const readsLndDataDirectory = app.security_notices?.includes(lndDataDirectoryReadNotice) ?? false
           return (
             <div key={app.id} className="section-card space-y-4">
-              <div className={`flex items-start justify-between gap-4 ${app.id === 'brln-hardwallet' ? 'flex-wrap' : ''}`}>
-                <div className={`flex items-start gap-4 ${app.id === 'brln-hardwallet' ? 'w-full min-w-0' : ''}`}>
-                  <div className={`h-12 w-12 rounded-2xl bg-transparent flex items-center justify-center overflow-hidden ${app.id === 'brln-hardwallet' ? 'shrink-0' : ''}`}>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-start gap-4">
+                  <div className="h-12 w-12 rounded-2xl bg-transparent flex items-center justify-center overflow-hidden shrink-0">
                     {icon ? (
                       <img
                         src={icon}
@@ -1069,18 +1069,6 @@ export default function AppStore() {
                       )}
                     </div>
                     <p className="text-sm text-fog/60">{app.id === 'brln-hardwallet' ? t('appStore.hardwallet.description') : app.description}</p>
-                    {app.id === 'brln-hardwallet' && <div className="mt-3 space-y-3 text-sm">
-                      <p className="text-brass">{t('appStore.hardwallet.experimental')}</p>
-                      <p>{t('appStore.hardwallet.access')}</p>
-                      <label className="block">{t('appStore.hardwallet.source')}
-                        <select className="input-field mt-2 w-full" disabled={isBusy} value={hardwalletSource || app.electrum_source || 'local'} onChange={event => setHardwalletSource(event.target.value as 'local' | 'club')}>
-                          <option value="local">{t('appStore.hardwallet.local')}</option>
-                          <option value="club">{t('appStore.hardwallet.club')}</option>
-                        </select>
-                      </label>
-                      <p className="text-fog/60">{t('appStore.hardwallet.privacy')}</p>
-                      {app.installed && <button className="btn-secondary" disabled={isBusy} onClick={() => void handleAction(app.id,'install',{electrum_source:hardwalletSource || app.electrum_source || 'local'})}>{t('appStore.hardwallet.apply')}</button>}
-                    </div>}
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -1110,6 +1098,19 @@ export default function AppStore() {
                   </span>
                 </div>
               </div>
+
+              {app.id === 'brln-hardwallet' && <div className="mt-3 space-y-3 text-sm">
+                <p className="text-brass">{t('appStore.hardwallet.experimental')}</p>
+                <p>{t('appStore.hardwallet.access')}</p>
+                <label className="block">{t('appStore.hardwallet.source')}
+                  <select className="input-field mt-2 w-full" disabled={isBusy} value={hardwalletSource || app.electrum_source || 'local'} onChange={event => setHardwalletSource(event.target.value as 'local' | 'club')}>
+                    <option value="local">{t('appStore.hardwallet.local')}</option>
+                    <option value="club">{t('appStore.hardwallet.club')}</option>
+                  </select>
+                </label>
+                <p className="text-fog/60">{t('appStore.hardwallet.privacy')}</p>
+                {app.installed && <button className="btn-secondary" disabled={isBusy} onClick={() => void handleAction(app.id,'install',{electrum_source:hardwalletSource || app.electrum_source || 'local'})}>{t('appStore.hardwallet.apply')}</button>}
+              </div>}
 
               {app.available_version && (
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-fog/65">

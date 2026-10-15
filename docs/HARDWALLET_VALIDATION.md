@@ -7,6 +7,22 @@ this changes the integration target, not the deployed version or release catalog
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Store card consistency (2026-10-15)
+
+Moved Hardwallet's Electrum/setup controls out of the card header and removed
+its full-width/wrapping exceptions. Status now uses the same top-right header
+as other apps. Existing Store visibility policy remains unchanged: hiding is
+available only for stopped/uninstalled apps; running apps cannot be hidden.
+Also removed duplicated product wording in the Portuguese description.
+
+`scripts/hardwallet-card-smoke.cjs` failed on the deployed baseline because the
+status was below the body. It passed on candidate and deployed UI: Hardwallet
+and Electrs header alignment, running/stopped visibility, hide/show and reload
+with browser-only preferences, and 390px mobile width. No real preferences or
+app lifecycle were mutated by this test. React build passed. UI-only deployment
+backup: `/var/backups/lightningos-hardwallet-pr260/ui-before-card-standard`.
+Post-deploy API health, LND chain/graph sync and running Hardwallet passed.
+
 ## Official full 0.5.45 baseline plus PR260 (2026-10-15)
 
 LOS-TEST2 was first restored to the complete published `0.5.45-Beta` source

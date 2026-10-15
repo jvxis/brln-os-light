@@ -140,9 +140,10 @@ no preço antigo (o gatilho estava certo); `shadow_sold` diz que teria vendido
 de qualquer jeito (o gatilho foi cedo). Uma semana de sombra nos dois nós antes
 de ligar `enforce`.
 
-Corredor de loop (antecipa a fase 3): par de canais A↔B em que ≥ 50% do que
-sai por B entrou por A e ≥ 50% do que sai por A entrou por B, com ≥ 100k sats
-por ponta em 7 dias. Marca a tag `loop-corridor` e nunca entra em
+Corredor de loop (antecipa a fase 3): par de canais A↔B em que ≥ 35% do que
+sai por B entrou por A e ≥ 35% do que sai por A entrou por B, com ≥ 100k sats
+por ponta em 7 dias (0.5.45; era 50% e perdia o speedupln.com ↔ cyberdyne.sh
+real, 52% / 47% com 80M em cada sentido). Marca a tag `loop-corridor` e nunca entra em
 experimento. A política completa por tipo (router/source, sink com rota, sink
 de mão única) continua na fase 3.
 

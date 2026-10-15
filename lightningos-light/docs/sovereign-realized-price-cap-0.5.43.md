@@ -66,6 +66,48 @@ rotas abaixo disso continua passando). Menos compras, mais margem por compra.
 A decisão expõe `sale_price_ppm`, `sale_price_source` e
 `fee_cap_reference_ppm` em `/api/rebalance/channels`.
 
+### 0.5.45: qualquer venda é preço; sem venda em 30 dias não se compra
+
+Dois dias depois de ligar o teto no Friendspool (13/10): 7% do gasto de 7
+dias (440 sats) foi para canais **sem nenhuma venda** (BitcoinVN 22 a 1034
+ppm, YOLOSpirit a 423), e 4% no HUB. O teto não os alcançava: com menos de 5
+forwards em 30 dias não havia preço de venda e o teto caía na fee anunciada;
+a trava de estoque só age depois do segundo lote.
+
+- Com `realized_price_cap_enabled`, **um forward em 30 dias já é preço**
+  (BitcoinVN vendeu uma vez a 879 → teto 703, não 1107).
+- Canal com **mais de 30 dias e zero forwards de saída em 30 dias** sai do
+  conjunto de alvos automáticos: `no_sale_30d` nos `skip_reasons` e
+  `sale_price_source = "no_sale_30d"` em `/api/rebalance/channels`. O piso do
+  Interlock e o envelope continuam na fee anunciada; **Manual Rebal In**
+  continua possível. Idade vem do short channel id contra a altura do bloco;
+  sem altura (LND indisponível) nada é bloqueado.
+
+### 0.5.45: canal drenado re-mede o preço; escada aceita `low_outbound`
+
+Em 13/10 a escada achou rota pro RA⚡KO a 320 ppm e o AutoFee subiu a fee de
+362 para 455 — mas o teto seguiu olhando o preço real de 332 (× 0,8 = 265),
+e um canal vazio não vende, logo o preço real não sobe. A escada mediu o
+preço e ninguém testou se o canal vende nele; o RA⚡KO, maior vendedor da
+semana, ficou a 1% até aparecer rota abaixo de 265.
+
+- **Canal com menos de 10% de saldo local** (`realizedPriceCapDrainedLocalPct`)
+  volta a precificar o teto pela **fee anunciada**, mas só para **um lote do
+  tamanho do keepalive** (`keepalive_refill_pct` da capacidade, ≥ mínimo de
+  execução): o suficiente para medir o preço, não para reestocar a um preço
+  que o canal talvez não feche. `sale_price_source = "drained_retest"` e
+  `drained_retest: true` em `/api/rebalance/channels`. Se o lote vende, o
+  preço real sobe e o teto normal cuida do próximo; se não vende, a trava de
+  estoque e o `no_sale_30d` seguram. Vale também para a base da sonda da
+  escada (os degraus de 125%/150% partem da fee anunciada no canal drenado).
+- **A escada passa a aceitar o intent `autofee_low_outbound_target`** além
+  de drained/extreme-drained (`isSovereignDiscoveryIntentReason`). Em 14/10
+  PurpleWisteria (6%) e Unwetter (7%) ficaram o dia inteiro em "all sources
+  failed" com esse intent e nunca receberam sonda. O keepalive continua só
+  com drained/extreme-drained.
+- Continua fora da escada: canal com AutoFee desligado (não produz intent) e
+  intent com menos de `keepalive_refill_after_hours` (48h).
+
 ## Compatibilidade
 
 - Uma coluna nova em `rebalance_config` (`add column if not exists`).

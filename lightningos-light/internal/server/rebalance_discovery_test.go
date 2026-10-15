@@ -101,8 +101,13 @@ func TestDiscoveryOnlyForLongDrainedRouteGatedTargets(t *testing.T) {
 	}
 	lowOutbound := drained
 	lowOutbound.AutomationIntent = &AutomationIntent{Kind: automationIntentKindRefillTarget, ReasonCode: "autofee_low_outbound_target", FirstSeenAt: now.Add(-72 * time.Hour)}
-	if sovereignDiscoveryDrained(lowOutbound, cfg, now) {
-		t.Fatal("only drained/extreme-drained intents qualify")
+	if !sovereignDiscoveryDrained(lowOutbound, cfg, now) {
+		t.Fatal("a low_outbound intent older than the keepalive window qualifies for the ladder")
+	}
+	productive := drained
+	productive.AutomationIntent = &AutomationIntent{Kind: automationIntentKindRefillTarget, ReasonCode: "autofee_productive_refill_target", FirstSeenAt: now.Add(-72 * time.Hour)}
+	if sovereignDiscoveryDrained(productive, cfg, now) {
+		t.Fatal("a productive refill is not a stuck channel")
 	}
 	if sovereignDiscoveryDrained(rebalanceTarget{}, cfg, now) {
 		t.Fatal("no intent, no discovery")

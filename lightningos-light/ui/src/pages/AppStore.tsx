@@ -1054,7 +1054,6 @@ export default function AppStore() {
                       )}
                       {app.id === 'brln-community' && (
                         <>
-                          <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-200">{t('appStore.brlnCommunityTest')}</span>
                           <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/70">Nostr</span>
                         </>
                       )}
@@ -1526,7 +1525,6 @@ export default function AppStore() {
 
             <div className="mt-5 space-y-3 rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-fog/80">
               <p>• {t('appStore.brlnCommunityInstallMembers')}</p>
-              <p>• {t('appStore.brlnCommunityInstallReset')}</p>
               <p>• {t('appStore.brlnCommunityInstallNotEncrypted')}</p>
               <p>• {t('appStore.brlnCommunityInstallKey')}</p>
               <p>• {t('appStore.brlnCommunityInstallNoLnd')}</p>

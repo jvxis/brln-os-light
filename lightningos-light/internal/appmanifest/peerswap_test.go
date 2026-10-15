@@ -2,6 +2,7 @@ package appmanifest
 
 import (
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,10 +15,10 @@ func TestPeerSwapCatalogPinsUpdatedBinariesInLegacyPackageDirectory(t *testing.T
 	if PeerSwapAssetDirectory != "version_5_0" {
 		t.Fatalf("the package directory is an intentional compatibility path, got %q", PeerSwapAssetDirectory)
 	}
-	if PeerSwapVersion != "v6.0.0-8-g816a5bb" || PeerSwapCommit != "816a5bb12d6ff2a08b667ca387cb8d4b3f706709" {
+	if PeerSwapVersion != "v7.0.2" || PeerSwapCommit != "62b80bf6b2e3392f0f61352560bccbb1e81bef65" {
 		t.Fatalf("unexpected PeerSwap provenance: %s %s", PeerSwapVersion, PeerSwapCommit)
 	}
-	if PeerSwapWebVersion != "v6.0.0.1" || len(PeerSwapWebCommit) != 40 {
+	if PeerSwapWebVersion != "v7.0.2" || PeerSwapWebCommit != "a50002685808f7a47f0758827f355f8a80bf666a" {
 		t.Fatalf("unexpected PSWeb provenance: %s %s", PeerSwapWebVersion, PeerSwapWebCommit)
 	}
 	for _, binary := range PeerSwapBinaries() {
@@ -33,6 +34,31 @@ func TestPeerSwapCatalogPinsUpdatedBinariesInLegacyPackageDirectory(t *testing.T
 		if actual != binary.SHA256 {
 			t.Fatalf("%s asset checksum mismatch: got %s, want %s", binary.Name, actual, binary.SHA256)
 		}
+	}
+}
+
+func TestPeerSwapPackagedBuildProvenance(t *testing.T) {
+	for _, binary := range PeerSwapBinaries() {
+		t.Run(binary.Name, func(t *testing.T) {
+			assetPath := filepath.Join("..", "..", "assets", "binaries", "peerswap", PeerSwapAssetDirectory, PeerSwapAssetArch, binary.Name)
+			info, err := buildinfo.ReadFile(assetPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			settings := make(map[string]string)
+			for _, setting := range info.Settings {
+				settings[setting.Key] = setting.Value
+			}
+			commit := PeerSwapCommit
+			if binary.Name == "psweb" {
+				commit = PeerSwapWebCommit
+			}
+			for key, want := range map[string]string{"GOOS": "linux", "GOARCH": PeerSwapAssetArch, "vcs.revision": commit, "vcs.modified": "false"} {
+				if got := settings[key]; got != want {
+					t.Errorf("%s = %q, want %q", key, got, want)
+				}
+			}
+		})
 	}
 }
 

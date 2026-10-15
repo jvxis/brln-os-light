@@ -4,6 +4,39 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Retained summary and automatic refresh (2026-10-15)
+
+Coordinator source `b61de2f89c3fc20f60daa5d3378171bed82c02ee` restores the last
+completed public summary with its timestamp and refreshes automatically when
+opened. Background discovery does not block signer controls or previously
+available address verification. Cache is bound to the account and Electrum
+source, contains only display balance/history/time (no spendable UTXOs/secrets),
+and survives cancelled/failed updates. Source/account changes invalidate it.
+Before preparing any payment, a new Electrum scan must complete and every
+selected output must still exist, be confirmed and match the previous value/path.
+Broadcast invalidates the cached summary even when its result is unknown.
+
+CI https://github.com/jvxis/brln-hardwallet/actions/runs/38779494667 passed.
+Image digest `sha256:b865104b51c2de7b99f44cd51c7e2f1a927c099bbf3a8878bdc80725576c0928`.
+All four firmware binaries are byte-identical to `5275570`; no device update is
+needed. The owner confirmed normal unlock and demonstrated receiving QR/copy.
+Advanced passphrase/signing/recovery physical gates remain open.
+
+Validation: 104 web tests, Svelte check/build, exact-image browser auto-discovery,
+reload/age, nonblocking controls, cancellation, expired login and stale/spent
+input rejection passed. Anonymous OCI amd64/arm64 digests and firmware verified.
+Candidate UI against the real authenticated Electrum backend completed 40
+queries in approximately 190 seconds, restored its summary immediately on reload,
+kept signer controls enabled and retained the timestamp after cancellation.
+
+Deployed through the normal app lifecycle to LOS-TEST2. Rollback snapshot:
+`/var/backups/lightningos-hardwallet-pr260/before-snapshot-b61de2f`.
+Manager hash `ee4bad7e02710a76ebae01af12a248da86053711d960ba1a57e424a664b3ba5c`;
+broker hash `f5608b79468e09886d93183bf1b4b89d3d9e2ae3a042507e5337e7c1c1006120`.
+Full LOS Go tests/vet, Linux amd64 builds, 11 privileged fixtures and broker
+self-test passed. Exact image is healthy; served firmware matches CI and remains
+protected by authentication. LND PID/start time unchanged. No device flash.
+
 ## Installed menu and explicit passphrase (2026-10-15)
 
 The store's Open action now navigates within the LOS shell. Installed Hardwallet

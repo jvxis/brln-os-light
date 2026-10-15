@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-// BR⚡LN Community is the members chat of the BR⚡LN Club (test build). The node
+// BR⚡LN Community is the members chat of the BR⚡LN Club. The node
 // runs a local copy of the chat and the member's Nostr remote signer (NIP-46).
 // The key never leaves the signer data directory; the chat relay is operated by
 // the club and is reached over an outbound WebSocket only.
@@ -42,9 +42,9 @@ const (
 	BRLNCommunityPairingUID = 65528
 	BRLNCommunityPairingGID = 65528
 
-	BRLNCommunityRelease             = "0.1.57"
-	BRLNCommunityWebDigest           = "cc604bd7abe739bdc75941bd71de5edf0c87df6b45849b09542ffa1d0a3aa2e8"
-	BRLNCommunitySignerDigest        = "12a0f89a5d4f1999314c1347dad45ad2e817656b23cd09282972cf662c622792"
+	BRLNCommunityRelease             = "0.1.58"
+	BRLNCommunityWebDigest           = "98944af254afc9c3ed5168dfe2ccb8961f7152dbb1b8aeb0f7536452d98634f2"
+	BRLNCommunitySignerDigest        = "23a0b6383cf9944729db829a5cd04bc0e9ac6f8e7884a6c7be33701131055d37"
 	BRLNCommunitySignerVersionOutput = "brln-signer " + BRLNCommunityRelease
 
 	BRLNCommunityWebImage    = "ghcr.io/jvxis/brln-community-web:" + BRLNCommunityRelease + "@sha256:" + BRLNCommunityWebDigest

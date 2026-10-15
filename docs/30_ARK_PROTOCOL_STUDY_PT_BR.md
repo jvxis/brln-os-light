@@ -7,6 +7,10 @@ implementação associada.**
 
 Data de verificação: 2026-07-10.
 
+Estudo relacionado: [LayerTree e oportunidades para o LightningOS](37_LAYERTREE_STUDY_PT_BR.md)
+(2026-10-15), uma proposta de UTXO compartilhado que depende de mudanças de
+consenso ainda não ativadas, conforme as fontes consultadas naquela data.
+
 ## Conclusão executiva
 
 É possível integrar ARK ao LightningOS Light e oferecer pagamentos entre ARK,

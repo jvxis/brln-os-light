@@ -4,6 +4,41 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Discovery progress and setup feedback (2026-10-15)
+
+The owner completed wallet creation and public-account export on 0fa2151. The
+subsequent public-account scan silently disabled controls for several minutes:
+40 address queries took approximately 213 seconds against the club endpoint.
+Source 7f5ed2111d2a0cbcfd175ff20eaeb3f9bca4b756 now shows progress, offers
+cancellation without applying partial results, and distinguishes an unqueried
+balance from zero. Discovery works with the USB signer disconnected. A duplicate
+account section seen in the owner's screenshot was not reproduced in isolated
+Chrome, including expired-session and cancellation tests; do not claim a proven
+fix for that separate observation.
+
+The same firmware starts password entry on a character instead of DONE, keeps
+short passwords in the entry screen, excludes spaces from wallet passwords,
+clarifies backup/generation text and immediately shows processing after final
+backup acknowledgment. Completion explicitly directs the user to the LOS app.
+COM5 identity was rechecked, storage partitions were preserved, and all four
+programmed regions passed independent readback. Camera inspection confirmed
+embedded hash e3d2674a1cf682e5fd217c6131911828031f7bd73766ee00ae59f9490e56d85f.
+The owner is absent: physical hash approval, unlock of the existing test wallet,
+and physical validation of the revised setup screens remain pending. Do not
+recreate or erase the existing wallet. Recovery and signing remain draft gates.
+
+Image: `ghcr.io/jvxis/brln-hardwallet:sha-7f5ed2111d2a0cbcfd175ff20eaeb3f9bca4b756@sha256:3aafa11daafd98b817fd6666c0dc9536f66935aa05e78d8f3fc294ab04ce19d9`.
+CI: https://github.com/jvxis/brln-hardwallet/actions/runs/38728510723 (passed).
+Anonymous OCI download verified both platforms and all bundled firmware files.
+Companion tests: 94 unit tests, Svelte check/build, production framebuffer bounds
+and native policy/crypto checks. Real Chrome regression against exact OCI assets
+passed disconnected discovery, 40-address completion, expired session,
+cancellation, re-enabled controls and a single account section, with no JS errors.
+LOS checks: full Go tests/vet, Linux amd64 manager/broker builds, eleven native
+privileged fixtures and broker self-test passed. Only the image pin changed in LOS.
+Rollback snapshot: `/var/backups/lightningos-hardwallet-pr260/before-followup-7f5ed21`.
+
+
 ## Physical-button device UI and final installer pin (2026-10-15)
 
 Companion source `0fa215122199960ddd771d33ce825a6ac57ea541` replaces the remaining

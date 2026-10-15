@@ -42,8 +42,11 @@ signer disconnected and the existing exported account retained.
 
 Pending: physical Serial picker/flasher within the embedded UI, new firmware
 hash approval, normal/advanced unlock on hardware, full signing and recovery.
-COM5 identity matched the authorized LilyGO, but the port could not be opened;
-no firmware was written in this update attempt. Current wallet storage is intact.
+After the owner released COM5, its authorized identity and unchanged partition
+table were verified and firmware `5275570` was flashed. Independent verification
+passed for all four package regions, preserving wallet storage. Embedded hash:
+`c96e1772d1d228fd989a4c18794df194d74455aeae8633d3826ff0694705476a`.
+Physical approval and unlock tests remain pending.
 Keep this PR draft until the remaining physical checks are complete.
 
 ## Discovery progress and setup feedback (2026-10-15)

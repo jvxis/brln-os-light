@@ -43,6 +43,16 @@ files match the published image. Anonymous firmware access and access after
 logout are denied. No Signer flash/erase occurred; the physical first-run journey
 remains a separate test.
 
+Post-deploy Chrome checks passed independently over LAN: installed menu before
+Open, simulated install completion/reload, embedding, live appearance changes,
+Serial policy/getPorts, expired-session login, anonymous denial and stopped-app
+recovery. The combined LAN/VPN run stalled and was interrupted; an isolated VPN
+retry also stalled at iframe loading. Do not count the VPN browser run as passed.
+Authenticated firmware downloads/status over the VPN passed; the cause of the
+browser automation stall remains unclassified. Container health became healthy
+after its initial starting phase. Final health/API baseline passed and other
+containers retained their original uptime.
+
 ## Product names and first-run journey (2026-10-15)
 
 BR⚡LN Hardwallet names the complete solution, combining BR⚡LN LightningOS

@@ -4,6 +4,50 @@ PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.5.45-rel
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Physical-button device UI and final installer pin (2026-10-15)
+
+Companion source `0fa215122199960ddd771d33ce825a6ac57ea541` replaces the remaining
+small operational text with a common BRLN layout, readable Portuguese labels,
+and action arrows beside the upper/lower physical buttons. All hash digits remain
+visible; help cannot approve a build and missing hashes fail closed. Transaction
+addresses are physically paginated without omissions, with separate amount/fee
+approval. See the [device guide and synthetic preview](https://github.com/jvxis/brln-hardwallet/blob/brln/tdisplay-los/docs/DEVICE_UI.md).
+
+Pinned and deployed image:
+`ghcr.io/jvxis/brln-hardwallet:sha-0fa215122199960ddd771d33ce825a6ac57ea541@sha256:c8a02fb17eb841677f124e6a3e9796073dec0922b848a472e5293fe777c759f0`.
+[CI 38722348931](https://github.com/jvxis/brln-hardwallet/actions/runs/38722348931)
+passed firmware/policy/crypto/package/renderer gates, app tests and amd64/arm64
+image publication. Anonymous OCI pull and all four firmware hashes were verified.
+The host framebuffer runs production layout code with the actual font and logo;
+it checks clipping/minimum size, printable input, maximum amounts, hash/help
+navigation and physical rejection on each address page. Its data are synthetic.
+
+The exact authorized COM5 board was programmed from those CI artifacts; all four
+regions passed independent flash readback, preserving wallet storage. Camera
+inspection confirmed the complete hash and the larger labels/inset arrows.
+The owner did not approve the preceding build and is now absent. The final board
+remains at physical approval of embedded hash:
+`b937c7528759777ef3718b42b21466f0bc1ad23075b8bd258f9a91477dd02c74`.
+No physical presses, seed generation, backup/recovery or signing were simulated.
+Those hardware flows still require owner validation; the PR remains draft.
+
+Only the image constant changed in LOS. Full `go test -p 1 ./...`, `go vet -p 1
+./...`, Linux amd64 manager/broker builds, eleven native privileged fixtures and
+broker self-test passed. The backed-up Manager/broker update and normal Store
+install succeeded on LOS-TEST2. The exact pinned image is running healthy.
+Authenticated installer files match CI byte-for-byte; six anonymous firmware
+routes are denied and logout revokes access. Public Electrum status/fees,
+invalid-Origin rejection, private binds and proxy identity preservation passed.
+The LAN and optional personal-VPN Store popups preserved login/theme and passed expired-login/stopped-app
+recovery checks. WebSerial remained available in a secure context.
+
+LND stayed at PID 3891, synchronized with chain and graph. Remote Bitcoin and
+unrelated containers were preserved. No VM reboot or production change occurred.
+Rollback backup: `/var/backups/lightningos-hardwallet-pr260/before-device-ui-0fa2151`.
+Installed Manager SHA-256: `bcbbf8ba5d575f5592e0ab8d1276de3cce08b503851720c2ecc795ef4272bea5`.
+Installed broker SHA-256: `0b66298816a7e717079cf79408446bd07f5f44a44bea14515057354d353d0659`.
+The earlier sections below are historical validation records.
+
 ## LOS appearance, compact layout and device readability (2026-10-15)
 
 The owner approved the prior firmware hash and manually confirmed matching pair

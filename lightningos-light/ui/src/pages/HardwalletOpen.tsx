@@ -38,11 +38,11 @@ export default function HardwalletOpen() {
     return () => { cancelled=true; observer.disconnect(); clearInterval(timer); window.removeEventListener('apps:changed',check) }
   }, [])
   if (state !== 'ready') return <div className="section-card space-y-4">
-    <h1 className="text-2xl font-semibold">BRLN Hardwallet</h1>
+    <h1 className="text-2xl font-semibold">BR⚡LN Hardwallet</h1>
     <p>{t(state === 'loading' ? 'appStore.hardwallet.opening' : 'appStore.hardwallet.openFailed')}</p>
     <a className="btn-secondary" href="#apps">{t('nav.apps')}</a>
   </div>
-  return <iframe title="BRLN Hardwallet" src={source}
+  return <iframe title="BR⚡LN Hardwallet" src={source}
     allow={`serial ${new URL(source).origin}; clipboard-write ${new URL(source).origin}`}
     referrerPolicy="no-referrer" className="w-full border-0 rounded-2xl"
     style={{height:'calc(100vh - 160px)', minHeight:640}} />

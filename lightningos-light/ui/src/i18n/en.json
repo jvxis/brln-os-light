@@ -1257,11 +1257,11 @@
   },
   "appStore": {
     "hardwallet": {
-      "description": "Bitcoin coordinator for the BR⚡LN ESP32 signer. Keys stay on the device; LOS queries Electrum and broadcasts signed transactions.",
+      "description": "Bitcoin coordinator for the BR⚡LN Signer. Keys stay on BR⚡LN Signer; BR⚡LN LightningOS queries Electrum and broadcasts signed transactions.",
       "experimental": "Experimental pilot: no real funds until physical review and recovery validation pass.",
-      "access": "Open the app using the same address as LOS, with trusted HTTPS and your login session. Connect USB to your computer.",
-      "opening": "Opening Hardwallet…",
-      "openFailed": "Could not open Hardwallet. Return to the store, check that the app is running and try again.",
+      "access": "Open the app using the same address as BR⚡LN LightningOS, with trusted HTTPS and your login session. Connect BR⚡LN Signer to your computer via USB.",
+      "opening": "Opening BR⚡LN Hardwallet…",
+      "openFailed": "Could not open BR⚡LN Hardwallet. Return to the store, check that the app is running and try again.",
       "source": "Electrum server",
       "local": "My local Electrs (default)",
       "club": "Club Electrs (public server)",

@@ -1257,11 +1257,11 @@
   },
   "appStore": {
     "hardwallet": {
-      "description": "Coordenador Bitcoin para o assinador ESP32 BR⚡LN. As chaves ficam na placa; o LOS consulta o Electrum e transmite transações assinadas.",
+      "description": "Coordenador Bitcoin para o BR⚡LN Signer ESP32 BR⚡LN. As chaves ficam no BR⚡LN Signer; o LOS consulta o Electrum e transmite transações assinadas.",
       "experimental": "Piloto experimental: sem fundos reais até concluir validação física e recuperação.",
-      "access": "Abra o app pelo mesmo endereço do LOS, com HTTPS confiável e sua sessão de login. Conecte a placa USB ao seu computador.",
-      "opening": "Abrindo o Hardwallet…",
-      "openFailed": "Não foi possível abrir o Hardwallet. Volte à loja, confira se o app está executando e tente novamente.",
+      "access": "Abra o app pelo mesmo endereço do BR⚡LN LightningOS, com HTTPS confiável e sua sessão de login. Conecte o BR⚡LN Signer USB ao seu computador.",
+      "opening": "Abrindo o BR⚡LN Hardwallet…",
+      "openFailed": "Não foi possível abrir o BR⚡LN Hardwallet. Volte à loja, confira se o app está executando e tente novamente.",
       "source": "Servidor Electrum",
       "local": "Meu Electrs local (padrão)",
       "club": "Electrs do clube (servidor público)",

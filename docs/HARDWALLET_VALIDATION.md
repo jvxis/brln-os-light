@@ -7,6 +7,26 @@ this changes the integration target, not the deployed version or release catalog
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Product names and first-run journey (2026-10-15)
+
+BR⚡LN Hardwallet names the complete solution, combining BR⚡LN LightningOS
+(coordinator) and BR⚡LN Signer (physical signer). App Store, native menu,
+embedded launcher and coordinator messages use those names. The firmware uses
+the BR⚡LN logo plus Signer, and short Signer/LightningOS labels to preserve
+readability. LilyGO T-Display remains only a hardware compatibility reference.
+
+The next physical test starts with an identified, erased laboratory Signer:
+install the app, flash through the embedded installer, check the hash, pair,
+create the wallet and record/check backup, reboot/unlock, import/synchronize
+the public account and compare a receive address. Then recover on a second
+Signer and validate transaction review/rejection/signing and advanced passphrase.
+This is a test plan, not an executed erase or successful physical validation.
+
+Naming changes passed 104 coordinator tests, Svelte check/build, React build,
+synthetic browser discovery/cache/error checks and the authenticated candidate
+UI smoke test against LOS-TEST2. Native production screen rendering passed
+text bounds and minimum size checks. These checks do not replace physical flashing.
+
 ## Menu refresh after installation (2026-10-15)
 
 App Store now notifies native navigation after loading its catalog and after a

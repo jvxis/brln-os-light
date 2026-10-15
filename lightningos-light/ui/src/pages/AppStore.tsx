@@ -1044,7 +1044,7 @@ export default function AppStore() {
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-lg font-semibold">{app.name}</h3>
+                      <h3 className="text-lg font-semibold">{app.id === 'brln-hardwallet' ? 'BR⚡LN Hardwallet' : app.name}</h3>
                       {app.id === 'bark-wallet' && (
                         <>
                           <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-200">{t('appStore.barkWalletBeta')}</span>

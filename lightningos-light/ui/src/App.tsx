@@ -229,7 +229,7 @@ export default function App() {
       ? [{ key: 'pay-boleto', label: t('nav.payBoleto'), element: <PayBoleto />, group: 'apps' as const }]
       : []
     const installedAppRoutes = [
-      ...(installedAppIDs.has('brln-hardwallet') ? [{key: 'hardwallet-open', label: 'BRLN Hardwallet', element: <HardwalletOpen />, group: 'apps' as const}] : []),
+      ...(installedAppIDs.has('brln-hardwallet') ? [{key: 'hardwallet-open', label: 'BR⚡LN Hardwallet', element: <HardwalletOpen />, group: 'apps' as const}] : []),
       ...(installedAppIDs.has('los-mesh') ? [{key: 'los-mesh', label: 'LOS Mesh', element: <LOSMesh />, group: 'apps' as const}] : []),
       ...(installedAppIDs.has('opreturn')
         ? [{ key: 'opreturn', label: 'Bitcoin OP_RETURN', element: <OPReturn />, group: 'apps' as const }]

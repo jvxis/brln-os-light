@@ -226,14 +226,22 @@ func TestDetectLoopCorridors(t *testing.T) {
 		{5, 6}: 900_000,
 		{7, 8}: 50_000, // crossed but tiny
 		{8, 7}: 50_000,
+		// speedupln (9) ↔ cyberdyne (10), Friendspool 7d to 2026-10-12: 52% / 47%.
+		{9, 10}:  80_000_000,
+		{11, 10}: 58_000_000,
+		{10, 9}:  73_000_000,
+		{12, 9}:  80_000_000,
+		// Aldebaran (13): 76% fed by speedupln, nothing flows back.
+		{9, 13}:  20_000_000,
+		{14, 13}: 6_000_000,
 	}
 	got := detectLoopCorridors(pairs)
-	for _, id := range []uint64{1, 2} {
+	for _, id := range []uint64{1, 2, 9, 10} {
 		if !got[id] {
 			t.Fatalf("channel %d should be a corridor: %v", id, got)
 		}
 	}
-	for _, id := range []uint64{3, 4, 5, 6, 7, 8} {
+	for _, id := range []uint64{3, 4, 5, 6, 7, 8, 11, 12, 13, 14} {
 		if got[id] {
 			t.Fatalf("channel %d should not be a corridor: %v", id, got)
 		}

@@ -7,6 +7,42 @@ this changes the integration target, not the deployed version or release catalog
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
 
+## Official full 0.5.45 baseline plus PR260 (2026-10-15)
+
+LOS-TEST2 was first restored to the complete published `0.5.45-Beta` source
+`c3a861933246b0fe181d4269a710fa22d3de1c27`, without Hardwallet integration.
+The VM already advertised the same version, so this was an operator reinstall
+using the release upgrade script with the exact tag/commit, not a normal
+newer-version UI upgrade. The operator copy replaces the script's two insecure
+health probes with CA-verified HTTPS to the node LAN address. Release source,
+Manager, broker, UI and bundled assets otherwise follow the official installer.
+
+Before reinstalling, root-only backup `before-full-0545` preserved Manager/UI,
+configuration, broker/mesh and Hardwallet app state. Only Hardwallet containers
+were stopped. Official build stamp, broker self-test, authenticated API and real
+Chrome Store confirmed the release baseline and absence of Hardwallet from the
+catalog and menu. LND remained PID 3891, started 2026-10-14 16:43:31 UTC, and
+synced to chain/graph; Bitcoin remained the existing remote source.
+
+The 0.6.0 base was fast-forwarded to that official release; PR260 merged it
+without conflicts. Its delta remains the 32 Hardwallet integration files.
+Deployment source `9d239ef6fc1bec2d8b957cd001387c66ae0bb92f` installs only the PR's
+Manager, broker and UI over the full release. Official release rollback is
+`/var/backups/lightningos-hardwallet-pr260/full-0545-before-pr`.
+The runtime build stamp records the overlay commit, and `HARDWALLET_LAB.txt`
+identifies the official base plus experimental PR rather than a released 0.6.0.
+
+Tests: full Go tests/vet on Windows, focused tests with the final image pin,
+React production build, Linux amd64 Manager/broker compilation, all 11 native
+Hardwallet fixtures on the VM and service-user broker self-test passed.
+The normal broker-backed install action then applied the branded companion image
+from successful CI 38807062680, source `82c2d1069f99e86b5fbbf39a795a300b53610276`,
+digest `sha256:c615b79d4c872f3e8d896e7c8d75b0112202061bb66e9fe6943862adacf29f90`.
+Anonymous OCI pull/digests were verified for amd64/arm64; all four served firmware
+files match the published image. Anonymous firmware access and access after
+logout are denied. No Signer flash/erase occurred; the physical first-run journey
+remains a separate test.
+
 ## Product names and first-run journey (2026-10-15)
 
 BR⚡LN Hardwallet names the complete solution, combining BR⚡LN LightningOS

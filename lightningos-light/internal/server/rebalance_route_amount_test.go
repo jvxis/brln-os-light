@@ -175,3 +175,82 @@ func TestRebalanceResizedFeeLimit(t *testing.T) {
 		}
 	}
 }
+
+// The realized price cap left the amount ladder with no route at any rung for
+// targets whose market route costs more than econ × the realized sale price,
+// so the legacy loop stopped producing partials. The probe retries the
+// minimum lot once at the advertised fee's cap.
+func TestQueryRebalanceRoutesProbeLotAtMinimum(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.MinSplitEnabled, cfg.AmountProbeAdaptive = true, true
+	cfg.MinAmountSat, cfg.MinExecuteSat = 10_000, 10_000
+	cfg.RealizedPriceCapEnabled, cfg.EconRatio = true, 0.8
+	// RA⚡KO, 2026-10-16: realized 343 ppm → cap 274; advertised 381 → 305;
+	// the market route costs 300 ppm, so only the probe finds it.
+	capped := lndclient.ChannelPolicySnapshot{FeeRatePpm: 343}
+	advertised := lndclient.ChannelPolicySnapshot{FeeRatePpm: 381}
+	route := &lnrpc.Route{Hops: []*lnrpc.Hop{{ChanId: 7}}}
+	run := func(probe *rebalanceRouteProbe, adaptive bool) (rebalanceRouteAmountResult, error, []int64, []int64) {
+		cfg := cfg
+		cfg.AmountProbeAdaptive = adaptive
+		var amounts, fees []int64
+		initialFee, _ := calcFeeLimitMsat(100_000*1000, capped, nil, cfg)
+		res, err := queryRebalanceRoutesWithAmountFallbackAndProbe(context.Background(), 100_000, initialFee, cfg, capped, nil,
+			func(_ context.Context, amount, fee int64) ([]*lnrpc.Route, error) {
+				amounts, fees = append(amounts, amount), append(fees, fee)
+				if feeMsatToPpm(fee, amount) >= 300 {
+					return []*lnrpc.Route{route}, nil
+				}
+				return nil, status.Error(codes.Unknown, "unable to find a path to destination")
+			}, nil, probe)
+		return res, err, amounts, fees
+	}
+
+	res, err, amounts, fees := run(&rebalanceRouteProbe{Policy: advertised, BudgetSat: 100_000}, true)
+	if err != nil || !res.Probe || res.AmountSat != 10_000 || len(res.Routes) != 1 {
+		t.Fatalf("probe lot expected at the minimum: res=%+v err=%v", res, err)
+	}
+	if !reflect.DeepEqual(amounts, []int64{100_000, 50_000, 25_000, 12_500, 10_000, 10_000}) {
+		t.Fatalf("ladder then one probe query, got %v", amounts)
+	}
+	if got := feeMsatToPpm(fees[len(fees)-1], 10_000); got != 304 && got != 305 {
+		t.Fatalf("probe priced on the advertised fee × econ (~305 ppm), got %d", got)
+	}
+	if got := feeMsatToPpm(fees[len(fees)-2], 10_000); got > 275 {
+		t.Fatalf("the realized rung before the probe must stay at the realized cap, got %d", got)
+	}
+
+	if res, err, amounts, _ := run(nil, true); err == nil || res.Probe || len(amounts) != 5 {
+		t.Fatalf("no probe object, no probe query: res=%+v err=%v amounts=%v", res, err, amounts)
+	}
+	if res, err, amounts, _ := run(&rebalanceRouteProbe{Policy: advertised, BudgetSat: 9_000}, true); err == nil || res.Probe || len(amounts) != 5 {
+		t.Fatalf("budget below the minimum lot must not probe: %+v %v %v", res, err, amounts)
+	}
+	if res, err, amounts, _ := run(&rebalanceRouteProbe{Policy: capped, BudgetSat: 100_000}, true); err == nil || res.Probe || len(amounts) != 5 {
+		t.Fatalf("a probe fee no higher than the realized cap is pointless: %+v %v %v", res, err, amounts)
+	}
+	if res, err, amounts, _ := run(&rebalanceRouteProbe{Policy: advertised, BudgetSat: 100_000}, false); err == nil || res.Probe || len(amounts) != 1 {
+		t.Fatalf("operator disabled adaptive amounts: no ladder, no probe: %+v %v %v", res, err, amounts)
+	}
+}
+
+func TestRealizedCapProbeBudget(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.MinAmountSat, cfg.MinExecuteSat = 100_000, 10_000
+	capped := lndclient.ChannelPolicySnapshot{FeeRatePpm: 343}
+	advertised := lndclient.ChannelPolicySnapshot{FeeRatePpm: 381}
+	if got := realizedCapProbeBudgetSat(cfg, capped, advertised); got != 0 {
+		t.Fatalf("cap off: no probe, got %d", got)
+	}
+	cfg.RealizedPriceCapEnabled = true
+	if got := realizedCapProbeBudgetSat(cfg, capped, advertised); got != 100_000 {
+		t.Fatalf("one normal lot of probe budget per job, got %d", got)
+	}
+	if got := realizedCapProbeBudgetSat(cfg, advertised, advertised); got != 0 {
+		t.Fatalf("cap did not lower the reference: no probe, got %d", got)
+	}
+	cfg.FeeLimitPpm = 500
+	if got := realizedCapProbeBudgetSat(cfg, capped, advertised); got != 0 {
+		t.Fatalf("a fixed fee limit has no advertised cap to probe with, got %d", got)
+	}
+}

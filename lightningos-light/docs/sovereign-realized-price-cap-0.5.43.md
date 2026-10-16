@@ -127,6 +127,26 @@ Três efeitos colaterais vistos em 15–16/10 depois de o reteste entrar:
   orçamento. Canal em reteste com preço viável é elegível como alvo
   automático (`autoTargetEligibility`); `no_sale_30d` continua vetando.
 
+### 0.5.46: sonda no degrau mínimo (os parciais de volta)
+
+Em 16/10 o loop legado do Friendspool não fechava **nenhum parcial**: com o
+teto pelo preço real, a escada de montante (100k → 50k → 25k → 12,5k → 10k)
+não achava rota em degrau nenhum, de nenhuma das 30 sources, porque o preço
+de mercado da rota (RA⚡KO 320, PW 630, CoinPayments ~180) estava acima de
+`econ × preço real` (274, 454, 160). Rota inexistente a 10k sats não é
+liquidez — é teto.
+
+A sonda (`rebalanceRouteProbe`) mantém o teto realizado em todos os degraus
+e, quando o lote mínimo também falha, repete **uma vez** o lote mínimo com o
+teto da **fee anunciada**. O lote é o mínimo de execução (10k por padrão),
+então o máximo que ele paga a mais são alguns sats; o orçamento é um lote
+normal por job (`min_amount_sat`). Uma sonda que paga registra o preço nos
+pair-stats e no custo recente — é assim que o AutoFee e a escada ficam
+sabendo quanto a rota custa agora. Só existe com `realized_price_cap_enabled`
+e quando o teto realizado de fato baixou a referência daquele alvo; com
+`fee_limit_ppm` fixo não há o que sondar. O journal mostra
+`realized-cap probe lot source=… amount=10000 fee_limit_ppm=…`.
+
 ## Compatibilidade
 
 - Uma coluna nova em `rebalance_config` (`add column if not exists`).

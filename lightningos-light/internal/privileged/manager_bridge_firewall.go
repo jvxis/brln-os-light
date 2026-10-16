@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"os"
 	"strings"
 )
 
@@ -19,15 +18,10 @@ import (
 // last: the next app start added the broad rule again (issue #264).
 //
 // The rule is now limited to the subnet Docker gave the app's network, read from Docker and
-// never assumed, and the old broad rule is removed: the app's own, and any left on a bridge
-// that no longer exists (a network recreated by a reinstall gets a new bridge). A broad rule
-// on another live bridge belongs to another app, and is that app's to replace when it starts.
-
-// bridgeExists is replaced in tests.
-var bridgeExists = func(name string) bool {
-	_, err := os.Stat("/sys/class/net/" + name)
-	return err == nil
-}
+// never assumed. Install the replacement before removing the old rule so a failed command
+// cannot remove the app's existing access. Only migrate the current app's bridge: an absent
+// interface is NOT proof that an unrelated rule belongs to LOS. Preserve unknown/orphaned
+// rules for operator review, and migrate other apps when they are started through LOS.
 
 // appBridge returns the bridge interface of a compose project's default network.
 func appBridge(ctx context.Context, runner CommandRunner, project string) (string, error) {
@@ -112,8 +106,14 @@ func allowManagerFromAppBridge(ctx context.Context, runner CommandRunner, projec
 	if err != nil {
 		return err
 	}
+	// Establish the restricted path first, even when a broad rule still exists. If adding
+	// fails, leave the original rules intact. If removal fails, retain both and report the
+	// failure; a retry can finish the migration without an authorization outage.
+	if _, err := runner.Run(ctx, ufwPath, "allow", "in", "on", bridge, "from", subnet, "to", "any", "port", "8443", "proto", "tcp"); err != nil {
+		return errors.New("manager authorization firewall preparation failed")
+	}
 	for _, old := range broadManagerBridgeRules(ufwStatus) {
-		if old != bridge && bridgeExists(old) {
+		if old != bridge {
 			continue
 		}
 		// Without a source address the rule was added for IPv4 and IPv6, and deleting it by
@@ -121,9 +121,6 @@ func allowManagerFromAppBridge(ctx context.Context, runner CommandRunner, projec
 		if _, err := runner.Run(ctx, ufwPath, "--force", "delete", "allow", "in", "on", old, "to", "any", "port", "8443", "proto", "tcp"); err != nil {
 			return errors.New("broad manager authorization rule removal failed")
 		}
-	}
-	if _, err := runner.Run(ctx, ufwPath, "allow", "in", "on", bridge, "from", subnet, "to", "any", "port", "8443", "proto", "tcp"); err != nil {
-		return errors.New("manager authorization firewall preparation failed")
 	}
 	return nil
 }

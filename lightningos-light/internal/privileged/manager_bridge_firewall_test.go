@@ -31,24 +31,9 @@ func ufwMutations(runner *composeRecordingRunner) [][]string {
 	return mutations
 }
 
-func withBridges(t *testing.T, live ...string) {
-	t.Helper()
-	previous := bridgeExists
-	bridgeExists = func(name string) bool {
-		for _, bridge := range live {
-			if bridge == name {
-				return true
-			}
-		}
-		return false
-	}
-	t.Cleanup(func() { bridgeExists = previous })
-}
-
 // Issue #264: the app's own broad rule (and its IPv6 twin) goes, and the restricted one takes
-// its place; a broad rule on another app's live bridge is that app's to replace.
-func TestManagerBridgeRuleReplacesTheBroadOneAndLeavesOtherLiveApps(t *testing.T) {
-	withBridges(t, "br-0123456789ab", "br-aaaaaaaaaaaa")
+// its place; all other rules are preserved, even when their interface no longer exists.
+func TestManagerBridgeRuleReplacesTheBroadOneAndLeavesOtherApps(t *testing.T) {
 	status := strings.Join([]string{
 		"Status: active",
 		"",
@@ -65,10 +50,8 @@ func TestManagerBridgeRuleReplacesTheBroadOneAndLeavesOtherLiveApps(t *testing.T
 		t.Fatal(err)
 	}
 	want := [][]string{
-		{"--force", "delete", "allow", "in", "on", "br-0123456789ab", "to", "any", "port", "8443", "proto", "tcp"},
-		// br-bbbbbbbbbbbb no longer exists: a leftover of a recreated network.
-		{"--force", "delete", "allow", "in", "on", "br-bbbbbbbbbbbb", "to", "any", "port", "8443", "proto", "tcp"},
 		{"allow", "in", "on", "br-0123456789ab", "from", "172.20.0.0/16", "to", "any", "port", "8443", "proto", "tcp"},
+		{"--force", "delete", "allow", "in", "on", "br-0123456789ab", "to", "any", "port", "8443", "proto", "tcp"},
 	}
 	if got := ufwMutations(runner); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ufw commands:\n%#v\nwant\n%#v", got, want)
@@ -76,7 +59,6 @@ func TestManagerBridgeRuleReplacesTheBroadOneAndLeavesOtherLiveApps(t *testing.T
 }
 
 func TestManagerBridgeRuleIsIdempotent(t *testing.T) {
-	withBridges(t, "br-0123456789ab")
 	status := "Status: active\n8443/tcp on br-0123456789ab ALLOW       172.20.0.0/16\n"
 	runner := bridgeRunner("172.20.0.0/16\n")
 	if err := allowManagerFromAppBridge(context.Background(), runner, "bark-wallet", status); err != nil {
@@ -91,7 +73,6 @@ func TestManagerBridgeRuleIsIdempotent(t *testing.T) {
 // The subnet comes from Docker and is never assumed, so whatever comes back is checked before
 // it reaches ufw.
 func TestManagerBridgeRuleRejectsAnUnusableSubnet(t *testing.T) {
-	withBridges(t, "br-0123456789ab")
 	for _, subnet := range []string{"", "fd00::/64", "8.8.8.0/24", "0.0.0.0/0", "172.20.0.1/16", "172.20.0.0/16;reboot", "not a subnet"} {
 		runner := bridgeRunner(subnet)
 		status := "Status: active\n8443/tcp on br-0123456789ab ALLOW       Anywhere\n"

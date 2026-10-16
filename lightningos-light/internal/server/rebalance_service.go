@@ -6692,6 +6692,11 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 	}
 
 	targetPolicy := realizedFeeCapPolicy(targetSnapshot, feeCfg)
+	// The probe lot (see rebalanceRouteProbe) is priced on the advertised
+	// fee; its budget is one normal lot per job and only exists when the
+	// realized cap lowered this target's reference.
+	probePolicy := lndclient.ChannelPolicySnapshot{FeeRatePpm: targetSnapshot.OutgoingFeePpm, BaseFeeMsat: targetSnapshot.OutgoingBaseMsat}
+	probeBudgetSat := realizedCapProbeBudgetSat(feeCfg, targetPolicy, probePolicy)
 	maxFeeMsat, feeErr := calcFeeLimitMsat(amount*1000, targetPolicy, nil, feeCfg)
 	maxFeePpm := feeMsatToPpm(maxFeeMsat, amount)
 	if feeErr != nil || maxFeeMsat <= 0 || maxFeePpm <= 0 {
@@ -7057,14 +7062,29 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 			}
 		}
 
-		queryResult, err := queryRebalanceRoutesWithAmountFallback(attemptCtx, amountTry, feeLimitMsat, feeCfg, targetPolicy, &sourcePolicy,
+		var probe *rebalanceRouteProbe
+		if probeBudgetSat > 0 {
+			probe = &rebalanceRouteProbe{Policy: probePolicy, BudgetSat: probeBudgetSat}
+		}
+		queryResult, err := queryRebalanceRoutesWithAmountFallbackAndProbe(attemptCtx, amountTry, feeLimitMsat, feeCfg, targetPolicy, &sourcePolicy,
 			func(queryCtx context.Context, queryAmount, queryFee int64) ([]*lnrpc.Route, error) {
 				return s.lnd.QueryRoutesToChannel(queryCtx, selfPubkey, queryAmount, source.ChannelID, targetSnapshot.RemotePubkey, targetChannelID, queryFee, 5, ignoredEdges, ignoredPairs)
 			}, func(from, to int64) {
 				if s.logger != nil {
 					s.logger.Printf("rebalance job=%d: no-route amount fallback source=%d target=%d amount=%d->%d", jobID, source.ChannelID, targetChannelID, from, to)
 				}
-			})
+			}, probe)
+		// A probe lot carries the advertised fee through the rest of this
+		// attempt (route probing and resizes), and spends the job's probe
+		// budget whether or not the payment lands.
+		attemptTargetPolicy := targetPolicy
+		if queryResult.Probe {
+			attemptTargetPolicy = probePolicy
+			probeBudgetSat -= queryResult.AmountSat
+			if s.logger != nil {
+				s.logger.Printf("rebalance job=%d: realized-cap probe lot source=%d target=%d amount=%d fee_limit_ppm=%d (realized cap %d ppm)", jobID, source.ChannelID, targetChannelID, queryResult.AmountSat, feeMsatToPpm(queryResult.FeeLimitMsat, queryResult.AmountSat), feeLimitPpm)
+			}
+		}
 		// Only the exhausted search is a pair/structural failure. A miss at a
 		// larger amount must not quarantine this source before smaller queries.
 		amountFallbackUsed := queryResult.AmountSat < amountTry
@@ -7120,7 +7140,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 			routeFeeLimitPpm := feeLimitPpm
 			activeRoute := route
 			if cfg.AmountProbeSteps > 0 {
-				maxAmount, probeErr := s.probeRoute(attemptCtx, route, amountTry, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, targetPolicy, sourcePolicy, feeCfg)
+				maxAmount, probeErr := s.probeRoute(attemptCtx, route, amountTry, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, attemptTargetPolicy, sourcePolicy, feeCfg)
 				if probeErr != nil {
 					lastErr = probeErr
 					continue
@@ -7138,7 +7158,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 						lastErr = errors.New("probe amount below execute minimum")
 						continue
 					}
-					maxFeeMsat, err := calcFeeLimitMsat(routeAmount*1000, targetPolicy, &sourcePolicy, feeCfg)
+					maxFeeMsat, err := calcFeeLimitMsat(routeAmount*1000, attemptTargetPolicy, &sourcePolicy, feeCfg)
 					if amountFallbackUsed {
 						maxFeeMsat = rebalanceResizedFeeLimit(routeAmount, queryResult.AmountSat, queryResult.FeeLimitMsat, maxFeeMsat)
 					}
@@ -7258,13 +7278,13 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 				if routeFailure.Code == lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE &&
 					feeCfg.AmountProbeSteps > 0 &&
 					int(routeFailure.FailureSourceIndex) == len(activeRoute.Hops)-2 {
-					maxAmount, probeErr := s.probeRoute(attemptCtx, activeRoute, routeAmount, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, targetPolicy, sourcePolicy, feeCfg)
+					maxAmount, probeErr := s.probeRoute(attemptCtx, activeRoute, routeAmount, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, attemptTargetPolicy, sourcePolicy, feeCfg)
 					if probeErr == nil && maxAmount > 0 {
 						if feeCfg.MinSplitEnabled && minExecuteSat > 0 && maxAmount < minExecuteSat {
 							lastErr = errors.New("probe amount below execute minimum")
 							continue
 						}
-						retryFeeMsat, retryErr := calcFeeLimitMsat(maxAmount*1000, targetPolicy, &sourcePolicy, feeCfg)
+						retryFeeMsat, retryErr := calcFeeLimitMsat(maxAmount*1000, attemptTargetPolicy, &sourcePolicy, feeCfg)
 						if amountFallbackUsed {
 							retryFeeMsat = rebalanceResizedFeeLimit(maxAmount, queryResult.AmountSat, queryResult.FeeLimitMsat, retryFeeMsat)
 						}

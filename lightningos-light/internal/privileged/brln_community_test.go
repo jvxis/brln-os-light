@@ -216,6 +216,9 @@ func TestNativeBRLNCommunityFirewallUsesOnlyFixedBridgeAndCatalogPorts(t *testin
 		if path == dockerPath && reflect.DeepEqual(args, []string{"network", "inspect", "brln-community_default", "--format", "{{.Id}}"}) {
 			return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n", nil, true
 		}
+		if path == dockerPath && reflect.DeepEqual(args, []string{"network", "inspect", "brln-community_default", "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}"}) {
+			return "172.20.0.0/16 \n", nil, true
+		}
 		return "", nil, false
 	}}
 	manager := testBRLNCommunityManager(t, runner)
@@ -226,7 +229,8 @@ func TestNativeBRLNCommunityFirewallUsesOnlyFixedBridgeAndCatalogPorts(t *testin
 	want := [][]string{
 		{"status"},
 		{"network", "inspect", "brln-community_default", "--format", "{{.Id}}"},
-		{"allow", "in", "on", "br-0123456789ab", "to", "any", "port", "8443", "proto", "tcp"},
+		{"network", "inspect", "brln-community_default", "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}"},
+		{"allow", "in", "on", "br-0123456789ab", "from", "172.20.0.0/16", "to", "any", "port", "8443", "proto", "tcp"},
 		{"allow", "4448/tcp"},
 	}
 	if len(runner.commands) != len(want) {

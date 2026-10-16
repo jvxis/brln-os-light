@@ -283,6 +283,9 @@ func TestNativeBarkWalletFirewallUsesOnlyFixedBridgeAndCatalogPorts(t *testing.T
 		if path == dockerPath && reflect.DeepEqual(args, []string{"network", "inspect", "bark-wallet_default", "--format", "{{.Id}}"}) {
 			return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n", nil, true
 		}
+		if path == dockerPath && reflect.DeepEqual(args, []string{"network", "inspect", "bark-wallet_default", "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}"}) {
+			return "172.21.0.0/16 \n", nil, true
+		}
 		return "", nil, false
 	}}
 	manager := testBarkWalletManager(t, runner)
@@ -293,7 +296,8 @@ func TestNativeBarkWalletFirewallUsesOnlyFixedBridgeAndCatalogPorts(t *testing.T
 	want := [][]string{
 		{"status"},
 		{"network", "inspect", "bark-wallet_default", "--format", "{{.Id}}"},
-		{"allow", "in", "on", "br-0123456789ab", "to", "any", "port", "8443", "proto", "tcp"},
+		{"network", "inspect", "bark-wallet_default", "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}"},
+		{"allow", "in", "on", "br-0123456789ab", "from", "172.21.0.0/16", "to", "any", "port", "8443", "proto", "tcp"},
 		{"allow", "4004/tcp"},
 	}
 	if len(runner.commands) != len(want) {

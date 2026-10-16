@@ -362,16 +362,27 @@ func (manager *NativeBRLNCommunityManager) validateSnapshot(allowPreviousImages 
 	return nil
 }
 
-// The official 0.5.29 catalog used this exact 0.1.4 image pair. Do not accept
+// An installed compose from an earlier official catalog: the exact image pair of
+// one release in appmanifest.BRLNCommunityPreviousReleases. Do not accept
 // arbitrary tags/digests or normalize YAML: every byte outside these two pins
 // must still match the current hardened catalog. This deliberately fails closed
-// for mixed releases, altered mounts/commands, and unknown images.
+// for mixed releases, altered mounts/commands, and unknown images. Until 0.5.46
+// only the 0.1.4 pair was known, and a newer catalog made the signer password
+// unreadable until the app itself was updated.
 func brlnCommunityPreviousComposeMatches(installed, current string) bool {
-	previous := strings.NewReplacer(
-		appmanifest.BRLNCommunityWebImage, "ghcr.io/jvxis/brln-community-web:0.1.4@sha256:3aec012bfdb29f3e4cf6f7626b25333a8505844c56decb6d522ffbc211cd68d6",
-		appmanifest.BRLNCommunitySignerImage, "ghcr.io/jvxis/brln-signer:0.1.4@sha256:c1c5b282cd0fa5ea5720f7c021a5fa32da6c7a00b1e45552193d207c89a3b2bc",
-	).Replace(current)
-	return installed == previous
+	for _, pair := range appmanifest.BRLNCommunityPreviousReleases {
+		if pair.Release == appmanifest.BRLNCommunityRelease {
+			continue
+		}
+		previous := strings.NewReplacer(
+			appmanifest.BRLNCommunityWebImage, pair.WebImage(),
+			appmanifest.BRLNCommunitySignerImage, pair.SignerImage(),
+		).Replace(current)
+		if installed == previous {
+			return true
+		}
+	}
+	return false
 }
 
 func (manager *NativeBRLNCommunityManager) snapshotReady() bool {

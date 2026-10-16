@@ -3668,6 +3668,10 @@ func effectivePolicyPpm(ratePpm, baseMsat, amountSat int64) int64 {
 	return ratePpm + basePpm
 }
 
+// rebalancePaidLotFloorMinPct: paid liquidity in the window must be at least
+// this share of capacity for its cost to floor the advertised fee.
+const rebalancePaidLotFloorMinPct = 10
+
 func deriveRebalanceEconomicEnvelope(
 	cfg RebalanceConfig,
 	setting channelSetting,
@@ -3682,6 +3686,8 @@ func deriveRebalanceEconomicEnvelope(
 	peerFeePpm int64,
 	peerBaseMsat int64,
 	rebalanceCostPpm int64,
+	paidAmountSat int64,
+	capacitySat int64,
 ) rebalanceEconomicEnvelope {
 	feeCfg := effectiveConfigForTarget(cfg, setting)
 	referenceAmountSat := effectiveMinExecuteSat(feeCfg)
@@ -3705,6 +3711,14 @@ func deriveRebalanceEconomicEnvelope(
 	}
 
 	needsRefill := active && !parked && targetPct-localPct > cfg.DeadbandPct
+	// A paid lot only sets a floor when it is a meaningful share of the
+	// channel. BitcoinVN (6M) carried one 100k lot at 1034 ppm and the floor
+	// priced the whole channel at 1322, where it never sold, while it had
+	// just sold 742k in two minutes at 923. Below the share the cost is
+	// still reported, but the price is left to the realized sale.
+	if capacitySat > 0 && paidAmountSat*100 < capacitySat*rebalancePaidLotFloorMinPct {
+		rebalanceCostPpm = 0
+	}
 	paidCostKnown := rebalanceCostPpm > 0
 	remoteInboundColdStart := !initiator && needsRefill && (setting.AutoEnabled || setting.ManualRestartEnabled)
 	if !paidCostKnown && !remoteInboundColdStart {
@@ -10410,8 +10424,8 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	// the realized price cap is on; the floor the envelope solves for stays
 	// in advertised-fee terms.
 	salePricePpm, salePriceSource := salePrice.referencePpm()
-	feeCapReference := feeCapReferencePpm(cfg, outgoingFee, salePricePpm, localPct)
-	drainedRetest := salePricePpm > 0 && salePricePpm < outgoingFee && realizedPriceCapDrained(cfg, localPct)
+	feeCapReference := feeCapReferencePpm(cfg, outgoingFee, salePricePpm, localPct, target)
+	drainedRetest := salePricePpm > 0 && salePricePpm < outgoingFee && realizedPriceCapDrained(cfg, localPct, target)
 	if drainedRetest {
 		salePriceSource = "drained_retest"
 	}
@@ -10425,6 +10439,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	economicEnvelope := deriveRebalanceEconomicEnvelope(
 		cfg, setting, ch.Initiator, ch.Active, parked, peerPolicyKnown,
 		localPct, target, feeCapReference, outgoingBaseMsat, peerFeeRate, peerBaseMsat, cost7d.FeePpm,
+		cost7d.AmountSat, ch.CapacitySat,
 	)
 
 	eligibleTarget := false
@@ -10447,9 +10462,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 			eligibleTarget = true
 		}
 	}
-	if noSale30d {
-		eligibleTarget = false
-	}
+	eligibleTarget = autoTargetEligibility(eligibleTarget, drainedRetest, eligibleManualTarget, noSale30d)
 
 	sourceFloorPct := cfg.SourceMinLocalPct
 	if sourceFloorPct <= 0 || sourceFloorPct > 100 {

@@ -108,6 +108,25 @@ semana, ficou a 1% até aparecer rota abaixo de 265.
 - Continua fora da escada: canal com AutoFee desligado (não produz intent) e
   intent com menos de `keepalive_refill_after_hours` (48h).
 
+### 0.5.46: faixa do reteste, lote pequeno não pina, reteste não espera o cost gate
+
+Três efeitos colaterais vistos em 15–16/10 depois de o reteste entrar:
+
+- **Cliff dos 10%.** O lote de reteste levava RA⚡KO, PurpleWisteria e
+  CoinPayments de 1–7% para 12–17%; fora da faixa, voltavam ao teto
+  realizado (abaixo da rota) e paravam de repor. A faixa passa a ser
+  `max(10%, alvo/2)`: canal com alvo 50% é "drenado" até 25%.
+- **Lote pequeno pinava o canal inteiro.** BitcoinVN (6M) com um lote de 100k
+  a 1034 ppm recebia piso `rebalance_cost_budget` de 1322 no canal todo, onde
+  nunca vendeu (vendeu 742k em dois minutos a 923). O custo pago só entra no
+  envelope quando a liquidez paga na janela é ≥ 10% da capacidade
+  (`rebalancePaidLotFloorMinPct`); abaixo disso o piso fica com o peer (se
+  houver déficit) e o preço com a venda real.
+- **Reteste × cost gate.** O lote de reteste é limitado pelo tamanho; não faz
+  sentido esperar que o custo histórico (o mesmo lote caro) caiba no
+  orçamento. Canal em reteste com preço viável é elegível como alvo
+  automático (`autoTargetEligibility`); `no_sale_30d` continua vetando.
+
 ## Compatibilidade
 
 - Uma coluna nova em `rebalance_config` (`add column if not exists`).

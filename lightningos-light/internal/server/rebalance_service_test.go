@@ -1985,6 +1985,7 @@ func TestDeriveRebalanceEconomicEnvelope(t *testing.T) {
 			got := deriveRebalanceEconomicEnvelope(
 				test.cfg, test.setting, test.initiator, true, false, test.policyKnown,
 				0, 10, 500, test.outgoingBaseMsat, test.peerRatePpm, test.peerBaseMsat, test.costPpm,
+				0, 0,
 			)
 			if got.PeerCostPpm != test.wantPeerPpm || got.RequiredCostPpm != test.wantRequiredPpm || got.FeeFloorPpm != test.wantFloorPpm || got.BlockedReason != test.wantBlocked {
 				t.Fatalf("unexpected envelope: got=%+v want peer=%d required=%d floor=%d blocked=%q", got, test.wantPeerPpm, test.wantRequiredPpm, test.wantFloorPpm, test.wantBlocked)
@@ -1999,17 +2000,17 @@ func TestDeriveRebalanceEconomicEnvelopeIgnoresPeerCostWithoutDeficit(t *testing
 	// Strike, 2026-10-07: 40% local against a 35% target, a 225 ppm lot paid
 	// in the window and the peer at 1000 ppm. No refill is coming, so the
 	// floor protects the paid lot only.
-	got := deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 40, 35, 578, 0, 1000, 0, 225)
+	got := deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 40, 35, 578, 0, 1000, 0, 225, 0, 0)
 	if got.RequiredCostPpm != 225 || got.FeeFloorPpm != 282 || got.FloorReason != "rebalance_cost_budget" {
 		t.Fatalf("expected paid-cost floor 282 without deficit, got %+v", got)
 	}
 	// Below target the next refill is real and the peer price is back.
-	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 20, 35, 578, 0, 1000, 0, 225)
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 20, 35, 578, 0, 1000, 0, 225, 0, 0)
 	if got.RequiredCostPpm != 1000 || got.FeeFloorPpm != 1250 || got.FloorReason != "peer_fee_budget" {
 		t.Fatalf("expected peer floor 1250 with deficit, got %+v", got)
 	}
 	// Without a paid lot and without a deficit there is no floor at all.
-	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 40, 35, 578, 0, 1000, 0, 0)
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 40, 35, 578, 0, 1000, 0, 0, 0, 0)
 	if got.FeeFloorPpm != 0 || got.RequiredCostPpm != 0 {
 		t.Fatalf("expected no floor, got %+v", got)
 	}
@@ -5520,5 +5521,30 @@ func TestSourceRouteabilityQuarantineHoursKnob(t *testing.T) {
 	target := rebalanceTarget{StructuralCooldown: sovereignTargetStructuralCooldownStat{Failures: 1, LastFailureAt: now.Add(-2 * time.Hour)}}
 	if sovereignKeepaliveRecentlyFailed(target, short, now) {
 		t.Fatal("2h-old failure must not hold keepalive back with a 1h window")
+	}
+}
+
+func TestDeriveRebalanceEconomicEnvelopeIgnoresSmallPaidLots(t *testing.T) {
+	cfg := RebalanceConfig{DeadbandPct: 3, EconRatio: 0.8, MinAmountSat: 100_000, MinSplitEnabled: true, MinExecuteSat: 10_000}
+	setting := channelSetting{AutoEnabled: true, UseDefaultEconRatio: true}
+	// BitcoinVN, 15/10: one 100k lot at 1034 ppm in a 6M channel, peer at 29 ppm.
+	got := deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 1, 25, 923, 0, 29, 0, 1034, 100_000, 6_000_000)
+	if got.RequiredCostPpm != 0 || got.FeeFloorPpm != 0 {
+		t.Fatalf("a lot under 10%% of capacity must not floor the channel (we opened it: seed-driven), got %+v", got)
+	}
+	// Same small lot on a peer-opened channel: the peer price still floors a refill.
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, false, true, false, true, 1, 25, 923, 0, 29, 0, 1034, 100_000, 6_000_000)
+	if got.RequiredCostPpm != 29 || got.FloorReason != "peer_fee_budget" {
+		t.Fatalf("small lot ignored, peer floor kept, got %+v", got)
+	}
+	// The same cost on 1.9M of a 10M channel (Authenticity) still counts.
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 22, 40, 860, 0, 0, 0, 864, 1_900_000, 10_000_000)
+	if got.RequiredCostPpm != 864 || got.FloorReason != "rebalance_cost_budget" {
+		t.Fatalf("a lot of 19%% of capacity keeps its floor, got %+v", got)
+	}
+	// Unknown capacity: the cost counts as before.
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 1, 25, 923, 0, 29, 0, 1034, 100_000, 0)
+	if got.RequiredCostPpm != 1034 {
+		t.Fatalf("without capacity the rule is inert, got %+v", got)
 	}
 }

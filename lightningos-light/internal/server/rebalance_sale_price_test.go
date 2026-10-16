@@ -32,24 +32,24 @@ func TestFeeCapReferencePpm(t *testing.T) {
 	off := RebalanceConfig{}
 	on := RebalanceConfig{RealizedPriceCapEnabled: true}
 	// bfx-lnd0, 30 days to 2026-10-10: advertised 1737, sold at 1619.
-	if got := feeCapReferencePpm(off, 1737, 1619, 24); got != 1737 {
+	if got := feeCapReferencePpm(off, 1737, 1619, 24, 0); got != 1737 {
 		t.Fatalf("cap off must keep the advertised fee, got %d", got)
 	}
-	if got := feeCapReferencePpm(on, 1737, 1619, 24); got != 1619 {
+	if got := feeCapReferencePpm(on, 1737, 1619, 24, 0); got != 1619 {
 		t.Fatalf("cap on must price on the realized sale, got %d", got)
 	}
-	if got := feeCapReferencePpm(on, 700, 1619, 24); got != 700 {
+	if got := feeCapReferencePpm(on, 700, 1619, 24, 0); got != 700 {
 		t.Fatalf("a realized price above the advertised fee never raises the cap, got %d", got)
 	}
 	// RA⚡KO, 2026-10-13: empty, last sold at 332, AutoFee at 455 after the
 	// ladder found a 320 ppm route. The retest lot prices on 455.
-	if got := feeCapReferencePpm(on, 455, 332, 1); got != 455 {
+	if got := feeCapReferencePpm(on, 455, 332, 1, 0); got != 455 {
 		t.Fatalf("a drained channel re-measures its price on the advertised fee, got %d", got)
 	}
-	if got := feeCapReferencePpm(on, 455, 332, 10); got != 332 {
+	if got := feeCapReferencePpm(on, 455, 332, 10, 0); got != 332 {
 		t.Fatalf("at 10%% local the realized cap applies again, got %d", got)
 	}
-	if got := feeCapReferencePpm(on, 700, 0, 24); got != 700 {
+	if got := feeCapReferencePpm(on, 700, 0, 24, 0); got != 700 {
 		t.Fatalf("no sale history keeps the advertised fee, got %d", got)
 	}
 }
@@ -123,5 +123,45 @@ func TestRealizedFeeCapPolicyUsesLocalBalance(t *testing.T) {
 	ch.LocalPct = 30
 	if got := realizedFeeCapPolicy(ch, cfg).FeeRatePpm; got != 332 {
 		t.Fatalf("stocked channel prices on the realized sale, got %d", got)
+	}
+}
+
+func TestRealizedPriceCapDrainedBandFollowsTarget(t *testing.T) {
+	cfg := RebalanceConfig{RealizedPriceCapEnabled: true}
+	// Target 50%: the band is 25%. RA⚡KO at 17% after its retest lot is
+	// still in the band; at 30% it is not.
+	if !realizedPriceCapDrained(cfg, 17, 50) {
+		t.Fatal("17% local against a 50% target is still drained")
+	}
+	if realizedPriceCapDrained(cfg, 30, 50) {
+		t.Fatal("30% local against a 50% target is stocked")
+	}
+	// Target 10%: the band stays at the 10% floor.
+	if realizedPriceCapDrained(cfg, 12, 10) {
+		t.Fatal("band never shrinks below 10%")
+	}
+	if !realizedPriceCapDrained(cfg, 9, 10) {
+		t.Fatal("9% is drained for any target")
+	}
+	if got := feeCapReferencePpm(cfg, 381, 346, 17, 50); got != 381 {
+		t.Fatalf("inside the band the cap prices on the advertised fee, got %d", got)
+	}
+	if got := feeCapReferencePpm(cfg, 381, 346, 30, 50); got != 346 {
+		t.Fatalf("outside the band the realized cap applies, got %d", got)
+	}
+}
+
+func TestAutoTargetEligibility(t *testing.T) {
+	if !autoTargetEligibility(false, true, true, false) {
+		t.Fatal("a drained retest with feasible pricing bypasses the historical cost gate")
+	}
+	if autoTargetEligibility(false, true, false, false) {
+		t.Fatal("the retest still needs feasible pricing")
+	}
+	if autoTargetEligibility(true, true, true, true) {
+		t.Fatal("no sale in 30 days is never an automatic target")
+	}
+	if !autoTargetEligibility(true, false, true, false) || autoTargetEligibility(false, false, true, false) {
+		t.Fatal("without a retest the cost gate decides")
 	}
 }

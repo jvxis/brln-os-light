@@ -7,6 +7,7 @@ import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, 
 import SensitiveActionModal from '../components/SensitiveActionModal'
 import StatusBadge from '../components/dashboard/StatusBadge'
 import { getLocale } from '../i18n'
+import { copyText } from '../utils/clipboard'
 
 const emptySummary = {
   balances: {
@@ -997,7 +998,7 @@ export default function Wallet() {
   const handleCopy = async () => {
     if (!address) return
     try {
-      await navigator.clipboard.writeText(address)
+      await copyText(address)
       setCopied(true)
     } catch {
       setAddressStatus(t('common.copyFailedManual'))
@@ -1183,7 +1184,7 @@ export default function Wallet() {
   const handleCopyInvoice = async () => {
     if (!invoice) return
     try {
-      await navigator.clipboard.writeText(invoice)
+      await copyText(invoice)
       setInvoiceCopied(true)
     } catch {
       setInvoiceNotice(t('common.copyFailedManual'))

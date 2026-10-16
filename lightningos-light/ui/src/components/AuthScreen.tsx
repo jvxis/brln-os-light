@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { type AuthState, type TLSAccessInfo, getTLSAccessInfo, loginAuth, recoverAuth, setupAuth } from '../api'
 import brlnOsLogo from '../assets/brln-os.png'
+import { copyText } from '../utils/clipboard'
 
 type AuthScreenProps = {
   state: AuthState
@@ -86,7 +87,7 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
 
   const copySetupCommand = async () => {
     try {
-      await navigator.clipboard.writeText(t('auth.setupCommand'))
+      await copyText(t('auth.setupCommand'))
       setSetupCommandCopied(true)
       window.setTimeout(() => setSetupCommandCopied(false), 2000)
     } catch {

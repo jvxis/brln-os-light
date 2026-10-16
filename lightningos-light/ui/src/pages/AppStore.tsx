@@ -24,6 +24,7 @@ import magmaSalesIcon from '../assets/apps/magma-sales.svg'
 import opreturnIcon from '../assets/apps/opreturn.svg'
 import CpuMinerStats from '../components/CpuMinerStats'
 import SensitiveActionModal from '../components/SensitiveActionModal'
+import { copyText } from '../utils/clipboard'
 
 type AppInfo = AppStoreInfo
 
@@ -877,7 +878,7 @@ export default function AppStore() {
         setMessage(t('appStore.adminPasswordUnavailable'))
         return
       }
-      await navigator.clipboard.writeText(password)
+      await copyText(password)
       setMessage(t('appStore.adminPasswordCopied'))
     } catch (err) {
       setMessage(err instanceof Error ? err.message : t('common.copyFailed'))

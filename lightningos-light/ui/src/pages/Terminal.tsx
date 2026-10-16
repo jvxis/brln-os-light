@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { APIError, getTerminalStatus, rotateTerminalCredential, setTerminalEnabled } from '../api'
+import { copyText } from '../utils/clipboard'
 
 type TerminalStatus = {
   enabled: boolean
@@ -46,7 +47,7 @@ export default function Terminal() {
   const copyToClipboard = async (value: string) => {
     if (!value) return
     try {
-      await navigator.clipboard.writeText(value)
+      await copyText(value)
     } catch {
       setStatusMessage(t('terminal.copyFailed'))
     }

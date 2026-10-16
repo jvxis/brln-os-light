@@ -16,6 +16,7 @@ import {
   tapdUniverseSync
 } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
+import { copyText } from '../utils/clipboard'
 
 type AppRow = { id: string; installed?: boolean; status?: string }
 
@@ -234,7 +235,7 @@ export default function TaprootAssets() {
   }, [])
 
   const copy = useCallback((value: string) => {
-    if (value) void navigator.clipboard?.writeText(value)
+    if (value) void copyText(value)
   }, [])
 
   const generateReceiveAddress = useCallback(async () => {

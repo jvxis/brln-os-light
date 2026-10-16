@@ -16,6 +16,7 @@ import {
 } from '../api'
 import { getLocale } from '../i18n'
 import clsx from '../utils/clsx'
+import { copyText } from '../utils/clipboard'
 
 type GraphExplorerTab = 'general' | 'channels' | 'closed' | 'fees'
 type GraphExplorerClosedRange = '30d' | '90d' | '1y' | 'all'
@@ -1087,10 +1088,7 @@ export default function GraphExplorer() {
     const text = String(value || '').trim()
     if (!text) return
     try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error('clipboard_unavailable')
-      }
-      await navigator.clipboard.writeText(text)
+      await copyText(text)
       setCopiedKey(key)
       setCopyError('')
     } catch {

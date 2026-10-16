@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createDepixOrder, getDepixConfig, getDepixOrder, getDepixOrders } from '../api'
 import { getLocale } from '../i18n'
+import { copyText } from '../utils/clipboard'
 
 type DepixConfig = {
   enabled: boolean
@@ -257,7 +258,7 @@ export default function BuyDepix() {
     if (!activeOrder?.qr_copy) return
     setCopying(true)
     try {
-      await navigator.clipboard.writeText(activeOrder.qr_copy)
+      await copyText(activeOrder.qr_copy)
       setMessage(t('common.copied'))
     } catch {
       setMessage(t('common.copyFailedManual'))

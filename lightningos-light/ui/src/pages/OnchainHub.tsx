@@ -20,6 +20,7 @@ import UtxoCanvas, { type CanvasGroup, type CanvasUtxo } from '../components/Utx
 import UtxoSpendDialog, { type SpendMode } from '../components/UtxoSpendDialog'
 import UtxoBumpDialog from '../components/UtxoBumpDialog'
 import UtxoOpenChannelDialog from '../components/UtxoOpenChannelDialog'
+import { copyText } from '../utils/clipboard'
 
 const WalletFlowView = lazy(() => import('../components/WalletFlowView'))
 
@@ -172,7 +173,7 @@ export default function OnchainHub() {
   const copyToClipboard = async (value: string) => {
     if (!value) return
     try {
-      await navigator.clipboard.writeText(value)
+      await copyText(value)
     } catch {
       // ignore
     }

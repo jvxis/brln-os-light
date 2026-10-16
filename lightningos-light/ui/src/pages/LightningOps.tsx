@@ -5,6 +5,7 @@ import { APIError, acceptBalancedOpenSession, addLnWatchtower, bakeLnMacaroon, b
 import { getLocale } from '../i18n'
 import ChannelDetailModal from '../components/ChannelDetailModal'
 import SensitiveActionModal from '../components/SensitiveActionModal'
+import { copyText } from '../utils/clipboard'
 
 type Channel = {
   channel_point: string
@@ -5486,7 +5487,7 @@ export default function LightningOps() {
     const value = kind === 'base64' ? macaroonResult?.macaroon_base64 : macaroonResult?.macaroon_hex
     if (!value) return
     try {
-      await navigator.clipboard.writeText(value)
+      await copyText(value)
       setMacaroonCopied(kind)
     } catch {
       setMacaroonStatus(t('common.copyFailedManual'))
@@ -5547,7 +5548,7 @@ export default function LightningOps() {
   const handleCopySignature = async () => {
     if (!signSignature) return
     try {
-      await navigator.clipboard.writeText(signSignature)
+      await copyText(signSignature)
       setSignCopied(true)
     } catch {
       setSignStatus(t('common.copyFailedManual'))
@@ -5570,7 +5571,7 @@ export default function LightningOps() {
     const value = channelIDText(channel)
     if (!value) return
     try {
-      await navigator.clipboard.writeText(value)
+      await copyText(value)
       const key = channel.channel_point || value
       setCopiedChannelIDKey(key)
       window.setTimeout(() => {
@@ -5702,7 +5703,7 @@ export default function LightningOps() {
       return
     }
     try {
-      await navigator.clipboard.writeText(value)
+      await copyText(value)
       const copyKey = recommendationCopyKey(channelPoint, item.pub_key)
       setPeerRecommendationCopiedKey(copyKey)
       window.setTimeout(() => {

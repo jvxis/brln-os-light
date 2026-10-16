@@ -17,6 +17,7 @@ import StackedRatioBar from './StackedRatioBar'
 import StatusBadge from './StatusBadge'
 import DbMaintenanceModal from './DbMaintenanceModal'
 import type { BitcoinCadenceBucket, BitcoinStatus, DiskSmart, LndChannel, LndPeer, LndStatus, PostgresStatus, SystemStats, Tone } from './types'
+import { copyText } from '../../utils/clipboard'
 
 type CoreHealthGridProps = {
   lnd: LndStatus | null
@@ -154,7 +155,7 @@ export default function CoreHealthGrid({
   const copyToClipboard = async (value: string) => {
     if (!value) return
     try {
-      await navigator.clipboard.writeText(value)
+      await copyText(value)
     } catch {
       // ignore copy failures
     }

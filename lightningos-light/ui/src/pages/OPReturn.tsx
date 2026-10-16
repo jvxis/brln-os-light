@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getApps, getMempoolFees, getOPReturnRecords, getOPReturnStatus, previewOPReturn, publishOPReturn, reauthAuth, type OPReturnPreview, type OPReturnRecord } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
+import { copyText } from '../utils/clipboard'
 
 export default function OPReturn() {
   const { i18n } = useTranslation()
@@ -113,7 +114,7 @@ export default function OPReturn() {
         {record.txid && <div className="space-y-2">
           <a className="block break-all text-xs underline underline-offset-4" href={`${explorerURL}tx/${encodeURIComponent(record.txid)}`} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" title={label(`Track transaction on ${explorerLabel}`, `Acompanhar transação em ${explorerLabel}`)}><code>{record.txid}</code></a>
           <p className="text-xs text-fog/60">{explorerLabel}</p>
-          <button className="btn-secondary" onClick={() => void navigator.clipboard.writeText(record.txid).then(() => setNotice(label('TXID copied.', 'TXID copiado.'))).catch(() => setError(label('Could not copy TXID.', 'Não foi possível copiar o TXID.')))}>{label('Copy TXID', 'Copiar TXID')}</button>
+          <button className="btn-secondary" onClick={() => void copyText(record.txid).then(() => setNotice(label('TXID copied.', 'TXID copiado.'))).catch(() => setError(label('Could not copy TXID.', 'Não foi possível copiar o TXID.')))}>{label('Copy TXID', 'Copiar TXID')}</button>
         </div>}
       </article>)}
       <p className="text-xs text-fog/60">{label('Uninstalling preserves local history. TXID links open your local Mempool when available, or mempool.space, only when clicked.', 'A desinstalação preserva o histórico local. Os links de TXID abrem seu Mempool local quando disponível, ou o mempool.space, somente ao clicar.')}</p>

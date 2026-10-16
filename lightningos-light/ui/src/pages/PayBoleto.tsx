@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { getBoletoConfig, activateBoleto, getActivationStatus, createBoletoQuote, getBoletoStatus, payInvoice } from '../api'
 import { getLocale } from '../i18n'
 import QRCode from 'qrcode'
+import { copyText } from '../utils/clipboard'
 
 type BoletoConfig = {
   enabled: boolean
@@ -329,7 +330,7 @@ export default function PayBoleto() {
 
   const copyActivationInvoice = useCallback(() => {
     if (!activation) return
-    navigator.clipboard.writeText(activation.invoice).then(() => {
+    copyText(activation.invoice).then(() => {
       setActivationCopied(true)
       setTimeout(() => setActivationCopied(false), 2000)
     })
@@ -416,7 +417,7 @@ export default function PayBoleto() {
 
   const copyInvoice = useCallback(() => {
     if (!quote) return
-    navigator.clipboard.writeText(quote.invoice).then(() => {
+    copyText(quote.invoice).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getCpuMinerStatus, setCpuMinerThreads, setCpuMinerConfig, type CpuMinerStatus } from '../api'
+import { copyText } from '../utils/clipboard'
 
 function formatHashrate(hs: number): string {
   if (!hs || hs <= 0) return '0 H/s'
@@ -90,7 +91,7 @@ export default function CpuMinerStats({ running }: Props) {
   const handleCopy = async () => {
     if (!cfgAddress) return
     try {
-      await navigator.clipboard.writeText(cfgAddress)
+      await copyText(cfgAddress)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {

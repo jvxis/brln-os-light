@@ -102,3 +102,42 @@ overhead. This is a host memory-allocation blocker, not a bootstrap test failure
 No guest test or installer ran. The VM remains powered off; disks and logs are
 preserved. Host paging/virtualization/network settings and other VMs were not
 changed. The Linux gates above remain pending and the PR remains draft.
+
+## Linux bootstrap retry — 2026-10-17
+
+After the owner restarted the Windows Remote Desktop service to release excess
+resources, the same authorized VM started successfully without changing its
+2 vCPU / 4 GiB sizing or the host configuration. SSH used the previously trusted
+host key and the recorded lab access helper; the guest MAC matched the VM.
+
+Baseline: Ubuntu 24.04.3 amd64, kernel 7.0.0-38-generic, Python 3.12.3,
+Git 2.43.0, approximately 3 GiB available memory and 84 GiB free disk. LND,
+Bitcoin, Manager and broker socket were inactive. Docker was active with no
+running containers. This is a reused lab guest, not a pristine-install fixture.
+
+The committed bootstrap/test files from `31ddb9b5` were exported with Git archive
+and executed natively in Linux:
+
+- `python3 -m unittest discover -s scripts/tests -p test_install_bootstrap.py -v`:
+  **16 passed**, including all three installer selections, installer re-entry,
+  repeat execution, invalid/mismatched releases, missing prerequisites,
+  network-failure/retry behavior and preservation of unrelated checkout state.
+- `python3 -m unittest discover -s scripts/tests -p test_release_draft.py -v`:
+  **3 passed**, preserving the legacy-catalog bridge publication boundary.
+- `bash -n lo_bootstrap.sh`: **passed**.
+
+A separate attempt used the unmodified candidate bootstrap and actual public
+GitHub catalog (no network/Git fixtures). It deliberately set
+`ACCEPT_MIT_LICENSE=0` to verify release resolution and checkout before allowing
+any installer changes. GitHub returned HTTP 403 with
+`x-ratelimit-remaining: 0` (60/60 unauthenticated requests used; reset advertised
+for 2026-10-17 12:54:59 UTC). The bootstrap exited nonzero at catalog discovery,
+without a legacy fallback, source clone or installer execution. Consequently,
+live release attestation/checkout and full installation are **not** validated
+by this attempt. No authentication bypass was added to the test.
+
+Logs remain under `/var/lib/los0547-bootstrap-validation` in the disposable VM.
+The guest was shut down after testing, as authorized, with disks and logs
+preserved. No production/test node, host network or paging configuration was
+changed. The PR remains draft with the installation/upgrade/ARM gates above
+explicitly pending; these Linux bootstrap tests do not replace those gates.

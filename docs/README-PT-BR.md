@@ -19,7 +19,7 @@ Se o upgrade funciona normalmente, nenhuma ação é necessária.
 
 [Arquitetura de segurança](#arquitetura-de-segurança) · [Relato privado de vulnerabilidades](../SECURITY.md)
 
-Um projeto do [BR⚡LN Club](https://br-ln.com), a comunidade brasileira de operadores de nodes Bitcoin e Lightning Network · [Blog](https://blog.br-ln.com) · [Ferramentas Lightning grátis](https://br-ln.com/ferramentas/)
+Um projeto do [BR⚡LN Club](https://br-ln.com), a comunidade brasileira de operadores de nodes Bitcoin e Lightning Network · [Blog](https://blog.br-ln.com) · [Ferramentas Lightning grátis](https://br-ln.com/ferramentas/) · [Guias](https://br-ln.com/guias/?utm_source=github&utm_medium=readme&utm_campaign=los)
 
 <img width="1920" height="1080" alt="logo" src="https://github.com/user-attachments/assets/504ec23e-31f8-407a-a848-3fa4ce3ec1f9" />
 
@@ -72,6 +72,8 @@ LightningOS é um instalador completo de daemon de nó Lightning, com gerenciado
 - `configs/config.yaml`: configuração local de desenvolvimento
 
 ## Instalação (Ubuntu Server)
+Primeiro node? O passo a passo cobre o que você precisa, a instalação e os primeiros passos depois dela (seed, primeiro canal, watchtower, teste de acesso): [Como montar um node Lightning](https://br-ln.com/guias/como-montar-um-node-lightning/?utm_source=github&utm_medium=readme&utm_campaign=los).
+
 O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort habilitado) + i2pd habilitado por padrão

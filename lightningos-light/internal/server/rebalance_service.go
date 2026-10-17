@@ -3789,6 +3789,17 @@ func passesAutoTargetCostGate(setting channelSetting, expectedCostPpm int64, fee
 	return setting.AutoBypassCostGate || expectedCostPpm <= 0 || feeBudgetPpm >= expectedCostPpm
 }
 
+// newChannelAutoEnabledDefault: a channel we funded is born full and was
+// opened to sell, so the autopilot may refill it once it drains. A channel the
+// peer opened is born empty, and buying its first lot for a peer with no sales
+// is the operator's call (New Horizons, 17/10/2026: 1M at 555 ppm minutes after
+// being enabled by hand, nothing sold). With candidate scope
+// auto_and_manual_restart a channel with both flags off is never a target, so
+// the default decides whether a new channel ever gets a chance.
+func newChannelAutoEnabledDefault(initiator bool) bool {
+	return initiator
+}
+
 func (s *RebalanceService) reconcileNewChannelDefaults(ctx context.Context, channels []lndclient.ChannelInfo, settings map[uint64]channelSetting, exclusions map[uint64]bool) {
 	if s.db == nil || len(channels) == 0 {
 		return
@@ -3815,9 +3826,9 @@ func (s *RebalanceService) reconcileNewChannelDefaults(ctx context.Context, chan
 insert into rebalance_channel_settings (
   channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, auto_bypass_cost_gate, updated_at
 )
-values ($1,$2,$3,false,false,true,false,now())
+values ($1,$2,$3,$4,false,true,false,now())
  on conflict (channel_id) do update set channel_point=excluded.channel_point, updated_at=now()
-`, int64(ch.ChannelID), ch.ChannelPoint, rebalanceDefaultTargetOutboundPct)
+`, int64(ch.ChannelID), ch.ChannelPoint, rebalanceDefaultTargetOutboundPct, newChannelAutoEnabledDefault(ch.Initiator))
 		if err != nil {
 			seedReady = false
 			if s.logger != nil {
@@ -3830,6 +3841,7 @@ values ($1,$2,$3,false,false,true,false,now())
 			ChannelID:           ch.ChannelID,
 			ChannelPoint:        ch.ChannelPoint,
 			TargetOutboundPct:   rebalanceDefaultTargetOutboundPct,
+			AutoEnabled:         newChannelAutoEnabledDefault(ch.Initiator),
 			UseDefaultEconRatio: true,
 		})
 

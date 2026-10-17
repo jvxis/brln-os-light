@@ -833,6 +833,8 @@ export const openChannel = (payload: {
   sat_per_vbyte?: number
   private?: boolean
   outpoints?: string[]
+  fee_rate_ppm?: number
+  base_fee_msat?: number
 	confirm_password?: string
 }) => request('/api/lnops/channel/open', { method: 'POST', body: JSON.stringify(payload) })
 export const openBatchChannels = (payload: {
@@ -843,6 +845,8 @@ export const openBatchChannels = (payload: {
     local_funding_sat: number
     close_address?: string
     private?: boolean
+    fee_rate_ppm?: number
+    base_fee_msat?: number
   }>
   sat_per_vbyte?: number
 	confirm_password?: string

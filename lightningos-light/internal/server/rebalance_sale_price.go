@@ -44,9 +44,21 @@ const (
 )
 
 // realizedPriceCapDrained: nothing left to sell, so the realized price is
-// stale by construction.
-func realizedPriceCapDrained(cfg RebalanceConfig, localPct float64) bool {
-	return cfg.RealizedPriceCapEnabled && localPct < realizedPriceCapDrainedLocalPct
+// stale by construction. The band is 10% of capacity or half the channel's
+// target, whichever is larger: a seller with a 50% target that the retest
+// lot lifted to 16% is still empty for its purpose, and on 16/10 RA⚡KO,
+// PurpleWisteria and CoinPayments sat between 12% and 17%, out of the band,
+// back on the realized cap and not refilling (the "10% cliff").
+func realizedPriceCapDrained(cfg RebalanceConfig, localPct float64, targetPct float64) bool {
+	return cfg.RealizedPriceCapEnabled && localPct < realizedPriceCapDrainedBandPct(targetPct)
+}
+
+func realizedPriceCapDrainedBandPct(targetPct float64) float64 {
+	band := realizedPriceCapDrainedLocalPct
+	if half := targetPct / 2; half > band {
+		band = half
+	}
+	return band
 }
 
 // drainedRetestAmountSat bounds the lot bought at the advertised-fee cap to
@@ -101,11 +113,11 @@ func (p channelSalePrice) referencePpm() (int64, string) {
 // feeCapReferencePpm is the fee the autopilot prices its purchases against:
 // the advertised fee, or the realized sale price when it is lower and the
 // cap is on.
-func feeCapReferencePpm(cfg RebalanceConfig, advertisedPpm int64, salePricePpm int64, localPct float64) int64 {
+func feeCapReferencePpm(cfg RebalanceConfig, advertisedPpm int64, salePricePpm int64, localPct float64, targetPct float64) int64 {
 	if !cfg.RealizedPriceCapEnabled || salePricePpm <= 0 || salePricePpm >= advertisedPpm {
 		return advertisedPpm
 	}
-	if realizedPriceCapDrained(cfg, localPct) {
+	if realizedPriceCapDrained(cfg, localPct, targetPct) {
 		return advertisedPpm
 	}
 	return salePricePpm
@@ -114,7 +126,7 @@ func feeCapReferencePpm(cfg RebalanceConfig, advertisedPpm int64, salePricePpm i
 // realizedFeeCapPolicy builds the target policy used by calcFeeLimitMsat.
 func realizedFeeCapPolicy(ch RebalanceChannel, cfg RebalanceConfig) lndclient.ChannelPolicySnapshot {
 	return lndclient.ChannelPolicySnapshot{
-		FeeRatePpm:  feeCapReferencePpm(cfg, ch.OutgoingFeePpm, ch.SalePricePpm, ch.LocalPct),
+		FeeRatePpm:  feeCapReferencePpm(cfg, ch.OutgoingFeePpm, ch.SalePricePpm, ch.LocalPct, ch.TargetOutboundPct),
 		BaseFeeMsat: ch.OutgoingBaseMsat,
 	}
 }
@@ -193,4 +205,19 @@ group by chan_id`)
 		}
 	}
 	return out, rows.Err()
+}
+
+// autoTargetEligibility folds the two 0.5.45/0.5.46 rules on top of the cost
+// gate: a drained retest lot is bounded by its size, so it does not wait for
+// the historical cost to fit the budget (BitcoinVN, 15/10: one 1034 ppm lot
+// in cost7d kept the 923×0.8 retest ineligible); a channel with no sale in
+// 30 days is never an automatic target.
+func autoTargetEligibility(eligibleTarget, drainedRetest, eligibleManualTarget, noSale30d bool) bool {
+	if drainedRetest && eligibleManualTarget {
+		eligibleTarget = true
+	}
+	if noSale30d {
+		return false
+	}
+	return eligibleTarget
 }

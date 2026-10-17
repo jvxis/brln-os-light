@@ -3668,6 +3668,10 @@ func effectivePolicyPpm(ratePpm, baseMsat, amountSat int64) int64 {
 	return ratePpm + basePpm
 }
 
+// rebalancePaidLotFloorMinPct: paid liquidity in the window must be at least
+// this share of capacity for its cost to floor the advertised fee.
+const rebalancePaidLotFloorMinPct = 10
+
 func deriveRebalanceEconomicEnvelope(
 	cfg RebalanceConfig,
 	setting channelSetting,
@@ -3682,11 +3686,19 @@ func deriveRebalanceEconomicEnvelope(
 	peerFeePpm int64,
 	peerBaseMsat int64,
 	rebalanceCostPpm int64,
+	paidAmountSat int64,
+	capacitySat int64,
 ) rebalanceEconomicEnvelope {
 	feeCfg := effectiveConfigForTarget(cfg, setting)
-	referenceAmountSat := effectiveMinExecuteSat(feeCfg)
+	// Base fees are amortised over the lot the executor actually sends first
+	// (min_amount), not over the smallest fallback rung. At the 10k rung a
+	// 1 sat base fee is 100 ppm, and that artifact decided eligibility: Harry
+	// Potter (peer 24 ppm + 1 sat, sells at 119) needed 124 ppm against a 95
+	// budget and got no job for days, while its 100k lot costs 34 ppm. The
+	// executor still caps every attempt at its own amount (calcFeeLimitMsat).
+	referenceAmountSat := effectiveStartAmountSat(feeCfg)
 	if referenceAmountSat <= 0 {
-		referenceAmountSat = effectiveStartAmountSat(feeCfg)
+		referenceAmountSat = effectiveMinExecuteSat(feeCfg)
 	}
 	if referenceAmountSat <= 0 {
 		referenceAmountSat = 1
@@ -3705,6 +3717,14 @@ func deriveRebalanceEconomicEnvelope(
 	}
 
 	needsRefill := active && !parked && targetPct-localPct > cfg.DeadbandPct
+	// A paid lot only sets a floor when it is a meaningful share of the
+	// channel. BitcoinVN (6M) carried one 100k lot at 1034 ppm and the floor
+	// priced the whole channel at 1322, where it never sold, while it had
+	// just sold 742k in two minutes at 923. Below the share the cost is
+	// still reported, but the price is left to the realized sale.
+	if capacitySat > 0 && paidAmountSat*100 < capacitySat*rebalancePaidLotFloorMinPct {
+		rebalanceCostPpm = 0
+	}
 	paidCostKnown := rebalanceCostPpm > 0
 	remoteInboundColdStart := !initiator && needsRefill && (setting.AutoEnabled || setting.ManualRestartEnabled)
 	if !paidCostKnown && !remoteInboundColdStart {
@@ -6692,6 +6712,11 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 	}
 
 	targetPolicy := realizedFeeCapPolicy(targetSnapshot, feeCfg)
+	// The probe lot (see rebalanceRouteProbe) is priced on the advertised
+	// fee; its budget is one normal lot per job and only exists when the
+	// realized cap lowered this target's reference.
+	probePolicy := lndclient.ChannelPolicySnapshot{FeeRatePpm: targetSnapshot.OutgoingFeePpm, BaseFeeMsat: targetSnapshot.OutgoingBaseMsat}
+	probeBudgetSat := realizedCapProbeBudgetSat(feeCfg, targetPolicy, probePolicy)
 	maxFeeMsat, feeErr := calcFeeLimitMsat(amount*1000, targetPolicy, nil, feeCfg)
 	maxFeePpm := feeMsatToPpm(maxFeeMsat, amount)
 	if feeErr != nil || maxFeeMsat <= 0 || maxFeePpm <= 0 {
@@ -7057,14 +7082,29 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 			}
 		}
 
-		queryResult, err := queryRebalanceRoutesWithAmountFallback(attemptCtx, amountTry, feeLimitMsat, feeCfg, targetPolicy, &sourcePolicy,
+		var probe *rebalanceRouteProbe
+		if probeBudgetSat > 0 {
+			probe = &rebalanceRouteProbe{Policy: probePolicy, BudgetSat: probeBudgetSat}
+		}
+		queryResult, err := queryRebalanceRoutesWithAmountFallbackAndProbe(attemptCtx, amountTry, feeLimitMsat, feeCfg, targetPolicy, &sourcePolicy,
 			func(queryCtx context.Context, queryAmount, queryFee int64) ([]*lnrpc.Route, error) {
 				return s.lnd.QueryRoutesToChannel(queryCtx, selfPubkey, queryAmount, source.ChannelID, targetSnapshot.RemotePubkey, targetChannelID, queryFee, 5, ignoredEdges, ignoredPairs)
 			}, func(from, to int64) {
 				if s.logger != nil {
 					s.logger.Printf("rebalance job=%d: no-route amount fallback source=%d target=%d amount=%d->%d", jobID, source.ChannelID, targetChannelID, from, to)
 				}
-			})
+			}, probe)
+		// A probe lot carries the advertised fee through the rest of this
+		// attempt (route probing and resizes), and spends the job's probe
+		// budget whether or not the payment lands.
+		attemptTargetPolicy := targetPolicy
+		if queryResult.Probe {
+			attemptTargetPolicy = probePolicy
+			probeBudgetSat -= queryResult.AmountSat
+			if s.logger != nil {
+				s.logger.Printf("rebalance job=%d: realized-cap probe lot source=%d target=%d amount=%d fee_limit_ppm=%d (realized cap %d ppm)", jobID, source.ChannelID, targetChannelID, queryResult.AmountSat, feeMsatToPpm(queryResult.FeeLimitMsat, queryResult.AmountSat), feeLimitPpm)
+			}
+		}
 		// Only the exhausted search is a pair/structural failure. A miss at a
 		// larger amount must not quarantine this source before smaller queries.
 		amountFallbackUsed := queryResult.AmountSat < amountTry
@@ -7120,7 +7160,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 			routeFeeLimitPpm := feeLimitPpm
 			activeRoute := route
 			if cfg.AmountProbeSteps > 0 {
-				maxAmount, probeErr := s.probeRoute(attemptCtx, route, amountTry, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, targetPolicy, sourcePolicy, feeCfg)
+				maxAmount, probeErr := s.probeRoute(attemptCtx, route, amountTry, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, attemptTargetPolicy, sourcePolicy, feeCfg)
 				if probeErr != nil {
 					lastErr = probeErr
 					continue
@@ -7138,7 +7178,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 						lastErr = errors.New("probe amount below execute minimum")
 						continue
 					}
-					maxFeeMsat, err := calcFeeLimitMsat(routeAmount*1000, targetPolicy, &sourcePolicy, feeCfg)
+					maxFeeMsat, err := calcFeeLimitMsat(routeAmount*1000, attemptTargetPolicy, &sourcePolicy, feeCfg)
 					if amountFallbackUsed {
 						maxFeeMsat = rebalanceResizedFeeLimit(routeAmount, queryResult.AmountSat, queryResult.FeeLimitMsat, maxFeeMsat)
 					}
@@ -7258,13 +7298,13 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 				if routeFailure.Code == lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE &&
 					feeCfg.AmountProbeSteps > 0 &&
 					int(routeFailure.FailureSourceIndex) == len(activeRoute.Hops)-2 {
-					maxAmount, probeErr := s.probeRoute(attemptCtx, activeRoute, routeAmount, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, targetPolicy, sourcePolicy, feeCfg)
+					maxAmount, probeErr := s.probeRoute(attemptCtx, activeRoute, routeAmount, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, attemptTargetPolicy, sourcePolicy, feeCfg)
 					if probeErr == nil && maxAmount > 0 {
 						if feeCfg.MinSplitEnabled && minExecuteSat > 0 && maxAmount < minExecuteSat {
 							lastErr = errors.New("probe amount below execute minimum")
 							continue
 						}
-						retryFeeMsat, retryErr := calcFeeLimitMsat(maxAmount*1000, targetPolicy, &sourcePolicy, feeCfg)
+						retryFeeMsat, retryErr := calcFeeLimitMsat(maxAmount*1000, attemptTargetPolicy, &sourcePolicy, feeCfg)
 						if amountFallbackUsed {
 							retryFeeMsat = rebalanceResizedFeeLimit(maxAmount, queryResult.AmountSat, queryResult.FeeLimitMsat, retryFeeMsat)
 						}
@@ -10410,8 +10450,8 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	// the realized price cap is on; the floor the envelope solves for stays
 	// in advertised-fee terms.
 	salePricePpm, salePriceSource := salePrice.referencePpm()
-	feeCapReference := feeCapReferencePpm(cfg, outgoingFee, salePricePpm, localPct)
-	drainedRetest := salePricePpm > 0 && salePricePpm < outgoingFee && realizedPriceCapDrained(cfg, localPct)
+	feeCapReference := feeCapReferencePpm(cfg, outgoingFee, salePricePpm, localPct, target)
+	drainedRetest := salePricePpm > 0 && salePricePpm < outgoingFee && realizedPriceCapDrained(cfg, localPct, target)
 	if drainedRetest {
 		salePriceSource = "drained_retest"
 	}
@@ -10425,6 +10465,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	economicEnvelope := deriveRebalanceEconomicEnvelope(
 		cfg, setting, ch.Initiator, ch.Active, parked, peerPolicyKnown,
 		localPct, target, feeCapReference, outgoingBaseMsat, peerFeeRate, peerBaseMsat, cost7d.FeePpm,
+		cost7d.AmountSat, ch.CapacitySat,
 	)
 
 	eligibleTarget := false
@@ -10447,9 +10488,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 			eligibleTarget = true
 		}
 	}
-	if noSale30d {
-		eligibleTarget = false
-	}
+	eligibleTarget = autoTargetEligibility(eligibleTarget, drainedRetest, eligibleManualTarget, noSale30d)
 
 	sourceFloorPct := cfg.SourceMinLocalPct
 	if sourceFloorPct <= 0 || sourceFloorPct > 100 {

@@ -5,6 +5,7 @@
 - LightningOS is not designed or supported for direct public Internet/WAN exposure. Port 8443 and App Store ports must never be publicly forwarded.
 - The installers add and verify a LAN-restricted port 8443 rule only when UFW is already installed and active. They do not activate UFW automatically because that could lock out SSH or unrelated services on existing nodes.
 - UFW absent, inactive, a missing trusted network, a broad 8443 rule, or a failed post-apply verification are explicit non-protected states and cannot create the system-integration success marker.
+- An app whose proxy asks the manager to authorize requests (BR⚡LN Community, Bark Wallet) is admitted to port 8443 only on its own Docker bridge and from that network's private IPv4 subnet, read from Docker on every app start through LOS. The restricted rule is added before the unrestricted rule of earlier versions is removed, preserving existing access on failure. Only the current app's bridge is migrated; unrelated or orphaned rules are never deleted merely because an interface is absent (issue #264). See [migration and validation](VALIDATION_0.5.46_MANAGER_BRIDGE_FIREWALL.md).
 - The System Pulse UI lets an authenticated operator select verified LAN-only or Tailscale-only access. Continuing with an upstream/alternative firewall requires an explicit unprotected acknowledgement; it is still displayed as unprotected.
 - The exposure workflow never changes SSH rules and never restarts Bitcoin or LND.
 

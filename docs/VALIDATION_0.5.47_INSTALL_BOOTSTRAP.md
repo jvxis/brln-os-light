@@ -87,3 +87,18 @@ maintainer explicitly accepts and documents a narrower validation scope:
 
 No production node, funded LND service or persistent Bitcoin data is a fixture.
 No full Linux installation, real UI upgrade or ARM runtime result is claimed.
+
+## Authorized Linux attempt — blocked before guest boot
+
+On 2026-10-17 the maintainer authorized reuse and subsequent shutdown of
+`los-disposable-0542-logs` (UUID `3619cb5d-2889-448e-94cd-1dbf8a4a181e`).
+It was powered off, configured with 2 vCPU / 4 GiB RAM. Headless startup failed
+in VirtualBox 7.2.14 before Ubuntu booted: `Unhandled error 1455` while allocating
+the guest RAM (`pgmR3PhysInitAndLinkRamRange`, `VERR_UNRESOLVED_ERROR`).
+
+Read-only Windows counters showed approximately 68.5 GiB committed against a
+71.9 GiB commit limit (95%), leaving less than the requested guest RAM plus
+overhead. This is a host memory-allocation blocker, not a bootstrap test failure.
+No guest test or installer ran. The VM remains powered off; disks and logs are
+preserved. Host paging/virtualization/network settings and other VMs were not
+changed. The Linux gates above remain pending and the PR remains draft.

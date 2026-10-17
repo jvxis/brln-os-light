@@ -1,5 +1,20 @@
 # 0.5.47: first installation from the modern release catalog
 
+## Final result and accepted scope
+
+**Passed:** complete first installation on a clean Ubuntu 24.04 amd64 clone,
+using the candidate bootstrap with license acceptance and the default target.
+It selected the actual immutable Latest `0.5.46-Beta`, compiled/installed the
+application, and passed browser, HTTPS, initial admin setup/login and real
+Manager-to-broker checks. The installed LND binary is `0.21.4-beta`; its service
+correctly awaits the first Bitcoin RPC/wallet wizard configuration.
+
+The maintainer explicitly limited acceptance to new `install.sh` installations,
+excluding existing-node and native ARM integration scenarios. The UI updater is
+unchanged. Earlier plans and blocked attempts below are retained as history;
+the complete-installation evidence and remaining configuration limits are at
+the end of this document.
+
 ## Scope and preserved behavior
 
 `lo_bootstrap.sh` now resolves GitHub Latest in `jvxis/brln-os-light-updates`.
@@ -70,10 +85,11 @@ For the expected-failure baseline regression, set
 `test_latest_dispatch_all_installers_and_repeat` test only. On Windows set
 `BOOTSTRAP_TEST_BASH=C:/Program Files/Git/bin/bash.exe` and use `python`.
 
-## Required gates before readiness
+## Original validation plan
 
-Keep the PR **draft** until these real installation paths are validated, or the
-maintainer explicitly accepts and documents a narrower validation scope:
+The initial plan kept the PR draft until the following paths were validated or
+the maintainer accepted a narrower scope. That scope was subsequently narrowed
+to first installation; see the final result and maintainer decision below:
 
 - Fresh Ubuntu amd64 `install.sh` with this bootstrap selecting the actual
   published release: installed UI/Manager/broker versions and service health.
@@ -170,3 +186,118 @@ stays draft. The original HTTP 403 log was preserved separately from the new
 Postcheck matched the baseline: LND, Bitcoin, Manager and broker socket inactive;
 Docker active with no running containers. The VM was shut down after testing;
 disks and logs were preserved.
+
+## Maintainer scope decision
+
+The maintainer explicitly narrowed acceptance to a complete first LOS
+installation through the default `install.sh` bootstrap. Native arm64 and
+`install_existing.sh` integration scenarios are excluded from this PR's
+acceptance scope; their automated selection/re-entry coverage remains recorded
+above. The UI updater implementation is unchanged and its separate old-client
+upgrade matrix is not part of this new-install bootstrap validation.
+
+The earlier reused VM contained inactive LOS binaries and configuration from
+previous tests. It therefore cannot establish first-install behavior. A new full
+clone of the powered-off protected template was created for that purpose:
+`los-disposable-0547-bootstrap-fresh`, UUID
+`64455cd6-4749-4384-bfbe-f70e81e10988`, 2 vCPU / 4 GiB, Ubuntu 24.04 amd64,
+kernel 6.14.0-37-generic. Baseline confirmed no LOS configuration/binaries,
+no LND unit or wallet database, and no active Bitcoin or Docker service.
+
+The template lacked curl. The first attempt correctly rejected the missing
+prerequisite before cloning or installing application components; evidence was
+preserved as `missing-curl.log`. The README prerequisite command then installed
+`ca-certificates curl git python3`, and the same candidate bootstrap was retried
+with `ACCEPT_MIT_LICENSE=1` and its default `/opt/brln-os-light` target. The
+bootstrap SHA-256 matched the host checkout:
+`a98f9468ca1f836bbe0d1fa264e8bac21470fc454341eb62572a54d09e6e1f5d`.
+
+### Test harness correction
+
+The first new clone's collector used systemd `UMask=0077` to protect its raw log,
+but accidentally passed that setting to the installer. Its Manager directory
+was consequently created as root-owned `0700`; that run is not accepted as the
+documented default Ubuntu installation scenario. The VM and its evidence were
+preserved and it was powered off. No application-source change or manual
+permission repair was used to turn that run into a passing result.
+
+The acceptance run instead uses another fresh full clone,
+`los-disposable-0547-bootstrap-default`, UUID
+`58dc436e-9329-4c63-91ac-a4201804d915`, same Ubuntu baseline and sizing. The
+collector explicitly invokes the unchanged candidate bootstrap in a subshell
+with the normal `umask 022`, while keeping its raw log file at `0600`. Baseline
+again confirmed no LOS/LND/Bitcoin installation, wallet or running Docker.
+README prerequisites are installed before invoking the bootstrap.
+
+## Complete first-installation result — 2026-10-17
+
+Acceptance VM: `los-disposable-0547-bootstrap-default`, UUID
+`58dc436e-9329-4c63-91ac-a4201804d915`. Baseline and sizes are recorded above.
+The candidate bootstrap was run with `ACCEPT_MIT_LICENSE=1`, normal `umask 022`,
+the default target and no ref/catalog/source override. Its source matched the
+committed bootstrap SHA-256 recorded above. The real public release selected
+was `0.5.46-Beta`, commit `3a3b03d110a9fa37426cff92c451ebc8bfaeeb94`.
+
+The unchanged released installer completed with **exit 0**, recorded at
+2026-10-17 13:20:46 UTC. The Ubuntu unattended-upgrade apt lock was handled by
+the installer itself. No application permission/configuration repair, package
+verification bypass, prebuilt replacement binary or manual service restart was
+used to make this acceptance run pass.
+
+Observed installation and functional checks:
+
+- PostgreSQL 18 provisioned and active; Tor, i2pd, Go and Node prerequisites
+  installed through the normal installer path.
+- LND `0.21.4-beta` authenticated with six pinned signers and archive SHA-256,
+  then installed. Its service is enabled and inactive by design until the
+  operator configures Bitcoin RPC and a wallet in the wizard. No wallet was
+  created, seed generated, or Bitcoin/App Store container installed.
+- Manager and broker/mesh built from the attested source; installed broker and
+  mesh bytes match their freshly compiled `dist` binaries.
+- Manager runs as `lightningos`, with `NRestarts=0`; the broker socket is active
+  and listening. `runuser -u lightningos --
+  /opt/lightningos/manager/lightningos-manager broker-self-test` passed against
+  the actual installed privileged socket.
+- Installed UI `version.txt` is `0.5.46-Beta` and agrees with the source. Runtime
+  Manager/UI directories are root-owned `0755`, with the raw test log `0600`.
+  Repository-only `.github` content is excluded.
+- Verified HTTPS loaded the UI and both referenced JS/CSS assets. Headless Edge
+  rendered the actual first-admin setup screen with two password inputs, the
+  expected version, and zero JavaScript page errors. Browser test requests used
+  Node HTTPS with the exact guest CA obtained over verified SSH; no Windows
+  trust-store change or certificate-validation bypass was used. Screenshot:
+  `D:/Cache/Temp/los0547-first-install-setup.png` (local test artifact).
+- The admin setup endpoint accepted a locally issued one-time token and an
+  ephemeral password held only in test-process memory. Authenticated App Store
+  and wizard GETs returned HTTP 200; the wizard correctly reported no wallet.
+  Logout, password login and logout again succeeded with session cookies/CSRF
+  handled by the client. Tokens, password and cookies were not printed or added
+  to the repository.
+
+The initial API smoke request omitted `Origin` and was rejected with HTTP 403,
+as required by the installed same-origin middleware. After adding the correct
+origin to the test client, the full smoke passed; the rejected request did not
+configure an admin password. Both smoke logs were preserved separately. The
+first browser launch also found a missing bundled Chromium executable on the
+Windows test host; using its installed Edge channel completed the browser run.
+Neither issue required an application change.
+
+Installer warnings were checked rather than treated as successful checks:
+
+- The immediate listener check raced Manager startup. Subsequent HTTPS checks
+  and the browser succeeded on 8443 without restarting Manager; `NRestarts=0`.
+- UFW remains inactive in this isolated template, exactly as documented in
+  both READMEs: installation does not enable it automatically. This run does
+  not claim protected network exposure. Configure the documented LAN/VPN
+  firewall before operating a real node.
+- The health API returns HTTP 200 with overall `ERR` specifically for missing
+  LND TLS and unreachable Bitcoin RPC before the wizard. These two issues were
+  read back explicitly; a synchronized/configured Lightning node is not claimed.
+
+Guest evidence: `/var/lib/los0547-bootstrap-validation/full-install.log`,
+`full-install.exit`, `functional-smoke.log` and
+`functional-smoke-with-origin.log`. The owner-requested first-install bootstrap
+acceptance gate is complete; existing-node, native ARM and old-client upgrade
+integration tests are not claimed. The lab VMs were shut down afterwards with
+disks/logs preserved; the protected template, LOS-TEST2 and production nodes
+were not changed.

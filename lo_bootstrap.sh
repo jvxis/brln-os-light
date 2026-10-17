@@ -5,8 +5,10 @@ REPO_URL_DEFAULT="https://github.com/jvxis/brln-os-light"
 REPO_URL="${REPO_URL:-$REPO_URL_DEFAULT}"
 TARGET_DIR="${BRLN_DIR:-/opt/brln-os-light}"
 REF_OVERRIDE="${BRLN_REF:-${BRLN_BRANCH:-}}"
-RELEASE_API_URL="${BRLN_RELEASE_API_URL:-https://api.github.com/repos/jvxis/brln-os-light/releases?per_page=10}"
-RELEASE_TAG_API_BASE="https://api.github.com/repos/jvxis/brln-os-light/releases/tags"
+RELEASE_API_URL="https://api.github.com/repos/jvxis/brln-os-light-updates/releases/latest"
+RELEASE_TAG_API_BASE="https://api.github.com/repos/jvxis/brln-os-light-updates/releases/tags"
+RELEASE_REPO_URL="https://github.com/jvxis/brln-os-light-updates.git"
+EXPECTED_COMMIT=""
 INSTALLER="${BRLN_INSTALLER:-install.sh}"
 GIT_USER="${BRLN_GIT_USER:-}"
 
@@ -50,24 +52,41 @@ configure_runtime_sparse_checkout() {
     || die "Failed to exclude repository-only GitHub metadata from the node checkout."
 }
 
-resolve_latest_release() {
-  require_cmd curl
-
-  local response=""
-  local tag=""
-  response=$(curl -fsSL \
+release_request() {
+  curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --connect-timeout 15 --max-time 45 --max-filesize 1048576 -fsSL \
     -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2026-03-10" \
     -H "User-Agent: lightningos-bootstrap" \
-    "$RELEASE_API_URL") || die "Failed to query published LightningOS releases."
-  while IFS= read -r line; do
-    if [[ "$line" =~ \"tag_name\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
-      tag="${BASH_REMATCH[1]}"
-      break
-    fi
-  done <<< "$response"
+    "$1"
+}
 
-  [[ -n "$tag" ]] || die "No published LightningOS release was found."
-  echo "$tag"
+# Parse the actual JSON object, not nested fields or whitespace-dependent grep.
+# Python 3 is a bootstrap prerequisite on the supported Ubuntu hosts.
+release_tag_from_json() {
+  python3 -c '
+import json, re, sys
+try:
+    release = json.load(sys.stdin)
+    if not isinstance(release, dict):
+        raise ValueError("expected a release object")
+    if release.get("immutable") is not True or release.get("draft") is not False or release.get("prerelease") is not False:
+        raise ValueError("release must be immutable, published and not a prerelease")
+    tag = release.get("tag_name", "")
+    if not isinstance(tag, str) or not re.fullmatch(r"[vV]?[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?", tag):
+        raise ValueError("invalid release tag")
+    print(tag)
+except (ValueError, TypeError) as error:
+    print("[ERROR] Invalid LightningOS release metadata: " + str(error), file=sys.stderr)
+    sys.exit(1)
+'
+}
+
+resolve_latest_release() {
+  local response=""
+  response=$(release_request "$RELEASE_API_URL") \
+    || die "Failed to query published LightningOS releases; no legacy catalog fallback."
+  printf '%s' "$response" | release_tag_from_json
 }
 
 resolve_ref() {
@@ -82,19 +101,47 @@ resolve_ref() {
 verify_immutable_release() {
   local tag="$1"
   local response=""
-  response=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
-    --connect-timeout 15 --max-time 45 --max-filesize 1048576 -fsSL \
-    -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2026-03-10" \
-    -H "User-Agent: lightningos-bootstrap" \
-    "${RELEASE_TAG_API_BASE}/${tag}") \
+  local verified_tag=""
+  local remote_refs=""
+  response=$(release_request "${RELEASE_TAG_API_BASE}/${tag}") \
     || die "Failed to retrieve the LightningOS release attestation."
-  printf '%s' "$response" | grep -Eq '"immutable"[[:space:]]*:[[:space:]]*true([,}])' \
+  verified_tag=$(printf '%s' "$response" | release_tag_from_json) \
     || die "LightningOS release is not immutable and attested."
-  printf '%s' "$response" | grep -Eq '"draft"[[:space:]]*:[[:space:]]*false([,}])' \
-    || die "LightningOS release is not published."
-  printf '%s' "$response" | grep -Fq "\"tag_name\":\"${tag}\"" \
+  [[ "$verified_tag" == "$tag" ]] \
     || die "LightningOS release attestation tag mismatch."
+  # The release target_commitish can be 'main'. Resolve the immutable tag itself,
+  # including annotated tags, and compare it to the source checkout before exec.
+  remote_refs=$(git ls-remote --exit-code "$RELEASE_REPO_URL" "refs/tags/$tag" "refs/tags/$tag^{}") \
+    || die "Failed to resolve immutable release source tag."
+  EXPECTED_COMMIT=$(printf '%s\n' "$remote_refs" | python3 -c '
+import re, sys
+tag = "refs/tags/" + sys.argv[1]
+refs = dict((ref, sha) for sha, ref in (line.split() for line in sys.stdin if line.strip()))
+commit = refs.get(tag + "^{}", refs.get(tag, ""))
+if not re.fullmatch(r"[0-9a-f]{40}", commit):
+    sys.exit("Invalid immutable release commit")
+print(commit)
+' "$tag") || die "Invalid immutable release source tag."
+}
+
+verify_release_checkout() {
+  local tag="$1"
+  local actual_commit=""
+  local tag_commit=""
+  local actual_version=""
+  actual_commit=$(repo_git rev-parse HEAD) || die "Cannot resolve checked-out commit."
+  tag_commit=$(repo_git rev-parse --verify "refs/tags/$tag^{commit}") \
+    || die "Release tag is missing from the source checkout; installer was not run."
+  [[ "$tag_commit" == "$EXPECTED_COMMIT" ]] \
+    || die "Source tag does not match the immutable release commit; installer was not run."
+  [[ "$actual_commit" == "$EXPECTED_COMMIT" ]] \
+    || die "Source tag does not match the immutable release commit; installer was not run."
+  actual_version=$(tr -d '\r\n' < "$TARGET_DIR/lightningos-light/ui/public/version.txt") \
+    || die "Cannot read source version."
+  actual_version="${actual_version#[vV]}"
+  tag="${tag#[vV]}"
+  [[ "${actual_version,,}" == "${tag,,}" ]] \
+    || die "Source version does not match the release tag; installer was not run."
 }
 
 ensure_repo() {
@@ -112,7 +159,7 @@ ensure_repo() {
     repo_git fetch --tags --prune origin
     if repo_git show-ref --verify --quiet "refs/tags/$ref"; then
       repo_git checkout --detach "refs/tags/$ref"
-    elif repo_git show-ref --verify --quiet "refs/remotes/origin/$ref"; then
+    elif [[ -n "$REF_OVERRIDE" && "$REF_OVERRIDE" != "latest" ]] && repo_git show-ref --verify --quiet "refs/remotes/origin/$ref"; then
       repo_git checkout -B "$ref" "origin/$ref"
     else
       die "LightningOS ref not found after fetch: $ref"
@@ -146,6 +193,19 @@ main() {
     *) die "Invalid BRLN_INSTALLER: $INSTALLER" ;;
   esac
 
+  if [[ -z "$REF_OVERRIDE" || "$REF_OVERRIDE" == "latest" ]]; then
+    require_cmd curl
+    require_cmd python3
+    [[ -z "${BRLN_RELEASE_API_URL:-}" || "$BRLN_RELEASE_API_URL" == "$RELEASE_API_URL" ]] \
+      || die "Custom release catalogs are not supported for verified installations."
+    case "${REPO_URL%.git}" in
+      https://github.com/jvxis/brln-os-light|git@github.com:jvxis/brln-os-light|ssh://git@github.com/jvxis/brln-os-light) ;;
+      *) die "Verified installations require the official source repository." ;;
+    esac
+  else
+    warn "Explicit BRLN_REF/BRLN_BRANCH: development checkout, not an attested latest-release installation."
+  fi
+
   local ref
   ref=$(resolve_ref)
   log "Using LightningOS release/ref: $ref"
@@ -154,6 +214,10 @@ main() {
     log "Immutable LightningOS release attestation verified"
   fi
   ensure_repo "$ref"
+  if [[ -n "$EXPECTED_COMMIT" ]]; then
+    verify_release_checkout "$ref"
+    log "Source commit and version match the immutable release"
+  fi
 
   local install_dir="$TARGET_DIR/lightningos-light"
   local install_script="$install_dir/$INSTALLER"

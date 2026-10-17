@@ -62,7 +62,9 @@ LightningOS é um instalador completo de daemon de nó Lightning, com gerenciado
 - **Observabilidade e comunicação:** notificações live, backups SCB e resumos via Telegram, relatórios e backfills de roteamento, APIs de movimento/live, chat Keysend, eventos de auditoria, logs de serviços e terminal web opcional protegido.
 - **Ecossistema Bitcoin e Liquid:** Bitcoin Core remoto ou local, Elements com seleção de mainchain local/remota, Peerswap, fallbacks de proveniência do Wallet Flow, Taproot Assets e apps de carteira, mineração, federação, analytics, pagamentos e infraestrutura self-hosted.
 
-## Estrutura do repositório
+## Estrutura do repositório
+Os caminhos abaixo são relativos a `lightningos-light/`.
+
 - `cmd/lightningos-manager`: backend Go (API + UI estática)
 - `ui`: UI React + Tailwind
 - `templates`: units systemd e templates de configuração
@@ -77,32 +79,49 @@ Primeiro node? O passo a passo cobre o que você precisa, a instalação e os pr
 O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort habilitado) + i2pd habilitado por padrão
-- Go 1.24.12 e a major mais recente do Node.js (fallback para Node.js 20.x se a detecção falhar)
-- Binários do LND (padrão `v0.21.2-beta`)
+- Go fixado em `lightningos-light/scripts/go-toolchain.conf` (atualmente 1.26.8) e Node.js 24.x (uma major mais nova já instalada é mantida)
+
+- Binários do LND fixados pela release selecionada (atualmente `v0.21.4-beta` para nodes novos)
+
 - Binário do LightningOS Manager (compilado localmente)
 - Build da UI (compilada localmente)
 - Serviços systemd e templates de configuração
 - CA local exclusiva do node, certificado TLS para a LAN e descoberta `.local` automática
 
-O instalador conhecido pelos usuarios muda automaticamente para a ultima release publicada do LightningOS antes da instalacao:
+Em um Ubuntu Server limpo, primeiro garanta os pré-requisitos do bootstrap:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git python3
+```
+
+O instalador de um clone atual seleciona automaticamente a última release publicada no [catálogo de updates](https://github.com/jvxis/brln-os-light-updates/releases/latest). Instalações novas **não** precisam passar pela 0.5.40. Essa etapa continua obrigatória somente no upgrade de Managers antigos já instalados; não execute novamente um instalador para atualizar uma instalação existente do LightningOS.
+
+Para instalar um node nativo novo:
+
 ```bash
 git clone https://github.com/jvxis/brln-os-light
 cd brln-os-light/lightningos-light
 sudo ./install.sh
 ```
 
-Se você já clonou e está em `brln-os-light`, use:
+Se você já tem um clone atual e sem alterações locais em `brln-os-light` e ainda não instalou o LOS, use:
+
 ```bash
 cd lightningos-light
 sudo ./install.sh
 ```
 
-Para desenvolvimento ou instalacao offline do checkout local exato, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install.sh`.
+Para desenvolvimento a partir do checkout local exato, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install.sh`. Isso pula a seleção/verificação da release; não torna o instalador offline (pacotes e dependências de compilação ainda exigem acesso à rede).
+
 
 Quando o UFW já está instalado e ativo, o instalador detecta automaticamente qual rede IPv4 local pode acessar o manager (por exemplo, `192.168.1.0/24`). Ele remove a regra pública antiga de `8443/tcp`, libera a descoberta mDNS na LAN em `5353/udp` e também libera o acesso pela interface `tailscale0` quando o Tailscale está disponível. O instalador deliberadamente não ativa o UFW em um host existente, pois isso poderia bloquear o SSH ou outros serviços do node; portanto, UFW ausente ou inativo exige que o operador configure um firewall equivalente para LAN/VPN.
 
 ### Instalação via curl (bootstrap)
-Isso identifica a ultima release publicada do LightningOS, faz checkout da tag exata e depois roda `lightningos-light/install.sh`.
+Com os pré-requisitos acima, o bootstrap seleciona a release **Latest** publicada, imutável e não marcada como prerelease no catálogo de updates. Faz checkout da tag correspondente no repositório oficial de código, confere o commit com a tag imutável do catálogo e verifica `version.txt` antes de executar `lightningos-light/install.sh`. O sufixo `-Beta` das nossas versões não é a marcação de prerelease do GitHub. Falhas de descoberta/verificação interrompem a instalação; não há fallback para a 0.5.40 ou para a `main` de desenvolvimento.
+
+`ACCEPT_MIT_LICENSE=1` aceita a licença MIT do projeto e é necessário no comando não interativo via pipe:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo ACCEPT_MIT_LICENSE=1 bash
 ```
@@ -110,35 +129,38 @@ curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstr
 Overrides opcionais:
 ```bash
 # Usar outro caminho de clone
-curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_DIR=/opt/brln-os-light bash
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo ACCEPT_MIT_LICENSE=1 BRLN_DIR=/opt/brln-os-light bash
+
 
-# Fixar branch/tag em vez da ultima release publicada
-curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_REF=main bash
+# Somente desenvolvimento/testes: ref explícita pula a verificação de release imutável
+
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo ACCEPT_MIT_LICENSE=1 BRLN_REF=main bash
+
 
 # Instalar em node existente x86_64/amd64
-curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_INSTALLER=install_existing.sh bash
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo ACCEPT_MIT_LICENSE=1 BRLN_INSTALLER=install_existing.sh bash
+
 
 # Instalar em node existente Raspberry Pi 4 (arm64)
-curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_INSTALLER=install_existing_pi.sh bash
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo ACCEPT_MIT_LICENSE=1 BRLN_INSTALLER=install_existing_pi.sh bash
+
 
-# Usar outra URL de repositório
-curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo REPO_URL=https://github.com/jvxis/brln-os-light bash
+
 ```
 
 Nota de UFW (App Store/LNDg):
 Se o LNDg não alcançar o LND gRPC e o UFW estiver ativo, tráfego Docker-to-host pode ser bloqueado.
-Rode os checks abaixo e permita a interface bridge usada pela rede do LNDg:
+Comece com verificações somente de leitura do container e da rede reais (os nomes podem variar):
+
 ```bash
 sudo docker exec -it lndg-lndg-1 getent hosts host.docker.internal
 sudo docker exec -it lndg-lndg-1 bash -lc 'timeout 3 bash -lc "</dev/tcp/host.docker.internal/10009" && echo OK || echo FAIL'
 sudo docker network inspect lndg_default --format '{{.Id}}'
-# nome da bridge = br-<primeiros 12 caracteres do id>
-sudo ufw allow in on br-<id> to any port 10009 proto tcp
+sudo ufw status numbered
+
 ```
-Se ainda falhar, tente:
-```bash
-sudo iptables -I INPUT -i br-<id> -p tcp --dport 10009 -j ACCEPT
-```
+Não adicione exceções amplas no UFW/iptables nem exponha o gRPC do LND como solução genérica. Relate o erro sanitizado e o contexto de rede para diagnóstico; falhas de firewall, TLS e macaroon exigem correções diferentes.
+
 
 **Atenção (nós existentes):** Se você já tem um nó Lightning com LND/Bitcoin rodando, não use `install.sh`.
 Siga o guia de Nó Existente:

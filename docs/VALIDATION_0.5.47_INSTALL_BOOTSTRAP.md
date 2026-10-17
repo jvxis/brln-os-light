@@ -141,3 +141,32 @@ The guest was shut down after testing, as authorized, with disks and logs
 preserved. No production/test node, host network or paging configuration was
 changed. The PR remains draft with the installation/upgrade/ARM gates above
 explicitly pending; these Linux bootstrap tests do not replace those gates.
+
+## Public catalog retry after rate-limit reset — 2026-10-17
+
+At 12:59 UTC the public catalog again returned HTTP 200. The same disposable VM
+was started and its baseline rechecked. Ubuntu boot was slow (a guest clock
+watchdog delay was observed), but SSH recovered without a reset or host changes.
+
+The unmodified candidate bootstrap then completed the real public-network path:
+
+- Selected `0.5.46-Beta` from the updates catalog, not the legacy `0.5.40` bridge.
+- Verified immutable release metadata and the catalog tag.
+- Cloned the official source repository and verified both its tag/HEAD and
+  version against commit `3a3b03d110a9fa37426cff92c451ebc8bfaeeb94`.
+- Invoked the actual released installer, which intentionally exited at its
+  initial license gate because this bounded test set `ACCEPT_MIT_LICENSE=0`.
+- Repeated the real-network selection with `install_existing.sh`,
+  `install_existing_pi.sh`, and `install.sh` again. All reached that same gate,
+  with no old-bootstrap recursion, a clean checkout and `.github` excluded.
+
+This closes the public catalog/checkout/dispatch validation gap. It does **not**
+claim a complete installation, native ARM execution, existing-node migration or
+old-client UI upgrade. The critical installation gates remain pending and the PR
+stays draft. The original HTTP 403 log was preserved separately from the new
+`public-catalog-after-reset.log` and `public-install*.sh.log` evidence in
+`/var/lib/los0547-bootstrap-validation`.
+
+Postcheck matched the baseline: LND, Bitcoin, Manager and broker socket inactive;
+Docker active with no running containers. The VM was shut down after testing;
+disks and logs were preserved.

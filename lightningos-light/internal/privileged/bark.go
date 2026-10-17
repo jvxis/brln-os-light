@@ -248,22 +248,9 @@ func (manager *NativeBarkWalletManager) EnsureFirewall(ctx context.Context, dryR
 	if err != nil || !strings.Contains(strings.ToLower(status), "status: active") {
 		return BarkWalletState{Status: "inactive"}, nil
 	}
-	networkID, err := manager.Runner.Run(ctx, dockerPath, "network", "inspect", appmanifest.BarkWalletProject+"_default", "--format", "{{.Id}}")
-	if err != nil {
-		return BarkWalletState{}, errors.New("Bark Wallet network lookup failed")
-	}
-	id := strings.TrimSpace(networkID)
-	if len(id) < 12 || len(id) > 64 {
-		return BarkWalletState{}, errors.New("Bark Wallet network ID is invalid")
-	}
-	for _, char := range id {
-		if !strings.ContainsRune("0123456789abcdef", char) {
-			return BarkWalletState{}, errors.New("Bark Wallet network ID is invalid")
-		}
-	}
-	bridge := "br-" + id[:12]
-	if _, err := manager.Runner.Run(ctx, ufwPath, "allow", "in", "on", bridge, "to", "any", "port", "8443", "proto", "tcp"); err != nil {
-		return BarkWalletState{}, errors.New("Bark Wallet manager authorization firewall preparation failed")
+	// Only the app's own subnet reaches the Manager; see manager_bridge_firewall.go (issue #264).
+	if err := allowManagerFromAppBridge(ctx, manager.Runner, appmanifest.BarkWalletProject, status); err != nil {
+		return BarkWalletState{}, errors.New("Bark Wallet " + err.Error())
 	}
 	if _, err := manager.Runner.Run(ctx, ufwPath, "allow", strconv.Itoa(appmanifest.BarkWalletPort)+"/tcp"); err != nil {
 		return BarkWalletState{}, errors.New("Bark Wallet firewall preparation failed")

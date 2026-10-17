@@ -214,22 +214,9 @@ func (manager *NativeBRLNCommunityManager) EnsureFirewall(ctx context.Context, d
 	if err != nil || !strings.Contains(strings.ToLower(status), "status: active") {
 		return BRLNCommunityState{Status: "inactive"}, nil
 	}
-	networkID, err := manager.Runner.Run(ctx, dockerPath, "network", "inspect", appmanifest.BRLNCommunityProject+"_default", "--format", "{{.Id}}")
-	if err != nil {
-		return BRLNCommunityState{}, errors.New("BR⚡LN Community network lookup failed")
-	}
-	id := strings.TrimSpace(networkID)
-	if len(id) < 12 || len(id) > 64 {
-		return BRLNCommunityState{}, errors.New("BR⚡LN Community network ID is invalid")
-	}
-	for _, char := range id {
-		if !strings.ContainsRune("0123456789abcdef", char) {
-			return BRLNCommunityState{}, errors.New("BR⚡LN Community network ID is invalid")
-		}
-	}
-	bridge := "br-" + id[:12]
-	if _, err := manager.Runner.Run(ctx, ufwPath, "allow", "in", "on", bridge, "to", "any", "port", "8443", "proto", "tcp"); err != nil {
-		return BRLNCommunityState{}, errors.New("BR⚡LN Community manager authorization firewall preparation failed")
+	// Only the app's own subnet reaches the Manager; see manager_bridge_firewall.go (issue #264).
+	if err := allowManagerFromAppBridge(ctx, manager.Runner, appmanifest.BRLNCommunityProject, status); err != nil {
+		return BRLNCommunityState{}, errors.New("BR⚡LN Community " + err.Error())
 	}
 	if _, err := manager.Runner.Run(ctx, ufwPath, "allow", strconv.Itoa(appmanifest.BRLNCommunityPort)+"/tcp"); err != nil {
 		return BRLNCommunityState{}, errors.New("BR⚡LN Community firewall preparation failed")

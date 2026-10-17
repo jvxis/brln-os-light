@@ -108,6 +108,25 @@ semana, ficou a 1% até aparecer rota abaixo de 265.
 - Continua fora da escada: canal com AutoFee desligado (não produz intent) e
   intent com menos de `keepalive_refill_after_hours` (48h).
 
+### 0.5.46: faixa do reteste, lote pequeno não pina, reteste não espera o cost gate
+
+Três efeitos colaterais vistos em 15–16/10 depois de o reteste entrar:
+
+- **Cliff dos 10%.** O lote de reteste levava RA⚡KO, PurpleWisteria e
+  CoinPayments de 1–7% para 12–17%; fora da faixa, voltavam ao teto
+  realizado (abaixo da rota) e paravam de repor. A faixa passa a ser
+  `max(10%, alvo/2)`: canal com alvo 50% é "drenado" até 25%.
+- **Lote pequeno pinava o canal inteiro.** BitcoinVN (6M) com um lote de 100k
+  a 1034 ppm recebia piso `rebalance_cost_budget` de 1322 no canal todo, onde
+  nunca vendeu (vendeu 742k em dois minutos a 923). O custo pago só entra no
+  envelope quando a liquidez paga na janela é ≥ 10% da capacidade
+  (`rebalancePaidLotFloorMinPct`); abaixo disso o piso fica com o peer (se
+  houver déficit) e o preço com a venda real.
+- **Reteste × cost gate.** O lote de reteste é limitado pelo tamanho; não faz
+  sentido esperar que o custo histórico (o mesmo lote caro) caiba no
+  orçamento. Canal em reteste com preço viável é elegível como alvo
+  automático (`autoTargetEligibility`); `no_sale_30d` continua vetando.
+
 ### 0.5.46: sonda no degrau mínimo (os parciais de volta)
 
 Em 16/10 o loop legado do Friendspool não fechava **nenhum parcial**: com o
@@ -127,6 +146,31 @@ sabendo quanto a rota custa agora. Só existe com `realized_price_cap_enabled`
 e quando o teto realizado de fato baixou a referência daquele alvo; com
 `fee_limit_ppm` fixo não há o que sondar. O journal mostra
 `realized-cap probe lot source=… amount=10000 fee_limit_ppm=…`.
+
+### 0.5.46: o lote de referência do envelope é o primeiro lote executado
+
+O envelope econômico (custo do peer, orçamento de fee, piso do Interlock e a
+elegibilidade "pricing feasible") amortizava as base fees sobre o **menor
+degrau** da escada de montante (`min_execute_sat`, 10k por padrão). A 10k,
+1 sat de base fee vale 100 ppm — e esse artefato decidia quem podia ser alvo.
+Harry Potter em 17/10 no Friendspool: peer 24 ppm + 1 sat, vende a 119 ppm,
+11% local contra alvo de 30%, 1,8k sats vendidos em 7 dias. Custo do peer
+calculado: 124 ppm; orçamento (119 × 0,8): 95. `eligible_as_target=false`,
+nenhum job em dias. O executor, no entanto, compra lotes de 100k
+(`min_amount_sat`), em que o mesmo peer custa 34 ppm — a elegibilidade e a
+execução não falavam do mesmo lote (issue #184, "valor de referência versus
+valor efetivamente executado").
+
+A referência passa a ser `min_amount_sat` (o primeiro lote que o executor
+envia), com `min_execute_sat` só como fallback quando não há `min_amount`.
+Cada tentativa continua limitada pela fee calculada no **seu** montante
+(`calcFeeLimitMsat`), então um degrau de 10k segue pagando no máximo o que
+cabe a 10k. Efeito no Friendspool (custo do peer a 100k em vez de 10k):
+Harry 124 → 34 (vira alvo), BitGo piso 353 → 263, 8DegreesWO e ifeellonely
+passam a ser elegíveis (o ROI decide), e os pisos `peer_fee_budget` do
+Interlock caem na mesma proporção nos canais em que o peer cobra base fee.
+`economic_reference_amount_sat` na API e `reference_amount_sat` na evidência
+do intent mostram o lote usado.
 
 ## Compatibilidade
 

@@ -1970,10 +1970,11 @@ func TestDeriveRebalanceEconomicEnvelope(t *testing.T) {
 	}{
 		{name: "new outbound remains seed driven", cfg: baseCfg, setting: baseSetting, initiator: true, policyKnown: true, peerRatePpm: 500, wantPeerPpm: 500},
 		{name: "new inbound peer 500 at ratio 075", cfg: baseCfg, setting: baseSetting, policyKnown: true, peerRatePpm: 500, wantPeerPpm: 500, wantRequiredPpm: 500, wantFloorPpm: 667},
-		{name: "peer base fee uses minimum shard", cfg: baseCfg, setting: baseSetting, policyKnown: true, peerRatePpm: 725, peerBaseMsat: 1000, wantPeerPpm: 825, wantRequiredPpm: 825, wantFloorPpm: 1100},
+		{name: "peer base fee is amortised over the first lot", cfg: baseCfg, setting: baseSetting, policyKnown: true, peerRatePpm: 725, peerBaseMsat: 1000, wantPeerPpm: 745, wantRequiredPpm: 745, wantFloorPpm: 994},
+		{name: "without min_amount the base fee uses the execute minimum", cfg: func() RebalanceConfig { c := baseCfg; c.MinAmountSat = 0; return c }(), setting: baseSetting, policyKnown: true, peerRatePpm: 725, peerBaseMsat: 1000, wantPeerPpm: 825, wantRequiredPpm: 825, wantFloorPpm: 1100},
 		{name: "current peer dominates stale lower cost", cfg: baseCfg, setting: baseSetting, policyKnown: true, peerRatePpm: 553, costPpm: 332, wantPeerPpm: 553, wantRequiredPpm: 553, wantFloorPpm: 738},
 		{name: "observed total cost dominates peer", cfg: baseCfg, setting: baseSetting, initiator: true, policyKnown: true, peerRatePpm: 100, costPpm: 900, wantPeerPpm: 100, wantRequiredPpm: 900, wantFloorPpm: 1200},
-		{name: "our base fee contributes to revenue", cfg: baseCfg, setting: baseSetting, policyKnown: true, outgoingBaseMsat: 1000, peerRatePpm: 500, wantPeerPpm: 500, wantRequiredPpm: 500, wantFloorPpm: 567},
+		{name: "our base fee contributes to revenue", cfg: baseCfg, setting: baseSetting, policyKnown: true, outgoingBaseMsat: 1000, peerRatePpm: 500, wantPeerPpm: 500, wantRequiredPpm: 500, wantFloorPpm: 647},
 		{name: "missing peer policy blocks cold inbound", cfg: baseCfg, setting: baseSetting, wantBlocked: "peer_policy_unavailable"},
 		{name: "fixed route budget cannot be repaired by advertised fee", cfg: func() RebalanceConfig { c := baseCfg; c.FeeLimitPpm = 400; return c }(), setting: baseSetting, policyKnown: true, peerRatePpm: 500, wantPeerPpm: 500, wantRequiredPpm: 500, wantBlocked: "fixed_fee_budget_below_cost"},
 		{name: "proportional cap below peer cost is blocked", cfg: func() RebalanceConfig { c := baseCfg; c.EconRatioMaxPpm = 600; return c }(), setting: baseSetting, policyKnown: true, peerRatePpm: 725, wantPeerPpm: 725, wantRequiredPpm: 725, wantBlocked: "econ_ratio_cap_below_cost"},
@@ -1985,6 +1986,7 @@ func TestDeriveRebalanceEconomicEnvelope(t *testing.T) {
 			got := deriveRebalanceEconomicEnvelope(
 				test.cfg, test.setting, test.initiator, true, false, test.policyKnown,
 				0, 10, 500, test.outgoingBaseMsat, test.peerRatePpm, test.peerBaseMsat, test.costPpm,
+				0, 0,
 			)
 			if got.PeerCostPpm != test.wantPeerPpm || got.RequiredCostPpm != test.wantRequiredPpm || got.FeeFloorPpm != test.wantFloorPpm || got.BlockedReason != test.wantBlocked {
 				t.Fatalf("unexpected envelope: got=%+v want peer=%d required=%d floor=%d blocked=%q", got, test.wantPeerPpm, test.wantRequiredPpm, test.wantFloorPpm, test.wantBlocked)
@@ -1999,17 +2001,17 @@ func TestDeriveRebalanceEconomicEnvelopeIgnoresPeerCostWithoutDeficit(t *testing
 	// Strike, 2026-10-07: 40% local against a 35% target, a 225 ppm lot paid
 	// in the window and the peer at 1000 ppm. No refill is coming, so the
 	// floor protects the paid lot only.
-	got := deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 40, 35, 578, 0, 1000, 0, 225)
+	got := deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 40, 35, 578, 0, 1000, 0, 225, 0, 0)
 	if got.RequiredCostPpm != 225 || got.FeeFloorPpm != 282 || got.FloorReason != "rebalance_cost_budget" {
 		t.Fatalf("expected paid-cost floor 282 without deficit, got %+v", got)
 	}
 	// Below target the next refill is real and the peer price is back.
-	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 20, 35, 578, 0, 1000, 0, 225)
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 20, 35, 578, 0, 1000, 0, 225, 0, 0)
 	if got.RequiredCostPpm != 1000 || got.FeeFloorPpm != 1250 || got.FloorReason != "peer_fee_budget" {
 		t.Fatalf("expected peer floor 1250 with deficit, got %+v", got)
 	}
 	// Without a paid lot and without a deficit there is no floor at all.
-	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 40, 35, 578, 0, 1000, 0, 0)
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 40, 35, 578, 0, 1000, 0, 0, 0, 0)
 	if got.FeeFloorPpm != 0 || got.RequiredCostPpm != 0 {
 		t.Fatalf("expected no floor, got %+v", got)
 	}
@@ -5520,5 +5522,49 @@ func TestSourceRouteabilityQuarantineHoursKnob(t *testing.T) {
 	target := rebalanceTarget{StructuralCooldown: sovereignTargetStructuralCooldownStat{Failures: 1, LastFailureAt: now.Add(-2 * time.Hour)}}
 	if sovereignKeepaliveRecentlyFailed(target, short, now) {
 		t.Fatal("2h-old failure must not hold keepalive back with a 1h window")
+	}
+}
+
+func TestDeriveRebalanceEconomicEnvelopeIgnoresSmallPaidLots(t *testing.T) {
+	cfg := RebalanceConfig{DeadbandPct: 3, EconRatio: 0.8, MinAmountSat: 100_000, MinSplitEnabled: true, MinExecuteSat: 10_000}
+	setting := channelSetting{AutoEnabled: true, UseDefaultEconRatio: true}
+	// BitcoinVN, 15/10: one 100k lot at 1034 ppm in a 6M channel, peer at 29 ppm.
+	got := deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 1, 25, 923, 0, 29, 0, 1034, 100_000, 6_000_000)
+	if got.RequiredCostPpm != 0 || got.FeeFloorPpm != 0 {
+		t.Fatalf("a lot under 10%% of capacity must not floor the channel (we opened it: seed-driven), got %+v", got)
+	}
+	// Same small lot on a peer-opened channel: the peer price still floors a refill.
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, false, true, false, true, 1, 25, 923, 0, 29, 0, 1034, 100_000, 6_000_000)
+	if got.RequiredCostPpm != 29 || got.FloorReason != "peer_fee_budget" {
+		t.Fatalf("small lot ignored, peer floor kept, got %+v", got)
+	}
+	// The same cost on 1.9M of a 10M channel (Authenticity) still counts.
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 22, 40, 860, 0, 0, 0, 864, 1_900_000, 10_000_000)
+	if got.RequiredCostPpm != 864 || got.FloorReason != "rebalance_cost_budget" {
+		t.Fatalf("a lot of 19%% of capacity keeps its floor, got %+v", got)
+	}
+	// Unknown capacity: the cost counts as before.
+	got = deriveRebalanceEconomicEnvelope(cfg, setting, true, true, false, true, 1, 25, 923, 0, 29, 0, 1034, 100_000, 0)
+	if got.RequiredCostPpm != 1034 {
+		t.Fatalf("without capacity the rule is inert, got %+v", got)
+	}
+}
+
+func TestDeriveRebalanceEconomicEnvelopeReferenceLotIsTheFirstLot(t *testing.T) {
+	// Harry Potter, Friendspool 17/10/2026: peer 24 ppm + 1 sat base fee,
+	// realized sale 119 ppm, econ 0.8, 11% local against a 30% target. With
+	// the 10k rung as reference the peer cost was 124 ppm against a 95 ppm
+	// budget: pricing infeasible, no job for days, 1.8k sats sold in 7d.
+	cfg := RebalanceConfig{DeadbandPct: 2, EconRatio: 0.8, MinAmountSat: 100_000, MinSplitEnabled: true, MinExecuteSat: 10_000}
+	setting := channelSetting{AutoEnabled: true, UseDefaultEconRatio: true}
+	got := deriveRebalanceEconomicEnvelope(cfg, setting, false, true, false, true, 11, 30, 119, 0, 24, 1000, 0, 0, 10_000_000)
+	if got.ReferenceAmountSat != 100_000 {
+		t.Fatalf("reference must be the first executed lot, got %+v", got)
+	}
+	if got.PeerCostPpm != 34 || got.RequiredCostPpm != 34 || got.FeeFloorPpm != 43 || got.FloorReason != "peer_fee_budget" {
+		t.Fatalf("peer cost must amortise the base fee over 100k, got %+v", got)
+	}
+	if got.FeeBudgetPpm < got.PeerCostPpm {
+		t.Fatalf("a 119 ppm sale must afford a 24 ppm + 1 sat peer: budget %d < cost %d", got.FeeBudgetPpm, got.PeerCostPpm)
 	}
 }

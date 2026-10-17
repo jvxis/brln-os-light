@@ -3690,9 +3690,15 @@ func deriveRebalanceEconomicEnvelope(
 	capacitySat int64,
 ) rebalanceEconomicEnvelope {
 	feeCfg := effectiveConfigForTarget(cfg, setting)
-	referenceAmountSat := effectiveMinExecuteSat(feeCfg)
+	// Base fees are amortised over the lot the executor actually sends first
+	// (min_amount), not over the smallest fallback rung. At the 10k rung a
+	// 1 sat base fee is 100 ppm, and that artifact decided eligibility: Harry
+	// Potter (peer 24 ppm + 1 sat, sells at 119) needed 124 ppm against a 95
+	// budget and got no job for days, while its 100k lot costs 34 ppm. The
+	// executor still caps every attempt at its own amount (calcFeeLimitMsat).
+	referenceAmountSat := effectiveStartAmountSat(feeCfg)
 	if referenceAmountSat <= 0 {
-		referenceAmountSat = effectiveStartAmountSat(feeCfg)
+		referenceAmountSat = effectiveMinExecuteSat(feeCfg)
 	}
 	if referenceAmountSat <= 0 {
 		referenceAmountSat = 1

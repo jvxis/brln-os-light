@@ -89,6 +89,7 @@ type OpenChannelParams struct {
 	Private         bool
 	SatPerVbyte     int64
 	Outpoints       []string
+	Policy          ChannelOpenPolicy
 }
 
 // OpenChannelWithOutpoints opens a channel using a fixed set of UTXOs as
@@ -138,6 +139,7 @@ func (c *Client) OpenChannelWithOutpoints(ctx context.Context, params OpenChanne
 	if strings.TrimSpace(params.CloseAddress) != "" {
 		req.CloseAddress = strings.TrimSpace(params.CloseAddress)
 	}
+	applyOpenChannelPolicy(req, params.Policy)
 
 	resp, err := client.OpenChannelSync(ctx, req)
 	if err != nil {

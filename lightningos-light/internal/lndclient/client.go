@@ -7111,6 +7111,7 @@ func (c *Client) BatchOpenChannel(ctx context.Context, channels []BatchOpenChann
 		if strings.TrimSpace(item.CloseAddress) != "" {
 			reqItem.CloseAddress = strings.TrimSpace(item.CloseAddress)
 		}
+		applyBatchOpenChannelPolicy(reqItem, item.Policy)
 		reqChannels = append(reqChannels, reqItem)
 	}
 
@@ -8139,6 +8140,51 @@ type BatchOpenChannelParams struct {
 	LocalFundingSat int64
 	Private         bool
 	CloseAddress    string
+	Policy          ChannelOpenPolicy
+}
+
+// ChannelOpenPolicy is the forwarding policy LND advertises for a channel the
+// moment it opens. A nil field keeps the node default (bitcoin.feerate and
+// bitcoin.basefee in lnd.conf). The policy of a pending channel cannot be
+// changed (UpdateChannelPolicy answers UPDATE_FAILURE_PENDING until the
+// funding confirms), so this is the only way a new channel does not route at
+// the node default until the first AutoFee run.
+type ChannelOpenPolicy struct {
+	FeeRatePpm  *int64
+	BaseFeeMsat *int64
+}
+
+// IsZero reports whether the policy leaves every field to the node default.
+func (p ChannelOpenPolicy) IsZero() bool {
+	return p.FeeRatePpm == nil && p.BaseFeeMsat == nil
+}
+
+func applyOpenChannelPolicy(req *lnrpc.OpenChannelRequest, policy ChannelOpenPolicy) {
+	if req == nil {
+		return
+	}
+	if policy.FeeRatePpm != nil && *policy.FeeRatePpm >= 0 {
+		req.UseFeeRate = true
+		req.FeeRate = uint64(*policy.FeeRatePpm)
+	}
+	if policy.BaseFeeMsat != nil && *policy.BaseFeeMsat >= 0 {
+		req.UseBaseFee = true
+		req.BaseFee = uint64(*policy.BaseFeeMsat)
+	}
+}
+
+func applyBatchOpenChannelPolicy(req *lnrpc.BatchOpenChannel, policy ChannelOpenPolicy) {
+	if req == nil {
+		return
+	}
+	if policy.FeeRatePpm != nil && *policy.FeeRatePpm >= 0 {
+		req.UseFeeRate = true
+		req.FeeRate = uint64(*policy.FeeRatePpm)
+	}
+	if policy.BaseFeeMsat != nil && *policy.BaseFeeMsat >= 0 {
+		req.UseBaseFee = true
+		req.BaseFee = uint64(*policy.BaseFeeMsat)
+	}
 }
 
 type BatchOpenChannelResult struct {

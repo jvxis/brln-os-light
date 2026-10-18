@@ -64,3 +64,25 @@ func TestMagmaCommittedStatesAreLocalOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterMagmaCommitmentsToNodeDropsTheOtherNodesSales(t *testing.T) {
+	// BRLN HUB, 18/10/2026: same Amboss account as the Friendspool, so the
+	// synced orders held twelve Friendspool channels and none of the HUB's.
+	items := []MagmaChannelCommitment{
+		{OrderID: "fp-1", ChannelPoint: "AAAA:1"},
+		{OrderID: "hub-1", ChannelPoint: "bbbb:0"},
+		{OrderID: "hub-pending", ChannelPoint: "cccc:2"},
+	}
+	local := map[string]struct{}{"bbbb:0": {}, "cccc:2": {}}
+	got := filterMagmaCommitmentsToNode(items, local)
+	if len(got) != 2 || got[0].OrderID != "hub-1" || got[1].OrderID != "hub-pending" {
+		t.Fatalf("expected only this node's channels, got %+v", got)
+	}
+	if got := filterMagmaCommitmentsToNode(items, nil); len(got) != 3 {
+		t.Fatalf("without a readable node the list must not hide obligations, got %d", len(got))
+	}
+	upper := map[string]struct{}{"aaaa:1": {}}
+	if got := filterMagmaCommitmentsToNode(items, upper); len(got) != 1 || got[0].OrderID != "fp-1" {
+		t.Fatalf("channel points compare case-insensitively, got %+v", got)
+	}
+}

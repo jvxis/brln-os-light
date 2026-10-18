@@ -62,7 +62,7 @@ func (s *Server) handleMagmaCommitments(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"commitments": []MagmaChannelCommitment{}})
 		return
 	}
-	items, err := svc.ActiveCommitments(r.Context())
+	items, err := s.nodeMagmaCommitments(r.Context(), svc)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"commitments": []MagmaChannelCommitment{}})
 		return

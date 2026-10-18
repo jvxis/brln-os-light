@@ -55,7 +55,7 @@ func (s *Server) channelCapitalPlanCommitments(ctx context.Context) ([]MagmaChan
 	if svc == nil {
 		return nil, false
 	}
-	items, err := svc.ActiveCommitments(ctx)
+	items, err := s.nodeMagmaCommitments(ctx, svc)
 	if err != nil {
 		return nil, false
 	}

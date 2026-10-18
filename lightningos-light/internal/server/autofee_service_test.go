@@ -4216,3 +4216,18 @@ func TestDeriveStalePaidStockAnchor(t *testing.T) {
 		t.Fatal("stale stock liquidation must be opt-in")
 	}
 }
+
+func TestShouldHoldSurgeWithoutDemandEvidence(t *testing.T) {
+	if !shouldHoldSurgeWithoutDemandEvidence(0, 0, false, false) {
+		t.Fatal("no forwards in 7d, none in 24h and no HTLC pressure: nobody to price for")
+	}
+	if shouldHoldSurgeWithoutDemandEvidence(3, 0, false, false) {
+		t.Fatal("a channel that sold this week keeps the surge (BitcoinVN, drained retest)")
+	}
+	if shouldHoldSurgeWithoutDemandEvidence(0, 1, false, false) {
+		t.Fatal("a forward in the last day is demand")
+	}
+	if shouldHoldSurgeWithoutDemandEvidence(0, 0, true, false) || shouldHoldSurgeWithoutDemandEvidence(0, 0, false, true) {
+		t.Fatal("HTLC pressure is demand even without a settled forward")
+	}
+}

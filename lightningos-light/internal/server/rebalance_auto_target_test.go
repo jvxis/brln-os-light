@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestAutoTargetEffectiveMaxPct(t *testing.T) {
 	cfg := defaultRebalanceConfig() // MaxPct=50, MinPct=10, MaxLocalSat=5_000_000
@@ -188,5 +191,22 @@ func TestNormalizeRebalanceConfigAutoTarget(t *testing.T) {
 	}
 	if got.AutoTargetMaxDownsPerCycle != def.AutoTargetMaxDownsPerCycle {
 		t.Fatalf("max downs should fall back to default, got %d", got.AutoTargetMaxDownsPerCycle)
+	}
+}
+
+func TestAutoTargetDownAllowedWaitsFourIntervals(t *testing.T) {
+	interval := 6 * time.Hour
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	if !autoTargetDownAllowed(time.Time{}, now, interval) {
+		t.Fatal("a channel never lowered may be lowered")
+	}
+	if autoTargetDownAllowed(now.Add(-18*time.Hour), now, interval) {
+		t.Fatal("Babylon-4a: a second DOWN 18h after the first must wait (4 x 6h)")
+	}
+	if !autoTargetDownAllowed(now.Add(-24*time.Hour), now, interval) {
+		t.Fatal("after four intervals the next DOWN is allowed")
+	}
+	if !autoTargetDownAllowed(now.Add(-1*time.Hour), now, 0) {
+		t.Fatal("a zero interval never blocks")
 	}
 }

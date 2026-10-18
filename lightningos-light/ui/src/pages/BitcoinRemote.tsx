@@ -32,7 +32,11 @@ export default function BitcoinRemote() {
       setStatus(updated)
       setRpcPass('')
     } catch (err: any) {
-      setMessage(err?.message || t('bitcoinRemote.validationFailed'))
+      setMessage(
+        err?.code === 'bitcoin_zmq_unreachable'
+          ? t('bitcoinRemote.zmqUnreachable', { detail: err.message })
+          : err?.message || t('bitcoinRemote.validationFailed')
+      )
       setMessageTone('error')
     }
   }

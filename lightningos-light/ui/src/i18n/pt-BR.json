@@ -1649,7 +1649,8 @@
     "title": "Bitcoin Remoto",
     "updateCredentials": "Atualizar credenciais RPC",
     "validationFailed": "Falha na validação. Verifique credenciais.",
-    "zmq": "ZMQ"
+    "zmq": "ZMQ",
+    "zmqUnreachable": "As credenciais estão certas e o RPC respondeu, mas este node não conseguiu falar com o ZMQ do Bitcoin (portas 28332 e 28333). Sem o ZMQ o LND não fica sabendo dos blocos novos, a sincronização não anda e o node não acha peers. Quase sempre é o roteador, um firewall ou a operadora bloqueando a saída para essas portas. Nada foi salvo. Detalhe: {{detail}}"
   },
   "bitcoinLocal": {
     "applyNow": "Aplicar agora (reinicia bitcoind)",

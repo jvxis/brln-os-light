@@ -1247,6 +1247,18 @@ func (s *Server) handleWizardBitcoinRemote(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// LND needs the ZMQ too, and an RPC that answers says nothing about it (bitcoin_zmq_probe.go).
+	// Checked before anything is saved, so a node behind a blocked port is told now, not left with
+	// a chain that never syncs.
+	zmqCtx, zmqCancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer zmqCancel()
+	if err := probeBitcoinZMQ(zmqCtx, remoteCfg.ZMQBlock, remoteCfg.ZMQTx); err != nil {
+		s.logger.Printf("bitcoin zmq check failed: %v", err)
+		writeErrorCode(w, http.StatusBadRequest, errBitcoinZMQUnreachable,
+			fmt.Sprintf("bitcoin RPC is OK, but this node could not reach the ZMQ: %v", err))
+		return
+	}
+
 	if err := storeBitcoinSecrets(user, pass); err != nil {
 		s.logger.Printf("failed to store secrets: %v", err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to store secrets: %v", err))

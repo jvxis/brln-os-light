@@ -7583,6 +7583,23 @@ func shouldHoldUpOnRecentRebalance(classLabel string, outRatio float64, lowOutPr
 	return outRatio < lowOutProtectThresh
 }
 
+// shouldHoldSurgeWithoutDemandEvidence: the scarcity surge raises the price of
+// a channel under 10% local so the next refill fits the budget. That only
+// makes sense when someone wanted the liquidity. A channel with no forward in
+// the week, none in the last day and no HTLC pressure has no buyer to price
+// for; the surge there only inflates a fee nobody ever paid. 17/10/2026:
+// 1sats 1015→1077, lancrypt 930→1050 on Friendspool and an unnamed peer
+// 338→722 on the HUB in one day, all with zero sales ever. The mature empty
+// sink hold does not cover these because it requires a sale history.
+// Channels that did sell (BitcoinVN, PurpleWisteria) keep the surge: with the
+// drained retest it is how the advertised cap climbs towards the route price.
+func shouldHoldSurgeWithoutDemandEvidence(forwardCount7d int, recentForwards1d int, htlcPressureSignal bool, htlcForwardHot bool) bool {
+	if forwardCount7d > 0 || recentForwards1d > 0 {
+		return false
+	}
+	return !htlcPressureSignal && !htlcForwardHot
+}
+
 func shouldHoldMatureEmptySinkUpwardPressure(classLabel string, channelAgeHours float64, bootstrapHours int, outRatio float64, lowOutProtectThresh float64, outPpm7d int, rebalRefPpm int, recentForwards1d int, recentRebalanceCount int, recentRebalanceWeakCount int, htlcPressureSignal bool, htlcForwardHot bool) bool {
 	if !strings.EqualFold(strings.TrimSpace(classLabel), "sink") {
 		return false
@@ -10496,7 +10513,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		htlcForwardHotPressure,
 	)
 	surgeApplied := false
-	if outRatio < 0.10 && !holdMatureEmptySinkUp {
+	holdSurgeNoDemand := shouldHoldSurgeWithoutDemandEvidence(fwdCount, recentForwards1d, htlcPressureSignal, htlcForwardHotPressure)
+	if holdSurgeNoDemand && outRatio < 0.10 && !holdMatureEmptySinkUp {
+		tags = append(tags, "surge-no-demand-hold")
+	}
+	if outRatio < 0.10 && !holdMatureEmptySinkUp && !holdSurgeNoDemand {
 		lack := (0.10 - outRatio) / 0.10
 		bump := math.Min(e.profile.SurgeBumpMax, 0.5*lack)
 		if bump > 0 {

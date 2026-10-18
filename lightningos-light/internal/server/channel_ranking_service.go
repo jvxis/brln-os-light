@@ -1025,8 +1025,8 @@ func buildChannelRankingItem(
 	noEconomicMovement7d := full7dObservation && channelRankingNoEconomicMovement(forward7d, assisted7d, rebal7d)
 	rebalanceNoPayback := full7dObservation && channelRankingRebalanceNoPaybackAfter7d(forward7d, assisted7d, rebal7d, rebal30d, effectiveProfitSat30d)
 	full30dObservation := channelRankingHasFull30dObservation(peerAggregate.SampleCount)
-	noEconomicMovement30d := full30dObservation && channelRankingNoEconomicMovement30d(forward30d, assisted30d, rebal30d)
-	rebalanceOnly30d := full30dObservation && channelRankingRebalanceOnly30d(forward30d, assisted30d, rebal30d)
+	noEconomicMovement30d := full30dObservation && channelRankingNoEconomicMovement30d(forward30d, assisted30d, rebal30d, capacity)
+	rebalanceOnly30d := full30dObservation && channelRankingRebalanceOnly30d(forward30d, assisted30d, rebal30d, capacity)
 	score7d := computeChannelRankingScore(ch, capacity, localPct, effectiveForward7d, rebal7d, effectiveProfitSat7d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
 	score7d = applyIdle7dPenalty(score7d, noEconomicMovement7d)
 	score7d = applyRebalanceNoPaybackPenalty(score7d, rebalanceNoPayback)
@@ -1175,8 +1175,38 @@ func applyIdle7dPenalty(score int, noEconomicMovement bool) int {
 	return clampInt(score-channelRankingIdle7dPenalty, 0, channelRankingIdle7dScoreCap)
 }
 
-func channelRankingNoEconomicMovement30d(forward30d channelTrafficStat, assisted30d channelTrafficStat, rebal30d channelTrafficStat) bool {
-	return channelRankingNoEconomicMovement(forward30d, assisted30d, rebal30d)
+// channelRankingNoEconomicMovement30d: over a month, a trickle is not
+// movement. Volarte (5M) forwarded 240k sats at 1 ppm in 30 days, 1 sat of
+// fee, and UNITEDPLOW earned 1 sat of assisted fee; both stayed "maintain"
+// with score 51 while the operator closed them by hand on 17/10/2026. The
+// 30-day close signals now need either a fee worth counting or a volume worth
+// counting; the 7-day idle penalty keeps the strict any-sat rule.
+func channelRankingNoEconomicMovement30d(forward30d channelTrafficStat, assisted30d channelTrafficStat, rebal30d channelTrafficStat, capacitySat int64) bool {
+	return !channelTrafficHasEconomicMovement30d(forward30d, capacitySat) &&
+		!channelTrafficHasEconomicMovement30d(assisted30d, capacitySat) &&
+		!channelTrafficHasMovement(rebal30d)
+}
+
+const (
+	// A month of forwards must earn at least this many sats, or move at
+	// least this fraction of the channel, to count as economic movement.
+	channelRankingIdleMinFeeSat30d      = int64(10)
+	channelRankingIdleMinVolumeFrac30d  = 0.10
+	channelRankingIdleMinVolumeFloorSat = int64(100_000)
+)
+
+func channelTrafficHasEconomicMovement30d(stat channelTrafficStat, capacitySat int64) bool {
+	if stat.FeeSat >= channelRankingIdleMinFeeSat30d {
+		return true
+	}
+	if capacitySat <= 0 {
+		return channelTrafficHasMovement(stat)
+	}
+	minVolume := int64(float64(capacitySat) * channelRankingIdleMinVolumeFrac30d)
+	if minVolume < channelRankingIdleMinVolumeFloorSat {
+		minVolume = channelRankingIdleMinVolumeFloorSat
+	}
+	return stat.AmountSat >= minVolume
 }
 
 func channelRankingNoEconomicMovement(forward channelTrafficStat, assisted channelTrafficStat, rebal channelTrafficStat) bool {
@@ -1193,9 +1223,9 @@ func channelRankingHasFull30dObservation(peerSampleCount30d int) bool {
 	return peerSampleCount30d >= channelRankingFull30dObservationSamples
 }
 
-func channelRankingRebalanceOnly30d(forward30d channelTrafficStat, assisted30d channelTrafficStat, rebal30d channelTrafficStat) bool {
-	return !channelTrafficHasMovement(forward30d) &&
-		!channelTrafficHasMovement(assisted30d) &&
+func channelRankingRebalanceOnly30d(forward30d channelTrafficStat, assisted30d channelTrafficStat, rebal30d channelTrafficStat, capacitySat int64) bool {
+	return !channelTrafficHasEconomicMovement30d(forward30d, capacitySat) &&
+		!channelTrafficHasEconomicMovement30d(assisted30d, capacitySat) &&
 		channelTrafficHasMovement(rebal30d)
 }
 

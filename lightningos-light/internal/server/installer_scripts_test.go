@@ -605,10 +605,12 @@ func TestReleaseBootstrapRequiresImmutableAttestedPublishedRelease(t *testing.T)
 	}
 	content := string(raw)
 	for _, required := range []string{
-		`RELEASE_TAG_API_BASE="https://api.github.com/repos/jvxis/brln-os-light/releases/tags"`,
+		`RELEASE_TAG_API_BASE="https://api.github.com/repos/jvxis/brln-os-light-updates/releases/tags"`,
 		`--proto '=https'`,
-		`"immutable"[[:space:]]*:[[:space:]]*true`,
-		`"draft"[[:space:]]*:[[:space:]]*false`,
+		`release.get("immutable") is not True`,
+		`release.get("draft") is not False`,
+		`release.get("prerelease") is not False`,
+		`verify_release_checkout "$ref"`,
 		`Immutable LightningOS release attestation verified`,
 	} {
 		if !strings.Contains(content, required) {

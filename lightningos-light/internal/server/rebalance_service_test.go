@@ -5568,3 +5568,12 @@ func TestDeriveRebalanceEconomicEnvelopeReferenceLotIsTheFirstLot(t *testing.T) 
 		t.Fatalf("a 119 ppm sale must afford a 24 ppm + 1 sat peer: budget %d < cost %d", got.FeeBudgetPpm, got.PeerCostPpm)
 	}
 }
+
+func TestNewChannelAutoEnabledDefaultFollowsTheInitiator(t *testing.T) {
+	if !newChannelAutoEnabledDefault(true) {
+		t.Fatal("a channel we opened is born with the autopilot enabled")
+	}
+	if newChannelAutoEnabledDefault(false) {
+		t.Fatal("a remotely opened channel waits for the operator")
+	}
+}

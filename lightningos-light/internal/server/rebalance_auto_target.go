@@ -229,7 +229,8 @@ func (s *RebalanceService) evaluateAutoTarget(
 		if isChannelAutomationParked(setting.AutomationMode) {
 			return
 		}
-		if last, ok := lastDecided[snap.ChannelID]; ok && scanAt.Sub(last) < interval {
+		last, hasLast := lastDecided[snap.ChannelID]
+		if hasLast && scanAt.Sub(last.At) < interval {
 			return
 		}
 		rate, attempts := sovereignHistoricalSuccessRate(pairStats[snap.ChannelID])
@@ -262,6 +263,11 @@ func (s *RebalanceService) evaluateAutoTarget(
 				s.persistAutoTargetDecision(ctx, snap, sig, cfg, dec, true)
 			}
 		case autoTargetDown:
+			if hasLast && !autoTargetDownAllowed(last.Down, scanAt, interval) {
+				// Not persisted: the channel is reconsidered next interval and
+				// an UP in the meantime is still allowed.
+				return
+			}
 			if downsRemaining <= 0 {
 				s.persistAutoTargetDecision(ctx, snap, sig, cfg, autoTargetDecision{
 					Direction: autoTargetNoop, NewTarget: sig.currentInt(),
@@ -394,13 +400,13 @@ func (s *RebalanceService) applyAutoTarget(ctx context.Context, snap RebalanceCh
 // loadAutoTargetLastDecided returns the last APPLIED change time per channel, used
 // for the per-channel eval cooldown. Only applied up/down rows count, so a
 // throttled-UP intent never blocks a channel from being reconsidered.
-func (s *RebalanceService) loadAutoTargetLastDecided(ctx context.Context) map[uint64]time.Time {
-	out := map[uint64]time.Time{}
+func (s *RebalanceService) loadAutoTargetLastDecided(ctx context.Context) map[uint64]autoTargetLastDecision {
+	out := map[uint64]autoTargetLastDecision{}
 	if s.db == nil {
 		return out
 	}
 	rows, err := s.db.Query(ctx, `
-select channel_id, max(decided_at)
+select channel_id, max(decided_at), max(decided_at) filter (where direction = 'down')
 from rebalance_auto_target_history
 where applied = true
 group by channel_id`)
@@ -411,12 +417,40 @@ group by channel_id`)
 	for rows.Next() {
 		var chID int64
 		var at time.Time
-		if err := rows.Scan(&chID, &at); err != nil {
+		var down *time.Time
+		if err := rows.Scan(&chID, &at, &down); err != nil {
 			return out
 		}
-		out[uint64(chID)] = at
+		last := autoTargetLastDecision{At: at}
+		if down != nil {
+			last.Down = *down
+		}
+		out[uint64(chID)] = last
 	}
 	return out
+}
+
+// autoTargetLastDecision: when the channel was last moved, and when it was
+// last moved DOWN. UP keeps the eval interval; DOWN waits longer.
+type autoTargetLastDecision struct {
+	At   time.Time
+	Down time.Time
+}
+
+// autoTargetDownIntervalFactor: a DOWN step waits this many eval intervals
+// after the previous DOWN. Babylon-4a (HUB) climbed 10→35 over two days of
+// sells_above_node and fell 35→10 in 18 hours of fill_and_hold at the 6-hour
+// interval, before the stock it had just bought could sell; the target then
+// sat on its local balance and the channel left eligibility. UP stays fast
+// (a supply-limited seller must not wait), DOWN gives a weak week time to
+// turn: four steps now take four times the interval instead of one night.
+const autoTargetDownIntervalFactor = 4
+
+func autoTargetDownAllowed(lastDown time.Time, now time.Time, interval time.Duration) bool {
+	if lastDown.IsZero() || interval <= 0 {
+		return true
+	}
+	return now.Sub(lastDown) >= interval*autoTargetDownIntervalFactor
 }
 
 func (s *RebalanceService) persistAutoTargetDecision(ctx context.Context, snap RebalanceChannel, sig autoTargetSignals, cfg RebalanceConfig, dec autoTargetDecision, applied bool) {

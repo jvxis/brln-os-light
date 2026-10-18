@@ -903,3 +903,60 @@ func TestChannelRankingCloseGuardsMagmaCommitment(t *testing.T) {
 		t.Fatalf("a channel with no commitment and no close verdict is untouched: %s %+v %+v", state, gotReasons, gotRecs)
 	}
 }
+
+func TestBuildChannelRankingItemTreatsTrickleForwards30dAsCloseCandidate(t *testing.T) {
+	// Volarte, Friendspool 17/10/2026: 5M channel, 240k forwarded at 1 ppm in
+	// 30 days (1 sat), nothing assisted, no rebalance. It sat at "maintain"
+	// score 51 until closed by hand.
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	ch := lndclient.ChannelInfo{
+		ChannelPoint:     "trickle-30d:1",
+		ChannelID:        101,
+		RemotePubkey:     "02trickle",
+		PeerAlias:        "Volarte",
+		Active:           true,
+		CapacitySat:      5_000_000,
+		LocalBalanceSat:  3_860_000,
+		RemoteBalanceSat: 1_140_000,
+	}
+	item := buildChannelRankingItem(
+		now,
+		ch,
+		"",
+		channelTrafficStat{},
+		channelTrafficStat{FeeSat: 1, AmountSat: 240_000, Ppm: 1},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		lndclient.ChannelMovement7d{},
+		channelPeerAggregate{Score30d: 75, SampleCount: 720},
+		channelHTLCAggregate{},
+		0,
+	)
+	if item.State != "close" {
+		t.Fatalf("a month of 1 sat on 5M must be a close candidate, got %s (score7d %d)", item.State, item.Score7d)
+	}
+	if !hasChannelRankingReason(item.Reasons, "no_economic_movement_30d") {
+		t.Fatalf("expected no_economic_movement_30d reason, got %+v", item.Reasons)
+	}
+}
+
+func TestChannelTrafficHasEconomicMovement30d(t *testing.T) {
+	cap := int64(5_000_000)
+	if channelTrafficHasEconomicMovement30d(channelTrafficStat{FeeSat: 1, AmountSat: 240_000}, cap) {
+		t.Fatal("240k at 1 ppm on a 5M channel is a trickle")
+	}
+	if !channelTrafficHasEconomicMovement30d(channelTrafficStat{FeeSat: 5, AmountSat: 1_000_000}, cap) {
+		t.Fatal("20% of capacity moved is movement even at a low fee (corridor)")
+	}
+	if !channelTrafficHasEconomicMovement30d(channelTrafficStat{FeeSat: 10, AmountSat: 20_000}, cap) {
+		t.Fatal("10 sats of fee count regardless of volume")
+	}
+	if !channelTrafficHasEconomicMovement30d(channelTrafficStat{FeeSat: 0, AmountSat: 150_000}, 1_000_000) {
+		t.Fatal("the volume floor is 100k for small channels")
+	}
+	if channelTrafficHasEconomicMovement30d(channelTrafficStat{}, 0) {
+		t.Fatal("no traffic is never movement")
+	}
+}

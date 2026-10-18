@@ -65,9 +65,16 @@ from the validated target version. It retains the immutable-release, exact tag,
 commit, source version, root-owned source and helper-digest checks. There is no
 caller-supplied repository URL.
 
-The existing first-install bootstrap still enters through the legacy 0.5.40
-release; the newly installed Manager then offers modern releases internally.
-Users do not rerun `install.sh` or either existing-node installer.
+The bootstrap revised for 0.5.47 selects the modern catalog's Latest published
+immutable release directly for a first LOS installation (native or on an
+existing LND node). It compares the official source tag's commit and version
+against the immutable catalog tag before running the selected installer. It
+does not fall back to the legacy catalog on failure. Older bootstrap copies
+still enter through 0.5.40; use the current documented entry point for new installs.
+
+This does not change already-installed Managers or their mandatory bridge.
+Users upgrade existing LOS installations through the UI; they do not rerun
+`install.sh` or either existing-node installer to bypass that transition.
 
 ## Publication prerequisites
 

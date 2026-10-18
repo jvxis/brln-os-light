@@ -153,3 +153,63 @@ func magmaClampChannelFees(channelID uint64, channelPoint string, baseFeeMsat, f
 	}
 	return baseFeeMsat, feeRatePPM, clamped
 }
+
+// filterMagmaCommitmentsToNode keeps the commitments whose channel belongs to
+// this node. Magma orders are synced per Amboss account, and two nodes under
+// the same account (Friendspool and BRLN HUB) both receive every sale: on
+// 18/10/2026 the HUB listed the Friendspool's twelve commitments as its own.
+// An empty set of local channel points means the node could not be read, and
+// the list is returned unfiltered rather than hiding real obligations.
+func filterMagmaCommitmentsToNode(items []MagmaChannelCommitment, localPoints map[string]struct{}) []MagmaChannelCommitment {
+	if len(localPoints) == 0 {
+		return items
+	}
+	out := make([]MagmaChannelCommitment, 0, len(items))
+	for _, item := range items {
+		if _, ok := localPoints[strings.ToLower(strings.TrimSpace(item.ChannelPoint))]; ok {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// localMagmaChannelPoints collects every channel point this node has held:
+// open, pending (a sold channel waiting for confirmations is already a
+// commitment) and closed (a broken commitment must still show).
+func (s *Server) localMagmaChannelPoints(ctx context.Context) map[string]struct{} {
+	points := map[string]struct{}{}
+	if s.lnd == nil {
+		return points
+	}
+	add := func(point string) {
+		key := strings.ToLower(strings.TrimSpace(point))
+		if key != "" {
+			points[key] = struct{}{}
+		}
+	}
+	if channels, err := s.lnd.ListChannels(ctx); err == nil {
+		for _, ch := range channels {
+			add(ch.ChannelPoint)
+		}
+	}
+	if pending, err := s.lnd.ListPendingChannels(ctx); err == nil {
+		for _, ch := range pending {
+			add(ch.ChannelPoint)
+		}
+	}
+	if closed, err := s.lnd.ListClosedChannels(ctx); err == nil {
+		for _, ch := range closed {
+			add(ch.ChannelPoint)
+		}
+	}
+	return points
+}
+
+// nodeMagmaCommitments is ActiveCommitments restricted to this node's channels.
+func (s *Server) nodeMagmaCommitments(ctx context.Context, svc *MagmaService) ([]MagmaChannelCommitment, error) {
+	items, err := svc.ActiveCommitments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return filterMagmaCommitmentsToNode(items, s.localMagmaChannelPoints(ctx)), nil
+}

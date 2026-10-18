@@ -1649,7 +1649,8 @@
     "title": "Bitcoin Remote",
     "updateCredentials": "Update RPC credentials",
     "validationFailed": "Validation failed. Check credentials.",
-    "zmq": "ZMQ"
+    "zmq": "ZMQ",
+    "zmqUnreachable": "The credentials are right and the RPC answered, but this node could not reach the Bitcoin ZMQ (ports 28332 and 28333). Without ZMQ, LND never hears about new blocks, syncing stalls and the node finds no peers. It is almost always the router, a firewall or the provider blocking outbound traffic to those ports. Nothing was saved. Detail: {{detail}}"
   },
   "bitcoinLocal": {
     "applyNow": "Apply now (restarts bitcoind)",
@@ -4524,6 +4525,15 @@
     "batchOpenItemAdded": "Peer added to batch queue.",
     "batchOpenItemSummary": "Funding {{amount}} sats · {{type}}",
     "batchOpenRemove": "Remove",
+    "batchOpenClear": "Clear list",
+    "batchOpenDraftRestored": "Batch list restored ({{count}} peers). It stays saved in this browser until the batch is submitted or you clear it.",
+    "batchOpenItemFee": "Initial fee {{ppm}} ppm · base {{base}} msat",
+    "initialFeeRateOptional": "Initial fee (ppm, optional)",
+    "initialBaseFeeOptional": "Initial base fee (msat, optional)",
+    "initialFeeHint": "Applied by LND at open. Left blank, the channel starts at the lnd.conf default (bitcoin.feerate) until the first AutoFee run; the policy cannot be changed while the funding is pending.",
+    "initialFeeSuggestion": "Suggestion: {{ppm}} ppm, the current fee of your channel with this peer.",
+    "useSuggestedFee": "Use suggestion",
+    "initialFeeInvalid": "Initial fee and base fee must be integers greater than or equal to zero.",
     "batchOpenConnectingPeer": "Connecting peer before adding to batch...",
     "batchOpenPeerNotConnected": "Could not confirm a connection to this peer (the connection attempt timed out). Some nodes drop idle connections — connect it via Connect Peer and try again, or it may not be accepting inbound connections.",
     "batchOpenHostRequired": "Peer is not connected. Use pubkey@host:port.",

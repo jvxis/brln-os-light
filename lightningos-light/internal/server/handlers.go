@@ -1247,6 +1247,18 @@ func (s *Server) handleWizardBitcoinRemote(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// LND needs the ZMQ too, and an RPC that answers says nothing about it (bitcoin_zmq_probe.go).
+	// Checked before anything is saved, so a node behind a blocked port is told now, not left with
+	// a chain that never syncs.
+	zmqCtx, zmqCancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer zmqCancel()
+	if err := probeBitcoinZMQ(zmqCtx, remoteCfg.ZMQBlock, remoteCfg.ZMQTx); err != nil {
+		s.logger.Printf("bitcoin zmq check failed: %v", err)
+		writeErrorCode(w, http.StatusBadRequest, errBitcoinZMQUnreachable,
+			fmt.Sprintf("bitcoin RPC is OK, but this node could not reach the ZMQ: %v", err))
+		return
+	}
+
 	if err := storeBitcoinSecrets(user, pass); err != nil {
 		s.logger.Printf("failed to store secrets: %v", err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to store secrets: %v", err))
@@ -2763,10 +2775,17 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 		Private         bool     `json:"private"`
 		SatPerVbyte     int64    `json:"sat_per_vbyte"`
 		Outpoints       []string `json:"outpoints"`
+		FeeRatePpm      *int64   `json:"fee_rate_ppm"`
+		BaseFeeMsat     *int64   `json:"base_fee_msat"`
 		ConfirmPassword string   `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	openPolicy, err := parseChannelOpenPolicy(req.FeeRatePpm, req.BaseFeeMsat)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	peerAddress := strings.TrimSpace(req.PeerAddress)
@@ -2822,7 +2841,10 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 		channelPoint string
 		openErr      error
 	)
-	if len(req.Outpoints) > 0 {
+	// An initial policy rides on the same OpenChannelRequest as fixed inputs,
+	// so both go through the parameterised path; the legacy push path stays
+	// for requests that set neither.
+	if len(req.Outpoints) > 0 || !openPolicy.IsZero() {
 		channelPoint, openErr = s.lnd.OpenChannelWithOutpoints(openCtx, lndclient.OpenChannelParams{
 			PubkeyHex:       pubkey,
 			LocalFundingSat: req.LocalFundingSat,
@@ -2831,25 +2853,26 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 			Private:         req.Private,
 			SatPerVbyte:     req.SatPerVbyte,
 			Outpoints:       req.Outpoints,
+			Policy:          openPolicy,
 		})
 	} else {
 		channelPoint, openErr = s.lnd.OpenChannelWithPush(openCtx, pubkey, req.LocalFundingSat, req.PushSat, req.CloseAddress, req.Private, req.SatPerVbyte)
 	}
 	if openErr != nil {
-		s.recordAuditEventAsync(r, "channel.open.failed", pubkey, map[string]any{
+		s.recordAuditEventAsync(r, "channel.open.failed", pubkey, channelOpenPolicyAudit(map[string]any{
 			"local_funding_sat": req.LocalFundingSat,
 			"private":           req.Private,
 			"sat_per_vbyte":     req.SatPerVbyte,
-		})
+		}, openPolicy))
 		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(openErr))
 		return
 	}
-	s.recordAuditEventAsync(r, "channel.open.submitted", channelPoint, map[string]any{
+	s.recordAuditEventAsync(r, "channel.open.submitted", channelPoint, channelOpenPolicyAudit(map[string]any{
 		"peer_pubkey":       pubkey,
 		"local_funding_sat": req.LocalFundingSat,
 		"private":           req.Private,
 		"sat_per_vbyte":     req.SatPerVbyte,
-	})
+	}, openPolicy))
 
 	writeJSON(w, http.StatusOK, map[string]string{"channel_point": channelPoint})
 }
@@ -2897,6 +2920,8 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 			LocalFundingSat int64  `json:"local_funding_sat"`
 			CloseAddress    string `json:"close_address"`
 			Private         bool   `json:"private"`
+			FeeRatePpm      *int64 `json:"fee_rate_ppm"`
+			BaseFeeMsat     *int64 `json:"base_fee_msat"`
 		} `json:"channels"`
 		SatPerVbyte     int64  `json:"sat_per_vbyte"`
 		ConfirmPassword string `json:"confirm_password"`
@@ -2938,6 +2963,7 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 
 	dedupe := make(map[string]bool, len(req.Channels))
 	batch := make([]lndclient.BatchOpenChannelParams, 0, len(req.Channels))
+	policyCount := 0
 	for idx, item := range req.Channels {
 		localFunding := item.LocalFundingSat
 		if localFunding <= 0 {
@@ -2978,6 +3004,14 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("channels[%d].host must include host:port", idx))
 			return
 		}
+		itemPolicy, err := parseChannelOpenPolicy(item.FeeRatePpm, item.BaseFeeMsat)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("channels[%d]: %v", idx, err))
+			return
+		}
+		if !itemPolicy.IsZero() {
+			policyCount++
+		}
 
 		pubkeyKey := strings.ToLower(pubkey)
 		if dedupe[pubkeyKey] {
@@ -3006,6 +3040,7 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 			LocalFundingSat: localFunding,
 			Private:         item.Private,
 			CloseAddress:    item.CloseAddress,
+			Policy:          itemPolicy,
 		})
 	}
 
@@ -3015,15 +3050,17 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 	results, err := s.lnd.BatchOpenChannel(openCtx, batch, req.SatPerVbyte)
 	if err != nil {
 		s.recordAuditEventAsync(r, "channel.open_batch.failed", "batch", map[string]any{
-			"channel_count": len(batch),
-			"sat_per_vbyte": req.SatPerVbyte,
+			"channel_count":        len(batch),
+			"sat_per_vbyte":        req.SatPerVbyte,
+			"initial_policy_count": policyCount,
 		})
 		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
 		return
 	}
 	s.recordAuditEventAsync(r, "channel.open_batch.submitted", "batch", map[string]any{
-		"channel_count": len(results),
-		"sat_per_vbyte": req.SatPerVbyte,
+		"channel_count":        len(results),
+		"sat_per_vbyte":        req.SatPerVbyte,
+		"initial_policy_count": policyCount,
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{

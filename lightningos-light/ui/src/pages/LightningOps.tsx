@@ -297,6 +297,8 @@ type BatchOpenItem = {
   local_funding_sat: number
   private: boolean
   close_address?: string
+  fee_rate_ppm?: number
+  base_fee_msat?: number
 }
 
 type OpenChannelPreview = {
@@ -943,6 +945,50 @@ const OPEN_CHANNEL_SECTION_ID = 'open-channel-section'
 const CLOSE_CHANNEL_SECTION_ID = 'close-channel-section'
 const UPDATE_FEES_SECTION_ID = 'update-fees-section'
 const BATCH_OPEN_SECTION_ID = 'batch-open-section'
+// The batch open draft survives a trip to the Graph Explorer or Open
+// Candidates to fetch the next peer's connection string. localStorage is per
+// origin, so each node keeps its own draft.
+const BATCH_OPEN_DRAFT_STORAGE_KEY = 'lightningOps.batchOpenDraft'
+
+const optionalNonNegativeInt = (value: unknown): number | undefined => {
+  if (value === null || value === undefined || value === '') return undefined
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) return undefined
+  return parsed
+}
+
+const readBatchOpenDraft = (): BatchOpenItem[] => {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(BATCH_OPEN_DRAFT_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((item: any) => item && typeof item.pubkey === 'string' && Number(item.local_funding_sat) > 0)
+      .map((item: any, index: number) => ({
+        id: Number.isFinite(Number(item.id)) ? Number(item.id) : index + 1,
+        pubkey: String(item.pubkey),
+        host: item.host ? String(item.host) : undefined,
+        local_funding_sat: Number(item.local_funding_sat),
+        private: Boolean(item.private),
+        close_address: item.close_address ? String(item.close_address) : undefined,
+        fee_rate_ppm: optionalNonNegativeInt(item.fee_rate_ppm),
+        base_fee_msat: optionalNonNegativeInt(item.base_fee_msat),
+      }))
+  } catch {
+    return []
+  }
+}
+
+// Blank keeps the LND default; anything else must be a non-negative integer.
+const parseInitialFeeInput = (raw: string): { value?: number; error: boolean } => {
+  const trimmed = raw.trim()
+  if (!trimmed) return { error: false }
+  const value = optionalNonNegativeInt(trimmed)
+  if (value === undefined) return { error: true }
+  return { value, error: false }
+}
 const BALANCED_OPEN_SECTION_ID = 'balanced-open-section'
 const WATCHTOWER_SECTION_ID = 'watchtower-section'
 const AMBOSS_HEALTH_SECTION_ID = 'amboss-health-section'
@@ -1349,13 +1395,17 @@ export default function LightningOps() {
   const [openPreviewLoading, setOpenPreviewLoading] = useState(false)
   const [openPreviewStatus, setOpenPreviewStatus] = useState('')
   const [openPrivate, setOpenPrivate] = useState(false)
+  const [openFeeRatePpm, setOpenFeeRatePpm] = useState('')
+  const [openBaseFeeMsat, setOpenBaseFeeMsat] = useState('')
   const [openStatus, setOpenStatus] = useState('')
   const [openChannelPoint, setOpenChannelPoint] = useState('')
   const [batchPeer, setBatchPeer] = useState('')
   const [batchAmount, setBatchAmount] = useState('')
   const [batchCloseAddress, setBatchCloseAddress] = useState('')
   const [batchPrivate, setBatchPrivate] = useState(false)
-  const [batchItems, setBatchItems] = useState<BatchOpenItem[]>([])
+  const [batchFeeRatePpm, setBatchFeeRatePpm] = useState('')
+  const [batchBaseFeeMsat, setBatchBaseFeeMsat] = useState('')
+  const [batchItems, setBatchItems] = useState<BatchOpenItem[]>(() => readBatchOpenDraft())
   const [batchFeeMode, setBatchFeeMode] = useState<'auto' | 'manual'>('auto')
   const [batchFeeRate, setBatchFeeRate] = useState('')
   const [batchFeeStatus, setBatchFeeStatus] = useState('')
@@ -1427,7 +1477,25 @@ export default function LightningOps() {
   const htlcManagerFormDirtyRef = useRef(false)
   const failedPaymentsCleanerIntervalDirtyRef = useRef(false)
   const torPeerCheckerIntervalDirtyRef = useRef(false)
-  const batchItemIdRef = useRef(1)
+  const batchItemIdRef = useRef(batchItems.reduce((max, item) => Math.max(max, item.id), 0) + 1)
+  const batchDraftRestoredCountRef = useRef(batchItems.length)
+  useEffect(() => {
+    try {
+      if (batchItems.length) {
+        window.localStorage.setItem(BATCH_OPEN_DRAFT_STORAGE_KEY, JSON.stringify(batchItems))
+      } else {
+        window.localStorage.removeItem(BATCH_OPEN_DRAFT_STORAGE_KEY)
+      }
+    } catch {
+      /* storage unavailable: the draft only lives in memory */
+    }
+  }, [batchItems])
+  useEffect(() => {
+    if (batchDraftRestoredCountRef.current > 0) {
+      setBatchStatus(t('lightningOps.batchOpenDraftRestored', { count: batchDraftRestoredCountRef.current }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const pendingScrollChannelRef = useRef('')
   const pendingScrollPeerRef = useRef('')
   const pendingScrollSectionRef = useRef('')
@@ -4727,6 +4795,20 @@ export default function LightningOps() {
     })
   }, [peers, peerSearch])
 
+  // The fee of the channel we already have with the peer is the best first
+  // guess for a sibling (coinos, 17/10/2026: a second 10M channel had to open
+  // at the 1791 ppm the first one sells at, not at the lnd.conf 1000).
+  const suggestInitialFeeForPeer = (rawPeer: string): number | null => {
+    const key = rawPeer.trim().split('@')[0].trim().toLowerCase()
+    if (!key) return null
+    const siblings = channels
+      .filter((ch) => String(ch.remote_pubkey || '').toLowerCase() === key && Number.isFinite(Number(ch.fee_rate_ppm)))
+      .sort((a, b) => Number(b.capacity_sat || 0) - Number(a.capacity_sat || 0))
+    return siblings.length ? Number(siblings[0].fee_rate_ppm) : null
+  }
+  const openPeerSuggestedFee = useMemo(() => suggestInitialFeeForPeer(openPeer), [openPeer, channels])
+  const batchPeerSuggestedFee = useMemo(() => suggestInitialFeeForPeer(batchPeer), [batchPeer, channels])
+
   const parseBatchPeerAddress = (raw: string): { pubkey: string; host?: string; error?: string } => {
     const value = raw.trim()
     if (!value) {
@@ -5806,6 +5888,12 @@ export default function LightningOps() {
       setOpenStatus(t('lightningOps.openManualFeeRequired'))
       return
     }
+    const openPolicyFee = parseInitialFeeInput(openFeeRatePpm)
+    const openPolicyBase = parseInitialFeeInput(openBaseFeeMsat)
+    if (openPolicyFee.error || openPolicyBase.error) {
+      setOpenStatus(t('lightningOps.initialFeeInvalid'))
+      return
+    }
     try {
       const res = await openChannel({
         peer_address: openPeer.trim(),
@@ -5813,13 +5901,17 @@ export default function LightningOps() {
         push_sat: pushSat > 0 ? pushSat : undefined,
         close_address: openCloseAddress.trim() || undefined,
         sat_per_vbyte: openFeeMode === 'manual' && feeRate > 0 ? feeRate : undefined,
-        private: openPrivate
+        private: openPrivate,
+        fee_rate_ppm: openPolicyFee.value,
+        base_fee_msat: openPolicyBase.value,
       })
       setOpenStatus(t('lightningOps.channelOpeningSubmitted'))
       setOpenChannelPoint(res?.channel_point || '')
       setOpenAmount('')
       setOpenPushSat('')
       setOpenCloseAddress('')
+      setOpenFeeRatePpm('')
+      setOpenBaseFeeMsat('')
       load()
     } catch (err: any) {
       if (queueFundsReauth(err, handleOpenChannel)) return
@@ -5843,6 +5935,12 @@ export default function LightningOps() {
     const pubkeyKey = pubkey.toLowerCase()
     if (batchItems.some((item) => item.pubkey.toLowerCase() === pubkeyKey)) {
       setBatchStatus(t('lightningOps.batchOpenDuplicatePeer'))
+      return
+    }
+    const batchPolicyFee = parseInitialFeeInput(batchFeeRatePpm)
+    const batchPolicyBase = parseInitialFeeInput(batchBaseFeeMsat)
+    if (batchPolicyFee.error || batchPolicyBase.error) {
+      setBatchStatus(t('lightningOps.initialFeeInvalid'))
       return
     }
 
@@ -5892,12 +5990,16 @@ export default function LightningOps() {
           local_funding_sat: amount,
           private: batchPrivate,
           close_address: batchCloseAddress.trim() || undefined,
+          fee_rate_ppm: batchPolicyFee.value,
+          base_fee_msat: batchPolicyBase.value,
         },
       ])
       setBatchPeer('')
       setBatchAmount('')
       setBatchCloseAddress('')
       setBatchPrivate(false)
+      setBatchFeeRatePpm('')
+      setBatchBaseFeeMsat('')
       setBatchStatus(t('lightningOps.batchOpenItemAdded'))
       load()
     } catch (err: any) {
@@ -5940,6 +6042,12 @@ export default function LightningOps() {
         }
         if (item.close_address?.trim()) {
           payload.close_address = item.close_address.trim()
+        }
+        if (typeof item.fee_rate_ppm === 'number') {
+          payload.fee_rate_ppm = item.fee_rate_ppm
+        }
+        if (typeof item.base_fee_msat === 'number') {
+          payload.base_fee_msat = item.base_fee_msat
         }
         return payload
       })
@@ -9053,6 +9161,33 @@ export default function LightningOps() {
             onChange={(e) => setOpenPushSat(e.target.value)}
           />
           <p className="text-xs text-fog/50">{t('lightningOps.pushAmountNote')}</p>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <input
+              className="input-field"
+              placeholder={t('lightningOps.initialFeeRateOptional')}
+              type="number"
+              min={0}
+              value={openFeeRatePpm}
+              onChange={(e) => setOpenFeeRatePpm(e.target.value)}
+            />
+            <input
+              className="input-field"
+              placeholder={t('lightningOps.initialBaseFeeOptional')}
+              type="number"
+              min={0}
+              value={openBaseFeeMsat}
+              onChange={(e) => setOpenBaseFeeMsat(e.target.value)}
+            />
+          </div>
+          <p className="text-xs text-fog/50">{t('lightningOps.initialFeeHint')}</p>
+          {openPeerSuggestedFee !== null && (
+            <div className="flex flex-wrap items-center gap-3 text-xs text-fog/70">
+              <span>{t('lightningOps.initialFeeSuggestion', { ppm: openPeerSuggestedFee })}</span>
+              <button className="btn-secondary text-xs px-3 py-1.5" type="button" onClick={() => setOpenFeeRatePpm(String(openPeerSuggestedFee))}>
+                {t('lightningOps.useSuggestedFee')}
+              </button>
+            </div>
+          )}
           <label className="text-sm text-fog/70">
             {t('lightningOps.feeRate')}
             <span className="ml-2 text-xs text-fog/50">
@@ -9450,10 +9585,42 @@ export default function LightningOps() {
             {t('lightningOps.privateChannel')}
           </label>
         </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <input
+            className="input-field"
+            placeholder={t('lightningOps.initialFeeRateOptional')}
+            type="number"
+            min={0}
+            value={batchFeeRatePpm}
+            onChange={(e) => setBatchFeeRatePpm(e.target.value)}
+          />
+          <input
+            className="input-field"
+            placeholder={t('lightningOps.initialBaseFeeOptional')}
+            type="number"
+            min={0}
+            value={batchBaseFeeMsat}
+            onChange={(e) => setBatchBaseFeeMsat(e.target.value)}
+          />
+        </div>
+        <p className="text-xs text-fog/50">{t('lightningOps.initialFeeHint')}</p>
+        {batchPeerSuggestedFee !== null && (
+          <div className="flex flex-wrap items-center gap-3 text-xs text-fog/70">
+            <span>{t('lightningOps.initialFeeSuggestion', { ppm: batchPeerSuggestedFee })}</span>
+            <button className="btn-secondary text-xs px-3 py-1.5" type="button" onClick={() => setBatchFeeRatePpm(String(batchPeerSuggestedFee))}>
+              {t('lightningOps.useSuggestedFee')}
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-3">
           <button className="btn-secondary" type="button" onClick={handleBatchAddItem} disabled={batchBusy}>
             + {t('lightningOps.batchOpenAdd')}
           </button>
+          {batchItems.length > 0 && (
+            <button className="btn-secondary" type="button" onClick={() => setBatchItems([])} disabled={batchBusy}>
+              {t('lightningOps.batchOpenClear')}
+            </button>
+          )}
           <span className="text-xs text-fog/60">
             {t('lightningOps.batchOpenItemsCount', { count: batchItems.length })}
           </span>
@@ -9474,6 +9641,14 @@ export default function LightningOps() {
                         type: item.private ? t('lightningOps.privateChannel') : t('lightningOps.publicChannel'),
                       })}
                     </p>
+                    {(typeof item.fee_rate_ppm === 'number' || typeof item.base_fee_msat === 'number') && (
+                      <p className="text-fog/60">
+                        {t('lightningOps.batchOpenItemFee', {
+                          ppm: typeof item.fee_rate_ppm === 'number' ? item.fee_rate_ppm : '-',
+                          base: typeof item.base_fee_msat === 'number' ? item.base_fee_msat : '-',
+                        })}
+                      </p>
+                    )}
                   </div>
                   <button className="btn-secondary text-xs px-3 py-1.5" type="button" onClick={() => handleBatchRemoveItem(item.id)} disabled={batchBusy}>
                     {t('lightningOps.batchOpenRemove')}

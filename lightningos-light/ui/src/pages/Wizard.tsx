@@ -146,7 +146,11 @@ export default function Wizard() {
         .catch(() => null)
       next()
     } catch (err: any) {
-      setStatus(err?.message || t('wizard.rpcValidationFailedRetry'))
+      setStatus(
+        err?.code === 'bitcoin_zmq_unreachable'
+          ? t('bitcoinRemote.zmqUnreachable', { detail: err.message })
+          : err?.message || t('wizard.rpcValidationFailedRetry')
+      )
       setStatusTone('error')
     }
   }

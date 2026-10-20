@@ -36,6 +36,7 @@ type GraphExplorerStatus = {
 
 type GraphExplorerStorageConfig = {
   history_retention_days?: number
+  own_history_retention_days?: number
   history_max_bytes?: number
 }
 
@@ -635,6 +636,7 @@ export default function GraphExplorer() {
   const [storage, setStorage] = useState<GraphExplorerStorageStatus | null>(null)
   const [storageError, setStorageError] = useState('')
   const [storageRetentionDays, setStorageRetentionDays] = useState('30')
+  const [storageOwnRetentionDays, setStorageOwnRetentionDays] = useState('365')
   const [storageMaxGB, setStorageMaxGB] = useState('5')
   const [storageSaving, setStorageSaving] = useState(false)
   const [storageCleaning, setStorageCleaning] = useState(false)
@@ -774,6 +776,7 @@ export default function GraphExplorer() {
           setStorage(storagePayload)
           setStorageError('')
           setStorageRetentionDays(String(Math.max(1, Math.round(Number(storagePayload?.config?.history_retention_days || 30)))))
+          setStorageOwnRetentionDays(String(Math.max(1, Math.round(Number(storagePayload?.config?.own_history_retention_days || 365)))))
           const maxBytes = Number(storagePayload?.config?.history_max_bytes || 0)
           setStorageMaxGB(maxBytes > 0 ? String(Math.round((maxBytes / (1024 * 1024 * 1024)) * 100) / 100) : '0')
         } else {
@@ -1030,14 +1033,18 @@ export default function GraphExplorer() {
 
   const parseStorageInputs = () => {
     const retentionDays = Math.round(Number(storageRetentionDays))
+    const ownRetentionDays = Math.round(Number(storageOwnRetentionDays))
     const maxGB = Number(String(storageMaxGB).trim().replace(',', '.'))
     if (!Number.isFinite(retentionDays) || retentionDays < 1 || retentionDays > 365) {
       throw new Error(t('graphExplorer.storage.invalidRetention'))
     }
+    if (!Number.isFinite(ownRetentionDays) || ownRetentionDays < retentionDays || ownRetentionDays > 730) {
+      throw new Error(t('graphExplorer.storage.invalidOwnRetention'))
+    }
     if (!Number.isFinite(maxGB) || maxGB < 0) {
       throw new Error(t('graphExplorer.storage.invalidSize'))
     }
-    return { retentionDays, maxGB }
+    return { retentionDays, ownRetentionDays, maxGB }
   }
 
   const handleSaveStorage = async () => {
@@ -1045,9 +1052,10 @@ export default function GraphExplorer() {
     setStorageError('')
     setStorageMessage('')
     try {
-      const { retentionDays, maxGB } = parseStorageInputs()
+      const { retentionDays, ownRetentionDays, maxGB } = parseStorageInputs()
       const nextStorage = await updateGraphExplorerStorage({
         history_retention_days: retentionDays,
+        own_history_retention_days: ownRetentionDays,
         history_max_gb: maxGB
       }) as GraphExplorerStorageStatus
       setStorage(nextStorage)
@@ -1396,7 +1404,7 @@ export default function GraphExplorer() {
                   </button>
                 ))}
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
                 <label className="space-y-2">
                   <span className="text-xs font-medium text-fog/65">{t('graphExplorer.storage.retentionDays')}</span>
                   <input
@@ -1408,6 +1416,19 @@ export default function GraphExplorer() {
                     onChange={(event) => setStorageRetentionDays(event.target.value)}
                     className="w-full rounded-2xl border border-white/10 bg-black/15 px-3 py-2 text-sm text-fog outline-none transition focus:border-sky-300/40"
                   />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-xs font-medium text-fog/65">{t('graphExplorer.storage.ownRetentionDays')}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={730}
+                    step={1}
+                    value={storageOwnRetentionDays}
+                    onChange={(event) => setStorageOwnRetentionDays(event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-black/15 px-3 py-2 text-sm text-fog outline-none transition focus:border-sky-300/40"
+                  />
+                  <span className="block text-[11px] text-fog/45">{t('graphExplorer.storage.ownRetentionHint')}</span>
                 </label>
                 <label className="space-y-2">
                   <span className="text-xs font-medium text-fog/65">{t('graphExplorer.storage.maxGB')}</span>

@@ -210,3 +210,71 @@ func TestAutoTargetDownAllowedWaitsFourIntervals(t *testing.T) {
 		t.Fatal("a zero interval never blocks")
 	}
 }
+
+func TestDecideAutoTargetIdleUp(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.AutoTargetIdleUpDays = 14
+	cfg.AutoTargetStepPct = 5
+	cfg.AutoTargetMinPct = 20
+	cfg.DeadbandPct = 2
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	idle := now.Add(-15 * 24 * time.Hour)
+	recent := now.Add(-10 * 24 * time.Hour)
+	cases := []struct {
+		name      string
+		cur       int
+		local     float64
+		effMax    int
+		last      time.Time
+		noSale    bool
+		candidate bool
+		mutate    func(*RebalanceConfig)
+		wantOK    bool
+		wantNew   int
+	}{
+		{name: "off", cur: 20, local: 19, effMax: 50, last: idle, mutate: func(c *RebalanceConfig) { c.AutoTargetIdleUpDays = 0 }},
+		{name: "idle at min goes up one step", cur: 20, local: 19, effMax: 50, last: idle, wantOK: true, wantNew: 25},
+		{name: "legacy target below min jumps to min", cur: 5, local: 4, effMax: 50, last: idle, wantOK: true, wantNew: 20},
+		{name: "not idle long enough", cur: 20, local: 19, effMax: 50, last: recent},
+		{name: "round candidate belongs to the sell-through rule", cur: 20, local: 10, effMax: 50, last: idle, candidate: true},
+		{name: "no sale in 30 days", cur: 20, local: 19, effMax: 50, last: idle, noSale: true},
+		{name: "unknown activity", cur: 20, local: 19, effMax: 50},
+		{name: "holds more than target: source or unsold stock", cur: 20, local: 57, effMax: 50, last: idle},
+		{name: "just above target inside the deadband still counts", cur: 20, local: 21.5, effMax: 50, last: idle, wantOK: true, wantNew: 25},
+		{name: "capped at the effective max", cur: 48, local: 40, effMax: 50, last: idle, wantOK: true, wantNew: 50},
+		{name: "already at the effective max", cur: 50, local: 40, effMax: 50, last: idle},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := cfg
+			if tc.mutate != nil {
+				tc.mutate(&c)
+			}
+			dec, ok := decideAutoTargetIdleUp(tc.cur, tc.local, tc.effMax, tc.last, tc.noSale, tc.candidate, c, now)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (%+v)", ok, tc.wantOK, dec)
+			}
+			if !ok {
+				return
+			}
+			if dec.Direction != autoTargetUp || dec.Reason != autoTargetIdleUpReason || dec.NewTarget != tc.wantNew || dec.Delta != tc.wantNew-tc.cur {
+				t.Fatalf("decision = %+v, want up to %d (%s)", dec, tc.wantNew, autoTargetIdleUpReason)
+			}
+		})
+	}
+}
+
+func TestNormalizeAutoTargetIdleUpDays(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	if cfg.AutoTargetIdleUpDays != 0 {
+		t.Fatalf("idle up must default to off, got %d", cfg.AutoTargetIdleUpDays)
+	}
+	cfg.AutoTargetIdleUpDays = -3
+	if got := normalizeRebalanceConfig(cfg).AutoTargetIdleUpDays; got != 0 {
+		t.Fatalf("negative days normalize to 0, got %d", got)
+	}
+	cfg.AutoTargetIdleUpDays = 400
+	if got := normalizeRebalanceConfig(cfg).AutoTargetIdleUpDays; got != autoTargetIdleUpDaysMax {
+		t.Fatalf("days are capped at %d, got %d", autoTargetIdleUpDaysMax, got)
+	}
+}

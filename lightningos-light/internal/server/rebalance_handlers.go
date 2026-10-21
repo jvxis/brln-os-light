@@ -119,6 +119,7 @@ type rebalanceConfigPayload struct {
 	AutoTargetUpSellThroughFactor          *float64 `json:"auto_target_up_sellthrough_factor,omitempty"`
 	AutoTargetDownSellThroughFactor        *float64 `json:"auto_target_down_sellthrough_factor,omitempty"`
 	AutoTargetMaxDownsPerCycle             *int     `json:"auto_target_max_downs_per_cycle,omitempty"`
+	AutoTargetIdleUpDays                   *int     `json:"auto_target_idle_up_days,omitempty"`
 }
 
 type rebalanceRunPayload struct {
@@ -640,6 +641,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	if payload.AutoTargetMaxDownsPerCycle != nil {
 		cfg.AutoTargetMaxDownsPerCycle = *payload.AutoTargetMaxDownsPerCycle
 	}
+	if payload.AutoTargetIdleUpDays != nil {
+		cfg.AutoTargetIdleUpDays = *payload.AutoTargetIdleUpDays
+	}
 	return cfg
 }
 
@@ -887,6 +891,9 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 		return err
 	}
 	if err := validateOptionalInt("auto_target_max_downs_per_cycle", payload.AutoTargetMaxDownsPerCycle, 1, 50); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("auto_target_idle_up_days", payload.AutoTargetIdleUpDays, 0, autoTargetIdleUpDaysMax); err != nil {
 		return err
 	}
 	if payload.AutoTargetMinPct != nil && payload.AutoTargetMaxPct != nil && *payload.AutoTargetMinPct >= *payload.AutoTargetMaxPct {

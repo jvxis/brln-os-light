@@ -228,6 +228,7 @@ func TestDecideAutoTargetIdleUp(t *testing.T) {
 		last      time.Time
 		noSale    bool
 		candidate bool
+		inbound   int64
 		mutate    func(*RebalanceConfig)
 		wantOK    bool
 		wantNew   int
@@ -243,6 +244,11 @@ func TestDecideAutoTargetIdleUp(t *testing.T) {
 		{name: "just above target inside the deadband still counts", cur: 20, local: 21.5, effMax: 50, last: idle, wantOK: true, wantNew: 25},
 		{name: "capped at the effective max", cur: 48, local: 40, effMax: 50, last: idle, wantOK: true, wantNew: 50},
 		{name: "already at the effective max", cur: 50, local: 40, effMax: 50, last: idle},
+		// The Continental (10M) at 1% after its fee went to 1 ppm: 54M came in
+		// over 14 days. It refills on its own and must not become a target.
+		{name: "source drained on purpose refills on its own", cur: 5, local: 1, effMax: 50, last: idle, inbound: 54_000_000},
+		{name: "inbound just under the self-refill share", cur: 20, local: 19, effMax: 50, last: idle, inbound: 1_900_000, wantOK: true, wantNew: 25},
+		{name: "inbound at the self-refill share", cur: 20, local: 19, effMax: 50, last: idle, inbound: 2_000_000},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,7 +256,7 @@ func TestDecideAutoTargetIdleUp(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(&c)
 			}
-			dec, ok := decideAutoTargetIdleUp(tc.cur, tc.local, tc.effMax, tc.last, tc.noSale, tc.candidate, c, now)
+			dec, ok := decideAutoTargetIdleUp(tc.cur, tc.local, tc.effMax, tc.last, tc.noSale, tc.candidate, tc.inbound, 10_000_000, c, now)
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v (%+v)", ok, tc.wantOK, dec)
 			}

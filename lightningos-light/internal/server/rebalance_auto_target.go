@@ -83,6 +83,9 @@ type autoTargetSignals struct {
 	IsRoundCandidate  bool    // selected as a candidate this round => supply-limited
 	// IdleSince is the last activity used by an idle_up decision (audit only).
 	IdleSince time.Time
+	// IdleInboundSat is the forwarded volume that entered through the channel
+	// over the idle window (audit only).
+	IdleInboundSat int64
 }
 
 func (sig autoTargetSignals) currentInt() int {
@@ -192,6 +195,15 @@ func decideAutoTargetAdjustment(sig autoTargetSignals, baseline autoTargetNodeBa
 // its target, outside the round, for AutoTargetIdleUpDays.
 const autoTargetIdleUpReason = "idle_up"
 
+// autoTargetIdleUpSelfRefillPct: a channel through which at least this share
+// of its capacity entered as forwards during the idle window refills on its
+// own (a source, or a router), so a low target is the operator's or the
+// market's choice, not a lock-in. Raising it would make the autopilot pay to
+// fill a channel that fills for free. Friendspool, 14 days to 21/10/2026: the
+// eight sources the operator keeps at 5–10% took in 26%–560% of capacity;
+// 38 of the 69 other rebalance channels took in under 10%.
+const autoTargetIdleUpSelfRefillPct = 20
+
 // decideAutoTargetIdleUp is the time-based counterpart of the sell-through UP.
 //
 // UP needs the channel to be a round candidate, and a candidate needs a
@@ -211,9 +223,12 @@ const autoTargetIdleUpReason = "idle_up"
 //
 // Skipped: the feature off (0 days), round candidates (the sell-through rule
 // owns them), no_sale_30d channels (the autopilot would not buy them anyway),
-// unknown activity time, and channels holding more than target + deadband
-// (sources that fill on their own, or stock still unsold).
-func decideAutoTargetIdleUp(cur int, localPct float64, effMax int, lastActivity time.Time, noSale30d bool, isCandidate bool, cfg RebalanceConfig, now time.Time) (autoTargetDecision, bool) {
+// unknown activity time, channels holding more than target + deadband (stock
+// still unsold), and channels that refill on their own: inbound forwards over
+// the idle window of at least autoTargetIdleUpSelfRefillPct of capacity. A
+// source drained on purpose by a low fee sits at 1% local with a low target
+// and must not become a refill target.
+func decideAutoTargetIdleUp(cur int, localPct float64, effMax int, lastActivity time.Time, noSale30d bool, isCandidate bool, inboundSat int64, capacitySat int64, cfg RebalanceConfig, now time.Time) (autoTargetDecision, bool) {
 	if cfg.AutoTargetIdleUpDays <= 0 || isCandidate || noSale30d || lastActivity.IsZero() {
 		return autoTargetDecision{}, false
 	}
@@ -221,6 +236,9 @@ func decideAutoTargetIdleUp(cur int, localPct float64, effMax int, lastActivity 
 		return autoTargetDecision{}, false
 	}
 	if localPct > float64(cur)+cfg.DeadbandPct {
+		return autoTargetDecision{}, false
+	}
+	if capacitySat > 0 && inboundSat*100 >= capacitySat*autoTargetIdleUpSelfRefillPct {
 		return autoTargetDecision{}, false
 	}
 	newT := cur + cfg.AutoTargetStepPct
@@ -267,8 +285,10 @@ func (s *RebalanceService) evaluateAutoTarget(
 	}
 	lastDecided := s.loadAutoTargetLastDecided(ctx)
 	var lastActivity map[uint64]time.Time
+	var idleInbound map[uint64]int64
 	if cfg.AutoTargetIdleUpDays > 0 {
 		lastActivity = s.loadAutoTargetLastActivity(ctx)
+		idleInbound = s.loadAutoTargetInboundSat(ctx, cfg.AutoTargetIdleUpDays)
 	}
 	interval := time.Duration(cfg.AutoTargetEvalIntervalHours) * time.Hour
 	upsRemaining := cfg.AutoTargetMaxUpsPerCycle
@@ -304,9 +324,10 @@ func (s *RebalanceService) evaluateAutoTarget(
 		}
 		dec := decideAutoTargetAdjustment(sig, baseline, cfg)
 		if dec.Direction == autoTargetNoop && lastActivity != nil {
-			if idle, ok := decideAutoTargetIdleUp(sig.currentInt(), snap.LocalPct, dec.EffectiveMaxPct, lastActivity[snap.ChannelID], snap.NoSale30d, isCandidate, cfg, scanAt); ok {
+			if idle, ok := decideAutoTargetIdleUp(sig.currentInt(), snap.LocalPct, dec.EffectiveMaxPct, lastActivity[snap.ChannelID], snap.NoSale30d, isCandidate, idleInbound[snap.ChannelID], snap.CapacitySat, cfg, scanAt); ok {
 				dec = idle
 				sig.IdleSince = lastActivity[snap.ChannelID]
+				sig.IdleInboundSat = idleInbound[snap.ChannelID]
 			}
 		}
 		switch dec.Direction {
@@ -540,6 +561,41 @@ left join (
 	return out
 }
 
+// loadAutoTargetInboundSat returns, per channel, the forwarded volume that
+// entered through it over the last `days` days (the same forward
+// notifications AutoFee reads to decide that a channel refills on its own).
+func (s *RebalanceService) loadAutoTargetInboundSat(ctx context.Context, days int) map[uint64]int64 {
+	out := map[uint64]int64{}
+	if s.db == nil || days <= 0 {
+		return out
+	}
+	rows, err := s.db.Query(ctx, `
+select chan_id_in, coalesce(sum(amount_in_msat), 0) / 1000
+from notifications
+where type = 'forward'
+  and occurred_at >= now() - ($1 * interval '1 day')
+  and chan_id_in is not null
+group by chan_id_in`, days)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("auto-target inbound load failed: %v", err)
+		}
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var chID int64
+		var sat int64
+		if err := rows.Scan(&chID, &sat); err != nil {
+			return out
+		}
+		if chID > 0 {
+			out[uint64(chID)] = sat
+		}
+	}
+	return out
+}
+
 // autoTargetLastDecision: when the channel was last moved, and when it was
 // last moved DOWN. UP keeps the eval interval; DOWN waits longer.
 type autoTargetLastDecision struct {
@@ -583,6 +639,7 @@ func (s *RebalanceService) persistAutoTargetDecision(ctx context.Context, snap R
 	if !sig.IdleSince.IsZero() {
 		signals["idle_since"] = sig.IdleSince.UTC().Format(time.RFC3339)
 		signals["idle_up_days"] = cfg.AutoTargetIdleUpDays
+		signals["idle_inbound_sat"] = sig.IdleInboundSat
 	}
 	blob, err := json.Marshal(signals)
 	if err != nil {

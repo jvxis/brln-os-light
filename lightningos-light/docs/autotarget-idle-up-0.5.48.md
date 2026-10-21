@@ -16,7 +16,8 @@ Ligado, um canal gerenciado pelo AutoTarget sobe **um degrau** (`auto_target_ste
 
 - não é candidato nesta rodada (candidatos seguem com a regra de sell-through);
 - não houve job de rebalance para ele (qualquer origem: autopilot, manual, sonda), movimento aplicado do AutoTarget nem mudança nas configurações do canal há N dias;
-- o saldo local está até o alvo + deadband (fontes cheias e estoque ainda não vendido ficam de fora);
+- o saldo local está até o alvo + deadband (estoque ainda não vendido fica de fora);
+- o canal **não enche sozinho**: a entrada por ele (forwards que entraram pelo canal) na janela de N dias ficou abaixo de 20% da capacidade. Sources e routers ficam de fora mesmo quando estão vazios. Motivo: no Friendspool, 14 dias até 21/10/2026, as oito sources que o operador mantém em 5–10% receberam de 26% a 560% da capacidade, e 38 dos 69 demais canais com rebalance ligado receberam menos de 10%. The Continental e Nodelou estavam em 1% de local porque a fee baixa os esvaziou de propósito; sem esse filtro virariam alvo de compra;
 - não está em `no_sale_30d` (o autopilot não compraria para ele de qualquer forma).
 
 A decisão é registrada no histórico do AutoTarget com motivo `idle_up` e `idle_since`. Usa o mesmo orçamento de subidas por ciclo (`auto_target_max_ups_per_cycle`) depois das subidas por venda; quando o orçamento acaba, não grava linha de throttle (o canal continua elegível e entra no próximo ciclo com vaga).
@@ -29,5 +30,5 @@ Valor sugerido: 14 dias. Antes de ligar, medir o ajuste manual de 21/10 (alvos e
 
 ## Testes
 
-- `TestDecideAutoTargetIdleUp`: desligado; sobe um degrau no mínimo; alvo antigo abaixo do mínimo vai ao mínimo; tempo insuficiente; candidato; `no_sale_30d`; atividade desconhecida; canal acima do alvo; dentro do deadband; teto no máximo efetivo; já no máximo.
+- `TestDecideAutoTargetIdleUp`: desligado; sobe um degrau no mínimo; alvo antigo abaixo do mínimo vai ao mínimo; tempo insuficiente; candidato; `no_sale_30d`; atividade desconhecida; canal acima do alvo; dentro do deadband; teto no máximo efetivo; já no máximo; source esvaziada de propósito (entrada 540% da capacidade); entrada logo abaixo e exatamente no limite de 20%.
 - `TestNormalizeAutoTargetIdleUpDays`: padrão 0, negativo vira 0, teto 90.

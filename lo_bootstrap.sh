@@ -225,6 +225,9 @@ main() {
     die "$INSTALLER not found at $install_script"
   fi
   chmod +x "$install_script" 2>/dev/null || true
+  if [[ -f "$install_dir/scripts/prepare-node-upgrade.sh" ]]; then
+    log "The selected release prepares a private, verified Node/npm build toolchain; system Node is not replaced."
+  fi
   log "Running installer"
   export LIGHTNINGOS_RELEASE_BOOTSTRAPPED=1
   exec "$install_script" "$@"

@@ -32,13 +32,12 @@ fi
 source "$GO_PREPARE_SCRIPT"
 
 
-NODE_VERSION="24"
-NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
-NODESOURCE_KEY_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
-NODESOURCE_KEY_SHA256="b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d"
-NODESOURCE_INRELEASE_URL="https://deb.nodesource.com/node_${NODE_VERSION}.x/dists/nodistro/InRelease"
-NODESOURCE_KEYRING="/usr/share/keyrings/nodesource.gpg"
-NODESOURCE_SOURCE="/etc/apt/sources.list.d/nodesource.sources"
+NODE_PREPARE_SCRIPT="$REPO_ROOT/scripts/prepare-node-upgrade.sh"
+if [[ ! -r "$NODE_PREPARE_SCRIPT" || -L "$NODE_PREPARE_SCRIPT" ]]; then
+  echo "Missing or unsafe Node preparation library: $NODE_PREPARE_SCRIPT" >&2
+  exit 1
+fi
+source "$NODE_PREPARE_SCRIPT"
 
 I2PD_KEY_URL="https://repo.i2pd.xyz/r4sas.gpg"
 I2PD_KEY_FINGERPRINT="951928BB317024EFD053D73C66F6C87B98EBCFE2"
@@ -728,7 +727,7 @@ install_packages() {
     postgresql-"${POSTGRES_VERSION}" \
     postgresql-client-"${POSTGRES_VERSION}" \
     smartmontools acl curl jq ca-certificates openssl build-essential git sudo tor apt-transport-https tmux \
-    avahi-daemon libnss-mdns
+    avahi-daemon libnss-mdns python3 util-linux
   install_tor_keyring_package_if_available
   print_ok "Base packages installed"
 }
@@ -832,41 +831,8 @@ install_go() {
 }
 
 install_node() {
-  print_step "Installing Node.js ${NODE_VERSION}.x"
-  if command -v node >/dev/null 2>&1; then
-    local major
-    major=$(node -v | sed 's/v//' | cut -d. -f1)
-    if [[ "$major" -ge "$NODE_VERSION" ]]; then
-      print_ok "Node.js already installed ($(node -v))"
-      return
-    fi
-  fi
-
-  apt_get install -y ca-certificates curl gnupg
-  local architecture source_tmp
-  architecture=$(dpkg --print-architecture)
-  if [[ "$architecture" != "amd64" && "$architecture" != "arm64" ]]; then
-    print_warn "Unsupported NodeSource architecture: ${architecture}"
-    return 1
-  fi
-  install -d -o root -g root -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
-  lightningos_install_authenticated_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256" \
-    "$NODESOURCE_INRELEASE_URL" "$NODESOURCE_KEYRING" "NodeSource repository"
-  source_tmp=$(mktemp)
-  cat > "$source_tmp" <<EOF
-Types: deb
-URIs: https://deb.nodesource.com/node_${NODE_VERSION}.x
-Suites: nodistro
-Components: main
-Architectures: ${architecture}
-Signed-By: ${NODESOURCE_KEYRING}
-EOF
-  install -o root -g root -m 0644 "$source_tmp" "$NODESOURCE_SOURCE"
-  rm -f -- "$source_tmp"
-  rm -f -- /etc/apt/sources.list.d/nodesource.list
-  apt_get update
-  apt-get install -y nodejs >/dev/null
-  print_ok "Node.js installed"
+  print_step "Preparing release-pinned LOS Node.js and npm (system Node is unchanged)"
+  lightningos_prepare_node
 }
 
 ensure_native_app_identity() {
@@ -1325,7 +1291,7 @@ install_lnd() {
 
 build_ui() {
   print_step "Building UI"
-  (cd "$REPO_ROOT/ui" && npm install && npm run build)
+(cd "$REPO_ROOT/ui" && "$NPM_BIN" ci --include=dev && "$NPM_BIN" run build)
   print_ok "UI build complete"
 }
 

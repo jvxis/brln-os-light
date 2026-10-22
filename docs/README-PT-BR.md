@@ -10,7 +10,8 @@ As releases publicadas no repositório principal terminam na **0.5.40** para pre
 
 Upgrade parado na preparação do Go na 0.5.40/0.5.41? Consulte o
 [diagnóstico e recuperação opcional do proprietário legado](GO_PARENT_OWNER_RECOVERY.md#português).
-Se o upgrade funciona normalmente, nenhuma ação é necessária.
+Para atualizar da 0.5.47 ou anterior para a 0.5.48 ou posterior, consulte também
+a [preparação única do Node/npm](NODE_TOOLCHAIN_UPGRADE.md#português).
 
 
 
@@ -79,7 +80,7 @@ Primeiro node? O passo a passo cobre o que você precisa, a instalação e os pr
 O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort habilitado) + i2pd habilitado por padrão
-- Go fixado em `lightningos-light/scripts/go-toolchain.conf` (atualmente 1.26.8) e Node.js 24.x (uma major mais nova já instalada é mantida)
+- Go fixado em `lightningos-light/scripts/go-toolchain.conf` (atualmente 1.26.8); ferramentas privadas de build do LOS: Node.js 24.22.1 e seu npm 11.19.1, verificados e preparados automaticamente pelos instaladores da 0.5.48+. O Node/npm do sistema não é substituído.
 
 - Binários do LND fixados pela release selecionada (atualmente `v0.21.4-beta` para nodes novos)
 

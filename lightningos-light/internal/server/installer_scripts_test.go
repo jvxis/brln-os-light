@@ -268,40 +268,28 @@ func TestInstallersUseAuthenticatedLNDReleaseHelper(t *testing.T) {
 }
 
 func TestInstallersUseFingerprintPinnedAPTRepositories(t *testing.T) {
-	installers := []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"}
-	for _, name := range installers {
-		t.Run(name, func(t *testing.T) {
-			raw, err := os.ReadFile(filepath.Join("..", "..", name))
-			if err != nil {
-				t.Fatal(err)
+	// Node no longer needs an APT repository: its official archive is pinned
+	// and prepared exclusively for LOS. Keep the independent i2pd/APT checks.
+	for _, name := range []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		for _, required := range []string{
+			`source "$NODE_PREPARE_SCRIPT"`, `lightningos_prepare_node`,
+			`"$NPM_BIN" ci --include=dev`, `"$NPM_BIN" run build`,
+		} {
+			if !strings.Contains(content, required) {
+				t.Fatalf("%s lacks managed Node integration %q", name, required)
 			}
-			content := strings.ReplaceAll(string(raw), "\r\n", "\n")
-			for _, expected := range []string{
-				`NODE_VERSION="24"`,
-				`NODESOURCE_KEY_URL="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"`,
-				`NODESOURCE_KEY_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"`,
-				`NODESOURCE_KEY_SHA256="b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d"`,
-				`NODESOURCE_INRELEASE_URL="https://deb.nodesource.com/node_${NODE_VERSION}.x/dists/nodistro/InRelease"`,
-				`lightningos_install_authenticated_apt_key "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" "$NODESOURCE_KEY_SHA256"`,
-				`URIs: https://deb.nodesource.com/node_${NODE_VERSION}.x`,
-				`Suites: nodistro`,
-				`Signed-By: ${NODESOURCE_KEYRING}`,
-			} {
-				if !strings.Contains(content, expected) {
-					t.Fatalf("%s is missing closed NodeSource policy %q", name, expected)
-				}
+		}
+		for _, forbidden := range []string{"deb.nodesource.com", "apt-get install -y nodejs", "npm install &&", "command -v node"} {
+			if strings.Contains(content, forbidden) {
+				t.Fatalf("%s retains system Node selection/mutation %q", name, forbidden)
 			}
-			for _, forbidden := range []string{
-				`deb.nodesource.com/setup_`,
-				`resolve_node_version`,
-			} {
-				if strings.Contains(content, forbidden) {
-					t.Fatalf("%s retains remote NodeSource setup behavior %q", name, forbidden)
-				}
-			}
-		})
+		}
 	}
-
 	freshRaw, err := os.ReadFile(filepath.Join("..", "..", "install.sh"))
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,8 @@ Releases in this repository stop at **0.5.40** to preserve the mandatory upgrade
 
 Upgrade stopped at Go preparation on 0.5.40/0.5.41? See the
 [optional legacy-owner diagnosis and recovery guide](docs/GO_PARENT_OWNER_RECOVERY.md).
-No action is needed when upgrades work normally.
+For upgrades to 0.5.48 or later from 0.5.47 or earlier, also read the
+[one-time Node/npm preparation instructions](docs/NODE_TOOLCHAIN_UPGRADE.md).
 
 > [!IMPORTANT]
 > LightningOS is a local node-control plane and is **not designed for direct public Internet exposure**. Run it only on a trusted LAN or through a private VPN such as Tailscale, behind a host or network firewall. Never forward port `8443` or App Store ports from the public Internet. The installers restrict `8443` to the detected LAN and `tailscale0` only when UFW is already installed and active; they do not enable UFW automatically. Always verify `sudo ufw status` or provide an equivalent external firewall before using the node.
@@ -83,7 +84,7 @@ First node? The step-by-step guide, in Portuguese, covers what you need, the ins
 The installer provisions everything needed on a clean Ubuntu box:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort enabled) + i2pd enabled by default
-- Go pinned by `lightningos-light/scripts/go-toolchain.conf` (currently 1.26.8) and Node.js 24.x (an already installed newer major is retained)
+- Go pinned by `lightningos-light/scripts/go-toolchain.conf` (currently 1.26.8); private LOS build tools Node.js 24.22.1 and its bundled npm 11.19.1, verified and prepared automatically by the 0.5.48+ installers. Existing system Node/npm are not replaced.
 - LND binaries pinned by the selected release (currently `v0.21.4-beta` for new nodes)
 - LightningOS Manager binary (compiled locally)
 - UI build (compiled locally)

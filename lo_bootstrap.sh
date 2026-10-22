@@ -226,7 +226,7 @@ main() {
   fi
   chmod +x "$install_script" 2>/dev/null || true
   if [[ -f "$install_dir/scripts/prepare-node-upgrade.sh" ]]; then
-    log "The selected release prepares a private, verified Node/npm build toolchain; system Node is not replaced."
+    log "The selected release installs/upgrades verified global Node/npm on this dedicated LOS host."
   fi
   log "Running installer"
   export LIGHTNINGOS_RELEASE_BOOTSTRAPPED=1

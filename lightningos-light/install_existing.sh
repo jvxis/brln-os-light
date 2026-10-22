@@ -387,7 +387,7 @@ install_go() {
 }
 
 install_node() {
-  print_step "Preparing release-pinned LOS Node.js and npm (system Node is unchanged)"
+  print_step "Installing/upgrading global Node.js and npm for this dedicated LOS host"
   if ! command -v python3 >/dev/null || ! command -v curl >/dev/null || ! command -v flock >/dev/null; then
     apt-get update
     apt-get install -y python3 curl ca-certificates util-linux

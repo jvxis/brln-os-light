@@ -10,7 +10,7 @@ import (
 
 func TestNodeToolchainSecurityFixtures(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("archive/permission behavior requires Linux")
+		t.Skip("APT/permission behavior requires Linux")
 	}
 	output, err := exec.Command("bash", filepath.Join("..", "..", "scripts", "tests", "node-toolchain-test.sh")).CombinedOutput()
 	if err != nil {
@@ -28,6 +28,6 @@ func TestAppUpgradePreparesNodeBeforeIdentityAndBuild(t *testing.T) {
 		t.Fatal("prepare Node only after release authentication and before identity/build mutations")
 	}
 	if strings.Contains(script, "Required command missing: npm") || strings.Contains(script, "resolve_bin npm") {
-		t.Fatal("the new updater must not require or select a system npm")
+		t.Fatal("the updater must prepare global npm before selecting its explicit path")
 	}
 }

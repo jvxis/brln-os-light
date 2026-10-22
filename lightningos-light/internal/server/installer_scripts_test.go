@@ -268,8 +268,8 @@ func TestInstallersUseAuthenticatedLNDReleaseHelper(t *testing.T) {
 }
 
 func TestInstallersUseFingerprintPinnedAPTRepositories(t *testing.T) {
-	// Node no longer needs an APT repository: its official archive is pinned
-	// and prepared exclusively for LOS. Keep the independent i2pd/APT checks.
+	// Node uses a checksum-pinned global Debian package through the shared
+	// preparer, not duplicated repository setup. Keep independent i2pd checks.
 	for _, name := range []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", name))
 		if err != nil {
@@ -286,7 +286,7 @@ func TestInstallersUseFingerprintPinnedAPTRepositories(t *testing.T) {
 		}
 		for _, forbidden := range []string{"deb.nodesource.com", "apt-get install -y nodejs", "npm install &&", "command -v node"} {
 			if strings.Contains(content, forbidden) {
-				t.Fatalf("%s retains system Node selection/mutation %q", name, forbidden)
+				t.Fatalf("%s bypasses shared Node policy %q", name, forbidden)
 			}
 		}
 	}

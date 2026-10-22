@@ -80,7 +80,7 @@ Primeiro node? O passo a passo cobre o que você precisa, a instalação e os pr
 O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort habilitado) + i2pd habilitado por padrão
-- Go fixado em `lightningos-light/scripts/go-toolchain.conf` (atualmente 1.26.8); ferramentas privadas de build do LOS: Node.js 24.22.1 e seu npm 11.19.1, verificados e preparados automaticamente pelos instaladores da 0.5.48+. O Node/npm do sistema não é substituído.
+- Go fixado em `lightningos-light/scripts/go-toolchain.conf` (atualmente 1.26.8); Node.js 24.22.1 global com npm 11.19.1 incluído, verificados e instalados/atualizados automaticamente pelos instaladores da 0.5.48+. A máquina é considerada dedicada ao LOS; veja a [preparação de nodes existentes e os cuidados de compatibilidade](NODE_TOOLCHAIN_UPGRADE.md).
 
 - Binários do LND fixados pela release selecionada (atualmente `v0.21.4-beta` para nodes novos)
 

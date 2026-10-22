@@ -84,7 +84,7 @@ First node? The step-by-step guide, in Portuguese, covers what you need, the ins
 The installer provisions everything needed on a clean Ubuntu box:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort enabled) + i2pd enabled by default
-- Go pinned by `lightningos-light/scripts/go-toolchain.conf` (currently 1.26.8); private LOS build tools Node.js 24.22.1 and its bundled npm 11.19.1, verified and prepared automatically by the 0.5.48+ installers. Existing system Node/npm are not replaced.
+- Go pinned by `lightningos-light/scripts/go-toolchain.conf` (currently 1.26.8); global Node.js 24.22.1 with bundled npm 11.19.1, verified and installed/upgraded automatically by the 0.5.48+ installers. The host is considered dedicated to LOS; see the [existing-node preparation and compatibility precautions](docs/NODE_TOOLCHAIN_UPGRADE.md).
 - LND binaries pinned by the selected release (currently `v0.21.4-beta` for new nodes)
 - LightningOS Manager binary (compiled locally)
 - UI build (compiled locally)

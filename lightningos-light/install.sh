@@ -831,7 +831,7 @@ install_go() {
 }
 
 install_node() {
-  print_step "Preparing release-pinned LOS Node.js and npm (system Node is unchanged)"
+  print_step "Installing/upgrading global Node.js and npm for this dedicated LOS host"
   lightningos_prepare_node
 }
 

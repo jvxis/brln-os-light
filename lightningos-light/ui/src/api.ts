@@ -1284,6 +1284,7 @@ export const updateRebalanceConfig = (payload: {
   auto_target_up_sellthrough_factor?: number
   auto_target_down_sellthrough_factor?: number
   auto_target_max_downs_per_cycle?: number
+  auto_target_idle_up_days?: number
 }) => request('/api/rebalance/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getRebalanceOverview = () => request('/api/rebalance/overview')
 export const getRebalanceChannels = () => request('/api/rebalance/channels')

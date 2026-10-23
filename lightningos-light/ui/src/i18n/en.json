@@ -5298,6 +5298,8 @@
       "maxUpsPerCycleHint": "Cap on how many channels can be raised in a single autopilot cycle (budget guard against a fill wave).",
       "maxDownsPerCycle": "Max lowers / cycle",
       "maxDownsPerCycleHint": "Cap on how many channels can be lowered in a single cycle, so DOWN never sweeps the whole node at once.",
+      "idleUpDays": "Raise idle target after (days)",
+      "idleUpDaysHint": "A managed channel with no rebalance job, no AutoTarget move and no manual change for this many days, holding no more than its target, is raised one step (at least to the minimum target). The autopilot's normal rules apply afterwards. 0 = off.",
       "upSellThroughFactor": "Raise sell-through ≥ node ×",
       "upSellThroughFactorHint": "A channel is raised when its sell-through (forward sold ÷ rebalanced) is at least this multiple of the node's baseline sell-through — it sells better than the node's typical channel.",
       "downSellThroughFactor": "Lower sell-through < node ×",

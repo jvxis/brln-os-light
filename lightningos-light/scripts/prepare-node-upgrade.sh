@@ -2,25 +2,55 @@
 # Release-pinned global Node/npm for dedicated Debian/Ubuntu LightningOS hosts.
 lightningos_node_error() { printf 'Node preparation: %s\n' "$*" >&2; return 1; }
 
+lightningos_node_candidate_notice() {
+  local policy='' line candidate=''
+  # Read cached metadata only. Never refresh repositories or expose policy URLs,
+  # which may contain credentials. Missing metadata must not hide the refusal.
+  if command -v apt-cache >/dev/null 2>&1 && policy=$(LC_ALL=C apt-cache policy nodejs 2>/dev/null); then
+    while IFS= read -r line; do
+      if [[ "$line" =~ ^[[:space:]]*Candidate:[[:space:]]+([^[:space:]]+)[[:space:]]*$ ]]; then
+        candidate="${BASH_REMATCH[1]}"
+        break
+      fi
+    done <<< "$policy"
+  fi
+  if [[ ${#candidate} -le 160 && "$candidate" =~ ^[0-9][0-9A-Za-z.+:~_-]*$ ]]; then
+    printf 'Node preparation: APT candidate (local metadata): %s. Availability does not prove security fixes; metadata may be stale.\n' "$candidate" >&2
+  else
+    printf '%s\n' 'Node preparation: APT candidate: unavailable from local metadata; no repository refresh was performed.' >&2
+  fi
+}
+
+lightningos_node_runtime_notice() {
+  printf '%s\n' 'Node preparation: already-running Node apps keep their previous runtime after package updates. Plan their restart to load the updated runtime; this preparer does not restart services.' >&2
+}
+
 lightningos_node_newer_version_error() {
   local installed="$1" upstream major
   upstream="${installed#*:}"
   major="${upstream%%.*}"
   printf 'Node preparation: installed Node %s; this LOS release validates Node %s LTS / npm %s.\n' \
     "$installed" "$LOS_NODE_VERSION" "$LOS_NPM_VERSION" >&2
+  lightningos_node_candidate_notice
   case "$major" in
     # Confirmed EOL in the upstream schedule, not an odd/even heuristic:
     # https://nodejs.org/en/about/previous-releases (reviewed 2026-10-23).
     25)
       printf '%s\n' 'Node preparation: Node.js 25 is end-of-life (EOL); a larger version number is not proof of security fixes.' >&2
       printf '%s\n' 'Node preparation: Review other Node apps and plan a controlled migration to a supported, security-patched LTS. A successful LOS UI upgrade using an older updater is not proof that Node was updated or patched.' >&2
+      printf '%s\n' 'Node preparation: An EOL repository may offer no newer candidate. Review its configured major line before planning a migration; this preparer will not switch repositories.' >&2
       ;;
     *)
       printf '%s\n' "Node preparation: installed Node is newer than this release's tested version; it is not necessarily insecure or unsupported, but compatibility and security fixes have not been validated by this preparer." >&2
       printf '%s\n' 'Node preparation: Review other Node apps and the upstream support/security status before planning any version change.' >&2
+      if [[ "$major" == 26 ]]; then
+        printf '%s\n' 'Node preparation: Node.js 26 can receive security fixes within its own major line; review the candidate and upstream advisory instead of downgrading solely to bypass this guard.' >&2
+        printf '%s\n' 'Node preparation: A security-patched runtime is not the same as LOS compatibility validation. This preparer does not install or approve an unvalidated Node 26 candidate.' >&2
+      fi
       ;;
   esac
   printf '%s\n' 'Node preparation: No Node/npm packages or app configurations were changed. Do not remove Node or force a downgrade just to bypass this guard.' >&2
+  lightningos_node_runtime_notice
   lightningos_node_error 'refusing automatic downgrade; preparation did not complete and is not Ready'
 }
 
@@ -272,6 +302,7 @@ lightningos_prepare_node() {
   export PATH="/usr/bin:/bin:$PATH"
   unset NODE_OPTIONS NODE_PATH NODE_ENV npm_config_prefix NPM_CONFIG_PREFIX npm_config_omit NPM_CONFIG_OMIT
   printf '[OK] Global Node %s / npm %s installed and verified (%s)\n' "$LOS_NODE_VERSION" "$LOS_NPM_VERSION" "$LOS_NODE_ARCH"
+  lightningos_node_runtime_notice
 }
 
 lightningos_node_upgrade_main() (

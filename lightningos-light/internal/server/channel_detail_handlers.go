@@ -328,7 +328,7 @@ func (s *Server) handleLNChannelDetail(w http.ResponseWriter, r *http.Request) {
 		detail.Periods = periods
 		lnApplySevenDayStatsToChannel(&detail.Channel, periods)
 	}
-	if feeLogs, err := s.loadLNChannelDetailFeeLogs(dbCtx, detail.Channel, selfPubkey, limit); err != nil {
+	if feeLogs, err := s.loadLNChannelDetailFeeLogs(dbCtx, detail.Channel, selfPubkey, limit, s.ownPolicyHistoryDays(dbCtx)); err != nil {
 		warnings = append(warnings, "fee logs unavailable")
 		if s.logger != nil {
 			s.logger.Printf("channel detail fee logs failed: %v", err)
@@ -776,7 +776,25 @@ func lnApplySevenDayStatsToChannel(channel *lndclient.ChannelInfo, periods []lnC
 	}
 }
 
-func (s *Server) loadLNChannelDetailFeeLogs(ctx context.Context, channel lndclient.ChannelInfo, selfPubkey string, limit int) ([]lnChannelDetailFeeLog, error) {
+// ownPolicyHistoryDays is how far back the channel fee log reads. Peer rows
+// older than the graph window are gone anyway; the own rows live for the
+// longer own window, so that is the horizon.
+func (s *Server) ownPolicyHistoryDays(ctx context.Context) int {
+	days := graphExplorerDefaultOwnHistoryRetentionDays
+	svc, _ := s.graphExplorerService()
+	if svc == nil {
+		return days
+	}
+	if cfg, err := svc.loadStorageConfig(ctx); err == nil && cfg.OwnHistoryRetentionDays > 0 {
+		days = cfg.OwnHistoryRetentionDays
+	}
+	return days
+}
+
+func (s *Server) loadLNChannelDetailFeeLogs(ctx context.Context, channel lndclient.ChannelInfo, selfPubkey string, limit int, historyDays int) ([]lnChannelDetailFeeLog, error) {
+	if historyDays <= 0 {
+		historyDays = graphExplorerDefaultHistoryRetentionDays
+	}
 	rows, err := s.db.Query(ctx, `
 with history as (
   select
@@ -792,7 +810,7 @@ with history as (
     lag(disabled) over (partition by advertising_pubkey order by captured_at asc, id asc) as old_disabled
   from graph_channel_policy_history
   where chan_id = $1
-    and captured_at >= now() - interval '30 day'
+    and captured_at >= now() - make_interval(days => $3)
 )
 select captured_at, advertising_pubkey, fee_rate_ppm, fee_base_msat, inbound_fee_rate_ppm, disabled,
   old_fee_rate_ppm, old_base_msat, old_inbound_fee_rate_ppm, old_disabled
@@ -804,7 +822,7 @@ where old_fee_rate_ppm is null
    or old_disabled <> disabled
 order by captured_at desc
 limit $2
-`, int64(channel.ChannelID), limit)
+`, int64(channel.ChannelID), limit, historyDays)
 	if err != nil {
 		return nil, err
 	}

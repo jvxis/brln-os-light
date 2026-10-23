@@ -290,7 +290,8 @@ export default function RebalanceCenter() {
     auto_target_drain_first_multiplier: typeof raw.auto_target_drain_first_multiplier === 'number' ? raw.auto_target_drain_first_multiplier : 3,
     auto_target_up_sellthrough_factor: typeof raw.auto_target_up_sellthrough_factor === 'number' ? raw.auto_target_up_sellthrough_factor : 1.1,
     auto_target_down_sellthrough_factor: typeof raw.auto_target_down_sellthrough_factor === 'number' ? raw.auto_target_down_sellthrough_factor : 0.5,
-    auto_target_max_downs_per_cycle: typeof raw.auto_target_max_downs_per_cycle === 'number' ? raw.auto_target_max_downs_per_cycle : 5
+    auto_target_max_downs_per_cycle: typeof raw.auto_target_max_downs_per_cycle === 'number' ? raw.auto_target_max_downs_per_cycle : 5,
+    auto_target_idle_up_days: typeof raw.auto_target_idle_up_days === 'number' ? raw.auto_target_idle_up_days : 0
   })
   const formatTimeToPayback = (channel: RebalanceChannel) => {
     if (!channel.time_to_payback_valid) return t('rebalanceCenter.channels.timeToPaybackNA')
@@ -444,7 +445,8 @@ export default function RebalanceCenter() {
       auto_target_drain_first_multiplier: cfg.auto_target_drain_first_multiplier ?? 3,
       auto_target_up_sellthrough_factor: cfg.auto_target_up_sellthrough_factor ?? 1.1,
       auto_target_down_sellthrough_factor: cfg.auto_target_down_sellthrough_factor ?? 0.5,
-      auto_target_max_downs_per_cycle: cfg.auto_target_max_downs_per_cycle ?? 5
+      auto_target_max_downs_per_cycle: cfg.auto_target_max_downs_per_cycle ?? 5,
+      auto_target_idle_up_days: cfg.auto_target_idle_up_days ?? 0
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -1069,7 +1071,8 @@ export default function RebalanceCenter() {
         auto_target_drain_first_multiplier: Math.max(1, Math.min(20, Number(config.auto_target_drain_first_multiplier) || 3)),
         auto_target_up_sellthrough_factor: Math.max(0.1, Math.min(5, Number(config.auto_target_up_sellthrough_factor) || 1.1)),
         auto_target_down_sellthrough_factor: Math.max(0.05, Math.min(5, Number(config.auto_target_down_sellthrough_factor) || 0.5)),
-        auto_target_max_downs_per_cycle: Math.max(1, Math.min(50, Number(config.auto_target_max_downs_per_cycle) || 5))
+        auto_target_max_downs_per_cycle: Math.max(1, Math.min(50, Number(config.auto_target_max_downs_per_cycle) || 5)),
+        auto_target_idle_up_days: Math.max(0, Math.min(90, Math.round(Number(config.auto_target_idle_up_days) || 0)))
       })) as RebalanceConfig
       const normalizedSaved = normalizeLoadedConfig(saved)
       setServerConfig(normalizedSaved)
@@ -1125,7 +1128,8 @@ export default function RebalanceCenter() {
           auto_target_drain_first_multiplier: normalizedSaved.auto_target_drain_first_multiplier,
           auto_target_up_sellthrough_factor: normalizedSaved.auto_target_up_sellthrough_factor,
           auto_target_down_sellthrough_factor: normalizedSaved.auto_target_down_sellthrough_factor,
-          auto_target_max_downs_per_cycle: normalizedSaved.auto_target_max_downs_per_cycle
+          auto_target_max_downs_per_cycle: normalizedSaved.auto_target_max_downs_per_cycle,
+          auto_target_idle_up_days: normalizedSaved.auto_target_idle_up_days
         }
       })
       setStatus(t('rebalanceCenter.autopilot.saved'))
@@ -3067,6 +3071,12 @@ export default function RebalanceCenter() {
                         <input className="input-field" type="number" min={1} max={50} step={1} disabled={atDisabled}
                           value={config.auto_target_max_downs_per_cycle ?? 5}
                           onChange={(e) => setConfig({ ...config, auto_target_max_downs_per_cycle: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.idleUpDaysHint')}>{t('rebalanceCenter.autoTarget.idleUpDays')}</label>
+                        <input className="input-field" type="number" min={0} max={90} step={1} disabled={atDisabled}
+                          value={config.auto_target_idle_up_days ?? 0}
+                          onChange={(e) => setConfig({ ...config, auto_target_idle_up_days: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.maxLocalSatHint')}>{t('rebalanceCenter.autoTarget.maxLocalSat')}</label>

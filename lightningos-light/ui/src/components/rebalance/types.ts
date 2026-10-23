@@ -104,6 +104,7 @@ export type RebalanceConfig = {
   auto_target_up_sellthrough_factor: number
   auto_target_down_sellthrough_factor: number
   auto_target_max_downs_per_cycle: number
+  auto_target_idle_up_days: number
 }
 
 export type RebalanceAutoTargetHistoryItem = {

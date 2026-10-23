@@ -504,7 +504,7 @@ export const updateNetworkAtlasConfig = (payload: { label?: string; lat?: string
   request('/api/lnops/network-map/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getGraphExplorerStatus = () => request('/api/lnops/graph-explorer/status')
 export const getGraphExplorerStorage = () => request('/api/lnops/graph-explorer/storage')
-export const updateGraphExplorerStorage = (payload: { history_retention_days?: number; history_max_bytes?: number; history_max_gb?: number }) =>
+export const updateGraphExplorerStorage = (payload: { history_retention_days?: number; history_max_bytes?: number; history_max_gb?: number; own_history_retention_days?: number }) =>
   request('/api/lnops/graph-explorer/storage', { method: 'POST', body: JSON.stringify(payload) })
 export const cleanupGraphExplorerStorage = () =>
   request('/api/lnops/graph-explorer/storage/cleanup', { method: 'POST', body: JSON.stringify({}) })
@@ -1284,6 +1284,7 @@ export const updateRebalanceConfig = (payload: {
   auto_target_up_sellthrough_factor?: number
   auto_target_down_sellthrough_factor?: number
   auto_target_max_downs_per_cycle?: number
+  auto_target_idle_up_days?: number
 }) => request('/api/rebalance/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getRebalanceOverview = () => request('/api/rebalance/overview')
 export const getRebalanceChannels = () => request('/api/rebalance/channels')

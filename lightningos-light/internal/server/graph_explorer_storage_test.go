@@ -95,3 +95,45 @@ func TestGraphExplorerClampFeeCoverageUsesConfiguredRetention(t *testing.T) {
 		t.Fatalf("expected roughly 30d floor, got %.2fd", ageDays)
 	}
 }
+
+func TestGraphExplorerStorageConfigOwnRetention(t *testing.T) {
+	cfg := normalizeGraphExplorerStorageConfig(GraphExplorerStorageConfig{HistoryRetentionDays: 30, HistoryMaxBytes: graphExplorerDefaultHistoryMaxBytes})
+	if cfg.OwnHistoryRetentionDays != graphExplorerDefaultOwnHistoryRetentionDays {
+		t.Fatalf("unset own retention takes the default, got %d", cfg.OwnHistoryRetentionDays)
+	}
+	cfg = normalizeGraphExplorerStorageConfig(GraphExplorerStorageConfig{HistoryRetentionDays: 90, HistoryMaxBytes: graphExplorerDefaultHistoryMaxBytes, OwnHistoryRetentionDays: 30})
+	if cfg.OwnHistoryRetentionDays != 90 {
+		t.Fatalf("own retention never drops below the graph window, got %d", cfg.OwnHistoryRetentionDays)
+	}
+	cfg = normalizeGraphExplorerStorageConfig(GraphExplorerStorageConfig{HistoryRetentionDays: 30, HistoryMaxBytes: graphExplorerDefaultHistoryMaxBytes, OwnHistoryRetentionDays: 5000})
+	if cfg.OwnHistoryRetentionDays != graphExplorerMaxOwnHistoryRetentionDays {
+		t.Fatalf("own retention is capped at %d, got %d", graphExplorerMaxOwnHistoryRetentionDays, cfg.OwnHistoryRetentionDays)
+	}
+	if err := graphExplorerValidateStorageConfig(GraphExplorerStorageConfig{HistoryRetentionDays: 60, HistoryMaxBytes: 0, OwnHistoryRetentionDays: 45}); err == nil {
+		t.Fatal("own retention below the graph window must be rejected")
+	}
+	if err := graphExplorerValidateStorageConfig(GraphExplorerStorageConfig{HistoryRetentionDays: 60, HistoryMaxBytes: 0, OwnHistoryRetentionDays: 365}); err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+}
+
+func TestGraphExplorerPolicyHistoryCutoffs(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	cutoff, ownCutoff := graphExplorerPolicyHistoryCutoffs(now, 30, 365)
+	if cutoff != now.AddDate(0, 0, -30) {
+		t.Fatalf("graph cutoff = %s", cutoff)
+	}
+	if ownCutoff != now.AddDate(0, 0, -365) {
+		t.Fatalf("own cutoff = %s", ownCutoff)
+	}
+	// The own window never ends after the graph window.
+	cutoff, ownCutoff = graphExplorerPolicyHistoryCutoffs(now, 90, 30)
+	if !ownCutoff.Equal(cutoff) {
+		t.Fatalf("own cutoff %s must not be after graph cutoff %s", ownCutoff, cutoff)
+	}
+	// And it is capped at the maximum.
+	_, ownCutoff = graphExplorerPolicyHistoryCutoffs(now, 30, 10_000)
+	if ownCutoff != now.AddDate(0, 0, -graphExplorerMaxOwnHistoryRetentionDays) {
+		t.Fatalf("own cutoff beyond the cap = %s", ownCutoff)
+	}
+}

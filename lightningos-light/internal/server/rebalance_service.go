@@ -103,6 +103,8 @@ const (
 	// scanSkipDetailLimit caps persisted/rendered diagnostic rows for the last
 	// scan while preserving aggregate skip counters separately.
 	scanSkipDetailLimit = 50
+	// autoTargetIdleUpDaysMax bounds auto_target_idle_up_days.
+	autoTargetIdleUpDaysMax = 90
 )
 
 const (
@@ -502,6 +504,10 @@ type RebalanceConfig struct {
 	AutoTargetUpSellThroughFactor   float64 `json:"auto_target_up_sellthrough_factor"`
 	AutoTargetDownSellThroughFactor float64 `json:"auto_target_down_sellthrough_factor"`
 	AutoTargetMaxDownsPerCycle      int     `json:"auto_target_max_downs_per_cycle"`
+	// AutoTargetIdleUpDays: a managed channel with no rebalance job, no
+	// AutoTarget move and no settings change for this many days, holding no
+	// more than its target, is raised one step. 0 = off.
+	AutoTargetIdleUpDays int `json:"auto_target_idle_up_days"`
 }
 
 type RebalanceOverview struct {
@@ -1821,6 +1827,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		AutoTargetUpSellThroughFactor:          1.1,
 		AutoTargetDownSellThroughFactor:        0.5,
 		AutoTargetMaxDownsPerCycle:             5,
+		AutoTargetIdleUpDays:                   0,
 	}
 }
 
@@ -2609,6 +2616,12 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.AutoTargetMaxDownsPerCycle > 50 {
 		cfg.AutoTargetMaxDownsPerCycle = 50
+	}
+	if cfg.AutoTargetIdleUpDays < 0 {
+		cfg.AutoTargetIdleUpDays = 0
+	}
+	if cfg.AutoTargetIdleUpDays > autoTargetIdleUpDaysMax {
+		cfg.AutoTargetIdleUpDays = autoTargetIdleUpDaysMax
 	}
 	return cfg
 }
@@ -13272,6 +13285,8 @@ end $$;
     add column if not exists auto_target_down_sellthrough_factor double precision not null default 0.5;
   alter table rebalance_config
     add column if not exists auto_target_max_downs_per_cycle integer not null default 5;
+  alter table rebalance_config
+    add column if not exists auto_target_idle_up_days integer not null default 0;
 
   alter table if exists rebalance_channel_settings
     add column if not exists manual_restart_enabled boolean not null default false;
@@ -13648,7 +13663,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
     daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours,
     stock_gate_enabled, stock_gate_min_stock_pct, stock_gate_cover_days, discovery_steps, discovery_ceiling_pct, discovery_daily_budget_sat,
-    realized_price_cap_enabled
+    realized_price_cap_enabled, auto_target_idle_up_days
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -13757,6 +13772,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.DiscoveryCeilingPct,
 		&cfg.DiscoveryDailyBudgetSat,
 		&cfg.RealizedPriceCapEnabled,
+		&cfg.AutoTargetIdleUpDays,
 	)
 	if err != nil {
 		return cfg, err
@@ -13785,9 +13801,9 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
     daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours,
     stock_gate_enabled, stock_gate_min_stock_pct, stock_gate_cover_days, discovery_steps, discovery_ceiling_pct, discovery_daily_budget_sat,
-    realized_price_cap_enabled,
+    realized_price_cap_enabled, auto_target_idle_up_days,
     updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,$98,$99,$100,$101,$102,$103,$104,$105,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,$98,$99,$100,$101,$102,$103,$104,$105,$106,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -13893,6 +13909,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     discovery_ceiling_pct = excluded.discovery_ceiling_pct,
     discovery_daily_budget_sat = excluded.discovery_daily_budget_sat,
     realized_price_cap_enabled = excluded.realized_price_cap_enabled,
+    auto_target_idle_up_days = excluded.auto_target_idle_up_days,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates, cfg.Profile,
@@ -13900,7 +13917,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
 		cfg.AutoTargetUpSellThroughFactor, cfg.AutoTargetDownSellThroughFactor, cfg.AutoTargetMaxDownsPerCycle,
 		cfg.DailyBudgetMinSat, cfg.DailyBudgetBaseDays, cfg.SovereignEfficiencyAutofeeAligned, cfg.KeepaliveRefillEnabled, cfg.KeepaliveRefillAfterHours, cfg.KeepaliveRefillPct, cfg.SourceRouteabilityQuarantineHours,
 		cfg.StockGateEnabled, cfg.StockGateMinStockPct, cfg.StockGateCoverDays, cfg.DiscoverySteps, cfg.DiscoveryCeilingPct, cfg.DiscoveryDailyBudgetSat,
-		cfg.RealizedPriceCapEnabled,
+		cfg.RealizedPriceCapEnabled, cfg.AutoTargetIdleUpDays,
 	)
 	if err != nil {
 		return err

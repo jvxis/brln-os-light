@@ -262,7 +262,6 @@ fi
 mkdir -p /var/log /var/lib/lightningos /opt/lightningos/manager /opt/lightningos/ui
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-NPM_BIN="$(resolve_bin npm /usr/bin/npm /usr/local/bin/npm /bin/npm)" || die "Required command missing: npm"
 SYSTEMCTL_BIN="$(resolve_bin systemctl /usr/bin/systemctl /bin/systemctl)" || die "Required command missing: systemctl"
 INSTALL_BIN="$(resolve_bin install /usr/bin/install /bin/install)" || die "Required command missing: install"
 CP_BIN="$(resolve_bin cp /usr/bin/cp /bin/cp)" || die "Required command missing: cp"
@@ -543,9 +542,7 @@ prepare_privilege_cutover() {
       *) die "An interrupted privilege cutover must be rolled back before retrying the upgrade." ;;
     esac
   fi
-  # Never reuse a historical bundle: it may predate the installed broker,
-  # Manager or credential. Preserve it for operator recovery, then snapshot the
-  # actual current installation. The fixed upgrade lock serializes prepare.
+  # Preserve old bundles; snapshot current state under the fixed upgrade lock.
   if [[ -n "$("$FIND_BIN" "$state_root" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
     local archive_root=""
     archive_root="$(mktemp -d "${state_root}.previous.XXXXXX")" || return 1
@@ -953,9 +950,7 @@ if [[ "$TRUSTED_CHECKOUT" -eq 1 ]]; then
     || die "Trusted checkout has staged changes."
   worktree_dir="${worktree_root}/app-upgrade-trusted-$($DATE_BIN +%Y%m%d%H%M%S)"
   "$INSTALL_BIN" -d -o root -g root -m 0700 "$worktree_dir"
-  # Git archives default to group-writable entries. Root tar otherwise retains
-  # those modes, which fail the preparation asset checks. Extract as root using
-  # fixed safe permissions even when the invoking operator uses umask 077.
+  # Fix archive modes before root extraction, independently of caller umask.
   "$GIT_BIN" -C "$source_repo_dir" archive "$EXPECTED_COMMIT" | (
     umask 022
     "$TAR_BIN" --no-same-owner --no-same-permissions -x -C "$worktree_dir"
@@ -1027,16 +1022,17 @@ if [[ "${source_version#v}" != "${VERSION,,}" ]]; then
 fi
 print_ok "Using authenticated project directory: $project_dir"
 
-# Load preparation code only after authenticating the target release. This is
-# intentionally before identity migration, compilation and application cutover.
-print_step "Preparing the release Go toolchain"
-for go_prepare_file in scripts/install-artifact-verification.sh scripts/prepare-go-toolchain.sh scripts/go-toolchain.conf; do
-  validate_root_regular_file "$project_dir/$go_prepare_file" || die "Go preparation asset is missing or unsafe."
+# Prepare only authenticated release assets, before identity/build mutations.
+print_step "Preparing release build toolchains"
+for prepare_file in scripts/install-artifact-verification.sh scripts/prepare-go-toolchain.sh scripts/go-toolchain.conf scripts/prepare-node-upgrade.sh; do
+  validate_root_regular_file "$project_dir/$prepare_file" || die "Unsafe toolchain asset."
 done
 source "$project_dir/scripts/install-artifact-verification.sh"
 source "$project_dir/scripts/prepare-go-toolchain.sh"
 lightningos_prepare_go "$project_dir" || die "Go preparation failed; application was not replaced."
-print_ok "Go toolchain ready"
+source "$project_dir/scripts/prepare-node-upgrade.sh"
+lightningos_prepare_node || die "Node preparation failed; application was not replaced."
+print_ok "Build toolchains ready"
 
 normalize_legacy_manager_identity
 
@@ -1055,7 +1051,7 @@ print_ok "Privileged broker built"
 
 print_step "Building UI"
 [[ -f "$project_dir/ui/package-lock.json" ]] || die "UI lockfile is missing"
-(cd "$project_dir/ui" && "$NPM_BIN" ci && "$NPM_BIN" run build)
+(cd "$project_dir/ui" && "$NPM_BIN" ci --include=dev && "$NPM_BIN" run build)
 print_ok "UI built"
 
 print_step "Repairing legacy Chat storage permissions"

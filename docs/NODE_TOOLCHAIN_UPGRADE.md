@@ -28,14 +28,21 @@ No remote setup script is executed, and no APT source or shell profile is change
 Future LOS installers/updaters apply their own reviewed Node/npm policy.
 
 APT's plan is checked before installation: only `nodejs` may be installed or
-upgraded, and only conflicting distro npm/development/documentation packages
-may be removed. No autoremove is run. Missing dependencies, held packages,
+configured. Conflicting distro npm/development/documentation packages and their
+automatically installed Node/JS dependency stack may be removed, because the
+new package bundles npm. The stack is derived from installed package metadata;
+manually installed extra tools and unrelated dependencies stay protected.
+No autoremove is run. Missing dependencies, held packages,
 unrelated removals/changes, an existing newer Node version, or a conflicting
 manual global installation stop preparation rather than trigger a broad repair.
 Install the reported prerequisites or resolve the conflict before retrying.
 Do not run APT or another Node installer concurrently.
 
 Global npm packages and app configurations are not deleted or reinstalled.
+When the old npm uses `/usr/local`, the helper preserves that global prefix in
+root-owned `/usr/etc/npmrc` before replacing the distro runtime. This also keeps
+future global package updates pointed at the existing packages. User npmrc files
+are not edited; custom prefixes outside `/usr` and `/usr/local` require review.
 Bitcoin/LND binaries, data and TLS files are not changed. The helper does not
 restart services, start a LOS upgrade, update container images or rebuild apps.
 It leaves `needrestart` in report-only mode for this APT invocation.
@@ -60,7 +67,7 @@ roll back global Node/npm; do not downgrade to a vulnerable runtime as a way to
 repair an application upgrade. Preserve logs for support.
 
 Supported packages: Debian/Ubuntu Linux amd64 and arm64. Standalone preparation
-requires curl, CA certificates, standard coreutils and APT/dpkg; installer
+requires Python 3, curl, CA certificates, standard coreutils and APT/dpkg; installer
 prerequisite setup supplies these for new installations. Native ARM testing is
 not implied by package availability.
 
@@ -90,14 +97,21 @@ verificado por SHA-256 fixado na release e instalado pelo APT. Não executa
 scripts remotos de configuração, não modifica repositórios APT nem perfis do
 shell. Versões futuras do LOS aplicam a política de Node/npm revisada para elas.
 
-O plano do APT é verificado: só instala/atualiza `nodejs` e permite remover os
-pacotes conflitantes de npm/documentação/headers da distribuição. Não faz
+O plano do APT é verificado: só instala/configura `nodejs`. Permite substituir
+os pacotes conflitantes de npm/documentação/headers e a pilha Node/JS instalada
+automaticamente como dependência deles, pois o novo pacote já inclui npm.
+A lista vem dos metadados dos pacotes instalados; ferramentas extras instaladas
+manualmente e dependências não relacionadas continuam protegidas. Não faz
 `autoremove`. Dependências ausentes, pacotes retidos, mudanças em pacotes não
 relacionados, Node mais novo ou instalações manuais conflitantes interrompem
 a preparação, sem tentar consertos amplos. Resolva o motivo e repita. Não
 execute APT ou outro instalador Node em paralelo.
 
-Não apaga/reinstala pacotes npm globais nem configurações de apps. Não altera
+Não apaga/reinstala pacotes npm globais nem configurações de apps. Preserva
+o prefixo global anterior `/usr/local` em `/usr/etc/npmrc`, pertencente ao root,
+antes de substituir o runtime, para que futuras atualizações encontrem os
+pacotes existentes. Não edita o npmrc dos usuários; prefixos personalizados
+fora de `/usr` e `/usr/local` exigem revisão. Não altera
 binários/dados/TLS do Bitcoin/LND, não reinicia serviços nem atualiza containers.
 O `needrestart` fica somente informativo nessa execução do APT.
 

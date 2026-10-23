@@ -2,6 +2,28 @@
 # Release-pinned global Node/npm for dedicated Debian/Ubuntu LightningOS hosts.
 lightningos_node_error() { printf 'Node preparation: %s\n' "$*" >&2; return 1; }
 
+lightningos_node_newer_version_error() {
+  local installed="$1" upstream major
+  upstream="${installed#*:}"
+  major="${upstream%%.*}"
+  printf 'Node preparation: installed Node %s; this LOS release validates Node %s LTS / npm %s.\n' \
+    "$installed" "$LOS_NODE_VERSION" "$LOS_NPM_VERSION" >&2
+  case "$major" in
+    # Confirmed EOL in the upstream schedule, not an odd/even heuristic:
+    # https://nodejs.org/en/about/previous-releases (reviewed 2026-10-23).
+    25)
+      printf '%s\n' 'Node preparation: Node.js 25 is end-of-life (EOL); a larger version number is not proof of security fixes.' >&2
+      printf '%s\n' 'Node preparation: Review other Node apps and plan a controlled migration to a supported, security-patched LTS. A successful LOS UI upgrade using an older updater is not proof that Node was updated or patched.' >&2
+      ;;
+    *)
+      printf '%s\n' "Node preparation: installed Node is newer than this release's tested version; it is not necessarily insecure or unsupported, but compatibility and security fixes have not been validated by this preparer." >&2
+      printf '%s\n' 'Node preparation: Review other Node apps and the upstream support/security status before planning any version change.' >&2
+      ;;
+  esac
+  printf '%s\n' 'Node preparation: No Node/npm packages or app configurations were changed. Do not remove Node or force a downgrade just to bypass this guard.' >&2
+  lightningos_node_error 'refusing automatic downgrade; preparation did not complete and is not Ready'
+}
+
 lightningos_node_policy() {
   LOS_NODE_VERSION=24.22.1
   LOS_NPM_VERSION=11.19.1
@@ -195,7 +217,7 @@ lightningos_node_install() (
     exit 0
   fi
   if [[ -n "$installed" ]] && dpkg --compare-versions "$installed" gt "$LOS_NODE_DEB_VERSION"; then
-    lightningos_node_error "installed Node ($installed) is newer than this release's tested version; refusing downgrade"; exit 1
+    lightningos_node_newer_version_error "$installed"; exit 1
   fi
   if [[ -x /usr/bin/npm ]]; then
     previous_prefix=$(lightningos_node_npm prefix -g) || { lightningos_node_error 'cannot inspect existing npm global prefix'; exit 1; }

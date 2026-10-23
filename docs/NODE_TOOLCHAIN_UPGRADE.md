@@ -38,6 +38,17 @@ manual global installation stop preparation rather than trigger a broad repair.
 Install the reported prerequisites or resolve the conflict before retrying.
 Do not run APT or another Node installer concurrently.
 
+From the 0.5.49 preparer, a newer installed Node receives a more specific
+diagnostic. Node 25 is identified as an end-of-life line according to the
+[upstream schedule](https://nodejs.org/en/about/previous-releases); a larger
+major number does not mean newer security fixes. Other newer versions are
+reported as unvalidated, not automatically described as unsupported/insecure.
+In both cases preparation still stops without replacing Node/npm or app
+configurations. Review dependent apps and plan a controlled migration where
+needed; there is no force-downgrade option. Successfully upgrading LOS through
+an old UI updater does not patch the existing Node runtime. These diagnostics
+do not change the already-published 0.5.48 script.
+
 Global npm packages and app configurations are not deleted or reinstalled.
 When the old npm uses `/usr/local`, the helper preserves that global prefix in
 root-owned `/usr/etc/npmrc` before replacing the distro runtime. This also keeps
@@ -106,6 +117,16 @@ manualmente e dependências não relacionadas continuam protegidas. Não faz
 relacionados, Node mais novo ou instalações manuais conflitantes interrompem
 a preparação, sem tentar consertos amplos. Resolva o motivo e repita. Não
 execute APT ou outro instalador Node em paralelo.
+
+A partir do preparador da 0.5.49, o diagnóstico diferencia Node 25, uma linha
+fora de suporte conforme o [calendário oficial](https://nodejs.org/en/about/previous-releases),
+de outras versões mais novas ainda não validadas por esta release. Número
+maior não garante correções de segurança mais recentes. Ambos os casos continuam
+interrompendo a preparação, sem substituir Node/npm ou configurações dos apps.
+Revise os apps dependentes e planeje uma migração controlada quando necessária;
+não há opção para forçar downgrade. Um upgrade do LOS pelo atualizador antigo
+não corrige o Node existente. Essa melhoria não altera o script já publicado
+da 0.5.48.
 
 Não apaga/reinstala pacotes npm globais nem configurações de apps. Preserva
 o prefixo global anterior `/usr/local` em `/usr/etc/npmrc`, pertencente ao root,

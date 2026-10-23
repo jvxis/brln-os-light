@@ -19,6 +19,17 @@ func TestNodeToolchainSecurityFixtures(t *testing.T) {
 	t.Log(string(output))
 }
 
+func TestNodeVersionDiagnostics(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Node preparation shell diagnostics require Linux Bash")
+	}
+	output, err := exec.Command("bash", filepath.Join("..", "..", "scripts", "tests", "node-version-diagnostics-test.sh")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Node version diagnostics: %v\n%s", err, output)
+	}
+	t.Log(string(output))
+}
+
 func TestAppUpgradePreparesNodeBeforeIdentityAndBuild(t *testing.T) {
 	script := embeddedAppUpgradeScript
 	authenticated := strings.Index(script, `print_ok "Using authenticated project directory: $project_dir"`)

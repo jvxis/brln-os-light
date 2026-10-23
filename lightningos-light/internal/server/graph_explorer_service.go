@@ -42,6 +42,12 @@ const (
 	graphExplorerDefaultHistoryMaxBytes      int64 = 5 * 1024 * 1024 * 1024
 	graphExplorerMinHistoryRetentionDays           = 1
 	graphExplorerMaxHistoryRetentionDays           = 365
+	// Policies this node advertises are a few hundred rows a day against
+	// millions for the rest of the graph, and they are the fee history the
+	// operator reads back when judging a price. They keep their own, longer
+	// window so the graph-wide retention can stay short.
+	graphExplorerDefaultOwnHistoryRetentionDays = 365
+	graphExplorerMaxOwnHistoryRetentionDays     = 730
 	graphExplorerMinHistoryMaxBytes          int64 = 256 * 1024 * 1024
 	graphExplorerHistoryStorageOverhead            = 4.0
 	graphExplorerPolicyHistoryPruneBatch           = 50000
@@ -83,8 +89,37 @@ type GraphExplorerService struct {
 
 	lastSyncAt time.Time
 	lastError  string
+	ownPubkey  string
 	stopCh     chan struct{}
 	doneCh     chan struct{}
+}
+
+// ownNodePubkey is this node's identity pubkey, lowercased and cached after
+// the first successful read. The policy rows it advertises are the ones kept
+// for own_history_retention_days; an empty result means "unknown", and the
+// prune then leaves every row inside the longer window alone.
+func (s *GraphExplorerService) ownNodePubkey(ctx context.Context) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	cached := s.ownPubkey
+	s.mu.Unlock()
+	if cached != "" || s.lnd == nil {
+		return cached
+	}
+	status, err := s.lnd.GetStatus(ctx)
+	if err != nil {
+		return ""
+	}
+	pubkey := strings.ToLower(strings.TrimSpace(status.Pubkey))
+	if pubkey == "" {
+		return ""
+	}
+	s.mu.Lock()
+	s.ownPubkey = pubkey
+	s.mu.Unlock()
+	return pubkey
 }
 
 type graphPolicyKey struct {
@@ -131,6 +166,7 @@ create table if not exists graph_explorer_config (
   updated_at timestamptz not null default now()
 );
 alter table graph_explorer_config add column if not exists history_max_bytes bigint not null default 0;
+alter table graph_explorer_config add column if not exists own_history_retention_days integer not null default `+fmt.Sprintf("%d", graphExplorerDefaultOwnHistoryRetentionDays)+`;
 alter table graph_explorer_config alter column history_retention_days set default `+fmt.Sprintf("%d", graphExplorerDefaultHistoryRetentionDays)+`;
 alter table graph_explorer_config alter column history_max_bytes set default `+fmt.Sprintf("%d", graphExplorerDefaultHistoryMaxBytes)+`;
 insert into graph_explorer_config (id)

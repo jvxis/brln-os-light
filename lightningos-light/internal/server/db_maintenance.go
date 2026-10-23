@@ -93,6 +93,9 @@ type retentionRoutine struct {
 	Column string
 	Cutoff func(now time.Time) time.Time
 	Label  string
+	// Delete replaces the generic "column < cutoff" prune when a table keeps
+	// rows past the cutoff on purpose (the own-node policy history).
+	Delete func(ctx context.Context, cutoff time.Time) (int64, error)
 }
 
 func (s *Server) graphExplorerMaintenanceRetentionDays(ctx context.Context) int {
@@ -124,16 +127,37 @@ func (s *Server) retentionRoutines(ctx context.Context) []retentionRoutine {
 	}
 	graphHistoryRetentionDays := s.graphExplorerMaintenanceRetentionDays(ctx)
 	return []retentionRoutine{
-		{"graph_channel_policy_history", "captured_at", days(graphHistoryRetentionDays), fmt.Sprintf("%dd", graphHistoryRetentionDays)},
-		{"notifications", "occurred_at", days(notificationRetentionDays), fmt.Sprintf("%dd", notificationRetentionDays)},
-		{"audit_events", "ts", days(auditEventsRetentionDays()), fmt.Sprintf("%dd", auditEventsRetentionDays())},
-		{"chat_messages", "timestamp", days(chatRetentionDays), fmt.Sprintf("%dd", chatRetentionDays)},
-		{"channel_ranking_peer_samples", "sampled_bucket", days(30), "30d"},
-		{"channel_ranking_htlc_failures", "sampled_bucket", days(30), "30d"},
-		{"channel_downtime_state", "updated_at", days(30), "30d"},
-		{"rebalance_scan_skips", "scan_at", days(14), "14d"},
-		{"rebalance_sovereign_history", "scan_at", func(now time.Time) time.Time { return now.Add(-48 * time.Hour) }, "48h"},
+		{"graph_channel_policy_history", "captured_at", days(graphHistoryRetentionDays), fmt.Sprintf("%dd", graphHistoryRetentionDays), s.graphPolicyHistoryRetentionDelete},
+		{"notifications", "occurred_at", days(notificationRetentionDays), fmt.Sprintf("%dd", notificationRetentionDays), nil},
+		{"audit_events", "ts", days(auditEventsRetentionDays()), fmt.Sprintf("%dd", auditEventsRetentionDays()), nil},
+		{"chat_messages", "timestamp", days(chatRetentionDays), fmt.Sprintf("%dd", chatRetentionDays), nil},
+		{"channel_ranking_peer_samples", "sampled_bucket", days(30), "30d", nil},
+		{"channel_ranking_htlc_failures", "sampled_bucket", days(30), "30d", nil},
+		{"channel_downtime_state", "updated_at", days(30), "30d", nil},
+		{"rebalance_scan_skips", "scan_at", days(14), "14d", nil},
+		{"rebalance_sovereign_history", "scan_at", func(now time.Time) time.Time { return now.Add(-48 * time.Hour) }, "48h", nil},
 	}
+}
+
+// graphPolicyHistoryRetentionDelete prunes the graph policy history the way
+// the Graph Explorer's own scheduler does: the graph-wide cutoff applies to
+// every node but this one, whose rows live for own_history_retention_days.
+func (s *Server) graphPolicyHistoryRetentionDelete(ctx context.Context, cutoff time.Time) (int64, error) {
+	svc, _ := s.graphExplorerService()
+	if svc == nil {
+		return s.batchedRetentionDelete(ctx, "graph_channel_policy_history", "captured_at", cutoff)
+	}
+	cfg, err := svc.loadStorageConfig(ctx)
+	if err != nil {
+		return 0, err
+	}
+	// cutoff already is "now minus the graph window"; the own cutoff is that
+	// same instant pushed back by the extra days the own window adds.
+	ownCutoff := cutoff.AddDate(0, 0, -(cfg.OwnHistoryRetentionDays - cfg.HistoryRetentionDays))
+	if ownCutoff.After(cutoff) {
+		ownCutoff = cutoff
+	}
+	return svc.deletePolicyHistoryBefore(ctx, cutoff, ownCutoff, svc.ownNodePubkey(ctx))
 }
 
 // dbMaintenanceOverview reports per-table size/bloat for the connected database
@@ -208,7 +232,13 @@ func (s *Server) runRetentionCleanup(ctx context.Context) []dbMaintenanceActionR
 	results := make([]dbMaintenanceActionResult, 0, len(routines))
 	now := time.Now().UTC()
 	for _, r := range routines {
-		removed, err := s.batchedRetentionDelete(ctx, r.Table, r.Column, r.Cutoff(now))
+		var removed int64
+		var err error
+		if r.Delete != nil {
+			removed, err = r.Delete(ctx, r.Cutoff(now))
+		} else {
+			removed, err = s.batchedRetentionDelete(ctx, r.Table, r.Column, r.Cutoff(now))
+		}
 		res := dbMaintenanceActionResult{Table: r.Table, RowsRemoved: removed}
 		if err != nil {
 			res.Error = err.Error()

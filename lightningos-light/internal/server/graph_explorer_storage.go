@@ -14,12 +14,16 @@ import (
 type GraphExplorerStorageConfig struct {
 	HistoryRetentionDays int   `json:"history_retention_days"`
 	HistoryMaxBytes      int64 `json:"history_max_bytes"`
+	// OwnHistoryRetentionDays keeps the policies advertised by this node for
+	// longer than the graph-wide window. Never below HistoryRetentionDays.
+	OwnHistoryRetentionDays int `json:"own_history_retention_days"`
 }
 
 type GraphExplorerStorageUpdateRequest struct {
-	HistoryRetentionDays *int     `json:"history_retention_days,omitempty"`
-	HistoryMaxBytes      *int64   `json:"history_max_bytes,omitempty"`
-	HistoryMaxGB         *float64 `json:"history_max_gb,omitempty"`
+	HistoryRetentionDays    *int     `json:"history_retention_days,omitempty"`
+	HistoryMaxBytes         *int64   `json:"history_max_bytes,omitempty"`
+	HistoryMaxGB            *float64 `json:"history_max_gb,omitempty"`
+	OwnHistoryRetentionDays *int     `json:"own_history_retention_days,omitempty"`
 }
 
 type GraphExplorerStorageProjection struct {
@@ -38,6 +42,8 @@ type GraphExplorerStorageStatus struct {
 	CoverageSince                *time.Time                       `json:"coverage_since,omitempty"`
 	CoverageUntil                *time.Time                       `json:"coverage_until,omitempty"`
 	CoverageDays                 float64                          `json:"coverage_days"`
+	OwnCoverageSince             *time.Time                       `json:"own_coverage_since,omitempty"`
+	OwnHistoryRows               int64                            `json:"own_history_rows"`
 	BytesPerDay                  int64                            `json:"bytes_per_day"`
 	GBPerDay                     float64                          `json:"gb_per_day"`
 	EffectiveRetentionDays       int                              `json:"effective_retention_days"`
@@ -57,8 +63,9 @@ type GraphExplorerStorageCleanupResult struct {
 
 func defaultGraphExplorerStorageConfig() GraphExplorerStorageConfig {
 	return GraphExplorerStorageConfig{
-		HistoryRetentionDays: graphExplorerDefaultHistoryRetentionDays,
-		HistoryMaxBytes:      graphExplorerDefaultHistoryMaxBytes,
+		HistoryRetentionDays:    graphExplorerDefaultHistoryRetentionDays,
+		HistoryMaxBytes:         graphExplorerDefaultHistoryMaxBytes,
+		OwnHistoryRetentionDays: graphExplorerDefaultOwnHistoryRetentionDays,
 	}
 }
 
@@ -75,7 +82,33 @@ func normalizeGraphExplorerStorageConfig(cfg GraphExplorerStorageConfig) GraphEx
 	if cfg.HistoryMaxBytes > 0 && cfg.HistoryMaxBytes < graphExplorerMinHistoryMaxBytes {
 		cfg.HistoryMaxBytes = graphExplorerMinHistoryMaxBytes
 	}
+	if cfg.OwnHistoryRetentionDays <= 0 {
+		cfg.OwnHistoryRetentionDays = graphExplorerDefaultOwnHistoryRetentionDays
+	}
+	if cfg.OwnHistoryRetentionDays < cfg.HistoryRetentionDays {
+		cfg.OwnHistoryRetentionDays = cfg.HistoryRetentionDays
+	}
+	if cfg.OwnHistoryRetentionDays > graphExplorerMaxOwnHistoryRetentionDays {
+		cfg.OwnHistoryRetentionDays = graphExplorerMaxOwnHistoryRetentionDays
+	}
 	return cfg
+}
+
+// graphExplorerPolicyHistoryCutoffs: rows older than cutoff are pruned, except
+// the ones this node advertises, which survive until ownCutoff. ownCutoff is
+// never later than cutoff, so the own window only ever extends the graph one.
+func graphExplorerPolicyHistoryCutoffs(now time.Time, effectiveDays int, ownDays int) (time.Time, time.Time) {
+	if effectiveDays < graphExplorerMinHistoryRetentionDays {
+		effectiveDays = graphExplorerMinHistoryRetentionDays
+	}
+	if ownDays < effectiveDays {
+		ownDays = effectiveDays
+	}
+	if ownDays > graphExplorerMaxOwnHistoryRetentionDays {
+		ownDays = graphExplorerMaxOwnHistoryRetentionDays
+	}
+	now = now.UTC()
+	return now.AddDate(0, 0, -effectiveDays), now.AddDate(0, 0, -ownDays)
 }
 
 func graphExplorerStorageBytesFromGB(gb float64) (int64, error) {
@@ -101,6 +134,9 @@ func graphExplorerValidateStorageConfig(cfg GraphExplorerStorageConfig) error {
 	}
 	if cfg.HistoryMaxBytes > 0 && cfg.HistoryMaxBytes < graphExplorerMinHistoryMaxBytes {
 		return fmt.Errorf("history_max_bytes must be at least %d or zero", graphExplorerMinHistoryMaxBytes)
+	}
+	if cfg.OwnHistoryRetentionDays < cfg.HistoryRetentionDays || cfg.OwnHistoryRetentionDays > graphExplorerMaxOwnHistoryRetentionDays {
+		return fmt.Errorf("own_history_retention_days must be between history_retention_days (%d) and %d", cfg.HistoryRetentionDays, graphExplorerMaxOwnHistoryRetentionDays)
 	}
 	return nil
 }
@@ -152,10 +188,10 @@ func (s *GraphExplorerService) loadStorageConfig(ctx context.Context) (GraphExpl
 	}
 
 	err := s.db.QueryRow(ctx, `
-select history_retention_days, history_max_bytes
+select history_retention_days, history_max_bytes, own_history_retention_days
 from graph_explorer_config
 where id = $1
-`, graphExplorerConfigID).Scan(&cfg.HistoryRetentionDays, &cfg.HistoryMaxBytes)
+`, graphExplorerConfigID).Scan(&cfg.HistoryRetentionDays, &cfg.HistoryMaxBytes, &cfg.OwnHistoryRetentionDays)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return cfg, nil
@@ -184,18 +220,26 @@ func (s *GraphExplorerService) UpdateStorageConfig(ctx context.Context, req Grap
 		}
 		next.HistoryMaxBytes = bytes
 	}
+	if req.OwnHistoryRetentionDays != nil {
+		next.OwnHistoryRetentionDays = *req.OwnHistoryRetentionDays
+	} else if next.OwnHistoryRetentionDays < next.HistoryRetentionDays {
+		// Raising the graph window above the own window without touching the
+		// latter means "at least as long as the graph", not an error.
+		next.OwnHistoryRetentionDays = next.HistoryRetentionDays
+	}
 	if err := graphExplorerValidateStorageConfig(next); err != nil {
 		return GraphExplorerStorageConfig{}, err
 	}
 
 	if _, err := s.db.Exec(ctx, `
-insert into graph_explorer_config (id, history_retention_days, history_max_bytes, updated_at)
-values ($1, $2, $3, now())
+insert into graph_explorer_config (id, history_retention_days, history_max_bytes, own_history_retention_days, updated_at)
+values ($1, $2, $3, $4, now())
 on conflict (id) do update set
   history_retention_days = excluded.history_retention_days,
   history_max_bytes = excluded.history_max_bytes,
+  own_history_retention_days = excluded.own_history_retention_days,
   updated_at = now()
-`, graphExplorerConfigID, next.HistoryRetentionDays, next.HistoryMaxBytes); err != nil {
+`, graphExplorerConfigID, next.HistoryRetentionDays, next.HistoryMaxBytes, next.OwnHistoryRetentionDays); err != nil {
 		return GraphExplorerStorageConfig{}, err
 	}
 	return next, nil
@@ -244,6 +288,15 @@ where relname = 'graph_channel_policy_history'
 	out.CoverageUntil = until
 	if since != nil && until != nil && until.After(*since) {
 		out.CoverageDays = until.Sub(*since).Hours() / 24
+	}
+	if ownPubkey := s.ownNodePubkey(ctx); ownPubkey != "" {
+		var ownSince *time.Time
+		_ = s.db.QueryRow(ctx, `
+select min(captured_at), count(*)
+from graph_channel_policy_history
+where advertising_pubkey = $1
+`, ownPubkey).Scan(&ownSince, &out.OwnHistoryRows)
+		out.OwnCoverageSince = ownSince
 	}
 
 	bytesPerDay := 0.0
@@ -325,14 +378,10 @@ func (s *GraphExplorerService) CleanupStorage(ctx context.Context, runVacuum boo
 		return out, err
 	}
 
-	effectiveDays := status.EffectiveRetentionDays
-	if effectiveDays < graphExplorerMinHistoryRetentionDays {
-		effectiveDays = graphExplorerMinHistoryRetentionDays
-	}
-	cutoff := time.Now().UTC().AddDate(0, 0, -effectiveDays)
+	cutoff, ownCutoff := graphExplorerPolicyHistoryCutoffs(time.Now(), status.EffectiveRetentionDays, status.Config.OwnHistoryRetentionDays)
 	out.CutoffAt = &cutoff
 
-	removed, err := s.deletePolicyHistoryBefore(ctx, cutoff)
+	removed, err := s.deletePolicyHistoryBefore(ctx, cutoff, ownCutoff, s.ownNodePubkey(ctx))
 	if err != nil {
 		return out, err
 	}
@@ -357,9 +406,21 @@ func (s *GraphExplorerService) CleanupStorage(ctx context.Context, runVacuum boo
 	return out, nil
 }
 
-func (s *GraphExplorerService) deletePolicyHistoryBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+// ErrGraphExplorerOwnPubkeyUnknown: the own window is longer than the graph
+// window but the node's pubkey could not be read, so the prune cannot tell
+// which rows to spare. The prune is skipped rather than risk the own history.
+var ErrGraphExplorerOwnPubkeyUnknown = errors.New("graph explorer: own node pubkey unknown, policy history prune skipped")
+
+func (s *GraphExplorerService) deletePolicyHistoryBefore(ctx context.Context, cutoff time.Time, ownCutoff time.Time, ownPubkey string) (int64, error) {
 	if s == nil || s.db == nil {
 		return 0, ErrGraphExplorerDBUnavailable
+	}
+	ownPubkey = strings.ToLower(strings.TrimSpace(ownPubkey))
+	if ownCutoff.After(cutoff) {
+		ownCutoff = cutoff
+	}
+	if ownCutoff.Before(cutoff) && ownPubkey == "" {
+		return 0, ErrGraphExplorerOwnPubkeyUnknown
 	}
 	var total int64
 	for iter := 0; iter < 1000; iter++ {
@@ -368,9 +429,10 @@ delete from graph_channel_policy_history
 where ctid in (
   select ctid from graph_channel_policy_history
   where captured_at < $1
-  limit $2
+    and (advertising_pubkey <> $2 or captured_at < $3)
+  limit $4
 )
-`, cutoff, graphExplorerPolicyHistoryPruneBatch)
+`, cutoff, ownPubkey, ownCutoff, graphExplorerPolicyHistoryPruneBatch)
 		if err != nil {
 			return total, err
 		}

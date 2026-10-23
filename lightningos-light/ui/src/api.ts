@@ -504,7 +504,7 @@ export const updateNetworkAtlasConfig = (payload: { label?: string; lat?: string
   request('/api/lnops/network-map/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getGraphExplorerStatus = () => request('/api/lnops/graph-explorer/status')
 export const getGraphExplorerStorage = () => request('/api/lnops/graph-explorer/storage')
-export const updateGraphExplorerStorage = (payload: { history_retention_days?: number; history_max_bytes?: number; history_max_gb?: number }) =>
+export const updateGraphExplorerStorage = (payload: { history_retention_days?: number; history_max_bytes?: number; history_max_gb?: number; own_history_retention_days?: number }) =>
   request('/api/lnops/graph-explorer/storage', { method: 'POST', body: JSON.stringify(payload) })
 export const cleanupGraphExplorerStorage = () =>
   request('/api/lnops/graph-explorer/storage/cleanup', { method: 'POST', body: JSON.stringify({}) })

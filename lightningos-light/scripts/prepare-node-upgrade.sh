@@ -53,7 +53,7 @@ lightningos_node_validate_plan() {
           npm|nodejs-doc|nodejs-dev|nodejs-legacy|libnode-dev) ;;
           *) lightningos_node_error "APT would remove unrelated package: $package"; return 1 ;;
         esac ;;
-      Inst)
+      Inst|Conf)
         case "${package%%:*}" in
           nodejs) ;;
           *) lightningos_node_error "APT would change unrelated package: $package"; return 1 ;;

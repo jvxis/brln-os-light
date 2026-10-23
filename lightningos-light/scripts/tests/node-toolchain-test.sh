@@ -11,6 +11,8 @@ for package in lnd bitcoind thunderhub balanceofsatoshis openssl libc6; do
   if lightningos_node_validate_plan "$fixture/rejected"; then echo "FAIL: removal $package allowed"; exit 1; fi
   printf 'Inst %s [1.0] (2.0 localhost [amd64])\n' "$package" > "$fixture/rejected"
   if lightningos_node_validate_plan "$fixture/rejected"; then echo "FAIL: change $package allowed"; exit 1; fi
+  printf 'Conf %s (2.0 localhost [amd64])\n' "$package" > "$fixture/rejected"
+  if lightningos_node_validate_plan "$fixture/rejected"; then echo "FAIL: pending configuration $package allowed"; exit 1; fi
 done
 if lightningos_node_safe_directory relative; then echo 'FAIL: relative path accepted'; exit 1; fi
 if lightningos_node_safe_directory /tmp; then echo 'FAIL: writable ancestor accepted'; exit 1; fi

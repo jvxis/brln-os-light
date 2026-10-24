@@ -91,8 +91,10 @@ unchanged since `4e77a03`; device hash
 `f15ca565b627bed07a3063704a06927233d97a13662810fc3c8dc52bd1843dad`. Final pin
 `140699b`: with the owner's agreement, the Store card and the app notice now ask
 for small amounts instead of "no real funds", since the wallet is mainnet only
-and members test with real sats. Recovery on a second board is part of the
-member test (guide, part 6). Pin `14498d5` adds **Apagar tudo** to the installer:
+and members test with real sats. The member test checks the backup on the
+device (guide, part 6); a full button recovery is optional (about 720 button
+presses for 24 words, so 20-30 minutes). The owner's backup check of
+`d11bc45b` matched the paper. Pin `14498d5` adds **Apagar tudo** to the installer:
 after a confirmation it erases the whole chip before writing and checks that
 NVS and the SPIFFS data partition read back erased (MD5 of 0xFF) before booting.
 This also allows a single-board recovery test before any funds are received. Pin `f430249` labels the installer box as the hash of the firmware file to be written.

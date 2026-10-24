@@ -1,11 +1,46 @@
 # BRLN Hardwallet: experimental validation
 
-PR: https://github.com/jvxis/brln-os-light/pull/260, targeting `agent/0.6.0-release`.
-Deferred from 0.5.45 for further validation. The 0.6.0 development base was
-created from 0.5.45 commit `15db737be9c2d333723a207bd8150e34a306f16f`;
-this changes the integration target, not the deployed version or release catalog.
+Branch `agent/0.5.48-brln-hardwallet`: the Hardwallet integration from PR #260
+merged onto the official 0.5.48-Beta (`49cb0b683ce0f3fe555269bd10581e194bd79ba7`).
 Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
 `brln/tdisplay-los`. This is not a release or approval to use real funds.
+
+## 0.5.48 base and brln-3 companion (2026-10-24)
+
+The PR #260 branch merged cleanly onto 0.5.48-Beta; only the image pin changed:
+`ghcr.io/jvxis/brln-hardwallet:sha-67ae61e0d9c7c15f62b51200a9d5bc030674d0df@sha256:034dc79a10cf8552481ba24c983c9511c8120d2b3dd69e5d5ac355bc36950abc`
+(anonymous OCI index verified, amd64/arm64). The companion adds brln-3
+committed pairing and an authenticated serial channel, the BIP84-only signing
+scope, the 500-address limit, fee confirmation and `POST /api/v1/scripts`
+(20 hashes per request). The Caddy proxy forwards every route, so no LOS
+change was needed for the batch route. Full Go vet/tests and the UI build passed.
+
+LOS-TEST2 was first upgraded through the official path (immutable
+`brln-os-light-updates` release, upgrader from the tag with TLS-verified health
+probes). The first attempt stopped safely before any replacement: the VM had a
+manually installed Node 26.5.1 (`node_26.x` source since 2026-08-02), and 0.5.48
+refuses to downgrade. Official installers use `node_24.x`, so this is specific to
+this VM. With the owner's approval Node was downgraded to the release-pinned
+24.22.1 package (same URL and SHA-256 as `prepare-node-upgrade.sh`; APT plan
+changed only `nodejs`, no dependants) and the source switched to `node_24.x`
+(original kept in the backup). `prepare-node-upgrade.sh --check` passed and
+the official upgrade completed. Backup:
+`/var/backups/lightningos-hardwallet-pr260/before-full-0548`.
+
+The overlay (this branch) then replaced Manager, broker and UI after hash
+guards, root Hardwallet fixtures and broker self-test; backup
+`before-overlay-0548hw`. The normal Store install applied the new image with the
+club source; the app became healthy. LND kept PID 3693 throughout and other
+containers kept their uptime.
+
+Through LOS: `/api/v1/scripts` with 20 public test-vector hashes returned 200
+(10.5 s from the VM to the club server), a 21-hash batch 400 and a foreign
+Origin 403; status reports `brln-3`; anonymous requests 401, logout revokes
+access; the six firmware resources are denied anonymously and the four files
+match the CI artifact of `67ae61e`. The CI firmware's embedded image hash is
+`d7aa945d48277760a1d42f4d77274f81175619514c1ebbbac4f4d215a0898e1a`.
+Remaining: physical session through LOS (pair, unlock, sync, address check),
+installer flash on a board without a wallet, signing review.
 
 ## Store card consistency (2026-10-15)
 

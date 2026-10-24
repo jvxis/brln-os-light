@@ -108,8 +108,12 @@ receber outro firmware.
 Volte ao app e clique em **Próximo**.
 
 > Se a placa já tem o firmware BR⚡LN instalado, use **Já tenho o firmware**.
-> Reinstalar o firmware não apaga a carteira, mas só faça isso com as 24
-> palavras anotadas.
+> Reinstalar o firmware normalmente mantém a carteira guardada na placa.
+>
+> **Para começar do zero**, marque também **Apagar tudo** antes de selecionar a
+> porta. O app pede uma confirmação, apaga a memória inteira da placa, grava o
+> firmware e confere se a área da carteira ficou realmente vazia. A carteira que
+> estava na placa só volta com as 24 palavras.
 
 ### Passo 2: conectar e parear
 
@@ -233,9 +237,19 @@ meio.
 ## Parte 6: testar a recuperação
 
 Este teste faz parte do piloto. Ele confirma que as 24 palavras anotadas
-recriam a mesma carteira. Você vai precisar de uma **segunda T-Display** e
-do papel com as palavras. **Não digite as palavras em computador ou celular:**
-a recuperação acontece só nos botões do Signer.
+recriam a mesma carteira. Você vai precisar do papel com as palavras. **Não
+digite as palavras em computador ou celular:** a recuperação acontece só nos
+botões do Signer.
+
+Há dois jeitos de fazer o teste:
+
+- **Com uma segunda T-Display** (recomendado): a primeira placa continua
+  intacta durante todo o teste.
+- **Com uma placa só**: faça o teste **logo depois de criar a carteira, antes
+  de receber qualquer valor**. Anote a **Conta pública** mostrada pelo app (por
+  exemplo `d11bc45b`). Siga os itens abaixo a partir do item 2 na mesma placa,
+  marcando **Apagar tudo** ao reinstalar o firmware. Se a conta recuperada for a
+  mesma, a carteira está pronta para receber.
 
 1. Desconecte o primeiro Signer e guarde-o.
 2. Ligue a segunda placa e repita o **passo 1** (firmware) e o **passo 2**
@@ -265,8 +279,8 @@ a recuperação acontece só nos botões do Signer.
 Se a conta pública for **diferente**, alguma palavra está errada ou fora de
 ordem. Nesse caso, o app pergunta se quer substituir a conta salva: responda
 **Cancelar**. Não envie fundos para essa carteira; confira o papel e avise no
-grupo do piloto. Para repetir o teste nessa mesma placa é preciso apagar a
-memória dela (reinstalar o firmware não apaga): peça ajuda no grupo.
+grupo do piloto. Para repetir o teste nessa placa, reinstale o firmware com
+**Apagar tudo** marcado e recomece a recuperação.
 
 Ao terminar, você pode usar qualquer uma das duas placas: as duas abrem a mesma
 carteira. Cada uma tem a sua própria senha.
@@ -298,7 +312,7 @@ carteira. Cada uma tem a sua própria senha.
 | A gravação falhou no meio | Não crie uma carteira. Reconecte a placa e repita o passo 1. Se não conectar, segure o botão de baixo (BOOT), aperte e solte o RESET na lateral, solte o BOOT e tente de novo. |
 | A tela ficou preta depois de gravar | Desconecte e reconecte o cabo. |
 | Os códigos de pareamento são diferentes | Clique em **Cancelar** e conecte de novo. Se continuar diferente, pare e avise no grupo. |
-| "Carteira existente / Use outro Signer" | O Signer já tem uma carteira: use **Desbloquear carteira**. |
+| "Carteira existente / Use outro Signer" | O Signer já tem uma carteira: use **Desbloquear carteira**. Para trocar de carteira nessa placa, reinstale o firmware com **Apagar tudo** (a carteira atual só volta com as palavras). |
 | "Cancelado / invalido" depois da senha | A senha está errada ou tem menos de 12 caracteres. Tente de novo. |
 | A sincronização falha | Com o Electrs local, confira se ele está sincronizado. Em **Apps**, você pode trocar para o Electrs do clube. |
 | O Signer recusou a transação ("Transacao recusada", "Aceita um destino") | A proposta saiu do formato aceito. Encerre a proposta e prepare outra com um único destino. |

@@ -1,8 +1,10 @@
 # BRLN Hardwallet: experimental validation
 
-Branch `agent/0.5.48-brln-hardwallet`: the Hardwallet integration from PR #260
-merged onto the official 0.5.48-Beta (`49cb0b683ce0f3fe555269bd10581e194bd79ba7`)
-and then onto `agent/0.5.49-release`. Target: **0.5.49-Beta**, as a club pilot
+Branch `agent/0.5.49-brln-hardwallet` (PR #287; renamed from
+`agent/0.5.48-brln-hardwallet`, PR #286): the Hardwallet integration from PR
+#260 merged onto the official 0.5.48-Beta
+(`49cb0b683ce0f3fe555269bd10581e194bd79ba7`) and then onto
+`agent/0.5.49-release`. Target: **0.5.49-Beta**, as a club pilot
 (previously 0.6.0 in #260). Companion firmware/coordinator:
 https://github.com/jvxis/brln-hardwallet, branch `brln/tdisplay-los`. Member
 guide: [38_BRLN_HARDWALLET_GUIA_PT_BR.md](38_BRLN_HARDWALLET_GUIA_PT_BR.md).
@@ -90,7 +92,10 @@ unchanged since `4e77a03`; device hash
 `140699b`: with the owner's agreement, the Store card and the app notice now ask
 for small amounts instead of "no real funds", since the wallet is mainnet only
 and members test with real sats. Recovery on a second board is part of the
-member test (guide, part 6).
+member test (guide, part 6). Pin `14498d5` adds **Apagar tudo** to the installer:
+after a confirmation it erases the whole chip before writing and checks that
+NVS and the SPIFFS data partition read back erased (MD5 of 0xFF) before booting.
+This also allows a single-board recovery test before any funds are received.
 
 ## Store card consistency (2026-10-15)
 

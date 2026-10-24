@@ -1405,6 +1405,7 @@ export type AppOperationInfo = {
 }
 
 export type AppStoreInfo = {
+  electrum_source?: 'local' | 'club'
   id: string
   name: string
   description: string
@@ -2025,7 +2026,7 @@ export const updateMagmaSettings = (payload: {
   request('/api/apps/magma-sales/settings', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
-export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string; confirm_bitcoin_restart?: boolean; confirm_legacy_migration?: boolean }) =>
+export const installApp = (id: string, payload?: { electrum_source?: 'local' | 'club'; data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string; confirm_bitcoin_restart?: boolean; confirm_legacy_migration?: boolean }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const uninstallApp = (id: string) =>
   request(`/api/apps/${id}/uninstall`, { method: 'POST', body: JSON.stringify({ confirm: true, app_id: id }) })

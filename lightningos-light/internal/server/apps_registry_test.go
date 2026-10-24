@@ -93,6 +93,7 @@ func TestConfiguredAppsHaveExplicitRuntimeSecurityClass(t *testing.T) {
 		"bitcoincore":       {class: "compose", reason: "closed broker-owned Compose manifest"},
 		"bark-wallet":       {class: "compose", reason: "closed broker-owned Compose manifest"},
 		"brln-community":    {class: "compose", reason: "closed broker-owned Compose manifest"},
+		"brln-hardwallet":   {class: "compose", reason: "closed broker manifest; device-only Bitcoin secrets; no LND access"},
 		"electrs":           {class: "compose", reason: "closed broker-owned Compose manifest"},
 		"mempool":           {class: "compose", reason: "closed broker-owned Compose manifest"},
 		"fedimint-guardian": {class: "compose", reason: "closed broker-owned Compose manifest"},

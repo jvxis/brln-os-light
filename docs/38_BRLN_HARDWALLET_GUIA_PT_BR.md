@@ -1,9 +1,9 @@
 # BR⚡LN Hardwallet: guia do piloto (LightningOS 0.5.49)
 
 Este guia leva você do Signer novo, ainda com o firmware de fábrica, até o
-primeiro envio e o teste de recuperação. Depois de instalar o app (parte 1), são
-cinco etapas: preparar o Signer, criar a carteira, receber, enviar e recuperar a
-carteira em uma segunda placa. Leia uma parte inteira antes de começar a fazê-la.
+primeiro envio e a conferência do backup. Depois de instalar o app (parte 1),
+são cinco etapas: preparar o Signer, criar a carteira, receber, enviar e
+conferir o backup. Leia uma parte inteira antes de começar a fazê-la.
 
 ## Antes de começar
 
@@ -22,7 +22,7 @@ Signer: elas nunca passam pelo computador.
 
 - Um node com BR⚡LN LightningOS **0.5.49** ou mais recente.
 - Uma **LilyGO T-Display original** (ESP32, tela de 1,14″, dois botões). Para
-  o teste de recuperação da parte 6, uma segunda placa igual.
+  a recuperação completa (opcional) da parte 6, de preferência uma segunda placa.
 - Um **cabo USB de dados**. Muitos cabos só carregam: se a placa não aparecer no
   computador, troque o cabo primeiro.
 - Um **computador** (Windows, macOS ou Linux) com **Chrome ou Edge**. Celular e
@@ -236,12 +236,34 @@ Para desistir antes de transmitir, use **Encerrar proposta**. **Exportar
 transação assinada** salva a transação em arquivo, para transmitir por outro
 meio.
 
-## Parte 6: testar a recuperação
+## Parte 6: conferir o backup
 
-Este teste faz parte do piloto. Ele confirma que as 24 palavras anotadas
-recriam a mesma carteira. Você vai precisar do papel com as palavras. **Não
-digite as palavras em computador ou celular:** a recuperação acontece só nos
-botões do Signer.
+Este teste faz parte do piloto. Ele confirma que o papel tem exatamente as
+palavras, na ordem certa, da carteira guardada no Signer. Nada é apagado e as
+palavras aparecem só na tela do Signer.
+
+1. Conecte e desbloqueie o Signer.
+2. No app, abra **Ajustes → Conferir backup** (no passo 4 da configuração o
+   mesmo botão se chama **Conferir backup no Signer**).
+3. No Signer:
+   1. **No Signer / Conferir backup?**: **CONFIRMAR**.
+   2. **Anote 1/24 ... Anote 24/24**: o Signer mostra uma palavra por tela.
+      Compare cada uma com o papel e aperte **CONFIRMAR** para ver a próxima.
+   3. **Anotou a seed? / Mantenha offline**: **CONFIRMAR**.
+   4. Aparece **Backup conferido**.
+
+Se alguma palavra do papel estiver diferente, aperte **CANCELAR**, corrija o
+papel e confira de novo. Não fotografe a tela enquanto as palavras aparecem.
+
+O papel conferido recupera a carteira em outro Signer ou em qualquer carteira
+compatível com BIP39 e BIP84 (caminho `m/84'/0'/0'`).
+
+### Recuperação completa (opcional)
+
+Para testar a recuperação em uma placa, digite as 24 palavras nos botões do
+Signer. Isso leva de **20 a 30 minutos**, porque cada letra é escolhida
+avançando pelo alfabeto. **Não digite as palavras em computador ou celular:** a
+recuperação acontece só nos botões do Signer.
 
 Há dois jeitos de fazer o teste:
 

@@ -95,7 +95,7 @@ and members test with real sats. Recovery on a second board is part of the
 member test (guide, part 6). Pin `14498d5` adds **Apagar tudo** to the installer:
 after a confirmation it erases the whole chip before writing and checks that
 NVS and the SPIFFS data partition read back erased (MD5 of 0xFF) before booting.
-This also allows a single-board recovery test before any funds are received.
+This also allows a single-board recovery test before any funds are received. Pin `f430249` labels the installer box as the hash of the firmware file to be written.
 
 ## Store card consistency (2026-10-15)
 

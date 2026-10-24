@@ -70,8 +70,10 @@ substitui esse firmware pelo do BR⚡LN Signer, direto pelo navegador.
 1. Ligue o Signer ao computador pelo cabo USB.
 2. Feche qualquer outro programa que use a placa: Arduino IDE, monitor serial
    ou outra aba do app.
-3. No passo **1. Instale o firmware**, confira o quadro **Hash que o Signer vai
-   mostrar**. São 64 dígitos em 4 linhas. Para a 0.5.49, o valor é:
+3. No passo **1. Instale o firmware**, confira o quadro **Hash do firmware que
+   será gravado**. Ele aparece antes de conectar a placa, porque é calculado a
+   partir do arquivo fornecido pelo LightningOS. São 64 dígitos em 4 linhas. Para
+   a 0.5.49, o valor é:
 
    ```text
    f15ca565b627bed0

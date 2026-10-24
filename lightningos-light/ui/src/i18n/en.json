@@ -1261,7 +1261,7 @@
   "appStore": {
     "hardwallet": {
       "description": "Bitcoin wallet with BR⚡LN LightningOS and BR⚡LN Signer. Keys stay on Signer; LightningOS queries Electrum and broadcasts signed transactions.",
-      "experimental": "Experimental pilot: no real funds until physical review and recovery validation pass.",
+      "experimental": "Experimental pilot without an independent audit: use only small amounts you can afford to lose.",
       "access": "Open the app using the same address as BR⚡LN LightningOS, with trusted HTTPS and your login session. Connect BR⚡LN Signer to your computer via USB.",
       "opening": "Opening BR⚡LN Hardwallet…",
       "openFailed": "Could not open BR⚡LN Hardwallet. Return to the store, check that the app is running and try again.",

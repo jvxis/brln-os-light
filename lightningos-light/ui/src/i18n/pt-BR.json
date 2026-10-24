@@ -1261,7 +1261,7 @@
   "appStore": {
     "hardwallet": {
       "description": "Carteira Bitcoin com BR⚡LN LightningOS e BR⚡LN Signer. As chaves ficam no Signer; o LightningOS consulta o Electrum e transmite transações assinadas.",
-      "experimental": "Piloto experimental: sem fundos reais até concluir validação física e recuperação.",
+      "experimental": "Piloto experimental sem auditoria independente: use apenas valores pequenos, que você aceita perder.",
       "access": "Abra o app pelo mesmo endereço do BR⚡LN LightningOS, com HTTPS confiável e sua sessão de login. Conecte o BR⚡LN Signer USB ao seu computador.",
       "opening": "Abrindo o BR⚡LN Hardwallet…",
       "openFailed": "Não foi possível abrir o BR⚡LN Hardwallet. Volte à loja, confira se o app está executando e tente novamente.",

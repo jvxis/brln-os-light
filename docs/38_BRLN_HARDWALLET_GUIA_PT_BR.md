@@ -1,8 +1,9 @@
 # BR⚡LN Hardwallet: guia do piloto (LightningOS 0.5.49)
 
 Este guia leva você do Signer novo, ainda com o firmware de fábrica, até o
-primeiro envio. São quatro partes: preparar o Signer, criar a carteira, receber
-e enviar. Leia uma parte inteira antes de começar a fazê-la.
+primeiro envio e o teste de recuperação. Depois de instalar o app (parte 1), são
+cinco etapas: preparar o Signer, criar a carteira, receber, enviar e recuperar a
+carteira em uma segunda placa. Leia uma parte inteira antes de começar a fazê-la.
 
 ## Antes de começar
 
@@ -20,7 +21,8 @@ Signer: elas nunca passam pelo computador.
 **Você precisa de:**
 
 - Um node com BR⚡LN LightningOS **0.5.49** ou mais recente.
-- Uma **LilyGO T-Display original** (ESP32, tela de 1,14″, dois botões).
+- Uma **LilyGO T-Display original** (ESP32, tela de 1,14″, dois botões). Para
+  o teste de recuperação da parte 6, uma segunda placa igual.
 - Um **cabo USB de dados**. Muitos cabos só carregam: se a placa não aparecer no
   computador, troque o cabo primeiro.
 - Um **computador** (Windows, macOS ou Linux) com **Chrome ou Edge**. Celular e
@@ -227,6 +229,47 @@ no Signer. Se uma proposta tiver outra forma, o Signer recusa sem assinar.
 Para desistir antes de transmitir, use **Encerrar proposta**. **Exportar
 transação assinada** salva a transação em arquivo, para transmitir por outro
 meio.
+
+## Parte 6: testar a recuperação
+
+Este teste faz parte do piloto. Ele confirma que as 24 palavras anotadas
+recriam a mesma carteira. Você vai precisar de uma **segunda T-Display** e
+do papel com as palavras. **Não digite as palavras em computador ou celular:**
+a recuperação acontece só nos botões do Signer.
+
+1. Desconecte o primeiro Signer e guarde-o.
+2. Ligue a segunda placa e repita o **passo 1** (firmware) e o **passo 2**
+   (pareamento) da parte 2: conferir o hash, "Preparar memoria" e o código de
+   pareamento.
+3. No passo 3, escolha **Recuperar carteira** e continue no Signer:
+   1. **No Signer / Recuperar carteira?**: **CONFIRMAR**.
+   2. **Senha da carteira** e **Repita a senha**: crie uma senha para esta placa.
+      Ela pode ser diferente da senha da primeira placa.
+   3. **Recuperar backup**: escolha **24 palavras** com **ESCOLHER**.
+   4. **Palavra 1/24 ... Palavra 24/24**: monte cada palavra letra por letra.
+      **PROXIMO** passa para a próxima letra possível e **ESCOLHER** adiciona a
+      letra. Quando só sobra uma palavra possível, o Signer mostra a palavra
+      inteira: confira com o papel e aperte **CONFIRMAR**. Se a palavra
+      completa também for o começo de outra, escolha **USAR**.
+   5. O Signer mostra as palavras de volta (**Anote 1/24...**), para você
+      conferir com o papel, e pergunta **Anotou a seed?**: **CONFIRMAR**.
+   6. **Recuperando / Aguarde**, e depois **Carteira pronta**.
+4. Confira no app:
+   - a **Conta pública** (por exemplo `d11bc45b`) deve ser **a mesma** da
+     primeira placa;
+   - o app não deve perguntar se quer substituir a conta salva;
+   - depois de **Sincronizar**, o saldo e o histórico devem ser os mesmos.
+5. Na aba **Receber**, gere um endereço e confira no Signer: ele continua a
+   sequência da carteira.
+
+Se a conta pública for **diferente**, alguma palavra está errada ou fora de
+ordem. Nesse caso, o app pergunta se quer substituir a conta salva: responda
+**Cancelar**. Não envie fundos para essa carteira; confira o papel e avise no
+grupo do piloto. Para repetir o teste nessa mesma placa é preciso apagar a
+memória dela (reinstalar o firmware não apaga): peça ajuda no grupo.
+
+Ao terminar, você pode usar qualquer uma das duas placas: as duas abrem a mesma
+carteira. Cada uma tem a sua própria senha.
 
 ## No dia a dia
 

@@ -86,7 +86,11 @@ For 0.5.49 the pin moved to `4d80f4e`: the installer now shows the 64-digit hash
 the Signer asks to approve on its first boot (read from the verified
 `firmware.bin`), so members can compare it without any other source. Firmware
 unchanged since `4e77a03`; device hash
-`f15ca565b627bed07a3063704a06927233d97a13662810fc3c8dc52bd1843dad`.
+`f15ca565b627bed07a3063704a06927233d97a13662810fc3c8dc52bd1843dad`. Final pin
+`140699b`: with the owner's agreement, the Store card and the app notice now ask
+for small amounts instead of "no real funds", since the wallet is mainnet only
+and members test with real sats. Recovery on a second board is part of the
+member test (guide, part 6).
 
 ## Store card consistency (2026-10-15)
 

@@ -1259,6 +1259,18 @@
     }
   },
   "appStore": {
+    "hardwallet": {
+      "description": "Bitcoin wallet with BR⚡LN LightningOS and BR⚡LN Signer. Keys stay on Signer; LightningOS queries Electrum and broadcasts signed transactions.",
+      "experimental": "Experimental pilot: no real funds until physical review and recovery validation pass.",
+      "access": "Open the app using the same address as BR⚡LN LightningOS, with trusted HTTPS and your login session. Connect BR⚡LN Signer to your computer via USB.",
+      "opening": "Opening BR⚡LN Hardwallet…",
+      "openFailed": "Could not open BR⚡LN Hardwallet. Return to the store, check that the app is running and try again.",
+      "source": "Electrum server",
+      "local": "My local Electrs (default)",
+      "club": "Club Electrs (public server)",
+      "privacy": "No automatic fallback. The club uses electrum.br-ln.com:50001 over TCP without TLS. The server and network intermediaries can observe your queries.",
+      "apply": "Apply server and start"
+    },
     "bitcoinLegacyMigrationTitle": "Legacy Bitcoin Core migration required",
     "bitcoinLegacyMigrationCard": "This node still uses the historical Store image. Ordinary start and stop controls are disabled until the verified image is adopted safely.",
     "bitcoinLegacyMigrationAction": "Migrate safely",

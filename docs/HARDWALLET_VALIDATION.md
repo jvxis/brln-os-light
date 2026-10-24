@@ -39,8 +39,15 @@ Origin 403; status reports `brln-3`; anonymous requests 401, logout revokes
 access; the six firmware resources are denied anonymously and the four files
 match the CI artifact of `67ae61e`. The CI firmware's embedded image hash is
 `d7aa945d48277760a1d42f4d77274f81175619514c1ebbbac4f4d215a0898e1a`.
-Remaining: physical session through LOS (pair, unlock, sync, address check),
-installer flash on a board without a wallet, signing review.
+Physical session through LOS on the same day (owner's browser, COM5 test
+wallet): brln-3 pairing, unlock on the buttons, club Electrum sync and a receive
+address identical on the Signer, in the app and in the QR. On-device signing
+review with synthetic UTXOs (nothing broadcast): three out-of-scope PSBTs refused
+without buttons, the app-shaped proposal reviewed as Destino/Troco and signed
+(signature verified by the app), and the same proposal rejected on the device.
+Evidence: jvxis/brln-hardwallet `docs/PHYSICAL_LAB.md` (d837962).
+Remaining: installer flash through LOS on a board without a wallet, recovery on
+a second board, advanced passphrase unlock.
 
 ## Store card consistency (2026-10-15)
 

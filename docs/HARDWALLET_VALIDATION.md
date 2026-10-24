@@ -46,8 +46,19 @@ review with synthetic UTXOs (nothing broadcast): three out-of-scope PSBTs refuse
 without buttons, the app-shaped proposal reviewed as Destino/Troco and signed
 (signature verified by the app), and the same proposal rejected on the device.
 Evidence: jvxis/brln-hardwallet `docs/PHYSICAL_LAB.md` (d837962).
-Remaining: installer flash through LOS on a board without a wallet, recovery on
-a second board, advanced passphrase unlock.
+Later pins: `f9aaec8` (one-screen balanced review rows, Portuguese signing
+states) and `4f61d5c` (installer boots the new firmware: esptool-js 0.7.0's hard
+reset left the chip in the flasher stub with a dark screen after a verified
+write, observed through LOS). Each pin: focused Go tests, hash-guarded Manager and
+broker replacement with backup (`before-pin-f9aaec8`, `before-pin-4f61d5c`),
+Store install, CI-identical firmware assets; LND untouched.
+
+Fresh first-run journey through LOS (owner's browser, COM5 board fully erased
+first): installer flash, "Preparar memória", hash approval, pairing, wallet
+creation on the buttons, public-account import (`d11bc45b`), club sync, receive
+address matching on Signer and app, then lock/disconnect/reconnect/unlock with
+the same account. Evidence: jvxis/brln-hardwallet `docs/PHYSICAL_LAB.md`.
+Remaining: recovery on a second board, advanced passphrase unlock.
 
 ## Store card consistency (2026-10-15)
 

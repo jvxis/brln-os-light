@@ -14,7 +14,7 @@ const (
 	HardwalletUID      = 65527
 	HardwalletProxyGID = 65532
 	// Filled only from a successful published multi-architecture build; no tag fallback.
-	HardwalletImage         = "ghcr.io/jvxis/brln-hardwallet:sha-4e77a03ea2a6172c0668081b902d7dafc44647c5@sha256:de6281f916505e18015807186c4a4526dddc9a8b22a54daa01365fca5ccb2c3f"
+	HardwalletImage         = "ghcr.io/jvxis/brln-hardwallet:sha-4d80f4e63e8757bb381e3e05ed93fcb78927db0d@sha256:c0f25c198b5c52445ebef9443a437fc471b0c1c01148fd6a5a26fdb63f6e65b1"
 	HardwalletProxyImage    = BarkWalletProxyImage
 	HardwalletVersionOutput = "brln-hardwallet 0.1.0-dev"
 	HardwalletClubAddress   = "electrum.br-ln.com:50001"

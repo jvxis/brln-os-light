@@ -859,6 +859,15 @@ Installing **Taproot Assets (tapd)** adds a dedicated page backed by the officia
 
 Lightning transfers of Taproot Assets are not enabled in this standalone mode; they depend on the separate community edge-node work.
 
+## BR⚡LN Hardwallet (pilot)
+
+The **BR⚡LN Hardwallet** app is an on-chain Bitcoin wallet (mainnet, BIP84) with
+a physical signer, the BR⚡LN Signer (a LilyGO T-Display). The seed and password
+stay on the Signer and are entered only with its buttons; LightningOS queries
+Electrum (local or the club's) and broadcasts signed transactions. The wallet is
+separate from LND. Pilot: use small amounts only. Step-by-step guide, in
+Portuguese: [docs/38_BRLN_HARDWALLET_GUIA_PT_BR.md](docs/38_BRLN_HARDWALLET_GUIA_PT_BR.md).
+
 ## Wallet Flow / provenance graph (optional)
 
 The Wallet Flow tab inside On-chain Hub renders a sankey graph of every transaction the wallet has touched. It needs to decode arbitrary txids — non-wallet ancestors and external counterparties — so it picks the first available source from this chain:

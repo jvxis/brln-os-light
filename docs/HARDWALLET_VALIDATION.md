@@ -1,9 +1,12 @@
 # BRLN Hardwallet: experimental validation
 
 Branch `agent/0.5.48-brln-hardwallet`: the Hardwallet integration from PR #260
-merged onto the official 0.5.48-Beta (`49cb0b683ce0f3fe555269bd10581e194bd79ba7`).
-Companion firmware/coordinator: https://github.com/jvxis/brln-hardwallet, branch
-`brln/tdisplay-los`. This is not a release or approval to use real funds.
+merged onto the official 0.5.48-Beta (`49cb0b683ce0f3fe555269bd10581e194bd79ba7`)
+and then onto `agent/0.5.49-release`. Target: **0.5.49-Beta**, as a club pilot
+(previously 0.6.0 in #260). Companion firmware/coordinator:
+https://github.com/jvxis/brln-hardwallet, branch `brln/tdisplay-los`. Member
+guide: [38_BRLN_HARDWALLET_GUIA_PT_BR.md](38_BRLN_HARDWALLET_GUIA_PT_BR.md).
+No independent audit yet: pilot members use small amounts only.
 
 ## 0.5.48 base and brln-3 companion (2026-10-24)
 
@@ -78,6 +81,12 @@ change, 141 sats fee), and the broadcast through LOS was received
 fixed in `4e77a03`: change amount labelled "Valor 2" on the device, sync blocked
 after broadcast, form not reset; the device no longer shows test wording (the
 LOS pilot notice remains).
+
+For 0.5.49 the pin moved to `4d80f4e`: the installer now shows the 64-digit hash
+the Signer asks to approve on its first boot (read from the verified
+`firmware.bin`), so members can compare it without any other source. Firmware
+unchanged since `4e77a03`; device hash
+`f15ca565b627bed07a3063704a06927233d97a13662810fc3c8dc52bd1843dad`.
 
 ## Store card consistency (2026-10-15)
 

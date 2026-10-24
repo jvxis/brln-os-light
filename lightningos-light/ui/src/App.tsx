@@ -506,6 +506,16 @@ export default function App() {
     return allRoutes.find((item) => item.key === 'dashboard') || allRoutes[0]
   }, [allRoutes, route, wizardRequired])
 
+  // Once opened, the Hardwallet stays mounted (hidden on other pages), so its USB
+  // session and unlocked Signer survive navigation inside LightningOS.
+  const hardwalletInstalled = installedAppIDs.has('brln-hardwallet')
+  const showingHardwallet = current.key === 'hardwallet-open'
+  const [hardwalletKept, setHardwalletKept] = useState(false)
+  useEffect(() => {
+    if (!hardwalletInstalled) setHardwalletKept(false)
+    else if (showingHardwallet) setHardwalletKept(true)
+  }, [hardwalletInstalled, showingHardwallet])
+
   const handleLogout = useCallback(async () => {
     try {
       await logoutAuth()
@@ -597,7 +607,8 @@ export default function App() {
           />
           <main className="app-content px-6 pb-16 pt-6 lg:px-12">
             {wizardHidden && current.key !== 'wizard' && <ReportsReconciliationNotice />}
-            {current.element}
+            {!showingHardwallet && current.element}
+            {hardwalletInstalled && (hardwalletKept || showingHardwallet) && <div hidden={!showingHardwallet}><HardwalletOpen /></div>}
           </main>
         </div>
       </div>

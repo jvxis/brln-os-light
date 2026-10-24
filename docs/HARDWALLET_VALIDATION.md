@@ -60,6 +60,25 @@ address matching on Signer and app, then lock/disconnect/reconnect/unlock with
 the same account. Evidence: jvxis/brln-hardwallet `docs/PHYSICAL_LAB.md`.
 Remaining: recovery on a second board, advanced passphrase unlock.
 
+Then the app was redesigned in the LOS page style (setup steps, wallet tabs,
+Signer controls on every tab; pins `2fce21a`, `72cb687`). `HardwalletOpen` sends
+appearance and language by `postMessage` (origin-checked), so switching EN/PT
+never reloads the app or drops its USB session; the app reports its height, so
+only the LOS page scrolls. `App.tsx` keeps the Hardwallet iframe mounted once
+opened and only hides it on other pages, so a connected Signer stays connected
+across LOS navigation. Current pin `4e77a03` (overlay `e142f92`, backup
+`before-pin-4e77a03`, LND untouched): a browser check confirmed the language
+toggle and the away-and-back navigation kept the same app document, and the
+installer files matched CI.
+
+With their own funds (outside the pilot rule), the owner received 1,000 sats and
+sent 500 sats from the LOS Send tab. The device review matched the app (destination,
+change, 141 sats fee), and the broadcast through LOS was received
+(`55c9c3a13352ef67c831124833e01b0a9d583ade6b49e7e64fc15d015847c93f`). Findings
+fixed in `4e77a03`: change amount labelled "Valor 2" on the device, sync blocked
+after broadcast, form not reset; the device no longer shows test wording (the
+LOS pilot notice remains).
+
 ## Store card consistency (2026-10-15)
 
 Moved Hardwallet's Electrum/setup controls out of the card header and removed

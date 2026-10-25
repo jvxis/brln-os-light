@@ -934,12 +934,16 @@ func (s *Server) buildTelegramSystemSummary(ctx context.Context) (string, error)
 		if header != "" {
 			lines = append(lines, header)
 		}
-		lines = append(lines, fmt.Sprintf("  ⏳ Power on hours: %s", formatInt(disk.PowerOnHours)))
-		lines = append(lines, fmt.Sprintf("  🧪 Wear: %d%% | Days left: %s", disk.WearPercentUsed, formatInt(disk.DaysLeftEstimate)))
-		if disk.TemperatureC > 0 {
-			lines = append(lines, fmt.Sprintf("  🌡️ Temp: %.1f C", disk.TemperatureC))
+		if strings.EqualFold(strings.TrimSpace(disk.SmartStatus), sysinfo.DiskSmartUnavailable) {
+			lines = append(lines, "  ℹ️ SMART not available (common on virtual/VPS disks)")
 		} else {
-			lines = append(lines, "  🌡️ Temp: N/A")
+			lines = append(lines, fmt.Sprintf("  ⏳ Power on hours: %s", formatInt(disk.PowerOnHours)))
+			lines = append(lines, fmt.Sprintf("  🧪 Wear: %d%% | Days left: %s", disk.WearPercentUsed, formatInt(disk.DaysLeftEstimate)))
+			if disk.TemperatureC > 0 {
+				lines = append(lines, fmt.Sprintf("  🌡️ Temp: %.1f C", disk.TemperatureC))
+			} else {
+				lines = append(lines, "  🌡️ Temp: N/A")
+			}
 		}
 		if disk.TotalGB > 0 {
 			used := formatFloat(disk.UsedGB, 1)

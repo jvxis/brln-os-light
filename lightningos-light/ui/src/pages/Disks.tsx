@@ -69,9 +69,10 @@ export default function Disks() {
             const totalLabel = formatGB(disk.total_gb)
             const usedLabel = formatGB(disk.used_gb)
             const percentLabel = formatPercent(disk.used_percent)
-            const wearLabel = formatPercentValue(disk.wear_percent_used)
+            const smartAvailable = String(disk.smart_status || '').toUpperCase() !== 'UNAVAILABLE'
+            const wearLabel = smartAvailable ? formatPercentValue(disk.wear_percent_used) : '—'
             const tempLabel = formatTemp(disk.temperature_c)
-            const wearWarn = typeof disk.wear_percent_used === 'number' && disk.wear_percent_used >= wearWarnThreshold
+            const wearWarn = smartAvailable && typeof disk.wear_percent_used === 'number' && disk.wear_percent_used >= wearWarnThreshold
             const tempWarn = typeof disk.temperature_c === 'number' && disk.temperature_c >= tempWarnThreshold
             const partitions = Array.isArray(disk.partitions) ? disk.partitions : []
             return (
@@ -100,11 +101,11 @@ export default function Disks() {
                 </div>
                 <div>
                   <p className="text-fog/60">{t('disks.powerOnHours')}</p>
-                  <p>{disk.power_on_hours}</p>
+                  <p>{smartAvailable ? disk.power_on_hours : '—'}</p>
                 </div>
                 <div>
                   <p className="text-fog/60">{t('disks.daysLeft')}</p>
-                  <p>{disk.days_left_estimate}</p>
+                  <p>{smartAvailable ? disk.days_left_estimate : '—'}</p>
                 </div>
                 <div>
                   <p className="text-fog/60">{t('disks.size')}</p>

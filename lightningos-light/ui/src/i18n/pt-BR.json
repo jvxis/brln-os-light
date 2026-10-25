@@ -2258,6 +2258,7 @@
     "wallet": "Carteira",
     "wear": "Desgaste",
     "wearDaysLeft": "Desgaste: {{wear}}% | Dias restantes: {{days}}",
+    "smartUnavailableHint": "SMART indisponível — comum em disco virtual (VPS). Uso e tamanho continuam medidos.",
     "zmqRawBlock": "ZMQ RAW BLOCK",
     "zmqRawTx": "ZMQ RAW TX"
   },

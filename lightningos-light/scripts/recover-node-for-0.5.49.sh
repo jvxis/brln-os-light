@@ -100,14 +100,49 @@ DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l LC_ALL=C apt-get -o DPkg::Lock
 lightningos_node_check_global || fail 'Post-install Node/npm verification failed; LOS was not upgraded'
 [[ $(lightningos_node_npm prefix -g) == "$prefix" ]] || fail 'Global npm prefix changed unexpectedly'
 lightningos_node_npm ls -g --depth=0 --json > "$stage/globals.after.json" || fail 'Global npm inventory needs review after migration; LOS was not upgraded'
-python3 - "$stage" <<'PY'
-import json, os, pathlib, stat, sys, tempfile
+python3 - "$stage" "$prefix" "$archive" <<'PY'
+import json, pathlib, subprocess, sys, tarfile
 stage = pathlib.Path(sys.argv[1])
 def packages(name):
     data = json.loads((stage/name).read_text())
     return {k:v.get('version') for k,v in data.get('dependencies', {}).items() if k != 'npm'}
-if packages('globals.before.json') != packages('globals.after.json'):
+before, after = packages('globals.before.json'), packages('globals.after.json')
+# NodeSource 24 bundles Corepack, whereas Node 25+ does not. Only accept a
+# NEW addition from this already checksum-verified .deb, at its packaged /usr
+# path. Do not exempt existing/user-managed Corepack or any other npm package.
+if 'corepack' not in before and 'corepack' in after and sys.argv[2] == '/usr':
+    bundled = None
+    process = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', sys.argv[3]], stdout=subprocess.PIPE)
+    try:
+        with tarfile.open(fileobj=process.stdout, mode='r|') as contents:
+            for member in contents:
+                name = member.name[2:] if member.name.startswith('./') else member.name
+                if name == 'usr/lib/node_modules/corepack/package.json' and member.isfile():
+                    with contents.extractfile(member) as package:
+                        bundled = package.read(65536)
+        # Consume padding too, so waiting cannot block on a full pipe.
+        while process.stdout.read(65536):
+            pass
+        if process.wait() != 0:
+            raise SystemExit('Cannot verify bundled Corepack package')
+    finally:
+        process.stdout.close()
+        if process.poll() is None:
+            process.terminate(); process.wait()
+    target = pathlib.Path('/usr/lib/node_modules/corepack/package.json')
+    if bundled is not None and target.is_file() and not target.is_symlink():
+        version = json.loads(bundled).get('version')
+        owners = subprocess.check_output(['dpkg-query', '-S', str(target)], text=True).splitlines()
+        packaged = any(line.split(': ', 1)[0].split(':')[0] == 'nodejs' for line in owners)
+        if packaged and after['corepack'] == version and target.read_bytes() == bundled:
+            after.pop('corepack')
+            print('[OK] New Corepack addition verified against the pinned Node package; other global packages remain protected')
+if before != after:
     raise SystemExit('Global npm package inventory changed; review recovery record')
+PY
+python3 - "$stage" <<'PY'
+import json, os, pathlib, stat, sys, tempfile
+stage = pathlib.Path(sys.argv[1])
 meta = json.loads((stage/'source.json').read_text())
 p = pathlib.Path(meta['path'])
 s = p.lstat()

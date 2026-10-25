@@ -1277,6 +1277,22 @@ func ValidateRequest(request Request) error {
 		if params.Action != AppLifecycleStart && params.Action != AppLifecycleStop {
 			return errors.New("Bark Wallet lifecycle action is not allowed")
 		}
+	case OperationHardwalletStatus:
+		if request.DryRun {
+			return errors.New("dry_run is not valid for Hardwallet status")
+		}
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return err
+		}
+	case OperationHardwalletControl:
+		var params HardwalletControlParams
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return err
+		}
+		if err := validateHardwalletControl(params); err != nil {
+			return err
+		}
 	case OperationBRLNCommunityStatus, OperationBRLNCommunityEnsure, OperationBRLNCommunityRemove,
 		OperationBRLNCommunityFirewall, OperationBRLNCommunityPasswordRead:
 		if request.DryRun && (request.Operation == OperationBRLNCommunityStatus || request.Operation == OperationBRLNCommunityPasswordRead) {
@@ -1327,7 +1343,7 @@ func validateCatalogImageParams(params AppImageParams) error {
 }
 
 func validateProbedImageParams(params AppImageParams) error {
-	if params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID && params.AppID != appmanifest.BarkWalletID && params.AppID != appmanifest.BRLNCommunityID && params.AppID != appmanifest.MempoolID && params.AppID != appmanifest.FedimintGuardianID && params.AppID != appmanifest.FedimintGatewayID {
+	if params.AppID != appmanifest.HardwalletID && params.AppID != appmanifest.CPUMinerID && params.AppID != appmanifest.TapdID && params.AppID != appmanifest.PublicPoolID && params.AppID != appmanifest.BarkWalletID && params.AppID != appmanifest.BRLNCommunityID && params.AppID != appmanifest.MempoolID && params.AppID != appmanifest.FedimintGuardianID && params.AppID != appmanifest.FedimintGatewayID {
 		return errors.New("app manifest is not allowed")
 	}
 	if _, err := appmanifest.CatalogImageForVariant(params.AppID, params.Variant); err != nil {

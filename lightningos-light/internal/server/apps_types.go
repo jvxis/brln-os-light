@@ -27,6 +27,7 @@ type appDefinition struct {
 }
 
 type appInfo struct {
+	ElectrumSource          string            `json:"electrum_source,omitempty"`
 	ID                      string            `json:"id"`
 	Name                    string            `json:"name"`
 	Description             string            `json:"description"`

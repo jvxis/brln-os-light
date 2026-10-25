@@ -12,7 +12,7 @@ for tool in curl sha256sum dpkg dpkg-deb dpkg-query apt-get apt-mark python3 sta
   command -v "$tool" >/dev/null || fail "Missing prerequisite: $tool"
 done
 [[ -f /opt/lightningos/manager/lightningos-manager && ! -L /opt/lightningos/manager/lightningos-manager ]] || fail 'Existing LightningOS installation required'
-version=$(cat /opt/lightningos/ui/version.txt)
+version=$(tr -d '\r\n' < /opt/lightningos/ui/version.txt)
 case "$version" in 0.5.4[0-9]-[Bb]eta) ;; *) fail 'Recovery is limited to LOS 0.5.40 through 0.5.49; older nodes must take the mandatory bridge first' ;; esac
 systemctl is-active --quiet lightningos-app-upgrade.service && fail 'An app upgrade is running; wait before retrying'
 # All mutable paths are root-controlled, never beneath a user checkout.

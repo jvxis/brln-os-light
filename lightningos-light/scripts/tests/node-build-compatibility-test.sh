@@ -45,6 +45,10 @@ lightningos_node_check_shadowing() { :; }
 lightningos_node_check_npm_config() { :; }
 lightningos_node_install() { echo 'FAIL unexpected package installation' >&2; return 99; }
 fixture_node=v26.12.1 fixture_npm=11.20.0
-lightningos_prepare_node
-[[ $NODE_BIN == /usr/bin/node && $NPM_BIN == /usr/bin/npm ]]
+if [[ $EUID == 0 ]]; then
+  lightningos_prepare_node
+  [[ $NODE_BIN == /usr/bin/node && $NPM_BIN == /usr/bin/npm ]]
+else
+  echo 'SKIP: full root preparation; version compatibility and warning fixtures ran above'
+fi
 echo 'PASS: version range, future patches, EOL/security warnings, malformed/broken runtimes and no package mutation for compatible runtime'

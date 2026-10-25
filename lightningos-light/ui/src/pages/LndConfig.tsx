@@ -32,7 +32,7 @@ type LndClearnetStatus = {
   tor_peers: number
 }
 
-const BRLN_CLEARNET_URL = 'https://br-ln.com'
+const BRLN_CLEARNET_URL = 'https://services.br-ln.com/clearnet'
 
 export default function LndConfig({ externalBitcoinDetected = false }: LndConfigProps) {
   const { t, i18n } = useTranslation()

@@ -22,6 +22,18 @@ type LndConfigProps = {
   externalBitcoinDetected?: boolean
 }
 
+type LndClearnetStatus = {
+  state: 'active' | 'announced_no_inbound' | 'configured_not_announced' | 'tor_only' | 'unknown'
+  listen_configured: boolean
+  external_configured: boolean
+  announced_addresses: string[]
+  clearnet_peers: number
+  inbound_clearnet_peers: number
+  tor_peers: number
+}
+
+const BRLN_CLEARNET_URL = 'https://services.br-ln.com/clearnet'
+
 export default function LndConfig({ externalBitcoinDetected = false }: LndConfigProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
@@ -35,6 +47,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
   const [graphSyncPeers, setGraphSyncPeers] = useState('3')
   const [disconnectUnresponsivePeers, setDisconnectUnresponsivePeers] = useState(true)
   const [syncedToGraph, setSyncedToGraph] = useState<boolean | null>(null)
+  const [clearnet, setClearnet] = useState<LndClearnetStatus | null>(null)
   const [graphSyncProgress, setGraphSyncProgress] = useState<number | null>(null)
   const [networkBusy, setNetworkBusy] = useState(false)
   const [maintenance, setMaintenance] = useState<LndMaintenanceStatus | null>(null)
@@ -104,6 +117,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
       const maxVal = Number(data.current.max_channel_size_sat || 0)
       setMinChan(minVal > 0 ? minVal.toString() : '')
       setMaxChan(maxVal > 0 ? maxVal.toString() : '')
+      setClearnet(data.clearnet || null)
       const nextMode = data.current.network_mode
       setNetworkMode(nextMode === 'private' || nextMode === 'hybrid' ? nextMode : 'custom')
       const nextGraphSyncPeers = Number(data.current.graph_sync_peers || 0)
@@ -521,6 +535,8 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
     }
   }
 
+  const clearnetAnnounced = clearnet?.state === 'active' || clearnet?.state === 'announced_no_inbound'
+
   return (
     <section className="flex flex-col gap-6">
       <div className="section-card">
@@ -621,6 +637,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
             </div>
             <p className="mt-3 text-sm text-fog/70">{t('lndConfig.privateModeDescription')}</p>
             <p className="mt-3 text-xs text-fog/50">{t('lndConfig.privateModeTechnical')}</p>
+            {clearnetAnnounced && <p className="mt-3 text-xs text-brass">{t('lndConfig.privateModeRoutingWarning')}</p>}
           </button>
 
           <button
@@ -637,11 +654,11 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
             <div className="flex items-center justify-between gap-3">
               <span className="font-semibold">{t('lndConfig.hybridMode')}</span>
               <span className="rounded-full border border-brass/30 bg-brass/10 px-2 py-1 text-[10px] uppercase tracking-wide text-brass">
-                {t('lndConfig.fasterInitialSync')}
+                {clearnetAnnounced ? t('lndConfig.recommendedForRouting') : t('lndConfig.fasterInitialSync')}
               </span>
             </div>
             <p className="mt-3 text-sm text-fog/70">{t('lndConfig.hybridModeDescription')}</p>
-            <p className="mt-3 text-xs text-brass">{t('lndConfig.hybridModePrivacyWarning')}</p>
+            <p className="mt-3 text-xs text-brass">{clearnetAnnounced ? t('lndConfig.hybridPrivacyIpAlreadyPublic') : t('lndConfig.hybridModePrivacyWarning')}</p>
           </button>
         </div>
 
@@ -650,9 +667,44 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
             {t('lndConfig.customNetworkDetected')}
           </div>
         )}
-        {networkMode === 'hybrid' && syncedToGraph === true && (
+        {networkMode === 'hybrid' && syncedToGraph === true && clearnet?.state === 'tor_only' && (
           <div className="rounded-xl border border-glow/30 bg-glow/10 px-4 py-3 text-sm text-glow">
             {t('lndConfig.graphSyncedPrivateSuggestion')}
+          </div>
+        )}
+        {networkMode === 'private' && clearnetAnnounced && (
+          <div className="rounded-xl border border-brass/30 bg-brass/10 px-4 py-3 text-sm text-brass">
+            {t('lndConfig.privateWithClearnetWarning')}
+          </div>
+        )}
+        {clearnet && clearnet.state !== 'unknown' && (
+          <div
+            className={`rounded-xl border px-4 py-3 text-sm ${
+              clearnet.state === 'active' ? 'border-glow/30 bg-glow/10 text-glow' : 'border-brass/30 bg-brass/10 text-brass'
+            }`}
+          >
+            {clearnet.state === 'active' && (
+              <p>{t('lndConfig.clearnetActive', { address: clearnet.announced_addresses.join(', '), inbound: clearnet.inbound_clearnet_peers, peers: clearnet.clearnet_peers })}</p>
+            )}
+            {clearnet.state === 'announced_no_inbound' && (
+              <p>{t('lndConfig.clearnetAnnouncedNoInbound', { address: clearnet.announced_addresses.join(', ') })}</p>
+            )}
+            {clearnet.state === 'configured_not_announced' && <p>{t('lndConfig.clearnetConfiguredNotAnnounced')}</p>}
+            {clearnet.state === 'tor_only' && (
+              <div className="space-y-2">
+                <p className="font-semibold">{t('lndConfig.clearnetTorOnlyTitle')}</p>
+                <p>{t('lndConfig.clearnetTorOnlyBody')}</p>
+                <p>{t('lndConfig.clearnetHowTo')}</p>
+              </div>
+            )}
+            {clearnet.state !== 'active' && (
+              <p className="mt-2">
+                {t('lndConfig.clearnetClubOffer')}{' '}
+                <a className="underline" href={BRLN_CLEARNET_URL} target="_blank" rel="noreferrer">
+                  {t('lndConfig.clearnetClubLink')}
+                </a>
+              </p>
+            )}
           </div>
         )}
 

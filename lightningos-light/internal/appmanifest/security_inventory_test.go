@@ -88,7 +88,9 @@ func TestComposeCatalogSecurityInventory(t *testing.T) {
 		BarkWalletID + "/barkd": hardened,
 		BarkWalletID + "/proxy": hardened,
 
-		BRLNCommunityID + "/web":    hardened,
+		HardwalletID + "/app":        hardened,
+		HardwalletID + "/proxy":      hardened,
+		BRLNCommunityID + "/web":     hardened,
 		BRLNCommunityID + "/signer":  hardened,
 		BRLNCommunityID + "/pairing": hardened,
 		BRLNCommunityID + "/proxy":   hardened,
@@ -191,6 +193,10 @@ func testCatalogComposeDocuments(t *testing.T) []catalogComposeDocument {
 	if err != nil {
 		t.Fatal(err)
 	}
+	hardwallet, err := HardwalletCompose(testHardwalletPaths(), HardwalletSettings{Source: "local", BindIP: "100.100.1.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	brlnCommunity, err := BRLNCommunityCompose(testBRLNCommunityComposePaths())
 	if err != nil {
 		t.Fatal(err)
@@ -233,5 +239,6 @@ func testCatalogComposeDocuments(t *testing.T) []catalogComposeDocument {
 		{appID: PublicPoolID, raw: publicPool},
 		{appID: BarkWalletID, raw: bark},
 		{appID: BRLNCommunityID, raw: brlnCommunity},
+		{appID: HardwalletID, raw: hardwallet},
 	}
 }

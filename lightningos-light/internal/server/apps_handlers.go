@@ -314,6 +314,27 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer finishOperation()
+	if appID == appmanifest.HardwalletID {
+		var req struct {
+			Source string `json:"electrum_source"`
+		}
+		if r.ContentLength != 0 {
+			if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid Hardwallet options")
+				return
+			}
+		}
+		if req.Source != "" && req.Source != "local" && req.Source != "club" {
+			writeError(w, http.StatusBadRequest, "invalid Electrum source")
+			return
+		}
+		if err := s.prepareHardwallet(r.Context(), req.Source); err != nil {
+			writeAppOperationError(w, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeSuccessfulAppInstallOrStart(w, r, appID)
+		return
+	}
 	// This in-process app persists its state only in PostgreSQL. In particular,
 	// installation must not depend on the privileged storage-root operation.
 	if appID == "opreturn" {

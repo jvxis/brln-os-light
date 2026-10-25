@@ -1548,18 +1548,35 @@ alter table autofee_outcomes add column if not exists liquidity_state text;
 		return err
 	}
 
-	// On new installs, enable native seed by default. Existing rows are not
-	// touched (on conflict do nothing) — users who already configured the
-	// service keep whatever they had.
-	_, err = s.db.Exec(ctx, `
-insert into autofee_config (id, native_seed_enabled)
-values ($1, true)
+	// On a new install the row is created and then written with the Go
+	// defaults (autofeeSeedConfig). Inserting only the id let every other
+	// column fall back to its SQL default, and those had drifted from the
+	// code: cooldown_down_sec 14400 instead of 3600, cooldown_up_sec 10800
+	// instead of 21600. The Go config is the single source of truth, as it is
+	// for the rebalance config since 0.4.x. Existing rows are never touched —
+	// an operator who already configured the service keeps whatever they had.
+	tag, err := s.db.Exec(ctx, `
+insert into autofee_config (id)
+values ($1)
 on conflict (id) do nothing
 `, autofeeConfigID)
 	if err != nil {
 		return err
 	}
+	if tag.RowsAffected() == 1 {
+		if err := s.writeAutofeeConfigRow(ctx, autofeeSeedConfig(s.defaultConfig()), ""); err != nil {
+			return err
+		}
+	}
 	return ensureChannelAutomationSchema(ctx, s.db)
+}
+
+// autofeeSeedConfig is the configuration a new install starts with: the Go
+// defaults, with the native seed on (it was already forced on for new
+// installs before the full row was written).
+func autofeeSeedConfig(def AutofeeConfig) AutofeeConfig {
+	def.NativeSeedEnabled = true
+	return def
 }
 
 func (s *AutofeeService) defaultConfig() AutofeeConfig {
@@ -1715,6 +1732,103 @@ from autofee_config where id=$1
 		cfg.MaxPpm = 2000
 	}
 	return autofeeConfigWithProfileDefaults(cfg), nil
+}
+
+// writeAutofeeConfigRow persists every stored AutoFee setting. It is the one
+// place that writes the row, shared by UpdateConfig and the new-install seed,
+// so a column added to one cannot be forgotten in the other.
+func (s *AutofeeService) writeAutofeeConfigRow(ctx context.Context, cfg AutofeeConfig, ambossToken string) error {
+	_, err := s.db.Exec(ctx, `
+update autofee_config
+set enabled=$2,
+  operation_mode=$3,
+  profile=$4,
+  lookback_days=$5,
+  run_interval_sec=$6,
+  cooldown_up_sec=$7,
+  cooldown_down_sec=$8,
+  step_cap_override=$9,
+  discovery_step_cap_down_override=$10,
+  stall_floor_relax_gap_frac_override=$11,
+  inbound_discount_max_ratio_override=$12,
+  inbound_discount_reach_out_ratio_override=$13,
+  inbound_discount_min_retained_spread_frac_override=$14,
+  outrate_floor_factor_low_override=$15,
+  soften_min_out_ratio_override=$16,
+  soften_max_drop_to_peg_frac_override=$17,
+  htlc_min_attempts_60m_override=$18,
+  htlc_policy_fail_rate_override=$19,
+  htlc_liquidity_fail_rate_override=$20,
+  rebal_cost_mode=$21,
+  native_seed_enabled=$22,
+  amboss_enabled=$23,
+  amboss_token=$24,
+  inbound_passive_enabled=$25,
+  discovery_enabled=$26,
+  explorer_enabled=$27,
+  idle_refresh_enabled=$28,
+  super_source_enabled=$29,
+  super_source_base_fee_msat=$30,
+  revfloor_enabled=$31,
+  circuit_breaker_enabled=$32,
+  extreme_drain_enabled=$33,
+  htlc_signal_enabled=$34,
+  htlc_mode=$35,
+  min_ppm=$36,
+  max_ppm=$37,
+  native_seed_v2_enabled=$38,
+  stale_stock_down_enabled=$39,
+  price_experiments_mode=$40,
+  price_experiments_max_active=$41,
+  price_experiments_days=$42,
+  price_experiments_floor_seed_pct=$43,
+  updated_at=now()
+where id=$1
+`, autofeeConfigID,
+		cfg.Enabled,
+		cfg.OperationMode,
+		cfg.Profile,
+		cfg.LookbackDays,
+		cfg.RunIntervalSec,
+		cfg.CooldownUpSec,
+		cfg.CooldownDownSec,
+		cfg.StepCapOverride,
+		cfg.DiscoveryStepCapDownOverride,
+		cfg.StallFloorRelaxGapFracOverride,
+		cfg.InboundDiscountMaxRatioOverride,
+		cfg.InboundDiscountReachOutRatioOverride,
+		cfg.InboundDiscountMinRetainedSpreadFracOverride,
+		cfg.OutrateFloorFactorLowOverride,
+		cfg.SoftenMinOutRatioOverride,
+		cfg.SoftenMaxDropToPegFracOverride,
+		cfg.HTLCMinAttempts60mOverride,
+		cfg.HTLCPolicyFailRateOverride,
+		cfg.HTLCLiquidityFailRateOverride,
+		cfg.RebalCostMode,
+		cfg.NativeSeedEnabled,
+		cfg.AmbossEnabled,
+		ambossToken,
+		cfg.InboundPassiveEnabled,
+		cfg.DiscoveryEnabled,
+		cfg.ExplorerEnabled,
+		cfg.IdleRefreshEnabled,
+		cfg.SuperSourceEnabled,
+		cfg.SuperSourceBaseFeeMsat,
+		cfg.RevfloorEnabled,
+		cfg.CircuitBreakerEnabled,
+		cfg.ExtremeDrainEnabled,
+		cfg.HTLCSignalEnabled,
+		cfg.HTLCMode,
+		cfg.MinPpm,
+		cfg.MaxPpm,
+		cfg.NativeSeedV2Enabled,
+		cfg.StaleStockDownEnabled,
+		cfg.PriceExperimentsMode,
+		cfg.PriceExperimentsMaxActive,
+		cfg.PriceExperimentsDays,
+		cfg.PriceExperimentsFloorSeedPct,
+	)
+	return err
 }
 
 func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpdate) (AutofeeConfig, error) {
@@ -1949,96 +2063,7 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 		}
 	}
 
-	_, err = s.db.Exec(ctx, `
-update autofee_config
-set enabled=$2,
-  operation_mode=$3,
-  profile=$4,
-  lookback_days=$5,
-  run_interval_sec=$6,
-  cooldown_up_sec=$7,
-  cooldown_down_sec=$8,
-  step_cap_override=$9,
-  discovery_step_cap_down_override=$10,
-  stall_floor_relax_gap_frac_override=$11,
-  inbound_discount_max_ratio_override=$12,
-  inbound_discount_reach_out_ratio_override=$13,
-  inbound_discount_min_retained_spread_frac_override=$14,
-  outrate_floor_factor_low_override=$15,
-  soften_min_out_ratio_override=$16,
-  soften_max_drop_to_peg_frac_override=$17,
-  htlc_min_attempts_60m_override=$18,
-  htlc_policy_fail_rate_override=$19,
-  htlc_liquidity_fail_rate_override=$20,
-  rebal_cost_mode=$21,
-  native_seed_enabled=$22,
-  amboss_enabled=$23,
-  amboss_token=$24,
-  inbound_passive_enabled=$25,
-  discovery_enabled=$26,
-  explorer_enabled=$27,
-  idle_refresh_enabled=$28,
-  super_source_enabled=$29,
-  super_source_base_fee_msat=$30,
-  revfloor_enabled=$31,
-  circuit_breaker_enabled=$32,
-  extreme_drain_enabled=$33,
-  htlc_signal_enabled=$34,
-  htlc_mode=$35,
-  min_ppm=$36,
-  max_ppm=$37,
-  native_seed_v2_enabled=$38,
-  stale_stock_down_enabled=$39,
-  price_experiments_mode=$40,
-  price_experiments_max_active=$41,
-  price_experiments_days=$42,
-  price_experiments_floor_seed_pct=$43,
-  updated_at=now()
-where id=$1
-`, autofeeConfigID,
-		current.Enabled,
-		current.OperationMode,
-		current.Profile,
-		current.LookbackDays,
-		current.RunIntervalSec,
-		current.CooldownUpSec,
-		current.CooldownDownSec,
-		current.StepCapOverride,
-		current.DiscoveryStepCapDownOverride,
-		current.StallFloorRelaxGapFracOverride,
-		current.InboundDiscountMaxRatioOverride,
-		current.InboundDiscountReachOutRatioOverride,
-		current.InboundDiscountMinRetainedSpreadFracOverride,
-		current.OutrateFloorFactorLowOverride,
-		current.SoftenMinOutRatioOverride,
-		current.SoftenMaxDropToPegFracOverride,
-		current.HTLCMinAttempts60mOverride,
-		current.HTLCPolicyFailRateOverride,
-		current.HTLCLiquidityFailRateOverride,
-		current.RebalCostMode,
-		current.NativeSeedEnabled,
-		current.AmbossEnabled,
-		ambossToken,
-		current.InboundPassiveEnabled,
-		current.DiscoveryEnabled,
-		current.ExplorerEnabled,
-		current.IdleRefreshEnabled,
-		current.SuperSourceEnabled,
-		current.SuperSourceBaseFeeMsat,
-		current.RevfloorEnabled,
-		current.CircuitBreakerEnabled,
-		current.ExtremeDrainEnabled,
-		current.HTLCSignalEnabled,
-		current.HTLCMode,
-		current.MinPpm,
-		current.MaxPpm,
-		current.NativeSeedV2Enabled,
-		current.StaleStockDownEnabled,
-		current.PriceExperimentsMode,
-		current.PriceExperimentsMaxActive,
-		current.PriceExperimentsDays,
-		current.PriceExperimentsFloorSeedPct,
-	)
+	err = s.writeAutofeeConfigRow(ctx, current, ambossToken)
 	if err != nil {
 		return autofeeConfigWithProfileDefaults(current), err
 	}

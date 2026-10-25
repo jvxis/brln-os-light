@@ -113,6 +113,7 @@ func main() {
 		PublicPool:           privileged.NewNativePublicPoolManager(runner),
 		BarkWallet:           privileged.NewNativeBarkWalletManager(runner),
 		BRLNCommunity:        privileged.NewNativeBRLNCommunityManager(runner),
+		Hardwallet:           privileged.NewNativeHardwalletManager(runner),
 		Caller:               caller,
 		Timeout:              15 * time.Second,
 	}

@@ -1708,6 +1708,7 @@ func (s *Server) handleLNDConfigGet(w http.ResponseWriter, r *http.Request) {
 	raw, _ := os.ReadFile(lndConfPath)
 
 	current := parseLNDUserConf(string(raw))
+	clearnet := s.lndClearnetStatus(r.Context(), string(raw))
 
 	resp := map[string]any{
 		"supported": map[string]bool{
@@ -1731,6 +1732,7 @@ func (s *Server) handleLNDConfigGet(w http.ResponseWriter, r *http.Request) {
 			"tor_skip_proxy_for_clearnet_targets": current.TorSkipProxyForClearnet,
 			"tor_stream_isolation":                current.TorStreamIsolation,
 		},
+		"clearnet":      clearnet,
 		"raw_user_conf": string(raw),
 	}
 

@@ -27,6 +27,7 @@ import Notifications from './pages/Notifications'
 import AuditLog from './pages/AuditLog'
 import LndConfig from './pages/LndConfig'
 import AppStore from './pages/AppStore'
+import HardwalletOpen from './pages/HardwalletOpen'
 import Terminal from './pages/Terminal'
 import Shortcuts from './pages/Shortcuts'
 import PayBoleto from './pages/PayBoleto'
@@ -96,7 +97,7 @@ type MenuConfig = {
 
 const MENU_CONFIG_KEY = 'los-menu-config'
 const MENU_CONFIG_VERSION = 1
-const OPTIONAL_MENU_ROUTE_KEYS = ['los-mesh', 'pay-boleto', 'taproot-assets', 'lightning-loop', 'loop-out-brln', 'magma-sales', 'opreturn']
+const OPTIONAL_MENU_ROUTE_KEYS = ['hardwallet-open', 'los-mesh', 'pay-boleto', 'taproot-assets', 'lightning-loop', 'loop-out-brln', 'magma-sales', 'opreturn']
 
 const readMenuConfig = (): MenuConfig | null => {
   try {
@@ -228,6 +229,7 @@ export default function App() {
       ? [{ key: 'pay-boleto', label: t('nav.payBoleto'), element: <PayBoleto />, group: 'apps' as const }]
       : []
     const installedAppRoutes = [
+      ...(installedAppIDs.has('brln-hardwallet') ? [{key: 'hardwallet-open', label: 'BR⚡LN Hardwallet', element: <HardwalletOpen />, group: 'apps' as const}] : []),
       ...(installedAppIDs.has('los-mesh') ? [{key: 'los-mesh', label: 'LOS Mesh', element: <LOSMesh />, group: 'apps' as const}] : []),
       ...(installedAppIDs.has('opreturn')
         ? [{ key: 'opreturn', label: 'Bitcoin OP_RETURN', element: <OPReturn />, group: 'apps' as const }]
@@ -504,6 +506,16 @@ export default function App() {
     return allRoutes.find((item) => item.key === 'dashboard') || allRoutes[0]
   }, [allRoutes, route, wizardRequired])
 
+  // Once opened, the Hardwallet stays mounted (hidden on other pages), so its USB
+  // session and unlocked Signer survive navigation inside LightningOS.
+  const hardwalletInstalled = installedAppIDs.has('brln-hardwallet')
+  const showingHardwallet = current.key === 'hardwallet-open'
+  const [hardwalletKept, setHardwalletKept] = useState(false)
+  useEffect(() => {
+    if (!hardwalletInstalled) setHardwalletKept(false)
+    else if (showingHardwallet) setHardwalletKept(true)
+  }, [hardwalletInstalled, showingHardwallet])
+
   const handleLogout = useCallback(async () => {
     try {
       await logoutAuth()
@@ -595,7 +607,8 @@ export default function App() {
           />
           <main className="app-content px-6 pb-16 pt-6 lg:px-12">
             {wizardHidden && current.key !== 'wizard' && <ReportsReconciliationNotice />}
-            {current.element}
+            {!showingHardwallet && current.element}
+            {hardwalletInstalled && (hardwalletKept || showingHardwallet) && <div hidden={!showingHardwallet}><HardwalletOpen /></div>}
           </main>
         </div>
       </div>

@@ -2447,6 +2447,8 @@
       "activityMirrorHint": "Mirror each new notifications card entry to Telegram.",
       "autofeeSummaryLabel": "Autofee summary",
       "autofeeSummaryHint": "Send an English Telegram summary after each Autofee run, only when fees changed.",
+      "resourceAlertsLabel": "RAM and disk alerts",
+      "resourceAlertsHint": "Alert on Telegram when RAM stays above 90% for 10 min (critical 95%) or a disk goes above 85% (critical 95%). Sends another message when it is back to normal; if it stays high, reminds once a day.",
       "summaryLabel": "Financial health summary",
       "summaryHint": "Send balances and routing results on a schedule.",
       "summaryInterval": "Summary interval (minutes)",

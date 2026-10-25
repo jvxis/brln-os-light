@@ -64,6 +64,7 @@ type TelegramNotificationConfig = {
   summary_interval_min?: number
   system_summary_enabled?: boolean
   system_summary_interval_min?: number
+  resource_alerts_enabled?: boolean
 }
 
 const arrowForDirection = (value: string) => {
@@ -217,6 +218,7 @@ export default function Notifications() {
   const [telegramScbEnabled, setTelegramScbEnabled] = useState(true)
   const [telegramActivityMirrorEnabled, setTelegramActivityMirrorEnabled] = useState(false)
   const [telegramAutofeeSummaryEnabled, setTelegramAutofeeSummaryEnabled] = useState(false)
+  const [telegramResourceAlertsEnabled, setTelegramResourceAlertsEnabled] = useState(true)
   const [telegramSummaryEnabled, setTelegramSummaryEnabled] = useState(false)
   const [telegramSummaryInterval, setTelegramSummaryInterval] = useState('')
   const [telegramSystemEnabled, setTelegramSystemEnabled] = useState(false)
@@ -315,6 +317,7 @@ export default function Notifications() {
         setTelegramSummaryInterval(data?.summary_interval_min ? String(data.summary_interval_min) : '')
         setTelegramSystemEnabled(Boolean(data?.system_summary_enabled))
         setTelegramSystemInterval(data?.system_summary_interval_min ? String(data.system_summary_interval_min) : '')
+        setTelegramResourceAlertsEnabled(data?.resource_alerts_enabled !== false)
       })
       .catch(() => null)
     return () => {
@@ -425,6 +428,7 @@ export default function Notifications() {
     summaryInterval?: string
     systemSummaryEnabled?: boolean
     systemSummaryInterval?: string
+    resourceAlertsEnabled?: boolean
   }) => {
     if (telegramSaving) return
     setTelegramSaving(true)
@@ -437,6 +441,7 @@ export default function Notifications() {
       const nextSummaryInterval = overrides?.summaryInterval ?? telegramSummaryInterval
       const nextSystemEnabled = overrides?.systemSummaryEnabled ?? telegramSystemEnabled
       const nextSystemInterval = overrides?.systemSummaryInterval ?? telegramSystemInterval
+      const nextResourceAlertsEnabled = overrides?.resourceAlertsEnabled ?? telegramResourceAlertsEnabled
       const prevIntervalValue = Number(telegramConfig?.summary_interval_min || 0)
       const effectiveSummaryInterval = nextSummaryInterval || (prevIntervalValue ? String(prevIntervalValue) : '720')
       const prevSystemIntervalValue = Number(telegramConfig?.system_summary_interval_min || 0)
@@ -474,6 +479,7 @@ export default function Notifications() {
         summary_interval_min?: number
         system_summary_enabled?: boolean
         system_summary_interval_min?: number
+        resource_alerts_enabled?: boolean
       } = {
         scb_backup_enabled: nextScbEnabled,
         activity_mirror_enabled: nextActivityMirrorEnabled,
@@ -481,7 +487,8 @@ export default function Notifications() {
         summary_enabled: nextSummaryEnabled,
         summary_interval_min: summaryIntervalValue || undefined,
         system_summary_enabled: nextSystemEnabled,
-        system_summary_interval_min: systemIntervalValue || undefined
+        system_summary_interval_min: systemIntervalValue || undefined,
+        resource_alerts_enabled: nextResourceAlertsEnabled
       }
       if (clearTelegram) {
         payload.bot_token = ''
@@ -506,6 +513,7 @@ export default function Notifications() {
       setTelegramSummaryInterval(data?.summary_interval_min ? String(data.summary_interval_min) : '')
       setTelegramSystemEnabled(Boolean(data?.system_summary_enabled))
       setTelegramSystemInterval(data?.system_summary_interval_min ? String(data.system_summary_interval_min) : '')
+      setTelegramResourceAlertsEnabled(data?.resource_alerts_enabled !== false)
       if (!data?.bot_token_set && !data?.chat_id) {
         setTelegramStatus(t('notifications.telegram.disabled'))
       } else {
@@ -526,9 +534,10 @@ export default function Notifications() {
           const autofeeSummaryChanged = prevAutofeeSummaryEnabled !== nextAutofeeSummaryEnabled
           const summaryChanged = prevSummaryEnabled !== nextSummaryEnabled
           const systemChanged = prevSystemEnabled !== nextSystemEnabled
+          const resourceAlertsChanged = (telegramConfig?.resource_alerts_enabled !== false) !== nextResourceAlertsEnabled
           const intervalChanged = summaryIntervalValue > 0 && prevIntervalValue !== summaryIntervalValue
           const systemIntervalChanged = systemIntervalValue > 0 && prevSystemIntervalValue !== systemIntervalValue
-          if ((intervalChanged || systemIntervalChanged) && !scbChanged && !activityMirrorChanged && !autofeeSummaryChanged && !summaryChanged && !systemChanged) {
+          if ((intervalChanged || systemIntervalChanged) && !scbChanged && !activityMirrorChanged && !autofeeSummaryChanged && !summaryChanged && !systemChanged && !resourceAlertsChanged) {
             setTelegramStatus(t('notifications.telegram.frequencySaved'))
           } else {
             setTelegramStatus(t('notifications.telegram.rulesSaved'))
@@ -733,6 +742,21 @@ export default function Notifications() {
                   <span className="ml-2">{t('notifications.telegram.systemIntervalHint')}</span>
                 </div>
               </div>
+              <label className="flex items-start gap-3 text-sm text-fog">
+                <input
+                  type="checkbox"
+                  checked={telegramResourceAlertsEnabled}
+                  onChange={(e) => {
+                    const checked = e.target.checked
+                    setTelegramResourceAlertsEnabled(checked)
+                    void handleSaveTelegram({ resourceAlertsEnabled: checked })
+                  }}
+                />
+                <span>
+                  <span className="font-semibold">{t('notifications.telegram.resourceAlertsLabel')}</span>
+                  <span className="block text-xs text-fog/60">{t('notifications.telegram.resourceAlertsHint')}</span>
+                </span>
+              </label>
               <p className="text-xs text-fog/50">{t('notifications.telegram.commandsHint')}</p>
             </div>
           </div>

@@ -117,13 +117,13 @@ their contents. Only after `[OK] Ready`, upgrade to the published 0.5.49 via UI.
 For hosts blocked by the Node-version refusal entering **0.5.49**, check first:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/b893209ebf5c4a76c74e99f860716583ade7be19/lightningos-light/scripts/recover-node-for-0.5.49.sh | sudo bash -s -- --check
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/ad60b902846dad41499509450a1a8606170b7a0c/lightningos-light/scripts/recover-node-for-0.5.49.sh | sudo bash -s -- --check
 ```
 
 After reviewing other Node applications, explicitly apply the global migration:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/b893209ebf5c4a76c74e99f860716583ade7be19/lightningos-light/scripts/recover-node-for-0.5.49.sh | sudo bash -s -- --migrate-to-lts
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/ad60b902846dad41499509450a1a8606170b7a0c/lightningos-light/scripts/recover-node-for-0.5.49.sh | sudo bash -s -- --migrate-to-lts
 ```
 
 Then use the normal LOS dashboard upgrade. No first-install script or manual LOS
@@ -131,6 +131,16 @@ reinstallation is needed. Hosts that already completed 0.5.49 do not need this
 recovery merely because they have another Node version; keep security patches
 current separately. The URLs pin the reviewed recovery code, independently of
 whether the 0.5.50 PR has merged or its release has been published.
+
+NodeSource 24 can add its bundled Corepack when migrating from Node 25/26.
+This addition is accepted only at the packaged `/usr` location, with matching
+version, package ownership and exact contents from the verified Node archive.
+Changes to existing Corepack or other global npm packages still stop recovery.
+
+Ao migrar do Node 25/26, o pacote NodeSource 24 pode adicionar seu Corepack.
+Essa adição só é aceita após conferir versão, propriedade e conteúdo contra o
+pacote verificado, em `/usr`. Alterações em Corepack já existente ou em outros
+pacotes npm globais continuam interrompendo a recuperação.
 
 O atualizador da 0.5.48 exige o Node LTS exato da release de destino; atualizadores
 mais antigos podiam compilar com o runtime existente. Por isso o Pi4 que veio da

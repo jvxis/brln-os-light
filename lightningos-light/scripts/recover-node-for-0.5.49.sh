@@ -6,7 +6,7 @@ umask 077
 fail() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 [[ ${1:-} != --help ]] || { echo 'Usage: sudo bash recover-node-for-0.5.49.sh --check | --migrate-to-lts'; exit 0; }
 [[ $# == 1 && ( $1 == --migrate-to-lts || $1 == --check ) ]] || fail 'Explicit --migrate-to-lts consent required: global Node/npm will be aligned to the 0.5.49 LTS pin. Review other Node applications first.'
-action=$1
+migration_action=$1
 [[ $EUID == 0 && $(uname -s) == Linux && -f /etc/debian_version ]] || fail 'Root on Debian/Ubuntu Linux required'
 for tool in curl sha256sum dpkg dpkg-deb dpkg-query apt-get apt-mark python3 stat readlink env flock find grep systemctl; do
   command -v "$tool" >/dev/null || fail "Missing prerequisite: $tool"
@@ -52,8 +52,8 @@ printf '%s  %s\n' "$LOS_NODE_SHA256" "$archive" | sha256sum --check --status || 
 [[ $(dpkg-deb -f "$archive" Package) == nodejs && $(dpkg-deb -f "$archive" Version) == "$LOS_NODE_DEB_VERSION" && $(dpkg-deb -f "$archive" Architecture) == "$LOS_NODE_ARCH" ]] || fail 'Unexpected Node package identity'
 # Changing only nodejs is intentional; no removals, autoremove or repairs.
 LC_ALL=C apt-get -o DPkg::Lock::Timeout=120 -o APT::Get::AutomaticRemove=false --simulate install --only-upgrade --allow-downgrades "$archive" > "$stage/apt-plan"
-while read -r action package rest; do
-  case "$action" in
+while read -r apt_action package rest; do
+  case "$apt_action" in
     Remv) fail 'APT would remove a package; migration refused' ;;
     Inst|Conf) [[ ${package%%:*} == nodejs ]] || fail 'APT would change another package; migration refused' ;;
   esac
@@ -90,7 +90,7 @@ p, original, replacement, s = candidates[0]
 (stage/'source.after').write_text(replacement)
 (stage/'source.json').write_text(json.dumps(dict(path=str(p), uid=s.st_uid, gid=s.st_gid, mode=stat.S_IMODE(s.st_mode))))
 PY
-if [[ $action == --check ]]; then
+if [[ $migration_action == --check ]]; then
   echo '[OK] Migration preflight passed. No Node packages, npm configuration or repositories changed. Run again with --migrate-to-lts to apply; this is not Ready for the LOS upgrade yet.'
   exit 0
 fi

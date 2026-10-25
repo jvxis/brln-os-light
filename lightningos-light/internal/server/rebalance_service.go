@@ -1190,6 +1190,12 @@ type RebalanceChannel struct {
 	SalePricePpm          int64   `json:"sale_price_ppm"`
 	SalePriceSource       string  `json:"sale_price_source,omitempty"`
 	NoSale30d             bool    `json:"no_sale_30d"`
+	// AutopilotReason says why the autopilot did or did not pick this channel
+	// as a target: a snapshot-level block (at_target, cost_gate, ...) or, for
+	// an eligible channel, the reason recorded in the last sovereign scan.
+	// AutopilotReasonAt is that scan's time when the reason came from it.
+	AutopilotReason       string  `json:"autopilot_reason,omitempty"`
+	AutopilotReasonAt     string  `json:"autopilot_reason_at,omitempty"`
 	DrainedRetest         bool    `json:"drained_retest"`
 	FeeCapReferencePpm    int64   `json:"fee_cap_reference_ppm"`
 	DrainRateSatPerHour   int64   `json:"drain_rate_sat_per_hour"`
@@ -16281,7 +16287,90 @@ func (s *RebalanceService) Channels(ctx context.Context) ([]RebalanceChannel, er
 		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], salePriceByChannel.forChannel(ch), costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		result = append(result, snapshot)
 	}
+	s.annotateAutopilotReasons(cfg, result)
 	return result, nil
+}
+
+// annotateAutopilotReasons fills AutopilotReason on every channel from its
+// snapshot and from the last sovereign scan's decisions.
+func (s *RebalanceService) annotateAutopilotReasons(cfg RebalanceConfig, channels []RebalanceChannel) {
+	if !isSovereignSchedulerMode(cfg.SchedulerMode) {
+		return
+	}
+	s.mu.Lock()
+	scanAt := s.lastSovereignDecisionAt
+	decisions := make(map[uint64]RebalanceSovereignDecision, len(s.lastSovereignDecisions))
+	for _, d := range s.lastSovereignDecisions {
+		if _, seen := decisions[d.ChannelID]; !seen || d.Selected {
+			decisions[d.ChannelID] = d
+		}
+	}
+	s.mu.Unlock()
+	for i := range channels {
+		var last *RebalanceSovereignDecision
+		if d, ok := decisions[channels[i].ChannelID]; ok {
+			last = &d
+		}
+		reason, fromScan := rebalanceAutopilotReason(channels[i], cfg, last, !scanAt.IsZero())
+		channels[i].AutopilotReason = reason
+		if fromScan {
+			channels[i].AutopilotReasonAt = scanAt.UTC().Format(time.RFC3339)
+		}
+	}
+}
+
+// Snapshot-level reasons a channel is not an automatic target. The order
+// mirrors the eligibility computed in buildChannelSnapshot: activity and
+// parking, the channel's automation flags and the candidate scope, the
+// deficit against the deadband, pricing feasibility (peer cost within the fee
+// budget), no sale in 30 days, then the historical cost gate.
+const (
+	rebalanceAutopilotReasonInactive          = "inactive"
+	rebalanceAutopilotReasonParked            = "parked"
+	rebalanceAutopilotReasonAutomationOff     = "automation_off"
+	rebalanceAutopilotReasonAtTarget          = "at_target"
+	rebalanceAutopilotReasonPricingInfeasible = "pricing_infeasible"
+	rebalanceAutopilotReasonNoSale30d         = "no_sale_30d"
+	rebalanceAutopilotReasonCostGate          = "cost_gate"
+	rebalanceAutopilotReasonSelected          = "selected"
+	rebalanceAutopilotReasonNotRanked         = "eligible_not_ranked"
+)
+
+// rebalanceAutopilotReason returns why the autopilot did or did not pick the
+// channel, and whether the answer came from the last scan. A channel blocked
+// at snapshot level never reaches the scan, so its reason is the block. An
+// eligible channel takes the reason the last scan recorded for it; one the
+// scan did not record (decisions are capped) is "eligible_not_ranked". With no
+// scan yet (fresh restart) an eligible channel has no reason.
+func rebalanceAutopilotReason(ch RebalanceChannel, cfg RebalanceConfig, last *RebalanceSovereignDecision, scanned bool) (string, bool) {
+	switch {
+	case !ch.Active:
+		return rebalanceAutopilotReasonInactive, false
+	case isChannelAutomationParked(ch.AutomationMode):
+		return rebalanceAutopilotReasonParked, false
+	case !ch.AutoEnabled && !(ch.ManualRestartEnabled && cfg.SovereignCandidateScope == rebalanceSovereignScopeAutoAndManualRestart):
+		return rebalanceAutopilotReasonAutomationOff, false
+	case ch.TargetOutboundPct-ch.LocalPct <= cfg.DeadbandPct:
+		return rebalanceAutopilotReasonAtTarget, false
+	case !ch.EligibleAsManualTarget:
+		return rebalanceAutopilotReasonPricingInfeasible, false
+	case ch.NoSale30d:
+		return rebalanceAutopilotReasonNoSale30d, false
+	case !ch.EligibleAsTarget:
+		return rebalanceAutopilotReasonCostGate, false
+	}
+	if last != nil {
+		if last.Selected {
+			return rebalanceAutopilotReasonSelected, true
+		}
+		if reason := strings.TrimSpace(last.Reason); reason != "" {
+			return reason, true
+		}
+	}
+	if !scanned {
+		return "", false
+	}
+	return rebalanceAutopilotReasonNotRanked, true
 }
 
 // classifyRebalanceNode computes the node size/liquidity calibration over ACTIVE

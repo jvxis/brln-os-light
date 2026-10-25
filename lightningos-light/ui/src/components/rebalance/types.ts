@@ -431,6 +431,8 @@ export type RebalanceChannel = {
   auto_bypass_cost_gate?: boolean
   eligible_as_target: boolean
   eligible_as_manual_target: boolean
+  autopilot_reason?: string
+  autopilot_reason_at?: string
   eligible_as_source: boolean
   protected_liquidity_sat: number
   effective_protected_sat: number

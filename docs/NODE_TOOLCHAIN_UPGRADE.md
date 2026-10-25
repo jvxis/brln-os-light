@@ -114,6 +114,24 @@ dpkg recovery; package migration is not automatically rolled back. Root-only
 records are retained under `/var/cache/lightningos-node-recovery.*`; do not post
 their contents. Only after `[OK] Ready`, upgrade to the published 0.5.49 via UI.
 
+For hosts blocked by the Node-version refusal entering **0.5.49**, check first:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/b893209ebf5c4a76c74e99f860716583ade7be19/lightningos-light/scripts/recover-node-for-0.5.49.sh | sudo bash -s -- --check
+```
+
+After reviewing other Node applications, explicitly apply the global migration:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/b893209ebf5c4a76c74e99f860716583ade7be19/lightningos-light/scripts/recover-node-for-0.5.49.sh | sudo bash -s -- --migrate-to-lts
+```
+
+Then use the normal LOS dashboard upgrade. No first-install script or manual LOS
+reinstallation is needed. Hosts that already completed 0.5.49 do not need this
+recovery merely because they have another Node version; keep security patches
+current separately. The URLs pin the reviewed recovery code, independently of
+whether the 0.5.50 PR has merged or its release has been published.
+
 O atualizador da 0.5.48 exige o Node LTS exato da release de destino; atualizadores
 mais antigos podiam compilar com o runtime existente. Por isso o Pi4 que veio da
 0.5.46 passou e o Node Privado vindo da 0.5.48 recusou o Node 26. Não é permissão.

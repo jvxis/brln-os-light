@@ -93,6 +93,66 @@ requires Python 3, curl, CA certificates, standard coreutils and APT/dpkg; insta
 prerequisite setup supplies these for new installations. Native ARM testing is
 not implied by package availability.
 
+## Recovery for the immutable 0.5.49 updater / Recuperação para a 0.5.49
+
+The 0.5.48 updater runs the target Node preparer and requires the exact LTS pin.
+Older updaters may build with the installed runtime instead, which explains why
+a direct 0.5.46 → 0.5.49 upgrade can succeed with Node 26 while 0.5.48 → 0.5.49
+refuses it. Neither result proves that all Node security patches were applied.
+
+`lightningos-light/scripts/recover-node-for-0.5.49.sh` is a **separate, explicit
+global migration**, not the normal compatibility check. Run `--check` first to
+simulate, then `--migrate-to-lts` to consent to Node 24.22.1/npm 11.19.1. It
+downloads the original 0.5.49 preparer by immutable commit and verifies its
+SHA-256, verifies the pinned Node package, permits only a nodejs package change,
+preserves the global prefix and package inventory, and aligns one recognized
+NodeSource source to node_24.x with a private backup. No app, Bitcoin or LND
+service is restarted. Other Node apps/native addons need their own compatibility
+review. Unsafe files, unhealthy npm inventory, unexpected APT plans and duplicate
+or unfamiliar repositories stop the operation. A failed APT transaction requires
+dpkg recovery; package migration is not automatically rolled back. Root-only
+records are retained under `/var/cache/lightningos-node-recovery.*`; do not post
+their contents. Only after `[OK] Ready`, upgrade to the published 0.5.49 via UI.
+
+O atualizador da 0.5.48 exige o Node LTS exato da release de destino; atualizadores
+mais antigos podiam compilar com o runtime existente. Por isso o Pi4 que veio da
+0.5.46 passou e o Node Privado vindo da 0.5.48 recusou o Node 26. Não é permissão.
+O script separado `recover-node-for-0.5.49.sh` oferece `--check` (simulação) e
+`--migrate-to-lts` (consentimento explícito para migrar o Node/npm global ao LTS
+exigido). Preserva o inventário npm e o prefixo global; verifica pacote e hash;
+recusa alterações de outros pacotes; alinha uma fonte NodeSource reconhecida à
+linha 24 com backup privado. Não reinicia serviços. Revise outros apps Node e
+addons nativos antes de migrar. Após `[OK] Ready`, atualize o LOS pela UI. Falhas
+do APT podem exigir recuperação do dpkg; não há rollback automático de pacotes.
+
+### From 0.5.50 / A partir da 0.5.50
+
+Existing global Node **>=22.12.0** and npm **>=10.0.0** are retained when both
+executables run successfully, including newer patches/majors. Missing or old
+toolchains still use the verified LTS installation path; new empty installations
+therefore retain the recommended pin. No automatic downgrade or repository
+rewrite occurs in normal preparation. Conflicting executables and unsafe npm
+configuration still fail closed. `--check` now checks build compatibility rather
+than exact Debian package identity. The actual lockfile install and UI build
+remain required and can fail on genuine incompatibilities.
+
+Compatibility does **not** certify security: the preparer warns about known EOL
+Node 25, versions below the reviewed 22/24/26 security baseline, or unreviewed
+future majors. These warnings do not prevent a compatible LOS build. Keep the
+runtime patched separately. The normal script does not restart Node applications.
+
+Da 0.5.50 em diante, Node global **>=22.12.0** e npm **>=10.0.0** funcionais são
+mantidos, sem exigir versões exatas. Ferramentas ausentes/antigas continuam pelo
+caminho LTS verificado. Colisões de executáveis e configurações inseguras continuam
+bloqueadas. `--check` verifica compatibilidade de build; `npm ci` e o build real
+ainda precisam passar. Alertas de segurança/EOL ficam separados da compatibilidade
+e não impedem o upgrade somente por diferença de versão. O texto da 0.5.48/49
+abaixo é histórico e descreve os preparadores imutáveis daquelas releases.
+
+Security baselines reviewed against the [upstream October advisory](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases):
+22.23.4, 24.22.1 and 26.12.1. This is not a promise to track future advisories
+automatically.
+
 ## Português
 
 **Os comandos abaixo só estarão disponíveis após publicar a tag 0.5.48-Beta.**

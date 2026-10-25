@@ -30,6 +30,17 @@ func TestNodeVersionDiagnostics(t *testing.T) {
 	t.Log(string(output))
 }
 
+func TestNodeBuildCompatibility(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Node build compatibility fixtures require Linux Bash")
+	}
+	output, err := exec.Command("bash", filepath.Join("..", "..", "scripts", "tests", "node-build-compatibility-test.sh")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Node compatibility: %v\n%s", err, output)
+	}
+	t.Log(string(output))
+}
+
 func TestAppUpgradePreparesNodeBeforeIdentityAndBuild(t *testing.T) {
 	script := embeddedAppUpgradeScript
 	authenticated := strings.Index(script, `print_ok "Using authenticated project directory: $project_dir"`)

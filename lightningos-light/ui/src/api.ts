@@ -888,15 +888,15 @@ export const createBalancedOpenSession = (payload: {
   role?: 'initiator' | 'accepter'
   metadata?: Record<string, unknown>
 }) => request('/api/lnops/balanced-open/sessions', { method: 'POST', body: JSON.stringify(payload) })
-export const proposeBalancedOpenSession = (sessionId: string) =>
+export const proposeBalancedOpenSession = (sessionId: string, payload?: { confirm_password?: string }) =>
   request(`/api/lnops/balanced-open/sessions/${encodeURIComponent(sessionId)}/propose`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify(payload || {}),
   })
-export const acceptBalancedOpenSession = (sessionId: string) =>
+export const acceptBalancedOpenSession = (sessionId: string, payload?: { confirm_password?: string }) =>
   request(`/api/lnops/balanced-open/sessions/${encodeURIComponent(sessionId)}/accept`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify(payload || {}),
   })
 export const executeBalancedOpenSession = (sessionId: string, confirmPassword?: string) =>
   request(`/api/lnops/balanced-open/sessions/${encodeURIComponent(sessionId)}/execute`, {

@@ -4622,6 +4622,7 @@
     "batchOpenPreviewNoConfirmedUtxos": "No confirmed UTXOs available to fund this batch open.",
     "balancedOpenTitle": "Balanced Open Channels",
     "balancedOpenSubtitle": "Coordinate a 50/50 channel open flow between two peers running this app.",
+    "balancedOpenApprovalNotice": "Propose and Accept can move funds into transit outputs and sign the funding transaction. Check the peer, capacity and fee before confirming.",
     "balancedOpenCapacity": "Total capacity (sats, even number)",
     "balancedOpenCreateAndPropose": "Create and propose",
     "balancedOpenRunning": "Running balanced open...",

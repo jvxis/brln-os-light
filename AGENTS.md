@@ -120,6 +120,19 @@ the final release assembly. After publication, verify actual old clients offer
 the bridge. See `docs/MANDATORY_0.5.40_CATALOG.md` for the publication sequence
 and the distinction between completed lab tests and public release validation.
 
+## Local regtest laboratory
+
+- `LOS-TEST2` is a mainnet test node with real funds. Keep it running; never use
+  it as a disposable fixture or stop it to free resources for the lab.
+- At most one `los-disposable-*` VM may be running. Inspect VirtualBox state
+  before starting any clone; never start a second disposable concurrently.
+- The dedicated `los-disposable-regtest` lab uses native Bitcoin/LND, local
+  regtest coins and isolated LOS configurations. See `scripts/regtest-lab/README.md`.
+  This laboratory profile does not enable regtest in production installers.
+- Never copy a production wallet, macaroon, password, seed or node data into it.
+- Deleting, resetting or restoring a VM still requires authorization for that
+  exact target and inspection of its attached storage.
+
 ## Architecture Notes
 
 - Go entry point: `lightningos-light/cmd/lightningos-manager/main.go`.

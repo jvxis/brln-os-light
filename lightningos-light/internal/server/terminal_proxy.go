@@ -5,23 +5,11 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
 const terminalProxyPrefix = "/terminal"
-
-func terminalProxyTarget() *url.URL {
-	port := terminalRuntimeValue("TERMINAL_PORT")
-	if port == "" {
-		port = "7681"
-	}
-	target, _ := url.Parse("http://127.0.0.1:" + port)
-	return target
-}
-
-func terminalCredential() string {
-	return terminalRuntimeValue("TERMINAL_CREDENTIAL")
-}
 
 func basicAuthHeader(credential string) string {
 	if credential == "" {
@@ -36,7 +24,8 @@ func basicAuthHeader(credential string) string {
 }
 
 func (s *Server) handleTerminalProxy(w http.ResponseWriter, r *http.Request) {
-	if terminalRuntimeValue("TERMINAL_ENABLED") != "1" {
+	runtime, err := readTerminalRuntimeSnapshot(terminalRuntimeEnvPath)
+	if err != nil || runtime.values["TERMINAL_ENABLED"] != "1" || !terminalCredentialConfigured(runtime.values["TERMINAL_CREDENTIAL"]) {
 		http.NotFound(w, r)
 		return
 	}
@@ -46,10 +35,30 @@ func (s *Server) handleTerminalProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target := terminalProxyTarget()
-	authHeader := basicAuthHeader(terminalCredential())
+	setNoStore(w)
+	if isWebsocketUpgrade(r) {
+		ctx, cancel, ok := s.terminalStreamContext(r, runtime)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		defer cancel()
+		r = r.WithContext(ctx)
+	}
+	port := runtime.values["TERMINAL_PORT"]
+	if port == "" {
+		port = "7681"
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		http.NotFound(w, r)
+		return
+	}
+	target, _ := url.Parse("http://127.0.0.1:" + port)
+	authHeader := basicAuthHeader(runtime.values["TERMINAL_CREDENTIAL"])
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Director = func(req *http.Request) {
+		req.Header.Del("Cookie")
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
 		req.URL.Path = strings.TrimPrefix(req.URL.Path, terminalProxyPrefix)

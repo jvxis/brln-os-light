@@ -382,7 +382,8 @@ func (s *Server) handleSPA(staticDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			path := strings.TrimPrefix(r.URL.Path, "/")
-			if _, err := http.Dir(staticDir).Open(path); err == nil {
+			if file, err := http.Dir(staticDir).Open(path); err == nil {
+				_ = file.Close()
 				fileServer.ServeHTTP(w, r)
 				return
 			}

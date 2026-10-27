@@ -1551,7 +1551,7 @@ export default function Wallet() {
       setSpendingGuardReauthOpen(false)
       setSpendingGuardPassword('')
     } catch (err: any) {
-      if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
+      if (err instanceof APIError && (err.code === 'spending_guard_reauth_required' || err.code === 'lightning_funds_reauth_required')) {
         setSpendingGuardReauthOpen(true)
         return
       }

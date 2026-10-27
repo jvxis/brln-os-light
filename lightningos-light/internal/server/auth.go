@@ -55,6 +55,7 @@ const (
 	authScopeTerminalCredential  = "terminal_credential"
 	authScopeTerminalControl     = "terminal_control"
 	authScopeLightningFunds      = "lightning_funds"
+	authScopeSpendingGuardPolicy = "spending_guard_policy"
 	authScopeLNDMaintenance      = "lnd_maintenance"
 	authScopeBarkSeedReveal      = "bark_seed_reveal"
 	authScopeBRLNCommunitySigner = "brln_community_signer"
@@ -527,7 +528,7 @@ func (a *AuthService) reauth(sessionID string, password string, scope string) (t
 
 func authScopeValid(scope string) bool {
 	switch strings.TrimSpace(scope) {
-	case authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeBarkSeedReveal, authScopeBRLNCommunitySigner:
+	case authScopeSpendingGuardPolicy, authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeBarkSeedReveal, authScopeBRLNCommunitySigner:
 		return true
 	default:
 		return false

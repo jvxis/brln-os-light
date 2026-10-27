@@ -93,3 +93,19 @@ func TestPendingSpendingSurvivesWindowAndRestart(t *testing.T) {
 		t.Fatal("confirmed release did not restore allowance", err)
 	}
 }
+
+func TestPendingSpendingCannotBindInactiveReservation(t *testing.T) {
+	pool := pendingSpendingPool(t)
+	ctx := context.Background()
+	guard := NewSpendingGuardService(pool, nil)
+	reservation, err := guard.Reserve(ctx, SpendingIntent{AmountSat: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := guard.Release(ctx, reservation, "confirmed pre-submission failure"); err != nil {
+		t.Fatal(err)
+	}
+	if err := guard.Bind(ctx, reservation, strings.Repeat("ab", 32)); err == nil {
+		t.Fatal("inactive reservation reported durable hash binding")
+	}
+}

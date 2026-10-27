@@ -331,9 +331,15 @@ func (s *SpendingGuardService) Bind(ctx context.Context, reservation SpendingRes
 	if !reservation.Active || strings.TrimSpace(reservation.ID) == "" || strings.TrimSpace(paymentHash) == "" {
 		return nil
 	}
-	_, err := s.db.Exec(ctx, `update spending_guard_entries set payment_hash=$2,updated_at=now() where id=$1 and status='reserved'`,
+	result, err := s.db.Exec(ctx, `update spending_guard_entries set payment_hash=$2,updated_at=now() where id=$1 and status='reserved'`,
 		reservation.ID, strings.ToLower(strings.TrimSpace(paymentHash)))
-	return err
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return errors.New("spending reservation is no longer active")
+	}
+	return nil
 }
 
 func (s *SpendingGuardService) pending(ctx context.Context, limit int) ([]pendingSpendingReservation, error) {

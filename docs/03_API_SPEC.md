@@ -13,7 +13,10 @@ Reconnection runs the normal session and same-origin checks again, using the
 current terminal configuration. GoTTY continues to enforce its configured
 view-only/write mode; the proxy does not grant shell privileges. Background
 monitoring never extends the login session. The Manager session cookie is
-removed before requests reach GoTTY, whose separate credential stays server-side.
+removed before requests reach GoTTY. GoTTY retains its native authenticated
+frontend handshake with a separate terminal-only credential; terminal responses
+are marked `no-store`. This credential is not a Linux login password or a wallet
+credential.
 
 ## HTTP request budgets
 

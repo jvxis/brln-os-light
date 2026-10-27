@@ -5296,8 +5296,12 @@ func (c *Client) ListOnchainUtxos(ctx context.Context, minConfs int32, maxConfs 
 		return nil, err
 	}
 
-	items := make([]OnchainUtxo, 0, len(resp.Utxos))
-	for _, utxo := range resp.Utxos {
+	return onchainUtxosFromRPC(resp.Utxos), nil
+}
+
+func onchainUtxosFromRPC(utxos []*lnrpc.Utxo) []OnchainUtxo {
+	items := make([]OnchainUtxo, 0, len(utxos))
+	for _, utxo := range utxos {
 		if utxo == nil {
 			continue
 		}
@@ -5327,7 +5331,7 @@ func (c *Client) ListOnchainUtxos(ctx context.Context, minConfs int32, maxConfs 
 		})
 	}
 
-	return items, nil
+	return items
 }
 
 func (c *Client) IsOutpointUnspent(ctx context.Context, txid string, vout uint32) (bool, error) {

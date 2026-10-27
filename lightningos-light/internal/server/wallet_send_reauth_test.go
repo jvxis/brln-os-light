@@ -47,6 +47,17 @@ func (rpc *onchainReauthRPC) SendCoins(_ context.Context, req *lnrpc.SendCoinsRe
 type onchainOwnershipRPC struct {
 	walletrpc.UnimplementedWalletKitServer
 	account string
+	reads   *atomic.Int64
+}
+
+func (rpc *onchainOwnershipRPC) ListUnspent(_ context.Context, req *walletrpc.ListUnspentRequest) (*walletrpc.ListUnspentResponse, error) {
+	if req.Account != "default" {
+		return nil, status.Error(codes.InvalidArgument, "default funding account required")
+	}
+	if rpc.reads != nil {
+		rpc.reads.Add(1)
+	}
+	return &walletrpc.ListUnspentResponse{}, nil
 }
 
 func (rpc *onchainOwnershipRPC) ListAddresses(context.Context, *walletrpc.ListAddressesRequest) (*walletrpc.ListAddressesResponse, error) {
@@ -70,7 +81,7 @@ func onchainReauthServer(t *testing.T, account string) (*Server, *onchainReauthR
 	rpc := &onchainReauthRPC{}
 	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{Certificates: cert.TLS.Certificates, MinVersion: tls.VersionTLS12})))
 	lnrpc.RegisterLightningServer(server, rpc)
-	walletrpc.RegisterWalletKitServer(server, &onchainOwnershipRPC{account: account})
+	walletrpc.RegisterWalletKitServer(server, &onchainOwnershipRPC{account: account, reads: &rpc.reads})
 	go server.Serve(listener)
 	t.Cleanup(server.Stop)
 	dir := t.TempDir()

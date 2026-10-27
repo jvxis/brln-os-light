@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,18 +12,31 @@ func TestAuditSessionIDFromAuthContext(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/onchain/utxos/lock", nil)
 	req = req.WithContext(context.WithValue(req.Context(), authSessionContextKey, authSessionSnapshot{ID: "sess_123"}))
 
-	if got := auditSessionID(req); got != "sess_123" {
-		t.Fatalf("expected session id, got %q", got)
+	got := auditSessionID(req)
+	if got == "sess_123" || !strings.HasPrefix(got, "audit:v1:") || len(got) != 73 {
+		t.Fatal("audit must expose only a non-credential correlation ID")
+	}
+	if again := auditSessionID(req); again != got {
+		t.Fatal("same session lost correlation")
+	}
+	other := req.WithContext(context.WithValue(req.Context(), authSessionContextKey, authSessionSnapshot{ID: "sess_other"}))
+	if auditSessionID(other) == got || auditSessionID(nil) != "anonymous" {
+		t.Fatal("distinct or anonymous sessions have incorrect correlation")
 	}
 }
 
-func TestAuditClientIPPrefersForwardedFor(t *testing.T) {
+func TestAuditClientIPIgnoresUntrustedForwardingHeaders(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/onchain/utxos/lock", nil)
 	req.RemoteAddr = "192.0.2.10:1234"
 	req.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.2")
+	req.Header.Set("X-Real-IP", "203.0.113.8")
 
-	if got := auditClientIP(req); got != "203.0.113.7" {
-		t.Fatalf("expected forwarded ip, got %q", got)
+	if got := auditClientIP(req); got != "192.0.2.10" {
+		t.Fatalf("expected connection peer, got %q", got)
+	}
+	req.RemoteAddr = "[2001:db8::1]:1234"
+	if got := auditClientIP(req); got != "2001:db8::1" {
+		t.Fatalf("IPv6 peer lost: %q", got)
 	}
 }
 

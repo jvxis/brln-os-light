@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"net/http"
 	"strconv"
@@ -75,25 +77,38 @@ func auditSessionID(r *http.Request) string {
 		return "anonymous"
 	}
 	if session, ok := authSessionFromContext(r.Context()); ok && strings.TrimSpace(session.ID) != "" {
-		return session.ID
+		return auditCorrelationID(session.ID)
 	}
 	return "anonymous"
+}
+
+const auditSessionPrefix = "audit:v1:"
+const auditSessionDomain = "lightningos:audit-session:v1:"
+const auditSessionPattern = `^audit:v1:[0-9a-f]{64}$`
+
+// Session cookies are bearer credentials. Audit correlation must never carry
+// them, including when a caller supplies a legacy event directly to Insert.
+func auditCorrelationID(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || sessionID == "anonymous" {
+		return "anonymous"
+	}
+	if strings.HasPrefix(sessionID, auditSessionPrefix) && len(sessionID) == len(auditSessionPrefix)+64 {
+		suffix := strings.TrimPrefix(sessionID, auditSessionPrefix)
+		if _, err := hex.DecodeString(suffix); err == nil && strings.ToLower(suffix) == suffix {
+			return sessionID
+		}
+	}
+	digest := sha256.Sum256([]byte(auditSessionDomain + sessionID))
+	return auditSessionPrefix + hex.EncodeToString(digest[:])
 }
 
 func auditClientIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-		for _, item := range strings.Split(forwarded, ",") {
-			if ip := strings.TrimSpace(item); ip != "" {
-				return ip
-			}
-		}
-	}
-	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
-		return realIP
-	}
+	// No trusted-proxy configuration exists. Record the transport peer rather
+	// than accepting a client-controlled forwarding header as evidence.
 	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
 	if err == nil {
 		return host

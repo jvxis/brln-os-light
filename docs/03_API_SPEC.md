@@ -334,6 +334,9 @@ Body:
 GET /api/audit/events?limit=100&action=utxo.lock
 - Returns recent structured audit events.
 - Optional filters: `action`, `session_id`, `target`.
+- `session_id` is a non-authenticating `audit:v1:<SHA-256>` correlation reference (or `anonymous`), never the login cookie. Existing records are converted on initialization; inserts and responses also normalize legacy identifiers.
+- IP records the direct connection peer. Forwarding headers are not trusted; behind a proxy this is the proxy's IP.
+- Responses use `Cache-Control: no-store`. Session-reference conversion preserves other event fields and retention behavior.
 - `limit` defaults to 100 and is capped at 500.
 - Authentication outcomes, rate-limit blocks, payments, on-chain sends, and manual channel fund operations are recorded without passwords, invoices, tokens, macaroons, or destination addresses.
 

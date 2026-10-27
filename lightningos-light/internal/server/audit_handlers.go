@@ -9,6 +9,7 @@ import (
 )
 
 func (s *Server) handleAuditEventsList(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	svc, errMsg := s.auditLogService()
 	if svc == nil {
 		writeError(w, http.StatusServiceUnavailable, errMsg)

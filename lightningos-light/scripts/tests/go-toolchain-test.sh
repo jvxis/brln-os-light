@@ -14,7 +14,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 reject() { if "$@"; then fail "unexpected success: $*"; fi; }
 
 lightningos_go_read_policy "$project/scripts/go-toolchain.conf"
-[[ "$LOS_GO_VERSION" == 1.26.8 ]] || fail policy
+[[ "$LOS_GO_VERSION" == 1.26.10 ]] || fail policy
 lightningos_go_check_module "$project/go.mod" "$LOS_GO_VERSION"
 for pair in '1.26.8 1.24.12' '1.26.8 1.26.8' '1.27.0 1.26.99' '1.26.10 1.26.9'; do
   read -r actual required <<<"$pair"
@@ -104,7 +104,7 @@ curl() {
       https://*) url="$arg" ;;
     esac
   done
-  [[ "$url" == 'https://go.dev/dl/go1.26.8.linux-amd64.tar.gz' ]] || return 1
+  [[ "$url" == "https://go.dev/dl/go${download_version:-1.26.8}.linux-amd64.tar.gz" ]] || return 1
   printf 'download\n' >>"$fixture/downloads"
   [[ "${download_failure:-0}" == 0 ]] || return 1
   sleep 0.1
@@ -112,10 +112,10 @@ curl() {
 }
 
 make_archive() {
-  local platform="${1:-linux/amd64}"
+  local platform="${1:-linux/amd64}" version="${2:-1.26.8}"
   rm -rf -- "$fixture/payload/go"
   mkdir -p "$fixture/payload/go/bin"
-  printf '#!/usr/bin/env bash\nprintf "go version go1.26.8 %s\\n"\n' "$platform" >"$fixture/payload/go/bin/go"
+  printf '#!/usr/bin/env bash\nprintf "go version go%s %s\\n"\n' "$version" "$platform" >"$fixture/payload/go/bin/go"
   chmod 0755 "$fixture/payload/go/bin/go"
   tar -czf "$fixture/archive.tar.gz" -C "$fixture/payload" go/
   checksum=$(sha256sum "$fixture/archive.tar.gz" | awk '{print $1}')
@@ -166,3 +166,24 @@ reject lightningos_go_install "$fixture/store" 1.26.8 amd64 "$checksum"
 [[ "$(cat "$fixture/system-go")" == 'preserve me' ]] || fail 'unrelated Go changed'
 [[ -z "$(find "$fixture/store" -name '.go-stage.*' -print -quit)" ]] || fail 'staging was retained'
 echo 'PASS: concurrent preparation, reuse and tampered cache rejection'
+
+# A security patch must use a distinct verified directory while retaining the
+# previous compiler for an interrupted update or rollback. The fixtures above
+# deliberately keep exercising the older version used by the bridge releases.
+previous_checksum="$checksum"
+printf '%s\n' "$previous_checksum" >"$target/.lightningos-sha256"
+download_version=1.26.10
+make_archive linux/amd64 "$download_version"
+download_failure=1
+reject lightningos_go_install "$fixture/store" "$download_version" amd64 "$checksum"
+[[ ! -e "$fixture/store/go${download_version}.linux-amd64" ]] || fail 'failed patch published toolchain'
+lightningos_go_check_tree "$target" 1.26.8 amd64 "$previous_checksum" || fail 'failed patch damaged previous compiler'
+download_failure=0
+lightningos_go_install "$fixture/store" "$download_version" amd64 "$checksum"
+lightningos_go_check_tree "$fixture/store/go${download_version}.linux-amd64" "$download_version" amd64 "$checksum" || fail 'patch compiler is invalid'
+lightningos_go_check_tree "$target" 1.26.8 amd64 "$previous_checksum" || fail 'patch replaced previous compiler'
+downloads_before=$(wc -l <"$fixture/downloads")
+lightningos_go_install "$fixture/store" "$download_version" amd64 "$checksum"
+[[ "$(wc -l <"$fixture/downloads")" == "$downloads_before" ]] || fail 'patch retry downloaded again'
+[[ "$(cat "$fixture/system-go")" == 'preserve me' ]] || fail 'patch changed unrelated Go'
+echo 'PASS: failed patch, retry and side-by-side compilers preserve rollback'

@@ -377,6 +377,7 @@ Body:
 }
 - At least one positive limit is required while enabled. `0` means no cap for that dimension.
 - The protected debit is the payment amount plus its maximum routing fee. Reservations are atomic, so concurrent protected requests cannot spend the same allowance.
+- Unresolved reservations continue consuming allowance regardless of age. The rolling window applies to settled debits, starting at settlement. Inconclusive LND lookups or transport errors do not release allowance; reconciliation uses definitive payment outcomes. Legacy reservations without a payment hash are retained for investigation, rather than automatically released on age.
 - Covers Wallet Lightning payments, Chat Keysend, and Loop Out BRLN tranches. It intentionally excludes routing forwards, LOS rebalances, channel operations, on-chain sends, and apps connected directly to LND.
 - A blocked payment returns HTTP 429 with code `spending_guard_limit_exceeded`.
 

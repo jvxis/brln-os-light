@@ -158,6 +158,8 @@ create index if not exists spending_guard_entries_window_idx
   on spending_guard_entries (status, created_at desc);
 create index if not exists spending_guard_entries_hash_idx
   on spending_guard_entries (payment_hash) where payment_hash <> '';
+create index if not exists spending_guard_entries_reconcile_idx
+  on spending_guard_entries (updated_at,created_at,id) where status='reserved';
 `)
 	return err
 }
@@ -341,7 +343,7 @@ func (s *SpendingGuardService) pending(ctx context.Context, limit int) ([]pendin
 	rows, err := s.db.Query(ctx, `
 select id,amount_sat,max_fee_sat,reserved_sat,payment_hash,created_at
 from spending_guard_entries where status='reserved'
-order by created_at asc limit $1`, limit)
+order by updated_at asc,created_at asc,id asc limit $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +358,11 @@ order by created_at asc limit $1`, limit)
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (s *SpendingGuardService) markReconciled(ctx context.Context, id string) error {
+	_, err := s.db.Exec(ctx, `update spending_guard_entries set updated_at=now() where id=$1 and status='reserved'`, id)
+	return err
 }
 
 func (s *SpendingGuardService) Release(ctx context.Context, reservation SpendingReservation, reason string) error {
@@ -382,9 +389,9 @@ func (s *SpendingGuardService) windowTotals(ctx context.Context, query spendingG
 select
  coalesce(sum(case when status='settled' then actual_debit_sat else 0 end),0),
  coalesce(sum(case when status='reserved' then reserved_sat else 0 end),0),
- min(case when status in ('settled','reserved') then coalesce(settled_at,created_at) end)
+ min(case when status='settled' then settled_at end)
 from spending_guard_entries
-where (status='settled' and settled_at >= $1) or (status='reserved' and created_at >= $1)`, windowStart).Scan(&used, &reserved, &oldest)
+where (status='settled' and settled_at >= $1) or status='reserved'`, windowStart).Scan(&used, &reserved, &oldest)
 	return used, reserved, oldest, err
 }
 

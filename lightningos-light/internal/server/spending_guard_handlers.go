@@ -140,7 +140,7 @@ func (s *Server) finishSpendingReservation(reservation SpendingReservation, paym
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	details, found, _ := s.lnd.TrackPaymentDetails(ctx, paymentHash)
+	details, found, trackErr := s.lnd.TrackPaymentDetails(ctx, paymentHash)
 	if found && strings.EqualFold(details.Status, "SUCCEEDED") {
 		feeSat := details.FeeSat
 		if feeSat <= 0 && details.FeeMsat > 0 {
@@ -155,13 +155,9 @@ func (s *Server) finishSpendingReservation(reservation SpendingReservation, paym
 		_ = svc.Settle(ctx, reservation, reservation.MaxFeeSat, paymentHash)
 		return
 	}
-	if found && !strings.EqualFold(details.Status, "FAILED") {
-		return
+	if trackErr == nil && found && strings.EqualFold(details.Status, "FAILED") {
+		_ = svc.Release(ctx, reservation, "LND reported payment failed")
 	}
-	if isAmbiguousPaymentError(paymentErr) {
-		return
-	}
-	_ = svc.Release(ctx, reservation, paymentErr.Error())
 }
 
 func isAmbiguousPaymentError(err error) bool {

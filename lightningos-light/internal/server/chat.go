@@ -223,18 +223,21 @@ func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, amount
 			return ChatMessage{}, err
 		}
 	}
-	paymentHash, err := c.lnd.SendKeysendMessage(ctx, peerPubkey, amountSat, message)
-	if guard != nil && reservation.Active && paymentHash != "" {
-		_ = guard.Bind(context.Background(), reservation, paymentHash)
-	}
+	paymentHash, err := c.lnd.SendKeysendMessageWithPaymentHash(ctx, peerPubkey, amountSat, message, func(hash string) error {
+		if guard != nil && reservation.Active {
+			return guard.Bind(ctx, reservation, hash)
+		}
+		return nil
+	})
 	if err != nil {
 		if guard != nil && reservation.Active {
 			trackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			details, found, _ := c.lnd.TrackPaymentDetails(trackCtx, paymentHash)
+			details, found, trackErr := c.lnd.TrackPaymentDetails(trackCtx, paymentHash)
 			if found && strings.EqualFold(details.Status, "SUCCEEDED") {
 				_ = guard.Settle(trackCtx, reservation, paymentDetailsFeeSat(details, reservation.MaxFeeSat), paymentHash)
-			} else if (found && strings.EqualFold(details.Status, "FAILED")) || !isAmbiguousPaymentError(err) {
-				_ = guard.Release(trackCtx, reservation, err.Error())
+			} else if paymentHash == "" || (trackErr == nil && found && strings.EqualFold(details.Status, "FAILED")) {
+				// An empty hash is the client's explicit pre-submission failure.
+				_ = guard.Release(trackCtx, reservation, "payment failed before submission or LND confirmed failure")
 			}
 			cancel()
 		}

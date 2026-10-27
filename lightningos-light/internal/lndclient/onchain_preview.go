@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcutil"
@@ -76,7 +77,7 @@ func (c *Client) PreviewOnchainSend(ctx context.Context, address string, amountS
 		return preview, nil
 	}
 
-	utxos, err := c.ListOnchainUtxos(ctx, 1, previewOnchainMaxConfs)
+	utxos, err := c.previewDefaultAccountUtxos(ctx)
 	if err != nil {
 		return preview, err
 	}
@@ -127,7 +128,27 @@ func (c *Client) PreviewOnchainSend(ctx context.Context, address string, amountS
 		return preview, nil
 	}
 
-	return c.previewFundedSend(ctx, preview, utxoByOutpoint, utxos)
+	var selected []OnchainUtxo
+	if len(outpoints) > 0 {
+		selected = utxos
+	}
+	return c.previewFundedSend(ctx, preview, utxoByOutpoint, selected)
+}
+
+// SendCoins/FundPsbt use LND's default account when no account is specified.
+// Ask the wallet for the same account, rather than guessing spendability from
+// address/key type (which would break legitimate default remote signers).
+func (c *Client) previewDefaultAccountUtxos(ctx context.Context) ([]OnchainUtxo, error) {
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	resp, err := walletrpc.NewWalletKitClient(conn).ListUnspent(ctx, &walletrpc.ListUnspentRequest{MinConfs: 1, MaxConfs: previewOnchainMaxConfs, Account: "default"})
+	if err != nil {
+		return nil, err
+	}
+	return onchainUtxosFromRPC(resp.GetUtxos()), nil
 }
 
 func (c *Client) previewFundedSend(ctx context.Context, preview OnchainSendPreview, utxoByOutpoint map[string]OnchainUtxo, candidateUtxos []OnchainUtxo) (OnchainSendPreview, error) {
@@ -418,11 +439,13 @@ func buildOutpointFilter(outpoints []string) (map[string]struct{}, bool, error) 
 }
 
 func releasePreviewLeases(ctx context.Context, client walletrpc.WalletKitClient, leases []*walletrpc.UtxoLease) {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
 	for _, lease := range leases {
 		if lease == nil || lease.GetOutpoint() == nil || len(lease.GetId()) == 0 {
 			continue
 		}
-		_, _ = client.ReleaseOutput(ctx, &walletrpc.ReleaseOutputRequest{
+		_, _ = client.ReleaseOutput(cleanup, &walletrpc.ReleaseOutputRequest{
 			Id:       lease.GetId(),
 			Outpoint: lease.GetOutpoint(),
 		})

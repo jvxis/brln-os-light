@@ -97,12 +97,9 @@ func (s *Server) reserveInvoiceSpending(ctx context.Context, paymentRequest stri
 	if err != nil {
 		return SpendingReservation{}, "", err
 	}
-	svc, errMsg := s.spendingGuardService()
+	svc, _ := s.spendingGuardService()
 	if svc == nil {
-		if s.logger != nil {
-			s.logger.Printf("spending guard unavailable; payment remains allowed because no active policy could be loaded: %s", errMsg)
-		}
-		return SpendingReservation{}, decoded.PaymentHash, nil
+		return SpendingReservation{}, decoded.PaymentHash, ErrSpendingGuardUnavailable
 	}
 	amountSat := decoded.AmountSat
 	if amountSat <= 0 && decoded.AmountMsat > 0 {

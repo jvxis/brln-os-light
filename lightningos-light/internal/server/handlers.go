@@ -3678,9 +3678,10 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		PeerPubkey string `json:"peer_pubkey"`
-		Message    string `json:"message"`
-		AmountSat  *int64 `json:"amount_sat,omitempty"`
+		PeerPubkey      string `json:"peer_pubkey"`
+		Message         string `json:"message"`
+		AmountSat       *int64 `json:"amount_sat,omitempty"`
+		ConfirmPassword string `json:"confirm_password,omitempty"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -3705,12 +3706,25 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+		return
+	}
+	guard, _ := s.spendingGuardService()
+	if guard == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "spending_guard_unavailable", "spending guard unavailable; payment was not submitted")
+		return
+	}
+	s.chat.AttachSpendingGuard(guard)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 
 	msg, err := s.chat.SendMessage(ctx, peerPubkey, amountSat, message)
 	if err != nil {
+		if errors.Is(err, ErrSpendingGuardUnavailable) {
+			writeErrorCode(w, http.StatusServiceUnavailable, "spending_guard_unavailable", "spending guard unavailable; payment was not submitted")
+			return
+		}
 		if writeSpendingGuardError(w, err) {
 			return
 		}

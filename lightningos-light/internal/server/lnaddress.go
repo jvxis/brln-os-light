@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"lightningos-light/internal/lndclient"
 	"math"
 	"net"
 	"net/http"
@@ -227,7 +230,7 @@ func validateLNURLPayDescriptor(payResp lnurlPayResponse) error {
 	return nil
 }
 
-func resolveLightningAddress(ctx context.Context, address string, amountSat int64, comment string) (string, error) {
+func resolveLightningAddress(ctx context.Context, address string, amountSat int64, comment string, decode func(context.Context, string) (lndclient.DecodedInvoice, error)) (string, error) {
 	if amountSat <= 0 {
 		return "", errors.New("amount must be positive")
 	}
@@ -279,7 +282,57 @@ func resolveLightningAddress(ctx context.Context, address string, amountSat int6
 	if strings.TrimSpace(cb.Pr) == "" {
 		return "", errors.New("payment request missing from callback")
 	}
-	return strings.TrimSpace(cb.Pr), nil
+	invoice := strings.TrimSpace(cb.Pr)
+	if decode == nil {
+		return "", errors.New("invoice decoder unavailable")
+	}
+	decoded, err := decode(ctx, invoice)
+	if err != nil {
+		return "", errors.New("invalid invoice returned by lightning address")
+	}
+	if err := validateLNURLInvoice(invoice, decoded, payResp.Metadata, amountMsat, time.Now()); err != nil {
+		return "", err
+	}
+	return invoice, nil
+}
+
+func validateLNURLInvoice(invoice string, decoded lndclient.DecodedInvoice, metadata string, amountMsat int64, now time.Time) error {
+	lower := strings.ToLower(invoice)
+	separator := strings.LastIndexByte(lower, '1')
+	if separator < 4 {
+		return errors.New("LNURL invoice must use Bitcoin mainnet")
+	}
+	hrp := lower[:separator]
+	if hrp != "lnbc" && !(strings.HasPrefix(hrp, "lnbc") && len(hrp) > 4 && hrp[4] >= '0' && hrp[4] <= '9') {
+		return errors.New("LNURL invoice must use Bitcoin mainnet")
+	}
+	if amountMsat <= 0 || decoded.AmountMsat != amountMsat {
+		return errors.New("LNURL invoice amount does not match requested millisatoshis")
+	}
+	if decoded.Timestamp <= 0 || decoded.Expiry <= 0 || decoded.Timestamp > math.MaxInt64-decoded.Expiry || decoded.Timestamp+decoded.Expiry <= now.Unix() {
+		return errors.New("LNURL invoice is expired or has invalid expiry")
+	}
+	var values [][]string
+	if err := json.Unmarshal([]byte(metadata), &values); err != nil {
+		return errors.New("invalid LNURL metadata")
+	}
+	plain := false
+	for _, value := range values {
+		if len(value) != 2 {
+			return errors.New("invalid LNURL metadata")
+		}
+		if value[0] == "text/plain" {
+			plain = true
+		}
+	}
+	if !plain {
+		return errors.New("LNURL metadata is missing text/plain")
+	}
+	commitment := sha256.Sum256([]byte(metadata))
+	if decoded.DescriptionHash != hex.EncodeToString(commitment[:]) {
+		return errors.New("LNURL invoice metadata commitment does not match")
+	}
+	return nil
 }
 
 func validateLNURLPayParameters(payResp lnurlPayResponse, amountSat int64, comment string) error {

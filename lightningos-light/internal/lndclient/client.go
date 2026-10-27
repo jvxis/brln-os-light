@@ -748,18 +748,19 @@ type RuntimeInfo struct {
 }
 
 type DecodedInvoice struct {
-	AmountSat    int64
-	AmountMsat   int64
-	Memo         string
-	Destination  string
-	PaymentHash  string
-	Expiry       int64
-	Timestamp    int64
-	CltvExpiry   int64
-	RouteHints   []*lnrpc.RouteHint
-	PaymentAddr  []byte
-	DestFeatures []lnrpc.FeatureBit
-	BlindedPaths []*lnrpc.BlindedPaymentPath
+	DescriptionHash string
+	AmountSat       int64
+	AmountMsat      int64
+	Memo            string
+	Destination     string
+	PaymentHash     string
+	Expiry          int64
+	Timestamp       int64
+	CltvExpiry      int64
+	RouteHints      []*lnrpc.RouteHint
+	PaymentAddr     []byte
+	DestFeatures    []lnrpc.FeatureBit
+	BlindedPaths    []*lnrpc.BlindedPaymentPath
 }
 
 type CreatedInvoice struct {
@@ -1434,18 +1435,19 @@ func decodePaymentRequestWithClient(ctx context.Context, client lnrpc.LightningC
 	}
 
 	decoded := DecodedInvoice{
-		AmountSat:    resp.NumSatoshis,
-		AmountMsat:   resp.NumMsat,
-		Memo:         resp.Description,
-		Destination:  strings.TrimSpace(resp.Destination),
-		PaymentHash:  strings.ToLower(strings.TrimSpace(resp.PaymentHash)),
-		Expiry:       resp.Expiry,
-		Timestamp:    resp.Timestamp,
-		CltvExpiry:   resp.CltvExpiry,
-		RouteHints:   append([]*lnrpc.RouteHint(nil), resp.RouteHints...),
-		PaymentAddr:  append([]byte(nil), resp.PaymentAddr...),
-		DestFeatures: payReqFeatureBits(resp.Features),
-		BlindedPaths: append([]*lnrpc.BlindedPaymentPath(nil), resp.BlindedPaths...),
+		DescriptionHash: strings.ToLower(strings.TrimSpace(resp.DescriptionHash)),
+		AmountSat:       resp.NumSatoshis,
+		AmountMsat:      resp.NumMsat,
+		Memo:            resp.Description,
+		Destination:     strings.TrimSpace(resp.Destination),
+		PaymentHash:     strings.ToLower(strings.TrimSpace(resp.PaymentHash)),
+		Expiry:          resp.Expiry,
+		Timestamp:       resp.Timestamp,
+		CltvExpiry:      resp.CltvExpiry,
+		RouteHints:      append([]*lnrpc.RouteHint(nil), resp.RouteHints...),
+		PaymentAddr:     append([]byte(nil), resp.PaymentAddr...),
+		DestFeatures:    payReqFeatureBits(resp.Features),
+		BlindedPaths:    append([]*lnrpc.BlindedPaymentPath(nil), resp.BlindedPaths...),
 	}
 	amountMsat := decoded.AmountMsat
 	if amountMsat <= 0 && decoded.AmountSat > 0 {

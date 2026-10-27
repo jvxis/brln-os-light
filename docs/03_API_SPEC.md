@@ -403,6 +403,7 @@ Body:
   "confirm_password": "optional fresh admin confirmation"
 }
 - Final Lightning payment routes (`/pay`, `/pay/validated-route`, and `/pay/mpp`) require recent `lightning_funds` reauthentication when login protection is enabled. A missing confirmation returns HTTP 428; previews remain available without reauthentication.
+- Lightning Address invoices are decoded by LND and checked for exact requested millisatoshis, mainnet, expiry and the LUD-06 metadata description hash. Preview and execution reuse one validated invoice per session/address/amount/comment until invoice expiry or five minutes. A changed invoice, amount, maximum fee or outgoing-channel selection requires approval in its specific `lnurl_invoice:<sha256>` scope. The HTTP 428 body supplies that scope for `POST /api/auth/reauth`; a generic payment grant does not approve a different LNURL intent. Previews continue to work without password confirmation.
 
 POST /api/wallet/send
 Body:

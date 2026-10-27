@@ -104,6 +104,17 @@ func TestChatFundsRequireReauthAndAvailableGuard(t *testing.T) {
 	if rec.Code != 503 || rpc.sends.Load() != 0 {
 		t.Fatalf("unavailable guard allowed chat: HTTP %d sends %d", rec.Code, rpc.sends.Load())
 	}
+	for _, path := range []string{"/api/wallet/pay", "/api/wallet/pay/validated-route", "/api/wallet/pay/mpp"} {
+		r := httptest.NewRequest("POST", "https://node.example"+path, strings.NewReader(`{"payment_request":"test-invoice"}`))
+		r.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: session.ID})
+		r.Header.Set("X-CSRF-Token", session.CSRFToken)
+		r.Header.Set("Origin", "https://node.example")
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, r)
+		if w.Code != 503 || rpc.sends.Load() != 0 {
+			t.Fatalf("%s allowed unavailable policy: %d sends %d", path, w.Code, rpc.sends.Load())
+		}
+	}
 }
 
 func TestMissingSpendingGuardBlocksInvoiceAndChat(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFundsGateExplicitDisabledAndActivePolicy(t *testing.T) {
@@ -53,9 +54,27 @@ func TestFundsGateExplicitDisabledAndActivePolicy(t *testing.T) {
 	if !errors.Is(err, ErrSpendingGuardLimit) || rpc.sends.Load() != 1 {
 		t.Fatalf("active policy did not block payment before RPC: sends=%d err=%v", rpc.sends.Load(), err)
 	}
+	t.Setenv("NOTIFICATIONS_PG_DSN", dsn)
+	recovering := &Server{db: pool, lnd: client, logger: logger, chat: chat, spendingGuardInitAt: time.Now(), spendingGuardErr: "simulated schema initialization failure"}
+	if loaded, _ := recovering.spendingGuardService(); loaded != nil {
+		t.Fatal("cooldown ignored failed initialization")
+	}
+	recovering.spendingGuardInitAt = time.Now().Add(-spendingGuardInitRetryCooldown - time.Second)
+	if loaded, _ := recovering.spendingGuardService(); loaded == nil {
+		t.Fatal("healthy PostgreSQL did not restore policy after retry")
+	}
+	chat.mu.Lock()
+	reattached := chat.spendingGuard
+	chat.mu.Unlock()
+	if reattached != recovering.spendingGuard {
+		t.Fatal("recovered guard not attached to chat")
+	}
 	pool.Close()
 	_, err = chat.SendMessage(ctx, "02"+strings.Repeat("11", 32), 1, "test")
-	if err == nil || rpc.sends.Load() != 1 {
-		t.Fatalf("database loss allowed payment: sends=%d err=%v", rpc.sends.Load(), err)
+	if rpc.sends.Load() != 1 {
+		t.Fatalf("database loss allowed another payment: sends=%d", rpc.sends.Load())
+	}
+	if !errors.Is(err, ErrSpendingGuardUnavailable) {
+		t.Fatalf("database failure did not return generic unavailable error: %v", err)
 	}
 }

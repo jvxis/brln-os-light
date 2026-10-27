@@ -120,7 +120,8 @@ authorized operation; provisioning never deletes a wallet or chain directory.
   cross-build and `npm run build` passed. Production source code was unchanged.
 - Both LOS instances passed verified HTTPS, required login, native balance and
   channel checks, LOS invoice creation, reauthentication rejection and approved
-  native Lightning payment. This does not validate Balanced Open PR #326 yet.
+  native Lightning payment. The separate native Balanced Open regression matrix
+  and its reviewed candidate are recorded in PR #326.
 - Repeated provisioning preserved balances and authentication material. Native
   service restarts preserved identities, automatically unlocked both wallets
   and allowed both LOS instances to resume. A real startup-guard invocation

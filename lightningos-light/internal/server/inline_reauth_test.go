@@ -36,6 +36,16 @@ func TestInlineReauthCannotBypassDedicatedQuota(t *testing.T) {
 			return s.requireSensitiveReauth(w, r, authScopeTerminalControl, "bad", "reauth_required", "approval required")
 		}},
 		{"dedicated", func(w http.ResponseWriter, r *http.Request) bool { auth.HandleReauth(w, r); return false }},
+		{"balanced propose", func(w http.ResponseWriter, r *http.Request) bool {
+			r.Body = io.NopCloser(strings.NewReader(`{"confirm_password":"bad"}`))
+			s.handleBalancedOpenSessionProposePost(w, r)
+			return false
+		}},
+		{"balanced accept", func(w http.ResponseWriter, r *http.Request) bool {
+			r.Body = io.NopCloser(strings.NewReader(`{"confirm_password":"bad"}`))
+			s.handleBalancedOpenSessionAcceptPost(w, r)
+			return false
+		}},
 		{"utxo bump", func(w http.ResponseWriter, r *http.Request) bool {
 			r.Body = io.NopCloser(strings.NewReader(`{"outpoint":"test:0","sat_per_vbyte":1,"confirm_password":"bad"}`))
 			s.handleUtxoBump(w, r)

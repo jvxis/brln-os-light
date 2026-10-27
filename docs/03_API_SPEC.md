@@ -11,7 +11,9 @@ React/graph layouts. QR workers may use same-origin or blob URLs, and camera
 media may use blob URLs. Images allow same-origin, data/blob and HTTP(S) because
 custom shortcut icons and provider QR images may be external; these permissions
 do not allow external scripts. Fonts may also use embedded data URLs. GoTTY and
-same-origin terminal frames use the same policy.
+same-origin terminal frames use the same policy, with `wasm-unsafe-eval` only
+under `/terminal/` for GoTTY 1.8's WebAssembly renderer. This exception does not
+permit JavaScript eval or inline scripts.
 
 HSTS defaults to off to preserve private-CA installation and rotation. An
 operator who has established certificate trust for a DNS origin may opt in via

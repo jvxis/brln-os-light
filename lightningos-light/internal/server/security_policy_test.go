@@ -17,9 +17,12 @@ func TestBrowserSecurityPolicy(t *testing.T) {
 			t.Fatalf("missing restrictive browser policy for %s: %q", path, policy)
 		}
 		for _, directive := range strings.Split(policy, ";") {
-			if strings.HasPrefix(strings.TrimSpace(directive), "script-src") && (strings.Contains(directive, "unsafe-inline") || strings.Contains(directive, "unsafe-eval") || strings.Contains(directive, "https:")) {
+			if strings.HasPrefix(strings.TrimSpace(directive), "script-src") && (strings.Contains(directive, "'unsafe-inline'") || strings.Contains(directive, "'unsafe-eval'") || strings.Contains(directive, "https:")) {
 				t.Fatal("script policy allows untrusted execution")
 			}
+		}
+		if strings.Contains(policy, "'wasm-unsafe-eval'") != strings.HasPrefix(path, "/terminal/") {
+			t.Fatal("WebAssembly exception must remain terminal-only")
 		}
 		if recorder.Header().Get("Strict-Transport-Security") != "" {
 			t.Fatal("default HSTS would interfere with private-CA bootstrap")

@@ -20,7 +20,13 @@ func securityHeadersMiddleware(hstsMaxAgeSeconds ...int) func(http.Handler) http
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Security-Policy", managerContentSecurityPolicy)
+			policy := managerContentSecurityPolicy
+			if strings.HasPrefix(r.URL.Path, "/terminal/") {
+				// GoTTY 1.8's terminal renderer compiles WebAssembly. This does
+				// not enable JavaScript eval or inline scripts in either page.
+				policy = strings.Replace(policy, "script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'", 1)
+			}
+			w.Header().Set("Content-Security-Policy", policy)
 			// Private-CA installs must be able to bootstrap/rotate trust. HSTS is
 			// opt-in and host-only, with IP access retained for recovery. Never
 			// infer trusted HTTPS from client-controlled forwarding headers.

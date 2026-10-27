@@ -64,7 +64,10 @@ func (s *Server) requireUtxoLockReauth(w http.ResponseWriter, r *http.Request, c
 		})
 		return false
 	}
-	if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+	if _, err := s.auth.reauth(w, r, session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+		if err == errReauthRateLimited {
+			return false
+		}
 		writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
 		return false
 	}
@@ -436,7 +439,10 @@ func (s *Server) handleUtxoBump(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+			if _, err := s.auth.reauth(w, r, session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+				if err == errReauthRateLimited {
+					return
+				}
 				writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
 				return
 			}

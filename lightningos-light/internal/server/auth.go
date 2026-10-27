@@ -336,9 +336,6 @@ func (a *AuthService) HandleReauth(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	if !a.allowAuthRequest(w, r, "reauth") {
-		return
-	}
 
 	session, ok := authSessionFromContext(r.Context())
 	if !ok {
@@ -354,8 +351,11 @@ func (a *AuthService) HandleReauth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expiresAt, err := a.reauth(session.ID, req.Password, req.Scope)
+	expiresAt, err := a.reauth(w, r, session.ID, req.Password, req.Scope)
 	if err != nil {
+		if err == errReauthRateLimited {
+			return
+		}
 		target := "invalid_scope"
 		if authScopeValid(req.Scope) {
 			target = strings.TrimSpace(req.Scope)
@@ -499,10 +499,18 @@ func (a *AuthService) changePassword(sessionID string, currentPassword string, p
 	return a.resetSessionsAndCreateNew()
 }
 
-func (a *AuthService) reauth(sessionID string, password string, scope string) (time.Time, error) {
+var errReauthRateLimited = errors.New("reauthentication rate limited")
+
+func (a *AuthService) reauth(w http.ResponseWriter, r *http.Request, sessionID string, password string, scope string) (time.Time, error) {
+	if !a.allowReauthRequest(w, r, sessionID) {
+		return time.Time{}, errReauthRateLimited
+	}
 	scope = strings.TrimSpace(scope)
 	if !authScopeValid(scope) {
 		return time.Time{}, errInvalidScope
+	}
+	if len(password) > 4*authPasswordMaxRunes || utf8.RuneCountInString(password) > authPasswordMaxRunes {
+		return time.Time{}, errInvalidCredentials
 	}
 	if err := authVerifyPassword(password); err != nil {
 		return time.Time{}, err

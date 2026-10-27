@@ -65,6 +65,7 @@ Underlying transport errors and credential contents are not returned to the UI.
   - `POST /api/auth/logout`
   - `POST /api/auth/reauth`
 - Manual external on-chain sends (`POST /api/wallet/send`) require a fresh reauthentication step.
+- Inline password confirmations and `POST /api/auth/reauth` share global, client-IP and session quotas. Exhaustion returns HTTP 429 with `code=auth_rate_limited` and `Retry-After`. Client identity uses the direct connection; untrusted forwarded headers do not create additional quotas.
 - Sensitive scopes accepted by `POST /api/auth/reauth` include:
   - `wallet_send_external`
   - `macaroon_export`

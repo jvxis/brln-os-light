@@ -155,6 +155,24 @@ func authClientIP(r *http.Request) string {
 	return "unknown"
 }
 
+// Both inline confirmation and the dedicated endpoint consume these same
+// buckets, regardless of the action or scope. Forwarded headers are untrusted.
+func (a *AuthService) allowReauthRequest(w http.ResponseWriter, r *http.Request, sessionID string) bool {
+	if !a.allowAuthRequest(w, r, "reauth") {
+		return false
+	}
+	allowed, retry := a.limiter.allow("session:reauth:"+sessionID, a.currentTime(), 5, 1.0/10.0)
+	if allowed {
+		return true
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(retry.Seconds())))))
+	if a.limiter.shouldAudit("session:reauth:"+sessionID, a.currentTime()) {
+		a.recordAudit(r, "auth.rate_limited", "reauth", map[string]any{"kind": "reauth"})
+	}
+	writeErrorCode(w, http.StatusTooManyRequests, "auth_rate_limited", "too many authentication attempts; try again later")
+	return false
+}
+
 func readAuthJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if r == nil || r.Body == nil {
 		writeError(w, http.StatusBadRequest, "invalid json")

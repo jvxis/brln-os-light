@@ -29,7 +29,10 @@ func (s *Server) requireSensitiveReauth(w http.ResponseWriter, r *http.Request, 
 		})
 		return false
 	}
-	if _, err := s.auth.reauth(session.ID, confirmPassword, scope); err != nil {
+	if _, err := s.auth.reauth(w, r, session.ID, confirmPassword, scope); err != nil {
+		if err == errReauthRateLimited {
+			return false
+		}
 		s.recordAuditEventAsync(r, "auth.reauth.failed", strings.TrimSpace(scope), map[string]any{"reason": authAuditReason(err)})
 		writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
 		return false

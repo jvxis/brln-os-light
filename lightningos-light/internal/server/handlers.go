@@ -5246,7 +5246,10 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 		if !s.auth.HasRecentReauth(session.ID, authScopeWalletSendExternal) {
 			confirmPassword := strings.TrimSpace(req.ConfirmPassword)
 			if confirmPassword != "" {
-				if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+				if _, err := s.auth.reauth(w, r, session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+					if err == errReauthRateLimited {
+						return
+					}
 					s.recordAuditEventAsync(r, "auth.reauth.failed", authScopeWalletSendExternal, map[string]any{"reason": authAuditReason(err)})
 					writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
 					return

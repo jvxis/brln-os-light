@@ -132,3 +132,24 @@ func TestTerminalEstablishedWebsocketRevocation(t *testing.T) {
 		})
 	}
 }
+
+func TestTerminalMonitoringDoesNotExtendSession(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	auth := &AuthService{enabled: true, now: func() time.Time { return now }, sessions: make(map[string]*authSession)}
+	session, err := auth.newSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := auth.sessions[session.ID].ExpiresAt
+	now = now.Add(time.Hour)
+	if !auth.terminalSessionValid(session.ID, true) {
+		t.Fatal("live session rejected")
+	}
+	if !auth.sessions[session.ID].ExpiresAt.Equal(expiry) || !auth.sessions[session.ID].LastSeenAt.Equal(session.ExpiresAt.Add(-authSessionTTL)) {
+		t.Fatal("background monitor refreshed session lifetime")
+	}
+	now = expiry
+	if auth.terminalSessionValid(session.ID, true) {
+		t.Fatal("session accepted at expiration")
+	}
+}

@@ -49,15 +49,17 @@ func (s *Server) handleSpendingGuardUpdate(w http.ResponseWriter, r *http.Reques
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	current, err := svc.Settings(ctx)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "failed to load spending guard")
-		return
+	authorized := s.auth == nil || !s.auth.Enabled()
+	if session, ok := authSessionFromContext(r.Context()); ok && s.auth != nil {
+		authorized = authorized || s.auth.HasRecentReauth(session.ID, authScopeSpendingGuardPolicy)
 	}
-	if spendingGuardNeedsReauth(current, next) && !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
-		return
+	updated, err := svc.UpdateSettings(ctx, next, authorized)
+	if errors.Is(err, ErrSpendingGuardReauth) {
+		if !s.requireSensitiveReauth(w, r, authScopeSpendingGuardPolicy, req.ConfirmPassword, "spending_guard_reauth_required", "password confirmation required to relax spending limits") {
+			return
+		}
+		updated, err = svc.UpdateSettings(ctx, next, true)
 	}
-	updated, err := svc.UpdateSettings(ctx, next)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update spending guard")
 		return

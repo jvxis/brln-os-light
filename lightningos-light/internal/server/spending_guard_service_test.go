@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
 )
 
 func TestValidateSpendingGuardSettings(t *testing.T) {
@@ -50,6 +51,26 @@ func TestSpendingGuardNeedsReauth(t *testing.T) {
 	}
 	if spendingGuardNeedsReauth(SpendingGuardSettings{}, SpendingGuardSettings{Enabled: true, MaxPaymentSat: 50_000}) {
 		t.Fatal("enabling a disabled guard should not require reauthentication")
+	}
+}
+
+func TestSpendingGuardFiniteAndUnlimitedTransitions(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		current, next SpendingGuardSettings
+		want          bool
+	}{
+		{"remove per payment", SpendingGuardSettings{true, 100, 1000, time.Time{}}, SpendingGuardSettings{true, 0, 1000, time.Time{}}, true},
+		{"remove rolling", SpendingGuardSettings{true, 100, 1000, time.Time{}}, SpendingGuardSettings{true, 100, 0, time.Time{}}, true},
+		{"introduce per payment", SpendingGuardSettings{true, 0, 1000, time.Time{}}, SpendingGuardSettings{true, 100, 1000, time.Time{}}, false},
+		{"introduce rolling", SpendingGuardSettings{true, 100, 0, time.Time{}}, SpendingGuardSettings{true, 100, 1000, time.Time{}}, false},
+		{"unchanged", SpendingGuardSettings{true, 100, 0, time.Time{}}, SpendingGuardSettings{true, 100, 0, time.Time{}}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := spendingGuardNeedsReauth(tt.current, tt.next); got != tt.want {
+				t.Fatalf("needs reauth = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

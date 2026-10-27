@@ -376,6 +376,7 @@ Body:
   "confirm_password": "required when increasing a limit or disabling an active guard"
 }
 - At least one positive limit is required while enabled. `0` means no cap for that dimension.
+- Removing a positive limit with `0`, increasing it, or disabling an active guard requires recent `spending_guard_policy` reauthentication or inline `confirm_password`. A payment grant does not authorize policy changes. Missing approval returns HTTP 428 with `code=spending_guard_reauth_required`.
 - The protected debit is the payment amount plus its maximum routing fee. Reservations are atomic, so concurrent protected requests cannot spend the same allowance.
 - Covers Wallet Lightning payments, Chat Keysend, and Loop Out BRLN tranches. It intentionally excludes routing forwards, LOS rebalances, channel operations, on-chain sends, and apps connected directly to LND.
 - A blocked payment returns HTTP 429 with code `spending_guard_limit_exceeded`.

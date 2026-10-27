@@ -19,6 +19,7 @@ const spendingGuardWindow = 24 * time.Hour
 
 var (
 	ErrSpendingGuardUnavailable = errors.New("spending guard unavailable")
+	ErrSpendingGuardReauth      = errors.New("spending policy reauthentication required")
 	ErrSpendingGuardLimit       = errors.New("spending guard limit exceeded")
 )
 
@@ -183,22 +184,43 @@ func (s *SpendingGuardService) Settings(ctx context.Context) (SpendingGuardSetti
 	return settings, err
 }
 
-func (s *SpendingGuardService) UpdateSettings(ctx context.Context, settings SpendingGuardSettings) (SpendingGuardSettings, error) {
+func (s *SpendingGuardService) UpdateSettings(ctx context.Context, settings SpendingGuardSettings, authorized bool) (SpendingGuardSettings, error) {
 	if err := validateSpendingGuardSettings(settings); err != nil {
 		return SpendingGuardSettings{}, err
 	}
 	if s == nil || s.db == nil {
 		return SpendingGuardSettings{}, ErrSpendingGuardUnavailable
 	}
+	// Serialize policy decisions with updates and payment reservations. Checking
+	// an earlier, unlocked snapshot could authorize a relaxation of a newer policy.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return SpendingGuardSettings{}, err
+	}
+	defer tx.Rollback(ctx)
+	var current SpendingGuardSettings
+	err = tx.QueryRow(ctx, `select enabled,max_payment_sat,rolling_24h_limit_sat,updated_at from spending_guard_settings where id=1 for update`).Scan(&current.Enabled, &current.MaxPaymentSat, &current.Rolling24hLimitSat, &current.UpdatedAt)
+	if err != nil {
+		return SpendingGuardSettings{}, err
+	}
+	if spendingGuardNeedsReauth(current, settings) && !authorized {
+		return SpendingGuardSettings{}, ErrSpendingGuardReauth
+	}
 	var updated SpendingGuardSettings
-	err := s.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 update spending_guard_settings
 set enabled=$1,max_payment_sat=$2,rolling_24h_limit_sat=$3,updated_at=now()
 where id=1
 returning enabled,max_payment_sat,rolling_24h_limit_sat,updated_at`,
 		settings.Enabled, settings.MaxPaymentSat, settings.Rolling24hLimitSat,
 	).Scan(&updated.Enabled, &updated.MaxPaymentSat, &updated.Rolling24hLimitSat, &updated.UpdatedAt)
-	return updated, err
+	if err != nil {
+		return SpendingGuardSettings{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SpendingGuardSettings{}, err
+	}
+	return updated, nil
 }
 
 func (s *SpendingGuardService) Status(ctx context.Context) (SpendingGuardStatus, error) {
@@ -422,8 +444,12 @@ func spendingGuardNeedsReauth(current, next SpendingGuardSettings) bool {
 	if current.Enabled && !next.Enabled {
 		return true
 	}
-	if next.MaxPaymentSat > current.MaxPaymentSat || next.Rolling24hLimitSat > current.Rolling24hLimitSat {
+	if spendingLimitRelaxed(current.MaxPaymentSat, next.MaxPaymentSat) || spendingLimitRelaxed(current.Rolling24hLimitSat, next.Rolling24hLimitSat) {
 		return true
 	}
 	return false
+}
+
+func spendingLimitRelaxed(current, next int64) bool {
+	return current > 0 && (next == 0 || next > current)
 }

@@ -47,6 +47,8 @@ type balancedFundingRPC struct {
 	opens                                      atomic.Int64
 	mu                                         sync.Mutex
 	utxos                                      []*lnrpc.Utxo
+	history                                    []*lnrpc.Transaction
+	exposeHistory                              atomic.Bool
 	sends, signs, keys, messages               atomic.Int64
 	loseReply, hideUTXO, failMessage, failSign atomic.Bool
 	onMessage                                  func(balancedOpenProtocolMessage)
@@ -84,6 +86,14 @@ func (r *balancedFundingRPC) ListUnspent(context.Context, *lnrpc.ListUnspentRequ
 	}
 	return &lnrpc.ListUnspentResponse{Utxos: append([]*lnrpc.Utxo(nil), r.utxos...)}, nil
 }
+func (r *balancedFundingRPC) GetTransactions(context.Context, *lnrpc.GetTransactionsRequest) (*lnrpc.TransactionDetails, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.exposeHistory.Load() {
+		return &lnrpc.TransactionDetails{}, nil
+	}
+	return &lnrpc.TransactionDetails{Transactions: append([]*lnrpc.Transaction(nil), r.history...)}, nil
+}
 func (r *balancedFundingRPC) SendCustomMessage(_ context.Context, req *lnrpc.SendCustomMessageRequest) (*lnrpc.SendCustomMessageResponse, error) {
 	r.messages.Add(1)
 	if r.failMessage.Swap(false) {
@@ -119,6 +129,7 @@ func (w *balancedWalletRPC) SendOutputs(_ context.Context, req *walletrpc.SendOu
 		return nil, err
 	}
 	r.mu.Lock()
+	r.history = append(r.history, &lnrpc.Transaction{TxHash: tx.TxHash().String(), RawTxHex: hex.EncodeToString(raw.Bytes()), Label: req.Label})
 	for i, out := range tx.TxOut {
 		r.utxos = append(r.utxos, &lnrpc.Utxo{AmountSat: out.Value, PkScript: hex.EncodeToString(out.PkScript), Outpoint: &lnrpc.OutPoint{TxidStr: tx.TxHash().String(), OutputIndex: uint32(i)}})
 	}
@@ -286,6 +297,26 @@ func TestBalancedAcceptApprovalSigningAndRetry(t *testing.T) {
 	b, _ := json.Marshal(after)
 	if string(a) != string(b) {
 		t.Fatal("dual proposal retry changed local keys/witness/state")
+	}
+}
+
+func TestBalancedLostReplyReconcilesWalletHistoryWithoutManagedUTXO(t *testing.T) {
+	p := balancedSecurityPool(t)
+	s, r, snap := balancedFundingFixture(t, p)
+	session, err := s.balancedOpen.CreateSession(context.Background(), BalancedOpenCreateParams{PeerPubkey: hex.EncodeToString(balancedTestKey(88)), CapacitySat: 100000, FeeRateSatVb: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	balancedApprove(s, snap)
+	r.loseReply.Store(true)
+	r.hideUTXO.Store(true) // Custom key-family transit is not a managed wallet UTXO in real LND.
+	r.exposeHistory.Store(true)
+	if w := balancedFundingCall(s, snap, session.SessionID, "propose"); w.Code != 409 || r.sends.Load() != 1 {
+		t.Fatalf("expected uncertain first send, HTTP=%d sends=%d", w.Code, r.sends.Load())
+	}
+	s.balancedOpen = NewBalancedOpenService(p, s.lnd, s.logger, nil)
+	if w := balancedFundingCall(s, snap, session.SessionID, "propose"); w.Code != 200 || r.sends.Load() != 1 {
+		t.Fatalf("wallet history must reconcile the original un-managed output, HTTP=%d sends=%d", w.Code, r.sends.Load())
 	}
 }
 func TestBalancedImmediateAcceptDoesNotRegressState(t *testing.T) {

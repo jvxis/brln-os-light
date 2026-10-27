@@ -104,3 +104,41 @@ func TestAuditSecurityHistoricalMigrationAndAPI(t *testing.T) {
 		t.Fatal("retention regression", err, n)
 	}
 }
+
+func TestAuditSecurityMigrationResumesCommittedBatches(t *testing.T) {
+	p := auditSecurityPool(t)
+	ctx := context.Background()
+	svc := NewAuditService(p, nil)
+	if err := svc.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(ctx, `insert into audit_events(session_id,action) select 'interrupted-cookie','migration.test' from generate_series(1,1100)`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `select id from audit_events where id=501 for update`); err != nil {
+		t.Fatal(err)
+	}
+	deadline, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := svc.migrateSessionIDs(deadline); err == nil {
+		t.Fatal("blocked migration ignored deadline")
+	}
+	var converted int
+	if err := p.QueryRow(ctx, `select count(*) from audit_events where session_id <> 'interrupted-cookie'`).Scan(&converted); err != nil || converted != 500 {
+		t.Fatalf("committed batch lost: count=%d err=%v", converted, err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureSchema(ctx); err != nil {
+		t.Fatal("resume", err)
+	}
+	if err := p.QueryRow(ctx, `select count(*) from audit_events where session_id = 'interrupted-cookie'`).Scan(&converted); err != nil || converted != 0 {
+		t.Fatal("raw IDs survived resumed migration", err)
+	}
+}

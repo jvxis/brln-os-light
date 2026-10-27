@@ -70,6 +70,10 @@ create index if not exists audit_events_action_idx on audit_events (action, ts d
 	if err != nil {
 		return err
 	}
+	return s.migrateSessionIDs(ctx)
+}
+
+func (s *AuditService) migrateSessionIDs(ctx context.Context) error {
 	// Commit bounded batches so initialization can resume after cancellation.
 	// SHA-256 is built into supported PostgreSQL versions; no extension needed.
 	for {

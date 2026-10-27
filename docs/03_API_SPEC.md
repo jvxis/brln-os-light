@@ -64,7 +64,9 @@ Underlying transport errors and credential contents are not returned to the UI.
 - Authenticated auth endpoints:
   - `POST /api/auth/logout`
   - `POST /api/auth/reauth`
-- Manual external on-chain sends (`POST /api/wallet/send`) require a fresh reauthentication step.
+- With login protection enabled, every manual on-chain send (`POST /api/wallet/send`) requires fresh reauthentication, including consolidations and destinations listed in imported/watch-only accounts. Address classification never exempts a send from approval.
+- The existing `wallet_send_external` scope and `wallet_send_external_reauth_required` challenge code are retained for client compatibility; they now apply to all manual on-chain sends. Existing session/CSRF protection, password quotas and three-minute grant lifetime are unchanged. Intent-bound, single-use approvals are separate work (#312).
+- `POST /api/wallet/send/preview` stays read-only and does not require reauthentication. Its `requires_password_confirmation` is true whenever login protection is enabled, including for `wallet_internal`; this classification only means a known address and is not proof of private-key control. The flag is false when login protection is disabled.
 - Inline password confirmations and `POST /api/auth/reauth` share global, client-IP and session quotas. Exhaustion returns HTTP 429 with `code=auth_rate_limited` and `Retry-After`. Client identity uses the direct connection; untrusted forwarded headers do not create additional quotas.
 - Sensitive scopes accepted by `POST /api/auth/reauth` include:
   - `wallet_send_external`

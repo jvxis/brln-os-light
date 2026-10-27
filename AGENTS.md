@@ -156,7 +156,7 @@ When adding or changing an API endpoint:
 - LND gRPC is expected to stay localhost-only.
 - Login-protected installs use secure HTTP-only cookies and CSRF tokens for mutating API calls.
 - Public unauthenticated API paths are limited in `internal/server/auth.go`; verify there before relaxing auth.
-- `POST /api/wallet/send` requires fresh reauthentication for external on-chain sends.
+- With login protection enabled, `POST /api/wallet/send` requires fresh reauthentication for all manual on-chain sends, including consolidations and imported/watch-only destinations.
 - `GET /api/onchain/utxos?limit=N` intentionally enriches the full wallet UTXO set before slicing; `limit` is only a response-size cap.
 
 ## App Store Notes

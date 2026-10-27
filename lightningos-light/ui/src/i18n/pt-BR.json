@@ -2850,8 +2850,8 @@
     "sendPasswordConfirmFailed": "Falha na confirmação de senha.",
     "sendPasswordConfirmRunning": "Confirmando...",
     "sendPasswordEntryRequired": "Informe a senha de admin para confirmar este envio.",
-    "sendPasswordModalBody": "Envios manuais on-chain para destinos fora da wallet deste node exigem uma nova confirmação de senha.",
-    "sendPasswordModalTitle": "Confirmar envio on-chain externo",
+    "sendPasswordModalBody": "Todos os envios manuais on-chain, incluindo consolidações para endereços conhecidos da wallet, exigem uma nova confirmação de senha.",
+    "sendPasswordModalTitle": "Confirmar envio on-chain",
     "sendPasswordRequired": "Confirmação de senha é obrigatória para este destino.",
     "sending": "Enviando...",
     "sendingOnchain": "Enviando on-chain...",
@@ -3371,7 +3371,7 @@
       "errorAddressRequired": "Endereço de destino obrigatório.",
       "errorPreviewFailed": "Falha na pré-visualização.",
       "errorSendFailed": "Falha no envio.",
-      "errorReauthRequired": "Confirmação de senha obrigatória para enviar a um endereço externo.",
+      "errorReauthRequired": "Confirmação de senha obrigatória para este envio on-chain, incluindo consolidações.",
       "errorDeriveAddress": "Falha ao derivar endereço interno."
     },
     "openChannel": {

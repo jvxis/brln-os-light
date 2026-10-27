@@ -2850,8 +2850,8 @@
     "sendPasswordConfirmFailed": "Password confirmation failed.",
     "sendPasswordConfirmRunning": "Confirming...",
     "sendPasswordEntryRequired": "Enter the admin password to confirm this send.",
-    "sendPasswordModalBody": "Manual on-chain sends to destinations outside this node wallet require a fresh password confirmation.",
-    "sendPasswordModalTitle": "Confirm external on-chain send",
+    "sendPasswordModalBody": "All manual on-chain sends, including consolidations to known wallet addresses, require a fresh password confirmation.",
+    "sendPasswordModalTitle": "Confirm on-chain send",
     "sendPasswordRequired": "Password confirmation is required for this destination.",
     "sending": "Sending...",
     "sendingOnchain": "Sending on-chain...",
@@ -3371,7 +3371,7 @@
       "errorAddressRequired": "Destination address required.",
       "errorPreviewFailed": "Preview failed.",
       "errorSendFailed": "Send failed.",
-      "errorReauthRequired": "Password confirmation required to send to an external address.",
+      "errorReauthRequired": "Password confirmation required for this on-chain send, including consolidations.",
       "errorDeriveAddress": "Failed to derive internal address."
     },
     "openChannel": {

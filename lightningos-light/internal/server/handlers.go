@@ -5220,15 +5220,6 @@ func (s *Server) classifyOnchainDestination(ctx context.Context, address string)
 	return "external", nil
 }
 
-func requiresWalletSendConfirmation(classification string) bool {
-	switch strings.TrimSpace(classification) {
-	case "wallet_internal":
-		return false
-	default:
-		return true
-	}
-}
-
 func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Address         string   `json:"address"`
@@ -5260,7 +5251,10 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	destinationClassification, _ := s.classifyOnchainDestination(ctx, address)
-	if s.auth != nil && s.auth.Enabled() && requiresWalletSendConfirmation(destinationClassification) {
+	// Being listed by WalletKit does not prove private-key control (imported
+	// and watch-only accounts are included). Every manual send spends funds or
+	// fees and must pass the same approval gate, including consolidations.
+	if s.auth != nil && s.auth.Enabled() {
 		session, ok := authSessionFromContext(r.Context())
 		if !ok {
 			writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
@@ -5280,7 +5274,7 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 				s.recordAuditEventAsync(r, "auth.reauth.succeeded", authScopeWalletSendExternal, nil)
 			} else {
 				writeJSON(w, http.StatusPreconditionRequired, map[string]any{
-					"error":                          "password confirmation required for external on-chain sends",
+					"error":                          "password confirmation required for on-chain sends",
 					"code":                           "wallet_send_external_reauth_required",
 					"destination_classification":     destinationClassification,
 					"requires_password_confirmation": true,
@@ -5382,7 +5376,7 @@ func (s *Server) handleWalletSendPreview(w http.ResponseWriter, r *http.Request)
 		"exact":                          preview.Exact,
 		"message":                        preview.Message,
 		"destination_classification":     destinationClassification,
-		"requires_password_confirmation": requiresWalletSendConfirmation(destinationClassification),
+		"requires_password_confirmation": s.auth != nil && s.auth.Enabled(),
 	})
 }
 

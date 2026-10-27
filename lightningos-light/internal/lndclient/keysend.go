@@ -31,6 +31,14 @@ func KeysendIdentityPayload(senderPubkey string, recipientPubkey string, amountS
 }
 
 func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amountSat int64, message string) (string, error) {
+	return c.SendKeysendMessageWithPaymentHash(ctx, pubkeyHex, amountSat, message, nil)
+}
+
+// SendKeysendMessageWithPaymentHash calls beforeSend before submitting any
+// payment RPC. A callback error prevents submission and returns an empty hash.
+// This lets a spending ledger persist the hash before an ambiguous disconnect
+// or process crash can hide the identity of an accepted payment.
+func (c *Client) SendKeysendMessageWithPaymentHash(ctx context.Context, pubkeyHex string, amountSat int64, message string, beforeSend func(string) error) (string, error) {
 	trimmed := strings.TrimSpace(pubkeyHex)
 	if trimmed == "" {
 		return "", errors.New("pubkey required")
@@ -82,6 +90,11 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
 		}
 	}
 
+	if beforeSend != nil {
+		if err := beforeSend(paymentHash); err != nil {
+			return "", err
+		}
+	}
 	stream, err := client.SendPaymentV2(ctx, &routerrpc.SendPaymentRequest{
 		Dest:              pubkey,
 		Amt:               amountSat,

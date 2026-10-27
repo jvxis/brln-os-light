@@ -2,6 +2,19 @@
 
 Base URL: https://127.0.0.1:8443
 
+## Terminal connection lifecycle
+
+An established terminal WebSocket is bound to the live login session and the
+terminal runtime configuration. Logout, session expiration, password change or
+recovery (which revoke prior sessions), credential rotation, disabling the
+terminal, and changing its write mode close existing connections within one
+second. An unreadable or invalid runtime file also closes the connection.
+Reconnection runs the normal session and same-origin checks again, using the
+current terminal configuration. GoTTY continues to enforce its configured
+view-only/write mode; the proxy does not grant shell privileges. Background
+monitoring never extends the login session. The Manager session cookie is
+removed before requests reach GoTTY, whose separate credential stays server-side.
+
 ## HTTP request budgets
 
 Request bodies are fully bounded before handlers run: 16 KiB for `/api/auth/*`,

@@ -1099,7 +1099,7 @@ func (s *LoopOutBRLNService) executeNextAttempt(ctx context.Context, job LoopOut
 		return s.waitForLiquidity(ctx, job, reason, newRound)
 	}
 	resolveCtx, resolveCancel := context.WithTimeout(ctx, 30*time.Second)
-	invoice, err := resolveLightningAddress(resolveCtx, job.LightningAddress, amount, job.Comment)
+	invoice, err := resolveLightningAddress(resolveCtx, job.LightningAddress, amount, job.Comment, s.lnd.DecodeInvoice)
 	resolveCancel()
 	if err != nil {
 		return s.waitForLiquidity(ctx, job, "lightning address: "+err.Error(), false)

@@ -62,6 +62,9 @@ type Server struct {
 	auditLogErr                 string
 	auditRetentionOnce          sync.Once
 	spendingGuardInitAt         time.Time
+	lnurlInvoiceMu              sync.Mutex
+	lnurlInvoices               map[string]cachedLNURLInvoice
+	lnurlInvoiceResolutions     singleflight.Group
 	spendingGuardMu             sync.Mutex
 	spendingGuard               *SpendingGuardService
 	spendingGuardErr            string

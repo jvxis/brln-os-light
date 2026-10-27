@@ -535,6 +535,11 @@ func (a *AuthService) reauth(w http.ResponseWriter, r *http.Request, sessionID s
 }
 
 func authScopeValid(scope string) bool {
+	if strings.HasPrefix(scope, lnurlInvoiceScopePrefix) {
+		suffix := strings.TrimPrefix(scope, lnurlInvoiceScopePrefix)
+		decoded, err := hex.DecodeString(suffix)
+		return err == nil && len(decoded) == sha256.Size && suffix == strings.ToLower(suffix)
+	}
 	switch strings.TrimSpace(scope) {
 	case authScopeSpendingGuardPolicy, authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeBarkSeedReveal, authScopeBRLNCommunitySigner:
 		return true

@@ -4796,7 +4796,7 @@ func (s *Server) resolveWalletPaymentInput(ctx context.Context, rawPaymentReques
 		if amountSat <= 0 {
 			return "", nil, errors.New("amount_sat must be positive for lightning address")
 		}
-		resolved, err := resolveLightningAddress(ctx, cleaned, amountSat, comment)
+		resolved, err := s.resolveCachedLNURLInvoice(ctx, cleaned, amountSat, comment)
 		if err != nil {
 			return "", nil, fmt.Errorf("lightning address error: %v", err)
 		}
@@ -4928,13 +4928,16 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "max_fee_sat must be zero or positive")
 		return
 	}
-	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+	if walletLightningAddress(req.PaymentRequest) == "" && !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
 	paymentRequest, outgoingChanIDs, err := s.resolveWalletPaymentInput(r.Context(), req.PaymentRequest, req.AmountSat, req.Comment, req.ChannelPoint, req.ChannelPoints)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.requireResolvedLNURLReauth(w, r, req.PaymentRequest, paymentRequest, req.AmountSat, req.MaxFeeSat, outgoingChanIDs, req.ConfirmPassword) {
 		return
 	}
 
@@ -5009,13 +5012,16 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 	// that gate gone the payment has to hold its own. The frontend already sends
 	// confirm_password here and already retries on lightning_funds_reauth_required,
 	// so only the server side was missing.
-	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+	if walletLightningAddress(req.PaymentRequest) == "" && !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
 	paymentRequest, outgoingChanIDs, err := s.resolveWalletPaymentInput(r.Context(), req.PaymentRequest, req.AmountSat, req.Comment, req.ChannelPoint, req.ChannelPoints)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.requireResolvedLNURLReauth(w, r, req.PaymentRequest, paymentRequest, req.AmountSat, req.MaxFeeSat, outgoingChanIDs, req.ConfirmPassword) {
 		return
 	}
 
@@ -5103,13 +5109,16 @@ func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "max_shard_sat must be zero or positive")
 		return
 	}
-	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+	if walletLightningAddress(req.PaymentRequest) == "" && !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
 	paymentRequest, outgoingChanIDs, err := s.resolveWalletPaymentInput(r.Context(), req.PaymentRequest, req.AmountSat, req.Comment, req.ChannelPoint, req.ChannelPoints)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.requireResolvedLNURLReauth(w, r, req.PaymentRequest, paymentRequest, req.AmountSat, req.MaxFeeSat, outgoingChanIDs, req.ConfirmPassword) {
 		return
 	}
 

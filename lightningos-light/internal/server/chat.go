@@ -213,6 +213,9 @@ func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, amount
 	c.mu.Lock()
 	guard := c.spendingGuard
 	c.mu.Unlock()
+	if guard == nil {
+		return ChatMessage{}, ErrSpendingGuardUnavailable
+	}
 	reservation := SpendingReservation{}
 	var err error
 	if guard != nil {

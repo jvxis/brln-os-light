@@ -1009,6 +1009,8 @@ POST   /api/chat/send
 ```
 
 `POST /api/chat/read` marks the latest inbound message for one `peer_pubkey` as read. The read timestamp is persisted on the node and returned as `last_read_at` by the inbox, so unread state is shared across browsers. Existing browser-local state is migrated by the UI when possible.
+
+`POST /api/chat/send` accepts `peer_pubkey`, `message`, optional positive `amount_sat` (default 1), and optional `confirm_password`. Because Chat sends sats through Keysend, it requires recent `lightning_funds` reauthentication when login is enabled. Missing approval returns HTTP 428 with `code=lightning_funds_reauth_required`. Reading messages and inboxes does not require reauthentication. Sending is blocked with HTTP 503 when Spending Guard cannot be initialized; a policy explicitly loaded as disabled preserves uncapped operation. Wallet invoice payment paths also block when the policy cannot be loaded.
 # LOS Mesh API
 
 `GET /api/apps/los-mesh/status` returns `app` (installed/status/device/devices),

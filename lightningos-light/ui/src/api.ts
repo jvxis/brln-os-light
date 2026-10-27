@@ -928,7 +928,7 @@ export const getChatInbox = () =>
 export const markChatRead = (peerPubkey: string) =>
   request('/api/chat/read', { method: 'POST', body: JSON.stringify({ peer_pubkey: peerPubkey }) })
 
-export const sendChatMessage = (payload: { peer_pubkey: string; message: string; amount_sat?: number }) =>
+export const sendChatMessage = (payload: { peer_pubkey: string; message: string; amount_sat?: number; confirm_password?: string }) =>
   request('/api/chat/send', { method: 'POST', body: JSON.stringify(payload) })
 
 export type NotificationItem = {

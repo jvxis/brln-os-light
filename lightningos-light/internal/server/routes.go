@@ -12,7 +12,11 @@ import (
 func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-	r.Use(securityHeadersMiddleware())
+	hstsMaxAge := 0
+	if s.cfg != nil {
+		hstsMaxAge = s.cfg.Server.HSTSMaxAgeSeconds
+	}
+	r.Use(securityHeadersMiddleware(hstsMaxAge))
 	r.Use(s.requestLogger())
 	r.Use(requestBodyMiddleware(requestBodyReadTimeout))
 	if s.auth != nil {

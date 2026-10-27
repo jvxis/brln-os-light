@@ -14,6 +14,7 @@ func (s *Server) routes() http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(securityHeadersMiddleware())
 	r.Use(s.requestLogger())
+	r.Use(requestBodyMiddleware(requestBodyReadTimeout))
 	if s.auth != nil {
 		r.Use(s.auth.Middleware())
 	}

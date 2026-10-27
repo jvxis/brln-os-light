@@ -318,6 +318,8 @@ func (s *Server) Run() error {
 		Addr:              addr,
 		Handler:           s.routes(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       requestBodyReadTimeout,
+		IdleTimeout:       90 * time.Second,
 		TLSConfig:         tlsCfg,
 	}
 

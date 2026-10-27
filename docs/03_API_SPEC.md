@@ -2,6 +2,22 @@
 
 Base URL: https://127.0.0.1:8443
 
+## HTTP request budgets
+
+Request bodies are fully bounded before handlers run: 16 KiB for `/api/auth/*`,
+16 MiB for `/api/lnops/channel/scb/restore`, and 1 MiB otherwise. This includes
+chunked bodies and trailing data after a JSON value. Oversized bodies return
+`413` (`request_too_large`, or `auth_request_too_large` for authentication).
+Uploads have a 30-second read budget; expiration returns `408`
+(`request_read_timeout`). A shared 32 MiB reservation budget bounds simultaneous
+uploads; capacity exhaustion returns `503` (`request_capacity_exceeded`) with
+`Retry-After: 1`. Reservations last until the handler returns. Retrying a
+financial mutation still requires checking its result before resubmission.
+
+Headers retain their 10-second read budget, and idle keep-alive connections have
+a 90-second timeout. There is no global response write timeout: reports, SSE and
+upgraded terminal connections retain their existing response lifetimes.
+
 ## Channel auto-heal: connected-peer recovery (0.5.41)
 
 `GET/POST /api/lnops/channel/auto-heal` preserve existing fields and POST

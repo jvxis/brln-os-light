@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,7 +28,8 @@ func TestRequestBodyTransportLimits(t *testing.T) {
 				_, _ = io.Copy(io.Discard, r.Body)
 				w.WriteHeader(http.StatusNoContent)
 			})
-			s := httptest.NewUnstartedServer(requestBodyMiddleware(100 * time.Millisecond)(h))
+			logger := (&Server{logger: log.New(io.Discard, "", 0)}).requestLogger()
+			s := httptest.NewUnstartedServer(logger(requestBodyMiddleware(100 * time.Millisecond)(h)))
 			s.EnableHTTP2 = h2
 			s.StartTLS()
 			defer s.Close()

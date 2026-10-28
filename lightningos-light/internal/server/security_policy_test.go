@@ -64,3 +64,20 @@ func TestHSTSRequiresOptInDirectTLSAndDNS(t *testing.T) {
 		}
 	}
 }
+
+func TestExistingAppFrameOriginIsBoundToNode(t *testing.T) {
+	for _, tc := range []struct{ host, want string }{
+		{"node.local:8443", "https://node.local:4449"},
+		{"127.0.0.1:8443", "https://127.0.0.1:4449"},
+		{"[::1]:8443", "https://[::1]:4449"},
+		{"localhost:8443", "https://localhost:4449"},
+		{"attacker@node.local:8443", ""},
+		{"node.local;script-src:*", ""},
+		{"node.local/path", ""},
+		{"", ""},
+	} {
+		if got := existingAppFrameOrigin(tc.host); got != tc.want {
+			t.Fatalf("host=%q got=%q want=%q", tc.host, got, tc.want)
+		}
+	}
+}

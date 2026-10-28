@@ -21,6 +21,11 @@ func securityHeadersMiddleware(hstsMaxAgeSeconds ...int) func(http.Handler) http
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			policy := managerContentSecurityPolicy
+			if origin := existingAppFrameOrigin(r.Host); origin != "" {
+				// Preserve the existing Hardwallet frame on this same node's
+				// dedicated HTTPS port. App contents stay outside this policy.
+				policy = strings.Replace(policy, "frame-src 'self'", "frame-src 'self' "+origin, 1)
+			}
 			if strings.HasPrefix(r.URL.Path, "/terminal/") {
 				// GoTTY 1.8's terminal renderer compiles WebAssembly. This does
 				// not enable JavaScript eval or inline scripts in either page.
@@ -43,6 +48,18 @@ func securityHeadersMiddleware(hstsMaxAgeSeconds ...int) func(http.Handler) http
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func existingAppFrameOrigin(authority string) string {
+	u, err := url.Parse("https://" + authority)
+	if err != nil || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if net.ParseIP(host) == nil && host != "localhost" && !hstsDNSHost(authority) {
+		return ""
+	}
+	return "https://" + net.JoinHostPort(host, "4449")
 }
 
 func hstsDNSHost(authority string) bool {

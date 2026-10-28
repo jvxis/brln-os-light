@@ -5,7 +5,7 @@ Base URL: https://127.0.0.1:8443
 ## Browser security policy
 
 The Manager enforces CSP with same-origin scripts, API/SSE/WebSocket connections,
-frames and fonts, no inline scripts or eval, no plugins/objects or document base
+fonts and core frames, no inline scripts or eval, no plugins/objects or document base
 URL changes, and same-origin framing/forms. Inline styles remain necessary for
 React/graph layouts. QR workers may use same-origin or blob URLs, and camera
 media may use blob URLs. Images allow same-origin, data/blob and HTTP(S) because
@@ -14,6 +14,9 @@ do not allow external scripts. Fonts may also use embedded data URLs. GoTTY and
 same-origin terminal frames use the same policy, with `wasm-unsafe-eval` only
 under `/terminal/` for GoTTY 1.8's WebAssembly renderer. This exception does not
 permit JavaScript eval or inline scripts.
+The existing Hardwallet frame on the same node's HTTPS port 4449 remains allowed;
+this is a narrow frame-origin allowance, not a policy or security review of App
+Store applications.
 
 HSTS defaults to off to preserve private-CA installation and rotation. An
 operator who has established certificate trust for a DNS origin may opt in via

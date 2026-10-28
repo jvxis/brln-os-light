@@ -8,6 +8,7 @@ import (
 	"errors"
 	"lightningos-light/internal/lndclient"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,12 @@ type financialBumpTarget struct {
 	SatPerVbyte int64  `json:"sat_per_vbyte"`
 	BudgetSat   int64  `json:"budget_sat"`
 	Immediate   bool   `json:"immediate"`
+}
+
+func scbFinancialSnapshot(points []string) map[string]any {
+	ordered := append([]string(nil), points...)
+	sort.Strings(ordered)
+	return map[string]any{"channel_points": ordered}
 }
 
 type financialNativeAuxRequest struct {
@@ -91,7 +98,7 @@ func (s *Server) prepareNativeAuxFinancialIntent(ctx context.Context, path strin
 		}
 		digest := sha256.Sum256(backup)
 		binding.Kind = "scb_restore"
-		binding.Snapshot = financialSnapshot(map[string]any{"channel_points": points})
+		binding.Snapshot = financialSnapshot(scbFinancialSnapshot(points))
 		binding.Summary.Details = financialSnapshot(map[string]any{"backup_sha256": hex.EncodeToString(digest[:]), "channel_points": points, "force_close": true})
 		return payload, binding, nil
 	}

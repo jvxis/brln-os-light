@@ -78,6 +78,12 @@ func TestRequestBodyTransportLimits(t *testing.T) {
 				}
 			}
 			before := calls.Load()
+			// A separate transport keeps the deadline assertion independent of
+			// the production-sized upload cases above.
+			slow := httptest.NewUnstartedServer(logger(requestBodyMiddleware(100 * time.Millisecond)(h)))
+			slow.EnableHTTP2 = h2
+			slow.StartTLS()
+			defer slow.Close()
 			reader, writer := io.Pipe()
 			defer reader.Close()
 			done := make(chan struct{})
@@ -87,9 +93,9 @@ func TestRequestBodyTransportLimits(t *testing.T) {
 				time.Sleep(350 * time.Millisecond)
 				writer.Close()
 			}()
-			req, _ := http.NewRequest("POST", s.URL+"/api/wallet/send", reader)
+			req, _ := http.NewRequest("POST", slow.URL+"/api/wallet/send", reader)
 			start := time.Now()
-			res, err := s.Client().Do(req)
+			res, err := slow.Client().Do(req)
 			if err != nil {
 				t.Fatal(err)
 			}

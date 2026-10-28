@@ -1,5 +1,9 @@
 # Regtest Lightning validation — 2026-10-28
 
+This records the initial observations before the fixes. See the
+[Retirement/Succession follow-up](REGTEST_RETIREMENT_SUCCESSION_VALIDATION_2026-10-28.md)
+for later corrected runs; the original failures below remain useful baselines.
+
 ## Environment and boundaries
 
 Ubuntu 24.04.3 amd64, one disposable VM, 4 CPUs / 4 GiB RAM; native Bitcoin

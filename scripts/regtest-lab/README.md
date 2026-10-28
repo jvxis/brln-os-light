@@ -57,6 +57,10 @@ upgrades/broker/App Store lifecycle remain outside this developer profile.
 Expand the yellow **O que funciona / Supported features** notice in either panel
 to check this scope before using a production menu.
 
+Select **Português** or **English** in the panel toolbar to read one language
+at a time. The scrollable table uses distinct status badges; language controls
+remain available while you scroll.
+
 | Validated workflow | What you can test |
 | --- | --- |
 | Wallet and channels | Login, on-chain/Lightning balances, receiving addresses and channel reads. |

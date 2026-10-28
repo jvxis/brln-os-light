@@ -41,13 +41,28 @@ class LabNoticeTests(unittest.TestCase):
         self.assertNotIn('open', details[0], 'scope panel must start collapsed')
         self.assertNotIn('pointer-events:none', details[0].get('style', ''))
         summaries = [attrs for tag, attrs in dom.elements if tag == 'summary']
-        self.assertEqual(summaries, [{'aria-controls': 'los-regtest-support', 'style': 'cursor:pointer;padding:6px'}])
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0]['aria-controls'], 'los-regtest-support')
+        styles = [attrs for tag, attrs in dom.elements if tag == 'style']
+        self.assertEqual(styles, [{'id': 'los-regtest-styles'}])
+        self.assertLess(next(i for i, item in enumerate(dom.elements) if item[0] == 'style'),
+                        next(i for i, item in enumerate(dom.elements) if item[0] == 'body'))
+        panels = [attrs for tag, attrs in dom.elements if tag == 'section' and 'data-lab-language' in attrs]
+        self.assertEqual([item['lang'] for item in panels], ['pt-BR', 'en'])
+        self.assertEqual(len([tag for tag, _ in dom.elements if tag == 'table']), 2)
+        inputs = {attrs['value']: attrs for tag, attrs in dom.elements if tag == 'input'}
+        self.assertEqual(set(inputs), {'pt', 'en'})
+        self.assertEqual(inputs['pt']['name'], inputs['en']['name'])
+        self.assertIn('checked', inputs['pt'])
+        self.assertNotIn('checked', inputs['en'])
+        labels = [attrs.get('for') for tag, attrs in dom.elements if tag == 'label']
+        self.assertEqual(labels, [inputs['pt']['id'], inputs['en']['id']])
         self.assertIn(('main', {'id': 'root'}), dom.elements)
         self.assertIn(('script', {'type': 'module', 'src': '/assets/app.js'}), dom.elements)
         self.assertEqual(sum(tag == 'script' for tag, _ in dom.elements), 1, 'notice must not add scripts')
         self.assertIn('REGTEST | LOS', result)
         self.assertIn('Not supported', result)
-        self.assertIn('name/alias', result)
+        self.assertIn('Name/alias', result)
         self.assertIn('GitHub', result)
         operations = {attrs['data-lab-operation']: attrs.get('data-lab-status')
                       for tag, attrs in dom.elements if tag == 'tr' and 'data-lab-operation' in attrs}
@@ -62,7 +77,9 @@ class LabNoticeTests(unittest.TestCase):
     def test_missing_body_and_duplicate_notice_are_refused(self):
         with self.assertRaisesRegex(RuntimeError, 'Could not attach'):
             self.module.add_lab_notice('<html><head></head></html>')
-        once = self.module.add_lab_notice('<html><body></body></html>')
+        with self.assertRaisesRegex(RuntimeError, 'Could not attach'):
+            self.module.add_lab_notice('<html><body></body></html>')
+        once = self.module.add_lab_notice('<html><head></head><body></body></html>')
         with self.assertRaisesRegex(RuntimeError, 'already attached'):
             self.module.add_lab_notice(once)
 

@@ -1123,6 +1123,11 @@ confused with the explicitly unsupported production controls listed below. An
 existing channel or a successful status request alone does not validate opening
 or closing channels. The notice contains Portuguese and English descriptions.
 
+Mining is manual. After a long period without new blocks, LND may report that
+it is not synced even at the current height. With the miner wallet loaded, run
+`sudo python3 /opt/los-regtest/control.py mine 1` and wait for synchronization
+before testing payments. The funding section below explains loading the miner.
+
 **Outside this profile:** LND configuration through the UI (including name/alias,
 color and network settings), maintenance/restart controls, LND/LOS UI upgrades,
 App Store and external integrations. Other features require their own validation.

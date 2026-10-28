@@ -1131,6 +1131,11 @@ deve ser confundido com os controles de produção explicitamente fora de escopo
 listados abaixo. Ter um canal aberto ou uma consulta de status bem-sucedida não
 valida abrir ou fechar canais. O aviso contém descrições em português e inglês.
 
+A mineração é manual. Após um longo período sem blocos, o LND pode indicar
+falta de sincronização mesmo na altura atual. Com a carteira mineradora carregada,
+execute `sudo python3 /opt/los-regtest/control.py mine 1` e aguarde a sincronização
+antes de testar pagamentos. A seção de fundos abaixo explica como carregar a mineradora.
+
 **Fora deste perfil:** configuração do LND pela interface (incluindo nome/alias,
 cor e rede), controles de manutenção/reinício, upgrades de LND/LOS pela interface,
 Apps da loja e integrações externas. Outras funcionalidades precisam de validação

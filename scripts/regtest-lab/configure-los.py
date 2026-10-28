@@ -46,6 +46,7 @@ def add_lab_notice(html):
 <tr data-lab-operation="channel-automation" data-lab-status="unvalidated"><td>Editar fees, rebalancear e usar automações de canais<br>Edit fees, rebalance and use channel automations</td><td>Ainda não validado / Not validated</td></tr>
 </tbody></table>
 <p>O canal inicial aberto não comprova que os fluxos de abertura/fechamento da interface foram validados. O aviso está disponível também nas telas de operações Lightning.<br>The existing initial channel does not validate the UI open/close workflows. This notice is also available on the Lightning operations screens.</p>
+<p>A mineração é manual. Após um período sem novos blocos, o LND pode indicar falta de sincronização; siga o guia regtest para minerar um novo bloco local antes de testar pagamentos.<br>Mining is manual. After an idle period without new blocks, LND can report that it is not synced; follow the regtest guide to mine a new local block before testing payments.</p>
 <p><strong>Fora de escopo / Not supported</strong></p>
 <ul>
 <li>Configuração do LND pela interface: nome/alias, cor, rede, manutenção e reinícios.<br>LND configuration through the UI: name/alias, color, networking, maintenance and restarts.</li>

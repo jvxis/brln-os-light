@@ -14,6 +14,22 @@ func TestClassifySuccessionTransferWalletFunds(t *testing.T) {
 		wantError       string
 	}{
 		{
+			name:            "waits for younger outputs even when mature funds exist",
+			confirmedAmount: 2000000,
+			totalAmount:     2050000,
+			wantDone:        false,
+			wantStatus:      "waiting_funds",
+			wantError:       "waiting for all wallet funds to reach the configured confirmations",
+		},
+		{
+			name:            "waits when separate wallet reads are inconsistent",
+			confirmedAmount: 21000,
+			totalAmount:     0,
+			wantDone:        false,
+			wantStatus:      "waiting_funds",
+			wantError:       "wallet UTXO snapshot changed; waiting for consistent confirmed funds",
+		},
+		{
 			name:            "waits when wallet has only unconfirmed funds",
 			confirmedAmount: 0,
 			totalAmount:     12500,

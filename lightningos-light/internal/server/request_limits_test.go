@@ -29,7 +29,10 @@ func TestRequestBodyTransportLimits(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			})
 			logger := (&Server{logger: log.New(io.Discard, "", 0)}).requestLogger()
-			s := httptest.NewUnstartedServer(logger(requestBodyMiddleware(100 * time.Millisecond)(h)))
+			// These cases measure byte ceilings, including a complete 16 MiB
+			// backup envelope under -race. Dedicated slow-upload tests below
+			// exercise short read deadlines independently.
+			s := httptest.NewUnstartedServer(logger(requestBodyMiddleware(requestBodyReadTimeout)(h)))
 			s.EnableHTTP2 = h2
 			s.StartTLS()
 			defer s.Close()

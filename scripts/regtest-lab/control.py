@@ -145,6 +145,11 @@ def smoke():
         time.sleep(1)
     else:
         raise RuntimeError('Native channel did not become active')
+    # A channel can become active after the first confirmation while LND is
+    # still processing the rest of the freshly mined batch. Router rejects
+    # payments before chain catch-up, without creating a payment record.
+    for node in PORTS:
+        wait_info(node)
     invoice = ln('bob', 'addinvoice', '--amt=1000', '--memo=LOS REGTEST native smoke test')
     payment = rest('alice', '/v2/router/send', {'payment_request': invoice['payment_request'],
                                               'timeout_seconds': 30, 'fee_limit_sat': '1000',

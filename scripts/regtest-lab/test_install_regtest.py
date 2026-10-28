@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import safety
 import deploy
+import control
 
 
 @unittest.skipUnless(sys.platform == 'linux' and os.geteuid() == 0, 'requires disposable Linux root')
@@ -106,6 +107,27 @@ class DeploymentTests(unittest.TestCase):
 
 
 class FinancialSmokeTests(unittest.TestCase):
+    def test_native_smoke_waits_for_chain_after_channel_confirmation(self):
+        events = []
+        lists = 0
+        def native(node, action, *args):
+            nonlocal lists
+            if action == 'listpeers':
+                return {'peers': [{'pub_key': 'bob'}]}
+            if action == 'listchannels':
+                lists += 1
+                return {'channels': [] if lists == 1 else [{'remote_pubkey': 'bob', 'active': True}]}
+            if action == 'addinvoice':
+                events.append('invoice')
+                return {'payment_request': 'private-fixture-invoice'}
+            return {}
+        def synced(node):
+            events.append('synced:' + node)
+            return {'identity_pubkey': node}
+        with patch.object(control, 'ln', side_effect=native), patch.object(control, 'wait_info', side_effect=synced), patch.object(control, 'mine', side_effect=lambda _: events.append('mine')), patch.object(control, 'rest', return_value={'result': {'status': 'SUCCEEDED'}}):
+            control.smoke()
+        self.assertEqual(events[-4:], ['mine', 'synced:alice', 'synced:bob', 'invoice'])
+
     def test_approval_and_retry_use_normalized_snapshot_not_original_body(self):
         spec = importlib.util.spec_from_file_location('verify_los_test', Path(__file__).with_name('verify-los.py'))
         module = importlib.util.module_from_spec(spec)

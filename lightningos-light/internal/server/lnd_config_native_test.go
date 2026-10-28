@@ -155,6 +155,51 @@ func TestLNDConfigNativeDisposable(t *testing.T) {
 		t.Fatal("stale native editor overwrote config")
 	}
 	t.Log("PASS: native redaction, preserved credentials/custom startup path/operator option, unsafe options and stale revision")
+	// Btcd is inactive in this Bitcoind-backed fixture, so deliberately unusual
+	// credentials exercise the actual INI quoting parser without disconnecting
+	// the chain backend or changing its real private credentials.
+	replacement := "fixture value with spaces and a \"quote\""
+	for _, action := range []string{"replace", "clear", "replace"} {
+		snap, _ = s.readLNDConfigSnapshot()
+		update := lndSecretUpdate{Action: action}
+		if action == "replace" {
+			update.Value = &replacement
+		}
+		if call(true, map[string]any{"raw_user_conf": snap.public, "config_revision": snap.revision, "secret_updates": map[string]lndSecretUpdate{"btcd/btcd.rpcpass": update}, "apply_now": true}).Code != 200 {
+			t.Fatal("native explicit secret mutation failed")
+		}
+		stored, _ := os.ReadFile(path)
+		values := lndPolicyValues(string(stored))["btcd.rpcpass"]
+		if action == "clear" && len(values) != 0 || action == "replace" && (len(values) != 1 || values[0] != replacement) {
+			t.Fatal("native explicit secret mutation stored wrong value")
+		}
+	}
+	t.Log("PASS: actual LND INI parsing of quoted secret replace/clear/restore without changing active RPC credentials")
+	if os.Getenv("LOS_LND_CONFIG_TOR_NATIVE") == "isolated-loopback-tor" {
+		beforeTor, _ := os.ReadFile(path)
+		baseline := updateLNDSectionOptions(string(beforeTor), "tor", []lndSectionOption{{key: "tor.socks", value: "127.0.0.1:19050"}, {key: "tor.control", value: "127.0.0.1:19051"}, {key: "tor.v3", value: "true"}})
+		if err := ops.write([]byte(baseline)); err != nil {
+			t.Fatal("could not prepare isolated Tor fixture")
+		}
+		for _, mode := range []string{"hybrid", "private"} {
+			if call(false, map[string]any{"network_mode": mode, "graph_sync_peers": 1, "disconnect_unresponsive_peers": true, "apply_now": true}).Code != 200 {
+				t.Fatalf("native %s Tor config failed", mode)
+			}
+			if state, err := ops.probe(ctx); err != nil || state != "active" {
+				t.Fatal("native Tor config not active")
+			}
+		}
+		if err := ops.write(beforeTor); err != nil {
+			t.Fatal("could not restore pre-Tor native config")
+		}
+		if err := ops.restart(ctx); err != nil {
+			t.Fatal("could not restart pre-Tor native config")
+		}
+		if _, err := waitLNDConfigReadiness(ctx, ops, string(beforeTor)); err != nil {
+			t.Fatal("pre-Tor native config not ready")
+		}
+		t.Log("PASS: native private/hybrid modes with real local Tor control; nonloopback Tor network disabled")
+	}
 	// A systemd restart may return success before a malformed INI option kills
 	// the daemon. Readiness must detect it and verify restoration independently.
 	snap, _ = s.readLNDConfigSnapshot()
@@ -192,4 +237,18 @@ func TestLNDConfigNativeDisposable(t *testing.T) {
 		t.Fatal("native config inode or permissions changed")
 	}
 	t.Log("PASS: native restart refusal recovery and preserved inode/permissions")
+	// Deliberately prepare a manual-unlock fixture outside the production API.
+	// A healthy locked wallet is accepted as pending, never as verified active.
+	manualLines := []string{}
+	for _, line := range strings.Split(string(snap.raw), "\n") {
+		if !strings.HasPrefix(line, "wallet-unlock-password-file=") && !strings.HasPrefix(line, "wallet-unlock-allow-create=") {
+			manualLines = append(manualLines, line)
+		}
+	}
+	manual := []byte(strings.Join(manualLines, "\n"))
+	result, err := applyLNDConfig(ctx, ops, manual, manual, true)
+	if err != nil || !result.Applied || !result.WalletUnlockRequired || result.WalletSetupRequired {
+		t.Fatal("native manual-unlock state not reported pending")
+	}
+	t.Log("PASS: actual manual-unlock daemon is explicitly pending, not reported active")
 }

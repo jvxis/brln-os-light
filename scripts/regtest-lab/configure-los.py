@@ -44,9 +44,16 @@ def configure(args):
         staged.chmod(0o755)
         staged.replace(installed)
     ui = destination / 'ui'
-    ui.mkdir(exist_ok=True)
+    ui.mkdir(mode=0o755, exist_ok=True)
     with tarfile.open(args.ui_archive) as archive:
         archive.extractall(ui, filter='data')
+    for folder, dirs, files in os.walk(ui):
+        Path(folder).chmod(0o755)
+        for name in dirs + files:
+            file = Path(folder) / name
+            if file.is_symlink():
+                raise RuntimeError('Symlink in UI artifact')
+            file.chmod(0o755 if file.is_dir() else 0o644)
     index = ui / 'index.html'
     html = index.read_text()
     notice = '<div id="los-regtest-notice" style="position:fixed;z-index:2147483647;bottom:0;left:0;right:0;background:#ffce00;color:#171717;text-align:center;font:bold 13px sans-serif;padding:6px;pointer-events:none">REGTEST — MOEDAS SEM VALOR — LABORATÓRIO DESCARTÁVEL</div>'
@@ -101,7 +108,8 @@ def configure(args):
                   'bitcoin_remote': {'rpchost': '127.0.0.1:18443', 'zmq_rawblock': 'tcp://127.0.0.1:28332', 'zmq_rawtx': 'tcp://127.0.0.1:28333'},
                   'postgres': {'db_name': role}, 'ui': {'static_dir': str(ui)}, 'features': {'enable_login': True, 'enable_balanced_open': True},
                   'privileged': {'mode': 'disabled'}}
-        (folder / 'config.yaml').write_text(json.dumps(config, indent=2))
+        if not (folder / 'config.yaml').exists():
+            (folder / 'config.yaml').write_text(json.dumps(config, indent=2))
         env = folder / 'secrets.env'
         # Preserve auth material added by setup/change-password on repeated runs.
         if not env.exists():

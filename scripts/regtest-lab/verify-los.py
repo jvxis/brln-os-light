@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Configure lab login and verify real LOS-to-LND calls, without printing secrets."""
+import argparse
 import http.cookiejar
 import json
 import re
@@ -11,7 +12,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from control import checked_lab, ln, mine
+from control import checked_lab, ln, mine, wait_info
 
 
 class LabAPI:
@@ -23,11 +24,12 @@ class LabAPI:
                                                  urllib.request.HTTPSHandler(context=context))
         self.csrf = ''
 
-    def call(self, endpoint, payload=None, expected=200):
-        headers = {'Origin': self.base, 'Content-Type': 'application/json'}
+    def call(self, endpoint, payload=None, expected=200, *, headers=None):
+        request_headers = {'Origin': self.base, 'Content-Type': 'application/json'}
         if self.csrf:
-            headers['X-CSRF-Token'] = self.csrf
-        request = urllib.request.Request(self.base + endpoint, data=None if payload is None else json.dumps(payload).encode(), headers=headers)
+            request_headers['X-CSRF-Token'] = self.csrf
+        request_headers.update(headers or {})
+        request = urllib.request.Request(self.base + endpoint, data=None if payload is None else json.dumps(payload).encode(), headers=request_headers)
         try:
             response = self.client.open(request, timeout=90)
         except urllib.error.HTTPError as error:
@@ -38,6 +40,17 @@ class LabAPI:
             if response.status != expected:
                 raise RuntimeError('Unexpected LOS response status')
             return json.load(response)
+
+    def financial(self, endpoint, payload):
+        intent = self.call('/api/financial/intents', {'path': endpoint, 'method': 'POST', 'payload': payload}, expected=201)
+        if not intent.get('required') or intent.get('path') != endpoint or intent.get('method') != 'POST' or not re.fullmatch('[a-f0-9]{32}', intent.get('intent_id', '')):
+            raise RuntimeError('Invalid laboratory financial snapshot')
+        self.call('/api/auth/reauth', {'scope': intent['scope'], 'password': (Path('/etc/los-regtest') / self.node / 'ui-password').read_text()})
+        headers = {'X-LOS-Financial-Intent': intent['intent_id']}
+        result = self.call(endpoint, intent['payload'], headers=headers)
+        if self.call(endpoint, intent['payload'], headers=headers) != result:
+            raise RuntimeError('Identical intent retry did not return its original result')
+        return result
 
     def login(self):
         folder = Path('/etc/los-regtest') / self.node
@@ -63,7 +76,7 @@ class LabAPI:
             raise RuntimeError('Lab authentication failed')
 
 
-def verify():
+def verify(setup_only=False):
     checked_lab()
     clients = {}
     for node, port in [('alice', 8443), ('bob', 8543)]:
@@ -89,21 +102,23 @@ def verify():
         api.call('/api/lnops/channels')
         clients[node] = api
         print('PASS: ' + node + ' verified HTTPS, REGTEST notice, login, native wallet balance and channels.')
+    if setup_only:
+        return
     invoice = clients['bob'].call('/api/wallet/invoice', {'amount_sat': 1000, 'memo': 'LOS REGTEST API smoke'})
     request = {'payment_request': invoice['payment_request'], 'max_fee_sat': 1000}
     clients['alice'].call('/api/wallet/pay', request, expected=428)
-    request['confirm_password'] = Path('/etc/los-regtest/alice/ui-password').read_text()
-    clients['alice'].call('/api/wallet/pay', request)
+    clients['alice'].financial('/api/wallet/pay', request)
     print('PASS: LOS invoice and native Lightning payment of 1000 regtest sats; reauthentication enforced.')
     address = clients['bob'].call('/api/wallet/address', {})['address']
     before = int(ln('bob', 'walletbalance')['confirmed_balance'])
     request = {'address': address, 'amount_sat': 10000, 'sat_per_vbyte': 2}
     clients['alice'].call('/api/wallet/send', request, expected=428)
-    request['confirm_password'] = Path('/etc/los-regtest/alice/ui-password').read_text()
-    sent = clients['alice'].call('/api/wallet/send', request)
+    sent = clients['alice'].financial('/api/wallet/send', request)
     if not sent.get('txid'):
         raise RuntimeError('LOS did not return an on-chain transaction ID')
     mine(6)
+    for node in ['alice', 'bob']:
+        wait_info(node)
     for _ in range(60):
         if int(ln('bob', 'walletbalance')['confirmed_balance']) == before + 10000:
             break
@@ -114,4 +129,10 @@ def verify():
 
 
 if __name__ == '__main__':
-    verify()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--setup-only', action='store_true', help='initialize login and verify reads without submitting payments')
+    options = parser.parse_args()
+    try:
+        verify(options.setup_only)
+    except Exception:
+        raise SystemExit('Laboratory HTTPS/authentication/financial verification failed; no automatic financial retry was submitted.')

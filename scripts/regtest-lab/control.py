@@ -21,7 +21,14 @@ PORTS = {'alice': (10009, 8080), 'bob': (11009, 8180)}
 def checked_lab():
     if socket.gethostname() != 'los-regtest' or Path('/etc/los-regtest/LAB_ONLY').read_text().strip() != 'LOS_REGTEST_ONLY':
         raise RuntimeError('Dedicated regtest host required')
-    if btc('getblockchaininfo')['chain'] != 'regtest':
+    info = None
+    for _ in range(60):
+        try:
+            info = btc('getblockchaininfo')
+            break
+        except RuntimeError:
+            time.sleep(1)
+    if info is None or info['chain'] != 'regtest':
         raise RuntimeError('Refusing non-regtest Bitcoin backend')
 
 
@@ -88,7 +95,16 @@ def initialize():
         mine(110 - btc('getblockcount'))
     for node in PORTS:
         macaroon = ROOT / node / 'data/chain/bitcoin/regtest/admin.macaroon'
-        if not macaroon.exists():
+        wallet_db = ROOT / node / 'data/chain/bitcoin/regtest/wallet.db'
+        if not macaroon.exists() and not wallet_db.exists():
+            for _ in range(60):
+                try:
+                    rest(node, '/v1/state')
+                    break
+                except (OSError, urllib.error.URLError):
+                    time.sleep(1)
+            else:
+                raise RuntimeError('Native wallet initializer did not become ready')
             # Seed words exist only in process memory during wallet creation.
             # Never save, print, return, or include them in an error message.
             seed = rest(node, '/v1/genseed')['cipher_seed_mnemonic']

@@ -1048,6 +1048,51 @@ Release-by-release notes are tracked in GitHub Releases:
 - [Historical releases through 0.5.40](https://github.com/jvxis/brln-os-light/releases)
 
 ## Development
+
+### Disposable regtest installation for developers
+
+Use a **fresh, dedicated Ubuntu 24.04 amd64 VM**, with 4 GiB RAM and at least
+20 GiB free disk space recommended. This development profile installs native
+Bitcoin Core, two LND nodes (Alice/Bob), PostgreSQL and two isolated LOS panels.
+It builds the committed source checkout; Internet access is required for packages,
+verified toolchains and build dependencies. All coins are local regtest coins with
+no value. The normal installers remain mainnet-only.
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git python3
+git clone --branch agent/0.5.50-release https://github.com/jvxis/brln-os-light.git
+cd brln-os-light
+sudo hostnamectl set-hostname los-regtest
+sudo bash lightningos-light/install_regtest.sh --disposable-host
+```
+
+The installer refuses existing node data, production service definitions, unowned
+lab directories and dirty checkouts. Commit your development changes before
+running it again. Repeated runs retain wallets and login credentials; each run
+makes small regtest transfers to validate the installation. A failed build leaves
+the current panels running; a failed Manager deployment restores the previous
+Manager/UI, with interrupted deployment recovery on the next attempt.
+
+Access from your workstation through SSH, replacing `user@lab-host`:
+
+```bash
+ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 user@lab-host
+```
+
+Open Alice at `https://127.0.0.1:19043` and Bob at `https://127.0.0.1:19053`.
+Copy the **public** CA `/etc/los-regtest/ca.crt` over verified SSH and trust it in
+your test browser; keep TLS verification enabled. Retrieve each UI password
+privately on the VM with `sudo cat /etc/los-regtest/alice/ui-password` or the Bob
+equivalent. Mine confirmations with `sudo python3 /opt/los-regtest/control.py mine 6`.
+
+App Store lifecycle, production installation/upgrades and external integrations
+are outside this profile. System health panels may report missing production
+services. Never install this profile on a mainnet node or import a real wallet.
+See the [regtest lab guide](scripts/regtest-lab/README.md) for service names,
+recovery and detailed boundaries. Do not run a second disposable VM concurrently
+in the maintainer's VirtualBox lab; keep LOS-TEST2 running and untouched.
+
 See `DEVELOPMENT.md` for local dev setup and build instructions.
 
 ## License

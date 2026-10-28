@@ -1099,6 +1099,55 @@ do Bob. Minere confirmações com `sudo python3 /opt/los-regtest/control.py mine
 Escolha uma taxa manual, como `2 sat/vB`: uma cadeia regtest curta pode ainda não
 ter estimativas automáticas, e serviços públicos de taxas ficam fora deste perfil.
 
+#### Fundos on-chain de teste e confirmações
+
+O instalador abastece as duas carteiras nativas do LND com moedas fictícias.
+Abra **Carteira (Wallet)** no painel da Alice ou do Bob para consultar o saldo confirmado
+no cartão **On-chain**. A mineração credita recompensas na carteira mineradora
+separada do laboratório. Para depositar mais moedas na Alice ou no Bob, abra
+**Carteira → Adicionar fundos** no painel de destino e copie o endereço regtest
+(`bcrt1...`).
+
+Após reiniciar o Bitcoin, pode ser necessário carregar a carteira mineradora.
+Confira as carteiras carregadas:
+
+```bash
+sudo /opt/los-regtest/bin/bitcoin-cli \
+  -datadir=/var/lib/los-regtest/bitcoin -regtest listwallets
+```
+
+Se `los-regtest-miner` não aparecer na lista, carregue a carteira existente:
+
+```bash
+sudo /opt/los-regtest/bin/bitcoin-cli \
+  -datadir=/var/lib/los-regtest/bitcoin -regtest \
+  loadwallet "los-regtest-miner"
+```
+
+Execute este comando **dentro da VM disposable**, substituindo o texto entre
+aspas pelo endereço copiado. O último argumento é o valor em BTC; o exemplo
+deposita 1 BTC fictício (100.000.000 sats):
+
+```bash
+sudo /opt/los-regtest/bin/bitcoin-cli \
+  -datadir=/var/lib/los-regtest/bitcoin \
+  -regtest \
+  -rpcwallet=los-regtest-miner \
+  sendtoaddress "SUBSTITUA_PELO_ENDERECO_REGTEST_DA_WALLET" 1
+```
+
+Minere seis blocos para confirmar o depósito e atualize a **Carteira** de destino:
+
+```bash
+sudo python3 /opt/los-regtest/control.py mine 6
+```
+
+Use o mesmo comando de mineração após transferências de teste entre Alice e
+Bob. Para gerar e maturar novas recompensas da mineradora, use `mine 101` no lugar
+de `mine 6` e depois envie o valor desejado da carteira mineradora, como acima.
+Minerar, por si só, não deposita essas recompensas diretamente nas carteiras LND
+da Alice ou do Bob. Todas essas moedas continuam locais, regtest e sem valor.
+
 Ciclo de vida da App Store, instalação/upgrades de produção e integrações externas
 ficam fora deste perfil. Painéis de saúde podem apontar serviços de produção
 ausentes. Nunca instale este perfil em um node mainnet nem importe uma carteira real.

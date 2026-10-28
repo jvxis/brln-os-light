@@ -1091,6 +1091,54 @@ equivalent. Mine confirmations with `sudo python3 /opt/los-regtest/control.py mi
 Use an explicit fee rate such as `2 sat/vB`; a short regtest chain may not yet
 have automatic estimates, and public fee services are outside this profile.
 
+#### On-chain test funds and confirmations
+
+The installer funds both native LND wallets with fictitious coins. Open **Wallet**
+in Alice's or Bob's panel to see the confirmed balance in the **On-chain** card.
+Mining credits block rewards to the separate laboratory miner wallet. To deposit
+more coins into Alice or Bob, open **Wallet → Add funds** in the receiving panel
+and copy its regtest address (`bcrt1...`).
+
+After a Bitcoin restart, the miner wallet may need to be loaded first. Check
+the loaded wallets:
+
+```bash
+sudo /opt/los-regtest/bin/bitcoin-cli \
+  -datadir=/var/lib/los-regtest/bitcoin -regtest listwallets
+```
+
+If `los-regtest-miner` is absent from that list, load the existing wallet:
+
+```bash
+sudo /opt/los-regtest/bin/bitcoin-cli \
+  -datadir=/var/lib/los-regtest/bitcoin -regtest \
+  loadwallet "los-regtest-miner"
+```
+
+Run this command **inside the disposable VM**, replacing the placeholder with
+that address. The final argument is the amount in BTC; this example deposits
+1 fictitious BTC (100,000,000 sats):
+
+```bash
+sudo /opt/los-regtest/bin/bitcoin-cli \
+  -datadir=/var/lib/los-regtest/bitcoin \
+  -regtest \
+  -rpcwallet=los-regtest-miner \
+  sendtoaddress "REPLACE_WITH_THE_REGTEST_WALLET_ADDRESS" 1
+```
+
+Mine six blocks to confirm the deposit, then refresh the receiving **Wallet**:
+
+```bash
+sudo python3 /opt/los-regtest/control.py mine 6
+```
+
+Use the same mining command after test transfers between Alice and Bob. To
+generate and mature new miner rewards, use `mine 101` instead of `mine 6`, then
+send the desired amount from the miner wallet as above. Mining alone does not
+deposit those rewards directly into Alice's or Bob's LND wallet. All these coins
+remain local regtest coins with no value.
+
 App Store lifecycle, production installation/upgrades and external integrations
 are outside this profile. System health panels may report missing production
 services. Never install this profile on a mainnet node or import a real wallet.

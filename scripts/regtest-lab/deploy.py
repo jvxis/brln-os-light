@@ -64,7 +64,8 @@ def recover():
             copy_asset(BACKUP / name, ROOT / name)
     if data['active']:
         run('systemctl', 'start', *data['active'])
-        run(sys.executable, str(ROOT / 'verify-los.py'), '--setup-only')
+        for unit in data['active']:
+            run(sys.executable, str(ROOT / 'verify-los.py'), '--setup-only', '--node', unit.removeprefix('los-regtest-ui-'))
     remove_asset(BACKUP)
     print('Restored previous laboratory Manager/UI; wallets and passwords retained.')
 

@@ -76,10 +76,15 @@ class LabAPI:
             raise RuntimeError('Lab authentication failed')
 
 
-def verify(setup_only=False):
+def verify(setup_only=False, node=None):
     checked_lab()
     clients = {}
-    for node, port in [('alice', 8443), ('bob', 8543)]:
+    nodes = [('alice', 8443), ('bob', 8543)]
+    if node is not None:
+        if not setup_only:
+            raise RuntimeError('Selecting one node requires --setup-only')
+        nodes = [item for item in nodes if item[0] == node]
+    for node, port in nodes:
         api = LabAPI(node, port)
         for _ in range(60):
             try:
@@ -131,8 +136,9 @@ def verify(setup_only=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--setup-only', action='store_true', help='initialize login and verify reads without submitting payments')
+    parser.add_argument('--node', choices=['alice', 'bob'], help='with --setup-only, check just this panel')
     options = parser.parse_args()
     try:
-        verify(options.setup_only)
+        verify(options.setup_only, options.node)
     except Exception:
         raise SystemExit('Laboratory HTTPS/authentication/financial verification failed; no automatic financial retry was submitted.')

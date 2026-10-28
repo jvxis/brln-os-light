@@ -100,6 +100,8 @@ class DeploymentTests(unittest.TestCase):
             with patch.object(deploy, 'ROOT', root), patch.object(deploy, 'BACKUP', backup), patch.object(deploy, 'run') as run, patch.object(deploy.subprocess, 'run'):
                 deploy.recover()
                 run.assert_any_call('systemctl', 'start', 'los-regtest-ui-alice')
+                run.assert_any_call(sys.executable, str(root / 'verify-los.py'), '--setup-only', '--node', 'alice')
+                self.assertNotIn(unittest.mock.call('systemctl', 'start', 'los-regtest-ui-bob'), run.call_args_list)
             self.assertEqual((root / 'bin/lightningos-manager').read_text(), 'old manager')
             self.assertEqual((root / 'ui/index.html').read_text(), 'old UI')
             self.assertEqual(wallet.read_bytes(), b'unchanged')

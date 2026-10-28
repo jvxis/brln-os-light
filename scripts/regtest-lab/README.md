@@ -46,7 +46,8 @@ backup does not undo application database migrations; developer changes must
 keep their schema compatible with any Manager version they intend to restore.
 
 `sudo python3 /opt/los-regtest/verify-los.py --setup-only` checks login and reads
-without new payments. Without that option, verification makes small test payments.
+without new payments; add `--node alice` or `--node bob` to check a single panel.
+Without that option, verification makes small test payments.
 Run `sudo python3 /opt/los-regtest/control.py status` for native regtest health.
 Access, certificate and private-password instructions are below. Production
 upgrades/broker/App Store lifecycle remain outside this developer profile.

@@ -5,11 +5,37 @@ import (
 	"encoding/json"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
+	"lightningos-light/internal/config"
 	"log"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestFinancialIntentBalancedObservationRetainsApprovedTerms(t *testing.T) {
+	pool := balancedSecurityPool(t)
+	ctx := context.Background()
+	service := NewBalancedOpenService(pool, nil, log.New(io.Discard, "", 0), nil)
+	session, err := service.CreateSession(ctx, BalancedOpenCreateParams{PeerPubkey: "02" + strings.Repeat("11", 32), CapacitySat: 100000, Role: balancedOpenRoleInitiator, Metadata: json.RawMessage(`{"execution_mode":"push_sat_v1"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := financialIntentBinding{Kind: "balanced_open", Snapshot: financialSnapshot(balancedFinancialTerms(session))}
+	record := &financialIntentRecord{Path: "/api/lnops/balanced-open/sessions/" + session.SessionID + "/execute"}
+	s := &Server{cfg: &config.Config{}, balancedOpen: service}
+	if _, err := pool.Exec(ctx, `update balanced_open_sessions set state=$2, metadata=metadata || '{"funding_tx_id":"native-progress"}'::jsonb where session_id=$1`, session.SessionID, balancedOpenStateActive); err != nil {
+		t.Fatal(err)
+	}
+	if status, _, err := s.observeFinancialWorkflow(ctx, record, binding); err != nil || status != 200 {
+		t.Fatal("same approved operation could not observe concurrent native progress", err)
+	}
+	if _, err := pool.Exec(ctx, `update balanced_open_sessions set capacity_sat=capacity_sat+1 where session_id=$1`, session.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.observeFinancialWorkflow(ctx, record, binding); err == nil {
+		t.Fatal("a different completed financial operation was reported as the approved result")
+	}
+}
 
 func financialExecutionContext(t *testing.T, s *Server, session authSessionSnapshot, record *financialIntentRecord) context.Context {
 	t.Helper()

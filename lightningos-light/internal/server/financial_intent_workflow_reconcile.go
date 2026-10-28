@@ -137,6 +137,9 @@ func (s *Server) observeFinancialWorkflow(ctx context.Context, record *financial
 			if err != nil {
 				return 0, nil, errFinancialIntentPending
 			}
+			if !balancedFinancialContinuationMatches(binding.Snapshot, session) {
+				return 0, nil, errFinancialIntentPending
+			}
 			resolved := false
 			switch action {
 			case "propose", "accept":

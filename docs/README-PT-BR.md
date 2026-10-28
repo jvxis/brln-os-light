@@ -1099,6 +1099,31 @@ do Bob. Minere confirmações com `sudo python3 /opt/los-regtest/control.py mine
 Escolha uma taxa manual, como `2 sat/vB`: uma cadeia regtest curta pode ainda não
 ter estimativas automáticas, e serviços públicos de taxas ficam fora deste perfil.
 
+#### Fluxos suportados e limitações visíveis
+
+Expanda o aviso amarelo **O que funciona / Supported features** em qualquer painel
+para consultar este escopo antes de usar um menu de produção.
+
+| Fluxo validado | O que você pode testar |
+| --- | --- |
+| Carteira e canais | Login, saldos on-chain/Lightning, endereços de recebimento e consulta de canais. |
+| Pagamentos Lightning | Criar invoices e pagar entre Alice/Bob, com confirmação de senha. |
+| Pagamentos on-chain | Depositar/enviar moedas fictícias, minerar confirmações manualmente e conferir o saldo recebido. |
+
+**Fora deste perfil:** configuração do LND pela interface (incluindo nome/alias,
+cor e rede), controles de manutenção/reinício, upgrades de LND/LOS pela interface,
+Apps da loja e integrações externas. Outras funcionalidades precisam de validação
+própria. A interface padrão mantém esses menus; estarem visíveis não significa
+que são suportados em regtest. Painéis de saúde também podem apontar serviços de
+produção ausentes.
+
+Cada Manager do laboratório só acessa localhost e tem o broker privilegiado de
+produção desabilitado. Por isso, a consulta de atualização no GitHub pode expirar
+e a tela de configuração do LND pode falhar ao ler o caminho de produção.
+São limitações documentadas do laboratório; não altere permissões ou rede de
+produção para fazer esses menus funcionarem. Os instaladores e a aplicação de
+produção permanecem inalterados.
+
 #### Fundos on-chain de teste e confirmações
 
 O instalador abastece as duas carteiras nativas do LND com moedas fictícias.

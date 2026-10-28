@@ -91,6 +91,23 @@ func TestLNDSecretMutationRejectsAmbiguity(t *testing.T) {
 	}
 }
 
+func TestLNDConfigRedactsMalformedCredentialURLsAndKeyVariants(t *testing.T) {
+	raw := "[Operator]\nupstream=http://fixture-user:invalid%zz@host/endpoint\napi_key=fixture-api-value\nauth-key=fixture-auth-value\n"
+	public, options, _ := redactLNDConfig(raw)
+	if len(options) < 3 || strings.Contains(public, "fixture-") || strings.Contains(public, "invalid%zz") {
+		t.Fatal("credential-like operator fields escaped redaction")
+	}
+	restored, err := restoreLNDConfigSecrets(raw, public, nil)
+	if err != nil || strings.Contains(restored, lndSecretPlaceholder) {
+		t.Fatal("protected operator fields could not be preserved")
+	}
+	for _, entry := range lndConfigEntries(raw) {
+		if !strings.Contains(restored, entry.line) {
+			t.Fatal("operator credential changed during keep")
+		}
+	}
+}
+
 func TestLNDConfigRevisionIsOpaqueAndGuardsRawWrites(t *testing.T) {
 	auth := &AuthService{enabled: true, now: time.Now, sessions: make(map[string]*authSession)}
 	snapshot, _ := auth.newSession()

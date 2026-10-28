@@ -12,8 +12,8 @@ import (
 var (
 	privateMaterial = regexp.MustCompile(`(?i)(BEGIN[^\r\n]*PRIVATE KEY|\b(?:seed[_ -]?(?:words|phrase)|mnemonic|private[_ -]?key)["']?\s*[:=])`)
 	urlUserinfo     = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s/]+@`)
-	jsonSecret      = regexp.MustCompile(`(?i)("[^"\r\n]*(?:password|passwd|token|secret|macaroon|credential|rpcuser|rpcpass|rpcauth|cookie|adminpw)[^"\r\n]*"\s*:\s*)"(?:\\.|[^"\\])*"`)
-	keyValueSecret  = regexp.MustCompile(`(?i)\b([a-z0-9_.-]*(?:password|passwd|token|secret|macaroon|credential|rpcuser|rpcpass|rpcauth|adminpw)[a-z0-9_.-]*|pass|user)(\s*[=:]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)`)
+	jsonSecret      = regexp.MustCompile(`(?i)("[^"\r\n]*(?:password|passwd|token|secret|macaroon|credential|rpc[_.-]?(?:user|pass|auth)|cookie|adminpw|api[_.-]?key|auth[_.-]?key)[^"\r\n]*"\s*:\s*)"(?:\\.|[^"\\])*"`)
+	keyValueSecret  = regexp.MustCompile(`(?i)\b([a-z0-9_.-]*(?:password|passwd|token|secret|macaroon|credential|rpc[_.-]?(?:user|pass|auth)|adminpw|api[_.-]?key|auth[_.-]?key)[a-z0-9_.-]*|pass|user)(\s*[=:]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)`)
 	accessToken     = regexp.MustCompile(`(?i)\b(Bearer|Basic)\s+[a-z0-9._~+/=-]+`)
 	telegramToken   = regexp.MustCompile(`\b(?:bot)?[0-9]{6,}:[A-Za-z0-9_-]{20,}\b`)
 	cookieHeader    = regexp.MustCompile(`(?i)\b((?:set-cookie|cookie)\s*[:=]\s*)[^\r\n]+`)

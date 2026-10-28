@@ -16,6 +16,9 @@ func TestRedactCoreDiagnosticCredentials(t *testing.T) {
 		{`rpc authentication failed bitcoind.rpcuser=private-user bitcoind.rpcpass="private value with spaces"`, []string{"private-user", "private value with spaces"}},
 		{`remote failed {"password":"private\"value","macaroon":"private-macaroon"}`, []string{"private", "private-macaroon"}},
 		{`authentication failed Authorization: Bearer private-token`, []string{"private-token"}},
+		{`request failed {"api_key":"private-api","rpc_user":"private-user","auth-key":"private-auth"}`, []string{"private-api", "private-user", "private-auth"}},
+		{`request failed rpc_user=private-user api-key=private-api auth_key=private-auth`, []string{"private-api", "private-user", "private-auth"}},
+		{`URL parsing failed http://fixture-user:invalid%zz@host/endpoint`, []string{"fixture-user", "invalid%zz"}},
 		{`authentication failed Cookie: __Host-lightningos_session=private-session; csrf=private-csrf`, []string{"private-session", "private-csrf"}},
 		{`notification failed https://api.telegram.org/bot123456789:abcdefghijklmnopqrstuv_xyz/getUpdates`, []string{"123456789:abcdefghijklmnopqrstuv_xyz"}},
 	} {

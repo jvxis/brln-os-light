@@ -67,13 +67,13 @@ func lndOptionIsSecret(entry lndConfigEntry) bool {
 	if lndProtectedPath(key) || key == "nomacaroons" {
 		return false
 	}
-	for _, part := range []string{"rpcuser", "rpcpass", "rpcauth", "password", "passwd", "token", "secret", "credential", "macaroon", "privatekey", "xprv", "mnemonic"} {
+	for _, part := range []string{"rpcuser", "rpcpass", "rpcauth", "password", "passwd", "token", "secret", "credential", "macaroon", "privatekey", "xprv", "mnemonic", "apikey", "authkey"} {
 		if strings.Contains(key, part) {
 			return true
 		}
 	}
 	u, err := url.Parse(strings.Trim(entry.value, "\""))
-	return err == nil && u.User != nil
+	return err == nil && u.User != nil || logsafe.Redact(entry.value) != entry.value
 }
 
 func protectedComment(index int) string { return fmt.Sprintf("# [LOS protected comment %d]", index) }
@@ -215,7 +215,9 @@ func restoreLNDConfigSecrets(previous, submitted string, updates map[string]lndS
 		if !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, ";") {
 			key, value, ok := strings.Cut(trimmed, "=")
 			entry := lndConfigEntry{section: section, key: strings.ToLower(strings.TrimSpace(key)), value: strings.TrimSpace(value)}
-			if ok && lndOptionIsSecret(entry) {
+			// URL-valued options lose their userinfo when redacted. Match the
+			// stored option ID as well as its submitted name/value classification.
+			if ok && (lndOptionIsSecret(entry) || len(old[lndOptionID(entry)]) > 0) {
 				if entry.value != lndSecretPlaceholder {
 					return "", errors.New("sensitive values require explicit keep, replace or clear updates")
 				}

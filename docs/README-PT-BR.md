@@ -1104,6 +1104,10 @@ ter estimativas automáticas, e serviços públicos de taxas ficam fora deste pe
 Expanda o aviso amarelo **O que funciona / Supported features** em qualquer painel
 para consultar este escopo antes de usar um menu de produção.
 
+Escolha **Português** ou **English** no topo do painel para ler um idioma
+por vez. A tabela tem badges de estado distintos e rolagem própria; o seletor
+de idioma continua acessível enquanto você rola o conteúdo.
+
 | Fluxo validado | O que você pode testar |
 | --- | --- |
 | Carteira e canais | Login, saldos on-chain/Lightning, endereços de recebimento e consulta de canais. |

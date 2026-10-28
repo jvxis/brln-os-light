@@ -355,6 +355,7 @@ export const queryLogs = (query: LogQuery, signal?: AbortSignal): Promise<LogQue
   request(`/api/logs/query${buildQuery(query)}`, { signal })
 
 export const updateLndConfig = (payload: {
+  confirm_password?: string
   alias?: string
   color?: string
   min_channel_size_sat?: number
@@ -365,7 +366,9 @@ export const updateLndConfig = (payload: {
   apply_now: boolean
 }) => request('/api/lnd/config', { method: 'POST', body: JSON.stringify(payload) })
 
-export const updateLndRawConfig = (payload: { raw_user_conf: string; apply_now: boolean }) =>
+export type LndSecretUpdate = { action: 'keep' | 'replace' | 'clear'; value?: string }
+export type LndSensitiveOption = { id: string; section: string; key: string; configured: boolean }
+export const updateLndRawConfig = (payload: { raw_user_conf: string; apply_now: boolean; config_revision: string; secret_updates?: Record<string, LndSecretUpdate>; confirm_password?: string }) =>
   request('/api/lnd/config/raw', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getMempoolFees = () => request('/api/mempool/fees')

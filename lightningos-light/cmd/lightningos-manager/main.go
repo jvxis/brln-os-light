@@ -11,6 +11,7 @@ import (
 
 	"lightningos-light/internal/config"
 	"lightningos-light/internal/lndclient"
+	"lightningos-light/internal/logsafe"
 	"lightningos-light/internal/privileged"
 	"lightningos-light/internal/reports"
 	"lightningos-light/internal/server"
@@ -20,6 +21,7 @@ import (
 )
 
 func main() {
+	log.SetOutput(logsafe.NewWriter(os.Stderr))
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "auth":
@@ -131,7 +133,7 @@ func runServer(args []string) {
 		log.Fatalf("config load failed: %v", err)
 	}
 
-	logger := log.New(os.Stdout, "", log.LstdFlags)
+	logger := log.New(logsafe.NewWriter(os.Stdout), "", log.LstdFlags)
 	privilegedClient, err := privileged.NewClient(
 		cfg.Privileged.Mode,
 		time.Duration(cfg.Privileged.TimeoutSeconds)*time.Second,
@@ -168,7 +170,7 @@ func runReports(args []string) {
 		log.Fatalf("config load failed: %v", err)
 	}
 
-	logger := log.New(os.Stdout, "", log.LstdFlags)
+	logger := log.New(logsafe.NewWriter(os.Stdout), "", log.LstdFlags)
 	dsn, err := server.ResolveNotificationsDSN(logger)
 	if err != nil {
 		logger.Fatalf("reports-run failed: %v", err)
@@ -237,7 +239,7 @@ func runReportsBackfill(args []string) {
 		log.Fatalf("config load failed: %v", err)
 	}
 
-	logger := log.New(os.Stdout, "", log.LstdFlags)
+	logger := log.New(logsafe.NewWriter(os.Stdout), "", log.LstdFlags)
 	dsn, err := server.ResolveNotificationsDSN(logger)
 	if err != nil {
 		logger.Fatalf("reports-backfill failed: %v", err)
@@ -428,7 +430,7 @@ func runReportsReconcile(args []string) {
 	if err != nil {
 		log.Fatalf("config load failed: %v", err)
 	}
-	logger := log.New(os.Stdout, "", log.LstdFlags)
+	logger := log.New(logsafe.NewWriter(os.Stdout), "", log.LstdFlags)
 	dsn, err := server.ResolveNotificationsDSN(logger)
 	if err != nil {
 		logger.Fatalf("reports-reconcile failed: %v", err)

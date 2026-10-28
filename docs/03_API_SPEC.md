@@ -284,6 +284,7 @@ GET /api/lnd/status
 - Rate and ETA appear after at least two minutes of progress samples and use a rolling 15-minute window.
 
 GET /api/lnd/config
+- `raw_user_conf` is redacted. Stored credential values never appear in this response. `sensitive_options` lists `{id,section,key,configured}`; `config_revision` is an opaque editor revision that expires when the Manager restarts. Responses use `Cache-Control: no-store`.
 - Supported settings, current values, detected network mode, and raw lnd.conf.
 - `current.network_mode` is `private`, `hybrid`, or `custom`.
 - `private` routes clearnet and onion peers through Tor with stream isolation.
@@ -307,9 +308,19 @@ Body:
 POST /api/lnd/config/raw
 Body:
 {
-  "raw_user_conf": "full lnd.conf text",
-  "apply_now": true
+  "raw_user_conf": "redacted lnd.conf text from GET, with non-secret edits",
+  "config_revision": "opaque revision from GET",
+  "secret_updates": {
+    "bitcoind/bitcoind.rpcpass": {"action": "keep"}
+  },
+  "apply_now": true,
+  "confirm_password": "current admin password, or use prior lnd_config reauth"
 }
+- Both structured and raw writes require fresh `lnd_config` reauthentication when login is enabled; `lnd_maintenance` does not authorize configuration writes. Missing approval returns 428. The UI uses `/api/auth/reauth` before submitting its captured change.
+- Raw writes require the current revision (409 `lnd_config_revision_conflict` on stale/missing revision). Reload before retrying after another writer or a Manager restart.
+- Omitted secret updates or `{action:"keep"}` preserve server values, even if their placeholder rows are omitted. `{action:"replace",value:"new credential"}` replaces one value; `{action:"clear"}` explicitly removes it. Keep/clear cannot include `value`. Only advertised sensitive IDs are accepted; the common Bitcoind/Btcd RPC slots remain available when unset. Plaintext credentials in the editor and unknown placeholders are rejected. Never persist `__LOS_KEEP_SECRET__` as a credential.
+- Existing storage/credential/startup paths are preserved; new paths, public RPC listeners, disabling RPC authentication or REST TLS, and unsafe Tor combinations are rejected before writing. Existing secure nonlocal REST listeners are preserved. Unknown operator settings remain supported and are validated by LND at startup.
+- Applying waits for a fresh uncached State/GetState and authenticated GetInfo after a blocking restart. Manual unlock/setup may return `wallet_unlock_required`/`wallet_setup_required`; this is explicitly pending verification. Startup failure restores the prior file, restarts and verifies recovery with an independent bounded context even if the client disconnects. Errors report `config_restored` and `rollback_verified` separately; pending/unverified recovery is never reported as verified. Writes preserve the existing inode/ownership/mode; this is not a crash-atomic file replacement.
 
 GET /api/lnd/maintenance
 - Returns the persisted maintenance state, effective LND protection flags, rebalance/Magma automation state, LND reachability, and the current pending HTLC count.

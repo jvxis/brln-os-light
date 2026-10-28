@@ -8,6 +8,7 @@ import (
 	"lightningos-light/lnrpc/routerrpc"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -114,6 +115,8 @@ func TestFinancialIntentInvoiceLostRPCReplyAndNativeReconciliation(t *testing.T)
 
 func TestFinancialIntentChatPersistsNativeHashBeforeRPC(t *testing.T) {
 	s, old, session := financialHTTPFixture(t)
+	dir := t.TempDir()
+	s.chat = &ChatService{legacy: newChatFileStore(filepath.Join(dir, "messages.jsonl"), filepath.Join(dir, "cursor.txt"), filepath.Join(dir, "read-state.json"))}
 	if _, err := s.financialIntents.cancelDraft(old.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +174,13 @@ func TestFinancialIntentChatPersistsNativeHashBeforeRPC(t *testing.T) {
 	status, result, err := s.observeFinancialIntent(context.Background(), stored)
 	if err != nil || status != 200 || !strings.Contains(string(result), nativeHash) {
 		t.Fatal("native keysend result not recovered", err)
+	}
+	if _, _, err := s.observeFinancialIntent(context.Background(), stored); err != nil {
+		t.Fatal("repeated native observation failed", err)
+	}
+	messages, err := s.chat.Messages(peer, 10)
+	if err != nil || len(messages) != 1 || messages[0].PaymentHash != nativeHash || messages[0].Message != "immutable message" {
+		t.Fatal("recovered keysend was missing or duplicated in chat history", err)
 	}
 	if _, err := s.financialIntents.reconcile(intent.ID, status, result); err != nil {
 		t.Fatal(err)

@@ -170,6 +170,18 @@ func (s *Server) observeFinancialInvoice(ctx context.Context, record *financialI
 				return 0, nil, errFinancialIntentPending
 			}
 			msg := ChatMessage{Timestamp: details.CreatedAt, PeerPubkey: request.PeerPubkey, Direction: "out", Message: request.Message, Status: "sent", PaymentHash: proof.PaymentHash, AmountSat: binding.Summary.AmountSat, IdentitySource: "local", SenderVerified: true}
+			if msg.Timestamp.IsZero() {
+				msg.Timestamp = proof.StartedAt
+			}
+			// A lost native response can precede normal outbound persistence.
+			// Both chat stores deduplicate by direction/payment hash, so repeated
+			// observation repairs history without another payment or message.
+			if s.chat != nil {
+				if err := s.chat.persistMessage(ctx, msg); err != nil {
+					return 0, nil, errFinancialIntentPending
+				}
+				s.chat.recordKeysendNotification(msg)
+			}
 			body, _ := json.Marshal(msg)
 			return 200, body, nil
 		}

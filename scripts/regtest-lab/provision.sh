@@ -90,4 +90,17 @@ EOF
 done
 systemctl daemon-reload
 systemctl enable --now los-regtest-bitcoin los-regtest-alice los-regtest-bob >/dev/null
+
+# enable --now leaves an already active process running its previous executable.
+# Compare the live executable too, so retrying an interrupted upgrade converges.
+restart_changed_lnd() {
+  local service=$1 binary=$2 pid
+  pid=$(systemctl show "$service" --property=MainPID --value)
+  if [[ $pid =~ ^[1-9][0-9]*$ && -e /proc/$pid/exe ]] && ! cmp -s -- "/proc/$pid/exe" "$binary"; then
+    systemctl restart "$service"
+  fi
+}
+for node in alice bob; do
+  restart_changed_lnd "los-regtest-$node" /opt/los-regtest/bin/lnd
+done
 echo 'Native Bitcoin/LND regtest units installed. Wallet initialization/funding is a separate step.'

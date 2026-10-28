@@ -2,6 +2,39 @@
 
 Base URL: https://127.0.0.1:8443
 
+## Browser security policy
+
+The Manager enforces CSP with same-origin scripts, API/SSE/WebSocket connections,
+fonts and core frames, no inline scripts or eval, no plugins/objects or document base
+URL changes, and same-origin framing/forms. Inline styles remain necessary for
+React/graph layouts. QR workers may use same-origin or blob URLs, and camera
+media may use blob URLs. Images allow same-origin, data/blob and HTTP(S) because
+custom shortcut icons and provider QR images may be external; these permissions
+do not allow external scripts. Fonts may also use embedded data URLs. GoTTY and
+same-origin terminal frames use the same policy, with `wasm-unsafe-eval` only
+under `/terminal/` for GoTTY 1.8's WebAssembly renderer. This exception does not
+permit JavaScript eval or inline scripts.
+The existing Hardwallet frame on the same node's HTTPS port 4449 remains allowed;
+this is a narrow frame-origin allowance, not a policy or security review of App
+Store applications.
+
+HSTS defaults to off to preserve private-CA installation and rotation. An
+operator who has established certificate trust for a DNS origin may opt in via
+`server.hsts_max_age_seconds` in the Manager config (0 through 31536000; start
+with 300). HSTS is sent only on direct TLS for qualified DNS names, without
+`includeSubDomains` or `preload`; client forwarding headers cannot enable it.
+IP literals and localhost never receive HSTS, retaining the certificate
+bootstrap/recovery path through a certificate-covered node IP. An HTTPS reverse
+proxy may manage its own host-only HSTS after its certificate trust is ready.
+
+Before changing a CA/certificate, provision client trust or retain a trusted
+certificate during the transition. Disabling the server option does not clear
+an HSTS policy already cached in a browser: use the covered IP recovery URL to
+install trust, or wait for the previous max-age to expire. HSTS does not justify
+exposing the Manager publicly. This policy follows
+[CSP Level 3](https://www.w3.org/TR/CSP3/) and
+[RFC 6797](https://www.rfc-editor.org/rfc/rfc6797).
+
 ## Terminal connection lifecycle
 
 An established terminal WebSocket is bound to the live login session and the

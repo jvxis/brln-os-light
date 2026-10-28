@@ -21,10 +21,11 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host    string `yaml:"host"`
-	Port    int    `yaml:"port"`
-	TLSCert string `yaml:"tls_cert"`
-	TLSKey  string `yaml:"tls_key"`
+	Host              string `yaml:"host"`
+	Port              int    `yaml:"port"`
+	TLSCert           string `yaml:"tls_cert"`
+	TLSKey            string `yaml:"tls_key"`
+	HSTSMaxAgeSeconds int    `yaml:"hsts_max_age_seconds"`
 }
 
 type LNDConfig struct {
@@ -138,6 +139,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("privileged.timeout_seconds must be between 1 and 30")
 	}
 
+	if cfg.Server.HSTSMaxAgeSeconds < 0 || cfg.Server.HSTSMaxAgeSeconds > 31536000 {
+		return nil, fmt.Errorf("server.hsts_max_age_seconds must be between 0 and 31536000")
+	}
 	if cfg.Server.TLSCert == "" || cfg.Server.TLSKey == "" {
 		return nil, fmt.Errorf("server TLS cert/key required")
 	}

@@ -1110,6 +1110,32 @@ para consultar este escopo antes de usar um menu de produção.
 | Pagamentos Lightning | Criar invoices e pagar entre Alice/Bob, com confirmação de senha. |
 | Pagamentos on-chain | Depositar/enviar moedas fictícias, minerar confirmações manualmente e conferir o saldo recebido. |
 
+**Operações Lightning:** use a distinção abaixo neste perfil. A mesma matriz
+bilíngue fica disponível no aviso amarelo em todas as páginas, inclusive nas
+telas de operações Lightning.
+
+| Operação | Estado no laboratório |
+| --- | --- |
+| Consultar canais e saldos | Validado. |
+| Canal inicial criado pelo preparador via `lncli` | Validado no preparador; isso não valida abertura pela interface do LOS. |
+| Abrir canal simples pela interface | Ainda não validado neste laboratório. |
+| Abrir canais em lote pela interface | Ainda não validado neste laboratório. |
+| Abrir canal balanceado pela interface | Habilitado, mas o fluxo completo ainda não foi validado neste laboratório. |
+| Fechar canal cooperativamente pela interface | Ainda não validado neste laboratório. |
+| Forçar fechamento de canal pela interface | Ainda não validado neste laboratório. |
+| Editar fees, rebalancear e usar automações de canais | Ainda não validado neste laboratório. |
+
+**Ainda não validado** significa que o fluxo completo pela interface não foi
+exercitado nesta instalação do laboratório. Isso não afirma que ele falha e não
+deve ser confundido com os controles de produção explicitamente fora de escopo,
+listados abaixo. Ter um canal aberto ou uma consulta de status bem-sucedida não
+valida abrir ou fechar canais. O aviso contém descrições em português e inglês.
+
+A mineração é manual. Após um longo período sem blocos, o LND pode indicar
+falta de sincronização mesmo na altura atual. Com a carteira mineradora carregada,
+execute `sudo python3 /opt/los-regtest/control.py mine 1` e aguarde a sincronização
+antes de testar pagamentos. A seção de fundos abaixo explica como carregar a mineradora.
+
 **Fora deste perfil:** configuração do LND pela interface (incluindo nome/alias,
 cor e rede), controles de manutenção/reinício, upgrades de LND/LOS pela interface,
 Apps da loja e integrações externas. Outras funcionalidades precisam de validação

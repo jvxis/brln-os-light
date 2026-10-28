@@ -1102,6 +1102,32 @@ to check this scope before using a production menu.
 | Lightning payments | Create invoices and pay between Alice/Bob, with password confirmation. |
 | On-chain payments | Deposit/send fictitious coins, mine confirmations manually and check the received balance. |
 
+**Lightning operations:** use the following distinction in this profile. The
+same bilingual matrix is available in the yellow notice on every page, including
+the Lightning operations screens.
+
+| Operation | Lab status |
+| --- | --- |
+| Read channels and balances | Validated. |
+| Initial channel created by setup through `lncli` | Validated in setup; this does not validate opening through the LOS UI. |
+| Open a single channel through the UI | Not yet validated in this lab. |
+| Batch-open channels through the UI | Not yet validated in this lab. |
+| Balanced channel opening through the UI | Enabled, but the complete workflow is not yet validated in this lab. |
+| Cooperative channel close through the UI | Not yet validated in this lab. |
+| Force-close a channel through the UI | Not yet validated in this lab. |
+| Fee editing, rebalance and channel automations | Not yet validated in this lab. |
+
+**Not yet validated** means the end-to-end UI workflow has not been exercised on
+this lab installation. It does not mean it is known to fail, and it must not be
+confused with the explicitly unsupported production controls listed below. An
+existing channel or a successful status request alone does not validate opening
+or closing channels. The notice contains Portuguese and English descriptions.
+
+Mining is manual. After a long period without new blocks, LND may report that
+it is not synced even at the current height. With the miner wallet loaded, run
+`sudo python3 /opt/los-regtest/control.py mine 1` and wait for synchronization
+before testing payments. The funding section below explains loading the miner.
+
 **Outside this profile:** LND configuration through the UI (including name/alias,
 color and network settings), maintenance/restart controls, LND/LOS UI upgrades,
 App Store and external integrations. Other features require their own validation.

@@ -1055,6 +1055,54 @@ Notas por versão são mantidas no GitHub Releases:
 - [Releases anteriores, até a 0.5.40](https://github.com/jvxis/brln-os-light/releases)
 
 ## Desenvolvimento
+
+### Instalação regtest descartável para desenvolvedores
+
+Use uma **VM nova e dedicada com Ubuntu 24.04 amd64**. Recomendamos 4 GiB de RAM
+e pelo menos 20 GiB livres em disco. Este perfil de desenvolvimento instala
+Bitcoin Core nativo, dois nodes LND (Alice/Bob), PostgreSQL e dois painéis LOS
+isolados. Compila o checkout commitado; exige Internet para pacotes, toolchains
+verificadas e dependências. Todas as moedas são regtest locais, sem valor.
+Os instaladores normais continuam exclusivos de mainnet.
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git python3
+git clone --branch agent/0.5.50-release https://github.com/jvxis/brln-os-light.git
+cd brln-os-light
+sudo hostnamectl set-hostname los-regtest
+sudo bash lightningos-light/install_regtest.sh --disposable-host
+```
+
+O instalador recusa dados de nodes existentes, definições de serviços de produção,
+diretórios de laboratório sem identificação e checkouts com alterações pendentes.
+Faça commit das alterações de desenvolvimento antes de executar novamente.
+Reexecuções preservam carteiras e senhas; cada execução faz pequenas transferências
+regtest para validar a instalação. Falha de compilação mantém os painéis atuais
+rodando. Falha na implantação do Manager restaura o Manager/UI anterior; uma
+implantação interrompida é recuperada na próxima tentativa.
+
+No computador de acesso, mantenha este túnel SSH aberto, substituindo `usuario@host-do-lab`:
+
+```bash
+ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 usuario@host-do-lab
+```
+
+Abra Alice em `https://127.0.0.1:19043` e Bob em `https://127.0.0.1:19053`.
+Copie a CA **pública** `/etc/los-regtest/ca.crt` por SSH verificado e confie nela
+no navegador de testes; mantenha a verificação TLS habilitada. Consulte a senha
+privadamente na VM com `sudo cat /etc/los-regtest/alice/ui-password` ou o equivalente
+do Bob. Minere confirmações com `sudo python3 /opt/los-regtest/control.py mine 6`.
+Escolha uma taxa manual, como `2 sat/vB`: uma cadeia regtest curta pode ainda não
+ter estimativas automáticas, e serviços públicos de taxas ficam fora deste perfil.
+
+Ciclo de vida da App Store, instalação/upgrades de produção e integrações externas
+ficam fora deste perfil. Painéis de saúde podem apontar serviços de produção
+ausentes. Nunca instale este perfil em um node mainnet nem importe uma carteira real.
+Veja o [guia do laboratório regtest](../scripts/regtest-lab/README.md) para serviços,
+recuperação e limites. No VirtualBox do mantenedor, não ligue duas disposables ao
+mesmo tempo; mantenha o LOS-TEST2 ligado e intocado.
+
 Veja `DEVELOPMENT.md` para setup local e instruções de build.
 
 ## Systemd

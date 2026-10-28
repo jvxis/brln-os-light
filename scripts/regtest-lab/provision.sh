@@ -5,6 +5,7 @@ umask 077
 [[ $EUID == 0 && $(hostname) == los-regtest ]]
 [[ $(cat /etc/los-regtest/LAB_ONLY) == LOS_REGTEST_ONLY ]]
 [[ $(uname -m) == x86_64 && ! -d /data/lnd ]]
+python3 "$(dirname -- "${BASH_SOURCE[0]}")/safety.py" check
 for service in lnd bitcoind lightningos-manager; do
   if systemctl is-active --quiet "$service"; then echo "Refusing existing service: $service" >&2; exit 1; fi
 done
@@ -39,17 +40,19 @@ credential=etc/'bitcoin-rpc-password'
 if not credential.exists():credential.write_text(secrets.token_urlsafe(32)+'\n');credential.chmod(0o600)
 password=credential.read_text().strip()
 bitcoin=root/'bitcoin';bitcoin.mkdir(mode=0o700,exist_ok=True)
-(bitcoin/'bitcoin.conf').write_text(f'regtest=1\nserver=1\nlisten=0\ndiscover=0\ndnsseed=0\ntxindex=1\nfallbackfee=0.00002\ndbcache=256\n[regtest]\nconnect=0\nrpcbind=127.0.0.1\nrpcallowip=127.0.0.1\nrpcport=18443\nrpcuser=los-regtest\nrpcpassword={password}\nzmqpubrawblock=tcp://127.0.0.1:28332\nzmqpubrawtx=tcp://127.0.0.1:28333\n')
+if not (bitcoin/'bitcoin.conf').exists():(bitcoin/'bitcoin.conf').write_text(f'regtest=1\nserver=1\nlisten=0\ndiscover=0\ndnsseed=0\ntxindex=1\nfallbackfee=0.00002\ndbcache=256\n[regtest]\nconnect=0\nrpcbind=127.0.0.1\nrpcallowip=127.0.0.1\nrpcport=18443\nrpcuser=los-regtest\nrpcpassword={password}\nzmqpubrawblock=tcp://127.0.0.1:28332\nzmqpubrawtx=tcp://127.0.0.1:28333\n')
 for name,grpc,rest,p2p in [('alice',10009,8080,9735),('bob',11009,8180,9835)]:
  folder=root/name;folder.mkdir(mode=0o700,exist_ok=True)
  wallet=folder/'wallet-password'
  if not wallet.exists():wallet.write_text(secrets.token_urlsafe(32)+'\n');wallet.chmod(0o600)
- (folder/'lnd.conf').write_text(f'[Application Options]\nalias=LOS-REGTEST-{name.upper()}\nlisten=127.0.0.1:{p2p}\nrpclisten=127.0.0.1:{grpc}\nrestlisten=127.0.0.1:{rest}\ntlsextraip=127.0.0.1\nwallet-unlock-password-file={wallet}\nwallet-unlock-allow-create=true\naccept-keysend=true\n[Bitcoin]\nbitcoin.regtest=true\nbitcoin.node=bitcoind\n[Bitcoind]\nbitcoind.rpchost=127.0.0.1:18443\nbitcoind.rpcuser=los-regtest\nbitcoind.rpcpass={password}\nbitcoind.zmqpubrawblock=tcp://127.0.0.1:28332\nbitcoind.zmqpubrawtx=tcp://127.0.0.1:28333\n[Protocol]\nprotocol.wumbo-channels=true\n')
+ if not (folder/'lnd.conf').exists():(folder/'lnd.conf').write_text(f'[Application Options]\nalias=LOS-REGTEST-{name.upper()}\nlisten=127.0.0.1:{p2p}\nrpclisten=127.0.0.1:{grpc}\nrestlisten=127.0.0.1:{rest}\ntlsextraip=127.0.0.1\nwallet-unlock-password-file={wallet}\nwallet-unlock-allow-create=true\naccept-keysend=true\n[Bitcoin]\nbitcoin.regtest=true\nbitcoin.node=bitcoind\n[Bitcoind]\nbitcoind.rpchost=127.0.0.1:18443\nbitcoind.rpcuser=los-regtest\nbitcoind.rpcpass={password}\nbitcoind.zmqpubrawblock=tcp://127.0.0.1:28332\nbitcoind.zmqpubrawtx=tcp://127.0.0.1:28333\n[Protocol]\nprotocol.wumbo-channels=true\n')
 user=pwd.getpwnam('los-regtest')
 for folder,dirs,files in os.walk(root):
- os.chown(folder,user.pw_uid,user.pw_gid)
+ os.chown(folder,user.pw_uid,user.pw_gid,follow_symlinks=False)
  for name in files:
-  file=Path(folder)/name;os.chown(file,user.pw_uid,user.pw_gid)
+  file=Path(folder)/name
+  if file.is_symlink():raise RuntimeError('Refusing symlink in native laboratory data')
+  os.chown(file,user.pw_uid,user.pw_gid,follow_symlinks=False)
   if name.endswith('.conf'):file.chmod(0o600)
 PY
 for node in bitcoin alice bob; do

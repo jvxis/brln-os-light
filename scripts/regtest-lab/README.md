@@ -41,7 +41,9 @@ checks both new instances through verified HTTPS/login. Failure restores the old
 assets and starts the previously active panels. If interrupted during deployment,
 the next attempt restores that backup first. A first-install failure retains lab
 data for retry; it never deletes or resets wallets. Native package/toolchain
-preparation is not a general OS package rollback mechanism.
+preparation is not a general OS package rollback mechanism. The deployment
+backup does not undo application database migrations; developer changes must
+keep their schema compatible with any Manager version they intend to restore.
 
 `sudo python3 /opt/los-regtest/verify-los.py --setup-only` checks login and reads
 without new payments. Without that option, verification makes small test payments.

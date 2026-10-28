@@ -19,7 +19,7 @@ class PreflightTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.path = lambda value: self.root / str(value).lstrip('/')
+        self.path = lambda value: Path(value) if Path(value).is_relative_to(self.root) else self.root / str(value).lstrip('/')
         self.patches = [patch.object(safety, 'Path', self.path),
                         patch.object(safety, 'MARKER', self.path('/etc/los-regtest/LAB_ONLY')),
                         patch.object(safety.subprocess, 'run', return_value=SimpleNamespace(stdout='not-found\n', returncode=0))]

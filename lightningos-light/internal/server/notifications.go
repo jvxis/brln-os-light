@@ -692,6 +692,7 @@ create index if not exists payment_route_hops_cost_idx on payment_route_hops (co
     system_summary_last_sent_at timestamptz,
     activity_mirror_enabled boolean not null default false,
     autofee_summary_enabled boolean not null default false,
+    resource_alerts_enabled boolean not null default true,
     last_update_id bigint not null default 0,
     updated_at timestamptz not null default now()
   );
@@ -701,6 +702,7 @@ create index if not exists payment_route_hops_cost_idx on payment_route_hops (co
   alter table telegram_notification_settings add column if not exists system_summary_last_sent_at timestamptz;
   alter table telegram_notification_settings add column if not exists activity_mirror_enabled boolean not null default false;
   alter table telegram_notification_settings add column if not exists autofee_summary_enabled boolean not null default false;
+  alter table telegram_notification_settings add column if not exists resource_alerts_enabled boolean not null default true;
 
   insert into telegram_notification_settings (id)
   values (1)

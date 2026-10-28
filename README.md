@@ -1091,6 +1091,29 @@ equivalent. Mine confirmations with `sudo python3 /opt/los-regtest/control.py mi
 Use an explicit fee rate such as `2 sat/vB`; a short regtest chain may not yet
 have automatic estimates, and public fee services are outside this profile.
 
+#### Supported workflows and visible limitations
+
+Expand the yellow **O que funciona / Supported features** notice in either panel
+to check this scope before using a production menu.
+
+| Validated workflow | What you can test |
+| --- | --- |
+| Wallet and channels | Login, on-chain/Lightning balances, receiving addresses and channel reads. |
+| Lightning payments | Create invoices and pay between Alice/Bob, with password confirmation. |
+| On-chain payments | Deposit/send fictitious coins, mine confirmations manually and check the received balance. |
+
+**Outside this profile:** LND configuration through the UI (including name/alias,
+color and network settings), maintenance/restart controls, LND/LOS UI upgrades,
+App Store and external integrations. Other features require their own validation.
+The standard UI retains these menus; visibility does not imply regtest support.
+Health panels may also report missing production services.
+
+Each lab Manager is restricted to localhost and has the production privileged
+broker disabled. GitHub update checks can therefore time out, and the LND config
+page can fail to read the production configuration path. These are documented
+lab limitations; do not change production permissions/networking to make the
+menus work. The production installers and application remain unchanged.
+
 #### On-chain test funds and confirmations
 
 The installer funds both native LND wallets with fictitious coins. Open **Wallet**

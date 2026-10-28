@@ -1,5 +1,6 @@
 """Run on Linux: python3 -m unittest discover -s scripts/regtest-lab -v."""
 import importlib.util
+from html.parser import HTMLParser
 import json
 import os
 import shutil
@@ -14,6 +15,47 @@ from unittest.mock import patch
 import safety
 import deploy
 import control
+
+
+@unittest.skipUnless(sys.platform == 'linux', 'requires Linux configure helper (pwd)')
+class LabNoticeTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location('configure_los_notice_test', Path(__file__).with_name('configure-los.py'))
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+
+    def test_scope_panel_is_keyboard_native_and_preserves_application_assets(self):
+        original = '<html><head><title>LOS</title><script type="module" src="/assets/app.js"></script></head><body class="app"><main id="root"></main></body></html>'
+        result = self.module.add_lab_notice(original)
+        class DOM(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.elements = []
+            def handle_starttag(self, tag, attrs):
+                self.elements.append((tag, dict(attrs)))
+        dom = DOM()
+        dom.feed(result)
+        details = [attrs for tag, attrs in dom.elements if tag == 'details']
+        self.assertEqual(len(details), 1)
+        self.assertEqual(details[0]['id'], 'los-regtest-notice')
+        self.assertNotIn('open', details[0], 'scope panel must start collapsed')
+        self.assertNotIn('pointer-events:none', details[0].get('style', ''))
+        summaries = [attrs for tag, attrs in dom.elements if tag == 'summary']
+        self.assertEqual(summaries, [{'aria-controls': 'los-regtest-support', 'style': 'cursor:pointer;padding:6px'}])
+        self.assertIn(('main', {'id': 'root'}), dom.elements)
+        self.assertIn(('script', {'type': 'module', 'src': '/assets/app.js'}), dom.elements)
+        self.assertEqual(sum(tag == 'script' for tag, _ in dom.elements), 1, 'notice must not add scripts')
+        self.assertIn('REGTEST | LOS', result)
+        self.assertIn('Not supported', result)
+        self.assertIn('name/alias', result)
+        self.assertIn('GitHub', result)
+
+    def test_missing_body_and_duplicate_notice_are_refused(self):
+        with self.assertRaisesRegex(RuntimeError, 'Could not attach'):
+            self.module.add_lab_notice('<html><head></head></html>')
+        once = self.module.add_lab_notice('<html><body></body></html>')
+        with self.assertRaisesRegex(RuntimeError, 'already attached'):
+            self.module.add_lab_notice(once)
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'requires Linux /proc executable identity')

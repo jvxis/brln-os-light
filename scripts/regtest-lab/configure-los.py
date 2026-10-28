@@ -19,6 +19,32 @@ def run(*args, input=None):
     subprocess.run(args, input=input, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
+def add_lab_notice(html):
+    if 'id="los-regtest-notice"' in html:
+        raise RuntimeError('Regtest notice is already attached')
+    notice = '''<details id="los-regtest-notice" style="position:fixed;z-index:2147483647;bottom:0;left:0;right:0;max-height:75vh;overflow:auto;background:#ffce00;color:#171717;text-align:center;font:bold 13px sans-serif">
+<summary aria-controls="los-regtest-support" style="cursor:pointer;padding:6px">REGTEST — MOEDAS SEM VALOR — LABORATÓRIO DESCARTÁVEL · O que funciona / Supported features</summary>
+<div id="los-regtest-support" style="background:#fff6c9;text-align:left;padding:10px 14px;font:13px/1.45 sans-serif">
+<p><strong>Validado neste laboratório / Validated in this lab</strong></p>
+<ul>
+<li>Login, saldos on-chain/Lightning, endereços de recebimento e consulta de canais.<br>Login, on-chain/Lightning balances, receiving addresses and channel reads.</li>
+<li>Invoices e pagamentos Lightning entre Alice e Bob; envios on-chain e confirmação por mineração manual.<br>Invoices and Lightning payments between Alice and Bob; on-chain sends and confirmation through manual mining.</li>
+<li>Confirmação de senha antes dos pagamentos e envios.<br>Password confirmation before payments and sends.</li>
+</ul>
+<p><strong>Fora de escopo / Not supported</strong></p>
+<ul>
+<li>Configuração do LND pela interface: nome/alias, cor, rede, manutenção e reinícios.<br>LND configuration through the UI: name/alias, color, networking, maintenance and restarts.</li>
+<li>Upgrades de LND/LOS pela interface, Apps da loja e integrações externas.<br>LND/LOS upgrades through the UI, App Store and external integrations.</li>
+</ul>
+<p>A interface mantém menus de produção. Itens fora de escopo podem aparecer e apresentar erro; consultas ao GitHub podem expirar porque os Managers só acessam localhost. Outras funcionalidades não têm validação garantida neste perfil.<br>The UI retains production menus. Unsupported items can remain visible and show errors; GitHub checks can time out because Managers can only reach localhost. Other features are not guaranteed validated in this profile.</p>
+<p>Use somente moedas regtest, sem valor. A instalação de produção continua mainnet-only.<br>Use only worthless regtest coins. Production installation remains mainnet-only.</p>
+</div></details>'''
+    html, count = re.subn(r'(<body\b[^>]*>)', lambda match: match.group(1) + notice, html, count=1)
+    if count != 1:
+        raise RuntimeError('Could not attach the mandatory regtest UI notice')
+    return html.replace('<title>', '<title>REGTEST | ')
+
+
 def configure(args):
     checked_lab()
     for node in ['alice', 'bob']:
@@ -55,12 +81,7 @@ def configure(args):
                 raise RuntimeError('Symlink in UI artifact')
             file.chmod(0o755 if file.is_dir() else 0o644)
     index = ui / 'index.html'
-    html = index.read_text()
-    notice = '<div id="los-regtest-notice" style="position:fixed;z-index:2147483647;bottom:0;left:0;right:0;background:#ffce00;color:#171717;text-align:center;font:bold 13px sans-serif;padding:6px;pointer-events:none">REGTEST — MOEDAS SEM VALOR — LABORATÓRIO DESCARTÁVEL</div>'
-    html, count = re.subn(r'(<body\b[^>]*>)', lambda match: match.group(1) + notice, html, count=1)
-    if count != 1:
-        raise RuntimeError('Could not attach the mandatory regtest UI notice')
-    index.write_text(html.replace('<title>', '<title>REGTEST | '))
+    index.write_text(add_lab_notice(index.read_text()))
     ca = Path('/etc/los-regtest/ca.crt')
     if not ca.exists():
         run('openssl', 'req', '-x509', '-newkey', 'rsa:3072', '-nodes', '-days', '3650',

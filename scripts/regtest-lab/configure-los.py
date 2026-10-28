@@ -44,12 +44,13 @@ def add_lab_notice(html):
 #los-regtest-notice .rt-title{font-size:23px;line-height:1.25;font-weight:750;margin:0 0 10px;color:#f0f6fa}
 #los-regtest-notice .rt-copy{font-size:14px;line-height:1.6;color:#a8bdcb;margin:0 0 18px;overflow-wrap:anywhere}
 #los-regtest-notice .rt-warning{display:inline-block;font-size:11px;font-weight:750;letter-spacing:.07em;color:#f5c451;margin-bottom:10px}
-#los-regtest-notice .rt-legend{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:18px 0 22px}
+#los-regtest-notice .rt-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:18px 0 22px}
 #los-regtest-notice .rt-legend-item{border:1px solid #29404e;border-radius:10px;background:#10232f;padding:12px}
 #los-regtest-notice .rt-legend-item p{font-size:12px;line-height:1.5;color:#a8bdcb;margin:7px 0 0}
 #los-regtest-notice .rt-badge{display:inline-block;font-size:12px;line-height:18px;font-weight:700;padding:3px 9px;border:1px solid;border-radius:999px;white-space:nowrap}
 #los-regtest-notice .rt-validated{color:#8be0b4;background:#11392e;border-color:#28654e}
 #los-regtest-notice .rt-unvalidated{color:#f2cc76;background:#392e15;border-color:#6b5424}
+#los-regtest-notice .rt-partial{color:#ffc6a0;background:#40291e;border-color:#81543a}
 #los-regtest-notice .rt-unsupported{color:#bac7d1;background:#263440;border-color:#475b69}
 #los-regtest-notice .rt-table-wrap{border:1px solid #29404e;border-radius:12px;overflow:hidden;margin-bottom:18px}
 #los-regtest-notice .rt-table{width:100%;border-collapse:collapse;table-layout:fixed;text-align:left;font-size:14px;line-height:1.5}
@@ -74,20 +75,23 @@ def add_lab_notice(html):
             'lang': 'pt-BR', 'title': 'Guia do laboratório regtest', 'warning': 'MOEDAS SEM VALOR',
             'intro': 'Consulte o estado de cada operação antes de usar os menus. Este guia descreve o que foi testado na instalação atual.',
             'headers': ('Operação', 'Estado'),
-            'statuses': {'validated': 'Validado', 'unvalidated': 'Não validado', 'unsupported': 'Fora de escopo'},
-            'legend': ('Testado com sucesso neste laboratório.', 'O fluxo completo ainda não foi testado. Isso não significa que ele falha.', 'Depende de recursos de produção que este perfil não oferece.'),
+            'statuses': {'validated': 'Validado', 'partial': 'Com ressalvas', 'unvalidated': 'Não validado', 'unsupported': 'Fora de escopo'},
+            'legend': ('Testado com sucesso neste laboratório.', 'Operação testada, com resultado parcial ou problema descrito na linha.', 'O fluxo completo ainda não foi testado. Isso não significa que ele falha.', 'Depende de recursos de produção que este perfil não oferece.'),
             'rows': [
                 ('wallet', 'validated', 'Carteira e acesso', 'Login, saldos on-chain/Lightning e endereços de recebimento.'),
                 ('payments', 'validated', 'Pagamentos Lightning', 'Invoices e pagamentos entre Alice e Bob, com confirmação de senha.'),
                 ('onchain', 'validated', 'Pagamentos on-chain', 'Depósitos, envios e confirmações por mineração manual.'),
                 ('channel-read', 'validated', 'Consultar canais e saldos', ''),
                 ('installer-channel', 'validated', 'Canal inicial do laboratório', 'Criado pelo preparador via lncli; não valida abertura pela interface.'),
-                ('channel-open', 'unvalidated', 'Abrir canal simples', 'Pela interface do LOS.'),
-                ('channel-open-batch', 'unvalidated', 'Abrir canais em lote', 'Pela interface do LOS.'),
-                ('balanced-open', 'unvalidated', 'Abrir canal balanceado', 'Recurso habilitado; fluxo completo ainda não validado.'),
-                ('channel-close', 'unvalidated', 'Fechar canal cooperativamente', ''),
-                ('channel-force-close', 'unvalidated', 'Forçar fechamento de canal', ''),
-                ('channel-automation', 'unvalidated', 'Fees, rebalance e automações', ''),
+                ('channel-open', 'validated', 'Abrir canal simples', 'Interface, confirmação de senha e canal ativo após mineração; taxa manual.'),
+                ('channel-open-batch', 'validated', 'Abrir canais em lote', 'Dois peers distintos, uma transação de funding e canais ativos; taxa manual.'),
+                ('balanced-open', 'validated', 'Abrir canal balanceado', 'Propor, aceitar e executar por Alice/Bob; canal 50/50 ativo após mineração.'),
+                ('channel-close', 'partial', 'Fechar canal cooperativamente', 'Auto concluiu; um fechamento manual confirmou no LND, mas a interface mostrou erro. Ver issues #343 e #344; confira o estado antes de repetir.'),
+                ('channel-force-close', 'validated', 'Forçar fechamento de canal', 'Interface, confirmação, mineração do prazo CSV e recuperação do saldo.'),
+                ('channel-fees', 'validated', 'Editar fees de um canal', 'Fee de saída, base e timelock conferidos na política nativa do LND.'),
+                ('channel-rebalance', 'partial', 'Rebalance manual', 'Moveu 49.824 dos 50.000 sats pedidos, por 2 sats; job parcial, com 176 sats restantes.'),
+                ('channel-autofee', 'validated', 'AutoFee manual', 'Dry run não alterou a política; Run now aplicou a mudança em canal de teste.'),
+                ('channel-automation', 'unvalidated', 'Automações agendadas e casos de falha', 'Rebalance automático, auto-heal, HTLC Manager e recuperação de falhas exigem ensaios específicos; um run manual não os valida.'),
                 ('lnd-config', 'unsupported', 'Configuração e manutenção do LND', 'Nome/alias, cor, rede e controles de reinício.'),
                 ('upgrades', 'unsupported', 'Upgrades de LND e LOS pela interface', ''),
                 ('external', 'unsupported', 'Apps da loja e integrações externas', ''),
@@ -101,20 +105,23 @@ def add_lab_notice(html):
             'lang': 'en', 'title': 'Regtest laboratory guide', 'warning': 'COINS HAVE NO VALUE',
             'intro': 'Check each operation before using the menus. This guide describes what has been tested in the current installation.',
             'headers': ('Operation', 'Status'),
-            'statuses': {'validated': 'Validated', 'unvalidated': 'Not validated', 'unsupported': 'Not supported'},
-            'legend': ('Tested successfully in this laboratory.', 'The complete workflow has not been tested. This does not mean it fails.', 'Requires production capabilities that this profile does not provide.'),
+            'statuses': {'validated': 'Validated', 'partial': 'Qualified result', 'unvalidated': 'Not validated', 'unsupported': 'Not supported'},
+            'legend': ('Tested successfully in this laboratory.', 'Tested operation with a partial result or the issue described in its row.', 'The complete workflow has not been tested. This does not mean it fails.', 'Requires production capabilities that this profile does not provide.'),
             'rows': [
                 ('wallet', 'validated', 'Wallet and access', 'Login, on-chain/Lightning balances and receiving addresses.'),
                 ('payments', 'validated', 'Lightning payments', 'Invoices and payments between Alice and Bob, with password confirmation.'),
                 ('onchain', 'validated', 'On-chain payments', 'Deposits, sends and confirmations through manual mining.'),
                 ('channel-read', 'validated', 'Read channels and balances', ''),
                 ('installer-channel', 'validated', 'Initial laboratory channel', 'Created by setup through lncli; this does not validate UI channel opening.'),
-                ('channel-open', 'unvalidated', 'Open a single channel', 'Through the LOS interface.'),
-                ('channel-open-batch', 'unvalidated', 'Batch-open channels', 'Through the LOS interface.'),
-                ('balanced-open', 'unvalidated', 'Balanced channel opening', 'Feature enabled; complete workflow not yet validated.'),
-                ('channel-close', 'unvalidated', 'Cooperative channel close', ''),
-                ('channel-force-close', 'unvalidated', 'Force-close a channel', ''),
-                ('channel-automation', 'unvalidated', 'Fees, rebalance and automations', ''),
+                ('channel-open', 'validated', 'Open a single channel', 'UI, password confirmation and active channel after mining; manual fee.'),
+                ('channel-open-batch', 'validated', 'Batch-open channels', 'Two distinct peers, one funding transaction and active channels; manual fee.'),
+                ('balanced-open', 'validated', 'Balanced channel opening', 'Alice/Bob propose, accept and execute; active 50/50 channel after mining.'),
+                ('channel-close', 'partial', 'Cooperative channel close', 'Auto completed; one manual close confirmed in LND but the UI showed an error. See issues #343 and #344; check state before retrying.'),
+                ('channel-force-close', 'validated', 'Force-close a channel', 'UI, confirmation, mining through the CSV delay and balance recovery.'),
+                ('channel-fees', 'validated', 'Edit one channel’s fees', 'Outbound fee, base fee and timelock checked against native LND policy.'),
+                ('channel-rebalance', 'partial', 'Manual rebalance', 'Moved 49,824 of 50,000 requested sats for 2 sats; partial job, 176 sats remaining.'),
+                ('channel-autofee', 'validated', 'Manual AutoFee', 'Dry run preserved policy; Run now applied a change to a test channel.'),
+                ('channel-automation', 'unvalidated', 'Scheduled automations and failure cases', 'Automatic rebalance, auto-heal, HTLC Manager and failure recovery need dedicated tests; a manual run does not validate them.'),
                 ('lnd-config', 'unsupported', 'LND configuration and maintenance', 'Name/alias, color, networking and restart controls.'),
                 ('upgrades', 'unsupported', 'LND and LOS upgrades through the UI', ''),
                 ('external', 'unsupported', 'App Store and external integrations', ''),
@@ -127,7 +134,7 @@ def add_lab_notice(html):
     }
     panels = []
     for language, text in languages.items():
-        legend = ''.join(f'<div class="rt-legend-item"><span class="rt-badge rt-{state}">{escape(text["statuses"][state])}</span><p>{escape(description)}</p></div>' for state, description in zip(('validated', 'unvalidated', 'unsupported'), text['legend']))
+        legend = ''.join(f'<div class="rt-legend-item"><span class="rt-badge rt-{state}">{escape(text["statuses"][state])}</span><p>{escape(description)}</p></div>' for state, description in zip(('validated', 'partial', 'unvalidated', 'unsupported'), text['legend']))
         rows = ''.join(f'<tr data-lab-operation="{operation}" data-lab-status="{state}"><td><span class="rt-operation">{escape(label)}</span>' + (f'<span class="rt-note">{escape(note)}</span>' if note else '') + f'</td><td><span class="rt-badge rt-{state}">{escape(text["statuses"][state])}</span></td></tr>' for operation, state, label, note in text['rows'])
         tips = ''.join(f'<aside class="rt-tip"><strong>{escape(title)}</strong><p>{escape(copy)}</p></aside>' for title, copy in text['tips'])
         panels.append(f'<section id="los-regtest-panel-{language}" data-lab-language="{language}" lang="{text["lang"]}" class="rt-panel rt-width" aria-labelledby="los-regtest-title-{language}"><span class="rt-warning">{text["warning"]}</span><h2 id="los-regtest-title-{language}" class="rt-title">{text["title"]}</h2><p class="rt-copy">{text["intro"]}</p><div class="rt-legend">{legend}</div><div class="rt-table-wrap"><table class="rt-table"><thead><tr><th scope="col">{text["headers"][0]}</th><th scope="col">{text["headers"][1]}</th></tr></thead><tbody>{rows}</tbody></table></div>{tips}</section>')

@@ -28,7 +28,7 @@ func (s *Server) auditUtxoLockAction(r *http.Request, action string, outpoints [
 	}
 	user := "anonymous"
 	if session, ok := authSessionFromContext(r.Context()); ok {
-		user = session.ID
+		user = auditCorrelationID(session.ID)
 	}
 	if expirySec > 0 {
 		s.logger.Printf("utxo %s by session=%s outpoints=%v expiry_sec=%d", action, user, outpoints, expirySec)

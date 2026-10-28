@@ -49,6 +49,15 @@ class LabNoticeTests(unittest.TestCase):
         self.assertIn('Not supported', result)
         self.assertIn('name/alias', result)
         self.assertIn('GitHub', result)
+        operations = {attrs['data-lab-operation']: attrs.get('data-lab-status')
+                      for tag, attrs in dom.elements if tag == 'tr' and 'data-lab-operation' in attrs}
+        self.assertEqual(operations['channel-read'], 'validated')
+        self.assertEqual(operations['installer-channel'], 'validated')
+        for operation in ['channel-open', 'channel-open-batch', 'balanced-open', 'channel-close', 'channel-force-close', 'channel-automation']:
+            self.assertEqual(operations[operation], 'unvalidated', 'untested UI channel workflows must not be advertised as validated')
+        self.assertIn('Abrir canal balanceado', result)
+        self.assertIn('Balanced channel opening', result)
+        self.assertIn('Not validated', result)
 
     def test_missing_body_and_duplicate_notice_are_refused(self):
         with self.assertRaisesRegex(RuntimeError, 'Could not attach'):

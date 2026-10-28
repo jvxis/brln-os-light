@@ -31,6 +31,21 @@ def add_lab_notice(html):
 <li>Invoices e pagamentos Lightning entre Alice e Bob; envios on-chain e confirmação por mineração manual.<br>Invoices and Lightning payments between Alice and Bob; on-chain sends and confirmation through manual mining.</li>
 <li>Confirmação de senha antes dos pagamentos e envios.<br>Password confirmation before payments and sends.</li>
 </ul>
+<p><strong>Operações Lightning / Lightning operations</strong></p>
+<p>Ainda não validado significa que o fluxo completo pela interface não foi testado neste laboratório; não é uma afirmação de que ele falha.<br>Not validated means the complete UI workflow has not been tested in this lab; it does not mean the operation fails.</p>
+<table style="width:100%;border-collapse:collapse;text-align:left">
+<thead><tr><th scope="col">Operação / Operation</th><th scope="col">Estado no laboratório / Lab status</th></tr></thead>
+<tbody>
+<tr data-lab-operation="channel-read" data-lab-status="validated"><td>Consultar canais e saldos<br>Read channels and balances</td><td>Validado / Validated</td></tr>
+<tr data-lab-operation="installer-channel" data-lab-status="validated"><td>Canal inicial criado pelo preparador via lncli<br>Initial channel created by the setup helper through lncli</td><td>Validado no preparador / Validated in setup</td></tr>
+<tr data-lab-operation="channel-open" data-lab-status="unvalidated"><td>Abrir canal simples pela interface<br>Open a single channel through the UI</td><td>Ainda não validado / Not validated</td></tr>
+<tr data-lab-operation="channel-open-batch" data-lab-status="unvalidated"><td>Abrir canais em lote pela interface<br>Batch-open channels through the UI</td><td>Ainda não validado / Not validated</td></tr>
+<tr data-lab-operation="balanced-open" data-lab-status="unvalidated"><td>Abrir canal balanceado pela interface<br>Balanced channel opening through the UI</td><td>Ainda não validado / Not validated</td></tr>
+<tr data-lab-operation="channel-close" data-lab-status="unvalidated"><td>Fechar canal cooperativamente pela interface<br>Cooperative channel close through the UI</td><td>Ainda não validado / Not validated</td></tr>
+<tr data-lab-operation="channel-force-close" data-lab-status="unvalidated"><td>Forçar fechamento de canal pela interface<br>Force-close a channel through the UI</td><td>Ainda não validado / Not validated</td></tr>
+<tr data-lab-operation="channel-automation" data-lab-status="unvalidated"><td>Editar fees, rebalancear e usar automações de canais<br>Edit fees, rebalance and use channel automations</td><td>Ainda não validado / Not validated</td></tr>
+</tbody></table>
+<p>O canal inicial aberto não comprova que os fluxos de abertura/fechamento da interface foram validados. O aviso está disponível também nas telas de operações Lightning.<br>The existing initial channel does not validate the UI open/close workflows. This notice is also available on the Lightning operations screens.</p>
 <p><strong>Fora de escopo / Not supported</strong></p>
 <ul>
 <li>Configuração do LND pela interface: nome/alias, cor, rede, manutenção e reinícios.<br>LND configuration through the UI: name/alias, color, networking, maintenance and restarts.</li>

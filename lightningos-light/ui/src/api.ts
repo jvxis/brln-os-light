@@ -673,7 +673,7 @@ export const getNodeRetirementSessionChannels = (sessionID: string) =>
 export const getNodeRetirementSessionTransfer = (sessionID: string) =>
   request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/transfer`)
 export const confirmNodeRetirementCoopClose = (sessionID: string, payload?: { confirm_password?: string }) =>
-  request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/confirm-coop`, { method: 'POST', body: payload ? JSON.stringify(payload) : undefined })
+  request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/confirm-coop`, { method: 'POST', body: JSON.stringify(payload || {}) })
 export const decideNodeRetirementChannel = (sessionID: string, payload: { channel_point: string; decision: 'wait' | 'force_close'; confirm_password?: string }) =>
   request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/decision`, { method: 'POST', body: JSON.stringify(payload) })
 export const getSuccessionStatus = () => request('/api/lnops/succession/status')

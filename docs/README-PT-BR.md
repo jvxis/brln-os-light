@@ -1122,12 +1122,24 @@ telas de operações Lightning.
 | --- | --- |
 | Consultar canais e saldos | Validado. |
 | Canal inicial criado pelo preparador via `lncli` | Validado no preparador; isso não valida abertura pela interface do LOS. |
-| Abrir canal simples pela interface | Ainda não validado neste laboratório. |
-| Abrir canais em lote pela interface | Ainda não validado neste laboratório. |
-| Abrir canal balanceado pela interface | Habilitado, mas o fluxo completo ainda não foi validado neste laboratório. |
-| Fechar canal cooperativamente pela interface | Ainda não validado neste laboratório. |
-| Forçar fechamento de canal pela interface | Ainda não validado neste laboratório. |
-| Editar fees, rebalancear e usar automações de canais | Ainda não validado neste laboratório. |
+| Abrir canal simples pela interface | Validado com taxa manual, confirmação de senha e canal ativo conferido no LND. |
+| Abrir canais em lote pela interface | Validado: dois peers distintos, uma transação de funding e ambos os canais ativos. |
+| Abrir canal balanceado pela interface | Validado: Alice propõe, Bob aceita e Alice executa; canal 50/50 ativo. |
+| Fechar canal cooperativamente pela interface | Validado após corrigir a reconciliação de erros e as explicações de taxas ([#343](https://github.com/jvxis/brln-os-light/issues/343), [#344](https://github.com/jvxis/brln-os-light/issues/344)). Fechamentos manual e Auto conferidos com os txids nativos. |
+| Forçar fechamento de canal pela interface | Validado até a confirmação, maturação CSV e recuperação do saldo no LND. |
+| Editar fees de um canal | Validado: fee de saída, base e timelock conferidos na política nativa do LND. |
+| Rebalance manual pela interface | Com ressalvas: moveu 49.824 dos 50.000 sats pedidos, por 2 sats; job informou resultado parcial, com 176 sats restantes. |
+| AutoFee manual | Validado: Dry run preservou a política; Run now aplicou a mudança em canal de teste. |
+| Automações agendadas e recuperação de falhas | Ainda não validadas: rebalance automático, auto-heal, HTLC Manager e cenários de falha exigem ensaios específicos. |
+| Node Retirement | Validados dry-run e execução real: fechamento cooperativo, decisão para peer offline, force-close com maturação/recuperação e conciliação final. Use um node de teste dedicado; encerra todos os canais dele. |
+| Succession | Validação local com ressalvas: prova de vida, carência, disparo automático por prazo e transferência on-chain. As datas do banco de testes foram antecipadas; a entrega real no Telegram permanece sem validação. A transferência total aguarda a confirmação de todos os fundos atuais; novos depósitos não confirmados podem adiá-la. |
+
+Consulte o [relatório datado dos testes](REGTEST_LIGHTNING_VALIDATION_2026-10-28.md)
+para ambiente, procedimentos, resultados e limites da cobertura. Execuções
+manuais não validam o agendamento nem a economia das automações no longo prazo.
+
+O [relatório de Retirement/Succession](REGTEST_RETIREMENT_SUCCESSION_VALIDATION_2026-10-28.md)
+registra as correções posteriores e o teste nativo do mínimo de confirmações.
 
 **Ainda não validado** significa que o fluxo completo pela interface não foi
 exercitado nesta instalação do laboratório. Isso não afirma que ele falha e não

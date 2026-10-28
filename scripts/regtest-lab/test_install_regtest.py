@@ -68,8 +68,11 @@ class LabNoticeTests(unittest.TestCase):
                       for tag, attrs in dom.elements if tag == 'tr' and 'data-lab-operation' in attrs}
         self.assertEqual(operations['channel-read'], 'validated')
         self.assertEqual(operations['installer-channel'], 'validated')
-        for operation in ['channel-open', 'channel-open-batch', 'balanced-open', 'channel-close', 'channel-force-close', 'channel-automation']:
-            self.assertEqual(operations[operation], 'unvalidated', 'untested UI channel workflows must not be advertised as validated')
+        for operation in ['channel-open', 'channel-open-batch', 'balanced-open', 'channel-close', 'channel-force-close', 'channel-fees', 'channel-autofee', 'node-retirement']:
+            self.assertEqual(operations[operation], 'validated')
+        for operation in ['channel-rebalance', 'succession']:
+            self.assertEqual(operations[operation], 'partial', 'qualified results must remain distinguishable from a clean pass')
+        self.assertEqual(operations['channel-automation'], 'unvalidated', 'manual runs do not validate scheduled automations')
         self.assertIn('Abrir canal balanceado', result)
         self.assertIn('Balanced channel opening', result)
         self.assertIn('Not validated', result)

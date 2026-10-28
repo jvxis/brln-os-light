@@ -309,6 +309,7 @@ func (s *NodeRetirementService) CreateSession(ctx context.Context, params NodeRe
 	if err != nil {
 		return NodeRetirementSession{}, err
 	}
+	sessionID = financialRetirementCreationID(ctx, sessionID)
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -330,6 +331,9 @@ where state not in ('completed', 'dry_run_completed', 'failed', 'canceled')
 	}
 	if activeCount > 0 {
 		return NodeRetirementSession{}, ErrNodeRetirementActiveSession
+	}
+	if err := commitFinancialWorkflow(ctx, sessionID); err != nil {
+		return NodeRetirementSession{}, err
 	}
 
 	var session NodeRetirementSession
@@ -574,13 +578,26 @@ func (s *NodeRetirementService) ConfirmCoopClose(ctx context.Context, sessionID 
 	if err != nil {
 		return NodeRetirementSession{}, err
 	}
+	tx, session, err := s.lockRetirementControl(ctx, session)
+	if err != nil {
+		return NodeRetirementSession{}, err
+	}
+	defer tx.Rollback(ctx)
 	if session.State != nodeRetirementStateReadyForConfirm {
 		return NodeRetirementSession{}, ErrNodeRetirementInvalidState
 	}
-	if err := s.updateSessionState(ctx, session.SessionID, nodeRetirementStateClosingCoop, ""); err != nil {
+	if err := commitFinancialWorkflow(ctx, session.SessionID); err != nil {
 		return NodeRetirementSession{}, err
 	}
-	_ = s.insertEvent(ctx, session.SessionID, "coop_close_confirmed", "info", map[string]any{"source": "ui"})
+	if _, err := tx.Exec(ctx, `update node_retirement_sessions set state=$2,last_error='',started_at=coalesce(started_at,now()),updated_at=now() where session_id=$1`, session.SessionID, nodeRetirementStateClosingCoop); err != nil {
+		return NodeRetirementSession{}, err
+	}
+	if err := s.insertEventTx(ctx, tx, session.SessionID, "coop_close_confirmed", "info", map[string]any{"source": "ui"}); err != nil {
+		return NodeRetirementSession{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return NodeRetirementSession{}, err
+	}
 	return s.GetSession(ctx, session.SessionID)
 }
 
@@ -597,6 +614,11 @@ func (s *NodeRetirementService) SetChannelDecision(ctx context.Context, sessionI
 	if err != nil {
 		return err
 	}
+	tx, session, err := s.lockRetirementControl(ctx, session)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
 	if session.State != nodeRetirementStateAwaitingDecision && session.State != nodeRetirementStateForceClosing {
 		return ErrNodeRetirementInvalidState
 	}
@@ -606,7 +628,8 @@ func (s *NodeRetirementService) SetChannelDecision(ctx context.Context, sessionI
 		return ErrNodeRetirementChannelNotFound
 	}
 
-	tag, tagErr := s.channelExists(ctx, session.SessionID, trimmedPoint)
+	var tag bool
+	tagErr := tx.QueryRow(ctx, `select exists(select 1 from node_retirement_channels where session_id=$1 and channel_point=$2)`, session.SessionID, trimmedPoint).Scan(&tag)
 	if tagErr != nil {
 		return tagErr
 	}
@@ -614,7 +637,10 @@ func (s *NodeRetirementService) SetChannelDecision(ctx context.Context, sessionI
 		return ErrNodeRetirementChannelNotFound
 	}
 
-	_, err = s.db.Exec(ctx, `
+	if err := commitFinancialWorkflow(ctx, session.SessionID); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
 update node_retirement_channels
 set decision = $3,
   updated_at = now()
@@ -623,14 +649,34 @@ where session_id = $1 and channel_point = $2
 	if err != nil {
 		return err
 	}
-	_ = s.insertEvent(ctx, session.SessionID, "channel_decision", "info", map[string]any{
+	if err := s.insertEventTx(ctx, tx, session.SessionID, "channel_decision", "info", map[string]any{
 		"channel_point": trimmedPoint,
 		"decision":      normalizedDecision,
-	})
-	if normalizedDecision == nodeRetirementDecisionForceClose {
-		_ = s.updateSessionState(ctx, session.SessionID, nodeRetirementStateForceClosing, "")
+	}); err != nil {
+		return err
 	}
-	return nil
+	if normalizedDecision == nodeRetirementDecisionForceClose {
+		if _, err := tx.Exec(ctx, `update node_retirement_sessions set state=$2,last_error='',started_at=coalesce(started_at,now()),updated_at=now() where session_id=$1`, session.SessionID, nodeRetirementStateForceClosing); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *NodeRetirementService) lockRetirementControl(ctx context.Context, session NodeRetirementSession) (pgx.Tx, NodeRetirementSession, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, session, err
+	}
+	err = tx.QueryRow(ctx, `select state,source,dry_run,config_json::text,snapshot_json::text from node_retirement_sessions where session_id=$1 for update`, session.SessionID).Scan(&session.State, &session.Source, &session.DryRun, &session.Config, &session.Snapshot)
+	if err == nil {
+		err = validateFinancialRetirementSnapshot(ctx, session)
+	}
+	if err != nil {
+		tx.Rollback(ctx)
+		return nil, session, err
+	}
+	return tx, session, nil
 }
 
 func (s *NodeRetirementService) GetSessionTransfer(ctx context.Context, sessionID string) (NodeRetirementTransfer, error) {

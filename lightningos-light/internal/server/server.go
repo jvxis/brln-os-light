@@ -39,6 +39,11 @@ type Server struct {
 	lndConfigRevisionOnce       sync.Once
 	lndConfigRevisionKey        [32]byte
 	lndConfigRevisionErr        error
+	financialIntentOnce         sync.Once
+	financialIntents            *financialIntentStore
+	financialIntentErr          error
+	financialIntentDir          string
+	financialNativeOps          *financialNativeOperations
 	networkMapMu                sync.Mutex
 	networkMapGeoCache          map[string]networkMapGeoCacheEntry
 	db                          *pgxpool.Pool

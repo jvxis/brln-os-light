@@ -50,6 +50,9 @@ type OnchainSendPreview struct {
 	EnoughFunds        bool   `json:"enough_funds"`
 	Exact              bool   `json:"exact"`
 	Message            string `json:"message,omitempty"`
+	// Internal funding snapshot for immutable manual-send intents. The public
+	// preview response keeps its existing shape.
+	SelectedOutpoints []string `json:"-"`
 }
 
 type previewInput struct {
@@ -235,6 +238,7 @@ func (c *Client) previewFundedSend(ctx context.Context, preview OnchainSendPrevi
 			continue
 		}
 		outpoint := fmt.Sprintf("%s:%d", strings.ToLower(txIn.PreviousOutPoint.Hash.String()), txIn.PreviousOutPoint.Index)
+		preview.SelectedOutpoints = append(preview.SelectedOutpoints, outpoint)
 		if lease := leaseByOutpoint[outpoint]; lease != nil {
 			preview.SelectedInputSat += int64(lease.GetValue())
 			inputScripts = append(inputScripts, previewInput{pkScript: append([]byte(nil), lease.GetPkScript()...)})
@@ -267,6 +271,7 @@ func buildSweepAllPreview(preview OnchainSendPreview, utxos []OnchainUtxo, scrip
 	inputs := make([]previewInput, 0, len(utxos))
 	for _, utxo := range utxos {
 		preview.SelectedInputSat += utxo.AmountSat
+		preview.SelectedOutpoints = append(preview.SelectedOutpoints, utxo.Outpoint)
 		inputs = append(inputs, previewInput{
 			pkScript:    decodeHexOrNil(utxo.PkScript),
 			addressType: utxo.AddressType,

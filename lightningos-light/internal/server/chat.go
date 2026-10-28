@@ -210,6 +210,9 @@ func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, amount
 	if amountSat <= 0 {
 		amountSat = chatDefaultAmountSat
 	}
+	if err := validateFinancialChatExecution(ctx, peerPubkey, amountSat, message); err != nil {
+		return ChatMessage{}, err
+	}
 	c.mu.Lock()
 	guard := c.spendingGuard
 	c.mu.Unlock()
@@ -231,9 +234,11 @@ func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, amount
 	}
 	paymentHash, err := c.lnd.SendKeysendMessageWithPaymentHash(ctx, peerPubkey, amountSat, message, func(hash string) error {
 		if guard != nil && reservation.Active {
-			return guard.Bind(ctx, reservation, hash)
+			if err := guard.Bind(ctx, reservation, hash); err != nil {
+				return err
+			}
 		}
-		return nil
+		return commitFinancialChatDispatch(ctx, hash)
 	})
 	if err != nil {
 		if guard != nil && reservation.Active {

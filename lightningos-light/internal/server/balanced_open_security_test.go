@@ -51,11 +51,14 @@ func TestBalancedFinancialActionsRequireApprovalBeforeService(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{cfg: cfg, auth: auth, logger: logger, balancedOpenInitAt: time.Now(), balancedOpenErr: "fixture unavailable", auditLogInitAt: time.Now()}
-	call := func(action string) *httptest.ResponseRecorder {
+	call := func(action string, intentIDs ...string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "https://node.example/api/lnops/balanced-open/sessions/test-session/"+action, strings.NewReader(`{}`))
 		r.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: session.ID})
 		r.Header.Set("Origin", "https://node.example")
 		r.Header.Set("X-CSRF-Token", session.CSRFToken)
+		if len(intentIDs) > 0 {
+			r.Header.Set(financialIntentHeader, intentIDs[0])
+		}
 		w := httptest.NewRecorder()
 		s.routes().ServeHTTP(w, r)
 		return w
@@ -70,8 +73,13 @@ func TestBalancedFinancialActionsRequireApprovalBeforeService(t *testing.T) {
 	auth.sessions[session.ID].ReauthScopes[authScopeLightningFunds] = time.Now().Add(time.Minute)
 	auth.mu.Unlock()
 	for _, action := range []string{"propose", "accept"} {
-		if w := call(action); w.Code != 503 {
-			t.Errorf("%s valid grant not accepted: HTTP %d", action, w.Code)
+		if w := call(action); w.Code != 428 {
+			t.Errorf("%s broad grant authorized an unbound workflow: HTTP %d", action, w.Code)
+		}
+		path := "/api/lnops/balanced-open/sessions/test-session/" + action
+		intent := financialHandlerApproval(t, s, session, path, []byte(`{}`), financialIntentBinding{Kind: "balanced_open"})
+		if w := call(action, intent.ID); w.Code != 503 {
+			t.Errorf("%s approved handler did not preserve unavailable-service failure: HTTP %d", action, w.Code)
 		}
 	}
 }

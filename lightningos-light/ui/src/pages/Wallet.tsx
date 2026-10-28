@@ -1130,11 +1130,6 @@ export default function Wallet() {
       setSendStatus(t('wallet.amountMustBePositive'))
       return
     }
-    if (sendPreview?.requires_password_confirmation) {
-      setSendConfirmOpen(true)
-      setSendConfirmStatus('')
-      return
-    }
     await executeOnchainSend()
   }
 

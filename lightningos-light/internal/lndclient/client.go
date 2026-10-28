@@ -7110,6 +7110,7 @@ func (c *Client) BatchOpenChannel(ctx context.Context, channels []BatchOpenChann
 			return nil, fmt.Errorf("invalid pubkey hex")
 		}
 		reqItem := &lnrpc.BatchOpenChannel{
+			Memo:               item.Memo,
 			NodePubkey:         pubkey,
 			LocalFundingAmount: item.LocalFundingSat,
 			Private:            item.Private,
@@ -8142,6 +8143,7 @@ type PeerNeighborRecommendation struct {
 }
 
 type BatchOpenChannelParams struct {
+	Memo            string
 	PubkeyHex       string
 	LocalFundingSat int64
 	Private         bool

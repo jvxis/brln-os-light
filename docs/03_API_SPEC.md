@@ -54,7 +54,8 @@ credential.
 ## HTTP request budgets
 
 Request bodies are fully bounded before handlers run: 16 KiB for `/api/auth/*`,
-16 MiB for `/api/lnops/channel/scb/restore`, and 1 MiB otherwise. This includes
+16 MiB for `/api/lnops/channel/scb/restore`, 16 MiB plus 64 KiB for the
+`/api/financial/intents` envelope, and 1 MiB otherwise. This includes
 chunked bodies and trailing data after a JSON value. Oversized bodies return
 `413` (`request_too_large`, or `auth_request_too_large` for authentication).
 Uploads have a 30-second read budget; expiration returns `408`
@@ -130,7 +131,7 @@ Underlying transport errors and credential contents are not returned to the UI.
   - `POST /api/auth/logout`
   - `POST /api/auth/reauth`
 - With login protection enabled, every manual on-chain send (`POST /api/wallet/send`) requires fresh reauthentication, including consolidations and destinations listed in imported/watch-only accounts. Address classification never exempts a send from approval.
-- The existing `wallet_send_external` scope and `wallet_send_external_reauth_required` challenge code are retained for client compatibility; they now apply to all manual on-chain sends. Existing session/CSRF protection, password quotas and three-minute grant lifetime are unchanged. Intent-bound, single-use approvals are separate work (#312).
+- Covered core financial operations use the intent protocol below. Existing challenge codes remain, with `requires_financial_intent=true`; a reusable `wallet_send_external` or `lightning_funds` grant and inline `confirm_password` cannot authorize these operations. Session/CSRF protection and password quotas remain enforced.
 - `POST /api/wallet/send/preview` stays read-only and does not require reauthentication. Its `requires_password_confirmation` is true whenever login protection is enabled, including for `wallet_internal`; this classification only means a known address and is not proof of private-key control. The flag is false when login protection is disabled.
 - Preview funding uses LND's `default` account, matching the account used by manual sends. Monitored/imported and custom-account balances remain visible in the full wallet UTXO listing but are not counted as default funding. Explicit inputs outside that account return an unavailable-selection preview; an unselected preview lets LND choose inputs. Default-account remote signers are not filtered by key ownership. Temporary preview leases are released with an independent bounded context even when the HTTP request is canceled.
 - Inline password confirmations and `POST /api/auth/reauth` share global, client-IP and session quotas. Exhaustion returns HTTP 429 with `code=auth_rate_limited` and `Retry-After`. Client identity uses the direct connection; untrusted forwarded headers do not create additional quotas.
@@ -139,6 +140,106 @@ Underlying transport errors and credential contents are not returned to the UI.
   - `macaroon_export`
   - `node_retirement_control`
   - `succession_live_control`
+  - `financial_intent:<32 lowercase hexadecimal characters>` for a live draft owned by this session.
+
+## Financial approval and retry protocol (0.5.50)
+
+With login enabled, prepare an immutable operation before asking for its password:
+
+1. `POST /api/financial/intents` with `{ "method":"POST", "path":"/api/wallet/send", "payload":{ "address":"bc1...", "amount_sat":1000, "sat_per_vbyte":5 } }`.
+2. Review the returned `summary` and normalized `payload`. A required approval returns HTTP 201 with `intent_id`, `scope`, `method`, `path`, `expires_at` and `required:true`. Confirm the returned `scope` using `POST /api/auth/reauth`.
+3. Submit **that normalized payload**, method and path with `X-LOS-Financial-Intent: <intent_id>` and the usual session cookie/CSRF header. Do not rebuild the body from a mutable form. Passwords are not part of the prepared/persisted payload.
+
+Drafts expire after three minutes. The approval is consumed once, only for its
+session and exact method, escaped URL, invoice/destination, amount, funding
+selection, fee settings and resource snapshot. Changed bodies/terms return 409;
+an absent approval returns 428. A broad grant cannot authorize a different
+operation. Logout, password change/recovery and session expiration revoke unused
+approval. An already submitted native operation may still finish after logout.
+
+`GET /api/financial/intents/{id}` returns `state`, `running`, `can_confirm`,
+operation/method, expiration and a safe summary. States are `draft`, `executing`,
+`uncertain`, `completed`, `rejected` and `cancelled`. An owned live draft also
+returns its normalized `payload` and `scope`; native proof is never returned.
+Terminal states return the original HTTP `status` and `result`. A new
+authenticated administrative session can inspect prior results, but cannot
+inherit an old session's execution approval.
+
+After a lost response, consult that same ID. An identical completed request
+replays its cached result with `X-LOS-Financial-Replay: true`; an executing or
+uncertain request returns 409 `financial_intent_pending` without calling the
+financial handler again. `POST /api/financial/intents/{id}/reconcile` observes
+native/recorded state and returns a proven original result, or 409 while the
+outcome is still uncertain. It never creates another payment, funds/signs a new
+transaction, or rebroadcasts. Missing native history alone does not prove that a
+dispatched operation failed. Unresolved spending reservations remain held.
+
+Balanced-open prefunding can be located even when the proposal or signing step
+did not finish. Reconciliation only locates the original output and updates its
+existing workflow record; it does not call funding, signing or protocol-send
+RPCs again. This known partial result includes
+`financial_intent_needs_review:true` and `financial_intent_message` alongside
+the current session. It is a recorded financial result, **not** a claim that the
+channel/protocol completed. The UI reports that continuation needs review. An
+explicit subsequent continuation requires a new intent/password confirmation
+against the now-funded workflow snapshot, and the native prefund ledger reuses
+that original output. Identical retries of the old intent only replay its
+partial result. If the existing output cannot be proven, the result stays
+uncertain and no continuation is submitted automatically.
+
+`POST /api/financial/intents/{id}/cancel` cancels only a draft, including one
+owned by a previous session. It cannot discard an executing/uncertain operation.
+The browser retains only opaque references and hashed request keys in session
+storage, requires that reference to be saved before confirmation/execution, and
+offers result review after reload. It does not store passwords, invoices or
+backup bodies there. Result review and reconciliation never repeat execution.
+
+Covered core mutations:
+
+| Family | Operations |
+| --- | --- |
+| Wallet | On-chain send; standard, validated-route and MPP Lightning payments; Chat keysend |
+| Channels | Single/batch open, close, pending-open fee bump, SCB restore |
+| On-chain management | UTXO fee bump; lock/unlock when their optional reauthentication setting is enabled |
+| Workflows | Balanced open propose/accept/execute; Close Manager force-close/bump; live retirement creation/coop confirmation/force decision; live succession policy updates |
+| Spending policy | Relaxation/disabling of the spending guard, using its independent policy scope |
+
+Previews, decoding, simulations, policy tightening and disabling live automation
+retain their existing behavior. Preparation returns `required:false` when no
+approval is required. Recovery endpoints for previously prepared balanced-open
+transactions retain their existing safeguards and do not create a fresh funding
+approval. App Store operations and nonfinancial administrative grants retain
+their own contracts; they are outside this protocol.
+
+On-chain approval fixes the positive fee rate and eligible default-account input
+set before execution; a maximum send cannot include later deposits. Execution
+continues through native LND SendCoins and preserves anchor reserves and native
+validation. Recovery checks the actual transaction inputs, destination, amount,
+change, fees and native/mempool/chain evidence. A tracking label is restored to
+the operator's original label only after the result is durably committed.
+
+Lightning Addresses resolve to one validated invoice before confirmation.
+Payment hash, exact millisatoshis, routing fee ceiling and outgoing channel IDs
+are bound. `amount_msat` and `max_fee_msat` in summaries are decimal strings to
+preserve integer precision in browsers. A zero requested routing fee keeps the
+existing deterministic native default; preparation reports that exact ceiling.
+Amountless invoice execution is not supported. Keysend records the native hash
+before submission; retries cannot generate another keysend payment.
+
+Channel funding retains native LND funding/coin-selection contracts at the fixed
+approved fee rate. Cooperative close reports its bounded negotiation ceiling;
+force close uses the existing commitment transaction. Fee bumps freeze explicit
+outpoints, rates and native budgets. Workflow terms are checked again within
+their services before effects. All intent responses are `no-store`.
+
+Execution metadata is kept in private durable storage under
+`/var/lib/lightningos/financial-intents`. A process lock prevents two Managers
+from owning it. Disk/commit failures block new execution; process interruption
+leaves an uncertain record instead of an executable draft. Unknown records are
+not discarded by age. Capacity exhaustion fails closed. Preparation and native
+reconciliation have per-session quotas with HTTP 429/`Retry-After`. Audit entries
+use intent IDs/digests and safe outcomes, without copying private request/proof
+or raw session cookies.
 
 ## Local TLS trust
 
@@ -455,11 +556,10 @@ Body:
 {
   "enabled": true,
   "max_payment_sat": 100000,
-  "rolling_24h_limit_sat": 500000,
-  "confirm_password": "required when increasing a limit or disabling an active guard"
+  "rolling_24h_limit_sat": 500000
 }
 - At least one positive limit is required while enabled. `0` means no cap for that dimension.
-- Removing a positive limit with `0`, increasing it, or disabling an active guard requires recent `spending_guard_policy` reauthentication or inline `confirm_password`. A payment grant does not authorize policy changes. Missing approval returns HTTP 428 with `code=spending_guard_reauth_required`.
+- Removing a positive limit with `0`, increasing it, or disabling an active guard requires an exact financial intent with independent spending-policy authorization. A payment intent or reusable policy grant does not authorize a different policy change. Missing approval returns HTTP 428 with `code=spending_guard_reauth_required` and `requires_financial_intent=true`.
 - The protected debit is the payment amount plus its maximum routing fee. Reservations are atomic, so concurrent protected requests cannot spend the same allowance.
 - Unresolved reservations continue consuming allowance regardless of age. The rolling window applies to settled debits, starting at settlement. Inconclusive LND lookups or transport errors do not release allowance; reconciliation uses definitive payment outcomes. Legacy reservations without a payment hash are retained for investigation, rather than automatically released on age.
 - Covers Wallet Lightning payments, Chat Keysend, and Loop Out BRLN tranches. It intentionally excludes routing forwards, LOS rebalances, channel operations, on-chain sends, and apps connected directly to LND.
@@ -484,11 +584,10 @@ Body:
 POST /api/wallet/pay
 Body:
 {
-  "payment_request": "lnbc...",
-  "confirm_password": "optional fresh admin confirmation"
+  "payment_request": "lnbc..."
 }
-- Final Lightning payment routes (`/pay`, `/pay/validated-route`, and `/pay/mpp`) require recent `lightning_funds` reauthentication when login protection is enabled. A missing confirmation returns HTTP 428; previews remain available without reauthentication.
-- Lightning Address invoices are decoded by LND and checked for exact requested millisatoshis, mainnet, expiry and the LUD-06 metadata description hash. Preview and execution reuse one validated invoice per session/address/amount/comment until invoice expiry or five minutes. A changed invoice, amount, maximum fee or outgoing-channel selection requires approval in its specific `lnurl_invoice:<sha256>` scope. The HTTP 428 body supplies that scope for `POST /api/auth/reauth`; a generic payment grant does not approve a different LNURL intent. Previews continue to work without password confirmation.
+- Final Lightning payment routes (`/pay`, `/pay/validated-route`, and `/pay/mpp`) require the financial approval protocol above when login protection is enabled. A missing confirmation returns HTTP 428; previews remain available without reauthentication.
+- Lightning Address invoices are decoded by LND and checked for exact requested millisatoshis, mainnet, expiry and the LUD-06 metadata description hash. Preview/preparation reuse one validated invoice per session/address/amount/comment until invoice expiry or five minutes. Execution uses the exact prepared invoice rather than resolving the address again. Changed invoice, amount, maximum fee or channel selection invalidates its `financial_intent:<id>` approval. Previews continue to work without password confirmation.
 
 POST /api/wallet/send
 Body:

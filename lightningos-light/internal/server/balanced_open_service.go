@@ -425,6 +425,9 @@ func (s *BalancedOpenService) ExecuteSession(ctx context.Context, sessionID stri
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
+	if err := validateFinancialSnapshot(ctx, "balanced_open", balancedFinancialTerms(session)); err != nil {
+		return BalancedOpenSession{}, err
+	}
 	if isBalancedOpenTerminalState(session.State) {
 		return BalancedOpenSession{}, ErrBalancedOpenTerminalState
 	}
@@ -475,6 +478,9 @@ func (s *BalancedOpenService) executeSessionPush(ctx context.Context, session Ba
 		}
 	}
 
+	if err := commitFinancialWorkflow(ctx, submitted.SessionID); err != nil {
+		return BalancedOpenSession{}, err
+	}
 	channelPoint, err := s.lnd.OpenChannelWithPush(
 		ctx,
 		submitted.PeerPubkey,
@@ -640,6 +646,9 @@ func (s *BalancedOpenService) executeSessionDual(ctx context.Context, session Ba
 		return BalancedOpenSession{}, err
 	}
 
+	if err := commitFinancialWorkflow(ctx, submitted.SessionID); err != nil {
+		return BalancedOpenSession{}, err
+	}
 	channelPoint, err := s.lnd.OpenChannelWithShim(ctx, lndclient.OpenChannelWithShimParams{
 		PubkeyHex:       submitted.PeerPubkey,
 		CapacitySat:     submitted.CapacitySat,
@@ -1142,6 +1151,9 @@ func (s *BalancedOpenService) ProposeSession(ctx context.Context, sessionID stri
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
+	if err := validateFinancialSnapshot(ctx, "balanced_open", balancedFinancialTerms(session)); err != nil {
+		return BalancedOpenSession{}, err
+	}
 	if isBalancedOpenTerminalState(session.State) {
 		return BalancedOpenSession{}, ErrBalancedOpenTerminalState
 	}
@@ -1267,6 +1279,9 @@ func (s *BalancedOpenService) ProposeSession(ctx context.Context, sessionID stri
 func (s *BalancedOpenService) AcceptSession(ctx context.Context, sessionID string) (BalancedOpenSession, error) {
 	session, err := s.GetSession(ctx, sessionID)
 	if err != nil {
+		return BalancedOpenSession{}, err
+	}
+	if err := validateFinancialSnapshot(ctx, "balanced_open", balancedFinancialTerms(session)); err != nil {
 		return BalancedOpenSession{}, err
 	}
 	if isBalancedOpenTerminalState(session.State) {
@@ -3581,6 +3596,9 @@ func (s *BalancedOpenService) publishBalancedTxWithRetry(ctx context.Context, tx
 	}
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := commitFinancialWorkflow(ctx, label); err != nil {
+			return err
+		}
 		err := s.lnd.PublishTransaction(ctx, txHex, label)
 		if err == nil || isBalancedOpenAlreadyPublishedError(err) {
 			return nil
@@ -4165,6 +4183,9 @@ func balancedOpenOnchainFundingByRole(role string, meta balancedOpenMetadata) (i
 func (s *BalancedOpenService) sendProtocolMessage(ctx context.Context, peerPubkey string, msg balancedOpenProtocolMessage) error {
 	raw, err := marshalBalancedOpenJSON(msg)
 	if err != nil {
+		return err
+	}
+	if err := commitFinancialWorkflow(ctx, msg.SessionID); err != nil {
 		return err
 	}
 	return s.lnd.SendCustomMessage(ctx, peerPubkey, balancedOpenCustomMsgType, raw)

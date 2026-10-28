@@ -2860,8 +2860,14 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 	// An initial policy rides on the same OpenChannelRequest as fixed inputs,
 	// so both go through the parameterised path; the legacy push path stays
 	// for requests that set neither.
-	if len(req.Outpoints) > 0 || !openPolicy.IsZero() {
+	memo, intentErr := commitFinancialChannelDispatch(openCtx, "channel_open")
+	if intentErr != nil {
+		writeError(w, http.StatusServiceUnavailable, intentErr.Error())
+		return
+	}
+	if len(req.Outpoints) > 0 || !openPolicy.IsZero() || memo != "" {
 		channelPoint, openErr = s.lnd.OpenChannelWithOutpoints(openCtx, lndclient.OpenChannelParams{
+			Memo:            memo,
 			PubkeyHex:       pubkey,
 			LocalFundingSat: req.LocalFundingSat,
 			PushSat:         req.PushSat,
@@ -3063,6 +3069,16 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 	openCtx, openCancel := context.WithTimeout(r.Context(), lndBatchOpenChannelTimeout)
 	defer openCancel()
 
+	memo, intentErr := commitFinancialChannelDispatch(openCtx, "channel_open_batch")
+	if intentErr != nil {
+		writeError(w, http.StatusServiceUnavailable, intentErr.Error())
+		return
+	}
+	if memo != "" {
+		for index := range batch {
+			batch[index].Memo = fmt.Sprintf("%s:%d", memo, index)
+		}
+	}
 	results, err := s.lnd.BatchOpenChannel(openCtx, batch, req.SatPerVbyte)
 	if err != nil {
 		s.recordAuditEventAsync(r, "channel.open_batch.failed", "batch", map[string]any{
@@ -3186,7 +3202,7 @@ func (s *Server) handleLNPendingOpenBumpFee(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := s.lnd.BumpFee(ctx, lndclient.BumpFeeParams{
+	if err := s.bumpFinancialFee(ctx, lndclient.BumpFeeParams{
 		Outpoint:    item.FundingBumpOutpoint,
 		SatPerVbyte: plan.SatPerVbyte,
 		Immediate:   plan.Immediate,
@@ -3353,7 +3369,7 @@ func (s *Server) handleLNCloseChannel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Minute)
 	defer cancel()
 
 	if req.SatPerVbyte < 0 {
@@ -3369,6 +3385,10 @@ func (s *Server) handleLNCloseChannel(w http.ResponseWriter, r *http.Request) {
 		satPerVbyte = 0
 	}
 
+	if _, err := commitFinancialChannelDispatch(ctx, "channel_close"); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	closingTxid, err := s.lnd.CloseChannel(ctx, req.ChannelPoint, req.Force, satPerVbyte)
 	if err != nil {
 		s.recordAuditEventAsync(r, "channel.close.failed", strings.TrimSpace(req.ChannelPoint), map[string]any{
@@ -4975,7 +4995,9 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "spending guard could not validate this payment")
 		return
 	}
-	paymentErr := s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat)
+	paymentErr := executeFinancialInvoicePayment(ctx, paymentHash, paymentRequest, outgoingChanIDs, req.MaxFeeSat, func() error {
+		return s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat)
+	})
 	s.finishSpendingReservation(reservation, paymentHash, paymentErr)
 	if paymentErr != nil {
 		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
@@ -5059,7 +5081,9 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusServiceUnavailable, "spending guard could not validate this payment")
 		return
 	}
-	paymentErr := s.lnd.PayInvoiceWithValidatedRoute(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 5, req.RouteToken)
+	paymentErr := executeFinancialInvoicePayment(ctx, paymentHash, paymentRequest, outgoingChanIDs, req.MaxFeeSat, func() error {
+		return s.lnd.PayInvoiceWithValidatedRoute(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 5, req.RouteToken)
+	})
 	s.finishSpendingReservation(reservation, paymentHash, paymentErr)
 	if paymentErr != nil {
 		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
@@ -5156,7 +5180,9 @@ func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "spending guard could not validate this payment")
 		return
 	}
-	paymentErr := s.lnd.PayInvoiceWithMPP(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, req.MaxParts, req.MaxShardSat)
+	paymentErr := executeFinancialInvoicePayment(ctx, paymentHash, paymentRequest, outgoingChanIDs, req.MaxFeeSat, func() error {
+		return s.lnd.PayInvoiceWithMPP(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, req.MaxParts, req.MaxShardSat)
+	})
 	s.finishSpendingReservation(reservation, paymentHash, paymentErr)
 	if paymentErr != nil {
 		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
@@ -5244,15 +5270,7 @@ func (s *Server) classifyOnchainDestination(ctx context.Context, address string)
 }
 
 func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Address         string   `json:"address"`
-		AmountSat       int64    `json:"amount_sat"`
-		SatPerVbyte     int64    `json:"sat_per_vbyte"`
-		SweepAll        bool     `json:"sweep_all"`
-		Outpoints       []string `json:"outpoints"`
-		Label           string   `json:"label"`
-		ConfirmPassword string   `json:"confirm_password"`
-	}
+	var req walletSendRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
@@ -5277,7 +5295,7 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 	// Being listed by WalletKit does not prove private-key control (imported
 	// and watch-only accounts are included). Every manual send spends funds or
 	// fees and must pass the same approval gate, including consolidations.
-	if s.auth != nil && s.auth.Enabled() {
+	if s.auth != nil && s.auth.Enabled() && !financialIntentApproved(r, authScopeWalletSendExternal) {
 		session, ok := authSessionFromContext(r.Context())
 		if !ok {
 			writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
@@ -5311,7 +5329,9 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 		txid    string
 		sendErr error
 	)
-	if len(req.Outpoints) > 0 || strings.TrimSpace(req.Label) != "" {
+	if _, bound := r.Context().Value(financialIntentContextKey{}).(*financialIntentExecution); bound {
+		txid, sendErr = s.executeFinancialOnchainIntent(ctx, r, req)
+	} else if len(req.Outpoints) > 0 || strings.TrimSpace(req.Label) != "" {
 		txid, sendErr = s.lnd.SendCoinsAdvanced(ctx, lndclient.SendCoinsParams{
 			Address:     address,
 			AmountSat:   req.AmountSat,

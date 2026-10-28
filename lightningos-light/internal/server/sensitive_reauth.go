@@ -15,6 +15,13 @@ func (s *Server) requireSensitiveReauth(w http.ResponseWriter, r *http.Request, 
 		writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
 		return false
 	}
+	if financialIntentApproved(r, scope) {
+		return true
+	}
+	if operation, covered := coreFinancialOperation(r.URL.EscapedPath()); covered && financialOperationConditional(operation) && operation.scope == scope {
+		financialIntentChallenge(w, operation, "")
+		return false
+	}
 	if s.auth.HasRecentReauth(session.ID, scope) {
 		return true
 	}

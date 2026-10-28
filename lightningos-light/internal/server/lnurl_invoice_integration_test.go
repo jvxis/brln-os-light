@@ -48,10 +48,17 @@ func TestLNURLPaymentModesRetainSpendingGuard(t *testing.T) {
 	auth.sessions[session.ID].ReauthScopes[scope] = time.Now().Add(time.Minute)
 	s := &Server{lnd: client, spendingGuard: guard, auth: auth, cfg: &config.Config{}, logger: logger, auditLogInitAt: time.Now()}
 	call := func(path string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodPost, "https://node.example"+path, strings.NewReader(`{"payment_request":"alice@merchant.example","amount_sat":100,"max_fee_sat":2}`))
+		t.Helper()
+		payload, binding, err := s.prepareInvoiceFinancialIntent(ctx, path, []byte(`{"payment_request":"alice@merchant.example","amount_sat":100,"max_fee_sat":2}`))
+		if err != nil {
+			t.Fatal("prepare invoice for spending guard regression", err)
+		}
+		intent := financialHandlerApproval(t, s, session, path, payload, binding)
+		r := httptest.NewRequest(http.MethodPost, "https://node.example"+path, strings.NewReader(string(intent.Request)))
 		r.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: session.ID})
 		r.Header.Set("X-CSRF-Token", session.CSRFToken)
 		r.Header.Set("Origin", "https://node.example")
+		r.Header.Set(financialIntentHeader, intent.ID)
 		w := httptest.NewRecorder()
 		s.routes().ServeHTTP(w, r)
 		return w

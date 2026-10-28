@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import AuthScreen from './components/AuthScreen'
+import FinancialIntentConfirmation from './components/FinancialIntentConfirmation'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import ReportsReconciliationNotice from './components/ReportsReconciliationNotice'
@@ -570,6 +571,7 @@ export default function App() {
 
   return (
     <>
+      <FinancialIntentConfirmation />
       <div className="app-shell min-h-screen flex flex-col lg:flex-row text-fog">
         <div
           className={`fixed inset-0 z-30 bg-black/60 backdrop-blur-sm transition-opacity lg:hidden ${

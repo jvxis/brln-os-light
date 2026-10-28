@@ -1,3 +1,5 @@
+import { financialRequest, cancelFinancialConfirmations } from './financialIntents'
+
 const base = ''
 
 export type MeshPeer = { correlated_replies?: boolean; last_response?: string; node: number; name: string; paired: boolean; allow_relay: boolean; fingerprint: string }
@@ -102,12 +104,12 @@ const setCSRFToken = (value?: string) => {
   csrfToken = typeof value === 'string' ? value.trim() : ''
 }
 
-async function request(path: string, options?: RequestInit) {
+const request = (path: string, options?: RequestInit) => financialRequest(path, options, requestRaw)
+
+async function requestRaw(path: string, options?: RequestInit) {
   const method = String(options?.method || 'GET').toUpperCase()
-  const headers = new Headers({
-    'Content-Type': 'application/json',
-    ...(options?.headers || {})
-  })
+  const headers = new Headers(options?.headers)
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   if (csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-CSRF-Token', csrfToken)
   }
@@ -139,6 +141,7 @@ async function request(path: string, options?: RequestInit) {
       }
     }
     if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      cancelFinancialConfirmations()
       setCSRFToken('')
       window.dispatchEvent(new CustomEvent('auth:required'))
     }
@@ -197,6 +200,7 @@ export const loginAuth = async (payload: { password: string }) => {
   return data
 }
 export const logoutAuth = async () => {
+  cancelFinancialConfirmations()
   const data = await request('/api/auth/logout', { method: 'POST', body: JSON.stringify({}) })
   setCSRFToken('')
   return data
@@ -215,6 +219,9 @@ export const changePasswordAuth = async (payload: { current_password: string; pa
 }
 export const reauthAuth = (payload: { password: string; scope: string }) =>
   request('/api/auth/reauth', { method: 'POST', body: JSON.stringify(payload) })
+export const getFinancialIntent = (id: string) => request(`/api/financial/intents/${encodeURIComponent(id)}`, { cache: 'no-store' })
+export const reconcileFinancialIntent = (id: string) => request(`/api/financial/intents/${encodeURIComponent(id)}/reconcile`, { method: 'POST', body: '{}' })
+export const cancelFinancialIntent = (id: string) => request(`/api/financial/intents/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' })
 export const getMenuPreferences = () =>
   request('/api/ui/preferences/menu') as Promise<MenuPreferencesRecord>
 export const updateMenuPreferences = (payload: MenuPreferences) =>

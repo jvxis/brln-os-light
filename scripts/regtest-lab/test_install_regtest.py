@@ -32,9 +32,9 @@ class ProvisionRuntimeTests(unittest.TestCase):
                 calls = root / 'calls'
                 # Keep the service wrapper local; executable comparison uses real /proc.
                 shell = '''set -eu
-pid=$1; calls=$2; binary=$3
+fixture_pid=$1; calls=$2; binary=$3
 systemctl() {
-  if [[ $1 == show ]]; then printf '%s\\n' "$pid"; else printf '%s\\n' "$*" >> "$calls"; fi
+  if [[ $1 == show ]]; then printf '%s\\n' "$fixture_pid"; else printf '%s\\n' "$*" >> "$calls"; fi
 }
 ''' + function + '\nrestart_changed_lnd los-regtest-alice "$binary"\n'
                 def run(pid):

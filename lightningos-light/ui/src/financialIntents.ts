@@ -94,6 +94,10 @@ const operationKey = async (path: string, method: string, body: unknown) => {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 const inFlight = new Map<string, Promise<any>>()
+const checkedFinancialResult = (result: any) => {
+  if (result?.financial_intent_needs_review) throw financialError('financial_workflow_resume_required', result.financial_intent_message || 'Existing funding was located. Review and confirm continuation; no new transfer was submitted.')
+  return result
+}
 
 export async function financialRequest(path: string, options: RequestInit | undefined, transport: Transport) {
   const method = String(options?.method || 'GET').toUpperCase()
@@ -114,12 +118,12 @@ export async function financialRequest(path: string, options: RequestInit | unde
       if (['completed', 'rejected', 'cancelled'].includes(state.state)) {
         saveReference(key)
         if (state.status >= 400) throw financialError(state.result?.code || 'financial_intent_rejected', state.result?.error || 'The original operation was rejected.')
-        return state.result
+        return checkedFinancialResult(state.result)
       }
       if (state.state === 'executing' || state.state === 'uncertain') {
         const result = await transport(`/api/financial/intents/${prior.id}/reconcile`, { method: 'POST', body: '{}' })
         saveReference(key)
-        return result
+        return checkedFinancialResult(result)
       }
       if (state.state === 'draft' && state.can_confirm && state.payload && state.summary) {
         intent = { ...state, required: true, path, intent_id: prior.id }
@@ -149,7 +153,7 @@ export async function financialRequest(path: string, options: RequestInit | unde
     // underlying page's form changes while the confirmation is open.
     const result = await transport(path, { ...options, headers, body: JSON.stringify(intent.payload) })
     saveReference(key)
-    return result
+    return checkedFinancialResult(result)
   }
   const promise = run()
   inFlight.set(key, promise)

@@ -13,9 +13,14 @@ import (
 	"time"
 )
 
+func financialPrivateTestDir(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "private-intents")
+}
+
 func financialStoreFixture(t *testing.T) (*financialIntentStore, *financialIntentRecord) {
 	t.Helper()
-	s, err := openFinancialIntentStore(t.TempDir())
+	s, err := openFinancialIntentStore(financialPrivateTestDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +186,30 @@ func TestFinancialIntentStoreExclusiveOwnershipAndCorruption(t *testing.T) {
 	}
 }
 
+func TestFinancialIntentStoreRejectsReadableExistingDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits are enforced by the native Linux integration run")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if store, err := openFinancialIntentStore(dir); err == nil {
+		store.Close()
+		t.Fatal("existing public directory accepted private financial metadata")
+	}
+	private := filepath.Join(dir, "private")
+	store, err := openFinancialIntentStore(private)
+	if err != nil {
+		t.Fatal("new private child could not be initialized", err)
+	}
+	defer store.Close()
+	info, err := os.Stat(private)
+	if err != nil || info.Mode().Perm() != 0700 {
+		t.Fatal("new financial directory did not enforce 0700")
+	}
+}
+
 func TestFinancialIntentStoreBoundedDraftsAndExpiredCleanup(t *testing.T) {
 	s, r := financialStoreFixture(t)
 	s.maxPending = 1
@@ -204,7 +233,7 @@ func TestFinancialIntentStoreBoundedDraftsAndExpiredCleanup(t *testing.T) {
 }
 
 func TestFinancialIntentStoreAbruptProcessExit(t *testing.T) {
-	dir := t.TempDir()
+	dir := financialPrivateTestDir(t)
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

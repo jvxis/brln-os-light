@@ -253,7 +253,7 @@ func TestLNURLAllPaymentModesRejectMismatchAndRequestBoundApproval(t *testing.T)
 	s := &Server{lnd: client, auth: auth, logger: logger, cfg: &config.Config{}}
 	for _, path := range []string{"/api/wallet/pay", "/api/wallet/pay/validated-route", "/api/wallet/pay/mpp"} {
 		t.Run(path, func(t *testing.T) {
-			store, err := openFinancialIntentStore(t.TempDir())
+			store, err := openFinancialIntentStore(financialPrivateTestDir(t))
 			if err != nil {
 				t.Fatal(err)
 			}

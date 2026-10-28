@@ -191,19 +191,36 @@ func balancedFundingFixture(t *testing.T, p *pgxpool.Pool) (*Server, *balancedFu
 	svc := NewBalancedOpenService(p, client, logger, nil)
 	return &Server{cfg: cfg, lnd: client, auth: auth, logger: logger, balancedOpen: svc, auditLogInitAt: time.Now()}, r, session
 }
-func balancedFundingCall(s *Server, snap authSessionSnapshot, id, action string) *httptest.ResponseRecorder {
+func balancedFundingCall(s *Server, snap authSessionSnapshot, id, action string, intentIDs ...string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("POST", "https://node.example/api/lnops/balanced-open/sessions/"+id+"/"+action, strings.NewReader(`{}`))
 	req.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: snap.ID})
 	req.Header.Set("Origin", "https://node.example")
 	req.Header.Set("X-CSRF-Token", snap.CSRFToken)
+	if len(intentIDs) > 0 {
+		req.Header.Set(financialIntentHeader, intentIDs[0])
+	}
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, req)
 	return w
 }
-func balancedApprove(s *Server, snap authSessionSnapshot) {
-	s.auth.mu.Lock()
-	s.auth.sessions[snap.ID].ReauthScopes[authScopeLightningFunds] = time.Now().Add(time.Minute)
-	s.auth.mu.Unlock()
+func balancedApprove(t *testing.T, s *Server, snap authSessionSnapshot, id, action string) *financialIntentRecord {
+	t.Helper()
+	path := "/api/lnops/balanced-open/sessions/" + id + "/" + action
+	payload, binding, err := s.prepareFinancialOperation(context.Background(), "unused-fixture-id", path, []byte(`{}`))
+	if err != nil {
+		t.Fatal("prepare balanced workflow fixture", err)
+	}
+	return financialHandlerApproval(t, s, snap, path, payload, binding)
+}
+
+func balancedReconcileCall(s *Server, snap authSessionSnapshot, id string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("POST", "https://node.example/api/financial/intents/"+id+"/reconcile", strings.NewReader(`{}`))
+	r.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: snap.ID})
+	r.Header.Set("Origin", "https://node.example")
+	r.Header.Set("X-CSRF-Token", snap.CSRFToken)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	return w
 }
 func TestBalancedPrefundingApprovalAndLostResponse(t *testing.T) {
 	for _, hidden := range []bool{false, true} {
@@ -219,15 +236,19 @@ func TestBalancedPrefundingApprovalAndLostResponse(t *testing.T) {
 			if w := balancedFundingCall(s, snap, session.SessionID, "propose"); w.Code != 428 || r.sends.Load() != 0 || r.keys.Load() != 0 || r.signs.Load() != 0 {
 				t.Fatal("unapproved proposal reached wallet")
 			}
-			balancedApprove(s, snap)
+			intent := balancedApprove(t, s, snap, session.SessionID, "propose")
 			r.loseReply.Store(true)
 			r.hideUTXO.Store(hidden)
-			w := balancedFundingCall(s, snap, session.SessionID, "propose")
+			w := balancedFundingCall(s, snap, session.SessionID, "propose", intent.ID)
 			if w.Code != 409 || r.sends.Load() != 1 {
 				t.Fatalf("lost reply must become unresolved, HTTP=%d sends=%d", w.Code, r.sends.Load())
 			}
 			s.balancedOpen = NewBalancedOpenService(p, s.lnd, s.logger, nil) // restart service state
-			w = balancedFundingCall(s, snap, session.SessionID, "propose")
+			w = balancedFundingCall(s, snap, session.SessionID, "propose", intent.ID)
+			if w.Code != 409 || r.sends.Load() != 1 {
+				t.Fatal("identical unresolved intent was executed twice")
+			}
+			w = balancedReconcileCall(s, snap, intent.ID)
 			expected := 200
 			if hidden {
 				expected = 409
@@ -247,7 +268,11 @@ func TestBalancedPrefundingApprovalAndLostResponse(t *testing.T) {
 					t.Fatal("canceled session could not reconcile without another transfer", err)
 				}
 			} else {
-				w = balancedFundingCall(s, snap, session.SessionID, "propose")
+				if !strings.Contains(w.Body.String(), "financial_intent_needs_review") {
+					t.Fatal("reconciled prefunding was mistaken for a completed proposal")
+				}
+				continuation := balancedApprove(t, s, snap, session.SessionID, "propose")
+				w = balancedFundingCall(s, snap, session.SessionID, "propose", continuation.ID)
 				if w.Code != 200 || r.sends.Load() != 1 {
 					t.Fatal("idempotent proposal retry failed")
 				}
@@ -269,18 +294,25 @@ func TestBalancedAcceptApprovalSigningAndRetry(t *testing.T) {
 	if w := balancedFundingCall(s, snap, msg.SessionID, "accept"); w.Code != 428 || r.sends.Load() != 0 || r.signs.Load() != 0 {
 		t.Fatal("unapproved accept reached funding/signing")
 	}
-	balancedApprove(s, snap)
+	intent := balancedApprove(t, s, snap, msg.SessionID, "accept")
 	r.failSign.Store(true)
-	if w := balancedFundingCall(s, snap, msg.SessionID, "accept"); w.Code != 500 || r.sends.Load() != 1 {
+	if w := balancedFundingCall(s, snap, msg.SessionID, "accept", intent.ID); w.Code != 500 || r.sends.Load() != 1 {
 		t.Fatalf("sign failure fixture, HTTP=%d sends=%d body=%s", w.Code, r.sends.Load(), w.Body.String())
 	}
 	if _, err := p.Exec(ctx, `update balanced_open_sessions set created_at=now()-interval '8 days',state_updated_at=now()-interval '8 days' where session_id=$1`, msg.SessionID); err != nil {
 		t.Fatal(err)
 	}
-	if w := balancedFundingCall(s, snap, msg.SessionID, "accept"); w.Code != 200 || r.sends.Load() != 1 || r.signs.Load() != 2 {
+	if w := balancedFundingCall(s, snap, msg.SessionID, "accept", intent.ID); w.Code != 409 || r.sends.Load() != 1 || r.signs.Load() != 1 {
+		t.Fatal("unresolved accept intent signed or funded again")
+	}
+	if w := balancedReconcileCall(s, snap, intent.ID); w.Code != 200 || !strings.Contains(w.Body.String(), "financial_intent_needs_review") || r.sends.Load() != 1 || r.signs.Load() != 1 {
+		t.Fatalf("existing prefund could not be reconciled without new financial RPCs: %d", w.Code)
+	}
+	continuation := balancedApprove(t, s, snap, msg.SessionID, "accept")
+	if w := balancedFundingCall(s, snap, msg.SessionID, "accept", continuation.ID); w.Code != 200 || r.sends.Load() != 1 || r.signs.Load() != 2 {
 		t.Fatalf("accept retry duplicated prefunding, HTTP=%d sends=%d signs=%d body=%s", w.Code, r.sends.Load(), r.signs.Load(), w.Body.String())
 	}
-	if w := balancedFundingCall(s, snap, msg.SessionID, "accept"); w.Code != 200 || r.sends.Load() != 1 || r.signs.Load() != 2 {
+	if w := balancedFundingCall(s, snap, msg.SessionID, "accept", continuation.ID); w.Code != 200 || r.sends.Load() != 1 || r.signs.Load() != 2 {
 		t.Fatal("accepted retry mutated artifacts")
 	}
 	before, _ := svc.GetSession(ctx, msg.SessionID)
@@ -307,15 +339,19 @@ func TestBalancedLostReplyReconcilesWalletHistoryWithoutManagedUTXO(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	balancedApprove(s, snap)
+	intent := balancedApprove(t, s, snap, session.SessionID, "propose")
 	r.loseReply.Store(true)
 	r.hideUTXO.Store(true) // Custom key-family transit is not a managed wallet UTXO in real LND.
 	r.exposeHistory.Store(true)
-	if w := balancedFundingCall(s, snap, session.SessionID, "propose"); w.Code != 409 || r.sends.Load() != 1 {
+	if w := balancedFundingCall(s, snap, session.SessionID, "propose", intent.ID); w.Code != 409 || r.sends.Load() != 1 {
 		t.Fatalf("expected uncertain first send, HTTP=%d sends=%d", w.Code, r.sends.Load())
 	}
 	s.balancedOpen = NewBalancedOpenService(p, s.lnd, s.logger, nil)
-	if w := balancedFundingCall(s, snap, session.SessionID, "propose"); w.Code != 200 || r.sends.Load() != 1 {
+	if w := balancedReconcileCall(s, snap, intent.ID); w.Code != 200 || !strings.Contains(w.Body.String(), "financial_intent_needs_review") || r.sends.Load() != 1 {
+		t.Fatalf("native wallet history did not reconcile known prefunding: HTTP %d", w.Code)
+	}
+	continuation := balancedApprove(t, s, snap, session.SessionID, "propose")
+	if w := balancedFundingCall(s, snap, session.SessionID, "propose", continuation.ID); w.Code != 200 || r.sends.Load() != 1 {
 		t.Fatalf("wallet history must reconcile the original un-managed output, HTTP=%d sends=%d", w.Code, r.sends.Load())
 	}
 }

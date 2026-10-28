@@ -147,6 +147,9 @@ func (s *Server) observeFinancialWorkflow(ctx context.Context, record *financial
 			if resolved {
 				return financialObservedResult(200, session)
 			}
+			if action == "propose" || action == "accept" {
+				return s.observeBalancedFinancialPrefund(ctx, record, binding, session)
+			}
 		case "close_manager":
 			return s.observeFinancialCloseManager(ctx, record, binding, id, action)
 		}

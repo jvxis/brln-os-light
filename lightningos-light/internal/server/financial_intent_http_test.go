@@ -20,7 +20,7 @@ import (
 func financialHandlerApproval(t *testing.T, s *Server, session authSessionSnapshot, path string, payload []byte, binding financialIntentBinding) *financialIntentRecord {
 	t.Helper()
 	if s.financialIntents == nil {
-		store, err := openFinancialIntentStore(t.TempDir())
+		store, err := openFinancialIntentStore(financialPrivateTestDir(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +48,7 @@ func financialHandlerApproval(t *testing.T, s *Server, session authSessionSnapsh
 
 func financialHTTPFixture(t *testing.T) (*Server, *financialIntentRecord, authSessionSnapshot) {
 	t.Helper()
-	store, err := openFinancialIntentStore(t.TempDir())
+	store, err := openFinancialIntentStore(financialPrivateTestDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

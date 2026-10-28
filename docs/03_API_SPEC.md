@@ -174,6 +174,19 @@ outcome is still uncertain. It never creates another payment, funds/signs a new
 transaction, or rebroadcasts. Missing native history alone does not prove that a
 dispatched operation failed. Unresolved spending reservations remain held.
 
+Balanced-open prefunding can be located even when the proposal or signing step
+did not finish. Reconciliation only locates the original output and updates its
+existing workflow record; it does not call funding, signing or protocol-send
+RPCs again. This known partial result includes
+`financial_intent_needs_review:true` and `financial_intent_message` alongside
+the current session. It is a recorded financial result, **not** a claim that the
+channel/protocol completed. The UI reports that continuation needs review. An
+explicit subsequent continuation requires a new intent/password confirmation
+against the now-funded workflow snapshot, and the native prefund ledger reuses
+that original output. Identical retries of the old intent only replay its
+partial result. If the existing output cannot be proven, the result stays
+uncertain and no continuation is submitted automatically.
+
 `POST /api/financial/intents/{id}/cancel` cancels only a draft, including one
 owned by a previous session. It cannot discard an executing/uncertain operation.
 The browser retains only opaque references and hashed request keys in session

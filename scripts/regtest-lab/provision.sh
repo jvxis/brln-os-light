@@ -28,9 +28,9 @@ fetch() {
 fetch bitcoin-31.1-x86_64-linux-gnu.tar.gz https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e
 tar -xzf bitcoin-31.1-x86_64-linux-gnu.tar.gz -C /opt/los-regtest/downloads
 install -m 0755 bitcoin-31.1/bin/bitcoind bitcoin-31.1/bin/bitcoin-cli /opt/los-regtest/bin/
-fetch lnd-linux-amd64-v0.21.4-beta.tar.gz https://github.com/lightningnetwork/lnd/releases/download/v0.21.4-beta/lnd-linux-amd64-v0.21.4-beta.tar.gz beffe4949a5e46410d90c0e6d020a1b685468440b0004fc4d59740a6291178fb
-tar -xzf lnd-linux-amd64-v0.21.4-beta.tar.gz -C /opt/los-regtest/downloads
-install -m 0755 lnd-linux-amd64-v0.21.4-beta/lnd lnd-linux-amd64-v0.21.4-beta/lncli /opt/los-regtest/bin/
+fetch lnd-linux-amd64-v0.21.5-beta.tar.gz https://github.com/lightningnetwork/lnd/releases/download/v0.21.5-beta/lnd-linux-amd64-v0.21.5-beta.tar.gz 2127d4794ea9cbd98e762ba16283615158743646d2d6d2a5bf88664dd6255ce7
+tar -xzf lnd-linux-amd64-v0.21.5-beta.tar.gz -C /opt/los-regtest/downloads
+install -m 0755 lnd-linux-amd64-v0.21.5-beta/lnd lnd-linux-amd64-v0.21.5-beta/lncli /opt/los-regtest/bin/
 cd /
 python3 - <<'PY'
 from pathlib import Path
@@ -90,4 +90,17 @@ EOF
 done
 systemctl daemon-reload
 systemctl enable --now los-regtest-bitcoin los-regtest-alice los-regtest-bob >/dev/null
+
+# enable --now leaves an already active process running its previous executable.
+# Compare the live executable too, so retrying an interrupted upgrade converges.
+restart_changed_lnd() {
+  local service=$1 binary=$2 pid
+  pid=$(systemctl show "$service" --property=MainPID --value)
+  if [[ $pid =~ ^[1-9][0-9]*$ && -e /proc/$pid/exe ]] && ! cmp -s -- "/proc/$pid/exe" "$binary"; then
+    systemctl restart "$service"
+  fi
+}
+for node in alice bob; do
+  restart_changed_lnd "los-regtest-$node" /opt/los-regtest/bin/lnd
+done
 echo 'Native Bitcoin/LND regtest units installed. Wallet initialization/funding is a separate step.'

@@ -2,6 +2,8 @@
 import importlib.util
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -12,6 +14,47 @@ from unittest.mock import patch
 import safety
 import deploy
 import control
+
+
+@unittest.skipUnless(sys.platform == 'linux', 'requires Linux /proc executable identity')
+class ProvisionRuntimeTests(unittest.TestCase):
+    def test_changed_running_binary_restarts_but_repeat_and_inactive_do_not(self):
+        script = Path(__file__).with_name('provision.sh').read_text()
+        start = script.index('restart_changed_lnd() {')
+        function = script[start:script.index('\n}', start) + 2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'lnd'
+            shutil.copyfile('/usr/bin/sleep', binary)
+            binary.chmod(0o755)
+            process = subprocess.Popen([str(binary), '60'])
+            try:
+                calls = root / 'calls'
+                # Keep the service wrapper local; executable comparison uses real /proc.
+                shell = '''set -eu
+fixture_pid=$1; calls=$2; binary=$3
+systemctl() {
+  if [[ $1 == show ]]; then printf '%s\\n' "$fixture_pid"; else printf '%s\\n' "$*" >> "$calls"; fi
+}
+''' + function + '\nrestart_changed_lnd los-regtest-alice "$binary"\n'
+                def run(pid):
+                    subprocess.run(['bash', '-c', shell, 'test', str(pid), str(calls), str(binary)], check=True)
+                run(process.pid)
+                self.assertFalse(calls.exists(), 'unchanged live executable must stay running')
+                replacement = root / 'replacement'
+                replacement.write_bytes(b'new verified executable fixture')
+                replacement.replace(binary)
+                run(process.pid)
+                self.assertEqual(calls.read_text().splitlines(), ['restart los-regtest-alice'])
+                calls.unlink()
+                run(0)
+                self.assertFalse(calls.exists(), 'inactive service is started by enable --now')
+                shutil.copyfile('/usr/bin/sleep', binary)
+                run(process.pid)
+                self.assertFalse(calls.exists(), 'identical binary on retry must not restart')
+            finally:
+                process.terminate()
+                process.wait(timeout=5)
 
 
 @unittest.skipUnless(sys.platform == 'linux' and os.geteuid() == 0, 'requires disposable Linux root')

@@ -29,11 +29,17 @@ class PreflightTests(unittest.TestCase):
 
     def test_fresh_and_repeated_owned_setup(self):
         safety.check()
-        safety.initialize()
+        previous = os.umask(0o077)
+        try:
+            safety.initialize()
+        finally:
+            os.umask(previous)
         safety.check()
         marker = self.path('/etc/los-regtest/LAB_ONLY')
         self.assertEqual(marker.read_text(), 'LOS_REGTEST_ONLY\n')
         self.assertEqual(marker.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(self.path('/opt/los-regtest').stat().st_mode & 0o777, 0o755)
+        self.assertEqual(self.path('/var/lib/los-regtest').stat().st_mode & 0o777, 0o700)
 
     def test_mainnet_data_is_refused_without_mutation(self):
         wallet = self.path('/data/lnd/wallet.db')

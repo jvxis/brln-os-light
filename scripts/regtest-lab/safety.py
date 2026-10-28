@@ -55,7 +55,10 @@ def check():
 def initialize():
     check()
     for value in ROOTS:
-        Path(value).mkdir(mode=0o700 if value.startswith('/var/lib/') else 0o755, parents=True, exist_ok=True)
+        path = Path(value)
+        mode = 0o700 if value.startswith('/var/lib/') else 0o755
+        path.mkdir(mode=mode, parents=True, exist_ok=True)
+        path.chmod(mode)
     if not MARKER.exists():
         with MARKER.open('x') as stream:
             stream.write('LOS_REGTEST_ONLY\n')

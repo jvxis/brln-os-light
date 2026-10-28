@@ -57,6 +57,7 @@ const (
 	authScopeLightningFunds      = "lightning_funds"
 	authScopeSpendingGuardPolicy = "spending_guard_policy"
 	authScopeLNDMaintenance      = "lnd_maintenance"
+	authScopeLNDConfig           = "lnd_config"
 	authScopeBarkSeedReveal      = "bark_seed_reveal"
 	authScopeBRLNCommunitySigner = "brln_community_signer"
 )
@@ -541,7 +542,7 @@ func authScopeValid(scope string) bool {
 		return err == nil && len(decoded) == sha256.Size && suffix == strings.ToLower(suffix)
 	}
 	switch strings.TrimSpace(scope) {
-	case authScopeSpendingGuardPolicy, authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeBarkSeedReveal, authScopeBRLNCommunitySigner:
+	case authScopeSpendingGuardPolicy, authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeLNDConfig, authScopeBarkSeedReveal, authScopeBRLNCommunitySigner:
 		return true
 	default:
 		return false

@@ -35,6 +35,10 @@ type Server struct {
 	shutdownCtx                 context.Context
 	shutdownCancel              context.CancelFunc
 	lnd                         *lndclient.Client
+	lndConfigOps                *lndConfigOperations
+	lndConfigRevisionOnce       sync.Once
+	lndConfigRevisionKey        [32]byte
+	lndConfigRevisionErr        error
 	networkMapMu                sync.Mutex
 	networkMapGeoCache          map[string]networkMapGeoCacheEntry
 	db                          *pgxpool.Pool

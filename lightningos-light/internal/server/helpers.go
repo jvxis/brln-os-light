@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"lightningos-light/internal/logsafe"
 	"net/http"
 	"strings"
 )
@@ -49,7 +50,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func writeErrorCode(w http.ResponseWriter, status int, code string, message string) {
-	payload := map[string]string{"error": message}
+	payload := map[string]string{"error": logsafe.Redact(message)}
 	if strings.TrimSpace(code) != "" {
 		payload["code"] = code
 	}

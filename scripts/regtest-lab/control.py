@@ -150,6 +150,18 @@ def smoke():
     # payments before chain catch-up, without creating a payment record.
     for node in PORTS:
         wait_info(node)
+    # Active links and chain sync can precede the router's local bandwidth
+    # view on a newly created channel. Wait using read-only route queries;
+    # never retry a payment merely because startup readiness was incomplete.
+    for _ in range(60):
+        try:
+            if ln('alice', 'queryroutes', '--dest=' + pubkey, '--amt=1000').get('routes'):
+                break
+        except RuntimeError:
+            pass
+        time.sleep(1)
+    else:
+        raise RuntimeError('Native channel routing did not become ready')
     invoice = ln('bob', 'addinvoice', '--amt=1000', '--memo=LOS REGTEST native smoke test')
     payment = rest('alice', '/v2/router/send', {'payment_request': invoice['payment_request'],
                                               'timeout_seconds': 30, 'fee_limit_sat': '1000',

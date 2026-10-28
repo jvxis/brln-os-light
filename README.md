@@ -1085,6 +1085,8 @@ Copy the **public** CA `/etc/los-regtest/ca.crt` over verified SSH and trust it 
 your test browser; keep TLS verification enabled. Retrieve each UI password
 privately on the VM with `sudo cat /etc/los-regtest/alice/ui-password` or the Bob
 equivalent. Mine confirmations with `sudo python3 /opt/los-regtest/control.py mine 6`.
+Use an explicit fee rate such as `2 sat/vB`; a short regtest chain may not yet
+have automatic estimates, and public fee services are outside this profile.
 
 App Store lifecycle, production installation/upgrades and external integrations
 are outside this profile. System health panels may report missing production

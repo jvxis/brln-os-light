@@ -153,6 +153,9 @@ Use the public CA `/etc/los-regtest/ca.crt` for certificate validation; do not
 disable TLS verification. Retrieve login credentials privately over verified SSH.
 
 To mine confirmations: `sudo python3 /opt/los-regtest/control.py mine 6`.
+Choose an explicit funding/closing fee such as `2 sat/vB`. Automatic estimates
+may be unavailable on a short regtest chain; public fee services are not enabled
+by this isolated profile.
 For a service restart test, restart only `los-regtest-*` units inside this VM;
 no Windows networking or other VM needs a restart. Reset/deletion is a separate
 authorized operation; provisioning never deletes a wallet or chain directory.

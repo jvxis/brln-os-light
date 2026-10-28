@@ -1093,6 +1093,8 @@ Copie a CA **pública** `/etc/los-regtest/ca.crt` por SSH verificado e confie ne
 no navegador de testes; mantenha a verificação TLS habilitada. Consulte a senha
 privadamente na VM com `sudo cat /etc/los-regtest/alice/ui-password` ou o equivalente
 do Bob. Minere confirmações com `sudo python3 /opt/los-regtest/control.py mine 6`.
+Escolha uma taxa manual, como `2 sat/vB`: uma cadeia regtest curta pode ainda não
+ter estimativas automáticas, e serviços públicos de taxas ficam fora deste perfil.
 
 Ciclo de vida da App Store, instalação/upgrades de produção e integrações externas
 ficam fora deste perfil. Painéis de saúde podem apontar serviços de produção

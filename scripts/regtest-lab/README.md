@@ -75,12 +75,19 @@ the Lightning operations screens.
 | --- | --- |
 | Read channels and balances | Validated. |
 | Initial channel created by setup through `lncli` | Validated in setup; this does not validate opening through the LOS UI. |
-| Open a single channel through the UI | Not yet validated in this lab. |
-| Batch-open channels through the UI | Not yet validated in this lab. |
-| Balanced channel opening through the UI | Enabled, but the complete workflow is not yet validated in this lab. |
-| Cooperative channel close through the UI | Not yet validated in this lab. |
-| Force-close a channel through the UI | Not yet validated in this lab. |
-| Fee editing, rebalance and channel automations | Not yet validated in this lab. |
+| Open a single channel through the UI | Validated with manual fees, password confirmation and native active-channel verification. |
+| Batch-open channels through the UI | Validated: two distinct peers, one funding transaction, both channels active. |
+| Balanced channel opening through the UI | Validated: Alice proposes, Bob accepts, Alice executes; active 50/50 channel. |
+| Cooperative channel close through the UI | Qualified: Auto completed; one manual close confirmed but the UI returned an error ([#343](https://github.com/jvxis/brln-os-light/issues/343)). Fee hints also need correction ([#344](https://github.com/jvxis/brln-os-light/issues/344)). Check native state before retrying. |
+| Force-close a channel through the UI | Validated through confirmation, CSV maturity and native balance recovery. |
+| Edit one channel’s fees | Validated: outbound/base fees and timelock matched native LND policy. |
+| Manual rebalance through the UI | Qualified: moved 49,824 of 50,000 requested sats for 2 sats; job correctly reported partial, with 176 sats remaining. |
+| Manual AutoFee | Validated: Dry run preserved policy; Run now applied a change to a test channel. |
+| Scheduled automations and failure recovery | Not yet validated: automatic rebalance, auto-heal, HTLC Manager and failure scenarios require dedicated tests. |
+
+See the [dated test report](../../docs/REGTEST_LIGHTNING_VALIDATION_2026-10-28.md)
+for the environment, procedures, observed results and coverage limits. Manual
+runs do not validate scheduled execution or long-term automation economics.
 
 **Not yet validated** means the end-to-end UI workflow has not been exercised on
 this lab installation. It does not mean it is known to fail, and it must not be

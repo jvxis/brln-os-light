@@ -1,8 +1,11 @@
 // Exercises the exported API helper and real financial-intent transport.
 // npm ci, then: node --test tests/retirement-confirmation.test.mjs
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
-import test from 'node:test'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test, { after } from 'node:test'
 import { build } from 'esbuild'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -10,6 +13,10 @@ const bundle = await build({
   stdin: { contents: `export { confirmNodeRetirementCoopClose } from './src/api.ts'; export { subscribeFinancialConfirmation } from './src/financialIntents.ts';`, resolveDir: root, loader: 'ts' },
   bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022'
 })
+const moduleDirectory = mkdtempSync(join(tmpdir(), 'los-retirement-confirm-'))
+const moduleFile = join(moduleDirectory, 'api.mjs')
+writeFileSync(moduleFile, bundle.outputFiles[0].text, { mode: 0o600 })
+after(() => { unlinkSync(moduleFile); rmdirSync(moduleDirectory) })
 
 for (const [name, payload] of [['omitted payload', undefined], ['explicit payload', { confirm_password: 'fixture-only-password' }]]) {
   test(`retirement cooperative confirmation prepares a financial snapshot with ${name}`, async t => {
@@ -28,7 +35,7 @@ for (const [name, payload] of [['omitted payload', undefined], ['explicit payloa
       if (url === '/api/financial/intents') {
         prepared++
         const request = JSON.parse(options.body)
-        assert.deepEqual(request, { method: 'POST', path, payload: payload || {} })
+        assert.deepEqual(request, { method: 'POST', path, payload: {} }, 'passwords must not enter the persisted financial snapshot')
         return response({ required: true, intent_id: id, scope: 'fixture-snapshot', path, method: 'POST', payload: normalized, summary: { operation: 'retirement_coop_confirm' } }, 201)
       }
       assert.equal(url, path)
@@ -41,7 +48,7 @@ for (const [name, payload] of [['omitted payload', undefined], ['explicit payloa
       submitted++
       return response({ ok: true })
     }
-    const module = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64') + '#' + encodeURIComponent(name))
+    const module = await import(pathToFileURL(moduleFile).href + '#' + encodeURIComponent(name))
     const unsubscribe = module.subscribeFinancialConfirmation(task => { if (task) { confirmations++; task.approve() } })
     t.after(unsubscribe)
     assert.deepEqual(await module.confirmNodeRetirementCoopClose('test-session', payload), { ok: true })

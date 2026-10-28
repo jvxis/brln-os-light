@@ -123,8 +123,8 @@ func TestLNDConfigNativeDisposable(t *testing.T) {
 	if err != nil {
 		t.Fatal("native snapshot failed")
 	}
-	for _, entry := range lndConfigEntries(string(snap.raw)) {
-		if lndOptionIsSecret(entry) && len(entry.value) > 3 && strings.Contains(snap.public, entry.value) {
+	for _, entry := range lndConfigEntries(snap.public) {
+		if lndOptionIsSecret(entry) && entry.value != lndSecretPlaceholder {
 			t.Fatal("native public config exposed credential")
 		}
 	}

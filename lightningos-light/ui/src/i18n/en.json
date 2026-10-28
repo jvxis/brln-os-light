@@ -2258,6 +2258,7 @@
     "wallet": "Wallet",
     "wear": "Wear",
     "wearDaysLeft": "Wear: {{wear}}% | Days left: {{days}}",
+    "smartUnavailableHint": "SMART not available — common on virtual (VPS) disks. Size and usage are still measured.",
     "zmqRawBlock": "ZMQ Raw Block",
     "zmqRawTx": "ZMQ Raw Tx"
   },

@@ -7161,10 +7161,22 @@ func (c *Client) CloseChannel(ctx context.Context, channelPoint string, force bo
 	}
 
 	closingTxid, err := c.closeChannelOnce(ctx, channelPoint, force, satPerVbyte, maxFeePerVbyte)
+	// A stream error does not prove that LND did not broadcast. Check the exact
+	// channel before returning an error or attempting the bounded fee retry.
+	if err != nil {
+		if observed := c.lookupKnownClosingTxid(ctx, channelPoint); observed != "" {
+			return observed, nil
+		}
+	}
 	if err != nil && !force && isCloseFeeProposalExceedsMaxError(err) {
 		boostedMaxFee := boostedCloseMaxFeePerVbyte(maxFeePerVbyte)
 		if boostedMaxFee > maxFeePerVbyte {
 			closingTxid, err = c.closeChannelOnce(ctx, channelPoint, force, satPerVbyte, boostedMaxFee)
+			if err != nil {
+				if observed := c.lookupKnownClosingTxid(ctx, channelPoint); observed != "" {
+					return observed, nil
+				}
+			}
 		}
 	}
 	if err != nil && isChannelClosingInProgressError(err) {
@@ -7184,6 +7196,31 @@ func (c *Client) CloseChannel(ctx context.Context, channelPoint string, force bo
 		}
 	}
 	return closingTxid, nil
+}
+
+// Read-only reconciliation also works when confirmation raced with the failed
+// stream. Keep it bounded, including when the dispatch context has expired.
+func (c *Client) lookupKnownClosingTxid(ctx context.Context, channelPoint string) string {
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if txid := c.lookupPendingClosingTxid(readCtx, channelPoint); txid != "" {
+		return txid
+	}
+	conn, err := c.dial(readCtx, true)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	closed, err := lnrpc.NewLightningClient(conn).ClosedChannels(readCtx, &lnrpc.ClosedChannelsRequest{})
+	if err != nil {
+		return ""
+	}
+	for _, channel := range closed.GetChannels() {
+		if strings.EqualFold(strings.TrimSpace(channel.GetChannelPoint()), strings.TrimSpace(channelPoint)) {
+			return strings.TrimSpace(channel.GetClosingTxHash())
+		}
+	}
+	return ""
 }
 
 func (c *Client) closeChannelOnce(ctx context.Context, channelPoint string, force bool, satPerVbyte int64, maxFeePerVbyte int64) (string, error) {

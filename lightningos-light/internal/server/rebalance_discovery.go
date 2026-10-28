@@ -27,8 +27,14 @@ const (
 	// One probe per scan and one in flight at a time: each one is a broad
 	// pathfinding call, and a burst of them is what saturates LND.
 	sovereignDiscoveryMaxPerCycle = 1
-	// One ladder per channel per window, whatever its outcome.
+	// One ladder per channel per window, whatever its outcome. The window is
+	// anchored at the ladder's first probe, not sliding: a sliding count let
+	// the first probe of yesterday's ladder expire while the second was still
+	// counted, so every later ladder skipped step 1 and probed twice at the
+	// ceiling (Ripio 900/900 ppm on 2026-10-22, 1263/1263 on 10-23).
 	sovereignDiscoveryWindow = 24 * time.Hour
+	// History read to find where the current ladder started.
+	sovereignDiscoveryHistory = 7 * sovereignDiscoveryWindow
 
 	// A probe below this amount measures base fees, not the route price:
 	// 1 sat on 1,000 sats is already 1,000 ppm. Operators with a smaller
@@ -43,6 +49,33 @@ type sovereignDiscoveryTargetStat struct {
 	Jobs      int
 	Succeeded bool
 	LastAt    time.Time
+}
+
+type sovereignDiscoveryJob struct {
+	At        time.Time
+	Succeeded bool
+}
+
+// sovereignDiscoveryCurrentLadder groups a target's discovery jobs (oldest
+// first) into ladders: a job at least one window after the start of the
+// running ladder opens a new one. It returns the steps of the ladder that is
+// still open at now, or an empty stat when the last ladder has expired.
+func sovereignDiscoveryCurrentLadder(jobs []sovereignDiscoveryJob, now time.Time) sovereignDiscoveryTargetStat {
+	var start time.Time
+	var stat sovereignDiscoveryTargetStat
+	for _, job := range jobs {
+		if start.IsZero() || !job.At.Before(start.Add(sovereignDiscoveryWindow)) {
+			start = job.At
+			stat = sovereignDiscoveryTargetStat{}
+		}
+		stat.Jobs++
+		stat.Succeeded = stat.Succeeded || job.Succeeded
+		stat.LastAt = job.At
+	}
+	if start.IsZero() || !now.Before(start.Add(sovereignDiscoveryWindow)) {
+		return sovereignDiscoveryTargetStat{}
+	}
+	return stat
 }
 
 type sovereignDiscoveryState struct {
@@ -102,8 +135,8 @@ func sovereignDiscoveryStepPct(cfg RebalanceConfig, step int) int {
 }
 
 // sovereignDiscoveryNextStep walks the ladder upwards across scans: every
-// discovery job of the last window is one spent step. It stops at the first
-// success and after the last step, until the window expires.
+// discovery job of the current ladder is one spent step. It stops at the
+// first success and after the last step, until the ladder's window expires.
 func sovereignDiscoveryNextStep(cfg RebalanceConfig, stat sovereignDiscoveryTargetStat) (int, bool) {
 	if cfg.DiscoverySteps <= 0 || stat.Succeeded || stat.Jobs >= cfg.DiscoverySteps {
 		return 0, false
@@ -193,38 +226,45 @@ func (s *RebalanceService) loadSovereignDiscoveryState(ctx context.Context, now 
 	}
 	rows, err := s.db.Query(ctx, `
 select target_channel_id,
-  count(*) as jobs,
-  coalesce(bool_or(status in ('succeeded','partial')), false) as succeeded,
-  count(*) filter (where status in ('queued','running')) as in_flight,
-  max(created_at) as last_at
+  created_at,
+  status in ('succeeded','partial') as succeeded,
+  status in ('queued','running') as in_flight
 from rebalance_jobs
 where source='auto'
   and coalesce(trigger_reason, reason, '')=$1
   and created_at >= $2
-group by target_channel_id
-`, sovereignDiscoveryReason, now.Add(-sovereignDiscoveryWindow))
+order by target_channel_id, created_at
+`, sovereignDiscoveryReason, now.Add(-sovereignDiscoveryHistory))
 	if err != nil {
 		state.Unavailable = true
 		return state
 	}
+	jobsByTarget := map[uint64][]sovereignDiscoveryJob{}
 	for rows.Next() {
 		var channelID int64
-		var stat sovereignDiscoveryTargetStat
-		var inFlight int
-		if err := rows.Scan(&channelID, &stat.Jobs, &stat.Succeeded, &inFlight, &stat.LastAt); err != nil {
+		var job sovereignDiscoveryJob
+		var inFlight bool
+		if err := rows.Scan(&channelID, &job.At, &job.Succeeded, &inFlight); err != nil {
 			rows.Close()
 			state.Unavailable = true
 			return state
 		}
-		state.InFlight += inFlight
+		if inFlight {
+			state.InFlight++
+		}
 		if channelID > 0 {
-			state.ByTarget[uint64(channelID)] = stat
+			jobsByTarget[uint64(channelID)] = append(jobsByTarget[uint64(channelID)], job)
 		}
 	}
 	rows.Close()
 	if rows.Err() != nil {
 		state.Unavailable = true
 		return state
+	}
+	for channelID, jobs := range jobsByTarget {
+		if stat := sovereignDiscoveryCurrentLadder(jobs, now); stat.Jobs > 0 {
+			state.ByTarget[channelID] = stat
+		}
 	}
 
 	local := now.In(time.Local)

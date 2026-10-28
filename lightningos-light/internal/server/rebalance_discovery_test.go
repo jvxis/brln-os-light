@@ -85,6 +85,51 @@ func TestDiscoveryNextStepStopsOnSuccessAndAfterTheLadder(t *testing.T) {
 	}
 }
 
+func TestDiscoveryLadderRestartsAtStepOneEachWindow(t *testing.T) {
+	cfg := discoveryTestConfig()
+	// Ripio on the Friendspool: a two-step ladder on 10-21, then one probe a
+	// day. With a sliding 24h count the 10-21 step 2 was still counted when
+	// step 1 expired, so every later ladder started at the ceiling.
+	day1 := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	jobs := []sovereignDiscoveryJob{{At: day1}, {At: day1.Add(15 * time.Minute)}}
+
+	stat := sovereignDiscoveryCurrentLadder(jobs, day1.Add(20*time.Minute))
+	if stat.Jobs != 2 {
+		t.Fatalf("both probes belong to the open ladder, got %+v", stat)
+	}
+	if _, ok := sovereignDiscoveryNextStep(cfg, stat); ok {
+		t.Fatal("the ladder is spent until its window expires")
+	}
+
+	// 24h05 after the first probe: step 2 is only 23h50 old, but the ladder
+	// it belonged to has expired. A new ladder starts at step 1.
+	next := day1.Add(24*time.Hour + 5*time.Minute)
+	stat = sovereignDiscoveryCurrentLadder(jobs, next)
+	if step, ok := sovereignDiscoveryNextStep(cfg, stat); !ok || step != 1 {
+		t.Fatalf("a new window starts the ladder at step 1, got %d %v (%+v)", step, ok, stat)
+	}
+
+	// Step 1 of the new ladder ran; the next scan climbs to step 2.
+	jobs = append(jobs, sovereignDiscoveryJob{At: next})
+	stat = sovereignDiscoveryCurrentLadder(jobs, next.Add(15*time.Minute))
+	if step, ok := sovereignDiscoveryNextStep(cfg, stat); !ok || step != 2 {
+		t.Fatalf("the second probe of the new ladder is step 2, got %d %v (%+v)", step, ok, stat)
+	}
+
+	// A success ends the ladder for its window, not for a sliding 24h.
+	success := []sovereignDiscoveryJob{{At: day1, Succeeded: true}}
+	if _, ok := sovereignDiscoveryNextStep(cfg, sovereignDiscoveryCurrentLadder(success, day1.Add(23*time.Hour))); ok {
+		t.Fatal("a successful probe ends the ladder until its window expires")
+	}
+	if step, ok := sovereignDiscoveryNextStep(cfg, sovereignDiscoveryCurrentLadder(success, day1.Add(24*time.Hour))); !ok || step != 1 {
+		t.Fatalf("after the window a successful target can be probed again from step 1, got %d %v", step, ok)
+	}
+
+	if stat := sovereignDiscoveryCurrentLadder(nil, day1); stat.Jobs != 0 {
+		t.Fatalf("no jobs, no ladder: %+v", stat)
+	}
+}
+
 func TestDiscoveryOnlyForLongDrainedRouteGatedTargets(t *testing.T) {
 	cfg := discoveryTestConfig()
 	cfg.KeepaliveRefillAfterHours = 48

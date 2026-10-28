@@ -112,7 +112,9 @@ Limites fixos:
   canal de entrada e a sonda só seria pulada, gastando um degrau.
 - 1 sonda por scan e 1 em voo por vez.
 - 1 escada por canal a cada 24h: cada job é um degrau, a escada sobe entre
-  scans e para no primeiro sucesso.
+  scans e para no primeiro sucesso. As 24h contam a partir do primeiro degrau
+  da escada (0.5.50); antes era uma janela deslizante, e a escada seguinte
+  começava direto no teto.
 - O orçamento da descoberta é conferido à parte, então ela roda mesmo com o
   orçamento normal esgotado. O que ela gasta entra no gasto diário (`auto`).
 

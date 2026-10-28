@@ -4276,6 +4276,19 @@ func payReqFeatureBits(features map[uint32]*lnrpc.Feature) []lnrpc.FeatureBit {
 }
 
 func (c *Client) SendCoins(ctx context.Context, address string, amountSat int64, satPerVbyte int64, sendAll bool) (string, error) {
+	return c.sendCoins(ctx, address, amountSat, satPerVbyte, sendAll, 0)
+}
+
+// SendCoinsWithMinConfirmations enforces an explicit maturity policy at native
+// coin selection. SendCoins retains LND's default for its existing callers.
+func (c *Client) SendCoinsWithMinConfirmations(ctx context.Context, address string, amountSat int64, satPerVbyte int64, sendAll bool, minConfs int32) (string, error) {
+	if minConfs <= 0 {
+		return "", errors.New("minimum confirmations must be positive")
+	}
+	return c.sendCoins(ctx, address, amountSat, satPerVbyte, sendAll, minConfs)
+}
+
+func (c *Client) sendCoins(ctx context.Context, address string, amountSat int64, satPerVbyte int64, sendAll bool, minConfs int32) (string, error) {
 	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return "", err
@@ -4285,8 +4298,9 @@ func (c *Client) SendCoins(ctx context.Context, address string, amountSat int64,
 	client := lnrpc.NewLightningClient(conn)
 
 	req := &lnrpc.SendCoinsRequest{
-		Addr:    address,
-		SendAll: sendAll,
+		Addr:     address,
+		SendAll:  sendAll,
+		MinConfs: minConfs,
 	}
 	if !sendAll {
 		req.Amount = amountSat

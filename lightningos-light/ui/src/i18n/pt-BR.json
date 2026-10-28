@@ -4911,7 +4911,7 @@
     "reminderDays": "Janela de lembrete diário (dias)",
     "reminderDaysHint": "Depois que os lembretes começam, sem confirmação por este prazo, a aposentadoria automática é acionada.",
     "sweepMinConfs": "Mínimo de confirmações para auto-transferência",
-    "sweepMinConfsHint": "A auto-transferência aguarda UTXOs com pelo menos este número de confirmações.",
+    "sweepMinConfsHint": "A transferência total aguarda todos os fundos atuais da carteira atingirem este número de confirmações. Novos depósitos não confirmados podem adiá-la.",
     "sweepSatPerVbyte": "Taxa da auto-transferência (sat/vbyte)",
     "sweepSatPerVbyteHint": "Use 0 para o LND estimar a taxa dinamicamente.",
     "preapproveOffline": "Pré-aprovar FC para peers offline",

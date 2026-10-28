@@ -4911,7 +4911,7 @@
     "reminderDays": "Daily reminder grace window (days)",
     "reminderDaysHint": "After reminders start, if there is no confirmation for this many days, automatic retirement is triggered.",
     "sweepMinConfs": "Min confirmations before auto-transfer",
-    "sweepMinConfsHint": "Auto-transfer waits for UTXOs with at least this many confirmations.",
+    "sweepMinConfsHint": "The whole-wallet transfer waits until all current wallet funds reach this confirmation threshold. New unconfirmed deposits can postpone it.",
     "sweepSatPerVbyte": "Auto-transfer fee rate (sat/vbyte)",
     "sweepSatPerVbyteHint": "Set 0 to let LND estimate fees dynamically.",
     "preapproveOffline": "Pre-approve FC for offline peers",

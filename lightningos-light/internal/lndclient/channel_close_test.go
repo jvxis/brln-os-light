@@ -59,7 +59,7 @@ func (f *channelCloseFixture) ClosedChannels(context.Context, *lnrpc.ClosedChann
 	return r, nil
 }
 
-func closeTestClient(t *testing.T, fixture *channelCloseFixture) *Client {
+func closeTestClient(t *testing.T, fixture lnrpc.LightningServer) *Client {
 	t.Helper()
 	tlsFixture := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	t.Cleanup(tlsFixture.Close)

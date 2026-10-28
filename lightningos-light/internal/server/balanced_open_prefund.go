@@ -23,6 +23,9 @@ func (s *BalancedOpenService) ensureBalancedTransit(ctx context.Context, session
 	if err != nil {
 		return balancedOpenMetadata{}, false, err
 	}
+	if err := validateFinancialSnapshot(ctx, "balanced_open", balancedFinancialTerms(fresh)); err != nil {
+		return balancedOpenMetadata{}, false, err
+	}
 	meta, err := decodeBalancedOpenMetadata(fresh.Metadata)
 	if err != nil {
 		return meta, false, err
@@ -119,7 +122,10 @@ func (s *BalancedOpenService) ensureBalancedTransit(ctx context.Context, session
 	if err != nil {
 		return meta, false, err
 	}
-	tag, err := s.db.Exec(ctx, `update balanced_open_sessions set metadata=metadata || $3::jsonb,updated_at=now() where session_id=$1 and not(metadata ? $2) and role=$4 and state=any($5::text[])`, fresh.SessionID, marker, string(patch), side, states)
+	if err := commitFinancialWorkflow(ctx, fresh.SessionID); err != nil {
+		return meta, false, err
+	}
+	tag, err := s.db.Exec(ctx, `update balanced_open_sessions set metadata=metadata || $3::jsonb,updated_at=now() where session_id=$1 and not(metadata ? $2) and role=$4 and state=any($5::text[]) and metadata=$6::jsonb`, fresh.SessionID, marker, string(patch), side, states, string(fresh.Metadata))
 	if err != nil {
 		return meta, false, err
 	}

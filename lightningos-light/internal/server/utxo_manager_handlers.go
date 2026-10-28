@@ -42,7 +42,7 @@ func utxoLockRequiresReauth() bool {
 }
 
 func (s *Server) requireUtxoLockReauth(w http.ResponseWriter, r *http.Request, confirmPassword string, action string) bool {
-	if !utxoLockRequiresReauth() || s.auth == nil || !s.auth.Enabled() {
+	if !utxoLockRequiresReauth() || s.auth == nil || !s.auth.Enabled() || financialIntentApproved(r, authScopeWalletSendExternal) {
 		return true
 	}
 
@@ -421,9 +421,9 @@ func (s *Server) handleUtxoBump(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// CPFP burns sats from the wallet, so it needs the same reauth posture as
-	// /api/wallet/send (external destination). Reuses authScopeWalletSendExternal
-	// so a recent reauth on either path covers both.
-	if s.auth != nil && s.auth.Enabled() {
+	// /api/wallet/send (external destination). A core API intent binds the
+	// outpoint and fee budget; a grant for a different transfer cannot cover it.
+	if s.auth != nil && s.auth.Enabled() && !financialIntentApproved(r, authScopeWalletSendExternal) {
 		session, ok := authSessionFromContext(r.Context())
 		if !ok {
 			writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
@@ -452,7 +452,7 @@ func (s *Server) handleUtxoBump(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
-	if err := s.lnd.BumpFee(ctx, lndclient.BumpFeeParams{
+	if err := s.bumpFinancialFee(ctx, lndclient.BumpFeeParams{
 		Outpoint:    req.Outpoint,
 		SatPerVbyte: req.SatPerVbyte,
 		TargetConf:  req.TargetConf,

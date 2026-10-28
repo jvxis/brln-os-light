@@ -28,9 +28,10 @@ import (
 
 type onchainReauthRPC struct {
 	lnrpc.UnimplementedLightningServer
-	sends atomic.Int64
-	reads atomic.Int64
-	last  *lnrpc.SendCoinsRequest
+	sends         atomic.Int64
+	reads         atomic.Int64
+	last          *lnrpc.SendCoinsRequest
+	restoredLabel string
 }
 
 func (rpc *onchainReauthRPC) ListUnspent(context.Context, *lnrpc.ListUnspentRequest) (*lnrpc.ListUnspentResponse, error) {
@@ -48,6 +49,14 @@ type onchainOwnershipRPC struct {
 	walletrpc.UnimplementedWalletKitServer
 	account string
 	reads   *atomic.Int64
+	onLabel func(string)
+}
+
+func (rpc *onchainOwnershipRPC) LabelTransaction(_ context.Context, request *walletrpc.LabelTransactionRequest) (*walletrpc.LabelTransactionResponse, error) {
+	if rpc.onLabel != nil {
+		rpc.onLabel(request.Label)
+	}
+	return &walletrpc.LabelTransactionResponse{}, nil
 }
 
 func (rpc *onchainOwnershipRPC) ListUnspent(_ context.Context, req *walletrpc.ListUnspentRequest) (*walletrpc.ListUnspentResponse, error) {
@@ -81,7 +90,7 @@ func onchainReauthServer(t *testing.T, account string) (*Server, *onchainReauthR
 	rpc := &onchainReauthRPC{}
 	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{Certificates: cert.TLS.Certificates, MinVersion: tls.VersionTLS12})))
 	lnrpc.RegisterLightningServer(server, rpc)
-	walletrpc.RegisterWalletKitServer(server, &onchainOwnershipRPC{account: account, reads: &rpc.reads})
+	walletrpc.RegisterWalletKitServer(server, &onchainOwnershipRPC{account: account, reads: &rpc.reads, onLabel: func(label string) { rpc.restoredLabel = label }})
 	go server.Serve(listener)
 	t.Cleanup(server.Stop)
 	dir := t.TempDir()
@@ -107,10 +116,13 @@ func onchainReauthServer(t *testing.T, account string) (*Server, *onchainReauthR
 	}
 	return &Server{cfg: cfg, auth: auth, lnd: client, logger: logger, auditLogInitAt: time.Now()}, rpc, session
 }
-func onchainReauthRequest(s *Server, session authSessionSnapshot, path, body string, csrf bool) *httptest.ResponseRecorder {
+func onchainReauthRequest(s *Server, session authSessionSnapshot, path, body string, csrf bool, intentIDs ...string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("POST", "https://node.example"+path, strings.NewReader(body))
 	req.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: session.ID})
 	req.Header.Set("Origin", "https://node.example")
+	if len(intentIDs) > 0 {
+		req.Header.Set(financialIntentHeader, intentIDs[0])
+	}
 	if csrf {
 		req.Header.Set("X-CSRF-Token", session.CSRFToken)
 	}
@@ -152,12 +164,29 @@ func TestWalletSendAllDestinationsRequireReauth(t *testing.T) {
 			}
 			for _, payload := range []string{body, `{"address":"1BoatSLRHtKNngkdXEeobR76b53LETtpyT","sweep_all":true}`, `{"address":"1BoatSLRHtKNngkdXEeobR76b53LETtpyT","amount_sat":1000,"outpoints":["` + strings.Repeat("aa", 32) + `:1"],"label":"consolidation","sat_per_vbyte":2}`} {
 				before := rpc.sends.Load()
-				rec = onchainReauthRequest(s, session, "/api/wallet/send", payload, true)
+				if blocked := onchainReauthRequest(s, session, "/api/wallet/send", payload, true); blocked.Code != 428 {
+					t.Fatal("broad wallet grant bypassed exact approval")
+				}
+				var request walletSendRequest
+				if json.Unmarshal([]byte(payload), &request) != nil {
+					t.Fatal("invalid fixture")
+				}
+				if request.SatPerVbyte == 0 {
+					request.SatPerVbyte = 2
+				}
+				if len(request.Outpoints) == 0 {
+					request.Outpoints = []string{strings.Repeat("aa", 32) + ":1"}
+				}
+				encoded, _ := json.Marshal(request)
+				inputs := []lndclient.FinancialIntentInput{{Outpoint: request.Outpoints[0], AmountSat: 100000}}
+				binding := financialIntentBinding{Kind: "onchain_send", Inputs: inputs, Summary: financialIntentSummary{Destination: request.Address, AmountSat: request.AmountSat, SatPerVbyte: request.SatPerVbyte}}
+				intent := financialHandlerApproval(t, s, session, "/api/wallet/send", encoded, binding)
+				rec = onchainReauthRequest(s, session, "/api/wallet/send", string(intent.Request), true, intent.ID)
 				if rec.Code != 200 || rpc.sends.Load() != before+1 {
 					t.Fatalf("authorized send broken: HTTP %d", rec.Code)
 				}
 			}
-			if rpc.last.Label != "consolidation" || len(rpc.last.Outpoints) != 1 || rpc.last.SatPerVbyte != 2 {
+			if !strings.HasPrefix(rpc.last.Label, "los-intent:") || rpc.restoredLabel != "consolidation" || len(rpc.last.Outpoints) != 1 || rpc.last.SatPerVbyte != 2 {
 				t.Fatal("advanced send parameters changed")
 			}
 			s.auth.mu.Lock()

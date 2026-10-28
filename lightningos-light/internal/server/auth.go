@@ -99,11 +99,12 @@ type AuthStatus struct {
 }
 
 type AuthService struct {
-	enabled bool
-	logger  *log.Logger
-	now     func() time.Time
-	limiter *authRateLimiter
-	audit   func(*http.Request, string, string, any)
+	enabled                 bool
+	logger                  *log.Logger
+	now                     func() time.Time
+	limiter                 *authRateLimiter
+	audit                   func(*http.Request, string, string, any)
+	financialScopeValidator func(sessionID, scope string) bool
 
 	mu       sync.Mutex
 	sessions map[string]*authSession
@@ -511,11 +512,17 @@ func (a *AuthService) reauth(w http.ResponseWriter, r *http.Request, sessionID s
 	if !authScopeValid(scope) {
 		return time.Time{}, errInvalidScope
 	}
+	if strings.HasPrefix(scope, financialIntentScopePrefix) && !a.financialScopeAllowed(sessionID, scope) {
+		return time.Time{}, errInvalidScope
+	}
 	if len(password) > 4*authPasswordMaxRunes || utf8.RuneCountInString(password) > authPasswordMaxRunes {
 		return time.Time{}, errInvalidCredentials
 	}
 	if err := authVerifyPassword(password); err != nil {
 		return time.Time{}, err
+	}
+	if strings.HasPrefix(scope, financialIntentScopePrefix) && !a.financialScopeAllowed(sessionID, scope) {
+		return time.Time{}, errInvalidScope
 	}
 
 	now := a.currentTime()
@@ -536,6 +543,9 @@ func (a *AuthService) reauth(w http.ResponseWriter, r *http.Request, sessionID s
 }
 
 func authScopeValid(scope string) bool {
+	if strings.HasPrefix(scope, financialIntentScopePrefix) {
+		return financialIntentIDValid(strings.TrimPrefix(scope, financialIntentScopePrefix))
+	}
 	if strings.HasPrefix(scope, lnurlInvoiceScopePrefix) {
 		suffix := strings.TrimPrefix(scope, lnurlInvoiceScopePrefix)
 		decoded, err := hex.DecodeString(suffix)
@@ -547,6 +557,36 @@ func authScopeValid(scope string) bool {
 	default:
 		return false
 	}
+}
+
+func (a *AuthService) setFinancialScopeValidator(validator func(string, string) bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.financialScopeValidator = validator
+}
+
+func (a *AuthService) financialScopeAllowed(sessionID, scope string) bool {
+	a.mu.Lock()
+	validator := a.financialScopeValidator
+	a.mu.Unlock()
+	return validator != nil && validator(sessionID, scope)
+}
+
+// Financial approval is consumed for one immutable intent. Scope grants used
+// by nonfinancial administration retain their existing behavior.
+func (a *AuthService) consumeFinancialApproval(sessionID, scope string) bool {
+	if a == nil || !a.Enabled() || !strings.HasPrefix(scope, financialIntentScopePrefix) {
+		return false
+	}
+	now := a.currentTime()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	session := a.sessions[sessionID]
+	if session == nil || !now.Before(session.ExpiresAt) || !now.Before(session.ReauthScopes[scope]) {
+		return false
+	}
+	delete(session.ReauthScopes, scope)
+	return true
 }
 
 func (a *AuthService) HasRecentReauth(sessionID string, scope string) bool {

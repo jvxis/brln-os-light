@@ -51,12 +51,15 @@ func TestSpendingPolicyAPIRequiresIndependentApproval(t *testing.T) {
 	if _, err := svc.Reserve(context.Background(), SpendingIntent{AmountSat: 1}); !errors.Is(err, ErrSpendingGuardLimit) {
 		t.Fatalf("rolling limit did not block before update: %v", err)
 	}
-	call := func(body string) *httptest.ResponseRecorder {
+	call := func(body string, intentIDs ...string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPut, "/api/wallet/spending-guard", strings.NewReader(body))
 		req = req.WithContext(context.WithValue(req.Context(), authSessionContextKey, authSessionSnapshot{ID: "test"}))
+		if len(intentIDs) > 0 {
+			req.Header.Set(financialIntentHeader, intentIDs[0])
+		}
 		rec := httptest.NewRecorder()
-		s.handleSpendingGuardUpdate(rec, req)
+		s.financialIntentMiddleware(http.HandlerFunc(s.handleSpendingGuardUpdate)).ServeHTTP(rec, req)
 		return rec
 	}
 	for _, body := range []string{`{"enabled":true,"max_payment_sat":0,"rolling_24h_limit_sat":200}`, `{"enabled":true,"max_payment_sat":100,"rolling_24h_limit_sat":0}`, `{"enabled":false,"max_payment_sat":100,"rolling_24h_limit_sat":200}`} {
@@ -79,7 +82,12 @@ func TestSpendingPolicyAPIRequiresIndependentApproval(t *testing.T) {
 		t.Fatalf("tightening: %d %s", rec.Code, rec.Body.String())
 	}
 	auth.sessions["test"].ReauthScopes[authScopeSpendingGuardPolicy] = now.Add(time.Minute)
-	if rec := call(`{"enabled":true,"max_payment_sat":50,"rolling_24h_limit_sat":0}`); rec.Code != 200 {
+	body := `{"enabled":true,"max_payment_sat":50,"rolling_24h_limit_sat":0}`
+	if rec := call(body); rec.Code != 428 {
+		t.Fatal("broad spending-policy grant authorized a changed policy")
+	}
+	intent := financialHandlerApproval(t, s, authSessionSnapshot{ID: "test"}, "/api/wallet/spending-guard", []byte(body), financialIntentBinding{Kind: "request"})
+	if rec := call(string(intent.Request), intent.ID); rec.Code != 200 {
 		t.Fatalf("approved removal: %d %s", rec.Code, rec.Body.String())
 	}
 	if _, err := svc.Reserve(context.Background(), SpendingIntent{AmountSat: 1}); err != nil {

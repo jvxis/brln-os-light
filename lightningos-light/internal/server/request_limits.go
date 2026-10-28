@@ -20,6 +20,9 @@ func requestBodyLimit(path string) int64 {
 		return authRequestBodyMaxBytes
 	case path == "/api/lnops/channel/scb/restore":
 		return 16 << 20
+	case path == "/api/financial/intents":
+		// Preserve the existing 16 MiB SCB request inside the intent envelope.
+		return (16 << 20) + (64 << 10)
 	default:
 		return 1 << 20
 	}

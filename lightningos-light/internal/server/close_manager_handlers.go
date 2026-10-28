@@ -143,7 +143,6 @@ func (s *Server) handleCloseManagerSessionRecoverPost(w http.ResponseWriter, r *
 		writeError(w, http.StatusBadRequest, "session missing channel_point")
 		return
 	}
-
 	txid, attempted, recoverErr := s.lnd.RecoverWaitingCloseTx(ctx, session.ChannelPoint)
 	if recoverErr != nil {
 		if s.notifier != nil {
@@ -227,6 +226,14 @@ func (s *Server) handleCloseManagerSessionForceClosePost(w http.ResponseWriter, 
 		return
 	}
 
+	if err := validateFinancialCloseManagerSnapshot(ctx, *session); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err := commitFinancialWorkflow(ctx, session.ChannelPoint); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	if session.Source == "node_retirement" && strings.TrimSpace(session.SourceRef) != "" {
 		nodeSvc, nodeSvcErr := s.nodeRetirementService()
 		if nodeSvc == nil {
@@ -336,6 +343,10 @@ func (s *Server) handleCloseManagerSessionBumpFeePost(w http.ResponseWriter, r *
 		writeError(w, http.StatusBadRequest, "session missing close txid for sweep bump")
 		return
 	}
+	if err := validateFinancialCloseManagerSnapshot(ctx, *session); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 
 	pendingSweeps, err := s.lnd.ListPendingSweeps(ctx)
 	if err != nil {
@@ -360,7 +371,7 @@ func (s *Server) handleCloseManagerSessionBumpFeePost(w http.ResponseWriter, r *
 		if strings.TrimSpace(item.Outpoint) == "" {
 			continue
 		}
-		if err := s.lnd.BumpFee(ctx, lndclient.BumpFeeParams{
+		if err := s.bumpFinancialFee(ctx, lndclient.BumpFeeParams{
 			Outpoint:    item.Outpoint,
 			SatPerVbyte: plan.SatPerVbyte,
 			Immediate:   plan.Immediate,

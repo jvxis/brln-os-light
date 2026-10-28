@@ -84,11 +84,14 @@ func TestChatFundsRequireReauthAndAvailableGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{auth: auth, cfg: &config.Config{}, logger: logger, lnd: client, chat: NewChatService(client, logger), spendingGuardInitAt: time.Now(), spendingGuardErr: "test unavailable", auditLogInitAt: time.Now()}
-	call := func() *httptest.ResponseRecorder {
+	call := func(intentIDs ...string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "https://node.example/api/chat/send", strings.NewReader(`{"peer_pubkey":"02`+strings.Repeat("11", 32)+`","message":"test","amount_sat":100}`))
 		r.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: session.ID})
 		r.Header.Set("X-CSRF-Token", session.CSRFToken)
 		r.Header.Set("Origin", "https://node.example")
+		if len(intentIDs) > 0 {
+			r.Header.Set(financialIntentHeader, intentIDs[0])
+		}
 		w := httptest.NewRecorder()
 		s.routes().ServeHTTP(w, r)
 		return w
@@ -101,6 +104,16 @@ func TestChatFundsRequireReauthAndAvailableGuard(t *testing.T) {
 	auth.sessions[session.ID].ReauthScopes[authScopeLightningFunds] = time.Now().Add(time.Minute)
 	auth.mu.Unlock()
 	rec = call()
+	if rec.Code != 428 || rpc.sends.Load() != 0 {
+		t.Fatal("broad Lightning grant authorized chat without its intent")
+	}
+	payload := []byte(`{"peer_pubkey":"02` + strings.Repeat("11", 32) + `","message":"test","amount_sat":100}`)
+	_, binding, err := prepareChatFinancialIntent(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := financialHandlerApproval(t, s, session, "/api/chat/send", payload, binding)
+	rec = call(intent.ID)
 	if rec.Code != 503 || rpc.sends.Load() != 0 {
 		t.Fatalf("unavailable guard allowed chat: HTTP %d sends %d", rec.Code, rpc.sends.Load())
 	}
@@ -109,6 +122,8 @@ func TestChatFundsRequireReauthAndAvailableGuard(t *testing.T) {
 		r.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: session.ID})
 		r.Header.Set("X-CSRF-Token", session.CSRFToken)
 		r.Header.Set("Origin", "https://node.example")
+		intent := financialHandlerApproval(t, s, session, path, []byte(`{"payment_request":"test-invoice"}`), financialIntentBinding{Kind: "invoice_payment"})
+		r.Header.Set(financialIntentHeader, intent.ID)
 		w := httptest.NewRecorder()
 		s.routes().ServeHTTP(w, r)
 		if w.Code != 503 || rpc.sends.Load() != 0 {

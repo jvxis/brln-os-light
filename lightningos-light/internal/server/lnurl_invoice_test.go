@@ -47,10 +47,12 @@ func (r *lnurlInvoiceRPC) DecodePayReq(context.Context, *lnrpc.PayReqString) (*l
 
 type lnurlPaymentRPC struct {
 	routerrpc.UnimplementedRouterServer
-	sends atomic.Int64
+	sends       atomic.Int64
+	lastFeeMsat atomic.Int64
 }
 
-func (r *lnurlPaymentRPC) SendPaymentV2(*routerrpc.SendPaymentRequest, routerrpc.Router_SendPaymentV2Server) error {
+func (r *lnurlPaymentRPC) SendPaymentV2(request *routerrpc.SendPaymentRequest, _ routerrpc.Router_SendPaymentV2Server) error {
+	r.lastFeeMsat.Store(request.FeeLimitMsat)
 	r.sends.Add(1)
 	return status.Error(codes.PermissionDenied, "simulated payment rejection")
 }
@@ -251,29 +253,66 @@ func TestLNURLAllPaymentModesRejectMismatchAndRequestBoundApproval(t *testing.T)
 	s := &Server{lnd: client, auth: auth, logger: logger, cfg: &config.Config{}}
 	for _, path := range []string{"/api/wallet/pay", "/api/wallet/pay/validated-route", "/api/wallet/pay/mpp"} {
 		t.Run(path, func(t *testing.T) {
-			call := func() *httptest.ResponseRecorder {
-				r := httptest.NewRequest("POST", "https://node.example"+path, strings.NewReader(`{"payment_request":"alice@merchant.example","amount_sat":100,"max_fee_sat":2}`))
+			store, err := openFinancialIntentStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.financialIntents = store
+			s.financialIntentOnce = sync.Once{}
+			s.financialIntentErr = nil
+			t.Cleanup(func() { store.Close() })
+			payload := `{"payment_request":"alice@merchant.example","amount_sat":100,"max_fee_sat":2}`
+			call := func(target, body string, intentIDs ...string) *httptest.ResponseRecorder {
+				r := httptest.NewRequest("POST", "https://node.example"+target, strings.NewReader(body))
 				r.AddCookie(&http.Cookie{Name: authSessionCookieName, Value: session.ID})
 				r.Header.Set("X-CSRF-Token", session.CSRFToken)
 				r.Header.Set("Origin", "https://node.example")
+				if len(intentIDs) > 0 {
+					r.Header.Set(financialIntentHeader, intentIDs[0])
+				}
 				w := httptest.NewRecorder()
 				s.routes().ServeHTTP(w, r)
 				return w
 			}
+			if blocked := call(path, payload); blocked.Code != 428 || !strings.Contains(blocked.Body.String(), "requires_financial_intent") || pay.sends.Load() != 0 {
+				t.Fatal("broad grant authorized an unbound Lightning address")
+			}
+			envelope, _ := json.Marshal(map[string]any{"path": path, "method": "POST", "payload": json.RawMessage(payload)})
 			rpc.mu.Lock()
 			rpc.decoded.NumMsat = 200000
 			rpc.mu.Unlock()
 			s.lnurlInvoices = nil
-			rec := call()
+			rec := call("/api/financial/intents", string(envelope))
 			if rec.Code != 400 || pay.sends.Load() != 0 {
 				t.Fatalf("mismatch reached payment: %d sends=%d", rec.Code, pay.sends.Load())
 			}
 			rpc.mu.Lock()
 			rpc.decoded.NumMsat = 100000
 			rpc.mu.Unlock()
-			rec = call()
-			if rec.Code != 428 || !strings.Contains(rec.Body.String(), lnurlInvoiceScopePrefix) || pay.sends.Load() != 0 {
-				t.Fatalf("unbound grant authorized invoice: %d %s", rec.Code, rec.Body.String())
+			rec = call("/api/financial/intents", string(envelope))
+			var intent struct {
+				ID      string          `json:"intent_id"`
+				Payload json.RawMessage `json:"payload"`
+				Scope   string          `json:"scope"`
+			}
+			if rec.Code != 201 || json.Unmarshal(rec.Body.Bytes(), &intent) != nil || !financialIntentIDValid(intent.ID) || intent.Scope != financialIntentScopePrefix+intent.ID || !strings.Contains(string(intent.Payload), "lnbc1test") || strings.Contains(string(intent.Payload), "merchant.example") || pay.sends.Load() != 0 {
+				t.Fatalf("exact resolved invoice was not prepared safely: HTTP %d", rec.Code)
+			}
+			rec = call(path, string(intent.Payload), intent.ID)
+			if rec.Code != 428 || pay.sends.Load() != 0 {
+				t.Fatalf("broad grant authorized prepared invoice without its own approval: HTTP %d", rec.Code)
+			}
+			var changed map[string]any
+			if json.Unmarshal(intent.Payload, &changed) != nil {
+				t.Fatal("invalid normalized invoice")
+			}
+			changed["max_fee_sat"] = 3
+			modified, _ := json.Marshal(changed)
+			if mismatch := call(path, string(modified), intent.ID); mismatch.Code != 409 || pay.sends.Load() != 0 {
+				t.Fatal("changed fee limit reused prepared invoice")
+			}
+			if _, err := s.financialIntents.cancelDraft(intent.ID); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

@@ -701,14 +701,6 @@ export default function NodeRetirement() {
       setSessionStatus(t('nodeRetirement.disclaimerRequired'))
       return
     }
-    if (!dryRun) {
-      openNodeRetirementReauthPrompt(
-        'nodeRetirement.reauthCreateTitle',
-        'nodeRetirement.reauthCreateBody',
-        executeCreateSession
-      )
-      return
-    }
     await executeCreateSession()
   }
 
@@ -738,15 +730,7 @@ export default function NodeRetirement() {
 
   const handleConfirmCoopClose = async () => {
     if (!activeSession) return
-    if (!activeSession.dry_run) {
-      setConfirmCoopOpen(false)
-      openNodeRetirementReauthPrompt(
-        'nodeRetirement.reauthCoopTitle',
-        'nodeRetirement.reauthCoopBody',
-        executeConfirmCoopClose
-      )
-      return
-    }
+    setConfirmCoopOpen(false)
     await executeConfirmCoopClose()
   }
 
@@ -774,14 +758,6 @@ export default function NodeRetirement() {
   }
 
   const handleChannelDecision = async (channelPoint: string, decision: 'wait' | 'force_close') => {
-    if (decision === 'force_close' && activeSession && !activeSession.dry_run) {
-      openNodeRetirementReauthPrompt(
-        'nodeRetirement.reauthForceCloseTitle',
-        'nodeRetirement.reauthForceCloseBody',
-        () => executeChannelDecision(channelPoint, decision)
-      )
-      return
-    }
     await executeChannelDecision(channelPoint, decision)
   }
 
@@ -823,10 +799,6 @@ export default function NodeRetirement() {
     }
     if (successionForm.enabled && !String(successionForm.destination_address || '').trim()) {
       setSuccessionStatus(t('nodeRetirement.destinationRequiredError'))
-      return
-    }
-    if (successionForm.enabled && !successionForm.dry_run) {
-      openSuccessionLiveReauthPrompt(executeSaveSuccession)
       return
     }
     await executeSaveSuccession()

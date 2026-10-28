@@ -92,6 +92,16 @@ func (s *Server) handleLNSCBRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	restoreCtx, restoreCancel := context.WithTimeout(r.Context(), 60*time.Second)
+	if err := validateFinancialSnapshot(restoreCtx, "scb_restore", map[string]any{"channel_points": chanPoints}); err != nil {
+		restoreCancel()
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err := commitFinancialWorkflow(restoreCtx, "scb_restore"); err != nil {
+		restoreCancel()
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	numRestored, err := s.lnd.RestoreChannelBackups(restoreCtx, backup)
 	restoreCancel()
 	if err != nil {

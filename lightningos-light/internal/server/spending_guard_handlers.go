@@ -49,10 +49,7 @@ func (s *Server) handleSpendingGuardUpdate(w http.ResponseWriter, r *http.Reques
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	authorized := s.auth == nil || !s.auth.Enabled()
-	if session, ok := authSessionFromContext(r.Context()); ok && s.auth != nil {
-		authorized = authorized || s.auth.HasRecentReauth(session.ID, authScopeSpendingGuardPolicy)
-	}
+	authorized := s.auth == nil || !s.auth.Enabled() || financialIntentApproved(r, authScopeSpendingGuardPolicy)
 	updated, err := svc.UpdateSettings(ctx, next, authorized)
 	if errors.Is(err, ErrSpendingGuardReauth) {
 		if !s.requireSensitiveReauth(w, r, authScopeSpendingGuardPolicy, req.ConfirmPassword, "spending_guard_reauth_required", "password confirmation required to relax spending limits") {
@@ -139,6 +136,10 @@ func (s *Server) finishSpendingReservation(reservation SpendingReservation, paym
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
+	if errors.Is(paymentErr, errFinancialNativeNotDispatched) {
+		_ = svc.Release(ctx, reservation, "native payment was not dispatched")
+		return
+	}
 	details, found, trackErr := s.lnd.TrackPaymentDetails(ctx, paymentHash)
 	if found && strings.EqualFold(details.Status, "SUCCEEDED") {
 		feeSat := details.FeeSat

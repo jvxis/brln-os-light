@@ -60,6 +60,9 @@ func TestRequestBodyTransportLimits(t *testing.T) {
 				{"/api/auth/login", 16000, 204},
 				{"/api/lnops/channel/scb/restore", 2 << 20, 204},
 				{"/api/lnops/channel/scb/restore", (16 << 20) + 1, 413},
+				{"/api/financial/intents", 2 << 20, 204},
+				{"/api/financial/intents", (16 << 20) + (64 << 10), 204},
+				{"/api/financial/intents", (16 << 20) + (64 << 10) + 1, 413},
 				{"/api/reports/config", 3000, 204},
 			} {
 				res, err := s.Client().Post(s.URL+tc.path, "application/json", bytes.NewReader(bytes.Repeat([]byte(" "), tc.size)))

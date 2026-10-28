@@ -82,6 +82,7 @@ func (c *Client) SendCoinsAdvanced(ctx context.Context, params SendCoinsParams) 
 // OpenChannelParams mirrors OpenChannelWithPush's arguments and adds outpoint
 // pinning. Callers without a selection should keep using OpenChannelWithPush.
 type OpenChannelParams struct {
+	Memo            string
 	PubkeyHex       string
 	LocalFundingSat int64
 	PushSat         int64
@@ -127,6 +128,7 @@ func (c *Client) OpenChannelWithOutpoints(ctx context.Context, params OpenChanne
 
 	client := lnrpc.NewLightningClient(conn)
 	req := &lnrpc.OpenChannelRequest{
+		Memo:               params.Memo,
 		NodePubkey:         pubkey,
 		LocalFundingAmount: params.LocalFundingSat,
 		PushSat:            params.PushSat,

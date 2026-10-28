@@ -26,8 +26,14 @@ PROJECT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 REPO=$(cd -- "$PROJECT/.." && pwd -P)
 LAB="$REPO/scripts/regtest-lab"
 [[ -f "$LAB/safety.py" && -f "$LAB/deploy.py" ]] || { echo 'Use the complete source checkout.' >&2; exit 1; }
-[[ ! -L /run/lock/los-regtest-install.lock ]] || exit 1
-exec 9>/run/lock/los-regtest-install.lock
+LOCK_DIR=/run/los-regtest-installer
+if [[ -e "$LOCK_DIR" || -L "$LOCK_DIR" ]]; then
+  [[ -d "$LOCK_DIR" && ! -L "$LOCK_DIR" && $(stat -c '%u:%a' "$LOCK_DIR") == 0:700 ]] || { echo 'Unsafe installation lock directory.' >&2; exit 1; }
+else
+  mkdir -m 0700 -- "$LOCK_DIR"
+fi
+[[ ! -L "$LOCK_DIR/install.lock" ]] || exit 1
+exec 9>"$LOCK_DIR/install.lock"
 flock -n 9 || { echo 'Another regtest installation is running.' >&2; exit 1; }
 python3 "$LAB/safety.py" check
 git_repo() { git -c safe.directory="$REPO" -C "$REPO" "$@"; }

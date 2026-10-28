@@ -12,6 +12,9 @@ Upgrade parado na preparação do Go na 0.5.40/0.5.41? Consulte o
 [diagnóstico e recuperação opcional do proprietário legado](GO_PARENT_OWNER_RECOVERY.md#português).
 Para atualizar da 0.5.47 ou anterior para a 0.5.48 ou posterior, consulte também
 a [preparação única do Node/npm](NODE_TOOLCHAIN_UPGRADE.md#português).
+Bloqueado ao entrar na **0.5.49** por uma versão mais nova do Node? O mesmo guia
+oferece um script separado de recuperação com migração explícita. A partir da
+**0.5.50**, runtimes globais compatíveis são mantidos sem exigir versões exatas.
 
 
 
@@ -80,7 +83,7 @@ Primeiro node? O passo a passo cobre o que você precisa, a instalação e os pr
 O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort habilitado) + i2pd habilitado por padrão
-- Go fixado em `lightningos-light/scripts/go-toolchain.conf` (atualmente 1.26.8); Node.js 24.22.1 global com npm 11.19.1 incluído, verificados e instalados/atualizados automaticamente pelos instaladores da 0.5.48+. A máquina é considerada dedicada ao LOS; veja a [preparação de nodes existentes e os cuidados de compatibilidade](NODE_TOOLCHAIN_UPGRADE.md).
+- Go fixado em `lightningos-light/scripts/go-toolchain.conf` (atualmente 1.26.8). Da 0.5.50 em diante, Node global >=22.12.0 / npm >=10 compatíveis são mantidos; ferramentas ausentes/antigas usam a instalação verificada Node 24.22.1 / npm 11.19.1. Compatibilidade de build não certifica segurança. A máquina é considerada dedicada ao LOS; veja a [preparação de nodes existentes e os cuidados de compatibilidade](NODE_TOOLCHAIN_UPGRADE.md).
 
 - Binários do LND fixados pela release selecionada (atualmente `v0.21.4-beta` para nodes novos)
 

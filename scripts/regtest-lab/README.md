@@ -6,6 +6,52 @@ Bitcoin Core 31.1 and two native LND 0.21.4-beta processes on a disposable Ubunt
 24.04 amd64 VM. Regtest coins have no value. It does not create a production
 release or change the production configuration contract.
 
+## Developer installer (0.5.50)
+
+On a fresh **Ubuntu 24.04 amd64** VM, clone the release branch, name the VM's
+Linux host `los-regtest`, and explicitly acknowledge the disposable host:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y git python3
+git clone --branch agent/0.5.50-release https://github.com/jvxis/brln-os-light.git
+cd brln-os-light
+sudo hostnamectl set-hostname los-regtest
+sudo bash lightningos-light/install_regtest.sh --disposable-host
+```
+
+Recommend 4 GiB RAM and at least 20 GiB free disk. The installer compiles the exact
+clean, committed checkout with the release-pinned Go/Node toolchains; dependency
+downloads require Internet. The build runs as an unprivileged dedicated account.
+It provisions the native lab below, creates private login credentials, checks
+authenticated HTTPS/native balances, and verifies Lightning/on-chain sends using
+single-use financial intents. The retry check uses the identical intent/result.
+Each installer run deliberately creates new small regtest test transfers.
+
+This does not call the production installers or switch to a published release.
+It refuses existing standard node data/service definitions (even inactive), LOS
+configuration/state, unowned lab paths and symlinks in managed data. The explicit
+flag never bypasses these checks. No wallet, seed or credential is imported.
+Commit developer edits before rerunning the same command to rebuild the panels;
+wallet identities, balances, configuration and authentication are retained.
+
+A failed build does not stop existing panels. Manager deployment keeps a private
+backup of the old Manager/UI/source receipt, stops only the lab UI units, then
+checks both new instances through verified HTTPS/login. Failure restores the old
+assets and starts the previously active panels. If interrupted during deployment,
+the next attempt restores that backup first. A first-install failure retains lab
+data for retry; it never deletes or resets wallets. Native package/toolchain
+preparation is not a general OS package rollback mechanism. The deployment
+backup does not undo application database migrations; developer changes must
+keep their schema compatible with any Manager version they intend to restore.
+
+`sudo python3 /opt/los-regtest/verify-los.py --setup-only` checks login and reads
+without new payments; add `--node alice` or `--node bob` to check a single panel.
+Without that option, verification makes small test payments.
+Run `sudo python3 /opt/los-regtest/control.py status` for native regtest health.
+Access, certificate and private-password instructions are below. Production
+upgrades/broker/App Store lifecycle remain outside this developer profile.
+
 ## Host boundary
 
 `LOS-TEST2` is a mainnet node with real funds and must remain running and untouched.
@@ -91,7 +137,9 @@ by connecting these configurations to a mainnet LND.
 HTTPS using the lab CA, logs in, compares each LOS balance with native LND,
 reads channels, creates a LOS invoice and pays it through the other LOS instance,
 then sends 10000 on-chain regtest sats and confirms them in the destination wallet.
-It first verifies that each send without reauthentication is rejected. Passwords
+It first verifies that sends without an intent are rejected, prepares the immutable
+snapshot, reauthenticates its scope and checks that identical retry returns the
+original result. Passwords
 remain under `/etc/los-regtest/{alice,bob}/ui-password` (root-only); tokens and
 cookies exist only in memory. Neither scripts nor reports print these secrets.
 
@@ -106,6 +154,9 @@ Use the public CA `/etc/los-regtest/ca.crt` for certificate validation; do not
 disable TLS verification. Retrieve login credentials privately over verified SSH.
 
 To mine confirmations: `sudo python3 /opt/los-regtest/control.py mine 6`.
+Choose an explicit funding/closing fee such as `2 sat/vB`. Automatic estimates
+may be unavailable on a short regtest chain; public fee services are not enabled
+by this isolated profile.
 For a service restart test, restart only `los-regtest-*` units inside this VM;
 no Windows networking or other VM needs a restart. Reset/deletion is a separate
 authorized operation; provisioning never deletes a wallet or chain directory.
@@ -126,6 +177,7 @@ authorized operation; provisioning never deletes a wallet or chain directory.
   service restarts preserved identities, automatically unlocked both wallets
   and allowed both LOS instances to resume. A real startup-guard invocation
   rejected a configuration pointing to an unexpected LND endpoint.
-- Existing frontend advisory #308 remains; no dependency changes were made.
+- That original baseline preceded the Vite security update in PR #331; it is
+  historical evidence, not the validation report for the developer installer.
 
 Keep exact artifact digests and full runtime results outside the worktree.

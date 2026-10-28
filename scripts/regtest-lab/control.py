@@ -21,7 +21,14 @@ PORTS = {'alice': (10009, 8080), 'bob': (11009, 8180)}
 def checked_lab():
     if socket.gethostname() != 'los-regtest' or Path('/etc/los-regtest/LAB_ONLY').read_text().strip() != 'LOS_REGTEST_ONLY':
         raise RuntimeError('Dedicated regtest host required')
-    if btc('getblockchaininfo')['chain'] != 'regtest':
+    info = None
+    for _ in range(60):
+        try:
+            info = btc('getblockchaininfo')
+            break
+        except RuntimeError:
+            time.sleep(1)
+    if info is None or info['chain'] != 'regtest':
         raise RuntimeError('Refusing non-regtest Bitcoin backend')
 
 
@@ -88,7 +95,16 @@ def initialize():
         mine(110 - btc('getblockcount'))
     for node in PORTS:
         macaroon = ROOT / node / 'data/chain/bitcoin/regtest/admin.macaroon'
-        if not macaroon.exists():
+        wallet_db = ROOT / node / 'data/chain/bitcoin/regtest/wallet.db'
+        if not macaroon.exists() and not wallet_db.exists():
+            for _ in range(60):
+                try:
+                    rest(node, '/v1/state')
+                    break
+                except (OSError, urllib.error.URLError):
+                    time.sleep(1)
+            else:
+                raise RuntimeError('Native wallet initializer did not become ready')
             # Seed words exist only in process memory during wallet creation.
             # Never save, print, return, or include them in an error message.
             seed = rest(node, '/v1/genseed')['cipher_seed_mnemonic']
@@ -129,6 +145,23 @@ def smoke():
         time.sleep(1)
     else:
         raise RuntimeError('Native channel did not become active')
+    # A channel can become active after the first confirmation while LND is
+    # still processing the rest of the freshly mined batch. Router rejects
+    # payments before chain catch-up, without creating a payment record.
+    for node in PORTS:
+        wait_info(node)
+    # Active links and chain sync can precede the router's local bandwidth
+    # view on a newly created channel. Wait using read-only route queries;
+    # never retry a payment merely because startup readiness was incomplete.
+    for _ in range(60):
+        try:
+            if ln('alice', 'queryroutes', '--dest=' + pubkey, '--amt=1000').get('routes'):
+                break
+        except RuntimeError:
+            pass
+        time.sleep(1)
+    else:
+        raise RuntimeError('Native channel routing did not become ready')
     invoice = ln('bob', 'addinvoice', '--amt=1000', '--memo=LOS REGTEST native smoke test')
     payment = rest('alice', '/v2/router/send', {'payment_request': invoice['payment_request'],
                                               'timeout_seconds': 30, 'fee_limit_sat': '1000',

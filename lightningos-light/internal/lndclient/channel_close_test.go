@@ -27,6 +27,8 @@ type channelCloseFixture struct {
 	point, observedPoint, txid, location, failure string
 	readFailure                                   bool
 	calls                                         atomic.Int32
+	pendingReads                                  atomic.Int32
+	minPendingReads                               int32
 }
 
 func (f *channelCloseFixture) CloseChannel(_ *lnrpc.CloseChannelRequest, _ lnrpc.Lightning_CloseChannelServer) error {
@@ -35,11 +37,12 @@ func (f *channelCloseFixture) CloseChannel(_ *lnrpc.CloseChannelRequest, _ lnrpc
 }
 
 func (f *channelCloseFixture) PendingChannels(context.Context, *lnrpc.PendingChannelsRequest) (*lnrpc.PendingChannelsResponse, error) {
+	reads := f.pendingReads.Add(1)
 	if f.readFailure {
 		return nil, status.Error(codes.Unavailable, "read unavailable")
 	}
 	r := &lnrpc.PendingChannelsResponse{}
-	if f.calls.Load() > 0 && f.location == "pending" {
+	if f.calls.Load() > 0 && f.location == "pending" && reads >= f.minPendingReads {
 		r.WaitingCloseChannels = []*lnrpc.PendingChannelsResponse_WaitingCloseChannel{{Channel: &lnrpc.PendingChannelsResponse_PendingChannel{ChannelPoint: f.observedPoint}, ClosingTxid: f.txid}}
 	}
 	return r, nil
@@ -83,13 +86,17 @@ func closeTestClient(t *testing.T, fixture *channelCloseFixture) *Client {
 
 func TestCloseChannelReconcilesErrorWithoutAnotherSubmission(t *testing.T) {
 	point := strings.Repeat("1", 64) + ":1"
-	for _, tc := range []struct{ name, location, failure string }{
-		{"pending after offline error", "pending", "channel link not found"},
-		{"confirmed after offline error", "closed", "channel link not found"},
-		{"broadcast before fee error", "pending", "latest fee proposal exceeds max fee"},
+	for _, tc := range []struct {
+		name, location, failure string
+		minReads                int32
+	}{
+		{"pending after offline error", "pending", "channel link not found", 0},
+		{"confirmed after offline error", "closed", "channel link not found", 0},
+		{"broadcast before fee error", "pending", "latest fee proposal exceeds max fee", 0},
+		{"delayed native persistence", "pending", "channel link not found", 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := &channelCloseFixture{point: point, observedPoint: point, txid: strings.Repeat("2", 64), location: tc.location, failure: tc.failure}
+			f := &channelCloseFixture{point: point, observedPoint: point, txid: strings.Repeat("2", 64), location: tc.location, failure: tc.failure, minPendingReads: tc.minReads}
 			client := closeTestClient(t, f)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()

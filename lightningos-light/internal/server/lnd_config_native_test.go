@@ -85,6 +85,10 @@ func TestLNDConfigNativeDisposable(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{lnd: client, logger: logger, auth: auth, lndConfigOps: &ops}
+	if os.Getenv("LOS_LND_CONFIG_BROWSER_NATIVE") == "serve-ui" {
+		runLNDConfigNativeBrowser(t, s)
+		return
+	}
 	call := func(raw bool, payload any) *httptest.ResponseRecorder {
 		body, err := json.Marshal(payload)
 		if err != nil {

@@ -4,6 +4,7 @@ package privileged
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"reflect"
 	"runtime"
@@ -57,8 +58,23 @@ func TestBitcoinCoreReleaseVerificationFailurePreservesExistingImage(t *testing.
 				}
 				script = strings.Join(lines, "\n")
 			}
-			if _, err := runner.Run(ctx, "/bin/sh", "-c", script); err == nil {
+			threshold := fmt.Sprintf(`[ "$signature_count" -ge %d ]`, appmanifest.BitcoinCoreSignatureThreshold)
+			if !strings.Contains(script, threshold) {
+				t.Fatal("signature quorum check missing")
+			}
+			script = strings.Replace(script, threshold, `printf 'fixture-valid-signatures=%s\n' "$signature_count"`+"\n"+threshold, 1)
+			output, verificationErr := runner.Run(ctx, "/bin/sh", "-c", script)
+			if verificationErr == nil {
 				t.Fatal("invalid release verification succeeded")
+			}
+			count := -1
+			for _, line := range strings.Split(output, "\n") {
+				if strings.HasPrefix(line, "fixture-valid-signatures=") {
+					_, _ = fmt.Sscanf(line, "fixture-valid-signatures=%d", &count)
+				}
+			}
+			if (mode == "checksum" && count < appmanifest.BitcoinCoreSignatureThreshold) || (mode == "signature" && count != 0) {
+				t.Fatal("fixture did not reach the intended verification refusal; network/preparation failures are not passing tests")
 			}
 			after, err := os.ReadFile(attestation)
 			if err != nil || !reflect.DeepEqual(before, after) {

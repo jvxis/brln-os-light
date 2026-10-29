@@ -35,6 +35,12 @@ flag never bypasses these checks. No wallet, seed or credential is imported.
 Commit developer edits before rerunning the same command to rebuild the panels;
 wallet identities, balances, configuration and authentication are retained.
 
+The installer pins native Bitcoin Core 31.2 for both new and existing labs.
+When a native binary changes, it replaces the executable atomically and restarts
+the matching service. Restarting Bitcoin temporarily stops dependent LND/panel
+units; the previously active units are restored. An unchanged rerun does not
+restart native processes merely because their executable files were refreshed.
+
 A failed build does not stop existing panels. Manager deployment keeps a private
 backup of the old Manager/UI/source receipt, stops only the lab UI units, then
 checks all three new instances through verified HTTPS/login. Failure restores the old

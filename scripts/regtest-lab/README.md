@@ -129,10 +129,29 @@ confused with the explicitly unsupported production controls listed below. An
 existing channel or a successful status request alone does not validate opening
 or closing channels. The notice contains Portuguese and English descriptions.
 
-Mining is manual. After a long period without new blocks, LND may report that
-it is not synced even at the current height. With the miner wallet loaded, run
-`sudo python3 /opt/los-regtest/control.py mine 1` and wait for synchronization
-before testing payments. See the funding instructions in the main README to load the miner.
+Automatic mining starts after a successful installation: one block every 60 seconds.
+Pause it for tests that need precise block heights; the pause and interval survive
+reinstallation and reboot. Existing labs can install the new helper from a reviewed
+checkout without reinitializing wallets or reopening channels:
+
+```bash
+sudo install -o root -g root -m 0755 scripts/regtest-lab/automine.py /opt/los-regtest/automine.py
+sudo python3 /opt/los-regtest/automine.py install
+sudo python3 /opt/los-regtest/automine.py status
+sudo python3 /opt/los-regtest/automine.py pause
+sudo python3 /opt/los-regtest/automine.py resume
+sudo python3 /opt/los-regtest/automine.py interval 60
+```
+
+The interval accepts 10 to 3600 seconds; changing it preserves a pause. Mining only
+runs while the lab host is running, with no catch-up blocks after downtime.
+Each automatic block advances confirmations, coinbase maturity, CSV/CLTV timelocks
+and force-close deadlines. This is an accelerated simulation, not mainnet timing.
+The service checks the dedicated lab and Bitcoin `regtest` network before mining.
+It never starts or restarts Bitcoin/LND. Manual `control.py mine 6` remains available.
+If mining is paused or the host was asleep, mine one block manually and wait for
+LND synchronization before testing payments. Intervals near one hour can also
+leave LND reporting stale blocks; the default is recommended for routine use.
 
 **Outside this profile:** LND configuration through the UI (including name/alias,
 color and network settings), maintenance/restart controls, LND/LOS UI upgrades,

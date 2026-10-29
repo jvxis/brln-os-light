@@ -1077,14 +1077,78 @@ Release-by-release notes are tracked in GitHub Releases:
 
 ## Development
 
-### Disposable regtest installation for developers
+### Regtest lab for developers and beginners
 
-Use a **fresh, dedicated Ubuntu 24.04 amd64 VM**, with 4 GiB RAM and at least
-20 GiB free disk space recommended. This development profile installs native
-Bitcoin Core 31.2, three LND nodes (Alice/Bob/Charlie), PostgreSQL and three isolated LOS panels.
-It builds the committed source checkout; Internet access is required for packages,
-verified toolchains and build dependencies. All coins are local regtest coins with
-no value. The normal installers remain mainnet-only.
+You do not need to be a developer: this lab also lets beginners get to know LOS,
+explore its screens and practise on-chain and Lightning operations before setting
+up a production node. It installs Bitcoin Core 31.2, three LND nodes
+(Alice/Bob/Charlie), PostgreSQL and three isolated LOS panels. The coins are
+fictitious and have no value. Moving to production means a separate mainnet
+installation; lab wallets, channels and balances are not migrated.
+
+Use a **fresh, dedicated Ubuntu 24.04 amd64 VM or WSL2 distribution on Windows 11**,
+with `systemd`, 4 GiB RAM and at least 20 GiB free Linux disk space recommended.
+Internet access is required for verified toolchains, packages and builds. The
+normal production installers remain mainnet-only.
+
+#### Quick installation with curl
+
+On a dedicated Ubuntu VM, prepare its hostname with
+`sudo hostnamectl set-hostname los-regtest`. For WSL2, prepare it as described
+below. Then run inside Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/agent/0.5.50-release/lo_regtest_bootstrap.sh | sudo bash -s -- --disposable-host
+```
+
+The dedicated bootstrap fetches a clean private source checkout and runs
+`install_regtest.sh`, then removes only its temporary checkout. It never resets
+your working repository. Its default source is `agent/0.5.50-release`; it prints
+the exact installed commit. This is development source, not an immutable
+production release. Developers can select a branch, tag or full commit by adding
+`LOS_REGTEST_REF=<ref>` after `sudo` in the command above. Repeating it preserves
+existing lab wallets and passwords; it does not reset the lab.
+
+#### Ubuntu on Windows 11 (WSL2)
+
+Reserve a new Ubuntu distribution for this lab. In PowerShell,
+`wsl --install -d Ubuntu-24.04` installs Ubuntu 24.04; check `wsl --list --verbose`
+for version **2**. If that distribution already contains your work or node data,
+use a separate one. Follow Microsoft's [WSL installation commands](https://learn.microsoft.com/en-us/windows/wsl/basic-commands).
+WSL1 and Windows on ARM are outside this amd64 profile.
+
+Inside Ubuntu, edit `/etc/wsl.conf` with `sudo nano /etc/wsl.conf`. Merge these
+settings with any existing sections, preserving other settings:
+
+```ini
+[boot]
+systemd=true
+[network]
+hostname=los-regtest
+```
+
+Save your work and close that lab's terminals. In PowerShell, run
+`wsl --terminate Ubuntu-24.04` (replace the name if your lab has a different name),
+then `wsl -d Ubuntu-24.04`. This stops only the named distribution. Check inside
+Ubuntu that `ps -p 1 -o comm=` reports `systemd` and `hostname` reports
+`los-regtest`, then run the curl installation above. See Microsoft's
+[systemd setup](https://learn.microsoft.com/en-us/windows/wsl/systemd) and
+[per-distribution configuration](https://learn.microsoft.com/en-us/windows/wsl/wsl-config).
+Keep the lab and its data on the Linux filesystem, not under `/mnt/c`.
+
+With WSL2 localhost forwarding enabled and free host ports, open
+`https://alice.localhost:8443`, `https://bob.localhost:8543` and
+`https://charlie.localhost:8643` from Windows. Trust only the lab's public CA and
+retrieve each password as described below. The SSH-forward URLs below are for
+remote/VM access; they use different local ports. See Microsoft's
+[WSL networking guide](https://learn.microsoft.com/en-us/windows/wsl/networking).
+Keep the distribution running while using the lab; closing/stopping WSL is not
+an always-on production setup. Installation integration checks currently use
+Ubuntu VMs; native WSL2 validation remains separate.
+
+#### Installation from a source checkout (developers)
 
 ```bash
 sudo apt-get update

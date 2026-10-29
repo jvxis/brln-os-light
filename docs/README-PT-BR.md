@@ -1085,14 +1085,79 @@ Notas por versão são mantidas no GitHub Releases:
 
 ## Desenvolvimento
 
-### Instalação regtest descartável para desenvolvedores
+### Laboratório regtest para desenvolvedores e iniciantes
 
-Use uma **VM nova e dedicada com Ubuntu 24.04 amd64**. Recomendamos 4 GiB de RAM
-e pelo menos 20 GiB livres em disco. Este perfil de desenvolvimento instala
-Bitcoin Core 31.2 nativo, três nodes LND (Alice/Bob/Charlie), PostgreSQL e três painéis LOS
-isolados. Compila o checkout commitado; exige Internet para pacotes, toolchains
-verificadas e dependências. Todas as moedas são regtest locais, sem valor.
-Os instaladores normais continuam exclusivos de mainnet.
+Não é necessário ser desenvolvedor: este laboratório também permite que
+iniciantes conheçam o LOS, explorem suas telas e pratiquem operações on-chain e
+Lightning antes de montar um node de produção. Instala Bitcoin Core 31.2, três
+nodes LND (Alice/Bob/Charlie), PostgreSQL e três painéis LOS isolados. As moedas
+são fictícias e não têm valor. Passar para produção significa fazer uma
+instalação mainnet separada; carteiras, canais e saldos do laboratório não são
+migrados.
+
+Use uma **VM ou distribuição WSL2 nova e dedicada, com Ubuntu 24.04 amd64**
+(WSL2 no Windows 11), `systemd`, 4 GiB de RAM e pelo menos 20 GiB livres no disco
+Linux recomendados. É necessário acesso à Internet para pacotes, toolchains
+verificadas e builds. Os instaladores normais de produção continuam mainnet-only.
+
+#### Instalação rápida com curl
+
+Em uma VM Ubuntu dedicada, prepare o hostname com
+`sudo hostnamectl set-hostname los-regtest`. No WSL2, prepare como explicado
+abaixo. Depois execute dentro do Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/agent/0.5.50-release/lo_regtest_bootstrap.sh | sudo bash -s -- --disposable-host
+```
+
+O bootstrap dedicado baixa um checkout limpo e privado, executa
+`install_regtest.sh` e remove somente seu checkout temporário. Não redefine seu
+repositório de trabalho. A fonte padrão é `agent/0.5.50-release`; o commit exato
+instalado é informado. Trata-se de código de desenvolvimento, não de uma release
+imutável de produção. Desenvolvedores podem escolher branch, tag ou commit
+completo incluindo `LOS_REGTEST_REF=<ref>` depois de `sudo` no comando acima.
+Executar novamente preserva as carteiras e senhas existentes do laboratório;
+não zera o ambiente.
+
+#### Ubuntu integrado ao Windows 11 (WSL2)
+
+Reserve uma distribuição Ubuntu nova para o laboratório. No PowerShell,
+`wsl --install -d Ubuntu-24.04` instala Ubuntu 24.04; confira a versão **2** em
+`wsl --list --verbose`. Se essa distribuição já contém seu trabalho ou dados de
+um node, use outra separada. Consulte os [comandos de instalação do WSL da Microsoft](https://learn.microsoft.com/pt-br/windows/wsl/basic-commands).
+WSL1 e Windows em ARM ficam fora deste perfil amd64.
+
+Dentro do Ubuntu, edite `/etc/wsl.conf` com `sudo nano /etc/wsl.conf`. Mescle estas
+opções com as seções existentes, preservando as demais configurações:
+
+```ini
+[boot]
+systemd=true
+[network]
+hostname=los-regtest
+```
+
+Salve seu trabalho e feche os terminais desse laboratório. No PowerShell, execute
+`wsl --terminate Ubuntu-24.04` (substitua pelo nome da sua distribuição dedicada,
+se diferente), depois `wsl -d Ubuntu-24.04`. Isso para somente a distribuição
+indicada. Dentro do Ubuntu, confira se `ps -p 1 -o comm=` retorna `systemd` e
+`hostname` retorna `los-regtest`; então execute a instalação por curl acima.
+Consulte as instruções da Microsoft sobre [systemd](https://learn.microsoft.com/pt-br/windows/wsl/systemd)
+e [configuração por distribuição](https://learn.microsoft.com/pt-br/windows/wsl/wsl-config).
+Mantenha o laboratório e os dados no filesystem Linux, fora de `/mnt/c`.
+
+Com o encaminhamento localhost do WSL2 habilitado e as portas livres no Windows,
+abra `https://alice.localhost:8443`, `https://bob.localhost:8543` e
+`https://charlie.localhost:8643`. Confie somente na CA pública do laboratório e
+consulte cada senha como explicado abaixo. Os endereços com túnel SSH abaixo
+servem para acesso remoto/VM e usam outras portas locais. Consulte o [guia de rede do WSL](https://learn.microsoft.com/pt-br/windows/wsl/networking).
+Mantenha a distribuição em execução enquanto usa o laboratório; encerrar/parar
+o WSL não equivale a um node de produção sempre ligado. Os ensaios atuais de
+instalação usam VMs Ubuntu; a validação nativa em WSL2 permanece separada.
+
+#### Instalação a partir do código-fonte (desenvolvedores)
 
 ```bash
 sudo apt-get update

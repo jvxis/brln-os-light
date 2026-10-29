@@ -192,7 +192,7 @@ limit $3`, start, end, limit)
 			Status:       strings.TrimSpace(status),
 			FeeSat:       feeSat,
 			ChannelPoint: strings.TrimSpace(channelPoint),
-			ChannelAlias: notificationPeerAlias(channelAlias),
+			ChannelAlias: lndclient.DisplayPeerAlias(channelAlias),
 			PaymentHash:  normalizeWalletHash(paymentHash),
 			Keysend:      strings.EqualFold(strings.TrimSpace(evtType), "keysend"),
 		}

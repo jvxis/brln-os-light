@@ -5031,8 +5031,8 @@ func recentRouteFromPayment(pay *lnrpc.Payment) *lnrpc.Route {
 }
 
 func recentPeerAlias(alias, pubkey string) string {
-	alias = strings.TrimSpace(alias)
-	if alias == "" || strings.HasPrefix(strings.ToLower(alias), "unable to lookup peer alias:") {
+	alias = DisplayPeerAlias(alias)
+	if alias == "" {
 		return shortRecentPubKey(pubkey)
 	}
 	return alias

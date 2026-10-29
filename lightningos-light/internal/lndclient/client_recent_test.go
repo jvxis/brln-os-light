@@ -25,6 +25,7 @@ func (f recentAliasClient) ListChannels(context.Context, *lnrpc.ListChannelsRequ
 func TestLightningActivityAliasLookupFailureUsesPubkey(t *testing.T) {
 	for _, tc := range []struct{ alias, want string }{
 		{"Visible peer", "Visible peer"},
+		{"unable to lookup peer alias: EOF", "unable to lookup peer alias: EOF"},
 		{"unable to lookup peer alias: alias for node not found", "02abcdef1234"},
 		{"  Unable to lookup peer alias: missing  ", "02abcdef1234"},
 		{"", "02abcdef1234"},

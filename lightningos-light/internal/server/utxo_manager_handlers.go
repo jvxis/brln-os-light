@@ -90,28 +90,23 @@ type EnrichedOnchainUtxo struct {
 // enrichOnchainUtxos merges UTXO metadata + lease state onto LND's list. It
 // records the current live set for the background prune loop, keeping the read
 // path focused on enrichment.
-func (s *Server) enrichOnchainUtxos(ctx context.Context, items []lndclient.OnchainUtxo) []EnrichedOnchainUtxo {
+func (s *Server) enrichOnchainUtxos(ctx context.Context, items []lndclient.OnchainUtxo, leases map[string]lndclient.LeaseInfo) []EnrichedOnchainUtxo {
 	enriched := make([]EnrichedOnchainUtxo, 0, len(items))
 	for _, item := range items {
 		enriched = append(enriched, EnrichedOnchainUtxo{OnchainUtxo: item})
 	}
 
-	leases, leaseErr := s.listCachedUtxoLeases(ctx)
-	if leaseErr != nil {
-		s.logger.Printf("utxo manager: list leases failed: %v", leaseErr)
-	} else {
-		for i := range enriched {
-			outpoint := strings.ToLower(strings.TrimSpace(enriched[i].Outpoint))
-			if outpoint == "" {
-				continue
-			}
-			if lease, ok := leases[outpoint]; ok {
-				enriched[i].Locked = true
-				enriched[i].LeaseExpiration = lease.Expiration
-				// The lease ID is deterministic from the outpoint when we
-				// created it; report whether this lease was ours.
-				enriched[i].LeaseManagedHere = lease.ID != ""
-			}
+	for i := range enriched {
+		outpoint := strings.ToLower(strings.TrimSpace(enriched[i].Outpoint))
+		if outpoint == "" {
+			continue
+		}
+		if lease, ok := leases[outpoint]; ok {
+			enriched[i].Locked = true
+			enriched[i].LeaseExpiration = lease.Expiration
+			// The lease ID is deterministic from the outpoint when we
+			// created it; report whether this lease was ours.
+			enriched[i].LeaseManagedHere = lease.ManagedByUtxoManager()
 		}
 	}
 

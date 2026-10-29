@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tarfile
 from pathlib import Path
+from urllib.parse import urlsplit, unquote
 
 from control import checked_lab, wait_info
 from nodes import NODES
@@ -18,6 +19,25 @@ from nodes import NODES
 
 def run(*args, input=None):
     subprocess.run(args, input=input, text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+
+def database_password(credential, env, role):
+    if not credential.exists():
+        if env.exists():
+            # Preserve credentials when adopting an earlier developer fixture.
+            values = [line.split('=', 1)[1] for line in env.read_text().splitlines()
+                      if line.startswith('NOTIFICATIONS_PG_DSN=')]
+            parsed = urlsplit(values[0]) if len(values) == 1 else None
+            if (parsed is None or parsed.scheme not in ['postgres', 'postgresql']
+                    or parsed.hostname != '127.0.0.1' or parsed.username != role
+                    or parsed.path != '/' + role or not parsed.password):
+                raise RuntimeError('Existing laboratory database credential cannot be safely adopted')
+            password = unquote(parsed.password)
+        else:
+            password = secrets.token_hex(32)
+        credential.write_text(password)
+        credential.chmod(0o600)
+    return credential.read_text()
 
 
 def add_lab_notice(html):
@@ -79,7 +99,7 @@ def add_lab_notice(html):
             'legend': ('O objetivo do teste foi atingido neste laboratório. Detalhes de execução ficam na descrição e no relatório.', 'O objetivo do teste ainda não foi verificado. Isso não significa que ele falha.', 'Depende de recursos de produção que este perfil não oferece.'),
             'rows': [
                 ('wallet', 'validated', 'Carteira e acesso', 'Login, saldos on-chain/Lightning e endereços de recebimento.'),
-                ('payments', 'validated', 'Pagamentos Lightning', 'Invoices e pagamentos entre Alice e Bob, com confirmação de senha.'),
+                ('payments', 'validated', 'Pagamentos Lightning', 'Invoices e pagamentos entre Alice, Bob e Charlie, com confirmação de senha.'),
                 ('onchain', 'validated', 'Pagamentos on-chain', 'Depósitos, envios e confirmações por mineração manual.'),
                 ('channel-read', 'validated', 'Consultar canais e saldos', ''),
                 ('installer-channel', 'validated', 'Canal inicial do laboratório', 'Criado pelo preparador via lncli; não valida abertura pela interface.'),
@@ -116,7 +136,7 @@ def add_lab_notice(html):
             'legend': ('The test objective passed in this laboratory. Execution details stay in the description and report.', 'The test objective has not been verified yet. This does not mean it fails.', 'Requires production capabilities that this profile does not provide.'),
             'rows': [
                 ('wallet', 'validated', 'Wallet and access', 'Login, on-chain/Lightning balances and receiving addresses.'),
-                ('payments', 'validated', 'Lightning payments', 'Invoices and payments between Alice and Bob, with password confirmation.'),
+                ('payments', 'validated', 'Lightning payments', 'Invoices and payments between Alice, Bob and Charlie, with password confirmation.'),
                 ('onchain', 'validated', 'On-chain payments', 'Deposits, sends and confirmations through manual mining.'),
                 ('channel-read', 'validated', 'Read channels and balances', ''),
                 ('installer-channel', 'validated', 'Initial laboratory channel', 'Created by setup through lncli; this does not validate UI channel opening.'),
@@ -218,16 +238,14 @@ def configure(args):
         state.mkdir(mode=0o700, exist_ok=True)
         os.chown(state, account.pw_uid, account.pw_gid)
         credential = folder.parent / 'database-password'
-        if not credential.exists():
-            credential.write_text(secrets.token_hex(32))
-            credential.chmod(0o600)
-        password = credential.read_text()
         role = 'los_regtest_' + node
+        password = database_password(credential, folder / 'secrets.env', role)
         # Generated hex password and fixed identifiers; SQL travels over stdin.
         sql = f"select 1 from pg_roles where rolname='{role}';"
         exists = subprocess.check_output(['runuser', '-u', 'postgres', '--', 'psql', '-At', '-c', sql], text=True).strip()
         if not exists:
-            run('runuser', '-u', 'postgres', '--', 'psql', '-v', 'ON_ERROR_STOP=1', input=f"CREATE ROLE {role} LOGIN PASSWORD '{password}';\n")
+            escaped_password = password.replace("'", "''")
+            run('runuser', '-u', 'postgres', '--', 'psql', '-v', 'ON_ERROR_STOP=1', input=f"CREATE ROLE {role} LOGIN PASSWORD '{escaped_password}';\n")
         exists = subprocess.check_output(['runuser', '-u', 'postgres', '--', 'psql', '-At', '-c', f"select 1 from pg_database where datname='{role}';"], text=True).strip()
         if not exists:
             run('runuser', '-u', 'postgres', '--', 'createdb', '-O', role, role)

@@ -88,6 +88,19 @@ class LabNoticeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'already attached'):
             self.module.add_lab_notice(once)
 
+    def test_legacy_database_credential_is_preserved_and_foreign_dsn_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); credential = root / 'database-password'; env = root / 'secrets.env'
+            env.write_text('NOTIFICATIONS_PG_DSN=postgres://los_regtest_charlie:fixture%21password@127.0.0.1:5432/los_regtest_charlie?sslmode=disable\n')
+            previous = env.read_bytes()
+            self.assertEqual(self.module.database_password(credential, env, 'los_regtest_charlie'), 'fixture!password')
+            self.assertEqual(env.read_bytes(), previous)
+            self.assertEqual(credential.stat().st_mode & 0o777, 0o600)
+            credential.unlink(); env.write_text('NOTIFICATIONS_PG_DSN=postgres://foreign:fixture@127.0.0.1/another_db\n')
+            with self.assertRaisesRegex(RuntimeError, 'cannot be safely adopted'):
+                self.module.database_password(credential, env, 'los_regtest_charlie')
+            self.assertFalse(credential.exists())
+
 
 @unittest.skipUnless(sys.platform == 'linux', 'requires Linux /proc executable identity')
 class ProvisionRuntimeTests(unittest.TestCase):

@@ -21,7 +21,7 @@ it does not downgrade that successful Succession test.
 
 ## Additional native checks
 
-Environment: existing `los-disposable-regtest`, Ubuntu 24.04 amd64, native Bitcoin
+Environment: existing disposable Ubuntu 24.04 amd64 VM, native Bitcoin
 Core 31.1 and LND 0.21.5-beta. Installed source at baseline: `2aa99255`, whose
 application tree equals release merge `e46fbbe3`. Managers use verified local
 HTTPS, normal login cookies and CSRF. No production node or real funds used.
@@ -81,7 +81,7 @@ restored synchronization. The existing `control.py mine` command also runs its
 native 1,000-sat Lightning smoke, as does the notice deployment's lab preparer;
 those fictitious transfers are separate from the
 balance-preserving operation checks above. Auxiliary Charlie/Delta stay stopped;
-LOS-TEST2 stays running and untouched, with only one disposable VM running.
+Unrelated mainnet nodes and services stayed running and untouched.
 
 ## Português
 
@@ -95,4 +95,33 @@ eventos no Audit. Metadados, grupos, leases e saldos foram restaurados/preservad
 Foi encontrada uma falha real de exibição: o UTXO bloqueado desaparece da lista
 do LOS (#349). Ela aparece separadamente como **Falha encontrada**, e o teste
 mantém a asserção que precisa passar após a correção. Os testes não alteraram
-o LOS-TEST2 nem qualquer serviço mainnet.
+qualquer node ou serviço mainnet.
+
+## Separately authorized mainnet reproduction — 2026-10-29
+
+After the disposable checks, the owner explicitly requested a bounded test on
+an existing mainnet test node. That authorization was limited to one temporary
+UTXO lease/release; no send, channel operation, upgrade or restart was performed.
+This is separate from the regtest checks above and is not a general production
+regression fixture or a new installation/upgrade validation.
+
+With native LND 0.21.4-beta, verified HTTPS, normal LOS authentication and strict
+SSH host-key checking, the baseline was healthy and synced: three wallet UTXOs,
+two active channels, no native leases, and Manager/LND/broker socket active.
+The smallest confirmed unlocked output was cross-checked against native LND,
+then locked through the normal LOS endpoint with `expiry_sec: 120`.
+
+Native `wallet listleases` gained one lease, while the exact output disappeared
+from the LOS UTXO inventory. An explicit LOS unlock immediately restored the
+row and the original native lease inventory. Native wallet balances, channel
+points/count, active-channel count and Manager/LND process IDs were unchanged.
+No amounts, addresses, outpoints, credentials or node connection details are
+included in this public report.
+
+**Conclusion:** #349 is confirmed on mainnet as well as regtest, on the tested
+LND versions. The failure concerns locked-output visibility; it did not transfer
+or lose funds. The test lease was explicitly released, not left to expire.
+
+The developer READMEs now use generic host/resource/isolation instructions.
+Owner-specific VM names, IP/UUID, template requirements and the private
+VirtualBox startup script are no longer part of the public regtest guide/tools.

@@ -138,15 +138,15 @@ menus work. The production installers and application remain unchanged.
 
 ## Host boundary
 
-`LOS-TEST2` is a mainnet node with real funds and must remain running and untouched.
-Only **one** `los-disposable-*` VM may run at a time. Use `Start-RegtestVM.ps1`;
-it refuses another running disposable, a stopped LOS-TEST2, an unexpected target
-path, or insufficient host RAM. It never stops another VM automatically.
+Use a dedicated disposable Linux host or VM without real funds. The lab does
+not require VirtualBox, a particular VM name, a maintainer's template, or another
+node to be running. Allocate resources according to your host's capacity; the
+recorded amd64 validation used 4 CPUs and 4 GiB RAM. Leave enough resources for
+the host and any other workloads.
 
-Create a full clone of the protected powered-off `brln-os-basica` template using
-the VirtualBox lab skill. Name it `los-disposable-regtest`; use 4 CPUs and 4 GiB
-RAM initially. Verify its new MAC, disk, UUID and SSH host key. The template must
-remain unchanged. Do not import production wallet data or credentials.
+When cloning a VM, verify its independent disks, new network identity and SSH
+host key before provisioning. Do not import production wallet data or
+credentials, and do not stop or reconfigure unrelated nodes to make room.
 
 ## Provisioning
 
@@ -247,8 +247,7 @@ authorized operation; provisioning never deletes a wallet or chain directory.
 
 ## Recorded validation, 2026-10-27
 
-- VM `los-disposable-regtest`, UUID `06fb6142-d6ee-49b8-ae3a-ca9ba753b3d6`,
-  Ubuntu 24.04 amd64, 4 CPUs, 4 GiB, 100 GiB dynamic disk; SSH 192.168.68.95.
+- Disposable Ubuntu 24.04 amd64 VM, 4 CPUs, 4 GiB RAM and 100 GiB dynamic disk.
 - Native Bitcoin 31.1 and LND 0.21.4-beta; real regtest funding, active channel,
   and settled native Lightning payment. No mainnet funds were used.
 - Manager/UI source `4bee25128cd702b2ab0bd29868d80b8b6e3512d4`, Go 1.26.10;

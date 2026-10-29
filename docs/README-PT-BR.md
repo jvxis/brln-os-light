@@ -1233,8 +1233,8 @@ Ciclo de vida da App Store, instalação/upgrades de produção e integrações 
 ficam fora deste perfil. Painéis de saúde podem apontar serviços de produção
 ausentes. Nunca instale este perfil em um node mainnet nem importe uma carteira real.
 Veja o [guia do laboratório regtest](../scripts/regtest-lab/README.md) para serviços,
-recuperação e limites. No VirtualBox do mantenedor, não ligue duas disposables ao
-mesmo tempo; mantenha o LOS-TEST2 ligado e intocado.
+recuperação e limites. Dimensione os recursos conforme a capacidade do seu host
+e mantenha o laboratório isolado de nodes com fundos reais.
 
 Veja `DEVELOPMENT.md` para setup local e instruções de build.
 

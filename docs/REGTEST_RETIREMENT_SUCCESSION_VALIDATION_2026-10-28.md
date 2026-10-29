@@ -19,7 +19,7 @@ LOS Manager and Postgres database isolated Retirement/Succession from their
 channels and settings. Temporary Delta LND supplied an offline peer. All
 services and Bitcoin peers were local; there was no production privileged
 broker or external Telegram credential. No additional VM was started.
-LOS-TEST2 stayed running and was not accessed.
+Mainnet nodes stayed running and were not accessed.
 
 The actual deployed UI supplied normal login, CSRF, financial snapshots,
 password approval and operation submission. Browser contexts were separated

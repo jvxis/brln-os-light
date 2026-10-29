@@ -14,7 +14,7 @@ Core 31.1 and LND 0.21.5-beta. LOS 0.5.50 source release commit
 
 Alice and Bob each ran native LND and a separate authenticated LOS Manager.
 Bitcoin/LND/Managers were restricted to localhost. The production privileged
-broker was disabled. LOS-TEST2 and every mainnet service were untouched.
+broker was disabled. All mainnet nodes and services were untouched.
 All amounts below are fictitious regtest sats.
 
 Before mutation, captured native identities, channel points, balances, pending

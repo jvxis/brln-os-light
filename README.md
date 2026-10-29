@@ -1221,8 +1221,8 @@ App Store lifecycle, production installation/upgrades and external integrations
 are outside this profile. System health panels may report missing production
 services. Never install this profile on a mainnet node or import a real wallet.
 See the [regtest lab guide](scripts/regtest-lab/README.md) for service names,
-recovery and detailed boundaries. Do not run a second disposable VM concurrently
-in the maintainer's VirtualBox lab; keep LOS-TEST2 running and untouched.
+recovery and detailed boundaries. Allocate resources according to your host's
+capacity and keep the laboratory isolated from nodes with real funds.
 
 See `DEVELOPMENT.md` for local dev setup and build instructions.
 

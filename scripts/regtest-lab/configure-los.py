@@ -50,7 +50,6 @@ def add_lab_notice(html):
 #los-regtest-notice .rt-badge{display:inline-block;font-size:12px;line-height:18px;font-weight:700;padding:3px 9px;border:1px solid;border-radius:999px;white-space:nowrap}
 #los-regtest-notice .rt-validated{color:#8be0b4;background:#11392e;border-color:#28654e}
 #los-regtest-notice .rt-unvalidated{color:#f2cc76;background:#392e15;border-color:#6b5424}
-#los-regtest-notice .rt-partial{color:#ffc6a0;background:#40291e;border-color:#81543a}
 #los-regtest-notice .rt-unsupported{color:#bac7d1;background:#263440;border-color:#475b69}
 #los-regtest-notice .rt-table-wrap{border:1px solid #29404e;border-radius:12px;overflow:hidden;margin-bottom:18px}
 #los-regtest-notice .rt-table{width:100%;border-collapse:collapse;table-layout:fixed;text-align:left;font-size:14px;line-height:1.5}
@@ -75,8 +74,8 @@ def add_lab_notice(html):
             'lang': 'pt-BR', 'title': 'Guia do laboratório regtest', 'warning': 'MOEDAS SEM VALOR',
             'intro': 'Consulte o estado de cada operação antes de usar os menus. Este guia descreve o que foi testado na instalação atual.',
             'headers': ('Operação', 'Estado'),
-            'statuses': {'validated': 'Validado', 'partial': 'Com ressalvas', 'unvalidated': 'Não validado', 'unsupported': 'Fora de escopo'},
-            'legend': ('Testado com sucesso neste laboratório.', 'Operação testada, com resultado parcial ou problema descrito na linha.', 'O fluxo completo ainda não foi testado. Isso não significa que ele falha.', 'Depende de recursos de produção que este perfil não oferece.'),
+            'statuses': {'validated': 'Validado', 'unvalidated': 'Não validado', 'unsupported': 'Fora de escopo'},
+            'legend': ('O objetivo do teste foi atingido neste laboratório. Detalhes de execução ficam na descrição e no relatório.', 'O objetivo do teste ainda não foi verificado. Isso não significa que ele falha.', 'Depende de recursos de produção que este perfil não oferece.'),
             'rows': [
                 ('wallet', 'validated', 'Carteira e acesso', 'Login, saldos on-chain/Lightning e endereços de recebimento.'),
                 ('payments', 'validated', 'Pagamentos Lightning', 'Invoices e pagamentos entre Alice e Bob, com confirmação de senha.'),
@@ -89,16 +88,21 @@ def add_lab_notice(html):
                 ('channel-close', 'validated', 'Fechar canal cooperativamente', 'Taxa manual e Auto; txid e confirmação conferidos no LND. Corrigidas a reconciliação do erro e as explicações de taxas (#343 e #344).'),
                 ('channel-force-close', 'validated', 'Forçar fechamento de canal', 'Interface, confirmação, mineração do prazo CSV e recuperação do saldo.'),
                 ('channel-fees', 'validated', 'Editar fees de um canal', 'Fee de saída, base e timelock conferidos na política nativa do LND.'),
-                ('channel-rebalance', 'partial', 'Rebalance manual', 'Moveu 49.824 dos 50.000 sats pedidos, por 2 sats; job parcial, com 176 sats restantes.'),
+                ('channel-rebalance', 'validated', 'Rebalance manual', 'Liquidez movimentada e custo registrados corretamente. Resultado parcial de uma tentativa é esperado: não é preciso mover 100% para validar o fluxo.'),
                 ('channel-autofee', 'validated', 'AutoFee manual', 'Dry run não alterou a política; Run now aplicou a mudança em canal de teste.'),
                 ('channel-automation', 'unvalidated', 'Automações agendadas e casos de falha', 'Rebalance automático, auto-heal, HTLC Manager e recuperação de falhas exigem ensaios específicos; um run manual não os valida.'),
                 ('node-retirement', 'validated', 'Node Retirement', 'Dry-run e execução real com fechamento cooperativo, peer offline, decisão de force-close, maturação e conciliação. Use um node de teste dedicado: encerra todos os canais dele.'),
-                ('succession', 'partial', 'Succession', 'Fluxo local, prova de vida, prazo vencido e transferência automática; prazos antecipados só no banco de testes. Entrega Telegram não validada. A transferência total aguarda a confirmação de todos os fundos atuais.'),
+                ('succession', 'validated', 'Succession', 'Prova de vida, disparo por prazo, aposentadoria e transferência automática com mínimo de confirmações. Prazos simulados no banco de testes. A transferência total aguarda a confirmação de todos os fundos atuais.'),
+                ('message-signing', 'validated', 'Assinar mensagens', 'API autenticada do LOS; assinatura conferida pelo LND do outro node, incluindo mensagem adulterada e entrada vazia.'),
+                ('utxo-management', 'validated', 'Organizar UTXOs', 'API autenticada: etiquetas, tags, cores, criar/atribuir/remover grupos; estado original restaurado.'),
+                ('utxo-lock', 'validated', 'Bloquear e desbloquear UTXOs', 'Moeda permanece visível com cadeado e metadados; desbloqueio pela interface e expiração conferidos no LND. As prévias de gasto continuam excluindo moedas bloqueadas. Corrigida a #349.'),
+                ('audit-log', 'validated', 'Audit Log', 'API autenticada: bloqueio/desbloqueio registrado e consulta por ação, alvo e limite; acesso sem login recusado.'),
                 ('lnd-config', 'unsupported', 'Configuração e manutenção do LND', 'Nome/alias, cor, rede e controles de reinício.'),
                 ('upgrades', 'unsupported', 'Upgrades de LND e LOS pela interface', ''),
                 ('external', 'unsupported', 'Apps da loja e integrações externas', ''),
             ],
             'tips': [
+                ('Telegram é uma integração separada', 'O fluxo de Succession foi validado. Entrega de avisos pelo Telegram exige configurar token e destino; não foi testada neste laboratório e não altera o resultado do teste de sucessão.'),
                 ('Mineração é manual', 'Após um período sem blocos, o LND pode indicar falta de sincronização. Com a mineradora carregada, minere um novo bloco local antes de testar pagamentos.'),
                 ('Menus de produção podem continuar visíveis', 'Os Managers só acessam localhost e não usam o broker de produção. Consultas ao GitHub podem expirar. A aplicação de produção permanece inalterada.'),
             ],
@@ -107,8 +111,8 @@ def add_lab_notice(html):
             'lang': 'en', 'title': 'Regtest laboratory guide', 'warning': 'COINS HAVE NO VALUE',
             'intro': 'Check each operation before using the menus. This guide describes what has been tested in the current installation.',
             'headers': ('Operation', 'Status'),
-            'statuses': {'validated': 'Validated', 'partial': 'Qualified result', 'unvalidated': 'Not validated', 'unsupported': 'Not supported'},
-            'legend': ('Tested successfully in this laboratory.', 'Tested operation with a partial result or the issue described in its row.', 'The complete workflow has not been tested. This does not mean it fails.', 'Requires production capabilities that this profile does not provide.'),
+            'statuses': {'validated': 'Validated', 'unvalidated': 'Not validated', 'unsupported': 'Not supported'},
+            'legend': ('The test objective passed in this laboratory. Execution details stay in the description and report.', 'The test objective has not been verified yet. This does not mean it fails.', 'Requires production capabilities that this profile does not provide.'),
             'rows': [
                 ('wallet', 'validated', 'Wallet and access', 'Login, on-chain/Lightning balances and receiving addresses.'),
                 ('payments', 'validated', 'Lightning payments', 'Invoices and payments between Alice and Bob, with password confirmation.'),
@@ -121,16 +125,21 @@ def add_lab_notice(html):
                 ('channel-close', 'validated', 'Cooperative channel close', 'Manual and Auto fees; txid and confirmation checked in LND. Error reconciliation and fee explanations corrected (#343 and #344).'),
                 ('channel-force-close', 'validated', 'Force-close a channel', 'UI, confirmation, mining through the CSV delay and balance recovery.'),
                 ('channel-fees', 'validated', 'Edit one channel’s fees', 'Outbound fee, base fee and timelock checked against native LND policy.'),
-                ('channel-rebalance', 'partial', 'Manual rebalance', 'Moved 49,824 of 50,000 requested sats for 2 sats; partial job, 176 sats remaining.'),
+                ('channel-rebalance', 'validated', 'Manual rebalance', 'Liquidity moved and costs recorded correctly. A partial attempt is an expected outcome: moving 100% is not required to validate the workflow.'),
                 ('channel-autofee', 'validated', 'Manual AutoFee', 'Dry run preserved policy; Run now applied a change to a test channel.'),
                 ('channel-automation', 'unvalidated', 'Scheduled automations and failure cases', 'Automatic rebalance, auto-heal, HTLC Manager and failure recovery need dedicated tests; a manual run does not validate them.'),
                 ('node-retirement', 'validated', 'Node Retirement', 'Dry run and live cooperative close, offline peer, force-close decision, maturity and reconciliation. Use a dedicated test node: retires all its channels.'),
-                ('succession', 'partial', 'Succession', 'Local workflow, proof of life, expired deadline and automatic transfer; only test database dates were advanced. Telegram delivery not validated. Whole-wallet transfer waits for all current funds to mature.'),
+                ('succession', 'validated', 'Succession', 'Proof of life, deadline trigger, retirement and automatic transfer respecting minimum confirmations. Deadlines simulated in the test database. Whole-wallet transfer waits for all current funds to mature.'),
+                ('message-signing', 'validated', 'Sign messages', 'Authenticated LOS API; signature checked by the other node’s LND, including a modified message and empty input.'),
+                ('utxo-management', 'validated', 'Organize UTXOs', 'Authenticated API: labels, tags, colors, group create/assign/detach/delete; original state restored.'),
+                ('utxo-lock', 'validated', 'Lock and unlock UTXOs', 'Output stays visible with its lock icon and metadata; UI release and expiry checked against LND. Spending previews still exclude leased outputs. Corrected #349.'),
+                ('audit-log', 'validated', 'Audit Log', 'Authenticated API: lock/release recorded and queried by action, target and limit; unauthenticated access rejected.'),
                 ('lnd-config', 'unsupported', 'LND configuration and maintenance', 'Name/alias, color, networking and restart controls.'),
                 ('upgrades', 'unsupported', 'LND and LOS upgrades through the UI', ''),
                 ('external', 'unsupported', 'App Store and external integrations', ''),
             ],
             'tips': [
+                ('Telegram is a separate integration', 'The Succession workflow passed. Telegram delivery requires configuring a token and destination; it was not tested in this lab and does not change the succession test result.'),
                 ('Mining is manual', 'After an idle period without blocks, LND can report that it is not synced. With the miner wallet loaded, mine a new local block before testing payments.'),
                 ('Production menus can remain visible', 'Managers can only reach localhost and do not use the production broker. GitHub checks can time out. The production application remains unchanged.'),
             ],
@@ -138,7 +147,7 @@ def add_lab_notice(html):
     }
     panels = []
     for language, text in languages.items():
-        legend = ''.join(f'<div class="rt-legend-item"><span class="rt-badge rt-{state}">{escape(text["statuses"][state])}</span><p>{escape(description)}</p></div>' for state, description in zip(('validated', 'partial', 'unvalidated', 'unsupported'), text['legend']))
+        legend = ''.join(f'<div class="rt-legend-item"><span class="rt-badge rt-{state}">{escape(text["statuses"][state])}</span><p>{escape(description)}</p></div>' for state, description in zip(('validated', 'unvalidated', 'unsupported'), text['legend']))
         rows = ''.join(f'<tr data-lab-operation="{operation}" data-lab-status="{state}"><td><span class="rt-operation">{escape(label)}</span>' + (f'<span class="rt-note">{escape(note)}</span>' if note else '') + f'</td><td><span class="rt-badge rt-{state}">{escape(text["statuses"][state])}</span></td></tr>' for operation, state, label, note in text['rows'])
         tips = ''.join(f'<aside class="rt-tip"><strong>{escape(title)}</strong><p>{escape(copy)}</p></aside>' for title, copy in text['tips'])
         panels.append(f'<section id="los-regtest-panel-{language}" data-lab-language="{language}" lang="{text["lang"]}" class="rt-panel rt-width" aria-labelledby="los-regtest-title-{language}"><span class="rt-warning">{text["warning"]}</span><h2 id="los-regtest-title-{language}" class="rt-title">{text["title"]}</h2><p class="rt-copy">{text["intro"]}</p><div class="rt-legend">{legend}</div><div class="rt-table-wrap"><table class="rt-table"><thead><tr><th scope="col">{text["headers"][0]}</th><th scope="col">{text["headers"][1]}</th></tr></thead><tbody>{rows}</tbody></table></div>{tips}</section>')

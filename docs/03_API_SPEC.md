@@ -599,6 +599,9 @@ Body:
 
 GET /api/onchain/utxos?limit=500
 - Returns wallet UTXOs enriched with local UTXO Manager metadata and lease state.
+- Includes active leased outputs omitted by native spendable `ListUnspent`, with native wallet ownership, value/script/address, confirmations and spend-history reconciliation. Reads do not create/release leases or make locked outputs spendable. An incomplete native inventory returns an error rather than pruning metadata from partial results.
+- `locked`, `lease_expiration` and `lease_managed_here` describe the current native lease. `lease_managed_here` is true only for the deterministic UTXO Manager lease ID; native/external lease IDs are never returned.
+- `include_unconfirmed`, `min_conf` and `max_conf` filter the displayed rows after full inventory enrichment; they do not discard live metadata from filtered-out outputs.
 - `limit` caps the response size only. The backend intentionally lists and enriches the full wallet UTXO set before slicing so metadata maintenance sees the complete live outpoint set.
 
 GET /api/onchain/provenance/metrics

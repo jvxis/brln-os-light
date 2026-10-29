@@ -4323,13 +4323,20 @@ func (s *Server) handleOnchainUtxos(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
 	defer cancel()
 
-	items, err := s.lnd.ListOnchainUtxos(ctx, minConfs, maxConfs)
+	items, leases, err := s.lnd.ListOnchainUtxoInventory(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, lndStatusMessage(err))
 		return
 	}
 
-	enriched := s.enrichOnchainUtxos(ctx, items)
+	enriched := s.enrichOnchainUtxos(ctx, items, leases)
+	filtered := enriched[:0]
+	for _, item := range enriched {
+		if item.Confirmations >= int64(minConfs) && item.Confirmations <= int64(maxConfs) {
+			filtered = append(filtered, item)
+		}
+	}
+	enriched = filtered
 
 	if limit > 0 && len(enriched) > limit {
 		enriched = enriched[:limit]

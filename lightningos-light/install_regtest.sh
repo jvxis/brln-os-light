@@ -7,7 +7,8 @@ usage() {
   cat <<'EOF'
 Usage: sudo ./lightningos-light/install_regtest.sh --disposable-host
 
-Install a developer lab on a dedicated Ubuntu 24.04 amd64 VM named los-regtest.
+Install a learning/developer lab on dedicated Ubuntu 24.04 amd64, hostname los-regtest.
+Use a dedicated VM or WSL2 distribution with systemd enabled.
 Builds this committed checkout, native Bitcoin and three LND/LOS instances.
 Requires Internet access. Repeated runs preserve wallets and login credentials.
 Each successful run performs small transfers of worthless regtest coins.

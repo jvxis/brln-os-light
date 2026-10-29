@@ -10882,6 +10882,7 @@ export default function LightningOps() {
                           age: peer.last_error_time ? ` (${formatAge(peer.last_error_time)})` : '',
                           error: peer.last_error
                         })}
+                        <span className="block text-fog/50">{t('lightningOps.peerErrorHistoryHint')}</span>
                       </p>
                     )}
                   </div>

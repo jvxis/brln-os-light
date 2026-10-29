@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { isRegtestLab } from '../utils/labProfile'
 import { getChatInbox, markChatRead } from '../api'
 import clsx from '../utils/clsx'
 import { chatReadEvent, effectiveChatReadAt, parseChatTimestamp, readLocalChatReadMap } from '../utils/chatRead'
@@ -382,7 +383,7 @@ export default function Sidebar({
         </div>
         <div className="flex-1">
           <p className="text-lg font-semibold">{t('topbar.productName')}</p>
-          <p className="text-xs text-fog/60">{t('topbar.mainnetOnly')}</p>
+          <p className="text-xs text-fog/60">{t(isRegtestLab() ? 'topbar.regtestOnly' : 'topbar.mainnetOnly')}</p>
         </div>
         <button
           type="button"

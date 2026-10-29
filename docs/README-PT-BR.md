@@ -1179,7 +1179,7 @@ implantação interrompida é recuperada na próxima tentativa.
 No computador de acesso, mantenha este túnel SSH aberto, substituindo `usuario@host-do-lab`:
 
 ```bash
-ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 usuario@host-do-lab
+ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 -L 127.0.0.1:19063:127.0.0.1:8643 usuario@host-do-lab
 ```
 
 Abra os três painéis:

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useId, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { previewRebalance } from '../../api'
@@ -14,6 +14,7 @@ type RebalanceInActionProps = {
   peerAlias: string
   targetOutboundPct: number
   disabled?: boolean
+  disabledReason?: string
   onRun: (overrides?: RebalanceInOverrides) => Promise<boolean>
 }
 
@@ -29,6 +30,7 @@ export function RebalanceInAction({
   peerAlias,
   targetOutboundPct,
   disabled = false,
+  disabledReason,
   onRun
 }: RebalanceInActionProps) {
   const { t } = useTranslation()
@@ -40,6 +42,8 @@ export function RebalanceInAction({
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
   const [running, setRunning] = useState(false)
+  const reasonID = useId()
+  const reason = disabledReason || t('rebalanceCenter.manualDisabled.unavailable')
 
   const parsedAmount = parseOptionalPositiveInteger(amount)
   const parsedFeeLimit = parseOptionalPositiveInteger(feeLimit)
@@ -213,6 +217,7 @@ export function RebalanceInAction({
                   <span>{t('rebalanceCenter.channels.rebalanceMaxCost')}</span>
                   <span className="font-medium text-fog">{formatter.format(preview.max_fee_sat)} sats</span>
                 </div>
+                <p className="text-fog/60">{t('rebalanceCenter.manualFeeBudgetHelp')}</p>
                 {preview.amount_overrides_config && (
                   <div className="text-amber-200">{t('rebalanceCenter.channels.rebalanceAmountWarning')}</div>
                 )}
@@ -248,13 +253,15 @@ export function RebalanceInAction({
 
   return (
     <>
-      <span className="inline-flex items-center gap-1">
+      <span className="inline-flex flex-col gap-1">
+      <span className="inline-flex items-center gap-1" title={disabled ? reason : undefined}>
         <button
           className="btn-primary px-3 py-1 text-xs"
           type="button"
           onClick={() => void handleDefaultRun()}
           disabled={disabled || running}
-          title={t('rebalanceCenter.channelsHints.rebalanceIn')}
+          title={disabled ? reason : t('rebalanceCenter.channelsHints.rebalanceIn')}
+          aria-describedby={disabled ? reasonID : undefined}
         >
           {t('rebalanceCenter.channels.rebalanceIn')}
         </button>
@@ -275,6 +282,8 @@ export function RebalanceInAction({
             <circle cx="12.5" cy="15" r="1.5" />
           </svg>
         </button>
+      </span>
+      {disabled && <span id={reasonID} className="max-w-64 text-[11px] text-amber-200">{reason} {t('rebalanceCenter.manualDisabled.review')}</span>}
       </span>
       {dialog}
     </>

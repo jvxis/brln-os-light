@@ -116,7 +116,8 @@ def verify(setup_only=False, node=None, require_alias=False):
             raise RuntimeError('LOS wallet balance does not match native LND')
         api.call('/api/lnops/channels')
         clients[node] = api
-        print('PASS: ' + node + ' verified HTTPS, REGTEST notice, login, native alias, wallet balance and channels.')
+        print('PASS: ' + node + ' verified HTTPS, REGTEST notice, login, ' +
+              ('native alias, ' if require_alias else '') + 'wallet balance and channels.')
     if setup_only:
         return
     for source, target in CHANNEL_PAIRS:

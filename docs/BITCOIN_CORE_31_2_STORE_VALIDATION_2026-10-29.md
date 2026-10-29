@@ -10,7 +10,7 @@ scripts were not changed.
 
 Baseline: `e46fbbe30e3e9eb1d6957572ea96433e651195ae` (Core 31.1).
 Core lifecycle functional source: `ac891b73`; UI/docs source: `3790ccf9`;
-strengthened verifier tests: `b98adb2f`; lifecycle Audit source: `b929e246`.
+strengthened verifier tests: `b98adb2f`; lifecycle Audit source: `e23fd9e0`.
 All source references are commits in `jvxis/brln-os-light`.
 
 The broker continues to build its own image from official archives, checks the
@@ -40,6 +40,7 @@ exercised the real custom-mounted-storage safeguards; no guard was bypassed.
 | First installation | A separate empty enrolled directory/credential store started 31.2 through the real lifecycle, passed mainnet/version/RPC/ZMQ checks and repeated Stop/Start. No existing wallet or chain was imported. |
 | Slow shutdown | A real Compose fixture took 14 seconds to handle SIGTERM. The production Core Stop path waited beyond the former ten-second cutoff and the process exited with code 0. |
 | Cancelled request | A shortened request context returned failure while the graceful Docker stop continued. The process subsequently exited with code 0; repeated Stop succeeded. Cancellation did not become a successful upgrade or forced kill. |
+| Missing mounted volume | After checking the exact ext4 loop-image identity, the owned test volume was unmounted. Start was refused and no container started. The image/data were retained privately, unmounted. |
 | Release-verification failures | The real generated verifier ran with an invalid expected checksum and, separately, an invalid signature fixture. Tests required reaching the intended cryptographic refusal, rather than accepting a download failure as a pass. The existing trusted image ID and attestation were unchanged. |
 | Funded regtest and LND | A separate Docker 31.1 regtest chain funded two dedicated native LND processes and an active channel. After replacing only the Docker backend with 31.2, both existing LND processes predated the replacement, regained sync, retained the active channel and completed a new Lightning payment and a confirmed on-chain send. A successful Lightning payment before replacement was independently checked in native payment history. |
 | Regtest reconnect timing | A block mined immediately after Core startup preceded subscriber readiness. Mining a fresh block after reconnect restored the regtest sync flags without restarting LND. This laboratory requires manual block generation; no automatic financial retries were used. |

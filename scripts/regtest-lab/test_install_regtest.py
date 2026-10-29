@@ -78,7 +78,7 @@ class LabNoticeTests(unittest.TestCase):
         self.assertEqual(sum(tag == 'script' for tag, _ in dom.elements), 1, 'notice must not add scripts')
         self.assertIn('REGTEST | LOS', result)
         self.assertIn('Not supported', result)
-        self.assertIn('The installer sets the initial alias', result)
+        self.assertIn('The native alias is visible in the header and read-only configuration view.', result)
         self.assertIn('GitHub', result)
         operations = {attrs['data-lab-operation']: attrs.get('data-lab-status')
                       for tag, attrs in dom.elements if tag == 'tr' and 'data-lab-operation' in attrs}

@@ -65,18 +65,21 @@ test or a failure introduced by the matrix change. It keeps asserting the desire
 locked-row behavior so the same native check can validate a future correction.
 
 Baseline Linux lab suite: `python3 -m unittest discover -s scripts/regtest-lab -v`,
-12/12 passed before editing. The same suite must pass after updating the notice.
+12/12 passed before editing and 12/12 passed after updating the notice.
 The changed surface is lab Python, the generated static notice and documentation;
 the production Go/React source tree is unchanged. Functional notice verification
-covers both languages, mobile scrolling, keyboard selection and collapsed state
-against the actual Alice/Bob pages. No new production installation, ARM or
+covers both languages, all 23 operation rows and their statuses, mobile scrolling,
+keyboard selection and collapsed state against the actual Alice/Bob pages; all
+passed. Exact pre-existing Manager/UI artifact hashes were reused for deployment,
+with unchanged Bitcoin/LND process IDs. No new production installation, ARM or
 mainnet validation is claimed. Existing scheduled channel automations remain
 outside the exercised scenarios.
 
 Initial health after overnight inactivity showed both nodes at height 637,
 two active channels each, zero limbo, but not yet synced. One manual local block
 restored synchronization. The existing `control.py mine` command also runs its
-native 1,000-sat Lightning smoke; that fictitious transfer is separate from the
+native 1,000-sat Lightning smoke, as does the notice deployment's lab preparer;
+those fictitious transfers are separate from the
 balance-preserving operation checks above. Auxiliary Charlie/Delta stay stopped;
 LOS-TEST2 stays running and untouched, with only one disposable VM running.
 

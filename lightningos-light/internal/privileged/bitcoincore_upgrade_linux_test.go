@@ -65,6 +65,18 @@ func TestBitcoinCoreStartupHealthFailureIsNotReportedAsSuccess(t *testing.T) {
 	}
 }
 
+func TestBitcoinCoreStopSucceedsWithoutRunningContainerOrStartupProbe(t *testing.T) {
+	manager, runner, _, _ := newTestBitcoinCoreLifecycleManager(t)
+	runner.containerID = ""
+	manager.BitcoinMigrationProbe = func(context.Context, string) error {
+		t.Fatal("Stop must not run startup health checks")
+		return nil
+	}
+	if err := manager.Lifecycle(context.Background(), appmanifest.BitcoinCoreID, AppLifecycleStop, false); err != nil {
+		t.Fatalf("successful shutdown treated as failed startup: %v", err)
+	}
+}
+
 func TestBitcoinCoreStartupRejectsWrongChainOrVersion(t *testing.T) {
 	for _, chain := range []string{"main", "regtest"} {
 		manager := &ComposeAppManager{Runner: &composeRecordingRunner{hook: func(_ string, args []string) (string, error, bool) {

@@ -937,7 +937,7 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		}
 		_, _ = manager.Runner.Run(ctx, dockerPath, "image", "rm", bitcoinCoreLegacyRollbackImage)
 	}
-	if manifest.ID == appmanifest.BitcoinCoreID && legacyBitcoin == nil {
+	if manifest.ID == appmanifest.BitcoinCoreID && action != AppLifecycleStop && legacyBitcoin == nil {
 		probe := manager.BitcoinMigrationProbe
 		if probe == nil {
 			probe = manager.probeMigratedBitcoinCore

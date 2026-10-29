@@ -1324,6 +1324,8 @@
     "availableVersion": "Available version",
     "unknownVersion": "Unknown",
     "updateAvailable": "Update available",
+    "bitcoinUpdateInstructions": "To apply the available Bitcoin Core version ({{version}}), click Stop, wait until it has stopped, then click Start. Blocks, indexes, wallets and settings are retained. LND and dependent apps temporarily lose their Bitcoin connection. Updating LOS alone does not update a running Bitcoin Core container.",
+    "bitcoinStopConfirm": "Stop Bitcoin Core? LND and dependent apps will temporarily lose their Bitcoin connection. Wait for shutdown to finish before clicking Start to apply the available version. Do not uninstall the app to update it.",
     "upToDate": "Up to date",
     "filters": {
       "all": "All",

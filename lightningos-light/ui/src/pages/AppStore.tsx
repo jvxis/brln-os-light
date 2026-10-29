@@ -543,6 +543,7 @@ export default function AppStore() {
     payload?: InstallPayload,
     options?: { skipSecurityConfirmation?: boolean, storageSelected?: boolean, uninstallConfirmed?: boolean }
   ) => {
+    if (id === 'bitcoincore' && action === 'stop' && !window.confirm(t('appStore.bitcoinStopConfirm'))) return
     if (action === 'uninstall' && !options?.uninstallConfirmed) {
       const app = apps.find((candidate) => candidate.id === id)
       if (app) setPendingUninstall(app)
@@ -1126,6 +1127,9 @@ export default function AppStore() {
                     <span className="rounded-full border border-amber-400/35 bg-amber-500/15 px-2 py-0.5 font-semibold uppercase tracking-wide text-amber-200">
                       {t('appStore.updateAvailable')}
                     </span>
+                  )}
+                  {app.installed && app.id === 'bitcoincore' && (
+                    <p className="mt-2 text-xs leading-relaxed text-fog/70">{t('appStore.bitcoinUpdateInstructions', { version: app.available_version || t('appStore.unknownVersion') })}</p>
                   )}
                   {app.installed && app.installed_version && !app.update_available && (
                     <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 font-semibold uppercase tracking-wide text-emerald-200">

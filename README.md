@@ -1025,6 +1025,31 @@ Selecting a mode only previews the change; **Apply mode** activates it after pas
 
 Physical pairing with a second radio and actual payment settlement remain acceptance tests for this experimental feature; simulated pairing and wallet tests do not replace those checks.
 
+### Updating Store-managed Bitcoin Core (0.5.50)
+
+The Store offers **Bitcoin Core 31.2**. Updating LOS updates the available
+version; it does not automatically replace a running Bitcoin container.
+
+1. Open **Apps → Bitcoin Core** and check the installed/available versions.
+2. Click **Stop**, confirm the temporary interruption, and wait for shutdown.
+3. Click **Start** to prepare the authenticated official image and apply it.
+
+Keep the app installed. The existing storage volume, blocks, indexes, wallets,
+configuration and RPC credentials are retained; there is no automatic reset or
+reindex. LND and dependent apps temporarily lose their Bitcoin connection.
+The broker checks mainnet, the expected version and local RPC/ZMQ endpoints
+before reporting a successful start. A new full node may still need to sync.
+
+Shutdown does not schedule a forced kill after a short timeout. If the request
+times out, check the status and wait for Core to finish; retry **Stop** if needed,
+then **Start**. Do not use **Uninstall** to update. Verification/startup failure
+is reported as an error; it must not be treated as a completed update. The old
+image/data are retained, but automatic binary downgrade is not promised.
+
+This procedure applies to the Docker app managed by the Store, not an external
+or manually installed Bitcoin node. Native developer regtest binaries are managed
+by their separate lab installer.
+
 ## App Store architecture
 - Each app implements a handler in `internal/server/apps_<app>.go`.
 - Apps are registered in `internal/server/apps_registry.go`.

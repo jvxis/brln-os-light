@@ -1033,7 +1033,33 @@ Selecionar um modo apenas prepara a alteração; **Aplicar modo** a ativa após 
 
 O pareamento físico com um segundo rádio e a liquidação real de pagamentos continuam sendo testes de aceite desta funcionalidade experimental; testes simulados de pareamento e carteira não substituem essas verificações.
 
-## Arquitetura da App Store
+### Atualização do Bitcoin Core gerenciado pela loja (0.5.50)
+
+A loja oferece o **Bitcoin Core 31.2**. Atualizar o LOS altera a versão
+disponível; não substitui automaticamente um container Bitcoin em execução.
+
+1. Abra **Apps → Bitcoin Core** e confira as versões instalada/disponível.
+2. Clique em **Parar**, confirme a interrupção temporária e aguarde o encerramento.
+3. Clique em **Iniciar** para preparar a imagem oficial autenticada e aplicá-la.
+
+Mantenha o app instalado. Volume, blocos, índices, carteiras, configuração e
+credenciais RPC existentes são preservados, sem reset ou reindexação automáticos.
+O LND e apps dependentes ficam temporariamente sem conexão com o Bitcoin. Antes
+de informar sucesso, o broker verifica mainnet, versão esperada e endpoints locais
+RPC/ZMQ. Um node novo ainda pode precisar sincronizar a blockchain.
+
+O encerramento não agenda uma finalização forçada após poucos segundos. Se a
+requisição expirar, confira o estado e aguarde o Core encerrar; repita **Parar**
+se necessário e depois **Iniciar**. Não use **Desinstalar** para atualizar.
+Falha de verificação ou inicialização é um erro, não uma atualização
+concluída. Imagem anterior e dados são mantidos, mas não se promete downgrade
+automático do binário.
+
+Este procedimento vale para o app Docker gerenciado pela loja. Nodes Bitcoin
+externos ou manuais e os binários nativos do laboratório regtest têm seus
+próprios procedimentos de atualização.
+
+## Arquitetura da App Store
 - Cada app implementa um handler em `internal/server/apps_<app>.go`.
 - Apps são registrados em `internal/server/apps_registry.go`.
 - Arquivos de app ficam em `/var/lib/lightningos/apps/<app>` e dados persistentes em `/var/lib/lightningos/apps-data/<app>`.

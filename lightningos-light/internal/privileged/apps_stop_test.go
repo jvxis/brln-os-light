@@ -12,6 +12,19 @@ import (
 	"lightningos-light/internal/appmanifest"
 )
 
+func TestBitcoinCoreStopNeverSchedulesForcedKill(t *testing.T) {
+	runner := catalogStopRunner(t, appmanifest.BitcoinCoreID, "bitcoind")
+	if err := stopCatalogApp(context.Background(), runner, appmanifest.BitcoinCoreID, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range runner.commands {
+		if len(command.args) > 0 && command.args[0] == "stop" && command.args[2] != "-1" {
+			t.Fatalf("Bitcoin Core stop schedules SIGKILL after %s seconds; shutdown must finish before replacement", command.args[2])
+		}
+	}
+	assertCatalogStopOnly(t, runner, 1)
+}
+
 // Emulates Docker-owned labels, not the potentially stale installed Compose.
 func catalogStopRunner(t *testing.T, appID string, services ...string) *composeRecordingRunner {
 	t.Helper()

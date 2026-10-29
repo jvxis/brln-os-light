@@ -1324,6 +1324,8 @@
     "availableVersion": "Versão disponível",
     "unknownVersion": "Desconhecida",
     "updateAvailable": "Atualização disponível",
+    "bitcoinUpdateInstructions": "Para aplicar a versão disponível do Bitcoin Core ({{version}}), clique em Parar, aguarde o encerramento e clique em Iniciar. Blocos, índices, carteiras e configurações são preservados. O LND e os apps dependentes ficam temporariamente sem conexão com o Bitcoin. Atualizar apenas o LOS não atualiza um container Bitcoin Core em execução.",
+    "bitcoinStopConfirm": "Parar o Bitcoin Core? O LND e os apps dependentes ficarão temporariamente sem conexão com o Bitcoin. Aguarde o encerramento antes de clicar em Iniciar para aplicar a versão disponível. Não desinstale o app para atualizá-lo.",
     "upToDate": "Atualizado",
     "filters": {
       "all": "Todos",

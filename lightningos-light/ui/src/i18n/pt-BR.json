@@ -776,6 +776,7 @@
     "cardAutomation": "Automação preservada",
     "cardAutomationBody": "Autofee, sucessão e serviços em background continuam operando sem prompts extras.",
     "mainnet": "Mainnet · Acesso soberano",
+    "regtest": "REGTEST · LABORATÓRIO",
     "accessMode": "Modo de acesso",
     "secureSession": "Sessão criptografada",
     "trustDeviceAction": "Confiar neste dispositivo",
@@ -1186,6 +1187,7 @@
     "healthCheckFailed": "Falha na verificação de saúde",
     "issueDetected": "Problema detectado",
     "mainnetOnly": "Apenas Mainnet",
+    "regtestOnly": "Regtest · moedas fictícias",
     "nodeLabel": "Node: {{node}}",
     "openMenu": "Abrir menu",
     "productName": "LightningOS",
@@ -4250,7 +4252,8 @@
     "inboundFeeRate": "Inbound fee rate (ppm)",
     "inboundFeesNote": "Inbound fees normalmente são negativas para atrair fluxo inbound.",
     "includeInboundFees": "Include inbound fees (advanced)",
-    "lastError": "Último erro{{age}}: {{error}}",
+    "lastError": "Histórico do peer{{age}}: {{error}}",
+    "peerErrorHistoryHint": "Último erro recebido do LND. Pode pertencer a uma tentativa anterior, mesmo após o fechamento ser concluído; confira o estado atual do canal.",
     "loadChannelsFailed": "Falha ao carregar canais.",
     "loadFeesFailed": "Falha ao carregar fees.",
     "loadClosedChannelsFailed": "Falha ao carregar histórico de fechamentos.",
@@ -5062,6 +5065,8 @@
     }
   },
   "rebalanceCenter": {
+    "manualDisabled": {"inactive": "O canal está inativo.", "parked": "O canal está em modo estacionado.", "target": "O saldo já está na tolerância do alvo salvo.", "policy": "A política de taxas do peer ainda não é conhecida.", "budget": "O orçamento padrão de {{budget}} ppm não cobre a política do peer.", "unavailable": "A execução padrão está indisponível com os parâmetros atuais.", "review": "Abra Opções para revisar a prévia."},
+    "manualFeeBudgetHelp": "Orçamento máximo, não uma cotação da rota. Cada salto de encaminhamento pode cobrar taxa base mais ppm; um limite de 1 sat pode ser insuficiente para múltiplos saltos. Revise o limite nas opções antes de executar.",
     "title": "Rebalance Center",
     "subtitle": "Custos ao vivo, controle de payback e recuperação automática de liquidez.",
     "profile": {

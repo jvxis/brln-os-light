@@ -4421,10 +4421,7 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 		item.ChannelID = chanID
 		if info, ok := channelByID[chanID]; ok {
 			item.ChannelPoint = info.ChannelPoint
-			item.ChannelAlias = strings.TrimSpace(info.PeerAlias)
-			if item.ChannelAlias == "" {
-				item.ChannelAlias = shortRecentPubKey(info.RemotePubkey)
-			}
+			item.ChannelAlias = recentPeerAlias(info.PeerAlias, info.RemotePubkey)
 		}
 		if item.ChannelAlias == "" {
 			item.ChannelAlias = shortRecentPubKey(hopPubkey)
@@ -4633,10 +4630,7 @@ func (c *Client) buildLightningActivity(ctx context.Context, client lnrpc.Lightn
 		item.ChannelID = chanID
 		if info, ok := channelByID[chanID]; ok {
 			item.ChannelPoint = info.ChannelPoint
-			item.ChannelAlias = strings.TrimSpace(info.PeerAlias)
-			if item.ChannelAlias == "" {
-				item.ChannelAlias = shortRecentPubKey(info.RemotePubkey)
-			}
+			item.ChannelAlias = recentPeerAlias(info.PeerAlias, info.RemotePubkey)
 		}
 		if item.ChannelAlias == "" {
 			item.ChannelAlias = shortRecentPubKey(hopPubkey)
@@ -5034,6 +5028,14 @@ func recentRouteFromPayment(pay *lnrpc.Payment) *lnrpc.Route {
 		}
 	}
 	return nil
+}
+
+func recentPeerAlias(alias, pubkey string) string {
+	alias = strings.TrimSpace(alias)
+	if alias == "" || strings.HasPrefix(strings.ToLower(alias), "unable to lookup peer alias:") {
+		return shortRecentPubKey(pubkey)
+	}
+	return alias
 }
 
 func shortRecentPubKey(value string) string {

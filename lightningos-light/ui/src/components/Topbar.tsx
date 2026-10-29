@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { isRegtestLab } from '../utils/labProfile'
 import { getHealth, getLndConfig, getLndStatus, type AuthState } from '../api'
 import { setLanguage } from '../i18n'
 import { type Appearance, type PaletteKey, type ThemeMode, type VisualThemeKey } from '../theme'
@@ -309,7 +310,7 @@ export default function Topbar({
           </button>
           <div className="text-right text-xs text-fog/60">
             <p className="text-fog font-semibold">{t('topbar.productName')}</p>
-            <p>{t('topbar.mainnetOnly')}</p>
+            <p>{t(isRegtestLab() ? 'topbar.regtestOnly' : 'topbar.mainnetOnly')}</p>
           </div>
         </div>
       )}

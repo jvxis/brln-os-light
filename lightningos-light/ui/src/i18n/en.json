@@ -776,6 +776,7 @@
     "cardAutomation": "Automation safe",
     "cardAutomationBody": "Autofee, succession and background services continue to run without extra prompts.",
     "mainnet": "Mainnet · Sovereign access",
+    "regtest": "REGTEST · LEARNING LAB",
     "accessMode": "Access mode",
     "secureSession": "Encrypted session",
     "trustDeviceAction": "Trust this device",
@@ -1186,6 +1187,7 @@
     "healthCheckFailed": "Health check failed",
     "issueDetected": "Issue detected",
     "mainnetOnly": "Mainnet only",
+    "regtestOnly": "Regtest · fictitious coins",
     "nodeLabel": "Node: {{node}}",
     "openMenu": "Open menu",
     "productName": "LightningOS",
@@ -4250,7 +4252,8 @@
     "inboundFeeRate": "Inbound fee rate (ppm)",
     "inboundFeesNote": "Inbound fees are usually negative to attract inbound flow.",
     "includeInboundFees": "Include inbound fees (advanced)",
-    "lastError": "Last error{{age}}: {{error}}",
+    "lastError": "Peer error history{{age}}: {{error}}",
+    "peerErrorHistoryHint": "Last error reported by LND. It may belong to an earlier attempt even after a close completes; check the current channel state.",
     "loadChannelsFailed": "Failed to load channels.",
     "loadFeesFailed": "Failed to load fees.",
     "loadClosedChannelsFailed": "Failed to load closed channel history.",
@@ -5062,6 +5065,8 @@
     }
   },
   "rebalanceCenter": {
+    "manualDisabled": {"inactive": "The channel is inactive.", "parked": "The channel is parked.", "target": "The balance is within the saved target tolerance.", "policy": "The peer routing policy is not yet known.", "budget": "The default budget of {{budget}} ppm does not cover the peer policy.", "unavailable": "The default run is unavailable with the current parameters.", "review": "Open Options to review the preview."},
+    "manualFeeBudgetHelp": "Maximum budget, not a route quote. Each forwarding hop may charge a base fee plus ppm; a 1-sat ceiling may not cover multiple hops. Review the fee override before running.",
     "title": "Rebalance Center",
     "subtitle": "Live costs, payback control, and autonomous liquidity recovery.",
     "profile": {

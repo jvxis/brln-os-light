@@ -27,6 +27,7 @@ export default function FinancialIntentConfirmation() {
   }, [task])
   if (!task) return <PendingFinancialOperations confirming={false} />
   const intent = task.intent
+  const closing = intent.summary.operation === 'lnops/channel/close'
   const summary = intent.summary
   const expired = now >= Date.parse(intent.expires_at)
   const number = (value: number | string) => (typeof value === 'string' ? BigInt(value) : value).toLocaleString(i18n.language)
@@ -55,7 +56,7 @@ export default function FinancialIntentConfirmation() {
     onPasswordChange={setPassword} onConfirm={approve} onClose={() => task.cancel()}
   >
     <dl className="mt-4 space-y-2 text-sm break-words" data-testid="financial-intent-summary">
-      <div><dt className="text-fog/55">{pt ? 'Operação' : 'Operation'}</dt><dd>{labels[summary.operation] || summary.operation}</dd></div>
+      <div><dt className="text-fog/55">{pt ? 'Operação' : 'Operation'}</dt><dd>{closing ? (summary.fee_mode === 'existing_commitment' ? (pt ? 'Forçar fechamento de canal' : 'Force-close channel') : (pt ? 'Fechar canal cooperativamente' : 'Cooperatively close channel')) : (labels[summary.operation] || summary.operation)}</dd></div>
       {summary.destination && <div><dt className="text-fog/55">{pt ? 'Destino' : 'Destination'}</dt><dd className="font-mono">{summary.destination}</dd></div>}
       {summary.amount_mode === 'selected_maximum'
         ? <div><dt className="text-fog/55">{pt ? 'Valor' : 'Amount'}</dt><dd>{pt ? 'Máximo disponível nas entradas selecionadas, respeitando a reserva do LND' : 'Maximum available from selected inputs, preserving the LND reserve'}</dd></div>

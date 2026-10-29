@@ -1056,7 +1056,7 @@ Release-by-release notes are tracked in GitHub Releases:
 
 Use a **fresh, dedicated Ubuntu 24.04 amd64 VM**, with 4 GiB RAM and at least
 20 GiB free disk space recommended. This development profile installs native
-Bitcoin Core, two LND nodes (Alice/Bob), PostgreSQL and two isolated LOS panels.
+Bitcoin Core, three LND nodes (Alice/Bob/Charlie), PostgreSQL and three isolated LOS panels.
 It builds the committed source checkout; Internet access is required for packages,
 verified toolchains and build dependencies. All coins are local regtest coins with
 no value. The normal installers remain mainnet-only.
@@ -1080,20 +1080,43 @@ Manager/UI, with interrupted deployment recovery on the next attempt.
 Access from your workstation through SSH, replacing `user@lab-host`:
 
 ```bash
-ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 user@lab-host
+ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 -L 127.0.0.1:19063:127.0.0.1:8643 user@lab-host
 ```
 
-Open Alice at `https://127.0.0.1:19043` and Bob at `https://127.0.0.1:19053`.
+Open the three panels:
+
+| Node alias | Panel through SSH |
+| --- | --- |
+| `LOS-Regtest-Alice` | `https://alice.localhost:19043` |
+| `LOS-Regtest-Bob` | `https://bob.localhost:19053` |
+| `LOS-Regtest-Charlie` | `https://charlie.localhost:19063` |
+
+All three native LNDs and LOS panels start automatically at boot. Each has its
+own wallet, login, TLS key, state and database. A fresh lab starts with a triangle
+Alice → Bob → Charlie → Alice: three 1,000,000-sat channels, each opened with 500,000 sats
+pushed to the peer. This enables multi-hop payments and circular rebalance tests;
+it does not imply every routing/rebalance scenario has already been validated.
+Repeated installation reuses existing/pending channels and preserves extra user
+channels. Old built-in aliases migrate to the names above; custom aliases remain.
+Alias migration can briefly restart an affected lab LND. Production installers
+and mainnet aliases are unaffected.
+
+Use the distinct `*.localhost` browser names above so the three login cookies do
+not overwrite one another. Browsers resolve them to loopback without editing DNS
+or the hosts file. Keep the SSH forwards bound to `127.0.0.1`. When upgrading an
+older lab, the existing CA and private TLS keys are retained; leaf certificates
+are reissued only as needed to cover the per-node names.
+
 Copy the **public** CA `/etc/los-regtest/ca.crt` over verified SSH and trust it in
 your test browser; keep TLS verification enabled. Retrieve each UI password
-privately on the VM with `sudo cat /etc/los-regtest/alice/ui-password` or the Bob
+privately on the VM with `sudo cat /etc/los-regtest/alice/ui-password` or the Bob/Charlie
 equivalent. Mine confirmations with `sudo python3 /opt/los-regtest/control.py mine 6`.
 Use an explicit fee rate such as `2 sat/vB`; a short regtest chain may not yet
 have automatic estimates, and public fee services are outside this profile.
 
 #### Supported workflows and visible limitations
 
-Expand the yellow **O que funciona / Supported features** notice in either panel
+Expand the yellow **O que funciona / Supported features** notice in any panel
 to check this scope before using a production menu.
 
 Select **Português** or **English** in the panel toolbar to read one language
@@ -1103,7 +1126,7 @@ remain available while you scroll.
 | Validated workflow | What you can test |
 | --- | --- |
 | Wallet and channels | Login, on-chain/Lightning balances, receiving addresses and channel reads. |
-| Lightning payments | Create invoices and pay between Alice/Bob, with password confirmation. |
+| Lightning payments | Create invoices and pay between Alice/Bob/Charlie, with password confirmation. |
 | On-chain payments | Deposit/send fictitious coins, mine confirmations manually and check the received balance. |
 
 **Lightning operations:** use the following distinction in this profile. The
@@ -1171,7 +1194,7 @@ menus work. The production installers and application remain unchanged.
 
 #### On-chain test funds and confirmations
 
-The installer funds both native LND wallets with fictitious coins. Open **Wallet**
+The installer funds all three native LND wallets with fictitious coins. Open **Wallet**
 in Alice's or Bob's panel to see the confirmed balance in the **On-chain** card.
 Mining credits block rewards to the separate laboratory miner wallet. To deposit
 more coins into Alice or Bob, open **Wallet → Add funds** in the receiving panel

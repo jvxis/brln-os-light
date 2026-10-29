@@ -2,7 +2,7 @@
 
 The production LightningOS installers remain mainnet-only. This separate lab
 profile runs the same reviewed Manager binary and React build against native
-Bitcoin Core 31.1 and two native LND 0.21.5-beta processes on a disposable Ubuntu
+Bitcoin Core 31.1 and three native LND 0.21.5-beta processes on a disposable Ubuntu
 24.04 amd64 VM. Regtest coins have no value. It does not create a production
 release or change the production configuration contract.
 
@@ -37,7 +37,7 @@ wallet identities, balances, configuration and authentication are retained.
 
 A failed build does not stop existing panels. Manager deployment keeps a private
 backup of the old Manager/UI/source receipt, stops only the lab UI units, then
-checks both new instances through verified HTTPS/login. Failure restores the old
+checks all three new instances through verified HTTPS/login. Failure restores the old
 assets and starts the previously active panels. If interrupted during deployment,
 the next attempt restores that backup first. A first-install failure retains lab
 data for retry; it never deletes or resets wallets. Native package/toolchain
@@ -46,7 +46,7 @@ backup does not undo application database migrations; developer changes must
 keep their schema compatible with any Manager version they intend to restore.
 
 `sudo python3 /opt/los-regtest/verify-los.py --setup-only` checks login and reads
-without new payments; add `--node alice` or `--node bob` to check a single panel.
+without new payments; add `--node alice`, `--node bob` or `--node charlie` to check a single panel.
 Without that option, verification makes small test payments.
 Run `sudo python3 /opt/los-regtest/control.py status` for native regtest health.
 Access, certificate and private-password instructions are below. Production
@@ -54,7 +54,7 @@ upgrades/broker/App Store lifecycle remain outside this developer profile.
 
 ## Supported workflows and visible limitations
 
-Expand the yellow **O que funciona / Supported features** notice in either panel
+Expand the yellow **O que funciona / Supported features** notice in any panel
 to check this scope before using a production menu.
 
 Select **Português** or **English** in the panel toolbar to read one language
@@ -64,7 +64,7 @@ remain available while you scroll.
 | Validated workflow | What you can test |
 | --- | --- |
 | Wallet and channels | Login, on-chain/Lightning balances, receiving addresses and channel reads. |
-| Lightning payments | Create invoices and pay between Alice/Bob, with password confirmation. |
+| Lightning payments | Create invoices and pay between Alice/Bob/Charlie, with password confirmation. |
 | On-chain payments | Deposit/send fictitious coins, mine confirmations manually and check the received balance. |
 
 **Lightning operations:** use the following distinction in this profile. The
@@ -102,7 +102,7 @@ To repeat these opt-in checks on the configured disposable host, mine a block
 if needed, then run `sudo python3 scripts/regtest-lab/verify-operations.py`
 from the source checkout. Do not run it concurrently with wallet operations.
 It creates no payments/channels, restores temporary metadata/groups/leases,
-and passed on both nodes after correcting #349. The locked-output assertion remains
+and now passes on all three nodes. The locked-output assertion remains
 enabled and fails if that inventory regression returns. Each scenario reports its result.
 This helper is not part of the installation or its automatic smoke tests.
 
@@ -157,7 +157,7 @@ by the provisioning script. Then run:
 
 ```sh
 sudo bash provision.sh
-sudo install -m 0755 control.py /opt/los-regtest/control.py
+sudo install -m 0755 nodes.py control.py /opt/los-regtest/
 sudo python3 /opt/los-regtest/control.py initialize
 sudo python3 /opt/los-regtest/control.py smoke
 sudo python3 /opt/los-regtest/control.py status
@@ -175,13 +175,18 @@ printed or included in reports. LND keeps its normal encrypted wallet database.
 Wallet unlock passwords stay in private local files. Initialization preserves
 existing wallets and funds a node with two regtest BTC only if its total on-chain
 balance is below one BTC. It mines blocks to confirm the outputs. The smoke
-check opens a one-million-sat channel if needed and makes a real 1000-regtest-sat
-Lightning payment. Each smoke run creates another test invoice/payment.
+check creates missing edges of Alice–Bob–Charlie–Alice. Each new channel has
+1,000,000 sats capacity with 500,000 sats initially pushed to the peer. Existing
+channels and pending funding are reused; extra user channels are retained.
+Each native smoke run sends 1,000 regtest sats on each of the three directed
+edges. The authenticated LOS smoke separately pays the same three pairs and
+confirms an on-chain transfer. These are actual fictitious transfers, not resets.
 
-Services are `los-regtest-bitcoin`, `los-regtest-alice` and `los-regtest-bob`.
+Services are `los-regtest-bitcoin`, `los-regtest-alice`, `los-regtest-bob` and
+`los-regtest-charlie`; all are enabled at boot.
 Data stays under `/var/lib/los-regtest`; executables under `/opt/los-regtest`.
 All Bitcoin/LND listeners bind localhost. Bitcoin has outbound peer discovery
-disabled; systemd IP filters restrict all three services to localhost.
+disabled; systemd IP filters restrict these services to localhost.
 
 ## LOS laboratory variant
 
@@ -198,20 +203,21 @@ sudo python3 verify-los.py
 ```
 
 `configure-los.py` requires the existing regtest backend to be ready. It creates
-two isolated PostgreSQL databases and two Manager services, with separate mount
+three isolated PostgreSQL databases and three Manager services, with separate mount
 namespaces for `/etc/lightningos` and `/var/lib/lightningos`, independent authentication state, localhost
 HTTPS, a lab CA and a persistent yellow REGTEST notice in the served HTML.
 The host's `/etc/lightningos` contains no production configuration. Auth secrets
 are preserved on repeated configuration. A changed Manager artifact requires
-stopping the two lab UI services first; the script refuses an in-use replacement.
+stopping all three lab UI services first; the script refuses an in-use replacement.
 
 Before each start, `control.py guard` verifies the real Bitcoin chain, the real
 LND network, the fixed local LND endpoint/credential paths, login protection,
 the lab database name/host and disabled privileged broker. A failed check prevents
 Manager startup. External service access is blocked by the UI unit's IP filter.
 
-The UI services are `los-regtest-ui-alice` (127.0.0.1:8443) and
-`los-regtest-ui-bob` (127.0.0.1:8543). This is a wallet/channel test profile;
+The UI services are `los-regtest-ui-alice` (127.0.0.1:8443),
+`los-regtest-ui-bob` (127.0.0.1:8543) and `los-regtest-ui-charlie`
+(127.0.0.1:8643). Each is enabled at boot. This is a wallet/channel test profile;
 production installation, upgrades, broker operations, external integrations and
 App Store lifecycle are not supported test flows in this profile. Some system
 health panels may report missing production services. Never bypass a failure
@@ -219,21 +225,50 @@ by connecting these configurations to a mainnet LND.
 
 `verify-los.py` creates a private random UI password on first setup, verifies
 HTTPS using the lab CA, logs in, compares each LOS balance with native LND,
-reads channels, creates a LOS invoice and pays it through the other LOS instance,
+reads channels, creates LOS invoices and pays across the three node pairs,
 then sends 10000 on-chain regtest sats and confirms them in the destination wallet.
 It first verifies that sends without an intent are rejected, prepares the immutable
 snapshot, reauthenticates its scope and checks that identical retry returns the
 original result. Passwords
-remain under `/etc/los-regtest/{alice,bob}/ui-password` (root-only); tokens and
+remain under `/etc/los-regtest/{alice,bob,charlie}/ui-password` (root-only); tokens and
 cookies exist only in memory. Neither scripts nor reports print these secrets.
 
 Access through SSH forwarding with host-key verification:
 
 ```sh
-ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 admin@<verified-lab-ip>
+ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 -L 127.0.0.1:19063:127.0.0.1:8643 user@<verified-lab-host>
 ```
 
-The URLs are `https://127.0.0.1:19043` and `https://127.0.0.1:19053`.
+| Alias | HTTPS URL through SSH | LND gRPC / REST / peer ports (localhost) |
+| --- | --- | --- |
+| `LOS-Regtest-Alice` | `https://alice.localhost:19043` | 10009 / 8080 / 9735 |
+| `LOS-Regtest-Bob` | `https://bob.localhost:19053` | 11009 / 8180 / 9835 |
+| `LOS-Regtest-Charlie` | `https://charlie.localhost:19063` | 12009 / 8280 / 9935 |
+
+Use these three distinct browser hostnames to isolate host-only session cookies;
+ports alone do not separate cookies. They resolve to loopback in browsers without
+changing the operating system's DNS/hosts file. SSH still binds all forwards to
+`127.0.0.1`. Certificates include the relevant per-node name plus localhost and
+127.0.0.1; migration preserves the existing CA and private keys, reissuing a leaf
+only when needed. Internal scripted API checks keep separate cookie jars and use
+127.0.0.1 directly. On an OS command-line client that does not resolve these names,
+use its explicit loopback-resolution option rather than disabling TLS verification.
+
+On first installation, the triangle provides two peers/channels per node and
+liquidity in both directions. Existing laboratories may keep additional channels.
+It is useful for routed payments, circular rebalance, batch channel openings and
+retirement/succession experiments. Those possibilities are not blanket validation
+of every related workflow. Retiring a node closes its channels, including the
+other endpoints' sides of those channels. Rerunning installation recreates missing
+triangle edges while retaining wallets and unrelated channels.
+
+Old built-in aliases (`LOS-REGTEST-ALICE`, etc.) migrate to the aliases above.
+Custom aliases stay unchanged. Initialization compares the actual native alias
+to the configuration and briefly restarts only an affected lab LND if needed;
+this also converges after interruption. Repeated correct aliases do not trigger
+a restart. Login, TLS, wallet identity and user configuration are retained.
+If manual experiments exhaust Lightning liquidity, a smoke payment can fail;
+the installer does not wipe or forcibly rebalance existing channels to pass it.
 Use the public CA `/etc/los-regtest/ca.crt` for certificate validation; do not
 disable TLS verification. Retrieve login credentials privately over verified SSH.
 

@@ -15,6 +15,7 @@ from unittest.mock import patch
 import safety
 import deploy
 import control
+import nodes
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'requires Linux configure helper (pwd)')
@@ -62,7 +63,7 @@ class LabNoticeTests(unittest.TestCase):
         self.assertEqual(sum(tag == 'script' for tag, _ in dom.elements), 1, 'notice must not add scripts')
         self.assertIn('REGTEST | LOS', result)
         self.assertIn('Not supported', result)
-        self.assertIn('Name/alias', result)
+        self.assertIn('The installer sets the initial alias', result)
         self.assertIn('GitHub', result)
         operations = {attrs['data-lab-operation']: attrs.get('data-lab-status')
                       for tag, attrs in dom.elements if tag == 'tr' and 'data-lab-operation' in attrs}
@@ -86,6 +87,38 @@ class LabNoticeTests(unittest.TestCase):
         once = self.module.add_lab_notice('<html><head></head><body></body></html>')
         with self.assertRaisesRegex(RuntimeError, 'already attached'):
             self.module.add_lab_notice(once)
+
+    def test_legacy_database_credential_is_preserved_and_foreign_dsn_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); credential = root / 'database-password'; env = root / 'secrets.env'
+            env.write_text('NOTIFICATIONS_PG_DSN=postgres://los_regtest_charlie:fixture%21password@127.0.0.1:5432/los_regtest_charlie?sslmode=disable\n')
+            previous = env.read_bytes()
+            self.assertEqual(self.module.database_password(credential, env, 'los_regtest_charlie'), 'fixture!password')
+            self.assertEqual(env.read_bytes(), previous)
+            self.assertEqual(credential.stat().st_mode & 0o777, 0o600)
+            credential.unlink(); env.write_text('NOTIFICATIONS_PG_DSN=postgres://foreign:fixture@127.0.0.1/another_db\n')
+            with self.assertRaisesRegex(RuntimeError, 'cannot be safely adopted'):
+                self.module.database_password(credential, env, 'los_regtest_charlie')
+            self.assertFalse(credential.exists())
+
+    def test_panel_certificate_adds_independent_hostname_without_rotating_private_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); folder = root / 'alice'; folder.mkdir()
+            ca = root / 'ca.crt'
+            self.module.run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+                            '-subj', '/CN=regtest fixture', '-keyout', str(root / 'ca.key'), '-out', str(ca))
+            self.module.ensure_panel_certificate(folder, ca, 'localhost')
+            original_key = (folder / 'server.key').read_bytes()
+            self.module.ensure_panel_certificate(folder, ca, 'alice.localhost')
+            cert = folder / 'server.crt'
+            self.assertEqual((folder / 'server.key').read_bytes(), original_key)
+            self.module.run('openssl', 'verify', '-CAfile', str(ca), '-verify_hostname', 'alice.localhost', str(cert))
+            self.module.run('openssl', 'verify', '-CAfile', str(ca), '-verify_ip', '127.0.0.1', str(cert))
+            mismatch = subprocess.run(['openssl', 'verify', '-CAfile', str(ca), '-verify_hostname', 'bob.localhost', str(cert)], capture_output=True)
+            self.assertNotEqual(mismatch.returncode, 0, 'one node certificate must not claim another node hostname')
+            original_cert = cert.read_bytes()
+            self.module.ensure_panel_certificate(folder, ca, 'alice.localhost')
+            self.assertEqual(cert.read_bytes(), original_cert, 'repeat must retain an already correct certificate')
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'requires Linux /proc executable identity')
@@ -222,36 +255,106 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(wallet.read_bytes(), b'unchanged')
             self.assertFalse(backup.exists())
 
+    def test_recovery_accepts_all_three_panels_without_dropping_charlie(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'lab'; backup = root / '.deployment-backup'
+            backup.mkdir(parents=True)
+            active = ['los-regtest-ui-' + n for n in nodes.NODES]
+            (backup / 'rollback.json').write_text(json.dumps({'assets': [], 'active': active}))
+            with patch.object(deploy, 'ROOT', root), patch.object(deploy, 'BACKUP', backup), patch.object(deploy, 'run') as run, patch.object(deploy.subprocess, 'run'):
+                deploy.recover()
+                run.assert_any_call('systemctl', 'start', *active)
+                run.assert_any_call(sys.executable, str(root / 'verify-los.py'), '--setup-only', '--node', 'charlie')
+
+
+class NodeAliasTests(unittest.TestCase):
+    def test_default_alias_migration_preserves_other_options_and_custom_names(self):
+        for node, spec in nodes.NODES.items():
+            original = '[Application Options]\nalias=LOS-REGTEST-' + node.upper() + '\nwallet-unlock-password-file=/private/fixture\n[Bitcoin]\nbitcoin.regtest=true\n'
+            updated = nodes.migrate_alias(original, node)
+            self.assertEqual(nodes.configured_alias(updated), spec['alias'])
+            self.assertEqual(nodes.migrate_alias(updated, node), updated)
+            self.assertEqual(updated.replace(spec['alias'], 'LOS-REGTEST-' + node.upper()), original)
+            custom = original.replace('LOS-REGTEST-' + node.upper(), 'My custom test node')
+            self.assertEqual(nodes.migrate_alias(custom, node), custom)
+
+    def test_missing_alias_is_added_to_application_section_and_duplicates_refused(self):
+        original = '[Application Options]\nlisten=127.0.0.1:9735\n[Bitcoin]\nbitcoin.regtest=true\n'
+        self.assertEqual(nodes.configured_alias(nodes.migrate_alias(original, 'alice')), 'LOS-Regtest-Alice')
+        with self.assertRaisesRegex(RuntimeError, 'Duplicate'):
+            nodes.migrate_alias('[Application Options]\nalias=Alice\nalias=Bob\n', 'alice')
+
+    def test_interrupted_alias_update_is_applied_once_from_actual_native_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / 'charlie').mkdir()
+            (root / 'charlie/lnd.conf').write_text('[Application Options]\nalias=LOS-Regtest-Charlie\n')
+            with patch.object(control, 'ROOT', root), patch.object(control, 'wait_info', side_effect=[{'alias': 'LOS-REGTEST-CHARLIE'}, {'alias': 'LOS-Regtest-Charlie'}]), patch.object(control.subprocess, 'run') as restart:
+                control.apply_alias('charlie')
+                restart.assert_called_once_with(['systemctl', 'restart', 'los-regtest-charlie'], check=True)
+            with patch.object(control, 'ROOT', root), patch.object(control, 'wait_info', return_value={'alias': 'LOS-Regtest-Charlie'}), patch.object(control.subprocess, 'run') as restart:
+                control.apply_alias('charlie')
+                restart.assert_not_called()
+
 
 class FinancialSmokeTests(unittest.TestCase):
-    def test_native_smoke_waits_for_chain_after_channel_confirmation(self):
-        events = []
-        lists = 0
-        queries = 0
+    def test_native_triangle_smoke_waits_for_chain_and_reuses_channels(self):
+        events, channels, pending = [], {n: [] for n in nodes.NODES}, []
+        opened, payments, queries = [], [], {}
         def native(node, action, *args):
-            nonlocal lists, queries
             if action == 'listpeers':
-                return {'peers': [{'pub_key': 'bob'}]}
+                return {'peers': [{'pub_key': n} for n in nodes.NODES if n != node]}
             if action == 'listchannels':
-                lists += 1
-                return {'channels': [] if lists == 1 else [{'remote_pubkey': 'bob', 'active': True}]}
-            if action == 'addinvoice':
-                events.append('invoice')
-                return {'payment_request': 'private-fixture-invoice'}
+                return {'channels': channels[node]}
+            if action == 'pendingchannels':
+                return {'pending_open_channels': [{'channel': {'remote_node_pub': target}} for source, target in pending if source == node]}
+            if action == 'openchannel':
+                target = next(a.split('=', 1)[1] for a in args if a.startswith('--node_key='))
+                self.assertIn('--push_amt=500000', args)
+                pending.append((node, target)); opened.append((node, target))
+                return {}
             if action == 'queryroutes':
-                queries += 1
-                events.append('route')
-                if queries < 3:
-                    raise RuntimeError('new channel bandwidth not yet available')
+                queries[node] = queries.get(node, 0) + 1
+                if queries[node] < 3:
+                    raise RuntimeError('native bandwidth not ready')
                 return {'routes': [{}]}
-            return {}
+            if action == 'addinvoice':
+                events.append('invoice:' + node)
+                return {'payment_request': 'fixture-' + node}
+            raise AssertionError(action)
+        def mine(_):
+            events.append('mine')
+            for source, target in pending:
+                channels[source].append({'remote_pubkey': target, 'active': True})
+                channels[target].append({'remote_pubkey': source, 'active': True})
+            pending.clear()
         def synced(node):
             events.append('synced:' + node)
             return {'identity_pubkey': node}
-        with patch.object(control, 'ln', side_effect=native), patch.object(control, 'wait_info', side_effect=synced), patch.object(control, 'mine', side_effect=lambda _: events.append('mine')), patch.object(control.time, 'sleep'), patch.object(control, 'rest', return_value={'result': {'status': 'SUCCEEDED'}}) as send:
+        def send(node, path, payload, **kwargs):
+            payments.append((node, payload['payment_request']))
+            return {'result': {'status': 'SUCCEEDED'}}
+        with patch.object(control, 'ln', side_effect=native), patch.object(control, 'wait_info', side_effect=synced), patch.object(control, 'mine', side_effect=mine), patch.object(control.time, 'sleep'), patch.object(control, 'rest', side_effect=send):
             control.smoke()
-        self.assertEqual(events[-7:], ['mine', 'synced:alice', 'synced:bob', 'route', 'route', 'route', 'invoice'])
-        self.assertEqual(send.call_count, 1)
+            self.assertEqual(opened, list(nodes.CHANNEL_PAIRS))
+            last_mine = max(i for i, e in enumerate(events) if e == 'mine')
+            first_invoice = next(i for i, e in enumerate(events) if e.startswith('invoice:'))
+            self.assertEqual(set(events[last_mine + 1:first_invoice]), {'synced:' + n for n in nodes.NODES})
+            self.assertEqual(payments, [(source, 'fixture-' + target) for source, target in nodes.CHANNEL_PAIRS])
+            self.assertTrue(all(len(c) == 2 for c in channels.values()))
+            control.smoke()
+            self.assertEqual(opened, list(nodes.CHANNEL_PAIRS), 'repeat must not duplicate existing channels')
+            self.assertEqual(events.count('mine'), 3)
+
+    def test_pending_channel_retry_mines_existing_funding_without_reopening(self):
+        mined = []
+        def native(node, action, *args):
+            if action == 'listpeers': return {'peers': [{'pub_key': 'bob'}]}
+            if action == 'pendingchannels': return {'pending_open_channels': [{'channel': {'remote_node_pub': 'bob'}}]}
+            if action == 'listchannels': return {'channels': [{'remote_pubkey': 'bob', 'active': True}] if mined else []}
+            raise AssertionError('unexpected native mutation: ' + action)
+        with patch.object(control, 'ln', side_effect=native), patch.object(control, 'mine', side_effect=mined.append):
+            control.ensure_channel('alice', 'bob', 'bob')
+        self.assertEqual(mined, [6])
 
     def test_approval_and_retry_use_normalized_snapshot_not_original_body(self):
         spec = importlib.util.spec_from_file_location('verify_los_test', Path(__file__).with_name('verify-los.py'))

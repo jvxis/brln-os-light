@@ -12,10 +12,11 @@ import urllib.parse
 import urllib.error
 import urllib.request
 from pathlib import Path
+from nodes import NODES, CHANNEL_PAIRS, configured_alias
 
 ROOT = Path('/var/lib/los-regtest')
 BIN = Path('/opt/los-regtest/bin')
-PORTS = {'alice': (10009, 8080), 'bob': (11009, 8180)}
+PORTS = {name: (spec['grpc'], spec['rest']) for name, spec in NODES.items()}
 
 
 def checked_lab():
@@ -112,7 +113,7 @@ def initialize():
             rest(node, '/v1/initwallet', {'wallet_password': base64.b64encode(password).decode(),
                                         'cipher_seed_mnemonic': seed, 'recovery_window': 0})
             del seed, password
-        wait_info(node)
+        apply_alias(node)
         balance = int(ln(node, 'walletbalance')['total_balance'])
         if balance < 100000000:
             address = ln(node, 'newaddress', 'p2wkh')['address']
@@ -120,7 +121,18 @@ def initialize():
     mine(6)
     for node in PORTS:
         wait_info(node)
-    print('Initialized two native LND wallets with local regtest coins; no seed words recorded.')
+    print('Initialized three native LND wallets with local regtest coins; no seed words recorded.')
+
+
+def apply_alias(node):
+    desired = configured_alias((ROOT / node / 'lnd.conf').read_text())
+    info = wait_info(node)
+    # Comparing live state also repairs an interrupted run after config write.
+    # Repeated successful runs do not restart a correctly configured node.
+    if info.get('alias') != desired:
+        subprocess.run(['systemctl', 'restart', 'los-regtest-' + node], check=True)
+        if wait_info(node).get('alias') != desired:
+            raise RuntimeError('Native LND did not apply its configured alias')
 
 
 def mine(blocks):
@@ -129,54 +141,59 @@ def mine(blocks):
     btc('generatetoaddress', blocks, Path('/etc/los-regtest/miner-address').read_text().strip(), wallet=True)
 
 
-def smoke():
-    alice = wait_info('alice')
-    bob = wait_info('bob')
-    pubkey = bob['identity_pubkey']
-    if not any(peer['pub_key'] == pubkey for peer in ln('alice', 'listpeers').get('peers', [])):
-        ln('alice', 'connect', pubkey + '@127.0.0.1:9835')
-    channels = ln('alice', 'listchannels').get('channels', [])
-    if not any(channel['remote_pubkey'] == pubkey and channel['active'] for channel in channels):
-        ln('alice', 'openchannel', '--node_key=' + pubkey, '--local_amt=1000000', '--sat_per_vbyte=2')
+def ensure_channel(source, target, pubkey):
+    if not any(peer['pub_key'] == pubkey for peer in ln(source, 'listpeers').get('peers', [])):
+        ln(source, 'connect', pubkey + '@127.0.0.1:' + str(NODES[target]['p2p']))
+    existing = any(c['remote_pubkey'] == pubkey for c in ln(source, 'listchannels').get('channels', []))
+    pending = any(c.get('channel', {}).get('remote_node_pub') == pubkey
+                  for c in ln(source, 'pendingchannels').get('pending_open_channels', []))
+    if not existing and not pending:
+        ln(source, 'openchannel', '--node_key=' + pubkey, '--local_amt=1000000',
+           '--push_amt=500000', '--sat_per_vbyte=2')
+        pending = True
+    if pending:
         mine(6)
+    # An inactive existing channel or an interrupted pending funding is reused;
+    # never open a duplicate merely because the link is not ready yet.
     for _ in range(60):
-        if any(channel['remote_pubkey'] == pubkey and channel['active'] for channel in ln('alice', 'listchannels').get('channels', [])):
-            break
+        if any(c['remote_pubkey'] == pubkey and c['active']
+               for c in ln(source, 'listchannels').get('channels', [])):
+            return
         time.sleep(1)
-    else:
-        raise RuntimeError('Native channel did not become active')
-    # A channel can become active after the first confirmation while LND is
-    # still processing the rest of the freshly mined batch. Router rejects
-    # payments before chain catch-up, without creating a payment record.
-    for node in PORTS:
+    raise RuntimeError('Native regtest channel did not become active')
+
+
+def smoke():
+    info = {node: wait_info(node) for node in NODES}
+    for source, target in CHANNEL_PAIRS:
+        ensure_channel(source, target, info[target]['identity_pubkey'])
+    for node in NODES:
         wait_info(node)
-    # Active links and chain sync can precede the router's local bandwidth
-    # view on a newly created channel. Wait using read-only route queries;
-    # never retry a payment merely because startup readiness was incomplete.
-    for _ in range(60):
-        try:
-            if ln('alice', 'queryroutes', '--dest=' + pubkey, '--amt=1000').get('routes'):
-                break
-        except RuntimeError:
-            pass
-        time.sleep(1)
-    else:
-        raise RuntimeError('Native channel routing did not become ready')
-    invoice = ln('bob', 'addinvoice', '--amt=1000', '--memo=LOS REGTEST native smoke test')
-    payment = rest('alice', '/v2/router/send', {'payment_request': invoice['payment_request'],
-                                              'timeout_seconds': 30, 'fee_limit_sat': '1000',
-                                              'no_inflight_updates': True}, authenticated=True)
-    payment = payment.get('result', payment)
-    if payment.get('status') != 'SUCCEEDED':
-        raise RuntimeError('Native Lightning payment failed')
-    print('PASS: native channel active; native Lightning payment of 1000 regtest sats succeeded.')
+    for source, target in CHANNEL_PAIRS:
+        pubkey = info[target]['identity_pubkey']
+        for _ in range(60):
+            try:
+                if ln(source, 'queryroutes', '--dest=' + pubkey, '--amt=1000').get('routes'):
+                    break
+            except RuntimeError:
+                pass
+            time.sleep(1)
+        else:
+            raise RuntimeError('Native channel routing did not become ready')
+        invoice = ln(target, 'addinvoice', '--amt=1000', '--memo=LOS REGTEST native smoke test')
+        payment = rest(source, '/v2/router/send', {'payment_request': invoice['payment_request'],
+                                                 'timeout_seconds': 30, 'fee_limit_sat': '1000',
+                                                 'no_inflight_updates': True}, authenticated=True)
+        if payment.get('result', payment).get('status') != 'SUCCEEDED':
+            raise RuntimeError('Native Lightning payment failed; no automatic payment retry')
+        print('PASS: native ' + source + ' -> ' + target + ' channel and payment of 1000 regtest sats.')
 
 
 def status():
     result = {'network': 'regtest', 'height': btc('getblockcount'), 'nodes': {}}
     for node in PORTS:
         info = wait_info(node)
-        result['nodes'][node] = {'version': info['version'], 'synced': info['synced_to_chain'],
+        result['nodes'][node] = {'alias': info['alias'], 'version': info['version'], 'synced': info['synced_to_chain'],
                                   'confirmed_sat': int(ln(node, 'walletbalance')['confirmed_balance']),
                                   'active_channels': info['num_active_channels']}
     print(json.dumps(result, indent=2))

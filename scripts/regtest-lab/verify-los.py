@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 from control import checked_lab, ln, mine, wait_info
+from nodes import NODES, CHANNEL_PAIRS
 
 
 class LabAPI:
@@ -79,7 +80,7 @@ class LabAPI:
 def verify(setup_only=False, node=None):
     checked_lab()
     clients = {}
-    nodes = [('alice', 8443), ('bob', 8543)]
+    nodes = [(name, spec['ui']) for name, spec in NODES.items()]
     if node is not None:
         if not setup_only:
             raise RuntimeError('Selecting one node requires --setup-only')
@@ -109,11 +110,12 @@ def verify(setup_only=False, node=None):
         print('PASS: ' + node + ' verified HTTPS, REGTEST notice, login, native wallet balance and channels.')
     if setup_only:
         return
-    invoice = clients['bob'].call('/api/wallet/invoice', {'amount_sat': 1000, 'memo': 'LOS REGTEST API smoke'})
-    request = {'payment_request': invoice['payment_request'], 'max_fee_sat': 1000}
-    clients['alice'].call('/api/wallet/pay', request, expected=428)
-    clients['alice'].financial('/api/wallet/pay', request)
-    print('PASS: LOS invoice and native Lightning payment of 1000 regtest sats; reauthentication enforced.')
+    for source, target in CHANNEL_PAIRS:
+        invoice = clients[target].call('/api/wallet/invoice', {'amount_sat': 1000, 'memo': 'LOS REGTEST API smoke'})
+        request = {'payment_request': invoice['payment_request'], 'max_fee_sat': 1000}
+        clients[source].call('/api/wallet/pay', request, expected=428)
+        clients[source].financial('/api/wallet/pay', request)
+        print('PASS: LOS ' + source + ' -> ' + target + ' native Lightning payment of 1000 regtest sats; reauthentication enforced.')
     address = clients['bob'].call('/api/wallet/address', {})['address']
     before = int(ln('bob', 'walletbalance')['confirmed_balance'])
     request = {'address': address, 'amount_sat': 10000, 'sat_per_vbyte': 2}
@@ -122,7 +124,7 @@ def verify(setup_only=False, node=None):
     if not sent.get('txid'):
         raise RuntimeError('LOS did not return an on-chain transaction ID')
     mine(6)
-    for node in ['alice', 'bob']:
+    for node in NODES:
         wait_info(node)
     for _ in range(60):
         if int(ln('bob', 'walletbalance')['confirmed_balance']) == before + 10000:
@@ -136,7 +138,7 @@ def verify(setup_only=False, node=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--setup-only', action='store_true', help='initialize login and verify reads without submitting payments')
-    parser.add_argument('--node', choices=['alice', 'bob'], help='with --setup-only, check just this panel')
+    parser.add_argument('--node', choices=list(NODES), help='with --setup-only, check just this panel')
     options = parser.parse_args()
     try:
         verify(options.setup_only, options.node)

@@ -1063,7 +1063,7 @@ Notas por versão são mantidas no GitHub Releases:
 
 Use uma **VM nova e dedicada com Ubuntu 24.04 amd64**. Recomendamos 4 GiB de RAM
 e pelo menos 20 GiB livres em disco. Este perfil de desenvolvimento instala
-Bitcoin Core nativo, dois nodes LND (Alice/Bob), PostgreSQL e dois painéis LOS
+Bitcoin Core nativo, três nodes LND (Alice/Bob/Charlie), PostgreSQL e três painéis LOS
 isolados. Compila o checkout commitado; exige Internet para pacotes, toolchains
 verificadas e dependências. Todas as moedas são regtest locais, sem valor.
 Os instaladores normais continuam exclusivos de mainnet.
@@ -1091,11 +1091,34 @@ No computador de acesso, mantenha este túnel SSH aberto, substituindo `usuario@
 ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 usuario@host-do-lab
 ```
 
-Abra Alice em `https://127.0.0.1:19043` e Bob em `https://127.0.0.1:19053`.
+Abra os três painéis:
+
+| Alias do node | Painel pelo SSH |
+| --- | --- |
+| `LOS-Regtest-Alice` | `https://alice.localhost:19043` |
+| `LOS-Regtest-Bob` | `https://bob.localhost:19053` |
+| `LOS-Regtest-Charlie` | `https://charlie.localhost:19063` |
+
+Os três LNDs nativos e painéis LOS iniciam automaticamente no boot. Cada um tem
+carteira, login, chave TLS, estado e banco próprios. Um laboratório novo começa
+com o triângulo Alice → Bob → Charlie → Alice: três canais de 1.000.000 sats, cada
+um aberto com 500.000 sats enviados ao peer. Isso permite pagamentos com múltiplos
+saltos e testes de rebalance circular; não significa que todos esses cenários já
+foram validados. Reinstalar reaproveita canais existentes/pendentes e preserva
+canais extras do usuário. Aliases padrão antigos migram para os nomes acima;
+aliases personalizados são preservados. A migração pode reiniciar brevemente
+um LND do laboratório. Instaladores de produção e aliases mainnet não mudam.
+
+Use os nomes `*.localhost` distintos acima para que os cookies de login dos três
+painéis não se sobrescrevam. Os navegadores os resolvem para loopback sem alterar
+DNS ou arquivo hosts. Mantenha os túneis SSH vinculados a `127.0.0.1`. Ao atualizar
+um laboratório antigo, a CA e as chaves TLS privadas são mantidas; os certificados
+dos painéis são reemitidos apenas quando necessário para incluir os novos nomes.
+
 Copie a CA **pública** `/etc/los-regtest/ca.crt` por SSH verificado e confie nela
 no navegador de testes; mantenha a verificação TLS habilitada. Consulte a senha
 privadamente na VM com `sudo cat /etc/los-regtest/alice/ui-password` ou o equivalente
-do Bob. Minere confirmações com `sudo python3 /opt/los-regtest/control.py mine 6`.
+do Bob/Charlie. Minere confirmações com `sudo python3 /opt/los-regtest/control.py mine 6`.
 Escolha uma taxa manual, como `2 sat/vB`: uma cadeia regtest curta pode ainda não
 ter estimativas automáticas, e serviços públicos de taxas ficam fora deste perfil.
 
@@ -1111,7 +1134,7 @@ de idioma continua acessível enquanto você rola o conteúdo.
 | Fluxo validado | O que você pode testar |
 | --- | --- |
 | Carteira e canais | Login, saldos on-chain/Lightning, endereços de recebimento e consulta de canais. |
-| Pagamentos Lightning | Criar invoices e pagar entre Alice/Bob, com confirmação de senha. |
+| Pagamentos Lightning | Criar invoices e pagar entre Alice/Bob/Charlie, com confirmação de senha. |
 | Pagamentos on-chain | Depositar/enviar moedas fictícias, minerar confirmações manualmente e conferir o saldo recebido. |
 
 **Operações Lightning:** use a distinção abaixo neste perfil. A mesma matriz
@@ -1182,7 +1205,7 @@ produção permanecem inalterados.
 
 #### Fundos on-chain de teste e confirmações
 
-O instalador abastece as duas carteiras nativas do LND com moedas fictícias.
+O instalador abastece as três carteiras nativas do LND com moedas fictícias.
 Abra **Carteira (Wallet)** no painel da Alice ou do Bob para consultar o saldo confirmado
 no cartão **On-chain**. A mineração credita recompensas na carteira mineradora
 separada do laboratório. Para depositar mais moedas na Alice ou no Bob, abra

@@ -18,6 +18,21 @@ import control
 import nodes
 
 
+class AliasViewTests(unittest.TestCase):
+    def test_setup_verification_requires_the_matching_native_alias(self):
+        spec = importlib.util.spec_from_file_location('verify_los_alias_test', Path(__file__).with_name('verify-los.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        api = SimpleNamespace(call=lambda endpoint: {'current': {'alias': 'LOS-Regtest-Alice'}})
+        with patch.object(module, 'ln', return_value={'alias': 'LOS-Regtest-Alice'}):
+            module.verify_alias(api, 'alice')
+        for wrong in ['', 'LOS-Regtest-Bob']:
+            api = SimpleNamespace(call=lambda endpoint: {'current': {'alias': wrong}})
+            with patch.object(module, 'ln', return_value={'alias': 'LOS-Regtest-Alice'}):
+                with self.assertRaises(RuntimeError):
+                    module.verify_alias(api, 'alice')
+
+
 @unittest.skipUnless(sys.platform == 'linux', 'requires Linux configure helper (pwd)')
 class LabNoticeTests(unittest.TestCase):
     def setUp(self):
@@ -63,7 +78,7 @@ class LabNoticeTests(unittest.TestCase):
         self.assertEqual(sum(tag == 'script' for tag, _ in dom.elements), 1, 'notice must not add scripts')
         self.assertIn('REGTEST | LOS', result)
         self.assertIn('Not supported', result)
-        self.assertIn('The installer sets the initial alias', result)
+        self.assertIn('The native alias is visible in the header and read-only configuration view.', result)
         self.assertIn('GitHub', result)
         operations = {attrs['data-lab-operation']: attrs.get('data-lab-status')
                       for tag, attrs in dom.elements if tag == 'tr' and 'data-lab-operation' in attrs}

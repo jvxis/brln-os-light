@@ -96,7 +96,7 @@ def deploy(args):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.configure(args)
-        run(sys.executable, str(ROOT / 'verify-los.py'), '--setup-only')
+        run(sys.executable, str(ROOT / 'verify-los.py'), '--setup-only', '--require-alias')
     except BaseException:
         recover()
         raise

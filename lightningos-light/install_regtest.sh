@@ -93,7 +93,7 @@ python3 /opt/los-regtest/deploy.py \
   --ui-archive "$BUILD/artifacts/ui.tar.gz" \
   --ui-sha256 "$(sha256sum "$BUILD/artifacts/ui.tar.gz" | cut -d' ' -f1)" \
   --source-commit "$COMMIT"
-python3 /opt/los-regtest/verify-los.py
+python3 /opt/los-regtest/verify-los.py --require-alias
 cat <<'EOF'
 
 REGTEST developer lab ready. Coins have no value.

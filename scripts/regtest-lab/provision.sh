@@ -27,13 +27,22 @@ fetch() {
     mv -- "$name.partial" "$name"
   fi
 }
-# Same pinned releases as the reviewed LOS source; compare before executing.
-fetch bitcoin-31.1-x86_64-linux-gnu.tar.gz https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e
-tar -xzf bitcoin-31.1-x86_64-linux-gnu.tar.gz -C /opt/los-regtest/downloads
-install -m 0755 bitcoin-31.1/bin/bitcoind bitcoin-31.1/bin/bitcoin-cli /opt/los-regtest/bin/
+# Replace each executable atomically, including while its old inode is running.
+# A failed copy must never truncate the installed binary.
+install_native_binary() {
+  local source=$1 destination=$2
+  install -m 0755 -- "$source" "$destination.new"
+  mv -f -- "$destination.new" "$destination"
+}
+# Official release archive pinned independently of production installer settings.
+fetch bitcoin-31.2-x86_64-linux-gnu.tar.gz https://bitcoincore.org/bin/bitcoin-core-31.2/bitcoin-31.2-x86_64-linux-gnu.tar.gz 2f38996afaa74dfa469a23bf4727887133dfc09784df1f21ddf1c74d0dc82300
+tar -xzf bitcoin-31.2-x86_64-linux-gnu.tar.gz -C /opt/los-regtest/downloads
+install_native_binary bitcoin-31.2/bin/bitcoind /opt/los-regtest/bin/bitcoind
+install_native_binary bitcoin-31.2/bin/bitcoin-cli /opt/los-regtest/bin/bitcoin-cli
 fetch lnd-linux-amd64-v0.21.5-beta.tar.gz https://github.com/lightningnetwork/lnd/releases/download/v0.21.5-beta/lnd-linux-amd64-v0.21.5-beta.tar.gz 2127d4794ea9cbd98e762ba16283615158743646d2d6d2a5bf88664dd6255ce7
 tar -xzf lnd-linux-amd64-v0.21.5-beta.tar.gz -C /opt/los-regtest/downloads
-install -m 0755 lnd-linux-amd64-v0.21.5-beta/lnd lnd-linux-amd64-v0.21.5-beta/lncli /opt/los-regtest/bin/
+install_native_binary lnd-linux-amd64-v0.21.5-beta/lnd /opt/los-regtest/bin/lnd
+install_native_binary lnd-linux-amd64-v0.21.5-beta/lncli /opt/los-regtest/bin/lncli
 cd /
 python3 - "$SCRIPT_DIR" <<'PY'
 from pathlib import Path
@@ -102,14 +111,27 @@ systemctl enable --now los-regtest-bitcoin "${LND_NODES[@]/#/los-regtest-}" >/de
 
 # enable --now leaves an already active process running its previous executable.
 # Compare the live executable too, so retrying an interrupted upgrade converges.
-restart_changed_lnd() {
+restart_changed_native() {
   local service=$1 binary=$2 pid
   pid=$(systemctl show "$service" --property=MainPID --value)
   if [[ $pid =~ ^[1-9][0-9]*$ && -e /proc/$pid/exe ]] && ! cmp -s -- "/proc/$pid/exe" "$binary"; then
+    local node unit
+    local -a resume=()
+    if [[ $service == los-regtest-bitcoin ]]; then
+      # Requires=/After= stops dependent LND/panel units with Bitcoin. Restore
+      # the units that were active, including all three panels, after restart.
+      for node in "${LND_NODES[@]}"; do
+        for unit in "los-regtest-$node" "los-regtest-ui-$node"; do
+          if systemctl is-active --quiet "$unit"; then resume+=("$unit"); fi
+        done
+      done
+    fi
     systemctl restart "$service"
+    if [[ ${#resume[@]} -gt 0 ]]; then systemctl start "${resume[@]}"; fi
   fi
 }
+restart_changed_native los-regtest-bitcoin /opt/los-regtest/bin/bitcoind
 for node in "${LND_NODES[@]}"; do
-  restart_changed_lnd "los-regtest-$node" /opt/los-regtest/bin/lnd
+  restart_changed_native "los-regtest-$node" /opt/los-regtest/bin/lnd
 done
 echo 'Native Bitcoin/LND regtest units installed. Wallet initialization/funding is a separate step.'

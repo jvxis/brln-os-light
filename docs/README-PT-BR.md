@@ -1089,7 +1089,7 @@ Notas por versão são mantidas no GitHub Releases:
 
 Use uma **VM nova e dedicada com Ubuntu 24.04 amd64**. Recomendamos 4 GiB de RAM
 e pelo menos 20 GiB livres em disco. Este perfil de desenvolvimento instala
-Bitcoin Core nativo, três nodes LND (Alice/Bob/Charlie), PostgreSQL e três painéis LOS
+Bitcoin Core 31.2 nativo, três nodes LND (Alice/Bob/Charlie), PostgreSQL e três painéis LOS
 isolados. Compila o checkout commitado; exige Internet para pacotes, toolchains
 verificadas e dependências. Todas as moedas são regtest locais, sem valor.
 Os instaladores normais continuam exclusivos de mainnet.

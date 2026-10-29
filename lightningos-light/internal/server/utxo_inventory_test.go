@@ -202,6 +202,7 @@ func TestUtxoInventoryExpiredSpentAndMissingLeaseData(t *testing.T) {
 				f.history = append(f.history, &lnrpc.Transaction{TxHash: transaction.TxHash().String(), RawTxHex: hex.EncodeToString(raw.Bytes())})
 			case "released-during-read":
 				f.releasedDuringHistory = true
+				wantError = true
 			case "wrong-value":
 				f.lease.Value++
 				wantError = true

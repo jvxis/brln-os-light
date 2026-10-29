@@ -97,11 +97,13 @@ func (c *Client) ListOnchainUtxoInventory(ctx context.Context) ([]OnchainUtxo, m
 		return nil, nil, err
 	}
 	current := activeInventoryLeases(leasesFromRPC(response), uint64(time.Now().Unix()))
-	for point := range leases {
-		if latest, ok := current[point]; ok {
-			leases[point] = latest
-		} else {
-			delete(leases, point)
+	if len(current) != len(leases) {
+		return nil, nil, errors.New("wallet leases changed during inventory read; retry")
+	}
+	for point, lease := range leases {
+		latest, ok := current[point]
+		if !ok || latest.ID != lease.ID || latest.Expiration != lease.Expiration {
+			return nil, nil, errors.New("wallet leases changed during inventory read; retry")
 		}
 	}
 	for _, point := range missing {

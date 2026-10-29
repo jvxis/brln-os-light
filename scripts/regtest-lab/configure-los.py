@@ -153,7 +153,7 @@ def add_lab_notice(html):
             ],
             'tips': [
                 ('Telegram é uma integração separada', 'O fluxo de Succession foi validado. Entrega de avisos pelo Telegram exige configurar token e destino; não foi testada neste laboratório e não altera o resultado do teste de sucessão.'),
-                ('Mineração é manual', 'Após um período sem blocos, o LND pode indicar falta de sincronização. Com a mineradora carregada, minere um novo bloco local antes de testar pagamentos.'),
+                ('Mineração automática no laboratório', 'Novas instalações mineram um bloco por minuto. Use automine.py status, pause, resume ou interval 60 no host. Blocos avançam confirmações e timelocks; pause para testes de altura exata. Mineração manual continua disponível. Em laboratórios antigos, instale o novo auxiliar conforme o README.'),
                 ('Menus de produção podem continuar visíveis', 'Os Managers só acessam localhost e não usam o broker de produção. Consultas ao GitHub podem expirar. A aplicação de produção permanece inalterada.'),
             ],
         },
@@ -190,7 +190,7 @@ def add_lab_notice(html):
             ],
             'tips': [
                 ('Telegram is a separate integration', 'The Succession workflow passed. Telegram delivery requires configuring a token and destination; it was not tested in this lab and does not change the succession test result.'),
-                ('Mining is manual', 'After an idle period without blocks, LND can report that it is not synced. With the miner wallet loaded, mine a new local block before testing payments.'),
+                ('Automatic laboratory mining', 'New installations mine one block per minute. Use automine.py status, pause, resume or interval 60 on the host. Blocks advance confirmations and timelocks; pause for exact-height tests. Manual mining remains available. For older labs, install the new helper as described in the README.'),
                 ('Production menus can remain visible', 'Managers can only reach localhost and do not use the production broker. GitHub checks can time out. The production application remains unchanged.'),
             ],
         },

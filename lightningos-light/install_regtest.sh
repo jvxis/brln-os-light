@@ -82,7 +82,7 @@ runuser -u los-regtest-build -- env -i HOME=/var/lib/los-regtest-build \
   ' build "$BUILD"
 
 # Native helpers remain separate from all production installers and services.
-for file in nodes.py control.py configure-los.py verify-los.py safety.py deploy.py; do
+for file in nodes.py control.py automine.py configure-los.py verify-los.py safety.py deploy.py; do
   install -o root -g root -m 0755 "$LAB/$file" "/opt/los-regtest/$file"
 done
 bash "$LAB/provision.sh"
@@ -95,6 +95,7 @@ python3 /opt/los-regtest/deploy.py \
   --ui-sha256 "$(sha256sum "$BUILD/artifacts/ui.tar.gz" | cut -d' ' -f1)" \
   --source-commit "$COMMIT"
 python3 /opt/los-regtest/verify-los.py --require-alias
+python3 /opt/los-regtest/automine.py install
 cat <<'EOF'
 
 REGTEST developer lab ready. Coins have no value.
@@ -107,4 +108,7 @@ Use these distinct browser hostnames to keep all three login cookies separate.
 Public certificate authority: /etc/los-regtest/ca.crt
 Private UI passwords: /etc/los-regtest/{alice,bob,charlie}/ui-password
 Mine confirmations: sudo python3 /opt/los-regtest/control.py mine 6
+Automatic mining: one block every 60 seconds by default (existing interval/pause preserved).
+Controls: sudo python3 /opt/los-regtest/automine.py status (or pause / resume)
+Change interval: sudo python3 /opt/los-regtest/automine.py interval 60
 EOF

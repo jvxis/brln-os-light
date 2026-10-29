@@ -1275,10 +1275,31 @@ deve ser confundido com os controles de produção explicitamente fora de escopo
 listados abaixo. Ter um canal aberto ou uma consulta de status bem-sucedida não
 valida abrir ou fechar canais. O aviso contém descrições em português e inglês.
 
-A mineração é manual. Após um longo período sem blocos, o LND pode indicar
-falta de sincronização mesmo na altura atual. Com a carteira mineradora carregada,
-execute `sudo python3 /opt/los-regtest/control.py mine 1` e aguarde a sincronização
-antes de testar pagamentos. A seção de fundos abaixo explica como carregar a mineradora.
+A mineração automática começa após uma instalação concluída: um bloco a cada
+60 segundos. Pause para testes que precisam controlar a altura dos blocos.
+O intervalo e a pausa são preservados após reinstalação e reinício. Em laboratórios
+existentes, instale o auxiliar de um checkout revisado, sem reinicializar carteiras
+nem reabrir canais:
+
+```bash
+sudo install -o root -g root -m 0755 scripts/regtest-lab/automine.py /opt/los-regtest/automine.py
+sudo python3 /opt/los-regtest/automine.py install
+sudo python3 /opt/los-regtest/automine.py status
+sudo python3 /opt/los-regtest/automine.py pause
+sudo python3 /opt/los-regtest/automine.py resume
+sudo python3 /opt/los-regtest/automine.py interval 60
+```
+
+O intervalo aceita 10 a 3600 segundos; alterá-lo preserva uma pausa existente.
+Só há mineração enquanto o host está ligado, sem compensar blocos do período
+desligado. Cada bloco avança confirmações, maturidade de coinbase, timelocks
+CSV/CLTV e prazos de fechamento forçado. É uma simulação acelerada, sem reproduzir
+o tempo da mainnet. Antes de minerar, o serviço confere o laboratório e a rede
+`regtest` do Bitcoin. Ele não inicia nem reinicia Bitcoin/LND.
+A mineração manual com `control.py mine 6` continua disponível. Após uma pausa
+longa, minere um bloco e aguarde a sincronização do LND antes de testar pagamentos.
+Intervalos próximos de uma hora também podem deixar o LND indicando blocos antigos;
+para uso normal, prefira o padrão.
 
 **Fora deste perfil:** configuração do LND pela interface (incluindo nome/alias,
 cor e rede), controles de manutenção/reinício, upgrades de LND/LOS pela interface,

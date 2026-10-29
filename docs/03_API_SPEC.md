@@ -971,10 +971,12 @@ POST /api/apps/{id}/install
 - Mempool uses a closed lightweight default of `MEMPOOL_INDEXING_BLOCKS_AMOUNT=8` to avoid saturating shared rotational storage during its initial history load. Arbitrary environment overrides remain rejected.
 
 POST /api/apps/{id}/start
+- In 0.5.50, Store-managed Bitcoin Core uses the pinned, authenticated 31.2 image. A normal local 31.1 runtime must first be stopped; it remains observable and does not require legacy-migration confirmation. Start preserves enrolled storage/configuration/credentials and reports success only after mainnet RPC, expected version and loopback RPC/ZMQ checks pass. Verification errors are not recorded as an applied catalog version. A failed start can be retried; this is not an automatic binary-downgrade contract.
 - Starting a detected legacy `bitcoincore` runtime requires `{"confirm_legacy_migration":true}` and follows the same transactional migration and rollback contract as installation.
 - Starting `electrs` against App Store Bitcoin accepts the same
   `confirm_bitcoin_restart` body and restart policy as installation.
 POST /api/apps/{id}/stop
+- Bitcoin Core shutdown uses an infinite Docker graceful-stop timeout (`-1`), so a request/broker deadline does not schedule SIGKILL. If the request expires, wait for shutdown and check/retry Stop before Start. No new payload is required; the UI asks for confirmation of the temporary Bitcoin connection interruption.
 POST /api/apps/{id}/uninstall
 - Requires JSON body `{"confirm":true,"app_id":"{id}"}`. Missing or mismatched confirmation is rejected before any lifecycle operation begins.
 - Uninstalling `bitcoincore` is rejected while LND uses the local source. When the source is remote, LightningOS verifies that the configured remote RPC is reachable and synchronized; uninstall never switches the source or restarts LND automatically.

@@ -59,8 +59,9 @@ Both Alice and Bob passed:
   original lease state. Original metadata/groups and native balances restored.
 - The real browser retained the locked card and lock icon after reload. Native
   pointer selection and the normal UI Unlock button restored the unlocked card
-  on both nodes. A transient read during the first browser run was retried using
-  read-only checks; no financial mutation was blindly retried.
+  on both nodes. Failed browser-driver checks were cleaned up before the final
+  successful UI run; no test lease was left behind or financial mutation blindly
+  retried.
 - Normal authenticated Lightning payment (1,000 fictitious sats) and on-chain
   send (10,000 fictitious sats), confirmation and reauthentication checks passed.
 

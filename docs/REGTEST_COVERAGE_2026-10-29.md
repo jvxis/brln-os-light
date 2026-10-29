@@ -82,10 +82,11 @@ outside the exercised scenarios.
 
 Initial health after overnight inactivity showed both nodes at height 637,
 two active channels each, zero limbo, but not yet synced. One manual local block
-restored synchronization. The existing `control.py mine` command also runs its
-native 1,000-sat Lightning smoke, as does the notice deployment's lab preparer;
-those fictitious transfers are separate from the
-balance-preserving operation checks above. Auxiliary Charlie/Delta stay stopped;
+restored synchronization. `control.py mine` only mines blocks; payment smoke
+checks are separate explicit operations. Printed smoke messages from mocked
+unit fixtures are not evidence of native payments. The later follow-up records
+the actual financial smoke transactions separately from balance-preserving
+lease checks. Auxiliary fixtures stay stopped;
 Unrelated mainnet nodes and services stayed running and untouched.
 
 ## Português

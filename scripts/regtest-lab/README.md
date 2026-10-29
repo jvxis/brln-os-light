@@ -102,7 +102,7 @@ To repeat these opt-in checks on the configured disposable host, mine a block
 if needed, then run `sudo python3 scripts/regtest-lab/verify-operations.py`
 from the source checkout. Do not run it concurrently with wallet operations.
 It creates no payments/channels, restores temporary metadata/groups/leases,
-and passed on both nodes after correcting #349. The locked-output assertion remains
+and now passes on all three nodes. The locked-output assertion remains
 enabled and fails if that inventory regression returns. Each scenario reports its result.
 This helper is not part of the installation or its automatic smoke tests.
 
@@ -157,7 +157,7 @@ by the provisioning script. Then run:
 
 ```sh
 sudo bash provision.sh
-sudo install -m 0755 control.py /opt/los-regtest/control.py
+sudo install -m 0755 nodes.py control.py /opt/los-regtest/
 sudo python3 /opt/los-regtest/control.py initialize
 sudo python3 /opt/los-regtest/control.py smoke
 sudo python3 /opt/los-regtest/control.py status
@@ -241,9 +241,18 @@ ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 -L 12
 
 | Alias | HTTPS URL through SSH | LND gRPC / REST / peer ports (localhost) |
 | --- | --- | --- |
-| `LOS-Regtest-Alice` | `https://127.0.0.1:19043` | 10009 / 8080 / 9735 |
-| `LOS-Regtest-Bob` | `https://127.0.0.1:19053` | 11009 / 8180 / 9835 |
-| `LOS-Regtest-Charlie` | `https://127.0.0.1:19063` | 12009 / 8280 / 9935 |
+| `LOS-Regtest-Alice` | `https://alice.localhost:19043` | 10009 / 8080 / 9735 |
+| `LOS-Regtest-Bob` | `https://bob.localhost:19053` | 11009 / 8180 / 9835 |
+| `LOS-Regtest-Charlie` | `https://charlie.localhost:19063` | 12009 / 8280 / 9935 |
+
+Use these three distinct browser hostnames to isolate host-only session cookies;
+ports alone do not separate cookies. They resolve to loopback in browsers without
+changing the operating system's DNS/hosts file. SSH still binds all forwards to
+`127.0.0.1`. Certificates include the relevant per-node name plus localhost and
+127.0.0.1; migration preserves the existing CA and private keys, reissuing a leaf
+only when needed. Internal scripted API checks keep separate cookie jars and use
+127.0.0.1 directly. On an OS command-line client that does not resolve these names,
+use its explicit loopback-resolution option rather than disabling TLS verification.
 
 On first installation, the triangle provides two peers/channels per node and
 liquidity in both directions. Existing laboratories may keep additional channels.

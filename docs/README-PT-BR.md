@@ -1095,9 +1095,9 @@ Abra os três painéis:
 
 | Alias do node | Painel pelo SSH |
 | --- | --- |
-| `LOS-Regtest-Alice` | `https://127.0.0.1:19043` |
-| `LOS-Regtest-Bob` | `https://127.0.0.1:19053` |
-| `LOS-Regtest-Charlie` | `https://127.0.0.1:19063` |
+| `LOS-Regtest-Alice` | `https://alice.localhost:19043` |
+| `LOS-Regtest-Bob` | `https://bob.localhost:19053` |
+| `LOS-Regtest-Charlie` | `https://charlie.localhost:19063` |
 
 Os três LNDs nativos e painéis LOS iniciam automaticamente no boot. Cada um tem
 carteira, login, chave TLS, estado e banco próprios. Um laboratório novo começa
@@ -1108,6 +1108,12 @@ foram validados. Reinstalar reaproveita canais existentes/pendentes e preserva
 canais extras do usuário. Aliases padrão antigos migram para os nomes acima;
 aliases personalizados são preservados. A migração pode reiniciar brevemente
 um LND do laboratório. Instaladores de produção e aliases mainnet não mudam.
+
+Use os nomes `*.localhost` distintos acima para que os cookies de login dos três
+painéis não se sobrescrevam. Os navegadores os resolvem para loopback sem alterar
+DNS ou arquivo hosts. Mantenha os túneis SSH vinculados a `127.0.0.1`. Ao atualizar
+um laboratório antigo, a CA e as chaves TLS privadas são mantidas; os certificados
+dos painéis são reemitidos apenas quando necessário para incluir os novos nomes.
 
 Copie a CA **pública** `/etc/los-regtest/ca.crt` por SSH verificado e confie nela
 no navegador de testes; mantenha a verificação TLS habilitada. Consulte a senha

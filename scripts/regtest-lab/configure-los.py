@@ -40,6 +40,35 @@ def database_password(credential, env, role):
     return credential.read_text()
 
 
+def ensure_panel_certificate(folder, ca, hostname):
+    key, cert = folder / 'server.key', folder / 'server.crt'
+    if cert.exists() and key.exists():
+        valid = subprocess.run(['openssl', 'verify', '-CAfile', str(ca), '-verify_hostname', hostname, str(cert)],
+                               capture_output=True).returncode == 0
+        valid_ip = subprocess.run(['openssl', 'verify', '-CAfile', str(ca), '-verify_ip', '127.0.0.1', str(cert)],
+                                  capture_output=True).returncode == 0
+        public_cert = subprocess.run(['openssl', 'x509', '-in', str(cert), '-pubkey', '-noout'], capture_output=True)
+        public_key = subprocess.run(['openssl', 'pkey', '-in', str(key), '-pubout'], capture_output=True)
+        if valid and valid_ip and public_cert.returncode == public_key.returncode == 0 and public_cert.stdout == public_key.stdout:
+            return
+    csr = folder / 'server.csr'
+    if key.exists():
+        run('openssl', 'req', '-new', '-subj', '/CN=' + hostname, '-key', str(key), '-out', str(csr))
+    else:
+        run('openssl', 'req', '-new', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=' + hostname,
+            '-keyout', str(key), '-out', str(csr))
+    ext = folder / 'certificate.ext'
+    ext.write_text('subjectAltName=DNS:localhost,DNS:' + hostname + ',IP:127.0.0.1\nextendedKeyUsage=serverAuth\n')
+    pending = folder / 'server.crt.new'
+    run('openssl', 'x509', '-req', '-in', str(csr), '-CA', str(ca), '-CAkey', str(ca.with_suffix('.key')),
+        '-CAcreateserial', '-out', str(pending), '-days', '3650', '-extfile', str(ext))
+    run('openssl', 'verify', '-CAfile', str(ca), str(pending))
+    run('openssl', 'verify', '-CAfile', str(ca), '-verify_hostname', hostname, str(pending))
+    run('openssl', 'verify', '-CAfile', str(ca), '-verify_ip', '127.0.0.1', str(pending))
+    pending.chmod(0o600)
+    pending.replace(cert)
+
+
 def add_lab_notice(html):
     from html import escape
 
@@ -118,7 +147,7 @@ def add_lab_notice(html):
                 ('utxo-management', 'validated', 'Organizar UTXOs', 'API autenticada: etiquetas, tags, cores, criar/atribuir/remover grupos; estado original restaurado.'),
                 ('utxo-lock', 'validated', 'Bloquear e desbloquear UTXOs', 'Moeda permanece visível com cadeado e metadados; desbloqueio pela interface e expiração conferidos no LND. As prévias de gasto continuam excluindo moedas bloqueadas. Corrigida a #349.'),
                 ('audit-log', 'validated', 'Audit Log', 'API autenticada: bloqueio/desbloqueio registrado e consulta por ação, alvo e limite; acesso sem login recusado.'),
-                ('lnd-config', 'unsupported', 'Configuração e manutenção do LND', 'Nome/alias, cor, rede e controles de reinício.'),
+                ('lnd-config', 'unsupported', 'Editar configuração e manutenção do LND', 'O instalador define o alias inicial. Editar alias, cor, rede e reiniciar pela tela ficam fora deste perfil.'),
                 ('upgrades', 'unsupported', 'Upgrades de LND e LOS pela interface', ''),
                 ('external', 'unsupported', 'Apps da loja e integrações externas', ''),
             ],
@@ -155,7 +184,7 @@ def add_lab_notice(html):
                 ('utxo-management', 'validated', 'Organize UTXOs', 'Authenticated API: labels, tags, colors, group create/assign/detach/delete; original state restored.'),
                 ('utxo-lock', 'validated', 'Lock and unlock UTXOs', 'Output stays visible with its lock icon and metadata; UI release and expiry checked against LND. Spending previews still exclude leased outputs. Corrected #349.'),
                 ('audit-log', 'validated', 'Audit Log', 'Authenticated API: lock/release recorded and queried by action, target and limit; unauthenticated access rejected.'),
-                ('lnd-config', 'unsupported', 'LND configuration and maintenance', 'Name/alias, color, networking and restart controls.'),
+                ('lnd-config', 'unsupported', 'Edit LND configuration and maintenance', 'The installer sets the initial alias. UI alias/color/network editing and restart controls remain outside this profile.'),
                 ('upgrades', 'unsupported', 'LND and LOS upgrades through the UI', ''),
                 ('external', 'unsupported', 'App Store and external integrations', ''),
             ],
@@ -249,15 +278,7 @@ def configure(args):
         exists = subprocess.check_output(['runuser', '-u', 'postgres', '--', 'psql', '-At', '-c', f"select 1 from pg_database where datname='{role}';"], text=True).strip()
         if not exists:
             run('runuser', '-u', 'postgres', '--', 'createdb', '-O', role, role)
-        tlskey = folder / 'server.key'
-        cert = folder / 'server.crt'
-        if not cert.exists():
-            run('openssl', 'req', '-new', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=localhost',
-                '-keyout', str(tlskey), '-out', str(folder / 'server.csr'))
-            ext = folder / 'certificate.ext'
-            ext.write_text('subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n')
-            run('openssl', 'x509', '-req', '-in', str(folder / 'server.csr'), '-CA', str(ca), '-CAkey', '/etc/los-regtest/ca.key',
-                '-CAcreateserial', '-out', str(cert), '-days', '3650', '-extfile', str(ext))
+        ensure_panel_certificate(folder, ca, spec['hostname'])
         config = {'server': {'host': '127.0.0.1', 'port': port, 'tls_cert': '/etc/lightningos/server.crt', 'tls_key': '/etc/lightningos/server.key'},
                   'lnd': {'grpc_host': '127.0.0.1:' + str(grpc), 'tls_cert_path': f'/var/lib/los-regtest/{node}/tls.cert',
                           'admin_macaroon_path': f'/var/lib/los-regtest/{node}/data/chain/bitcoin/regtest/admin.macaroon'},

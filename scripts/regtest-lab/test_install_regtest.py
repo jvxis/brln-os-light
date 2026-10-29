@@ -63,7 +63,7 @@ class LabNoticeTests(unittest.TestCase):
         self.assertEqual(sum(tag == 'script' for tag, _ in dom.elements), 1, 'notice must not add scripts')
         self.assertIn('REGTEST | LOS', result)
         self.assertIn('Not supported', result)
-        self.assertIn('Name/alias', result)
+        self.assertIn('The installer sets the initial alias', result)
         self.assertIn('GitHub', result)
         operations = {attrs['data-lab-operation']: attrs.get('data-lab-status')
                       for tag, attrs in dom.elements if tag == 'tr' and 'data-lab-operation' in attrs}
@@ -100,6 +100,25 @@ class LabNoticeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'cannot be safely adopted'):
                 self.module.database_password(credential, env, 'los_regtest_charlie')
             self.assertFalse(credential.exists())
+
+    def test_panel_certificate_adds_independent_hostname_without_rotating_private_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); folder = root / 'alice'; folder.mkdir()
+            ca = root / 'ca.crt'
+            self.module.run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+                            '-subj', '/CN=regtest fixture', '-keyout', str(root / 'ca.key'), '-out', str(ca))
+            self.module.ensure_panel_certificate(folder, ca, 'localhost')
+            original_key = (folder / 'server.key').read_bytes()
+            self.module.ensure_panel_certificate(folder, ca, 'alice.localhost')
+            cert = folder / 'server.crt'
+            self.assertEqual((folder / 'server.key').read_bytes(), original_key)
+            self.module.run('openssl', 'verify', '-CAfile', str(ca), '-verify_hostname', 'alice.localhost', str(cert))
+            self.module.run('openssl', 'verify', '-CAfile', str(ca), '-verify_ip', '127.0.0.1', str(cert))
+            mismatch = subprocess.run(['openssl', 'verify', '-CAfile', str(ca), '-verify_hostname', 'bob.localhost', str(cert)], capture_output=True)
+            self.assertNotEqual(mismatch.returncode, 0, 'one node certificate must not claim another node hostname')
+            original_cert = cert.read_bytes()
+            self.module.ensure_panel_certificate(folder, ca, 'alice.localhost')
+            self.assertEqual(cert.read_bytes(), original_cert, 'repeat must retain an already correct certificate')
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'requires Linux /proc executable identity')

@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env python3
 """Explicit, opt-in native regtest checks; never runs during an installation.
 
-Requires an already configured Alice/Bob lab. Signs a public test message and
+Requires an already configured Alice/Bob/Charlie lab. Signs a public test message and
 temporarily edits metadata/groups and leases one unlocked output per node.
 Restores those edits in finally blocks; creates no payments or channels.
 """

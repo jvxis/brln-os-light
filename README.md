@@ -1087,9 +1087,9 @@ Open the three panels:
 
 | Node alias | Panel through SSH |
 | --- | --- |
-| `LOS-Regtest-Alice` | `https://127.0.0.1:19043` |
-| `LOS-Regtest-Bob` | `https://127.0.0.1:19053` |
-| `LOS-Regtest-Charlie` | `https://127.0.0.1:19063` |
+| `LOS-Regtest-Alice` | `https://alice.localhost:19043` |
+| `LOS-Regtest-Bob` | `https://bob.localhost:19053` |
+| `LOS-Regtest-Charlie` | `https://charlie.localhost:19063` |
 
 All three native LNDs and LOS panels start automatically at boot. Each has its
 own wallet, login, TLS key, state and database. A fresh lab starts with a triangle
@@ -1100,6 +1100,12 @@ Repeated installation reuses existing/pending channels and preserves extra user
 channels. Old built-in aliases migrate to the names above; custom aliases remain.
 Alias migration can briefly restart an affected lab LND. Production installers
 and mainnet aliases are unaffected.
+
+Use the distinct `*.localhost` browser names above so the three login cookies do
+not overwrite one another. Browsers resolve them to loopback without editing DNS
+or the hosts file. Keep the SSH forwards bound to `127.0.0.1`. When upgrading an
+older lab, the existing CA and private TLS keys are retained; leaf certificates
+are reissued only as needed to cover the per-node names.
 
 Copy the **public** CA `/etc/los-regtest/ca.crt` over verified SSH and trust it in
 your test browser; keep TLS verification enabled. Retrieve each UI password

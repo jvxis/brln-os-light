@@ -3,9 +3,9 @@ import re
 import sys
 
 NODES = {
-    'alice': {'alias': 'LOS-Regtest-Alice', 'grpc': 10009, 'rest': 8080, 'p2p': 9735, 'ui': 8443},
-    'bob': {'alias': 'LOS-Regtest-Bob', 'grpc': 11009, 'rest': 8180, 'p2p': 9835, 'ui': 8543},
-    'charlie': {'alias': 'LOS-Regtest-Charlie', 'grpc': 12009, 'rest': 8280, 'p2p': 9935, 'ui': 8643},
+    'alice': {'alias': 'LOS-Regtest-Alice', 'hostname': 'alice.localhost', 'grpc': 10009, 'rest': 8080, 'p2p': 9735, 'ui': 8443},
+    'bob': {'alias': 'LOS-Regtest-Bob', 'hostname': 'bob.localhost', 'grpc': 11009, 'rest': 8180, 'p2p': 9835, 'ui': 8543},
+    'charlie': {'alias': 'LOS-Regtest-Charlie', 'hostname': 'charlie.localhost', 'grpc': 12009, 'rest': 8280, 'p2p': 9935, 'ui': 8643},
 }
 CHANNEL_PAIRS = (('alice', 'bob'), ('bob', 'charlie'), ('charlie', 'alice'))
 

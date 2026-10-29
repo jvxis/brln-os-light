@@ -99,9 +99,10 @@ cat <<'EOF'
 REGTEST developer lab ready. Coins have no value.
 Forward ports over verified SSH (replace user@lab-host):
   ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 -L 127.0.0.1:19063:127.0.0.1:8643 user@lab-host
-LOS-Regtest-Alice:   https://127.0.0.1:19043
-LOS-Regtest-Bob:     https://127.0.0.1:19053
-LOS-Regtest-Charlie: https://127.0.0.1:19063
+LOS-Regtest-Alice:   https://alice.localhost:19043
+LOS-Regtest-Bob:     https://bob.localhost:19053
+LOS-Regtest-Charlie: https://charlie.localhost:19063
+Use these distinct browser hostnames to keep all three login cookies separate.
 Public certificate authority: /etc/los-regtest/ca.crt
 Private UI passwords: /etc/los-regtest/{alice,bob,charlie}/ui-password
 Mine confirmations: sudo python3 /opt/los-regtest/control.py mine 6

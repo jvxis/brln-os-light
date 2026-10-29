@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { financialOperationLabel } from '../utils/financialOperationLabel'
 import { reauthAuth } from '../api'
 import { subscribeFinancialConfirmation, type FinancialConfirmation } from '../financialIntents'
 import SensitiveActionModal from './SensitiveActionModal'
@@ -27,7 +28,6 @@ export default function FinancialIntentConfirmation() {
   }, [task])
   if (!task) return <PendingFinancialOperations confirming={false} />
   const intent = task.intent
-  const closing = intent.summary.operation === 'lnops/channel/close'
   const summary = intent.summary
   const expired = now >= Date.parse(intent.expires_at)
   const number = (value: number | string) => (typeof value === 'string' ? BigInt(value) : value).toLocaleString(i18n.language)
@@ -44,9 +44,6 @@ export default function FinancialIntentConfirmation() {
       setError(failure?.message || (pt ? 'Não foi possível confirmar.' : 'Confirmation failed.'))
     } finally { setBusy(false) }
   }
-  const labels: Record<string, string> = pt
-    ? { onchain_send: 'Envio on-chain', chat_keysend: 'Mensagem com pagamento', channel_open: 'Abrir canal', channel_open_batch: 'Abrir canais', 'wallet/pay': 'Pagamento Lightning', 'wallet/pay/mpp': 'Pagamento Lightning MPP', 'wallet/pay/validated-route': 'Pagamento por rota validada' }
-    : { onchain_send: 'On-chain transfer', chat_keysend: 'Message with payment', channel_open: 'Open channel', channel_open_batch: 'Open channels', 'wallet/pay': 'Lightning payment', 'wallet/pay/mpp': 'Lightning MPP payment', 'wallet/pay/validated-route': 'Validated route payment' }
   return <SensitiveActionModal
     open title={pt ? 'Confirmar operação' : 'Confirm operation'}
     description={pt ? 'Confira os dados. Sua senha autoriza uma execução desta operação.' : 'Review these details. Your password authorizes one execution of this operation.'}
@@ -56,7 +53,7 @@ export default function FinancialIntentConfirmation() {
     onPasswordChange={setPassword} onConfirm={approve} onClose={() => task.cancel()}
   >
     <dl className="mt-4 space-y-2 text-sm break-words" data-testid="financial-intent-summary">
-      <div><dt className="text-fog/55">{pt ? 'Operação' : 'Operation'}</dt><dd>{closing ? (summary.fee_mode === 'existing_commitment' ? (pt ? 'Forçar fechamento de canal' : 'Force-close channel') : (pt ? 'Fechar canal cooperativamente' : 'Cooperatively close channel')) : (labels[summary.operation] || summary.operation)}</dd></div>
+      <div><dt className="text-fog/55">{pt ? 'Operação' : 'Operation'}</dt><dd>{financialOperationLabel(summary.operation, summary.fee_mode, pt)}</dd></div>
       {summary.destination && <div><dt className="text-fog/55">{pt ? 'Destino' : 'Destination'}</dt><dd className="font-mono">{summary.destination}</dd></div>}
       {summary.amount_mode === 'selected_maximum'
         ? <div><dt className="text-fog/55">{pt ? 'Valor' : 'Amount'}</dt><dd>{pt ? 'Máximo disponível nas entradas selecionadas, respeitando a reserva do LND' : 'Maximum available from selected inputs, preserving the LND reserve'}</dd></div>

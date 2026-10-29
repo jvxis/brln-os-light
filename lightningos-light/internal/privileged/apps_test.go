@@ -358,12 +358,12 @@ func TestComposeAppPrepareBitcoinCoreImageUsesVerifiedLocalBuild(t *testing.T) {
 	script := command.args[7]
 	for _, expected := range []string{
 		"https://bitcoincore.org/bin/bitcoin-core-31.2/SHA256SUMS",
-		"b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+		"2f38996afaa74dfa469a23bf4727887133dfc09784df1f21ddf1c74d0dc82300",
 		"--status-fd 1 --verify",
 		"signature_count",
 		"-ge 3",
 		"docker build --pull --no-cache --network=none",
-		"lightningos/bitcoin-core:31.1",
+		"lightningos/bitcoin-core:31.2",
 		"image-attestation",
 	} {
 		if !strings.Contains(script, expected) {

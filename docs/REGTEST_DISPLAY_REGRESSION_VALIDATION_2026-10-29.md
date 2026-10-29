@@ -58,6 +58,10 @@ The refinement has identical frontend files to the first candidate.
 - Deployment preserved native LND PIDs, identities, existing channel sets,
   configuration, passwords and rebalance defaults. It replaced only Manager/UI
   artifacts, without rerunning native provisioning or reopening closed channels.
+- The deployed three-panel lab also passed actual browser login/sidebar/activity
+  checks over normally verified HTTPS. Its native balances, existing channel
+  sets, passwords and TLS keys were preserved. The additional isolated test
+  environment was stopped after validation.
 
 ## Scope limits
 

@@ -102,6 +102,10 @@ def tick():
         return
     # A stale or redirected RPC must never generate a block on another network.
     control.checked_lab()
+    # Core may restart without loading this wallet. Reuse only the existing
+    # fixture wallet; never initialize wallets or fund/open channels here.
+    if 'los-regtest-miner' not in control.btc('listwallets'):
+        control.btc('loadwallet', 'los-regtest-miner')
     control.mine(1)
     print('Mined one local regtest block (coins have no value).')
 

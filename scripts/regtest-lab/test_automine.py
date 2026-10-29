@@ -25,7 +25,7 @@ class AutomineTests(unittest.TestCase):
                 mine.assert_not_called()
 
     def test_tick_mines_exactly_one_and_paused_tick_does_not_call_rpc(self):
-        with tempfile.TemporaryDirectory() as folder, patch.object(automine, 'CONFIG', Path(folder)), patch.object(automine, 'local_guard'), patch.object(automine.control, 'checked_lab') as check, patch.object(automine.control, 'mine') as mine:
+        with tempfile.TemporaryDirectory() as folder, patch.object(automine, 'CONFIG', Path(folder)), patch.object(automine, 'local_guard'), patch.object(automine.control, 'checked_lab') as check, patch.object(automine.control, 'btc', return_value=['los-regtest-miner']), patch.object(automine.control, 'mine') as mine:
             automine.tick()
             check.assert_called_once()
             mine.assert_called_once_with(1)
@@ -33,6 +33,16 @@ class AutomineTests(unittest.TestCase):
             check.reset_mock(); mine.reset_mock()
             automine.tick()
             check.assert_not_called(); mine.assert_not_called()
+
+    def test_tick_reloads_existing_miner_wallet_after_core_restart(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(automine, 'CONFIG', Path(folder)), patch.object(automine, 'local_guard'), patch.object(automine.control, 'checked_lab'), patch.object(automine.control, 'btc', side_effect=[[], {}]) as btc, patch.object(automine.control, 'mine') as mine:
+            automine.tick()
+            self.assertEqual([call.args for call in btc.call_args_list], [('listwallets',), ('loadwallet', 'los-regtest-miner')])
+            mine.assert_called_once_with(1)
+        with tempfile.TemporaryDirectory() as folder, patch.object(automine, 'CONFIG', Path(folder)), patch.object(automine, 'local_guard'), patch.object(automine.control, 'checked_lab'), patch.object(automine.control, 'btc', side_effect=[[], RuntimeError('missing wallet')]), patch.object(automine.control, 'mine') as mine:
+            with self.assertRaises(RuntimeError):
+                automine.tick()
+            mine.assert_not_called()
 
     def test_local_guard_refuses_production_or_missing_marker(self):
         with patch.object(automine.safety, 'check', side_effect=RuntimeError('Existing production service')), patch.object(automine.control, 'mine') as mine:

@@ -12,11 +12,12 @@ from pathlib import Path
 
 from control import checked_lab
 from safety import check
+from nodes import NODES
 
 ROOT = Path('/opt/los-regtest')
 BACKUP = ROOT / '.deployment-backup'
 ASSETS = ['bin/lightningos-manager', 'ui', 'source.json']
-UNITS = ['los-regtest-ui-alice', 'los-regtest-ui-bob']
+UNITS = ['los-regtest-ui-' + node for node in NODES]
 
 
 def run(*args):

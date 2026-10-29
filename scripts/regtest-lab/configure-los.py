@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure two restricted LOS processes using explicitly supplied lab artifacts."""
+"""Configure three restricted LOS processes using explicitly supplied lab artifacts."""
 import argparse
 import hashlib
 import json
@@ -13,6 +13,7 @@ import tarfile
 from pathlib import Path
 
 from control import checked_lab, wait_info
+from nodes import NODES
 
 
 def run(*args, input=None):
@@ -162,7 +163,7 @@ def add_lab_notice(html):
 
 def configure(args):
     checked_lab()
-    for node in ['alice', 'bob']:
+    for node in NODES:
         wait_info(node)
     if Path('/etc/lightningos/config.yaml').exists():
         raise RuntimeError('Refusing existing production LOS configuration')
@@ -176,10 +177,10 @@ def configure(args):
     destination = Path('/opt/los-regtest')
     installed = destination / 'bin/lightningos-manager'
     if not installed.exists() or hashlib.sha256(installed.read_bytes()).hexdigest() != args.manager_sha256:
-        for node in ['alice', 'bob']:
+        for node in NODES:
             active = subprocess.run(['systemctl', 'is-active', '--quiet', 'los-regtest-ui-' + node]).returncode == 0
             if active:
-                raise RuntimeError('Stop the two lab UI units before changing their artifact')
+                raise RuntimeError('Stop all lab UI units before changing their artifact')
         staged = destination / 'bin/lightningos-manager.new'
         shutil.copyfile(binary, staged)
         staged.chmod(0o755)
@@ -209,7 +210,8 @@ def configure(args):
     if state_target.exists() and any(state_target.iterdir()):
         raise RuntimeError('Refusing existing host LOS state')
     state_target.mkdir(mode=0o755, exist_ok=True)
-    for node, grpc, port in [('alice', 10009, 8443), ('bob', 11009, 8543)]:
+    for node, spec in NODES.items():
+        grpc, port = spec['grpc'], spec['ui']
         folder = Path('/etc/los-regtest') / node / 'lightningos'
         folder.mkdir(parents=True, mode=0o700, exist_ok=True)
         state = Path('/var/lib/los-regtest') / node / 'los-state'
@@ -282,8 +284,8 @@ WantedBy=multi-user.target
     (destination / 'source.json').write_text(json.dumps({'source_commit': args.source_commit, 'manager_sha256': args.manager_sha256,
                                                        'ui_sha256': args.ui_sha256, 'network': 'regtest'}, indent=2))
     run('systemctl', 'daemon-reload')
-    run('systemctl', 'enable', '--now', 'los-regtest-ui-alice', 'los-regtest-ui-bob')
-    print('Configured two local HTTPS LOS instances. Login setup remains required; production installers unchanged.')
+    run('systemctl', 'enable', '--now', *('los-regtest-ui-' + node for node in NODES))
+    print('Configured three local HTTPS LOS instances. Login setup remains required; production installers unchanged.')
 
 
 if __name__ == '__main__':

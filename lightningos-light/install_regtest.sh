@@ -8,7 +8,7 @@ usage() {
 Usage: sudo ./lightningos-light/install_regtest.sh --disposable-host
 
 Install a developer lab on a dedicated Ubuntu 24.04 amd64 VM named los-regtest.
-Builds this committed checkout, native Bitcoin and two LND/LOS instances.
+Builds this committed checkout, native Bitcoin and three LND/LOS instances.
 Requires Internet access. Repeated runs preserve wallets and login credentials.
 Each successful run performs small transfers of worthless regtest coins.
 Production nodes, App Store lifecycle and the production updater are unsupported.
@@ -81,7 +81,7 @@ runuser -u los-regtest-build -- env -i HOME=/var/lib/los-regtest-build \
   ' build "$BUILD"
 
 # Native helpers remain separate from all production installers and services.
-for file in control.py configure-los.py verify-los.py safety.py deploy.py; do
+for file in nodes.py control.py configure-los.py verify-los.py safety.py deploy.py; do
   install -o root -g root -m 0755 "$LAB/$file" "/opt/los-regtest/$file"
 done
 bash "$LAB/provision.sh"
@@ -98,9 +98,11 @@ cat <<'EOF'
 
 REGTEST developer lab ready. Coins have no value.
 Forward ports over verified SSH (replace user@lab-host):
-  ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 user@lab-host
-Alice: https://127.0.0.1:19043   Bob: https://127.0.0.1:19053
+  ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 -L 127.0.0.1:19063:127.0.0.1:8643 user@lab-host
+LOS-Regtest-Alice:   https://127.0.0.1:19043
+LOS-Regtest-Bob:     https://127.0.0.1:19053
+LOS-Regtest-Charlie: https://127.0.0.1:19063
 Public certificate authority: /etc/los-regtest/ca.crt
-Private UI passwords: /etc/los-regtest/{alice,bob}/ui-password
+Private UI passwords: /etc/los-regtest/{alice,bob,charlie}/ui-password
 Mine confirmations: sudo python3 /opt/los-regtest/control.py mine 6
 EOF

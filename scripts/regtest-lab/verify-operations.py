@@ -11,6 +11,7 @@ import time
 from urllib.parse import urlencode
 
 from control import checked_lab, ln, wait_info
+from nodes import NODES, CHANNEL_PAIRS
 
 
 def require(condition, message):
@@ -33,7 +34,8 @@ def verify():
     spec = importlib.util.spec_from_file_location('verify_los', Path(__file__).with_name('verify-los.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    for node, port, peer in [('alice', 8443, 'bob'), ('bob', 8543, 'alice')]:
+    for node, peer in CHANNEL_PAIRS:
+        port = NODES[node]['ui']
         info = wait_info(node)
         api = module.LabAPI(node, port)
         api.call('/api/onchain/utxos', expected=401)

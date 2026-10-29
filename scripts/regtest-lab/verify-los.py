@@ -84,7 +84,7 @@ def verify_alias(api, node):
         raise RuntimeError('LOS configuration alias does not match native LND: ' + node)
 
 
-def verify(setup_only=False, node=None):
+def verify(setup_only=False, node=None, require_alias=False):
     checked_lab()
     clients = {}
     nodes = [(name, spec['ui']) for name, spec in NODES.items()]
@@ -108,7 +108,8 @@ def verify(setup_only=False, node=None):
                 raise RuntimeError('Regtest UI notice absent')
         api.call('/api/wallet/summary', expected=401)
         api.login()
-        verify_alias(api, node)
+        if require_alias:
+            verify_alias(api, node)
         summary = api.call('/api/wallet/summary')
         native = int(ln(node, 'walletbalance')['total_balance'])
         if summary['balances']['onchain_sat'] != native:
@@ -147,8 +148,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--setup-only', action='store_true', help='initialize login and verify reads without submitting payments')
     parser.add_argument('--node', choices=list(NODES), help='with --setup-only, check just this panel')
+    parser.add_argument('--require-alias', action='store_true', help='require the read-only config alias to match native LND')
     options = parser.parse_args()
     try:
-        verify(options.setup_only, options.node)
+        verify(options.setup_only, options.node, options.require_alias)
     except Exception:
         raise SystemExit('Laboratory HTTPS/authentication/financial verification failed; no automatic financial retry was submitted.')

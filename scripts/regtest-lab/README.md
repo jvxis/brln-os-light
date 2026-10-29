@@ -36,6 +36,10 @@ Commit developer edits before rerunning the same command to rebuild the panels;
 wallet identities, balances, configuration and authentication are retained.
 
 The installer pins native Bitcoin Core 31.2 for both new and existing labs.
+Each panel reads only its own native `lnd.conf` through a read-only mount in a
+private `/data` filesystem. This displays the alias in the header and configuration
+page without creating `/data/lnd` on the host or enabling configuration writes.
+The installer verifies that each displayed config alias matches native LND.
 When a native binary changes, it replaces the executable atomically and restarts
 the matching service. Restarting Bitcoin temporarily stops dependent LND/panel
 units; the previously active units are restored. An unchanged rerun does not

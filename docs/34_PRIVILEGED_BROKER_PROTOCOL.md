@@ -426,7 +426,7 @@ slice does not alter local/remote Bitcoin selection, RPC credentials, or LND.
 
 Bitcoin Core uses the same operations with the additional closed variant
 `{"app_id":"bitcoincore","variant":"node"}`, but it never executes a
-registry pull. The broker maps that variant to release 31.1 and one
+registry pull. The broker maps that variant to release 31.2 and one
 architecture record containing the official archive name and SHA-256 plus a
 Debian slim base pinned by platform digest. It downloads `SHA256SUMS`,
 `SHA256SUMS.asc`, the archive from `bitcoincore.org`, and seven Guix builder
@@ -437,7 +437,7 @@ must be present verbatim, and the downloaded archive must match the embedded
 SHA-256.
 
 Only after those checks does the transient unit build
-`lightningos/bitcoin-core:31.1` locally using the pinned base. The Dockerfile
+`lightningos/bitcoin-core:31.2` locally using the pinned base. The Dockerfile
 has no package installation or downloader and build `RUN` steps use
 `--network=none`. The resulting entrypoint drops bitcoind to UID/GID 101. A
 successful version probe is followed by an atomic root-only attestation under

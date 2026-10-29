@@ -57,7 +57,7 @@ func TestBitcoinCoreImageStatusRejectsUnattestedOrMismatchedImages(t *testing.T)
 	}{
 		{name: "missing attestation"},
 		{name: "insufficient signatures", attestation: bitcoinCoreTestAttestation(artifact, testBitcoinCoreImageID, appmanifest.BitcoinCoreSignatureThreshold-1)},
-		{name: "wrong release", attestation: strings.Replace(bitcoinCoreTestAttestation(artifact, testBitcoinCoreImageID, 3), "release=31.1", "release=31.0", 1)},
+		{name: "wrong release", attestation: strings.Replace(bitcoinCoreTestAttestation(artifact, testBitcoinCoreImageID, 3), "release="+appmanifest.BitcoinCoreRelease, "release=31.0", 1)},
 		{name: "wrong archive", attestation: strings.Replace(bitcoinCoreTestAttestation(artifact, testBitcoinCoreImageID, 3), artifact.ArchiveSHA256, strings.Repeat("b", 64), 1)},
 		{name: "wrong base", attestation: strings.Replace(bitcoinCoreTestAttestation(artifact, testBitcoinCoreImageID, 3), artifact.BaseImage, "debian:bookworm-slim@sha256:"+strings.Repeat("c", 64), 1)},
 		{name: "wrong image id", attestation: bitcoinCoreTestAttestation(artifact, testBitcoinCoreImageID, 3), inspectID: "sha256:" + strings.Repeat("d", 64)},

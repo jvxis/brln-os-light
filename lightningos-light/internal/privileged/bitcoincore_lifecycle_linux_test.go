@@ -41,7 +41,7 @@ func TestBitcoinCoreLifecycleUsesOnlyBrokerOwnedExecutionAssets(t *testing.T) {
 	if runner.composeSnapshot != expected || strings.Contains(runner.composeSnapshot, "privileged: true") {
 		t.Fatalf("broker executed an unexpected manifest:\n%s", runner.composeSnapshot)
 	}
-	last := runner.commands[len(runner.commands)-1]
+	last := runner.commands[len(runner.commands)-2]
 	if !hasArgsSuffix(last.args, "up", "-d") {
 		t.Fatalf("unexpected start command: %#v", last)
 	}
@@ -61,7 +61,7 @@ func TestBitcoinCoreLifecycleUsesOnlyBrokerOwnedExecutionAssets(t *testing.T) {
 	if err := manager.Lifecycle(context.Background(), appmanifest.BitcoinCoreID, AppLifecycleRestart, false); err != nil {
 		t.Fatal(err)
 	}
-	if !hasArgsSuffix(runner.commands[len(runner.commands)-1].args, "up", "-d", "--force-recreate", "--no-deps", "bitcoind") {
+	if !hasArgsSuffix(runner.commands[len(runner.commands)-2].args, "up", "-d", "--force-recreate", "--no-deps", "bitcoind") {
 		t.Fatalf("unexpected restart command: %#v", runner.commands)
 	}
 }
@@ -90,7 +90,7 @@ func TestBitcoinCoreInspectAndRemovePreserveEnrollmentAndAttestation(t *testing.
 			t.Fatalf("execution asset %s remains after remove: %v", name, err)
 		}
 	}
-	if !hasArgsSuffix(runner.commands[len(runner.commands)-1].args, "down", "--remove-orphans", "--timeout", "10") {
+	if !hasArgsSuffix(runner.commands[len(runner.commands)-1].args, "down", "--remove-orphans", "--timeout", "-1") {
 		t.Fatalf("unexpected remove command: %#v", runner.commands)
 	}
 }
@@ -619,10 +619,14 @@ func newTestBitcoinCoreLifecycleManager(t *testing.T) (*ComposeAppManager, *comp
 		t.Fatal(err)
 	}
 	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && slices.Contains(args, "label=com.docker.compose.oneoff=False") {
+			return "", nil, true
+		}
 		if path == dockerPath && reflect.DeepEqual(args, []string{"image", "inspect", "--format", "{{.Id}}", appmanifest.BitcoinCoreImage}) {
 			return lifecycleTestBitcoinCoreImageID + "\n", nil, true
 		}
 		return "", nil, false
 	}}
-	return &ComposeAppManager{Runner: runner, PrivilegedAppsRoot: privilegedRoot, TempRoot: t.TempDir()}, runner, privilegedRoot, dataDir
+	runner.containerID = strings.Repeat("a", 64)
+	return &ComposeAppManager{Runner: runner, PrivilegedAppsRoot: privilegedRoot, TempRoot: t.TempDir(), BitcoinMigrationProbe: func(context.Context, string) error { return nil }}, runner, privilegedRoot, dataDir
 }

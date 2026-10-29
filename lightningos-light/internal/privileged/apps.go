@@ -902,6 +902,9 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 		args = append(args, "stop", "--timeout", strconv.Itoa(manifest.StopTimeoutSeconds))
 	case AppLifecycleRestart:
 		if manifest.ID == appmanifest.BitcoinCoreID {
+			if err := stopCatalogApp(ctx, manager.Runner, manifest.ID, false); err != nil {
+				return err
+			}
 			// A plain `compose restart` keeps the legacy container image and
 			// declaration. Recreate the single service so upgrades actually cut
 			// over to the broker-attested Bitcoin Core image and storage guard.
@@ -933,6 +936,19 @@ func (manager *ComposeAppManager) Lifecycle(ctx context.Context, appID string, a
 			return manager.rollbackLegacyBitcoinMigration(ctx, commandPath, prefix, executionArgs, manifest, legacyBitcoin, probeErr)
 		}
 		_, _ = manager.Runner.Run(ctx, dockerPath, "image", "rm", bitcoinCoreLegacyRollbackImage)
+	}
+	if manifest.ID == appmanifest.BitcoinCoreID && legacyBitcoin == nil {
+		probe := manager.BitcoinMigrationProbe
+		if probe == nil {
+			probe = manager.probeMigratedBitcoinCore
+		}
+		containerID, err := manager.catalogRunningContainerID(ctx, manifest)
+		if err != nil || containerID == "" {
+			return errors.New("Bitcoin Core started but its running container could not be verified; retry Start after checking its status")
+		}
+		if err := probe(ctx, containerID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1202,12 +1218,12 @@ func (manager *ComposeAppManager) Inspect(ctx context.Context, appID string) (Ap
 		return manager.inspectCatalogRuntime(ctx, manifest, false)
 	case appmanifest.BitcoinCoreID:
 		runtime, found, runtimeErr := manager.inspectBitcoinCoreCatalogRuntime(ctx)
-		if runtimeErr == nil && found && isLegacyBitcoinCoreImage(runtime.ImageRef) {
+		if runtimeErr == nil && found && (isLegacyBitcoinCoreImage(runtime.ImageRef) || isPreviousManagedBitcoinCoreImage(runtime.ImageRef)) {
 			status := "stopped"
 			if runtime.Running {
 				status = "running"
 			}
-			return AppInspection{Status: status, LegacyMigrationRequired: true}, nil
+			return AppInspection{Status: status, LegacyMigrationRequired: isLegacyBitcoinCoreImage(runtime.ImageRef)}, nil
 		}
 		snapshot, cleanup, err := manager.createBitcoinCoreInspectionSnapshot(ctx)
 		if err != nil {

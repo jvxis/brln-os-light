@@ -89,7 +89,7 @@ func (manager *ComposeAppManager) BitcoinCoreStatus(ctx context.Context) (Bitcoi
 		// writes still require full broker enrollment and attestation.
 		runtimeState, found, inspectErr := manager.inspectBitcoinCoreCatalogRuntime(ctx)
 		if inspectErr != nil || !found || !runtimeState.Running ||
-			(runtimeState.ImageRef != appmanifest.BitcoinCoreImage && !isLegacyBitcoinCoreImage(runtimeState.ImageRef)) {
+			(runtimeState.ImageRef != appmanifest.BitcoinCoreImage && !isLegacyBitcoinCoreImage(runtimeState.ImageRef) && !isPreviousManagedBitcoinCoreImage(runtimeState.ImageRef)) {
 			return state, errors.New("bitcoin core runtime cannot be safely observed")
 		}
 		containerID = runtimeState.ContainerID

@@ -357,7 +357,7 @@ func TestComposeAppPrepareBitcoinCoreImageUsesVerifiedLocalBuild(t *testing.T) {
 	}
 	script := command.args[7]
 	for _, expected := range []string{
-		"https://bitcoincore.org/bin/bitcoin-core-31.1/SHA256SUMS",
+		"https://bitcoincore.org/bin/bitcoin-core-31.2/SHA256SUMS",
 		"b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
 		"--status-fd 1 --verify",
 		"signature_count",

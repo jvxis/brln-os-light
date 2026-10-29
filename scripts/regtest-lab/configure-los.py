@@ -147,7 +147,7 @@ def add_lab_notice(html):
                 ('utxo-management', 'validated', 'Organizar UTXOs', 'API autenticada: etiquetas, tags, cores, criar/atribuir/remover grupos; estado original restaurado.'),
                 ('utxo-lock', 'validated', 'Bloquear e desbloquear UTXOs', 'Moeda permanece visível com cadeado e metadados; desbloqueio pela interface e expiração conferidos no LND. As prévias de gasto continuam excluindo moedas bloqueadas. Corrigida a #349.'),
                 ('audit-log', 'validated', 'Audit Log', 'API autenticada: bloqueio/desbloqueio registrado e consulta por ação, alvo e limite; acesso sem login recusado.'),
-                ('lnd-config', 'unsupported', 'Editar configuração e manutenção do LND', 'O instalador define o alias inicial. Editar alias, cor, rede e reiniciar pela tela ficam fora deste perfil.'),
+                ('lnd-config', 'unsupported', 'Editar configuração e manutenção do LND', 'O alias nativo aparece no cabeçalho e na leitura da configuração. Editar alias, cor, rede e reiniciar pela tela ficam fora deste perfil.'),
                 ('upgrades', 'unsupported', 'Upgrades de LND e LOS pela interface', ''),
                 ('external', 'unsupported', 'Apps da loja e integrações externas', ''),
             ],
@@ -184,7 +184,7 @@ def add_lab_notice(html):
                 ('utxo-management', 'validated', 'Organize UTXOs', 'Authenticated API: labels, tags, colors, group create/assign/detach/delete; original state restored.'),
                 ('utxo-lock', 'validated', 'Lock and unlock UTXOs', 'Output stays visible with its lock icon and metadata; UI release and expiry checked against LND. Spending previews still exclude leased outputs. Corrected #349.'),
                 ('audit-log', 'validated', 'Audit Log', 'Authenticated API: lock/release recorded and queried by action, target and limit; unauthenticated access rejected.'),
-                ('lnd-config', 'unsupported', 'Edit LND configuration and maintenance', 'The installer sets the initial alias. UI alias/color/network editing and restart controls remain outside this profile.'),
+                ('lnd-config', 'unsupported', 'Edit LND configuration and maintenance', 'The native alias is visible in the header and read-only configuration view. UI alias/color/network editing and restart controls remain outside this profile.'),
                 ('upgrades', 'unsupported', 'LND and LOS upgrades through the UI', ''),
                 ('external', 'unsupported', 'App Store and external integrations', ''),
             ],
@@ -306,6 +306,10 @@ Group=los-regtest
 EnvironmentFile={env}
 BindPaths={folder}:/etc/lightningos
 BindPaths={state}:/var/lib/lightningos
+# Read native settings without exposing a writable production data path.
+# The destination exists only in this service's private mount namespace.
+TemporaryFileSystem=/data:ro
+BindReadOnlyPaths=/var/lib/los-regtest/{node}/lnd.conf:/data/lnd/lnd.conf
 ExecStartPre=/usr/bin/python3 /opt/los-regtest/control.py guard {node}
 ExecStart=/opt/los-regtest/bin/lightningos-manager --config=/etc/lightningos/config.yaml
 Restart=on-failure

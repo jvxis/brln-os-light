@@ -77,6 +77,13 @@ class LabAPI:
             raise RuntimeError('Lab authentication failed')
 
 
+def verify_alias(api, node):
+    expected = ln(node, 'getinfo')['alias']
+    current = api.call('/api/lnd/config').get('current', {}).get('alias')
+    if not expected or current != expected:
+        raise RuntimeError('LOS configuration alias does not match native LND: ' + node)
+
+
 def verify(setup_only=False, node=None):
     checked_lab()
     clients = {}
@@ -101,13 +108,14 @@ def verify(setup_only=False, node=None):
                 raise RuntimeError('Regtest UI notice absent')
         api.call('/api/wallet/summary', expected=401)
         api.login()
+        verify_alias(api, node)
         summary = api.call('/api/wallet/summary')
         native = int(ln(node, 'walletbalance')['total_balance'])
         if summary['balances']['onchain_sat'] != native:
             raise RuntimeError('LOS wallet balance does not match native LND')
         api.call('/api/lnops/channels')
         clients[node] = api
-        print('PASS: ' + node + ' verified HTTPS, REGTEST notice, login, native wallet balance and channels.')
+        print('PASS: ' + node + ' verified HTTPS, REGTEST notice, login, native alias, wallet balance and channels.')
     if setup_only:
         return
     for source, target in CHANNEL_PAIRS:

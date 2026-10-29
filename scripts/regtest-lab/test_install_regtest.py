@@ -18,6 +18,21 @@ import control
 import nodes
 
 
+class AliasViewTests(unittest.TestCase):
+    def test_setup_verification_requires_the_matching_native_alias(self):
+        spec = importlib.util.spec_from_file_location('verify_los_alias_test', Path(__file__).with_name('verify-los.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        api = SimpleNamespace(call=lambda endpoint: {'current': {'alias': 'LOS-Regtest-Alice'}})
+        with patch.object(module, 'ln', return_value={'alias': 'LOS-Regtest-Alice'}):
+            module.verify_alias(api, 'alice')
+        for wrong in ['', 'LOS-Regtest-Bob']:
+            api = SimpleNamespace(call=lambda endpoint: {'current': {'alias': wrong}})
+            with patch.object(module, 'ln', return_value={'alias': 'LOS-Regtest-Alice'}):
+                with self.assertRaises(RuntimeError):
+                    module.verify_alias(api, 'alice')
+
+
 @unittest.skipUnless(sys.platform == 'linux', 'requires Linux configure helper (pwd)')
 class LabNoticeTests(unittest.TestCase):
     def setUp(self):

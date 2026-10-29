@@ -13,6 +13,17 @@ class AutomineTests(unittest.TestCase):
                 automine.tick()
             mine.assert_not_called()
 
+    def test_real_network_guard_rejects_mainnet_rpc_response(self):
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder)/'LAB_ONLY'; marker.write_text('LOS_REGTEST_ONLY')
+            original_path = Path
+            def path(value):
+                return marker if value == '/etc/los-regtest/LAB_ONLY' else original_path(value)
+            with patch.object(automine, 'local_guard'), patch.object(automine.control, 'Path', side_effect=path), patch.object(automine.control.socket, 'gethostname', return_value='los-regtest'), patch.object(automine.control, 'btc', return_value={'chain': 'main'}), patch.object(automine.control, 'mine') as mine:
+                with self.assertRaisesRegex(RuntimeError, 'non-regtest'):
+                    automine.tick()
+                mine.assert_not_called()
+
     def test_tick_mines_exactly_one_and_paused_tick_does_not_call_rpc(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(automine, 'CONFIG', Path(folder)), patch.object(automine, 'local_guard'), patch.object(automine.control, 'checked_lab') as check, patch.object(automine.control, 'mine') as mine:
             automine.tick()

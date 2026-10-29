@@ -109,6 +109,6 @@ Public certificate authority: /etc/los-regtest/ca.crt
 Private UI passwords: /etc/los-regtest/{alice,bob,charlie}/ui-password
 Mine confirmations: sudo python3 /opt/los-regtest/control.py mine 6
 Automatic mining: one block every 60 seconds by default (existing interval/pause preserved).
-Controls: sudo python3 /opt/los-regtest/automine.py status|pause|resume
+Controls: sudo python3 /opt/los-regtest/automine.py status (or pause / resume)
 Change interval: sudo python3 /opt/los-regtest/automine.py interval 60
 EOF

@@ -309,3 +309,25 @@ authorized operation; provisioning never deletes a wallet or chain directory.
   historical evidence, not the validation report for the developer installer.
 
 Keep exact artifact digests and full runtime results outside the worktree.
+
+## Alias display regression, 2026-10-29
+
+On an existing Ubuntu 24.04 amd64 three-node lab (Bitcoin Core 31.2,
+LND 0.21.5-beta), the native aliases were correct but the authenticated
+configuration endpoint failed because the Manager could not see `lnd.conf`.
+The normal deployment helper was exercised with the read-only namespace mapping:
+
+- All 22 Python helper tests passed on Linux; Windows passed 9 and skipped the
+  13 Linux-only tests. The UI built with `npm ci` and `npm run build`.
+- All three authenticated configuration responses matched their native aliases;
+  an actual browser showed those aliases in both the header and LND Config.
+- Anonymous configuration reads were rejected and RPC/wallet passwords remained
+  hidden. Opening the mapped file for writing and creating a sibling file both
+  failed with `EROFS`, including as root inside the Manager namespace.
+- Native LND PIDs, identities, channel sets, configurations and private credential
+  hashes were unchanged; `/data/lnd` remained absent on the host. Only the three
+  Manager/UI services restarted, using the unchanged Manager binary.
+
+This targeted check did not repeat a complete fresh-chain installation or the
+financial test matrix. Production installers, Go/React source and mainnet
+services were unchanged by the alias fix.

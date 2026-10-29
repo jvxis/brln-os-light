@@ -295,6 +295,8 @@ func isAppHiddenFromStore(id string) bool {
 
 func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 	appID := chi.URLParam(r, "id")
+	w, finishAudit := s.auditBitcoinCoreOperation(w, r, appID, "install")
+	defer finishAudit()
 	if appID == "" {
 		writeError(w, http.StatusBadRequest, "missing app id")
 		return
@@ -526,6 +528,8 @@ func (s *Server) handleAppUninstall(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 	appID := chi.URLParam(r, "id")
+	w, finishAudit := s.auditBitcoinCoreOperation(w, r, appID, "start")
+	defer finishAudit()
 	if appID == "" {
 		writeError(w, http.StatusBadRequest, "missing app id")
 		return
@@ -634,6 +638,8 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAppStop(w http.ResponseWriter, r *http.Request) {
 	appID := chi.URLParam(r, "id")
+	w, finishAudit := s.auditBitcoinCoreOperation(w, r, appID, "stop")
+	defer finishAudit()
 	if appID == "" {
 		writeError(w, http.StatusBadRequest, "missing app id")
 		return

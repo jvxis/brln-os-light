@@ -977,6 +977,7 @@ POST /api/apps/{id}/start
   `confirm_bitcoin_restart` body and restart policy as installation.
 POST /api/apps/{id}/stop
 - Bitcoin Core shutdown uses an infinite Docker graceful-stop timeout (`-1`), so a request/broker deadline does not schedule SIGKILL. If the request expires, wait for shutdown and check/retry Stop before Start. No new payload is required; the UI asks for confirmation of the temporary Bitcoin connection interruption.
+- Bitcoin Core install/start/stop outcomes are also recorded in the UI Audit as `app.bitcoincore.install`, `app.bitcoincore.start` and `app.bitcoincore.stop`, with HTTP status, success/error and target catalog version. Request bodies and raw errors are excluded; broker audit remains independent.
 POST /api/apps/{id}/uninstall
 - Requires JSON body `{"confirm":true,"app_id":"{id}"}`. Missing or mismatched confirmation is rejected before any lifecycle operation begins.
 - Uninstalling `bitcoincore` is rejected while LND uses the local source. When the source is remote, LightningOS verifies that the configured remote RPC is reachable and synchronized; uninstall never switches the source or restarts LND automatically.

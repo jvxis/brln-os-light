@@ -95,15 +95,15 @@ Additional authenticated LOS API checks, independently verified against native L
 | Sign messages | Validated: peer LND verifies the signer; changing the message does not retain that identity, and empty input is rejected. |
 | Organize UTXOs | Validated: labels/tags/colors and group create, assign, detach and delete; original metadata restored. |
 | Audit Log | Validated: native lock/release actions persisted and queried by action, target and limit; unauthenticated access and invalid limits rejected. |
-| Display locked UTXOs | Issue found: native lease/release work, but the locked output disappears from the LOS inventory ([#349](https://github.com/jvxis/brln-os-light/issues/349)). |
+| Lock and unlock UTXOs | Validated after [#349](https://github.com/jvxis/brln-os-light/issues/349): locked rows and metadata stay visible; UI release, expiry and unchanged spending-preview exclusion verified. |
 
 See the [additional operations report](../../docs/REGTEST_COVERAGE_2026-10-29.md).
 To repeat these opt-in checks on the configured disposable host, mine a block
 if needed, then run `sudo python3 scripts/regtest-lab/verify-operations.py`
 from the source checkout. Do not run it concurrently with wallet operations.
 It creates no payments/channels, restores temporary metadata/groups/leases,
-and currently exits **1** because the locked-output inventory assertion exposes
-the existing #349 bug. Other checks continue and report their individual results.
+and passed on both nodes after correcting #349. The locked-output assertion remains
+enabled and fails if that inventory regression returns. Each scenario reports its result.
 This helper is not part of the installation or its automatic smoke tests.
 
 See the [dated test report](../../docs/REGTEST_LIGHTNING_VALIDATION_2026-10-28.md)

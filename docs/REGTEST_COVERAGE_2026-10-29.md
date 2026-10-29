@@ -1,5 +1,10 @@
 # Regtest test objectives and additional operations — 2026-10-29
 
+Update: the inventory failure recorded below was subsequently corrected and
+validated in native regtest and in a separately authorized mainnet test. See
+the [UTXO inventory follow-up](REGTEST_UTXO_INVENTORY_FIX_2026-10-29.md). The original
+failed assertions below are historical evidence, not the current matrix status.
+
 Rebalance and Succession are **Validated** in the supported-features matrix.
 Validation describes whether the test objective passed. It is not a promise
 that every rebalance moves its entire requested amount or that an unrelated
@@ -59,7 +64,7 @@ metadata/groups/leases in `finally` blocks. It makes no payments, opens no
 channels and enables no automation. Do not run concurrently with another wallet
 operation. Mine a block first if native LND is no longer synced after inactivity.
 
-The helper currently exits **1**, correctly reporting #349 on both nodes after
+Before the fix, the helper exited **1**, correctly reporting #349 on both nodes after
 completing the other checks. This is an existing product failure, not a passing
 test or a failure introduced by the matrix change. It keeps asserting the desired
 locked-row behavior so the same native check can validate a future correction.

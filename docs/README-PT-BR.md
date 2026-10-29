@@ -1143,7 +1143,7 @@ Testes adicionais pela API autenticada do LOS, conferidos no LND nativo (não si
 | Assinar mensagens | Validado: LND do peer verifica o autor; adulterar a mensagem não mantém essa identidade, e entrada vazia é recusada. |
 | Organizar UTXOs | Validado: etiquetas/tags/cores e criar, atribuir, desassociar e excluir grupos; metadados originais restaurados. |
 | Audit Log | Validado: bloqueio/desbloqueio nativo registrado, consultas por ação/alvo/limite, recusa de acesso sem login e limite inválido. |
-| Exibir UTXOs bloqueados | Falha encontrada: o bloqueio/desbloqueio nativo funciona, mas a moeda bloqueada desaparece da lista do LOS ([#349](https://github.com/jvxis/brln-os-light/issues/349)). |
+| Bloquear e desbloquear UTXOs | Validado após a correção da [#349](https://github.com/jvxis/brln-os-light/issues/349): moedas bloqueadas e metadados continuam visíveis; desbloqueio pela interface, expiração e exclusão das prévias de gasto conferidos. |
 
 Veja o [relatório dos testes adicionais](REGTEST_COVERAGE_2026-10-29.md) e as
 [instruções para repetir os testes opcionais](../scripts/regtest-lab/README.md).

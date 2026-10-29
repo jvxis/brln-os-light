@@ -50,7 +50,6 @@ def add_lab_notice(html):
 #los-regtest-notice .rt-badge{display:inline-block;font-size:12px;line-height:18px;font-weight:700;padding:3px 9px;border:1px solid;border-radius:999px;white-space:nowrap}
 #los-regtest-notice .rt-validated{color:#8be0b4;background:#11392e;border-color:#28654e}
 #los-regtest-notice .rt-unvalidated{color:#f2cc76;background:#392e15;border-color:#6b5424}
-#los-regtest-notice .rt-issue{color:#ffc6a0;background:#40291e;border-color:#81543a}
 #los-regtest-notice .rt-unsupported{color:#bac7d1;background:#263440;border-color:#475b69}
 #los-regtest-notice .rt-table-wrap{border:1px solid #29404e;border-radius:12px;overflow:hidden;margin-bottom:18px}
 #los-regtest-notice .rt-table{width:100%;border-collapse:collapse;table-layout:fixed;text-align:left;font-size:14px;line-height:1.5}
@@ -75,8 +74,8 @@ def add_lab_notice(html):
             'lang': 'pt-BR', 'title': 'Guia do laboratório regtest', 'warning': 'MOEDAS SEM VALOR',
             'intro': 'Consulte o estado de cada operação antes de usar os menus. Este guia descreve o que foi testado na instalação atual.',
             'headers': ('Operação', 'Estado'),
-            'statuses': {'validated': 'Validado', 'issue': 'Falha encontrada', 'unvalidated': 'Não validado', 'unsupported': 'Fora de escopo'},
-            'legend': ('O objetivo do teste foi atingido neste laboratório. Detalhes de execução ficam na descrição e no relatório.', 'Um teste encontrou um problema reproduzível, identificado na descrição.', 'O objetivo do teste ainda não foi verificado. Isso não significa que ele falha.', 'Depende de recursos de produção que este perfil não oferece.'),
+            'statuses': {'validated': 'Validado', 'unvalidated': 'Não validado', 'unsupported': 'Fora de escopo'},
+            'legend': ('O objetivo do teste foi atingido neste laboratório. Detalhes de execução ficam na descrição e no relatório.', 'O objetivo do teste ainda não foi verificado. Isso não significa que ele falha.', 'Depende de recursos de produção que este perfil não oferece.'),
             'rows': [
                 ('wallet', 'validated', 'Carteira e acesso', 'Login, saldos on-chain/Lightning e endereços de recebimento.'),
                 ('payments', 'validated', 'Pagamentos Lightning', 'Invoices e pagamentos entre Alice e Bob, com confirmação de senha.'),
@@ -96,7 +95,7 @@ def add_lab_notice(html):
                 ('succession', 'validated', 'Succession', 'Prova de vida, disparo por prazo, aposentadoria e transferência automática com mínimo de confirmações. Prazos simulados no banco de testes. A transferência total aguarda a confirmação de todos os fundos atuais.'),
                 ('message-signing', 'validated', 'Assinar mensagens', 'API autenticada do LOS; assinatura conferida pelo LND do outro node, incluindo mensagem adulterada e entrada vazia.'),
                 ('utxo-management', 'validated', 'Organizar UTXOs', 'API autenticada: etiquetas, tags, cores, criar/atribuir/remover grupos; estado original restaurado.'),
-                ('utxo-lock', 'issue', 'Exibir UTXOs bloqueados', 'O bloqueio e desbloqueio funcionam no LND, mas a moeda bloqueada desaparece da lista do LOS (#349). Não valide este fluxo completo pela interface até corrigir a exibição.'),
+                ('utxo-lock', 'validated', 'Bloquear e desbloquear UTXOs', 'Moeda permanece visível com cadeado e metadados; desbloqueio pela interface e expiração conferidos no LND. As prévias de gasto continuam excluindo moedas bloqueadas. Corrigida a #349.'),
                 ('audit-log', 'validated', 'Audit Log', 'API autenticada: bloqueio/desbloqueio registrado e consulta por ação, alvo e limite; acesso sem login recusado.'),
                 ('lnd-config', 'unsupported', 'Configuração e manutenção do LND', 'Nome/alias, cor, rede e controles de reinício.'),
                 ('upgrades', 'unsupported', 'Upgrades de LND e LOS pela interface', ''),
@@ -112,8 +111,8 @@ def add_lab_notice(html):
             'lang': 'en', 'title': 'Regtest laboratory guide', 'warning': 'COINS HAVE NO VALUE',
             'intro': 'Check each operation before using the menus. This guide describes what has been tested in the current installation.',
             'headers': ('Operation', 'Status'),
-            'statuses': {'validated': 'Validated', 'issue': 'Issue found', 'unvalidated': 'Not validated', 'unsupported': 'Not supported'},
-            'legend': ('The test objective passed in this laboratory. Execution details stay in the description and report.', 'A test found a reproducible issue, identified in the description.', 'The test objective has not been verified yet. This does not mean it fails.', 'Requires production capabilities that this profile does not provide.'),
+            'statuses': {'validated': 'Validated', 'unvalidated': 'Not validated', 'unsupported': 'Not supported'},
+            'legend': ('The test objective passed in this laboratory. Execution details stay in the description and report.', 'The test objective has not been verified yet. This does not mean it fails.', 'Requires production capabilities that this profile does not provide.'),
             'rows': [
                 ('wallet', 'validated', 'Wallet and access', 'Login, on-chain/Lightning balances and receiving addresses.'),
                 ('payments', 'validated', 'Lightning payments', 'Invoices and payments between Alice and Bob, with password confirmation.'),
@@ -133,7 +132,7 @@ def add_lab_notice(html):
                 ('succession', 'validated', 'Succession', 'Proof of life, deadline trigger, retirement and automatic transfer respecting minimum confirmations. Deadlines simulated in the test database. Whole-wallet transfer waits for all current funds to mature.'),
                 ('message-signing', 'validated', 'Sign messages', 'Authenticated LOS API; signature checked by the other node’s LND, including a modified message and empty input.'),
                 ('utxo-management', 'validated', 'Organize UTXOs', 'Authenticated API: labels, tags, colors, group create/assign/detach/delete; original state restored.'),
-                ('utxo-lock', 'issue', 'Display locked UTXOs', 'Native LND lease and release work, but the locked output disappears from the LOS inventory (#349). The complete UI workflow needs its display corrected.'),
+                ('utxo-lock', 'validated', 'Lock and unlock UTXOs', 'Output stays visible with its lock icon and metadata; UI release and expiry checked against LND. Spending previews still exclude leased outputs. Corrected #349.'),
                 ('audit-log', 'validated', 'Audit Log', 'Authenticated API: lock/release recorded and queried by action, target and limit; unauthenticated access rejected.'),
                 ('lnd-config', 'unsupported', 'LND configuration and maintenance', 'Name/alias, color, networking and restart controls.'),
                 ('upgrades', 'unsupported', 'LND and LOS upgrades through the UI', ''),
@@ -148,7 +147,7 @@ def add_lab_notice(html):
     }
     panels = []
     for language, text in languages.items():
-        legend = ''.join(f'<div class="rt-legend-item"><span class="rt-badge rt-{state}">{escape(text["statuses"][state])}</span><p>{escape(description)}</p></div>' for state, description in zip(('validated', 'issue', 'unvalidated', 'unsupported'), text['legend']))
+        legend = ''.join(f'<div class="rt-legend-item"><span class="rt-badge rt-{state}">{escape(text["statuses"][state])}</span><p>{escape(description)}</p></div>' for state, description in zip(('validated', 'unvalidated', 'unsupported'), text['legend']))
         rows = ''.join(f'<tr data-lab-operation="{operation}" data-lab-status="{state}"><td><span class="rt-operation">{escape(label)}</span>' + (f'<span class="rt-note">{escape(note)}</span>' if note else '') + f'</td><td><span class="rt-badge rt-{state}">{escape(text["statuses"][state])}</span></td></tr>' for operation, state, label, note in text['rows'])
         tips = ''.join(f'<aside class="rt-tip"><strong>{escape(title)}</strong><p>{escape(copy)}</p></aside>' for title, copy in text['tips'])
         panels.append(f'<section id="los-regtest-panel-{language}" data-lab-language="{language}" lang="{text["lang"]}" class="rt-panel rt-width" aria-labelledby="los-regtest-title-{language}"><span class="rt-warning">{text["warning"]}</span><h2 id="los-regtest-title-{language}" class="rt-title">{text["title"]}</h2><p class="rt-copy">{text["intro"]}</p><div class="rt-legend">{legend}</div><div class="rt-table-wrap"><table class="rt-table"><thead><tr><th scope="col">{text["headers"][0]}</th><th scope="col">{text["headers"][1]}</th></tr></thead><tbody>{rows}</tbody></table></div>{tips}</section>')

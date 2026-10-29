@@ -72,7 +72,7 @@ class LabNoticeTests(unittest.TestCase):
             self.assertEqual(operations[operation], 'validated')
         for operation in ['channel-rebalance', 'succession', 'message-signing', 'utxo-management', 'audit-log']:
             self.assertEqual(operations[operation], 'validated')
-        self.assertEqual(operations['utxo-lock'], 'issue', 'a reproduced failure differs from an expected partial rebalance outcome')
+        self.assertEqual(operations['utxo-lock'], 'validated')
         self.assertEqual(operations['channel-automation'], 'unvalidated', 'manual runs do not validate scheduled automations')
         self.assertIn('Abrir canal balanceado', result)
         self.assertIn('Balanced channel opening', result)

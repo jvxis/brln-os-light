@@ -77,7 +77,14 @@ class LabAPI:
             raise RuntimeError('Lab authentication failed')
 
 
-def verify(setup_only=False, node=None):
+def verify_alias(api, node):
+    expected = ln(node, 'getinfo')['alias']
+    current = api.call('/api/lnd/config').get('current', {}).get('alias')
+    if not expected or current != expected:
+        raise RuntimeError('LOS configuration alias does not match native LND: ' + node)
+
+
+def verify(setup_only=False, node=None, require_alias=False):
     checked_lab()
     clients = {}
     nodes = [(name, spec['ui']) for name, spec in NODES.items()]
@@ -101,13 +108,16 @@ def verify(setup_only=False, node=None):
                 raise RuntimeError('Regtest UI notice absent')
         api.call('/api/wallet/summary', expected=401)
         api.login()
+        if require_alias:
+            verify_alias(api, node)
         summary = api.call('/api/wallet/summary')
         native = int(ln(node, 'walletbalance')['total_balance'])
         if summary['balances']['onchain_sat'] != native:
             raise RuntimeError('LOS wallet balance does not match native LND')
         api.call('/api/lnops/channels')
         clients[node] = api
-        print('PASS: ' + node + ' verified HTTPS, REGTEST notice, login, native wallet balance and channels.')
+        print('PASS: ' + node + ' verified HTTPS, REGTEST notice, login, ' +
+              ('native alias, ' if require_alias else '') + 'wallet balance and channels.')
     if setup_only:
         return
     for source, target in CHANNEL_PAIRS:
@@ -139,8 +149,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--setup-only', action='store_true', help='initialize login and verify reads without submitting payments')
     parser.add_argument('--node', choices=list(NODES), help='with --setup-only, check just this panel')
+    parser.add_argument('--require-alias', action='store_true', help='require the read-only config alias to match native LND')
     options = parser.parse_args()
     try:
-        verify(options.setup_only, options.node)
+        verify(options.setup_only, options.node, options.require_alias)
     except Exception:
         raise SystemExit('Laboratory HTTPS/authentication/financial verification failed; no automatic financial retry was submitted.')

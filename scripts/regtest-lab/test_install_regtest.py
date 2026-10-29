@@ -125,7 +125,7 @@ class LabNoticeTests(unittest.TestCase):
 class ProvisionRuntimeTests(unittest.TestCase):
     def test_changed_running_binary_restarts_but_repeat_and_inactive_do_not(self):
         script = Path(__file__).with_name('provision.sh').read_text()
-        start = script.index('restart_changed_lnd() {')
+        start = script.index('restart_changed_native() {')
         function = script[start:script.index('\n}', start) + 2]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -141,7 +141,7 @@ fixture_pid=$1; calls=$2; binary=$3
 systemctl() {
   if [[ $1 == show ]]; then printf '%s\\n' "$fixture_pid"; else printf '%s\\n' "$*" >> "$calls"; fi
 }
-''' + function + '\nrestart_changed_lnd los-regtest-alice "$binary"\n'
+''' + function + '\nrestart_changed_native los-regtest-alice "$binary"\n'
                 def run(pid):
                     subprocess.run(['bash', '-c', shell, 'test', str(pid), str(calls), str(binary)], check=True)
                 run(process.pid)
@@ -157,6 +157,63 @@ systemctl() {
                 shutil.copyfile('/usr/bin/sleep', binary)
                 run(process.pid)
                 self.assertFalse(calls.exists(), 'identical binary on retry must not restart')
+            finally:
+                process.terminate()
+                process.wait(timeout=5)
+
+    def test_bitcoin_restart_restores_only_previously_active_dependents(self):
+        script = Path(__file__).with_name('provision.sh').read_text()
+        start = script.index('restart_changed_native() {')
+        function = script[start:script.index('\n}', start) + 2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'bitcoind'
+            shutil.copyfile('/usr/bin/sleep', binary)
+            binary.chmod(0o755)
+            process = subprocess.Popen([str(binary), '60'])
+            try:
+                replacement = root / 'replacement'
+                replacement.write_bytes(b'verified replacement fixture')
+                replacement.replace(binary)
+                calls = root / 'calls'
+                shell = '''set -eu
+fixture_pid=$1; calls=$2; binary=$3
+LND_NODES=(alice bob charlie)
+systemctl() {
+  if [[ $1 == show ]]; then printf '%s\\n' "$fixture_pid"
+  elif [[ $1 == is-active ]]; then [[ $3 != los-regtest-ui-bob ]]
+  else printf '%s\\n' "$*" >> "$calls"; fi
+}
+''' + function + '\nrestart_changed_native los-regtest-bitcoin "$binary"\n'
+                subprocess.run(['bash', '-c', shell, 'test', str(process.pid), str(calls), str(binary)], check=True)
+                self.assertEqual(calls.read_text().splitlines(), [
+                    'restart los-regtest-bitcoin',
+                    'start los-regtest-alice los-regtest-ui-alice los-regtest-bob los-regtest-charlie los-regtest-ui-charlie'])
+            finally:
+                process.terminate()
+                process.wait(timeout=5)
+
+    def test_native_binary_install_is_atomic_and_failed_copy_preserves_live_binary(self):
+        script = Path(__file__).with_name('provision.sh').read_text()
+        start = script.index('install_native_binary() {')
+        function = script[start:script.index('\n}', start) + 2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'bitcoind'
+            shutil.copyfile('/usr/bin/sleep', binary)
+            binary.chmod(0o755)
+            process = subprocess.Popen([str(binary), '60'])
+            try:
+                original = binary.read_bytes()
+                shell = 'set -eu\n' + function + '\ninstall_native_binary "$1" "$2"\n'
+                failed = subprocess.run(['bash', '-c', shell, 'test', str(root/'absent'), str(binary)], capture_output=True)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertEqual(binary.read_bytes(), original)
+                subprocess.run(['bash', '-c', shell, 'test', '/usr/bin/true', str(binary)], check=True)
+                self.assertEqual(binary.read_bytes(), Path('/usr/bin/true').read_bytes())
+                self.assertIsNone(process.poll(), 'old executable must stay alive until controlled service restart')
+                self.assertEqual(Path('/proc/'+str(process.pid)+'/exe').read_bytes(), original)
+                self.assertFalse(binary.with_name('bitcoind.new').exists())
             finally:
                 process.terminate()
                 process.wait(timeout=5)

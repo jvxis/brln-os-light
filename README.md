@@ -1056,7 +1056,7 @@ Release-by-release notes are tracked in GitHub Releases:
 
 Use a **fresh, dedicated Ubuntu 24.04 amd64 VM**, with 4 GiB RAM and at least
 20 GiB free disk space recommended. This development profile installs native
-Bitcoin Core, three LND nodes (Alice/Bob/Charlie), PostgreSQL and three isolated LOS panels.
+Bitcoin Core 31.2, three LND nodes (Alice/Bob/Charlie), PostgreSQL and three isolated LOS panels.
 It builds the committed source checkout; Internet access is required for packages,
 verified toolchains and build dependencies. All coins are local regtest coins with
 no value. The normal installers remain mainnet-only.

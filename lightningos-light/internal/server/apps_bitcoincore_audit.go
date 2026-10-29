@@ -3,8 +3,9 @@ package server
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5/middleware"
 	"lightningos-light/internal/appmanifest"
+
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 // Record the HTTP outcome without copying request bodies, credentials or raw
@@ -18,7 +19,9 @@ func (s *Server) auditBitcoinCoreOperation(w http.ResponseWriter, r *http.Reques
 	return wrapped, func() {
 		status := wrapped.Status()
 		if status == 0 {
-			status = http.StatusOK
+			// These handlers always write a response on completion. A panic
+			// before that point must not become a successful lifecycle event.
+			status = http.StatusInternalServerError
 		}
 		outcome := "error"
 		if status >= 200 && status < 300 {

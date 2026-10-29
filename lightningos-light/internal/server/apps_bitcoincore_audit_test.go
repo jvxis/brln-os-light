@@ -19,15 +19,17 @@ func TestBitcoinCoreOperationAuditPersistsOutcomesWithoutSecrets(t *testing.T) {
 	for _, test := range []struct {
 		action string
 		status int
-	}{{"start", 200}, {"stop", 500}, {"install", 409}} {
+	}{{"start", 200}, {"stop", 500}, {"install", 409}, {"start_interrupted", 0}} {
 		req := httptest.NewRequest("POST", "/api/apps/bitcoincore/"+test.action, strings.NewReader(`{"password":"fixture-private-password"}`))
 		req.Header.Set("Cookie", "session=fixture-private-cookie")
 		out := httptest.NewRecorder()
 		wrapped, done := s.auditBitcoinCoreOperation(out, req, "bitcoincore", test.action)
-		wrapped.WriteHeader(test.status)
-		_, _ = wrapped.Write([]byte("fixture-private-error-detail"))
+		if test.status != 0 {
+			wrapped.WriteHeader(test.status)
+			_, _ = wrapped.Write([]byte("fixture-private-error-detail"))
+		}
 		done()
-		if out.Code != test.status || out.Body.String() != "fixture-private-error-detail" {
+		if test.status != 0 && (out.Code != test.status || out.Body.String() != "fixture-private-error-detail") {
 			t.Fatal("Audit changed the HTTP response")
 		}
 	}
@@ -37,7 +39,7 @@ func TestBitcoinCoreOperationAuditPersistsOutcomesWithoutSecrets(t *testing.T) {
 		if err := pool.QueryRow(context.Background(), "select count(*) from audit_events").Scan(&count); err != nil {
 			t.Fatal(err)
 		}
-		if count == 3 {
+		if count == 4 {
 			break
 		}
 		if time.Now().After(deadline) {

@@ -1128,11 +1128,25 @@ telas de operações Lightning.
 | Fechar canal cooperativamente pela interface | Validado após corrigir a reconciliação de erros e as explicações de taxas ([#343](https://github.com/jvxis/brln-os-light/issues/343), [#344](https://github.com/jvxis/brln-os-light/issues/344)). Fechamentos manual e Auto conferidos com os txids nativos. |
 | Forçar fechamento de canal pela interface | Validado até a confirmação, maturação CSV e recuperação do saldo no LND. |
 | Editar fees de um canal | Validado: fee de saída, base e timelock conferidos na política nativa do LND. |
-| Rebalance manual pela interface | Com ressalvas: moveu 49.824 dos 50.000 sats pedidos, por 2 sats; job informou resultado parcial, com 176 sats restantes. |
+| Rebalance manual pela interface | Validado: moveu 49.824 sats por 2 sats e registrou corretamente o resultado parcial. Uma tentativa não precisa mover 100% do valor pedido para validar o fluxo. |
 | AutoFee manual | Validado: Dry run preservou a política; Run now aplicou a mudança em canal de teste. |
 | Automações agendadas e recuperação de falhas | Ainda não validadas: rebalance automático, auto-heal, HTLC Manager e cenários de falha exigem ensaios específicos. |
 | Node Retirement | Validados dry-run e execução real: fechamento cooperativo, decisão para peer offline, force-close com maturação/recuperação e conciliação final. Use um node de teste dedicado; encerra todos os canais dele. |
-| Succession | Validação local com ressalvas: prova de vida, carência, disparo automático por prazo e transferência on-chain. As datas do banco de testes foram antecipadas; a entrega real no Telegram permanece sem validação. A transferência total aguarda a confirmação de todos os fundos atuais; novos depósitos não confirmados podem adiá-la. |
+| Succession | Validado: prova de vida, carência, disparo automático por prazo, aposentadoria e transferência on-chain respeitando o mínimo de confirmações. Datas do banco de testes antecipadas. A transferência total aguarda todos os fundos amadurecerem; novos depósitos não confirmados podem adiá-la. |
+
+A entrega de avisos no Telegram é uma integração separada: configure token e destino para usá-la. A entrega externa não foi testada neste laboratório restrito a localhost; isso não rebaixa a validação do fluxo de Succession. Da mesma forma, um rebalance parcial esperado é uma execução válida. Os relatórios históricos preservam os valores e os prazos simulados observados.
+
+Testes adicionais pela API autenticada do LOS, conferidos no LND nativo (não significam que todos os controles relacionados da interface foram exercitados):
+
+| Operação | Estado no laboratório |
+| --- | --- |
+| Assinar mensagens | Validado: LND do peer verifica o autor; adulterar a mensagem não mantém essa identidade, e entrada vazia é recusada. |
+| Organizar UTXOs | Validado: etiquetas/tags/cores e criar, atribuir, desassociar e excluir grupos; metadados originais restaurados. |
+| Audit Log | Validado: bloqueio/desbloqueio nativo registrado, consultas por ação/alvo/limite, recusa de acesso sem login e limite inválido. |
+| Exibir UTXOs bloqueados | Falha encontrada: o bloqueio/desbloqueio nativo funciona, mas a moeda bloqueada desaparece da lista do LOS ([#349](https://github.com/jvxis/brln-os-light/issues/349)). |
+
+Veja o [relatório dos testes adicionais](REGTEST_COVERAGE_2026-10-29.md) e as
+[instruções para repetir os testes opcionais](../scripts/regtest-lab/README.md).
 
 Consulte o [relatório datado dos testes](REGTEST_LIGHTNING_VALIDATION_2026-10-28.md)
 para ambiente, procedimentos, resultados e limites da cobertura. Execuções

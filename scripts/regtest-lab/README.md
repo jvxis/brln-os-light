@@ -81,11 +81,30 @@ the Lightning operations screens.
 | Cooperative channel close through the UI | Validated after correcting native error reconciliation and fee hints ([#343](https://github.com/jvxis/brln-os-light/issues/343), [#344](https://github.com/jvxis/brln-os-light/issues/344)). Manual and Auto closes verified against native txids. |
 | Force-close a channel through the UI | Validated through confirmation, CSV maturity and native balance recovery. |
 | Edit one channel’s fees | Validated: outbound/base fees and timelock matched native LND policy. |
-| Manual rebalance through the UI | Qualified: moved 49,824 of 50,000 requested sats for 2 sats; job correctly reported partial, with 176 sats remaining. |
+| Manual rebalance through the UI | Validated: moved 49,824 sats for 2 sats and correctly recorded the partial result. A rebalance attempt does not need to move 100% of the requested amount to validate the workflow. |
 | Manual AutoFee | Validated: Dry run preserved policy; Run now applied a change to a test channel. |
 | Scheduled automations and failure recovery | Not yet validated: automatic rebalance, auto-heal, HTLC Manager and failure scenarios require dedicated tests. |
 | Node Retirement | Validated dry-run and live flow: cooperative close, offline-peer decision, force-close maturity/recovery and final reconciliation. Use a dedicated test node; this retires all its channels. |
-| Succession | Qualified local validation: proof of life, grace period, automatic deadline trigger and on-chain transfer. Test database dates were advanced; actual Telegram delivery remains unvalidated. The whole-wallet transfer waits for all current funds to reach its confirmation threshold; new unconfirmed deposits can postpone it. |
+| Succession | Validated: proof of life, grace period, automatic deadline trigger, retirement and on-chain transfer respecting minimum confirmations. Test database dates were advanced. The whole-wallet transfer waits for all current funds to mature; new unconfirmed deposits can postpone it. |
+Telegram notification delivery is a separate integration: configure its token and destination to use it. External delivery was not tested in this localhost-only lab; that does not downgrade the successful Succession workflow. Likewise, an expected partial rebalance is a valid execution result. Historical reports retain the exact observed amounts and timing fixtures.
+
+Additional authenticated LOS API checks, independently verified against native LND (these do not claim that every related UI control was exercised):
+
+| Operation | Lab status |
+| --- | --- |
+| Sign messages | Validated: peer LND verifies the signer; changing the message does not retain that identity, and empty input is rejected. |
+| Organize UTXOs | Validated: labels/tags/colors and group create, assign, detach and delete; original metadata restored. |
+| Audit Log | Validated: native lock/release actions persisted and queried by action, target and limit; unauthenticated access and invalid limits rejected. |
+| Display locked UTXOs | Issue found: native lease/release work, but the locked output disappears from the LOS inventory ([#349](https://github.com/jvxis/brln-os-light/issues/349)). |
+
+See the [additional operations report](../../docs/REGTEST_COVERAGE_2026-10-29.md).
+To repeat these opt-in checks on the configured disposable host, mine a block
+if needed, then run `sudo python3 scripts/regtest-lab/verify-operations.py`
+from the source checkout. Do not run it concurrently with wallet operations.
+It creates no payments/channels, restores temporary metadata/groups/leases,
+and currently exits **1** because the locked-output inventory assertion exposes
+the existing #349 bug. Other checks continue and report their individual results.
+This helper is not part of the installation or its automatic smoke tests.
 
 See the [dated test report](../../docs/REGTEST_LIGHTNING_VALIDATION_2026-10-28.md)
 for the environment, procedures, observed results and coverage limits. Manual

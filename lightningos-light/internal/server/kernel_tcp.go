@@ -57,7 +57,7 @@ func kernelTCPSystemCheckItem(status kernelTCPStatus, available bool) systemChec
 	if !available {
 		return item
 	}
-	item.Value = status
+	item.Value = status.FilterVerified && !status.Disabled
 	if status.Disabled {
 		item.Detail = "CVE-2026-98432: mitigation explicitly disabled by the operator"
 	} else if status.FilterVerified {

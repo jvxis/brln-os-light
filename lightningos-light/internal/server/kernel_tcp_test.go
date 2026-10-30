@@ -37,4 +37,7 @@ func TestKernelTCPStatusDoesNotTreatOldOrInvalidProofAsProtection(t *testing.T) 
 	if kernelTCPSystemCheckItem(kernelTCPStatus{FilterVerified: true}, true).Status != systemCheckOK {
 		t.Fatal("verified filter not shown")
 	}
+	if kernelTCPSystemCheckItem(kernelTCPStatus{FilterVerified: true}, true).Value != true {
+		t.Fatal("system check value must preserve the existing scalar frontend contract")
+	}
 }

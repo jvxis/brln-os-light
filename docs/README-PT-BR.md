@@ -1033,6 +1033,23 @@ Selecionar um modo apenas prepara a alteração; **Aplicar modo** a ativa após 
 
 O pareamento físico com um segundo rádio e a liquidação real de pagamentos continuam sendo testes de aceite desta funcionalidade experimental; testes simulados de pareamento e carteira não substituem essas verificações.
 
+### Atualização do BTCPay Server gerenciado pela loja (0.5.50)
+
+A loja oferece **BTCPay Server 2.4.7** e **NBXplorer 2.6.21**, mantendo o
+PostgreSQL na versão principal 16. O BTCPay 2.4.7 inclui correções de segurança
+e contabilização de pagamentos; confira as [notas oficiais](https://github.com/btcpayserver/btcpayserver/releases/tag/v2.4.7).
+
+Após atualizar o LOS, abra **Apps → BTCPay Server**, clique em **Parar**, aguarde
+o encerramento da stack e clique em **Iniciar**. A inicialização prepara as
+imagens do catálogo e as aplica à instalação existente. Mantenha o app instalado:
+os diretórios de dados, banco das lojas, invoices e credenciais existentes são
+reutilizados. Atualizar apenas o LOS não substitui um container BTCPay em execução.
+
+A credencial dedicada do LND mantém suas permissões limitadas. A versão principal
+do PostgreSQL, a seleção da fonte Bitcoin e a integração Tor seguem a configuração
+existente do LOS. Mudanças no Docker oficial do BTCPay não regeneram a stack
+gerenciada separadamente pelo LOS.
+
 ### Atualização do Bitcoin Core gerenciado pela loja (0.5.50)
 
 A loja oferece o **Bitcoin Core 31.2**. Atualizar o LOS altera a versão

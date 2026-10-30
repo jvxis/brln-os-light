@@ -1135,6 +1135,7 @@ refresh_terminal_helper
 configure_lnd_restart_policy
 configure_manager_tls_mdns
 configure_manager_firewall
+bash "$project_dir/scripts/install-kernel-tcp-mitigation.sh"
 
 print_step "Staging privilege cutover"
 if ! stage_privilege_cutover; then

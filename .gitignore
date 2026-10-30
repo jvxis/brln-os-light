@@ -14,3 +14,6 @@ l2.json
 # remain on GitHub; runtime node checkouts exclude .github via sparse-checkout.
 .github/ISSUE_TRIAGE_POLICY.md
 .github/ISSUE_TRIAGE_SCHEDULED_PROMPT.md
+
+# Python helper/test bytecode is local build output.
+__pycache__/

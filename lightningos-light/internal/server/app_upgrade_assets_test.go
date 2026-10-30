@@ -59,7 +59,7 @@ func TestEmbeddedSystemIntegrationAssetsAreSafe(t *testing.T) {
 		"so stdout contains only the selected CIDR",
 		"Restart=always",
 		"setup-manager-tls-mdns.sh",
-		"/var/lib/lightningos-privileged/system-integrations-20260816-v10",
+		"/var/lib/lightningos-privileged/system-integrations-20261030-v11",
 	} {
 		combined := embeddedTerminalHelper + embeddedManagerFirewallHelper + embeddedManagerTLSMDNSHelper + embeddedAppUpgradeScript + systemIntegrationsMarkerPath
 		if !strings.Contains(combined, fragment) {
@@ -74,6 +74,7 @@ func TestEmbeddedSystemIntegrationAssetsMatchBrokerCatalog(t *testing.T) {
 		{Asset: privileged.SystemIntegrationAssetTerminal, Content: embeddedTerminalHelper},
 		{Asset: privileged.SystemIntegrationAssetManagerFirewall, Content: embeddedManagerFirewallHelper},
 		{Asset: privileged.SystemIntegrationAssetManagerTLSMDNS, Content: embeddedManagerTLSMDNSHelper},
+		{Asset: privileged.SystemIntegrationAssetKernelTCP, Content: embeddedKernelTCPHelper},
 	}
 	for _, asset := range assets {
 		state, err := manager.InstallAsset(context.Background(), asset, true)

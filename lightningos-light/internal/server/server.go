@@ -230,6 +230,7 @@ func (s *Server) Run() error {
 	s.initNotifications()
 	s.initAppVersions()
 	s.initAuditLog()
+	s.startKernelTCPAuditMonitor()
 	s.initSpendingGuard()
 	s.startSpendingGuardReconciler()
 	s.initReports()

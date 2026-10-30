@@ -1611,6 +1611,7 @@ main() {
   bash "$REPO_ROOT/scripts/install-lnd-onion-recovery.sh"
   trap '/usr/local/libexec/lightningos-lnd-onion recover || true' EXIT
   install_packages
+  bash "$REPO_ROOT/scripts/install-kernel-tcp-mitigation.sh"
   configure_tor
   create_lnd_user
   ensure_group_member lnd debian-tor

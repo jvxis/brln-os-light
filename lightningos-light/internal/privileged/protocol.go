@@ -156,6 +156,7 @@ const (
 	SystemIntegrationAssetTerminal        SystemIntegrationAsset = "terminal"
 	SystemIntegrationAssetManagerFirewall SystemIntegrationAsset = "manager_firewall"
 	SystemIntegrationAssetManagerTLSMDNS  SystemIntegrationAsset = "manager_tls_mdns"
+	SystemIntegrationAssetKernelTCP       SystemIntegrationAsset = "kernel_tcp"
 )
 
 type SystemIntegrationAssetInstallParams struct {
@@ -1320,7 +1321,8 @@ func validSystemIntegrationAsset(asset SystemIntegrationAsset) bool {
 	switch asset {
 	case SystemIntegrationAssetTerminal,
 		SystemIntegrationAssetManagerFirewall,
-		SystemIntegrationAssetManagerTLSMDNS:
+		SystemIntegrationAssetManagerTLSMDNS,
+		SystemIntegrationAssetKernelTCP:
 		return true
 	default:
 		return false

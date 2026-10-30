@@ -1830,10 +1830,14 @@ func (n *Notifier) runPayments() {
 		}
 
 		maxIndex := indexOffset
+		forwardPageComplete := err == nil
 		pendingDirty := false
 		now := time.Now().Unix()
 		suppressMirror := n.paymentsCatchupMode.Load()
 		for _, pay := range res.Payments {
+			if pay == nil {
+				continue
+			}
 			if pay.PaymentIndex <= indexOffset {
 				continue
 			}
@@ -1861,6 +1865,7 @@ func (n *Notifier) runPayments() {
 			}
 			if !processPayment(pay, suppressMirror || recovery.suppressMirror(pay)) {
 				maxIndex = previousMaxIndex
+				forwardPageComplete = false
 				break // Retry the failed row before advancing past it.
 			}
 			if _, ok := pending[paymentHash]; ok {
@@ -1926,7 +1931,7 @@ func (n *Notifier) runPayments() {
 				pendingDirty = true
 			}
 		}
-		if n.paymentsCatchupMode.Load() && !shouldContinuePaymentsCatchup(len(res.Payments)) {
+		if n.paymentsCatchupMode.Load() && forwardPageComplete && !shouldContinuePaymentsCatchup(len(res.Payments)) {
 			n.paymentsCatchupMode.Store(false)
 		}
 

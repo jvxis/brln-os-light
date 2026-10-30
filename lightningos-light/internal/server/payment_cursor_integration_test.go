@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -142,5 +143,33 @@ create trigger los_cursor_test_reject before insert on notification_cursors for 
 	var duplicates int
 	if err := pool.QueryRow(ctx, "select count(*) from notifications where event_key='payment:historical'").Scan(&duplicates); err != nil || duplicates != 1 {
 		t.Fatal("historical replay duplicated notification")
+	}
+
+	// Preserve the pre-existing invoice/payment reconciliation in either order.
+	// This uses the actual SQL reconciliation, not a copied classification rule.
+	restarted.setTelegramActivityMirrorEnabled(false)
+	for i, invoiceFirst := range []bool{true, false} {
+		hash := fmt.Sprintf("%064x", 1000+i)
+		payment := Notification{OccurredAt: time.Now(), Type: "lightning", Action: "sent", Direction: "out", Status: "SUCCEEDED", AmountSat: 50000, FeeSat: 13, FeeMsat: 13088, PaymentHash: hash}
+		invoice := Notification{OccurredAt: payment.OccurredAt, Type: "lightning", Action: "received", Direction: "in", Status: "SETTLED", AmountSat: 50000, PaymentHash: hash}
+		for _, received := range []bool{invoiceFirst, !invoiceFirst} {
+			event, key := payment, "payment:"+hash
+			if received {
+				event, key = invoice, "invoice:"+hash
+			}
+			if _, err := restarted.upsertNotification(ctx, key, event); err != nil {
+				t.Fatal(err)
+			}
+			restarted.reconcileRebalance(ctx, hash)
+		}
+		restarted.reconcileRebalance(ctx, hash)
+		var rows, amount, fee int64
+		var kind, status string
+		if err := pool.QueryRow(ctx, "select count(*) from notifications where payment_hash=$1", hash).Scan(&rows); err != nil || rows != 1 {
+			t.Fatal("invoice/payment order duplicated rebalance")
+		}
+		if err := pool.QueryRow(ctx, "select type,status,amount_sat,fee_msat from notifications where payment_hash=$1", hash).Scan(&kind, &status, &amount, &fee); err != nil || kind != "rebalance" || status != "SETTLED" || amount != 50000 || fee != 13088 {
+			t.Fatal("invoice/payment reconciliation changed classification or values", err)
+		}
 	}
 }

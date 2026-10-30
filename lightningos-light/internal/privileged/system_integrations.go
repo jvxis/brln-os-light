@@ -19,7 +19,9 @@ const (
 	defaultReportsServicePath        = "/etc/systemd/system/lightningos-reports.service"
 	defaultReportsTimerPath          = "/etc/systemd/system/lightningos-reports.timer"
 	defaultManagerTLSCertificatePath = "/etc/lightningos/tls/server.crt"
-	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20260816-v10"
+	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20261030-v11"
+	defaultKernelTCPHelperPath       = "/usr/local/libexec/lightningos-kernel-tcp"
+	kernelTCPHelperSHA256            = "ec673fc074416fef37db6681c53c8f66f83543ee13fd6f09dd4e22b72bf156ce"
 	envExecutablePath                = "/usr/bin/env"
 	idExecutablePath                 = "/usr/bin/id"
 
@@ -139,6 +141,7 @@ type SystemIntegrationPaths struct {
 	TerminalService       string
 	ManagerFirewallHelper string
 	ManagerTLSMDNSHelper  string
+	KernelTCPHelper       string
 	LNDDropIn             string
 	ReportsService        string
 	ReportsTimer          string
@@ -165,6 +168,7 @@ func NewNativeSystemIntegrationsManager(runner CommandRunner) *NativeSystemInteg
 			TerminalService:       terminalServiceUnitPath,
 			ManagerFirewallHelper: defaultManagerFirewallHelperPath,
 			ManagerTLSMDNSHelper:  defaultManagerTLSMDNSHelperPath,
+			KernelTCPHelper:       defaultKernelTCPHelperPath,
 			LNDDropIn:             defaultLNDIntegrationDropInPath,
 			ReportsService:        defaultReportsServicePath,
 			ReportsTimer:          defaultReportsTimerPath,
@@ -217,6 +221,13 @@ func (manager *NativeSystemIntegrationsManager) Apply(ctx context.Context, dryRu
 	}
 	if err := manager.verifyInstalledAssets(); err != nil {
 		return SystemIntegrationsState{}, err
+	}
+	// A fixed, digest-checked helper also covers old updaters: the new Manager
+	// reconciles this catalog through the new broker after the normal upgrade.
+	// Run the root installation outside the broker's read-only /etc namespace.
+	if _, err := manager.Runner.Run(ctx, "/usr/bin/systemd-run", "--wait", "--pipe", "--collect",
+		"--unit=lightningos-kernel-tcp-install", "/usr/bin/python3", manager.Paths.KernelTCPHelper, "install"); err != nil {
+		return SystemIntegrationsState{}, errors.New("kernel TCP mitigation installation failed")
 	}
 
 	state := SystemIntegrationsState{Status: "ready"}
@@ -410,6 +421,7 @@ func (manager *NativeSystemIntegrationsManager) assetSpec(asset SystemIntegratio
 		SystemIntegrationAssetTerminal:        terminalHelperSHA256,
 		SystemIntegrationAssetManagerFirewall: managerFirewallHelperSHA256,
 		SystemIntegrationAssetManagerTLSMDNS:  managerTLSMDNSHelperSHA256,
+		SystemIntegrationAssetKernelTCP:       kernelTCPHelperSHA256,
 	}
 	for key, value := range manager.Digests {
 		digests[key] = value
@@ -418,6 +430,7 @@ func (manager *NativeSystemIntegrationsManager) assetSpec(asset SystemIntegratio
 		SystemIntegrationAssetTerminal:        manager.Paths.TerminalHelper,
 		SystemIntegrationAssetManagerFirewall: manager.Paths.ManagerFirewallHelper,
 		SystemIntegrationAssetManagerTLSMDNS:  manager.Paths.ManagerTLSMDNSHelper,
+		SystemIntegrationAssetKernelTCP:       manager.Paths.KernelTCPHelper,
 	}
 	path, ok := paths[asset]
 	digest, digestOK := digests[asset]
@@ -435,6 +448,7 @@ func (manager *NativeSystemIntegrationsManager) verifyInstalledAssets() error {
 		SystemIntegrationAssetTerminal,
 		SystemIntegrationAssetManagerFirewall,
 		SystemIntegrationAssetManagerTLSMDNS,
+		SystemIntegrationAssetKernelTCP,
 	} {
 		spec, err := manager.assetSpec(asset)
 		if err != nil {

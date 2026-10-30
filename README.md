@@ -1025,6 +1025,27 @@ Selecting a mode only previews the change; **Apply mode** activates it after pas
 
 Physical pairing with a second radio and actual payment settlement remain acceptance tests for this experimental feature; simulated pairing and wallet tests do not replace those checks.
 
+### Temporary kernel TCP protection (0.5.50)
+
+Production installers and application upgrades install a dedicated nftables
+filter for **CVE-2026-98432**, rejecting
+TCP/IPv4 packets with IPv4 header options. Ordinary TCP options such as MSS,
+timestamps and window scaling remain allowed. Existing ordinary connections
+do not require an LND or Bitcoin restart. A timer checks and restores the filter
+every 30 seconds; a global firewall flush can leave a gap until reconciliation.
+
+LOS also defaults its Go binaries and managed native LND services to ordinary
+TCP instead of MPTCP, preserving other configured `GODEBUG` options. The LND
+environment change takes effect on its next start; upgrading LOS does not
+restart LND for this setting. Existing-node installs retain the existing service
+commands and configuration.
+
+Verify the loaded filter with `sudo /usr/local/libexec/lightningos-kernel-tcp status`.
+**System Check → Security** reports recent verification, and **Audit Log** records
+verification/state changes and repairs. This is temporary mitigation, not proof
+of a patched kernel. Install the distribution's fixed kernel and boot into it
+when available. See [scope, diagnostics and explicit removal](docs/KERNEL_TCP_MITIGATION.md).
+
 ### Updating Store-managed BTCPay Server (0.5.50)
 
 The Store offers **BTCPay Server 2.4.7** and **NBXplorer 2.6.21**, with PostgreSQL

@@ -4,6 +4,9 @@ go 1.26.0
 
 toolchain go1.26.10
 
+// Kernel CVE-2026-98432 defense in depth; keep ordinary TCP as the default.
+godebug multipathtcp=0
+
 require (
 	github.com/btcsuite/btcd v0.24.2
 	github.com/btcsuite/btcd/btcutil v1.1.5

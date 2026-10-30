@@ -490,6 +490,7 @@ Body:
 GET /api/system-check
 - Returns grouped read-only diagnostics for the app, LND, Bitcoin, Postgres, Tor, host system, and security.
 - The `security` group reports whether UFW is installed/active and whether manager port `8443` is restricted to the saved LAN CIDR. This endpoint never enables or changes firewall rules.
+- The `kernel_tcp` item reports recent root-verified IPv4 TCP-options filtering for CVE-2026-98432. Missing, stale (over 90 seconds), unsafe or operator-disabled status is a warning, never proof of protection. A verified filter is a temporary mitigation and does not certify that the running kernel is patched.
 
 GET /api/security/manager-exposure
 - Returns the effective Manager exposure state, including the selected access mode, UFW availability/activity, verified LAN or Tailscale rules, broad rules, and explicit unprotected acknowledgement.

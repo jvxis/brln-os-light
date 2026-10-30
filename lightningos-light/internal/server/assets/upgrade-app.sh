@@ -1033,6 +1033,7 @@ lightningos_prepare_go "$project_dir" || die "Go preparation failed; application
 source "$project_dir/scripts/prepare-node-upgrade.sh"
 lightningos_prepare_node || die "Node preparation failed; application was not replaced."
 print_ok "Build toolchains ready"
+bash "$project_dir/scripts/install-kernel-tcp-mitigation.sh"
 
 normalize_legacy_manager_identity
 

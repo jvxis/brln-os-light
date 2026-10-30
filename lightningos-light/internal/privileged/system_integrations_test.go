@@ -144,6 +144,7 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 		TerminalService:       filepath.Join(root, "systemd", "lightningos-terminal.service"),
 		ManagerFirewallHelper: filepath.Join(root, "sbin", "lightningos-manager-firewall"),
 		ManagerTLSMDNSHelper:  filepath.Join(root, "sbin", "lightningos-setup-manager-tls-mdns"),
+		KernelTCPHelper:       filepath.Join(root, "sbin", "lightningos-kernel-tcp"),
 		LNDDropIn:             filepath.Join(root, "systemd", "lnd.service.d", "20-lightningos-restart.conf"),
 		ReportsService:        filepath.Join(root, "systemd", "lightningos-reports.service"),
 		ReportsTimer:          filepath.Join(root, "systemd", "lightningos-reports.timer"),
@@ -164,6 +165,7 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 		SystemIntegrationAssetTerminal,
 		SystemIntegrationAssetManagerFirewall,
 		SystemIntegrationAssetManagerTLSMDNS,
+		SystemIntegrationAssetKernelTCP,
 	} {
 		digests[asset] = digestHex
 	}
@@ -182,6 +184,7 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 		SystemIntegrationAssetTerminal,
 		SystemIntegrationAssetManagerFirewall,
 		SystemIntegrationAssetManagerTLSMDNS,
+		SystemIntegrationAssetKernelTCP,
 	} {
 		state, err := manager.InstallAsset(context.Background(), SystemIntegrationAssetInstallParams{Asset: asset, Content: content}, false)
 		if err != nil || state.Status != "ready" || !state.Changed {
@@ -234,6 +237,16 @@ func TestNativeSystemIntegrationsUsePinnedAssetsAndFinalizeLast(t *testing.T) {
 	}
 	if status, err := manager.Status(context.Background()); err != nil || status.Status != "ready" {
 		t.Fatalf("integrations not ready after finalization: state=%+v err=%v", status, err)
+	}
+	commandsBeforeTamper := len(runner.commands)
+	if err := os.WriteFile(paths.KernelTCPHelper, []byte("tampered helper\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Apply(context.Background(), false); err == nil || len(runner.commands) != commandsBeforeTamper {
+		t.Fatal("tampered kernel mitigation helper reached privileged execution")
+	}
+	if err := os.WriteFile(paths.KernelTCPHelper, []byte(content), 0755); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(paths.ReportsTimer, []byte("tampered\n"), 0644); err != nil {
 		t.Fatal(err)

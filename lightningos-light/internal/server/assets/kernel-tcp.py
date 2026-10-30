@@ -102,6 +102,7 @@ def atomic_write(path, data, mode=0o644):
     fd, name = tempfile.mkstemp(prefix='.kernel-tcp-', dir=path.parent)
     try:
         with os.fdopen(fd, 'w') as target:
+            os.fchown(target.fileno(), 0, 0)
             os.fchmod(target.fileno(), mode)
             target.write(data)
             target.flush()
@@ -280,6 +281,8 @@ def main():
     if len(sys.argv) != 2 or sys.argv[1] not in ('install','apply','status','disable'):
         raise RuntimeError('Usage: lightningos-kernel-tcp install|apply|status|disable')
     directory(RUNTIME)
+    os.chown(RUNTIME, 0, 0)
+    os.chmod(RUNTIME, 0o755)  # Status must remain readable even with a root umask of 077.
     lock = RUNTIME / 'lock'
     safe_path(lock)
     with lock.open('a') as handle:

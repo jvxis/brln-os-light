@@ -16,13 +16,13 @@ const (
 	BTCPayPort                   = 23000
 	BTCPayNbxplorerPort          = 32838
 	BTCPayStopTimeout            = 30
-	BTCPayRelease                = "2.4.4"
-	BTCPayNbxplorerRelease       = "2.6.13"
+	BTCPayRelease                = "2.4.7"
+	BTCPayNbxplorerRelease       = "2.6.21"
 
 	// BTCPayServerImage is the newest stable tag published by the official
 	// BTCPay Docker project. Upstream does not publish a usable `latest` tag.
 	// Every user-requested install/start still refreshes this closed release
-	// tag before Compose runs; future releases change only BTCPayRelease.
+	// tag before Compose runs; updates advance the reviewed release constants.
 	BTCPayServerImage    = "btcpayserver/btcpayserver:" + BTCPayRelease
 	BTCPayNbxplorerImage = "nicolasdorier/nbxplorer:" + BTCPayNbxplorerRelease
 	BTCPayPostgresImage  = "postgres:16"

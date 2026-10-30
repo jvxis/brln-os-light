@@ -1025,6 +1025,23 @@ Selecting a mode only previews the change; **Apply mode** activates it after pas
 
 Physical pairing with a second radio and actual payment settlement remain acceptance tests for this experimental feature; simulated pairing and wallet tests do not replace those checks.
 
+### Updating Store-managed BTCPay Server (0.5.50)
+
+The Store offers **BTCPay Server 2.4.7** and **NBXplorer 2.6.21**, with PostgreSQL
+remaining on major version 16. BTCPay 2.4.7 includes security and payment-accounting
+fixes; see the [official release notes](https://github.com/btcpayserver/btcpayserver/releases/tag/v2.4.7).
+
+After updating LOS, open **Apps → BTCPay Server**, click **Stop**, wait for the
+stack to stop, then click **Start**. Starting prepares the catalog images and
+applies them to the existing installation. Keep the app installed: use the
+existing data directories, store database, invoices and credentials. Updating
+LOS alone does not replace an already-running BTCPay container.
+
+The dedicated LND credential keeps its existing limited permissions. The
+PostgreSQL major version, Bitcoin source selection and Tor integration follow
+the existing LOS configuration. BTCPay's upstream Docker deployment changes do
+not regenerate the separate LOS-managed stack.
+
 ### Updating Store-managed Bitcoin Core (0.5.50)
 
 The Store offers **Bitcoin Core 31.2**. Updating LOS updates the available

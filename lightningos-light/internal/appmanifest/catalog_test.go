@@ -137,14 +137,14 @@ func TestLNbitsCatalogPinsOfficialStableManifest(t *testing.T) {
 }
 
 // 2.4.2 established the security floor for the LND macaroon disclosure fixed
-// upstream on 2026-08-07. The catalog now follows the official 2.4.4 stack and
-// its NBXplorer 2.6.13 companion. Keep this exact guard current when advancing
+// upstream on 2026-08-07. The catalog now follows the official 2.4.7 release and
+// its NBXplorer 2.6.21 companion. Keep this exact guard current when advancing
 // the catalog so either component cannot regress silently.
 func TestBTCPayCatalogSecurityFloor(t *testing.T) {
-	if BTCPayRelease != "2.4.4" || BTCPayServerImage != "btcpayserver/btcpayserver:2.4.4" {
-		t.Fatalf("BTCPay catalog fell below the 2.4.2 security floor: %q", BTCPayServerImage)
+	if BTCPayRelease != "2.4.7" || BTCPayServerImage != "btcpayserver/btcpayserver:2.4.7" {
+		t.Fatalf("BTCPay catalog must match the reviewed 2.4.7 security release: %q", BTCPayServerImage)
 	}
-	if BTCPayNbxplorerRelease != "2.6.13" || BTCPayNbxplorerImage != "nicolasdorier/nbxplorer:2.6.13" {
+	if BTCPayNbxplorerRelease != "2.6.21" || BTCPayNbxplorerImage != "nicolasdorier/nbxplorer:2.6.21" {
 		t.Fatalf("unexpected NBXplorer security companion: %q", BTCPayNbxplorerImage)
 	}
 }

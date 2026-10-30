@@ -19,8 +19,8 @@ class KernelTCPTests(unittest.TestCase):
             field = args[args.index('-p')+1]
             return SimpleNamespace(stdout={'LoadState':'loaded', 'Environment':'GODEBUG=panicnil=1',
                 'EnvironmentFiles':'/etc/operator.env (ignore_errors=no)\n/etc/lightningos-kernel-tcp/lnd.service.env (ignore_errors=no)\n'}[field])
-        with mock.patch.object(module, 'run', side_effect=command), mock.patch.object(module, 'safe_path'), \
-             mock.patch.object(Path, 'read_text', return_value='GODEBUG="http2client=0,multipathtcp=1"\n'):
+        with mock.patch.object(module, 'run', side_effect=command), \
+             mock.patch.object(module, 'read_environment_file', return_value='GODEBUG="http2client=0,multipathtcp=1"\n'):
             self.assertEqual(module.unit_godebug('lnd.service'), 'http2client=0,multipathtcp=0')
 
     def test_preserves_other_godebug_options(self):

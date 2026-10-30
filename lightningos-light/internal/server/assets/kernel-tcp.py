@@ -119,6 +119,26 @@ def without_mptcp(value):
     return ','.join([*values, 'multipathtcp=0'])
 
 
+def read_environment_file(path, optional):
+    # Existing LOS secrets.env is intentionally group-writable. We only read
+    # GODEBUG from the service's configured files; never tighten their policy,
+    # echo their contents or copy any other variable into a privileged file.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        if optional:
+            return ''
+        raise
+    with os.fdopen(fd, 'r') as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 128 * 1024:
+            raise RuntimeError('Unsafe or oversized service environment file')
+        text = source.read(128 * 1024 + 1)
+        if len(text) > 128 * 1024:
+            raise RuntimeError('Oversized service environment file')
+        return text
+
+
 def unit_godebug(unit):
     value = ''
     if run('/usr/bin/systemctl', 'show', unit, '-p', 'LoadState', '--value', check=False).stdout.strip() == 'not-found':
@@ -137,10 +157,7 @@ def unit_godebug(unit):
         path = Path(match[1])
         if path == CONFIG / (unit + '.env'):
             continue  # Do not retain our own previous override across upgrades.
-        safe_path(path)
-        if not path.exists() and match[2] == 'yes':
-            continue
-        text = path.read_text()
+        text = read_environment_file(path, match[2] == 'yes')
         for line in text.splitlines():
             if re.match(r'^\s*GODEBUG\s*=', line):
                 rhs = line.split('=', 1)[1].strip()

@@ -21,7 +21,7 @@ const (
 	defaultManagerTLSCertificatePath = "/etc/lightningos/tls/server.crt"
 	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20261030-v11"
 	defaultKernelTCPHelperPath       = "/usr/local/libexec/lightningos-kernel-tcp"
-	kernelTCPHelperSHA256            = "2e9dc446149908d7dceef751cdd6e52f849d8bf3194200e5ee4d93dc36addc28"
+	kernelTCPHelperSHA256            = "0f31e4f051351d6a512031f5ed0617e87760a2b5e7b28dda4c3698dd99fe6ca6"
 	envExecutablePath                = "/usr/bin/env"
 	idExecutablePath                 = "/usr/bin/id"
 

@@ -72,3 +72,79 @@ conclusão, respeitando as configurações e proteções de inicialização exis
 
 A origem da divergência ainda não foi estabelecida. A correção não atribui a
 causa à migração PostgreSQL, a um upgrade ou ao fast-path de rebalance.
+
+## Validation — 2026-10-30
+
+Platform: disposable Ubuntu 24.04 amd64, native LND 0.21.5-beta and local
+Bitcoin Core 31.2 regtest, using an isolated systemd fixture. No production node
+was used. Baseline: `1f8435c7`; tested functional source: `10c40c93`.
+
+- Original baseline and final candidate: `go test ./...` and `go vet ./...`
+  passed on Linux. Focused cursor, historical Telegram, invoice and rebalance
+  tests passed. The new PostgreSQL test was enabled with
+  `LOS_PAYMENT_CURSOR_TEST_DSN` pointing to a dedicated
+  `los_payment_cursor_test_*` database. Other optional integration suites requiring
+  separate DSNs were not enabled.
+- The original Manager reproduced the bug: a real fictitious payment succeeded,
+  while the synthetic ahead cursor stayed unchanged and its outgoing notification
+  remained absent. The candidate recovered that same payment and collected new
+  payments without changing LND state.
+- Real ordinary circular rebalance and managed fast-path execution both produced
+  exactly one settled rebalance notification per successful payment, with amount
+  and milllisatoshi fee checked independently against LND. The managed result was
+  also checked through the authenticated Notifications API and execution journal.
+- Real PostgreSQL tests covered invoice/payment arrival in both orders,
+  compare-and-swap rejection, transaction rollback/retry, original-cursor backups,
+  actual notification upserts and the Telegram enqueue boundary. Historical
+  replay stayed out of that queue, including after recreating the Notifier;
+  a pending completion after the recovery boundary remained live and deduplicated.
+- A stale `IN_FLIGHT` rebalance plus a late invoice reconciled to one final row
+  even while the recovery checkpoint was deliberately unreadable. An injected
+  notification-write error held the cursor; removing the error allowed retry of
+  the same completed payment without duplication.
+- The Manager was stopped after the rewind transaction committed but before
+  durable replay. Restart retained the recovery fence and both original-cursor
+  backups, completed replay and preserved event counts.
+- Final authenticated HTTPS checks passed for all three instances. Native LND
+  PIDs, identities, channel sets, on-chain balances, credentials, TLS keys and
+  configuration hashes matched the pre-deployment snapshot. Temporary rebalance
+  settings were restored and injected SQL triggers removed.
+
+The initial native test used a 55-second observation window, shorter than the
+existing 300-second degraded-runtime polling interval. A goroutine capture showed
+the collector waiting in its timer; a direct read-only Go RPC probe returned the
+pending page correctly. The full scenario was rerun with a 350-second deadline
+and passed. Polling/backoff policy was not changed. The circular-payment harness
+was also corrected to use the installed native CLI's numeric `scid` and the
+REST `outgoing_chan_ids` field, rather than the newer full channel identifier.
+
+No external Telegram bot message was sent; the actual queue boundary and database
+behavior were tested without tokens. Native mainnet/other LND versions were not
+used as fixtures. Payment execution, rebalance algorithms, invoice cursor logic,
+frontend and production installation/upgrade paths are unchanged.
+
+## Validação — 30/10/2026
+
+Os testes foram realizados em Ubuntu 24.04 amd64 descartável, com LND nativo
+0.21.5-beta e Bitcoin Core 31.2 local em regtest, sem acessar nodes de produção.
+O erro foi reproduzido no Manager original e o mesmo pagamento foi recuperado
+pela versão corrigida. Os testes completos do backend e `go vet` passaram.
+
+Foram validados rebalance circular comum, fast-path real, invoices/pagamentos nas
+duas ordens, recuperação de `IN_FLIGHT` durante erro de checkpoint, rollback de
+transação, falha/repetição de gravação e interrupção depois do reposicionamento
+do cursor e antes do reprocessamento. Valores, taxas em milissatoshis e ausência
+de duplicação foram conferidos. A fila real do Telegram foi testada sem enviar
+mensagens externas: histórico suprimido e conclusão nova de pendência elegível.
+
+A janela inicial de 55 segundos não cobria a cadência degradada de cinco minutos
+já existente. A captura mostrou espera no timer; o cenário completo passou ao
+observar essa cadência, sem alterá-la. O comando do teste circular também foi
+ajustado ao SCID numérico e ao campo REST da versão nativa instalada.
+
+Ao final, as três instâncias passaram pela autenticação HTTPS. Processos LND,
+identidades, canais, saldos on-chain, senhas, chaves TLS e configurações foram
+preservados; parâmetros temporários foram restaurados e triggers de falha
+removidos. Os limites da validação são os mesmos descritos na seção em inglês:
+outras integrações opcionais, entrega externa do Telegram e outras versões
+nativas/mainnet não foram usadas como prova deste ensaio.

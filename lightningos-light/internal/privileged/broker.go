@@ -825,6 +825,9 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 		}
 		state, err := broker.BitcoinStorage.Ensure(ctx, params.DataDir, request.DryRun)
 		if err != nil {
+			if errors.Is(err, errBitcoinStorageSpaceLow) {
+				return nil, "bitcoin_storage_space_low", errors.New("Bitcoin storage needs 10 GiB free for initial enrollment, or 1 GiB for a verified existing volume")
+			}
 			return nil, "bitcoin_storage_failed", errors.New("bitcoin storage enrollment failed")
 		}
 		return state, "", nil

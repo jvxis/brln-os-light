@@ -88,7 +88,7 @@ The installer provisions everything needed on a clean Ubuntu box:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort enabled) + i2pd enabled by default
 - Go pinned by `lightningos-light/scripts/go-toolchain.conf` (currently 1.26.8). From 0.5.50, compatible global Node >=22.12.0 / npm >=10 are retained; missing/older toolchains use the verified Node 24.22.1 / npm 11.19.1 installation. Build compatibility is not security certification. The host is considered dedicated to LOS; see the [existing-node preparation and compatibility precautions](docs/NODE_TOOLCHAIN_UPGRADE.md).
-- LND binaries pinned by the selected release (currently `v0.21.5-beta` for new nodes)
+- LND binaries pinned by the selected release (currently `v0.21.6-beta` for new nodes)
 - LightningOS Manager binary (compiled locally)
 - UI build (compiled locally)
 - systemd services and config templates

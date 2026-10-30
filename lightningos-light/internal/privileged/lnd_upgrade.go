@@ -9,7 +9,7 @@ const (
 	lndUpgradeHelperPath   = "/usr/local/sbin/lightningos-upgrade-lnd"
 	lndUpgradeUnit         = "lightningos-lnd-upgrade"
 	lndVerifyUnit          = "lightningos-lnd-verify"
-	lndUpgradeHelperSHA256 = "187906eb44efd083d39a94247e62ee8c655e1d5b2bcfc5870a63dce51008b89e"
+	lndUpgradeHelperSHA256 = "bf187e1a029667fe93535ec5059e851a06e725d090f606135d05943e7f1765ba"
 )
 
 type NativeLNDUpgradeManager struct {

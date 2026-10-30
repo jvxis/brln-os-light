@@ -6,6 +6,9 @@ References, checked 2026-10-30:
 - [Go Security Team advisory](https://seclists.org/oss-sec/2026/q4/437).
 - [Go MPTCP defaults](https://go.dev/doc/godebug#go-124).
 
+See the [validation report](KERNEL_TCP_VALIDATION.md) for exercised scenarios,
+baseline failures and remaining platform limits.
+
 The underlying bug is in the Linux kernel; disabling MPTCP alone is not a
 complete fix. The distribution's patched **running** kernel remains the final
 remedy. Do not infer backported patch status from a generic kernel-version

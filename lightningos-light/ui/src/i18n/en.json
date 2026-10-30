@@ -2615,6 +2615,37 @@
     "updatedDaily": "Automatic reconciliation every hour"
   },
   "wallet": {
+    "lnurlWithdraw": {
+      "title": "Receive with LNURL",
+      "hint": "Redeem an LNURL-withdraw voucher from another service into this wallet. Requires inbound liquidity and a working route. Keep the voucher private.",
+      "voucher": "LNURL withdrawal voucher",
+      "inspect": "Check voucher",
+      "busy": "Please wait…",
+      "service": "Service",
+      "callbackService": "Service receiving the invoice",
+      "range": "Available range",
+      "confirmHint": "Confirm to create an invoice and ask this service to pay it. No funds are sent from your node.",
+      "confirm": "Confirm receipt request",
+      "retry": "Retry with the same invoice",
+      "accepted": "The service accepted the request. Await payment in Recent activity; acceptance does not confirm receipt.",
+      "unknown": "The service response could not be confirmed. Check Recent activity before retrying. A retry uses the same invoice.",
+      "rejected": "The service rejected the request. No receipt was confirmed. Check Recent activity; any retry uses the same invoice.",
+      "paymentHash": "Payment hash",
+      "restartHint": "Closing or refreshing discards this confirmation. Check Recent activity before checking the voucher again.",
+      "failed": "Could not complete the request. Check Recent activity before retrying.",
+      "errors": {
+        "lnurl_withdraw_invalid_input": "Enter a valid LNURL withdrawal voucher using public HTTPS.",
+        "lnurl_withdraw_wrong_type": "This LNURL is not a withdrawal voucher. Payment and login LNURLs cannot be redeemed here.",
+        "lnurl_withdraw_no_balance": "This voucher has no available whole-satoshi balance.",
+        "lnurl_withdraw_invalid_response": "The service returned an invalid withdrawal response.",
+        "lnurl_withdraw_provider_error": "The service refused the voucher. It may be expired or already used.",
+        "lnurl_withdraw_unavailable": "The service is unavailable or its connection is unsafe.",
+        "lnurl_withdraw_expired": "This confirmation expired or belongs to another session. Close it and check the voucher again.",
+        "lnurl_withdraw_amount_invalid": "Choose a whole-satoshi amount within the range. Once requested, retries must use the same amount.",
+        "lnurl_withdraw_invoice_failed": "Could not create the receiving invoice. Check LND status.",
+        "lnurl_withdraw_busy": "Too many pending vouchers. Wait ten minutes before checking another."
+      }
+    },
     "spendingGuardTitle": "Lightning Spending Guard",
     "spendingGuardDescription": "These are independent limits that work together: a payment is allowed only when it passes both configured limits. Every protected debit includes the amount sent plus the maximum routing fee defined by that operation.",
     "spendingGuardActive": "Active",

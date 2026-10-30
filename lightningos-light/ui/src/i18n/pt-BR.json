@@ -2615,6 +2615,37 @@
     "updatedDaily": "Reconciliação automática a cada hora"
   },
   "wallet": {
+    "lnurlWithdraw": {
+      "title": "Receber com LNURL",
+      "hint": "Resgate um voucher LNURL-withdraw de outro serviço para esta wallet. Requer liquidez de entrada e uma rota disponível. Mantenha o voucher privado.",
+      "voucher": "Voucher de recebimento LNURL",
+      "inspect": "Consultar voucher",
+      "busy": "Aguarde…",
+      "service": "Serviço",
+      "callbackService": "Serviço que receberá a invoice",
+      "range": "Faixa disponível",
+      "confirmHint": "Confirme para criar uma invoice e solicitar o pagamento ao serviço. Nenhum fundo sai do seu node.",
+      "confirm": "Confirmar solicitação de recebimento",
+      "retry": "Tentar com a mesma invoice",
+      "accepted": "O serviço aceitou a solicitação. Aguarde o pagamento em Atividade recente; a aceitação não confirma o recebimento.",
+      "unknown": "Não foi possível confirmar a resposta do serviço. Confira a Atividade recente antes de tentar novamente. A tentativa reutiliza a mesma invoice.",
+      "rejected": "O serviço recusou a solicitação. O recebimento não foi confirmado. Confira a Atividade recente; uma nova tentativa reutiliza a mesma invoice.",
+      "paymentHash": "Hash do pagamento",
+      "restartHint": "Fechar ou atualizar a página descarta esta confirmação. Confira a Atividade recente antes de consultar o voucher novamente.",
+      "failed": "Não foi possível concluir a solicitação. Confira a Atividade recente antes de tentar novamente.",
+      "errors": {
+        "lnurl_withdraw_invalid_input": "Informe um voucher LNURL válido que use HTTPS público.",
+        "lnurl_withdraw_wrong_type": "Este LNURL não é um voucher de recebimento. LNURLs de pagamento e login não podem ser resgatados aqui.",
+        "lnurl_withdraw_no_balance": "Este voucher não tem saldo disponível em satoshis inteiros.",
+        "lnurl_withdraw_invalid_response": "O serviço retornou uma resposta de resgate inválida.",
+        "lnurl_withdraw_provider_error": "O serviço recusou o voucher. Ele pode estar expirado ou já utilizado.",
+        "lnurl_withdraw_unavailable": "O serviço está indisponível ou a conexão não é segura.",
+        "lnurl_withdraw_expired": "Esta confirmação expirou ou pertence a outra sessão. Feche e consulte o voucher novamente.",
+        "lnurl_withdraw_amount_invalid": "Escolha um valor inteiro dentro da faixa. Após solicitar, novas tentativas precisam manter o mesmo valor.",
+        "lnurl_withdraw_invoice_failed": "Não foi possível criar a invoice de recebimento. Confira o estado do LND.",
+        "lnurl_withdraw_busy": "Há muitos vouchers pendentes. Aguarde dez minutos antes de consultar outro."
+      }
+    },
     "spendingGuardTitle": "Proteção de Gastos Lightning",
     "spendingGuardDescription": "São limites independentes que funcionam juntos: o pagamento só é autorizado quando respeita todos os limites configurados. Cada débito protegido inclui o valor enviado mais a taxa máxima de roteamento definida pela própria operação.",
     "spendingGuardActive": "Ativa",

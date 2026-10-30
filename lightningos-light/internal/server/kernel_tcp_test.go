@@ -19,6 +19,7 @@ func TestKernelTCPStatusDoesNotTreatOldOrInvalidProofAsProtection(t *testing.T) 
 		{"trailing", fmt.Sprintf(`{"version":1,"checked_at":%d} {}`, now.Unix()), false},
 		{"unknown version", fmt.Sprintf(`{"version":2,"checked_at":%d}`, now.Unix()), false},
 		{"malformed", `{"filter_verified":true`, false},
+		{"timestamp overflow", `{"version":1,"checked_at":-9223372036854775808,"filter_verified":true}`, false},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			status, valid := parseKernelTCPStatus(strings.NewReader(item.raw), now)

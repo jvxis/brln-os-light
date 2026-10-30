@@ -26,7 +26,7 @@ func parseKernelTCPStatus(reader io.Reader, now time.Time) (kernelTCPStatus, boo
 		return kernelTCPStatus{}, false
 	}
 	var extra any
-	if decoder.Decode(&extra) != io.EOF || status.CheckedAt > now.Unix()+5 || now.Unix()-status.CheckedAt > 90 {
+	if decoder.Decode(&extra) != io.EOF || status.CheckedAt > now.Unix()+5 || status.CheckedAt < now.Unix()-90 {
 		return kernelTCPStatus{}, false
 	}
 	return status, true

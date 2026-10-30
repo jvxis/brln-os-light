@@ -964,7 +964,8 @@ POST /api/apps/{id}/install
 }
 - `data_dir` is install-time only; existing blockchain data is not migrated.
 - `bitcoincore` defaults to `/data/bitcoin`; `elements` defaults to `/data/elements`.
-- Custom `bitcoincore` data directories must be on an already mounted volume and have at least 10 GiB free.
+- Custom `bitcoincore` data directories must be on an already mounted volume; initial enrollment requires at least 10 GiB free.
+- Reusing a matching, root-enrolled Bitcoin volume requires 1 GiB free; initial or unverified enrollment still requires 10 GiB. This applies to Install/Start storage checks, including pruned nodes. Low space returns the sanitized `bitcoin_storage_space_low` diagnostic. See [storage restart policy](BITCOIN_STORAGE_RESTART.md).
 - A detected legacy Bitcoin runtime requires `{"confirm_legacy_migration":true}`. Before cutover, the broker validates the attested official image, enrolled storage, configuration, network, ports, and a local rollback image. It accepts success only after mainnet RPC and loopback RPC/ZMQ probes pass; otherwise it automatically restores the previous runtime. The flow never restarts LND or removes the blockchain volume.
 - Installing `electrs` against Bitcoin Core managed by the App Store requires
   `{"confirm_bitcoin_restart":true}`. On a legacy `rpcauth` installation the

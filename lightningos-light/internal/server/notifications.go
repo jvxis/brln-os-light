@@ -1621,6 +1621,8 @@ func (n *Notifier) processSettledInvoice(parent context.Context, invoice *lnrpc.
 
 func (n *Notifier) runPayments() {
 	pending := map[string]pendingPaymentEntry{}
+	var recovery paymentCursorRecovery
+	var nextCursorProbe time.Time
 	if n != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		pending = n.loadPendingPayments(ctx)
@@ -1641,20 +1643,20 @@ func (n *Notifier) runPayments() {
 		stuckCancel()
 	}
 
-	processPayment := func(pay *lnrpc.Payment, suppressMirror bool) {
+	processPayment := func(pay *lnrpc.Payment, suppressMirror bool) bool {
 		if pay == nil {
-			return
+			return true
 		}
 		paymentHash := normalizeHash(pay.PaymentHash)
 		if paymentHash == "" {
-			return
+			return true
 		}
 		status := pay.Status.String()
 		if status == "IN_FLIGHT" {
-			return
+			return true
 		}
 		if status != "SUCCEEDED" && isProbePayment(pay) {
-			return
+			return true
 		}
 
 		amount := pay.ValueSat
@@ -1709,7 +1711,7 @@ func (n *Notifier) runPayments() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			_ = n.removeRebalanceInvoice(cleanupCtx, paymentHash)
 			cleanupCancel()
-			return
+			return true
 		}
 		if peerAlias == "" && peerPubkey != "" {
 			peerAlias = n.lookupNodeAlias(peerPubkey)
@@ -1745,7 +1747,9 @@ func (n *Notifier) runPayments() {
 		if isRebalance {
 			evt = n.rebalanceEvent(ctx, pay, occurredAt)
 		}
+		succeeded := false
 		if _, err := n.upsertNotificationWithOptions(ctx, fmt.Sprintf("payment:%s", paymentHash), evt, notificationUpsertOptions{suppressMirror: suppressMirror}); err == nil {
+			succeeded = true
 			paymentType := paymentRouteType(pay, isKeysend, isRebalance)
 			if routeErr := n.replacePaymentRouteHistory(ctx, pay, paymentType, occurredAt); routeErr != nil && n.logger != nil {
 				n.logger.Printf("notifications: payment route history upsert failed for %s: %v", paymentHash, routeErr)
@@ -1759,6 +1763,7 @@ func (n *Notifier) runPayments() {
 			n.logger.Printf("notifications: payment upsert failed for %s: %v", paymentHash, err)
 		}
 		cancel()
+		return succeeded
 	}
 
 	for {
@@ -1814,50 +1819,29 @@ func (n *Notifier) runPayments() {
 			persistCancel()
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		cursorVal, _ := n.getCursor(ctx, "payments_index")
-		cancel()
-		if strings.TrimSpace(cursorVal) == "" && !n.paymentsCatchupMode.Load() {
-			n.paymentsCatchupMode.Store(true)
-		}
-
-		var indexOffset uint64
-		if cursorVal != "" {
-			if parsed, err := strconv.ParseUint(cursorVal, 10, 64); err == nil {
-				indexOffset = parsed
-			}
-		}
-
-		rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		conn, release, err := n.lnd.BorrowLightning(rpcCtx, false)
-		if err != nil {
-			rpcCancel()
-			n.logger.Printf("notifications: payments poll dial failed: %v", err)
-			continue
-		}
-
-		client := lnrpc.NewLightningClient(conn)
-		res, err := client.ListPayments(rpcCtx, &lnrpc.ListPaymentsRequest{
-			IncludeIncomplete: true,
-			IndexOffset:       indexOffset,
-			MaxPayments:       paymentsPollPageSize,
-			Reversed:          false,
-		})
-		release()
-		rpcCancel()
-		if err != nil {
+		res, indexOffset, err := n.pollPaymentPage(&recovery, &nextCursorProbe)
+		if err != nil && n.logger != nil {
 			n.logger.Printf("notifications: payments poll failed: %v", err)
-			continue
+		}
+		if err != nil || res == nil {
+			// Cursor/RPC recovery errors must not starve the independent pending
+			// reconciliation below. No forward cursor is advanced on this path.
+			res = &lnrpc.ListPaymentsResponse{}
 		}
 
 		maxIndex := indexOffset
+		forwardPageComplete := err == nil
 		pendingDirty := false
 		now := time.Now().Unix()
 		suppressMirror := n.paymentsCatchupMode.Load()
 		for _, pay := range res.Payments {
+			if pay == nil {
+				continue
+			}
 			if pay.PaymentIndex <= indexOffset {
 				continue
 			}
+			previousMaxIndex := maxIndex
 			if pay.PaymentIndex > maxIndex {
 				maxIndex = pay.PaymentIndex
 			}
@@ -1879,7 +1863,11 @@ func (n *Notifier) runPayments() {
 				}
 				continue
 			}
-			processPayment(pay, suppressMirror)
+			if !processPayment(pay, suppressMirror || recovery.suppressMirror(pay)) {
+				maxIndex = previousMaxIndex
+				forwardPageComplete = false
+				break // Retry the failed row before advancing past it.
+			}
 			if _, ok := pending[paymentHash]; ok {
 				delete(pending, paymentHash)
 				pendingDirty = true
@@ -1936,12 +1924,14 @@ func (n *Notifier) runPayments() {
 					pendingDirty = true
 					continue
 				}
-				processPayment(pay, n.paymentsCatchupMode.Load())
+				if !processPayment(pay, n.paymentsCatchupMode.Load() || recovery.suppressMirror(pay)) {
+					continue // Keep the pending entry until its notification is durable.
+				}
 				delete(pending, hash)
 				pendingDirty = true
 			}
 		}
-		if n.paymentsCatchupMode.Load() && !shouldContinuePaymentsCatchup(len(res.Payments)) {
+		if n.paymentsCatchupMode.Load() && forwardPageComplete && !shouldContinuePaymentsCatchup(len(res.Payments)) {
 			n.paymentsCatchupMode.Store(false)
 		}
 

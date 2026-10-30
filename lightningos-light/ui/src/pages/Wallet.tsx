@@ -6,6 +6,7 @@ import QRCode from 'qrcode'
 import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getSpendingGuard, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, markWalletActivity, payInvoice, payInvoiceMPP, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain, updateSpendingGuard, type SpendingGuardStatus } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
 import StatusBadge from '../components/dashboard/StatusBadge'
+import LNURLWithdraw from '../components/LNURLWithdraw'
 import { getLocale } from '../i18n'
 
 const emptySummary = {
@@ -1952,6 +1953,7 @@ export default function Wallet() {
               )}
             </div>
           )}
+          <LNURLWithdraw />
         </div>
 
         <div className={`section-card space-y-4 ${paymentPreviewLoading ? 'route-preview-busy' : ''}`}>

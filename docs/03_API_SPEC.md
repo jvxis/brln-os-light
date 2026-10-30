@@ -576,6 +576,42 @@ Body:
   "memo": "optional"
 }
 
+### Redeem an LNURL-withdraw voucher
+
+`POST /api/wallet/lnurl-withdraw/preview`
+
+Body: `{"lnurl":"LNURL1..."}` (also accepts a `lightning:` prefix).
+Decodes a Bech32 LNURL, queries its public HTTPS endpoint and accepts only a
+LUD-03 `withdrawRequest`. Returns `token`, `service`, `callback_service`,
+`description`, `min_sat`, `max_sat`, `expires_at`. Bounds round inward to whole
+satoshis. Empty balances, other LNURL types, unsafe URLs and invalid responses
+are rejected. Preview does not create an invoice or claim the voucher.
+
+`POST /api/wallet/lnurl-withdraw`
+
+Body: `{"token":"<preview token>","amount_sat":100}`. Creates a receiving
+invoice (600-second expiry), then submits that invoice and the provider's `k1`
+to the callback. Returns `status` (`accepted`, `rejected`, or `unknown`),
+`payment_hash` and `amount_sat`. **Accepted means provider acknowledgement,
+not settled funds.** Receipt appears through the existing LND-backed wallet
+activity and balances. Inbound liquidity and a usable route are still required.
+
+Both routes use existing session/CSRF protection when login is enabled. Tickets
+are session-bound, valid for ten minutes and held in memory (maximum 64 active
+tickets); a Manager restart invalidates them. Repeating redemption with the same
+ticket serializes execution and reuses the same invoice and amount. Accepted
+requests are cached and do not contact the provider again. If a callback fails or
+times out, check activity before retrying that same ticket. A fresh preview is a
+new request, so do not generate another while a payment is still uncertain.
+Refreshing the page loses its pending ticket; check activity before restarting.
+
+Only receiving-invoice RPCs are used, with no outgoing payment or on-chain send.
+Public HTTPS, TLS verification, DNS/dial address restrictions, bounded responses
+and timeouts apply to discovery, callbacks and redirects. No public inbound LOS
+endpoint is needed. Voucher URLs and callback credentials are not returned in
+errors or audit events; audit stores only callback hostname, amount, invoice hash
+and request outcome. Fixed error messages use the `lnurl_withdraw_*` prefix.
+
 POST /api/wallet/decode
 Body:
 {

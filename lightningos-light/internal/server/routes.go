@@ -225,6 +225,8 @@ func (s *Server) routes() http.Handler {
 		r.Get("/payments/{paymentHash}", s.handleWalletPaymentDetail)
 		r.Post("/address", s.handleWalletAddress)
 		r.Post("/invoice", s.handleWalletInvoice)
+		r.Post("/lnurl-withdraw/preview", s.handleLNURLWithdrawPreview)
+		r.Post("/lnurl-withdraw", s.handleLNURLWithdraw)
 		r.Post("/decode", s.handleWalletDecode)
 		r.Post("/pay/preview", s.handleWalletPayPreview)
 		r.Post("/pay/validated-route", s.handleWalletPayValidatedRoute)

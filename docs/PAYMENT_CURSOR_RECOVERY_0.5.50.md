@@ -91,7 +91,7 @@ was used. Baseline: `1f8435c7`; tested functional source: `10c40c93`.
   payments without changing LND state.
 - Real ordinary circular rebalance and managed fast-path execution both produced
   exactly one settled rebalance notification per successful payment, with amount
-  and milllisatoshi fee checked independently against LND. The managed result was
+  and millisatoshi fee checked independently against LND. The managed result was
   also checked through the authenticated Notifications API and execution journal.
 - Real PostgreSQL tests covered invoice/payment arrival in both orders,
   compare-and-swap rejection, transaction rollback/retry, original-cursor backups,

@@ -154,6 +154,11 @@ def unit_godebug(unit):
 def valid_rules(document):
     """Validate semantics, hook/order and the complete dedicated table, not a label."""
     entries = document.get('nftables', [])
+    tables = [x['table'] for x in entries if 'table' in x]
+    if len(tables) != 1 or tables[0].get('family') != 'ip' or tables[0].get('name') != TABLE or tables[0].get('flags'):
+        return False
+    if any(set(x) - {'metainfo','table','chain','rule'} for x in entries):
+        return False
     chains = [x['chain'] for x in entries if 'chain' in x]
     rules = [x['rule'] for x in entries if 'rule' in x]
     if len(chains) != 1 or len(rules) != 1:

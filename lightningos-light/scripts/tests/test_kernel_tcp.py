@@ -35,9 +35,9 @@ class KernelTCPTests(unittest.TestCase):
             {'match':{'op':'==','left':{'meta':{'key':'l4proto'}},'right':'tcp'}},
             {'match':{'op':'>','left':{'payload':{'protocol':'ip','field':'hdrlength'}},'right':5}},
             {'counter':{'packets':12,'bytes':480}}, {'drop':None}]}
-        good = {'nftables':[{'chain':chain},{'rule':rule}]}
+        good = {'nftables':[{'chain':chain},{'rule':rule},{'table':{'family':'ip','name':module.TABLE}}]}
         self.assertTrue(module.valid_rules(good))
-        for change in ['accept','wrong_hook','wrong_priority','wrong_length','missing_counter','extra_rule']:
+        for change in ['accept','wrong_hook','wrong_priority','wrong_length','missing_counter','extra_rule','dormant']:
             bad = copy.deepcopy(good)
             if change=='accept':bad['nftables'][1]['rule']['expr'][-1]={'accept':None}
             if change=='wrong_hook':bad['nftables'][0]['chain']['hook']='input'
@@ -45,6 +45,7 @@ class KernelTCPTests(unittest.TestCase):
             if change=='wrong_length':bad['nftables'][1]['rule']['expr'][1]['match']['right']=6
             if change=='missing_counter':bad['nftables'][1]['rule']['expr'].pop(2)
             if change=='extra_rule':bad['nftables'].append(copy.deepcopy(bad['nftables'][1]))
+            if change=='dormant':bad['nftables'][2]['table']['flags']=['dormant']
             self.assertFalse(module.valid_rules(bad),change)
 
 

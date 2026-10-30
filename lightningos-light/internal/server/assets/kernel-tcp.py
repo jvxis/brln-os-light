@@ -254,6 +254,10 @@ def install():
             run('/usr/bin/env','DEBIAN_FRONTEND=noninteractive','NEEDRESTART_MODE=l','/usr/bin/apt-get','update',timeout=300)
             run('/usr/bin/env','DEBIAN_FRONTEND=noninteractive','NEEDRESTART_MODE=l','/usr/bin/apt-get','install','-y','--no-install-recommends','nftables',timeout=300)
         finally:
+            if enabled not in ('enabled', 'enabled-runtime'):
+                # Package postinst may create wants-links even while masked.
+                # A newly introduced nftables.service must remain disabled.
+                run('/usr/bin/systemctl','disable','nftables.service',check=False)
             if masked_here:
                 run('/usr/bin/systemctl','unmask','--runtime','nftables.service')
     for path in [CONFIG, RUNTIME, HELPER.parent]:

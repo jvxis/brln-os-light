@@ -56,10 +56,19 @@ replaced or restarted by this helper. Custom LND unit names beyond these two
 native layouts require separate operator configuration. A per-socket explicit
 MPTCP request can override Go defaults; the packet filter remains independent.
 
-Installers apply the helper directly. The new Manager/broker also reconcile its
+The production `install.sh`, `install_existing.sh` and `install_existing_pi.sh`
+apply the helper directly. The isolated `install_regtest.sh` does not install a
+host firewall or rewrite its separate lab LND units. Its newly built LOS binary
+still inherits the ordinary-TCP build default.
+
+The new production Manager/broker also reconcile its
 digest-pinned asset, covering an upgrade launched by an older installed updater
 that does not know the new installer hook. No caller-selected path, helper
 content, command or package is accepted in place of the reviewed asset.
+With an older updater, verification can remain pending during the new Manager's
+initial reconciliation and prerequisite download. Check the Security diagnostic
+after upgrading rather than treating the upgrade-complete message as proof that
+the kernel filter has already been verified.
 
 ## Diagnostics
 

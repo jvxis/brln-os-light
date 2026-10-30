@@ -4,6 +4,11 @@ import copy
 import importlib.util
 from pathlib import Path
 import unittest
+import os
+import sys
+import tempfile
+import contextlib
+import io
 from unittest import mock
 from types import SimpleNamespace
 
@@ -14,6 +19,23 @@ spec.loader.exec_module(module)
 
 
 class KernelTCPTests(unittest.TestCase):
+    @unittest.skipUnless(os.geteuid() == 0, 'Root-owned status permissions require Linux root')
+    def test_restrictive_umask_does_not_hide_status_from_manager(self):
+        with tempfile.TemporaryDirectory(prefix='kernel-tcp-test-', dir='/root') as folder:
+            runtime = Path(folder) / 'runtime'
+            status = runtime / 'status.json'
+            previous = os.umask(0o077)
+            try:
+                with mock.patch.multiple(module, RUNTIME=runtime, STATUS=status, DISABLED=Path(folder)/'disabled'), \
+                     mock.patch.object(module, 'inspect_rule', return_value=True), \
+                     mock.patch.object(sys, 'argv', ['kernel-tcp', 'apply']), contextlib.redirect_stdout(io.StringIO()):
+                    module.main()
+            finally:
+                os.umask(previous)
+            self.assertEqual(runtime.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(status.stat().st_mode & 0o777, 0o644)
+            self.assertEqual((status.stat().st_uid, status.stat().st_gid), (0, 0))
+
     def test_multiple_systemd_environment_files_and_repeat_install(self):
         def command(*args, **kwargs):
             field = args[args.index('-p')+1]

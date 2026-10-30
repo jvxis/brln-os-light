@@ -1035,7 +1035,8 @@ O pareamento físico com um segundo rádio e a liquidação real de pagamentos c
 
 ### Proteção temporária do TCP no kernel (0.5.50)
 
-O LOS instala um filtro nftables exclusivo para a **CVE-2026-98432**, descartando
+Os instaladores de produção e os upgrades do app instalam um filtro nftables
+exclusivo para a **CVE-2026-98432**, descartando
 pacotes TCP/IPv4 com opções no cabeçalho IPv4. Opções TCP comuns, como MSS,
 timestamps e window scaling, continuam permitidas. Conexões comuns existentes
 não exigem reiniciar LND ou Bitcoin. Um timer verifica e recompõe o filtro a

@@ -1027,7 +1027,8 @@ Physical pairing with a second radio and actual payment settlement remain accept
 
 ### Temporary kernel TCP protection (0.5.50)
 
-LOS installs a dedicated nftables filter for **CVE-2026-98432**, rejecting
+Production installers and application upgrades install a dedicated nftables
+filter for **CVE-2026-98432**, rejecting
 TCP/IPv4 packets with IPv4 header options. Ordinary TCP options such as MSS,
 timestamps and window scaling remain allowed. Existing ordinary connections
 do not require an LND or Bitcoin restart. A timer checks and restores the filter

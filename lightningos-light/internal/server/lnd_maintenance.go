@@ -378,6 +378,8 @@ func (s *Server) handleLNDMaintenancePost(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) activateLNDMaintenance(ctx context.Context) error {
+	lndConfigMutationMu.Lock()
+	defer lndConfigMutationMu.Unlock()
 	raw, err := os.ReadFile(lndConfPath)
 	if err != nil {
 		return fmt.Errorf("read lnd.conf: %w", err)
@@ -449,6 +451,8 @@ func (s *Server) activateLNDMaintenance(ctx context.Context) error {
 }
 
 func (s *Server) deactivateLNDMaintenance(ctx context.Context, state lndMaintenanceState) error {
+	lndConfigMutationMu.Lock()
+	defer lndConfigMutationMu.Unlock()
 	if !state.Active {
 		return nil
 	}

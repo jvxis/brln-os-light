@@ -196,6 +196,7 @@ export default function Wallet() {
   const [sendConfirmStatus, setSendConfirmStatus] = useState('')
   const [sendConfirmRunning, setSendConfirmRunning] = useState(false)
   const [paymentReauthAction, setPaymentReauthAction] = useState<'pay' | 'validated' | 'mpp' | null>(null)
+  const [paymentReauthScope, setPaymentReauthScope] = useState('lightning_funds')
   const [paymentReauthPassword, setPaymentReauthPassword] = useState('')
   const [paymentReauthError, setPaymentReauthError] = useState('')
   const [paymentReauthBusy, setPaymentReauthBusy] = useState(false)
@@ -1129,11 +1130,6 @@ export default function Wallet() {
       setSendStatus(t('wallet.amountMustBePositive'))
       return
     }
-    if (sendPreview?.requires_password_confirmation) {
-      setSendConfirmOpen(true)
-      setSendConfirmStatus('')
-      return
-    }
     await executeOnchainSend()
   }
 
@@ -1302,6 +1298,7 @@ export default function Wallet() {
     } catch (err: any) {
       if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
         setPaymentReauthAction('pay')
+        setPaymentReauthScope(String(err.details?.scope || 'lightning_funds'))
         setPaymentReauthError('')
         return
       }
@@ -1374,6 +1371,7 @@ export default function Wallet() {
     } catch (err: any) {
       if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
         setPaymentReauthAction('validated')
+        setPaymentReauthScope(String(err.details?.scope || 'lightning_funds'))
         setPaymentReauthError('')
         return
       }
@@ -1443,6 +1441,7 @@ export default function Wallet() {
     } catch (err: any) {
       if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
         setPaymentReauthAction('mpp')
+        setPaymentReauthScope(String(err.details?.scope || 'lightning_funds'))
         setPaymentReauthError('')
         return
       }
@@ -1507,7 +1506,7 @@ export default function Wallet() {
     setPaymentReauthBusy(true)
     setPaymentReauthError('')
     try {
-      await reauthAuth({ password: paymentReauthPassword, scope: 'lightning_funds' })
+      await reauthAuth({ password: paymentReauthPassword, scope: paymentReauthScope })
       setPaymentReauthAction(null)
       setPaymentReauthPassword('')
       if (action === 'validated') await handlePayValidatedRoute()
@@ -1551,7 +1550,7 @@ export default function Wallet() {
       setSpendingGuardReauthOpen(false)
       setSpendingGuardPassword('')
     } catch (err: any) {
-      if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
+      if (err instanceof APIError && (err.code === 'spending_guard_reauth_required' || err.code === 'lightning_funds_reauth_required')) {
         setSpendingGuardReauthOpen(true)
         return
       }

@@ -11,7 +11,10 @@ import (
 	"lightningos-light/internal/system"
 )
 
-const systemIntegrationsMarkerPath = "/var/lib/lightningos-privileged/system-integrations-20260816-v10"
+const systemIntegrationsMarkerPath = "/var/lib/lightningos-privileged/system-integrations-20261030-v11"
+
+//go:embed assets/kernel-tcp.py
+var embeddedKernelTCPHelper string
 
 //go:embed assets/lightningos-terminal.sh
 var embeddedTerminalHelper string
@@ -65,6 +68,7 @@ func reconcileSystemIntegrations(ctx context.Context) error {
 		{Name: "terminal", Content: embeddedTerminalHelper},
 		{Name: "manager_firewall", Content: embeddedManagerFirewallHelper},
 		{Name: "manager_tls_mdns", Content: embeddedManagerTLSMDNSHelper},
+		{Name: "kernel_tcp", Content: embeddedKernelTCPHelper},
 	}
 	for _, asset := range assets {
 		if asset.Content == "" {

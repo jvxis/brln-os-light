@@ -49,32 +49,48 @@ func ReadDiskSmart(ctx context.Context) ([]DiskSmart, error) {
     devicePath := "/dev/" + dev
     smart, err := smartctlDevice(ctx, devicePath)
     if err != nil {
-      out = append(out, DiskSmart{
+      // No SMART (virtual disks on a VPS, some USB bridges): the health
+      // fields stay empty, but size and usage come from lsblk/df and are
+      // still known. Dropping them hid the disk usage on every VPS node.
+      smart = DiskSmart{
         Device: devicePath,
         Type: guessDiskType(devicePath),
-        SmartStatus: "UNAVAILABLE",
-      })
-      continue
+        SmartStatus: DiskSmartUnavailable,
+      }
     }
     if smart.Type == "" {
       smart.Type = guessDiskType(devicePath)
     }
-    if parts, ok := usageByDisk[devicePath]; ok {
-      smart.Partitions = parts
-      totalGB, usedGB := sumPartitionUsage(parts)
-      smart.UsedGB = usedGB
-      if diskTotal, ok := diskSizes[devicePath]; ok && diskTotal > 0 {
-        smart.TotalGB = diskTotal
-      } else if totalGB > 0 {
-        smart.TotalGB = totalGB
-      }
-      if smart.TotalGB > 0 {
-        smart.UsedPercent = (smart.UsedGB / smart.TotalGB) * 100
-      }
-    }
+    attachDiskUsage(&smart, devicePath, usageByDisk, diskSizes)
     out = append(out, smart)
   }
   return out, nil
+}
+
+// DiskSmartUnavailable is the SmartStatus of a disk smartctl could not read.
+const DiskSmartUnavailable = "UNAVAILABLE"
+
+// attachDiskUsage fills partitions, size and usage for a disk, whether or
+// not its SMART data could be read.
+func attachDiskUsage(d *DiskSmart, devicePath string, usageByDisk map[string][]DiskPartition, diskSizes map[string]float64) {
+  parts, ok := usageByDisk[devicePath]
+  if !ok {
+    if diskTotal, ok := diskSizes[devicePath]; ok && diskTotal > 0 {
+      d.TotalGB = diskTotal
+    }
+    return
+  }
+  d.Partitions = parts
+  totalGB, usedGB := sumPartitionUsage(parts)
+  d.UsedGB = usedGB
+  if diskTotal, ok := diskSizes[devicePath]; ok && diskTotal > 0 {
+    d.TotalGB = diskTotal
+  } else if totalGB > 0 {
+    d.TotalGB = totalGB
+  }
+  if d.TotalGB > 0 {
+    d.UsedPercent = (d.UsedGB / d.TotalGB) * 100
+  }
 }
 
 func listBlockDevices(ctx context.Context) ([]string, error) {
@@ -346,7 +362,7 @@ func smartctlDevice(ctx context.Context, device string) (DiskSmart, error) {
     lower := strings.ToLower(strings.TrimSpace(line))
     if strings.Contains(lower, "smart support is:") {
       if strings.Contains(lower, "unavailable") {
-        smart.SmartStatus = "UNAVAILABLE"
+        smart.SmartStatus = DiskSmartUnavailable
       } else if strings.Contains(lower, "disabled") {
         smart.SmartStatus = "DISABLED"
       }

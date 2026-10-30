@@ -1,6 +1,36 @@
 #!/usr/bin/env bash
-# Release-pinned global Node/npm for dedicated Debian/Ubuntu LightningOS hosts.
+# Keep compatible global runtimes; install the pinned LTS when one is missing.
 lightningos_node_error() { printf 'Node preparation: %s\n' "$*" >&2; return 1; }
+
+# Build compatibility is independent of the recommended installation pin and
+# security support. Never downgrade a working runtime just to match the pin.
+# Vite/TypeScript run as build tools; no Node server is shipped by the Manager.
+lightningos_node_check_compatible() {
+  local node_version npm_version
+  [[ -x /usr/bin/node && -x /usr/bin/npm ]] || return 1
+  node_version=$(env -u NODE_OPTIONS -u NODE_PATH /usr/bin/node --version) || return 1
+  npm_version=$(lightningos_node_npm --version) || return 1
+  [[ "$node_version" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+  dpkg --compare-versions "${node_version#v}" ge 22.12.0 || return 1
+  [[ "$npm_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  dpkg --compare-versions "$npm_version" ge 10.0.0 || return 1
+  LOS_NODE_ACTUAL_VERSION=${node_version#v}
+  LOS_NPM_ACTUAL_VERSION=$npm_version
+}
+
+lightningos_node_security_notice() {
+  local version="$LOS_NODE_ACTUAL_VERSION" minimum=''
+  case "${version%%.*}" in
+    22) minimum=22.23.4 ;;
+    24) minimum=24.22.1 ;;
+    26) minimum=26.12.1 ;;
+    25) printf '%s\n' '[WARN] Node 25 is EOL. LOS build compatibility does not imply security support; plan migration to a supported runtime.' >&2; return ;;
+    *) printf '%s\n' '[WARN] This Node major has no reviewed security baseline in this LOS release; check upstream support and security advisories.' >&2; return ;;
+  esac
+  if dpkg --compare-versions "$version" lt "$minimum"; then
+    printf '[WARN] Node %s is build-compatible but below the reviewed security baseline %s. Update its security patches separately.\n' "$version" "$minimum" >&2
+  fi
+}
 
 lightningos_node_candidate_notice() {
   local policy='' line candidate=''
@@ -297,6 +327,16 @@ lightningos_prepare_node() {
     command -v "$required" >/dev/null || { lightningos_node_error "missing prerequisite: $required"; return 1; }
   done
   lightningos_node_policy || return 1
+  lightningos_node_check_shadowing || return 1
+  lightningos_node_check_npm_config || return 1
+  if lightningos_node_check_compatible; then
+    export NODE_BIN=/usr/bin/node NPM_BIN=/usr/bin/npm
+    export PATH="/usr/bin:/bin:$PATH"
+    unset NODE_OPTIONS NODE_PATH NODE_ENV npm_config_prefix NPM_CONFIG_PREFIX npm_config_omit NPM_CONFIG_OMIT
+    printf '[OK] Compatible global Node %s / npm %s retained; no packages or repositories changed\n' "$LOS_NODE_ACTUAL_VERSION" "$LOS_NPM_ACTUAL_VERSION"
+    lightningos_node_security_notice
+    return 0
+  fi
   lightningos_node_install || return 1
   export NODE_BIN=/usr/bin/node NPM_BIN=/usr/bin/npm
   export PATH="/usr/bin:/bin:$PATH"
@@ -312,8 +352,11 @@ lightningos_node_upgrade_main() (
   [[ "$EUID" == 0 && "$(uname -s)" == Linux && -f /etc/debian_version ]] || { lightningos_node_error 'root on Debian/Ubuntu Linux is required'; exit 1; }
   lightningos_node_policy
   if [[ "${1:-}" == --check ]]; then
-    lightningos_node_check_global
-    echo '[OK] Global Node/npm verified'
+    lightningos_node_check_shadowing
+    lightningos_node_check_npm_config
+    lightningos_node_check_compatible
+    lightningos_node_security_notice
+    echo '[OK] Global Node/npm build compatibility verified'
     exit 0
   fi
   [[ -f /opt/lightningos/manager/lightningos-manager && ! -L /opt/lightningos/manager/lightningos-manager ]] || {
@@ -323,7 +366,7 @@ lightningos_node_upgrade_main() (
     lightningos_node_error 'an upgrade is running; wait for it to finish'; exit 1
   fi
   lightningos_prepare_node
-  echo '[OK] Ready: start the LightningOS upgrade through the UI. Global Node/npm were updated; app configurations were not changed.'
+  echo '[OK] Ready: start the LightningOS upgrade through the UI. A compatible build runtime is available; app configurations were not changed. Review any security warnings separately.'
 )
 
 if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then

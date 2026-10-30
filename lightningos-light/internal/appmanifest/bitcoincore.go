@@ -10,27 +10,29 @@ import (
 
 const (
 	BitcoinCoreID      = "bitcoincore"
-	BitcoinCoreRelease = "31.1"
+	BitcoinCoreRelease = "31.2"
 
 	// BitcoinCoreImage is built locally by the privileged broker from the
 	// official bitcoincore.org release archive after checksum and multisignature
 	// verification. It is never pulled from a container registry.
-	BitcoinCoreImage = "lightningos/bitcoin-core:31.1"
+	BitcoinCoreImage = "lightningos/bitcoin-core:31.2"
 
 	BitcoinCoreImageNode AppImageVariant = "node"
 
 	BitcoinCoreSignatureThreshold = 3
 
-	BitcoinCoreDefaultDataDir   = "/data/bitcoin"
-	BitcoinCoreProject          = "bitcoincore"
-	BitcoinConsumerNetwork      = "bitcoincore_default"
-	BitcoinConsumerRPCSubnet    = "172.31.253.0/24"
-	BitcoinConsumerHostGateway  = "172.31.253.1"
-	BitcoinCoreNetwork          = BitcoinConsumerNetwork
-	BitcoinCoreRPCSubnet        = BitcoinConsumerRPCSubnet
-	BitcoinCoreComposeFile      = "docker-compose.yaml"
-	BitcoinCorePrimaryService   = "bitcoind"
-	BitcoinCoreStopTimeout      = 10
+	BitcoinCoreDefaultDataDir  = "/data/bitcoin"
+	BitcoinCoreProject         = "bitcoincore"
+	BitcoinConsumerNetwork     = "bitcoincore_default"
+	BitcoinConsumerRPCSubnet   = "172.31.253.0/24"
+	BitcoinConsumerHostGateway = "172.31.253.1"
+	BitcoinCoreNetwork         = BitcoinConsumerNetwork
+	BitcoinCoreRPCSubnet       = BitcoinConsumerRPCSubnet
+	BitcoinCoreComposeFile     = "docker-compose.yaml"
+	BitcoinCorePrimaryService  = "bitcoind"
+	// Docker's -1 timeout waits for graceful shutdown without scheduling SIGKILL.
+	// Broker/request deadlines still bound waiting; timeout must not force a kill.
+	BitcoinCoreStopTimeout      = -1
 	BitcoinCoreP2PPort          = 8333
 	BitcoinCoreExecutionRoot    = "/var/lib/lightningos-privileged/apps/bitcoincore"
 	BitcoinCoreStorageGuardFile = "storage-guard.sh"
@@ -64,20 +66,20 @@ type BitcoinCoreTrustedBuilder struct {
 var bitcoinCoreReleaseArtifacts = map[string]BitcoinCoreReleaseArtifact{
 	"amd64": {
 		GOARCH:        "amd64",
-		Archive:       "bitcoin-31.1-x86_64-linux-gnu.tar.gz",
-		ArchiveSHA256: "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+		Archive:       "bitcoin-31.2-x86_64-linux-gnu.tar.gz",
+		ArchiveSHA256: "2f38996afaa74dfa469a23bf4727887133dfc09784df1f21ddf1c74d0dc82300",
 		BaseImage:     "debian:bookworm-slim@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143",
 	},
 	"arm64": {
 		GOARCH:        "arm64",
-		Archive:       "bitcoin-31.1-aarch64-linux-gnu.tar.gz",
-		ArchiveSHA256: "dcf1873f2208ba4f962f3398d47e154c39c0084be8f4553e05c940d0ace3d004",
+		Archive:       "bitcoin-31.2-aarch64-linux-gnu.tar.gz",
+		ArchiveSHA256: "1d7d8916719ed8de0f49937f8702ec5895b0af24d936e9c4d72b58f15afe3731",
 		BaseImage:     "debian:bookworm-slim@sha256:817e6cf99d6fc127ff4ffe8580049b60deba0adfbbb2bd65ddc3ef8fbb7aade0",
 	},
 	"arm": {
 		GOARCH:        "arm",
-		Archive:       "bitcoin-31.1-arm-linux-gnueabihf.tar.gz",
-		ArchiveSHA256: "66b2b45359efa161031a49898f96aa7cf1455db46ca6102acd16a7197dc3b96f",
+		Archive:       "bitcoin-31.2-arm-linux-gnueabihf.tar.gz",
+		ArchiveSHA256: "dd579760f72ff24212f1a13f18ee419670fe8538465034370b5a07e624273f5e",
 		BaseImage:     "debian:bookworm-slim@sha256:67275dca5c395b1010017c291799bdb3e2d31bfdc4786c400f502e2ad3187c07",
 	},
 }

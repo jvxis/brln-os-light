@@ -288,7 +288,24 @@ func (s *Server) handleBalancedOpenSessionCancelPost(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusOK, session)
 }
 
+func (s *Server) requireBalancedOpenFinancialApproval(w http.ResponseWriter, r *http.Request) bool {
+	var req struct {
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := readOptionalJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return false
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+		return false
+	}
+	return !s.rejectLNDMaintenanceAction(w, r, "balanced channel funding")
+}
+
 func (s *Server) handleBalancedOpenSessionProposePost(w http.ResponseWriter, r *http.Request) {
+	if !s.requireBalancedOpenFinancialApproval(w, r) {
+		return
+	}
 	svc, errMsg := s.balancedOpenService()
 	if svc == nil {
 		if errMsg == "" {
@@ -310,6 +327,8 @@ func (s *Server) handleBalancedOpenSessionProposePost(w http.ResponseWriter, r *
 	session, err := svc.ProposeSession(ctx, sessionID)
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrBalancedOpenPrefundUncertain):
+			writeErrorCode(w, http.StatusConflict, "balanced_open_prefund_unresolved", err.Error())
 		case errors.Is(err, ErrBalancedOpenSessionNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, ErrBalancedOpenInvalidAction),
@@ -329,6 +348,9 @@ func (s *Server) handleBalancedOpenSessionProposePost(w http.ResponseWriter, r *
 }
 
 func (s *Server) handleBalancedOpenSessionAcceptPost(w http.ResponseWriter, r *http.Request) {
+	if !s.requireBalancedOpenFinancialApproval(w, r) {
+		return
+	}
 	svc, errMsg := s.balancedOpenService()
 	if svc == nil {
 		if errMsg == "" {
@@ -350,9 +372,11 @@ func (s *Server) handleBalancedOpenSessionAcceptPost(w http.ResponseWriter, r *h
 	session, err := svc.AcceptSession(ctx, sessionID)
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrBalancedOpenPrefundUncertain):
+			writeErrorCode(w, http.StatusConflict, "balanced_open_prefund_unresolved", err.Error())
 		case errors.Is(err, ErrBalancedOpenSessionNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrBalancedOpenInvalidAction),
+		case errors.Is(err, ErrBalancedOpenProposalExpired), errors.Is(err, ErrBalancedOpenInvalidAction),
 			errors.Is(err, ErrBalancedOpenInvalidState),
 			errors.Is(err, ErrBalancedOpenInvalidRole),
 			errors.Is(err, ErrBalancedOpenInsufficientOnchainSafety):

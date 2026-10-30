@@ -210,9 +210,15 @@ func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, amount
 	if amountSat <= 0 {
 		amountSat = chatDefaultAmountSat
 	}
+	if err := validateFinancialChatExecution(ctx, peerPubkey, amountSat, message); err != nil {
+		return ChatMessage{}, err
+	}
 	c.mu.Lock()
 	guard := c.spendingGuard
 	c.mu.Unlock()
+	if guard == nil {
+		return ChatMessage{}, ErrSpendingGuardUnavailable
+	}
 	reservation := SpendingReservation{}
 	var err error
 	if guard != nil {
@@ -220,21 +226,29 @@ func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, amount
 			Source: "chat_keysend", AmountSat: amountSat, MaxFeeSat: suggestedSpendingGuardFeeSat(amountSat, 0),
 		})
 		if err != nil {
-			return ChatMessage{}, err
+			if errors.Is(err, ErrSpendingGuardLimit) {
+				return ChatMessage{}, err
+			}
+			return ChatMessage{}, ErrSpendingGuardUnavailable
 		}
 	}
-	paymentHash, err := c.lnd.SendKeysendMessage(ctx, peerPubkey, amountSat, message)
-	if guard != nil && reservation.Active && paymentHash != "" {
-		_ = guard.Bind(context.Background(), reservation, paymentHash)
-	}
+	paymentHash, err := c.lnd.SendKeysendMessageWithPaymentHash(ctx, peerPubkey, amountSat, message, func(hash string) error {
+		if guard != nil && reservation.Active {
+			if err := guard.Bind(ctx, reservation, hash); err != nil {
+				return err
+			}
+		}
+		return commitFinancialChatDispatch(ctx, hash)
+	})
 	if err != nil {
 		if guard != nil && reservation.Active {
 			trackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			details, found, _ := c.lnd.TrackPaymentDetails(trackCtx, paymentHash)
+			details, found, trackErr := c.lnd.TrackPaymentDetails(trackCtx, paymentHash)
 			if found && strings.EqualFold(details.Status, "SUCCEEDED") {
 				_ = guard.Settle(trackCtx, reservation, paymentDetailsFeeSat(details, reservation.MaxFeeSat), paymentHash)
-			} else if (found && strings.EqualFold(details.Status, "FAILED")) || !isAmbiguousPaymentError(err) {
-				_ = guard.Release(trackCtx, reservation, err.Error())
+			} else if paymentHash == "" || (trackErr == nil && found && strings.EqualFold(details.Status, "FAILED")) {
+				// An empty hash is the client's explicit pre-submission failure.
+				_ = guard.Release(trackCtx, reservation, "payment failed before submission or LND confirmed failure")
 			}
 			cancel()
 		}

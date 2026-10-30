@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 
 	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/lndclient"
+	"lightningos-light/internal/logsafe"
 	"lightningos-light/internal/privileged"
 	"lightningos-light/internal/reports"
 	"lightningos-light/internal/system"
@@ -1233,6 +1235,10 @@ func (s *Server) handleWizardBitcoinRemote(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "rpcuser and rpcpass required")
 		return
 	}
+	if strings.ContainsAny(user+pass, "\r\n\x00") {
+		writeError(w, http.StatusBadRequest, "RPC credentials must not contain line breaks")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -1693,7 +1699,7 @@ func sanitizeLogLine(line string) string {
 	line = ansiOSCRegexp.ReplaceAllString(line, "")
 	line = ansiCSIRegexp.ReplaceAllString(line, "")
 	line = ansiSingleCharRegex.ReplaceAllString(line, "")
-	return strings.Map(func(r rune) rune {
+	return logsafe.Redact(strings.Map(func(r rune) rune {
 		if r == '\t' {
 			return r
 		}
@@ -1701,11 +1707,17 @@ func sanitizeLogLine(line string) string {
 			return -1
 		}
 		return r
-	}, line)
+	}, line))
 }
 
 func (s *Server) handleLNDConfigGet(w http.ResponseWriter, r *http.Request) {
-	raw, _ := os.ReadFile(lndConfPath)
+	setNoStore(w)
+	snapshot, readErr := s.readLNDConfigSnapshot()
+	if readErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read lnd.conf")
+		return
+	}
+	raw := snapshot.raw
 
 	current := parseLNDUserConf(string(raw))
 	clearnet := s.lndClearnetStatus(r.Context(), string(raw))
@@ -1732,8 +1744,10 @@ func (s *Server) handleLNDConfigGet(w http.ResponseWriter, r *http.Request) {
 			"tor_skip_proxy_for_clearnet_targets": current.TorSkipProxyForClearnet,
 			"tor_stream_isolation":                current.TorStreamIsolation,
 		},
-		"clearnet":      clearnet,
-		"raw_user_conf": string(raw),
+		"clearnet":          clearnet,
+		"raw_user_conf":     snapshot.public,
+		"config_revision":   snapshot.revision,
+		"sensitive_options": snapshot.options,
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -2846,8 +2860,14 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 	// An initial policy rides on the same OpenChannelRequest as fixed inputs,
 	// so both go through the parameterised path; the legacy push path stays
 	// for requests that set neither.
-	if len(req.Outpoints) > 0 || !openPolicy.IsZero() {
+	memo, intentErr := commitFinancialChannelDispatch(openCtx, "channel_open")
+	if intentErr != nil {
+		writeError(w, http.StatusServiceUnavailable, intentErr.Error())
+		return
+	}
+	if len(req.Outpoints) > 0 || !openPolicy.IsZero() || memo != "" {
 		channelPoint, openErr = s.lnd.OpenChannelWithOutpoints(openCtx, lndclient.OpenChannelParams{
+			Memo:            memo,
 			PubkeyHex:       pubkey,
 			LocalFundingSat: req.LocalFundingSat,
 			PushSat:         req.PushSat,
@@ -3049,6 +3069,16 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 	openCtx, openCancel := context.WithTimeout(r.Context(), lndBatchOpenChannelTimeout)
 	defer openCancel()
 
+	memo, intentErr := commitFinancialChannelDispatch(openCtx, "channel_open_batch")
+	if intentErr != nil {
+		writeError(w, http.StatusServiceUnavailable, intentErr.Error())
+		return
+	}
+	if memo != "" {
+		for index := range batch {
+			batch[index].Memo = fmt.Sprintf("%s:%d", memo, index)
+		}
+	}
 	results, err := s.lnd.BatchOpenChannel(openCtx, batch, req.SatPerVbyte)
 	if err != nil {
 		s.recordAuditEventAsync(r, "channel.open_batch.failed", "batch", map[string]any{
@@ -3172,7 +3202,7 @@ func (s *Server) handleLNPendingOpenBumpFee(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := s.lnd.BumpFee(ctx, lndclient.BumpFeeParams{
+	if err := s.bumpFinancialFee(ctx, lndclient.BumpFeeParams{
 		Outpoint:    item.FundingBumpOutpoint,
 		SatPerVbyte: plan.SatPerVbyte,
 		Immediate:   plan.Immediate,
@@ -3339,7 +3369,7 @@ func (s *Server) handleLNCloseChannel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Minute)
 	defer cancel()
 
 	if req.SatPerVbyte < 0 {
@@ -3355,6 +3385,10 @@ func (s *Server) handleLNCloseChannel(w http.ResponseWriter, r *http.Request) {
 		satPerVbyte = 0
 	}
 
+	if _, err := commitFinancialChannelDispatch(ctx, "channel_close"); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	closingTxid, err := s.lnd.CloseChannel(ctx, req.ChannelPoint, req.Force, satPerVbyte)
 	if err != nil {
 		s.recordAuditEventAsync(r, "channel.close.failed", strings.TrimSpace(req.ChannelPoint), map[string]any{
@@ -3678,9 +3712,10 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		PeerPubkey string `json:"peer_pubkey"`
-		Message    string `json:"message"`
-		AmountSat  *int64 `json:"amount_sat,omitempty"`
+		PeerPubkey      string `json:"peer_pubkey"`
+		Message         string `json:"message"`
+		AmountSat       *int64 `json:"amount_sat,omitempty"`
+		ConfirmPassword string `json:"confirm_password,omitempty"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -3705,12 +3740,25 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+		return
+	}
+	guard, _ := s.spendingGuardService()
+	if guard == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "spending_guard_unavailable", "spending guard unavailable; payment was not submitted")
+		return
+	}
+	s.chat.AttachSpendingGuard(guard)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 
 	msg, err := s.chat.SendMessage(ctx, peerPubkey, amountSat, message)
 	if err != nil {
+		if errors.Is(err, ErrSpendingGuardUnavailable) {
+			writeErrorCode(w, http.StatusServiceUnavailable, "spending_guard_unavailable", "spending guard unavailable; payment was not submitted")
+			return
+		}
 		if writeSpendingGuardError(w, err) {
 			return
 		}
@@ -3865,6 +3913,7 @@ func buildLNDConfigUpdate(
 }
 
 func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	if s.rejectLNDMaintenanceAction(w, r, "LND config update") {
 		return
 	}
@@ -3877,14 +3926,22 @@ func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
 		GraphSyncPeers              *int    `json:"graph_sync_peers"`
 		DisconnectUnresponsivePeers *bool   `json:"disconnect_unresponsive_peers"`
 		ApplyNow                    bool    `json:"apply_now"`
+		ConfirmPassword             string  `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 
+	if !s.requireSensitiveReauth(w, r, authScopeLNDConfig, req.ConfirmPassword, "lnd_config_reauth_required", "password confirmation required to change LND configuration") {
+		return
+	}
 	if req.MinChannelSizeSat != nil && *req.MinChannelSizeSat < 0 || req.MaxChannelSizeSat != nil && *req.MaxChannelSizeSat < 0 {
 		writeError(w, http.StatusBadRequest, "channel sizes must be positive")
+		return
+	}
+	if req.Alias != nil && strings.ContainsAny(*req.Alias, "\r\n\x00") {
+		writeError(w, http.StatusBadRequest, "alias must be a single line")
 		return
 	}
 	if req.Alias != nil && len(*req.Alias) > 32 {
@@ -3904,7 +3961,10 @@ func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := os.ReadFile(lndConfPath)
+	lndConfigMutationMu.Lock()
+	defer lndConfigMutationMu.Unlock()
+	ops := s.lndConfigOperations()
+	raw, err := ops.read()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read lnd.conf")
 		return
@@ -3942,71 +4002,68 @@ func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.WriteFile(lndConfPath, []byte(updated), 0660); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to write lnd.conf")
-		return
-	}
-
-	if req.ApplyNow {
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-		if err := restartLNDService(ctx); err != nil {
-			_ = os.WriteFile(lndConfPath, raw, 0660)
-			writeError(w, http.StatusInternalServerError, "lnd restart failed, rollback applied")
-			return
-		}
-		s.markLNDRestart()
-	}
-
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	result, applyErr := applyLNDConfig(r.Context(), ops, raw, []byte(updated), req.ApplyNow)
+	s.respondLNDConfigApply(w, r, "structured", result, applyErr)
 }
 
 func (s *Server) handleLNDConfigRaw(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	if s.rejectLNDMaintenanceAction(w, r, "raw LND config update") {
 		return
 	}
 	var req struct {
-		RawUserConf string `json:"raw_user_conf"`
-		ApplyNow    bool   `json:"apply_now"`
+		RawUserConf     string                     `json:"raw_user_conf"`
+		ApplyNow        bool                       `json:"apply_now"`
+		ConfirmPassword string                     `json:"confirm_password"`
+		ConfigRevision  string                     `json:"config_revision"`
+		SecretUpdates   map[string]lndSecretUpdate `json:"secret_updates,omitempty"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 
-	prev, _ := os.ReadFile(lndConfPath)
+	if !s.requireSensitiveReauth(w, r, authScopeLNDConfig, req.ConfirmPassword, "lnd_config_reauth_required", "password confirmation required to change LND configuration") {
+		return
+	}
+	lndConfigMutationMu.Lock()
+	defer lndConfigMutationMu.Unlock()
+	ops := s.lndConfigOperations()
+	prev, readErr := ops.read()
+	if readErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read lnd.conf")
+		return
+	}
 	// The advanced editor is authoritative. Auto-unlock directives are only
 	// created by the wallet setup/unlock flow after LND validates the password.
-	updated := req.RawUserConf
-	if err := validateLNDNetworkCombination(updated); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	revision, revisionErr := s.lndConfigRevision(prev)
+	if revisionErr != nil {
+		writeError(w, http.StatusInternalServerError, "config revision unavailable")
 		return
 	}
-	if err := os.WriteFile(lndConfPath, []byte(updated), 0660); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to write lnd.conf")
+	if !hmac.Equal([]byte(req.ConfigRevision), []byte(revision)) {
+		writeErrorCode(w, http.StatusConflict, "lnd_config_revision_conflict", "configuration changed or editor expired; reload it before saving")
 		return
 	}
-
-	if req.ApplyNow {
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-		if err := restartLNDService(ctx); err != nil {
-			_ = os.WriteFile(lndConfPath, prev, 0660)
-			writeError(w, http.StatusInternalServerError, "lnd restart failed, rollback applied")
-			return
-		}
-		s.markLNDRestart()
+	updated, mergeErr := restoreLNDConfigSecrets(string(prev), req.RawUserConf, req.SecretUpdates)
+	if mergeErr != nil {
+		writeErrorCode(w, http.StatusBadRequest, "lnd_config_secret_update_invalid", mergeErr.Error())
+		return
 	}
-
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	result, applyErr := applyLNDConfig(r.Context(), ops, prev, []byte(updated), req.ApplyNow)
+	s.respondLNDConfigApply(w, r, "raw", result, applyErr)
 }
 
 func restartLNDService(ctx context.Context) error {
+	return restartLNDServiceMode(ctx, true)
+}
+
+func restartLNDServiceMode(ctx context.Context, noBlock bool) error {
 	service := "lnd"
 	if !system.SystemctlIsActive(ctx, service) && system.SystemctlIsActive(ctx, "lnd@default") {
 		service = "lnd@default"
 	}
-	return system.RestartServiceWithBroker(ctx, service, true)
+	return system.RestartServiceWithBroker(ctx, service, noBlock)
 }
 
 type lndOptionUpdate struct {
@@ -4266,13 +4323,20 @@ func (s *Server) handleOnchainUtxos(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
 	defer cancel()
 
-	items, err := s.lnd.ListOnchainUtxos(ctx, minConfs, maxConfs)
+	items, leases, err := s.lnd.ListOnchainUtxoInventory(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, lndStatusMessage(err))
 		return
 	}
 
-	enriched := s.enrichOnchainUtxos(ctx, items)
+	enriched := s.enrichOnchainUtxos(ctx, items, leases)
+	filtered := enriched[:0]
+	for _, item := range enriched {
+		if item.Confirmations >= int64(minConfs) && item.Confirmations <= int64(maxConfs) {
+			filtered = append(filtered, item)
+		}
+	}
+	enriched = filtered
 
 	if limit > 0 && len(enriched) > limit {
 		enriched = enriched[:limit]
@@ -4782,7 +4846,7 @@ func (s *Server) resolveWalletPaymentInput(ctx context.Context, rawPaymentReques
 		if amountSat <= 0 {
 			return "", nil, errors.New("amount_sat must be positive for lightning address")
 		}
-		resolved, err := resolveLightningAddress(ctx, cleaned, amountSat, comment)
+		resolved, err := s.resolveCachedLNURLInvoice(ctx, cleaned, amountSat, comment)
 		if err != nil {
 			return "", nil, fmt.Errorf("lightning address error: %v", err)
 		}
@@ -4914,13 +4978,16 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "max_fee_sat must be zero or positive")
 		return
 	}
-	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+	if walletLightningAddress(req.PaymentRequest) == "" && !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
 	paymentRequest, outgoingChanIDs, err := s.resolveWalletPaymentInput(r.Context(), req.PaymentRequest, req.AmountSat, req.Comment, req.ChannelPoint, req.ChannelPoints)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.requireResolvedLNURLReauth(w, r, req.PaymentRequest, paymentRequest, req.AmountSat, req.MaxFeeSat, outgoingChanIDs, req.ConfirmPassword) {
 		return
 	}
 
@@ -4935,7 +5002,9 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "spending guard could not validate this payment")
 		return
 	}
-	paymentErr := s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat)
+	paymentErr := executeFinancialInvoicePayment(ctx, paymentHash, paymentRequest, outgoingChanIDs, req.MaxFeeSat, func() error {
+		return s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat)
+	})
 	s.finishSpendingReservation(reservation, paymentHash, paymentErr)
 	if paymentErr != nil {
 		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
@@ -4995,13 +5064,16 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 	// that gate gone the payment has to hold its own. The frontend already sends
 	// confirm_password here and already retries on lightning_funds_reauth_required,
 	// so only the server side was missing.
-	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+	if walletLightningAddress(req.PaymentRequest) == "" && !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
 	paymentRequest, outgoingChanIDs, err := s.resolveWalletPaymentInput(r.Context(), req.PaymentRequest, req.AmountSat, req.Comment, req.ChannelPoint, req.ChannelPoints)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.requireResolvedLNURLReauth(w, r, req.PaymentRequest, paymentRequest, req.AmountSat, req.MaxFeeSat, outgoingChanIDs, req.ConfirmPassword) {
 		return
 	}
 
@@ -5016,7 +5088,9 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusServiceUnavailable, "spending guard could not validate this payment")
 		return
 	}
-	paymentErr := s.lnd.PayInvoiceWithValidatedRoute(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 5, req.RouteToken)
+	paymentErr := executeFinancialInvoicePayment(ctx, paymentHash, paymentRequest, outgoingChanIDs, req.MaxFeeSat, func() error {
+		return s.lnd.PayInvoiceWithValidatedRoute(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 5, req.RouteToken)
+	})
 	s.finishSpendingReservation(reservation, paymentHash, paymentErr)
 	if paymentErr != nil {
 		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
@@ -5089,13 +5163,16 @@ func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "max_shard_sat must be zero or positive")
 		return
 	}
-	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+	if walletLightningAddress(req.PaymentRequest) == "" && !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
 	paymentRequest, outgoingChanIDs, err := s.resolveWalletPaymentInput(r.Context(), req.PaymentRequest, req.AmountSat, req.Comment, req.ChannelPoint, req.ChannelPoints)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.requireResolvedLNURLReauth(w, r, req.PaymentRequest, paymentRequest, req.AmountSat, req.MaxFeeSat, outgoingChanIDs, req.ConfirmPassword) {
 		return
 	}
 
@@ -5110,7 +5187,9 @@ func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "spending guard could not validate this payment")
 		return
 	}
-	paymentErr := s.lnd.PayInvoiceWithMPP(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, req.MaxParts, req.MaxShardSat)
+	paymentErr := executeFinancialInvoicePayment(ctx, paymentHash, paymentRequest, outgoingChanIDs, req.MaxFeeSat, func() error {
+		return s.lnd.PayInvoiceWithMPP(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, req.MaxParts, req.MaxShardSat)
+	})
 	s.finishSpendingReservation(reservation, paymentHash, paymentErr)
 	if paymentErr != nil {
 		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
@@ -5197,25 +5276,8 @@ func (s *Server) classifyOnchainDestination(ctx context.Context, address string)
 	return "external", nil
 }
 
-func requiresWalletSendConfirmation(classification string) bool {
-	switch strings.TrimSpace(classification) {
-	case "wallet_internal":
-		return false
-	default:
-		return true
-	}
-}
-
 func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Address         string   `json:"address"`
-		AmountSat       int64    `json:"amount_sat"`
-		SatPerVbyte     int64    `json:"sat_per_vbyte"`
-		SweepAll        bool     `json:"sweep_all"`
-		Outpoints       []string `json:"outpoints"`
-		Label           string   `json:"label"`
-		ConfirmPassword string   `json:"confirm_password"`
-	}
+	var req walletSendRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
@@ -5237,7 +5299,10 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	destinationClassification, _ := s.classifyOnchainDestination(ctx, address)
-	if s.auth != nil && s.auth.Enabled() && requiresWalletSendConfirmation(destinationClassification) {
+	// Being listed by WalletKit does not prove private-key control (imported
+	// and watch-only accounts are included). Every manual send spends funds or
+	// fees and must pass the same approval gate, including consolidations.
+	if s.auth != nil && s.auth.Enabled() && !financialIntentApproved(r, authScopeWalletSendExternal) {
 		session, ok := authSessionFromContext(r.Context())
 		if !ok {
 			writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
@@ -5246,7 +5311,10 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 		if !s.auth.HasRecentReauth(session.ID, authScopeWalletSendExternal) {
 			confirmPassword := strings.TrimSpace(req.ConfirmPassword)
 			if confirmPassword != "" {
-				if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+				if _, err := s.auth.reauth(w, r, session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+					if err == errReauthRateLimited {
+						return
+					}
 					s.recordAuditEventAsync(r, "auth.reauth.failed", authScopeWalletSendExternal, map[string]any{"reason": authAuditReason(err)})
 					writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
 					return
@@ -5254,7 +5322,7 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 				s.recordAuditEventAsync(r, "auth.reauth.succeeded", authScopeWalletSendExternal, nil)
 			} else {
 				writeJSON(w, http.StatusPreconditionRequired, map[string]any{
-					"error":                          "password confirmation required for external on-chain sends",
+					"error":                          "password confirmation required for on-chain sends",
 					"code":                           "wallet_send_external_reauth_required",
 					"destination_classification":     destinationClassification,
 					"requires_password_confirmation": true,
@@ -5268,7 +5336,9 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 		txid    string
 		sendErr error
 	)
-	if len(req.Outpoints) > 0 || strings.TrimSpace(req.Label) != "" {
+	if _, bound := r.Context().Value(financialIntentContextKey{}).(*financialIntentExecution); bound {
+		txid, sendErr = s.executeFinancialOnchainIntent(ctx, r, req)
+	} else if len(req.Outpoints) > 0 || strings.TrimSpace(req.Label) != "" {
 		txid, sendErr = s.lnd.SendCoinsAdvanced(ctx, lndclient.SendCoinsParams{
 			Address:     address,
 			AmountSat:   req.AmountSat,
@@ -5356,7 +5426,7 @@ func (s *Server) handleWalletSendPreview(w http.ResponseWriter, r *http.Request)
 		"exact":                          preview.Exact,
 		"message":                        preview.Message,
 		"destination_classification":     destinationClassification,
-		"requires_password_confirmation": requiresWalletSendConfirmation(destinationClassification),
+		"requires_password_confirmation": s.auth != nil && s.auth.Enabled(),
 	})
 }
 
@@ -5833,6 +5903,8 @@ func updateLNDConfRPC(ctx context.Context, user, pass, host, zmqBlock, zmqTx str
 }
 
 func updateLNDConfBitcoinSource(active string, remoteCfg bitcoinRPCConfig, localCfg bitcoinRPCConfig) error {
+	lndConfigMutationMu.Lock()
+	defer lndConfigMutationMu.Unlock()
 	content, err := os.ReadFile(lndConfPath)
 	if err != nil {
 		return err
@@ -6054,6 +6126,8 @@ func walletPasswordAvailable() bool {
 }
 
 func ensureWalletUnlockConfig() error {
+	lndConfigMutationMu.Lock()
+	defer lndConfigMutationMu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(lndConfPath), 0750); err != nil {
 		return err
 	}

@@ -159,7 +159,10 @@ func (s *Server) requireMacaroonExportReauth(w http.ResponseWriter, r *http.Requ
 		})
 		return false
 	}
-	if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeMacaroonExport); err != nil {
+	if _, err := s.auth.reauth(w, r, session.ID, confirmPassword, authScopeMacaroonExport); err != nil {
+		if err == errReauthRateLimited {
+			return false
+		}
 		writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
 		return false
 	}

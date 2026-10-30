@@ -49,15 +49,14 @@ func (s *Server) handleSpendingGuardUpdate(w http.ResponseWriter, r *http.Reques
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	current, err := svc.Settings(ctx)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "failed to load spending guard")
-		return
+	authorized := s.auth == nil || !s.auth.Enabled() || financialIntentApproved(r, authScopeSpendingGuardPolicy)
+	updated, err := svc.UpdateSettings(ctx, next, authorized)
+	if errors.Is(err, ErrSpendingGuardReauth) {
+		if !s.requireSensitiveReauth(w, r, authScopeSpendingGuardPolicy, req.ConfirmPassword, "spending_guard_reauth_required", "password confirmation required to relax spending limits") {
+			return
+		}
+		updated, err = svc.UpdateSettings(ctx, next, true)
 	}
-	if spendingGuardNeedsReauth(current, next) && !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
-		return
-	}
-	updated, err := svc.UpdateSettings(ctx, next)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update spending guard")
 		return
@@ -95,12 +94,9 @@ func (s *Server) reserveInvoiceSpending(ctx context.Context, paymentRequest stri
 	if err != nil {
 		return SpendingReservation{}, "", err
 	}
-	svc, errMsg := s.spendingGuardService()
+	svc, _ := s.spendingGuardService()
 	if svc == nil {
-		if s.logger != nil {
-			s.logger.Printf("spending guard unavailable; payment remains allowed because no active policy could be loaded: %s", errMsg)
-		}
-		return SpendingReservation{}, decoded.PaymentHash, nil
+		return SpendingReservation{}, decoded.PaymentHash, ErrSpendingGuardUnavailable
 	}
 	amountSat := decoded.AmountSat
 	if amountSat <= 0 && decoded.AmountMsat > 0 {
@@ -140,7 +136,11 @@ func (s *Server) finishSpendingReservation(reservation SpendingReservation, paym
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	details, found, _ := s.lnd.TrackPaymentDetails(ctx, paymentHash)
+	if errors.Is(paymentErr, errFinancialNativeNotDispatched) {
+		_ = svc.Release(ctx, reservation, "native payment was not dispatched")
+		return
+	}
+	details, found, trackErr := s.lnd.TrackPaymentDetails(ctx, paymentHash)
 	if found && strings.EqualFold(details.Status, "SUCCEEDED") {
 		feeSat := details.FeeSat
 		if feeSat <= 0 && details.FeeMsat > 0 {
@@ -155,13 +155,9 @@ func (s *Server) finishSpendingReservation(reservation SpendingReservation, paym
 		_ = svc.Settle(ctx, reservation, reservation.MaxFeeSat, paymentHash)
 		return
 	}
-	if found && !strings.EqualFold(details.Status, "FAILED") {
-		return
+	if trackErr == nil && found && strings.EqualFold(details.Status, "FAILED") {
+		_ = svc.Release(ctx, reservation, "LND reported payment failed")
 	}
-	if isAmbiguousPaymentError(paymentErr) {
-		return
-	}
-	_ = svc.Release(ctx, reservation, paymentErr.Error())
 }
 
 func isAmbiguousPaymentError(err error) bool {

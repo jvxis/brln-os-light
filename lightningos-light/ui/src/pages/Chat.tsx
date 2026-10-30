@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { connectPeer, getChatInbox, getChatMessages, getLnPeers, markChatRead, sendChatMessage } from '../api'
 import { getLocale } from '../i18n'
 import { announceChatRead, parseChatTimestamp, readLocalChatReadMap, saveLocalChatRead } from '../utils/chatRead'
+import SensitiveActionModal from '../components/SensitiveActionModal'
 
 type Peer = {
   pub_key: string
@@ -131,6 +132,8 @@ export default function Chat() {
   const [draft, setDraft] = useState('')
   const [amountSatInput, setAmountSatInput] = useState(String(defaultAmountSat))
   const [sending, setSending] = useState(false)
+  const [pendingSend, setPendingSend] = useState<{ peer: ChatPeer; message: string; amount: number } | null>(null)
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [loadingMessages, setLoadingMessages] = useState(false)
   const readAtRef = useRef<Record<string, number>>(readLocalChatReadMap())
   const markReadInFlightRef = useRef(new Set<string>())
@@ -463,12 +466,14 @@ export default function Chat() {
   const canSend = Boolean(selectedPeer && selectedOnline && draft.trim() && amountSat && !overLimit && !sending)
 
   const handleSelectPeer = (peer: ChatPeer) => {
+    if (sending || pendingSend) return
     stickToBottomRef.current = true
     setSelectedPeer(peer)
     if (peer.last_inbound_at) void persistRead(peer.pub_key, peer.last_inbound_at)
   }
 
   const handleMobileBack = () => {
+    if (sending || pendingSend) return
     setSelectedPeer(null)
     setMessages([])
     setMessageStatus('')
@@ -477,18 +482,24 @@ export default function Chat() {
 
   const handleSend = async () => {
     if (!selectedPeer || !canSend || !amountSat) return
-    const trimmed = draft.trim()
+    await submitMessage({ peer: selectedPeer, message: draft.trim(), amount: amountSat })
+  }
+
+  const submitMessage = async (intent: { peer: ChatPeer; message: string; amount: number }, password?: string) => {
+    if (sending) return
+    const { peer, message: trimmed, amount } = intent
     setSending(true)
     setMessageStatus(t('chat.sending'))
     try {
-      const res = await sendChatMessage({ peer_pubkey: selectedPeer.pub_key, message: trimmed, amount_sat: amountSat })
-      setDraft('')
+      const res = await sendChatMessage({ peer_pubkey: peer.pub_key, message: trimmed, amount_sat: amount, confirm_password: password || undefined })
+      setDraft((current) => current.trim() === trimmed ? '' : current)
+      setPendingSend(null)
       setMessages((prev) => [...prev, res])
       setInboxItems((prev) => {
-        const existing = prev.find((item) => item.peer_pubkey === selectedPeer.pub_key)
+        const existing = prev.find((item) => item.peer_pubkey === peer.pub_key)
         const nextItem: ChatInboxItem = {
-          peer_pubkey: selectedPeer.pub_key,
-          peer_alias: selectedPeer.alias,
+          peer_pubkey: peer.pub_key,
+          peer_alias: peer.alias,
           last_inbound_at: existing?.last_inbound_at || res.timestamp,
           last_message_at: res.timestamp,
           last_message: trimmed,
@@ -496,13 +507,20 @@ export default function Chat() {
           sender_verified: true,
           identity_source: 'local',
         }
-        const rest = prev.filter((item) => item.peer_pubkey !== selectedPeer.pub_key)
+        const rest = prev.filter((item) => item.peer_pubkey !== peer.pub_key)
         return [nextItem, ...rest]
       })
       setMessageStatus('')
     } catch (err: any) {
+      if (err?.code === 'lightning_funds_reauth_required') {
+        setPendingSend(intent)
+        setMessageStatus('')
+        return
+      }
+      if (err?.code !== 'auth_invalid_credentials' && err?.code !== 'auth_rate_limited') setPendingSend(null)
       setMessageStatus(chatSendErrorMessage(err, t))
     } finally {
+      setConfirmPassword('')
       setSending(false)
     }
   }
@@ -829,6 +847,21 @@ export default function Chat() {
           </div>
         </div>
       </div>
+      <SensitiveActionModal
+        open={pendingSend !== null}
+        title={t('wallet.paymentPasswordTitle')}
+        description={t('wallet.paymentPasswordBody')}
+        password={confirmPassword}
+        busy={sending}
+        error={messageStatus}
+        confirmLabel={t('wallet.paymentPasswordAction')}
+        onPasswordChange={setConfirmPassword}
+        onConfirm={() => {
+          if (!confirmPassword.trim()) { setMessageStatus(t('wallet.paymentPasswordRequired')); return }
+          if (pendingSend) void submitMessage(pendingSend, confirmPassword)
+        }}
+        onClose={() => { if (!sending) { setPendingSend(null); setConfirmPassword(''); setMessageStatus('') } }}
+      />
     </section>
   )
 }

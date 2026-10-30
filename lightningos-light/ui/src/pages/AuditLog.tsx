@@ -200,9 +200,14 @@ export default function AuditLog() {
           <p className="mt-4 text-sm text-fog/60">{t('auditLog.empty')}</p>
         )}
         {!status && items.length > 0 && (
-          <div className="mt-4 overflow-x-auto">
+          <div
+            className="mt-4 max-h-[65dvh] overflow-auto overscroll-contain focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
+            role="region"
+            aria-label={t('auditLog.recentEvents')}
+            tabIndex={0}
+          >
             <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-white/10 text-xs uppercase text-fog/50">
+              <thead className="sticky top-0 z-10 border-b border-white/10 bg-ink text-xs uppercase text-fog/50">
                 <tr>
                   <th className="px-3 py-2 font-medium">{t('auditLog.time')}</th>
                   <th className="px-3 py-2 font-medium">{t('auditLog.action')}</th>

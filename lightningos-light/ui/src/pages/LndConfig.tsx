@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { APIError, getBitcoinLocalStatus, getBitcoinSource, getLndConfig, getLndMaintenance, getLndStatus, getLndUpgradeStatus, getLogs, setBitcoinSource, setLndMaintenance, startLndUpgrade, updateLndConfig, updateLndRawConfig, type LndMaintenanceStatus } from '../api'
+import { APIError, getBitcoinLocalStatus, getBitcoinSource, getLndConfig, getLndMaintenance, getLndStatus, getLndUpgradeStatus, getLogs, reauthAuth, setBitcoinSource, setLndMaintenance, startLndUpgrade, updateLndConfig, updateLndRawConfig, type LndMaintenanceStatus, type LndSecretUpdate, type LndSensitiveOption } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
 import { getLocale } from '../i18n'
 import { formatJournalLogLine, formatJournalLogLines } from '../utils/journalLogs'
@@ -17,6 +17,9 @@ type BitcoinLocalStatus = {
 
 const LND_ALIAS_MAX_BYTES = 32
 type LndNetworkMode = 'private' | 'hybrid' | 'custom'
+type PendingConfigChange =
+  | { kind: 'structured'; payload: Parameters<typeof updateLndConfig>[0] }
+  | { kind: 'raw'; payload: Parameters<typeof updateLndRawConfig>[0] }
 
 type LndConfigProps = {
   externalBitcoinDetected?: boolean
@@ -49,13 +52,18 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
   const [syncedToGraph, setSyncedToGraph] = useState<boolean | null>(null)
   const [clearnet, setClearnet] = useState<LndClearnetStatus | null>(null)
   const [graphSyncProgress, setGraphSyncProgress] = useState<number | null>(null)
-  const [networkBusy, setNetworkBusy] = useState(false)
   const [maintenance, setMaintenance] = useState<LndMaintenanceStatus | null>(null)
   const [maintenanceBusy, setMaintenanceBusy] = useState(false)
   const [maintenanceTarget, setMaintenanceTarget] = useState<boolean | null>(null)
   const [maintenancePassword, setMaintenancePassword] = useState('')
   const [maintenanceError, setMaintenanceError] = useState('')
   const [raw, setRaw] = useState('')
+  const [secretUpdates, setSecretUpdates] = useState<Record<string, LndSecretUpdate>>({})
+  const [pendingConfig, setPendingConfig] = useState<PendingConfigChange | null>(null)
+  const [configPassword, setConfigPassword] = useState('')
+  const [configError, setConfigError] = useState('')
+  const [configBusy, setConfigBusy] = useState(false)
+  const configRunning = useRef(false)
   const [advanced, setAdvanced] = useState(false)
   const [status, setStatus] = useState('')
   const [bitcoinSource, setBitcoinSourceState] = useState<'remote' | 'local'>('remote')
@@ -396,7 +404,50 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
     }
   }
 
-  const handleSave = async () => {
+  const openConfigConfirmation = (change: PendingConfigChange) => {
+    if (configRunning.current) return
+    setConfigPassword('')
+    setConfigError('')
+    setPendingConfig(change)
+  }
+
+  const reloadConfig = async () => {
+    const refreshed = await getLndConfig()
+    setConfig(refreshed)
+    setRaw(refreshed.raw_user_conf || '')
+    setSecretUpdates({})
+  }
+
+  const confirmConfigChange = async () => {
+    if (!pendingConfig || configRunning.current) return
+    const change = pendingConfig
+    configRunning.current = true
+    setConfigBusy(true)
+    setConfigError('')
+    try {
+      // Reauthenticate through the auth endpoint so an incorrect confirmation
+      // password does not discard the active login or the approved snapshot.
+      await reauthAuth({ password: configPassword, scope: 'lnd_config' })
+      setConfigPassword('')
+      const result = change.kind === 'raw'
+        ? await updateLndRawConfig(change.payload)
+        : await updateLndConfig(change.payload)
+      setPendingConfig(null)
+      setSecretUpdates({})
+      setStatus(result?.wallet_unlock_required ? t('lndConfig.unlockPending')
+        : result?.wallet_setup_required ? t('lndConfig.setupPending') : t('lndConfig.savedApplied'))
+      // A successful apply remains successful if refreshing the editor fails.
+      try { await reloadConfig() } catch { setStatus(t('lndConfig.savedReloadRequired')) }
+    } catch (err) {
+      setConfigPassword('')
+      setConfigError(err instanceof Error ? err.message : t('lndConfig.saveFailed'))
+    } finally {
+      configRunning.current = false
+      setConfigBusy(false)
+    }
+  }
+
+  const handleSave = () => {
     if (aliasTooLong) {
       setStatus(t('lndConfig.aliasTooLong', { count: aliasByteLength, max: LND_ALIAS_MAX_BYTES }))
       return
@@ -405,40 +456,23 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
       setStatus(t('lndConfig.colorInvalid'))
       return
     }
-    setStatus(t('common.saving'))
-    try {
-      await updateLndConfig({
+    openConfigConfirmation({ kind: 'structured', payload: {
         alias,
         color,
         min_channel_size_sat: Number(minChan || 0),
         max_channel_size_sat: Number(maxChan || 0),
         apply_now: true
-      })
-      setStatus(t('lndConfig.savedApplied'))
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : t('lndConfig.saveFailed'))
-    }
+    } })
   }
 
-  const handleSaveRaw = async () => {
-    setStatus(t('lndConfig.savingAdvanced'))
-    try {
-      const result = await updateLndRawConfig({ raw_user_conf: raw, apply_now: true })
-      if (result?.warning) {
-        setStatus(t('lndConfig.advancedAppliedWarning', { warning: result.warning }))
-      } else {
-        setStatus(t('lndConfig.advancedApplied'))
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message) {
-        setStatus(err.message)
-      } else {
-        setStatus(t('lndConfig.advancedFailed'))
-      }
-    }
+  const handleSaveRaw = () => {
+    openConfigConfirmation({ kind: 'raw', payload: {
+      raw_user_conf: raw, apply_now: true, config_revision: config?.config_revision || '',
+      secret_updates: structuredClone(secretUpdates),
+    } })
   }
 
-  const handleSaveNetwork = async () => {
+  const handleSaveNetwork = () => {
     if (networkMode === 'custom') {
       setStatus(t('lndConfig.networkChoosePreset'))
       return
@@ -448,26 +482,12 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
       setStatus(t('lndConfig.graphSyncPeersInvalid'))
       return
     }
-    setNetworkBusy(true)
-    setStatus(t('common.saving'))
-    try {
-      await updateLndConfig({
+    openConfigConfirmation({ kind: 'structured', payload: {
         network_mode: networkMode,
         graph_sync_peers: peers,
         disconnect_unresponsive_peers: disconnectUnresponsivePeers,
         apply_now: true
-      })
-      const refreshed = await getLndConfig().catch(() => null)
-      if (refreshed?.raw_user_conf) {
-        setRaw(refreshed.raw_user_conf)
-        setConfig(refreshed)
-      }
-      setStatus(t('lndConfig.networkSaved'))
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : t('lndConfig.networkSaveFailed'))
-    } finally {
-      setNetworkBusy(false)
-    }
+    } })
   }
 
   const handleSelectSafeBootstrap = () => {
@@ -741,9 +761,9 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
             className="btn-primary"
             type="button"
             onClick={handleSaveNetwork}
-            disabled={networkBusy || networkMode === 'custom' || maintenance?.enabled}
+            disabled={configBusy || networkMode === 'custom' || maintenance?.enabled || !!pendingConfig}
           >
-            {networkBusy ? t('common.saving') : t('lndConfig.saveNetworkRestart')}
+            {configBusy ? t('common.saving') : t('lndConfig.saveNetworkRestart')}
           </button>
           <p className="text-xs text-fog/50">{t('lndConfig.networkRestartHint')}</p>
         </div>
@@ -894,15 +914,34 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
             <p className="text-xs text-fog/50">{t('lndConfig.maxChannelHint')}</p>
           </div>
         </div>
-        <button className="btn-primary" disabled={maintenance?.enabled} onClick={handleSave}>{t('lndConfig.saveRestart')}</button>
+        <button className="btn-primary" disabled={!config || configBusy || !!pendingConfig || maintenance?.enabled} onClick={handleSave}>{t('lndConfig.saveRestart')}</button>
         <p className="text-xs text-fog/50">{t('lndConfig.restartHint')}</p>
       </div>
 
       {advanced && (
         <div className="section-card order-2 space-y-4">
           <h3 className="text-lg font-semibold">{t('lndConfig.advancedEditor')}</h3>
+          <p className="text-sm text-fog/60">{t('lndConfig.protectedSecretsHint')}</p>
           <textarea className="input-field min-h-[180px]" value={raw} onChange={(e) => setRaw(e.target.value)} />
-          <button className="btn-secondary" disabled={maintenance?.enabled} onClick={handleSaveRaw}>{t('lndConfig.applyAdvanced')}</button>
+          {(config?.sensitive_options || []).map((option: LndSensitiveOption) => {
+            const update = secretUpdates[option.id] || { action: 'keep' as const }
+            return <div key={option.id} className="space-y-2 rounded-xl border border-white/10 p-3">
+              <label className="block text-sm" htmlFor={`secret-action-${option.id}`}>{option.key} ({option.section}) — {t(option.configured ? 'lndConfig.secretConfigured' : 'lndConfig.secretUnset')}</label>
+              <select id={`secret-action-${option.id}`} className="input-field" value={update.action} disabled={configBusy || !!pendingConfig}
+                onChange={(event) => setSecretUpdates(previous => ({ ...previous, [option.id]: { action: event.target.value as LndSecretUpdate['action'] } }))}>
+                <option value="keep">{t('lndConfig.secretKeep')}</option>
+                <option value="replace">{t('lndConfig.secretReplace')}</option>
+                <option value="clear">{t('lndConfig.secretClear')}</option>
+              </select>
+              {update.action === 'replace' && <input className="input-field" type="password" autoComplete="new-password" aria-label={`${t('lndConfig.secretNewValue')} ${option.key}`}
+                disabled={configBusy || !!pendingConfig} value={update.value || ''} maxLength={4096}
+                onChange={(event) => setSecretUpdates(previous => ({ ...previous, [option.id]: { action: 'replace', value: event.target.value } }))} />}
+            </div>
+          })}
+          <div className="flex flex-wrap gap-3">
+            <button className="btn-secondary" disabled={!config?.config_revision || configBusy || !!pendingConfig || maintenance?.enabled} onClick={handleSaveRaw}>{t('lndConfig.applyAdvanced')}</button>
+            <button className="btn-secondary" disabled={configBusy || !!pendingConfig} onClick={() => void reloadConfig().catch(() => setStatus(t('lndConfig.reloadFailed')))}>{t('lndConfig.reloadEditor')}</button>
+          </div>
         </div>
       )}
 
@@ -982,6 +1021,25 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
       </div>
 
       {!config && <p className="order-6 text-fog/60">{t('lndConfig.loadingConfig')}</p>}
+
+      <SensitiveActionModal
+        open={pendingConfig !== null}
+        title={t('lndConfig.confirmChangeTitle')}
+        description={t('lndConfig.confirmChangeBody')}
+        password={configPassword}
+        busy={configBusy}
+        error={configError}
+        confirmLabel={t('lndConfig.saveRestart')}
+        onPasswordChange={setConfigPassword}
+        onConfirm={confirmConfigChange}
+        onClose={() => {
+          if (configRunning.current) return
+          setPendingConfig(null)
+          setConfigPassword('')
+          setConfigError('')
+          setSecretUpdates({})
+        }}
+      />
 
       <SensitiveActionModal
         open={maintenanceTarget !== null}

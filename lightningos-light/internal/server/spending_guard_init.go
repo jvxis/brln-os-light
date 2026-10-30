@@ -87,10 +87,14 @@ func (s *Server) reconcileSpendingGuard() {
 		return
 	}
 	for _, item := range items {
+		// Rotate attempted entries so an old, inconclusive batch cannot hide
+		// newer payments forever. A failed query is not evidence of failure.
+		if err := svc.markReconciled(ctx, item.ID); err != nil {
+			return
+		}
 		if strings.TrimSpace(item.PaymentHash) == "" {
-			if time.Since(item.CreatedAt) > 10*time.Minute {
-				_ = svc.Release(ctx, item.SpendingReservation, "orphaned before payment submission")
-			}
+			// Legacy unbound entries may precede a crash after submission.
+			// Their age alone cannot prove that no payment took place.
 			continue
 		}
 		details, found, trackErr := s.lnd.TrackPaymentDetails(ctx, item.PaymentHash)

@@ -869,7 +869,10 @@ func (s *NodeRetirementService) processSuccessionTransfer(ctx context.Context, s
 	for _, item := range utxos {
 		confirmedAmount += item.AmountSat
 	}
-	if confirmedAmount <= 0 {
+	{
+		// A whole-wallet sweep must wait for mixed mature/immature balances too.
+		// Checking only whether some mature funds exist lets younger close
+		// outputs ride along in SendAll despite the approved confirmation policy.
 		allUtxos, allErr := s.lnd.ListOnchainUtxos(ctx, 0, 9999999)
 		if allErr != nil {
 			return false, &transfer, allErr
@@ -886,13 +889,15 @@ func (s *NodeRetirementService) processSuccessionTransfer(ctx context.Context, s
 			transfer.LastError = lastError
 			return true, &transfer, nil
 		}
-		_ = s.updateTransferStatus(ctx, session.SessionID, status, "", 0, transfer.Attempts, lastError)
-		transfer.Status = status
-		transfer.LastError = lastError
-		return false, &transfer, nil
+		if status != "" {
+			_ = s.updateTransferStatus(ctx, session.SessionID, status, "", 0, transfer.Attempts, lastError)
+			transfer.Status = status
+			transfer.LastError = lastError
+			return false, &transfer, nil
+		}
 	}
 
-	txid, sendErr := s.lnd.SendCoins(ctx, cfg.DestinationAddress, 0, cfg.SweepSatPerVbyte, true)
+	txid, sendErr := s.lnd.SendCoinsWithMinConfirmations(ctx, cfg.DestinationAddress, 0, cfg.SweepSatPerVbyte, true, cfg.SweepMinConfs)
 	attempts := transfer.Attempts + 1
 	if sendErr != nil {
 		_ = s.updateTransferStatus(ctx, session.SessionID, "failed", "", confirmedAmount, attempts, sendErr.Error())
@@ -930,7 +935,13 @@ func sumOnchainUtxoAmount(utxos []lndclient.OnchainUtxo) int64 {
 }
 
 func classifySuccessionTransferWalletFunds(confirmedAmount int64, totalWalletAmount int64) (bool, string, string) {
+	if confirmedAmount > totalWalletAmount {
+		return false, "waiting_funds", "wallet UTXO snapshot changed; waiting for consistent confirmed funds"
+	}
 	if confirmedAmount > 0 {
+		if confirmedAmount < totalWalletAmount {
+			return false, "waiting_funds", "waiting for all wallet funds to reach the configured confirmations"
+		}
 		return false, "", ""
 	}
 	if totalWalletAmount > 0 {

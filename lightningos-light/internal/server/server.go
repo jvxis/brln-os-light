@@ -35,6 +35,15 @@ type Server struct {
 	shutdownCtx                 context.Context
 	shutdownCancel              context.CancelFunc
 	lnd                         *lndclient.Client
+	lndConfigOps                *lndConfigOperations
+	lndConfigRevisionOnce       sync.Once
+	lndConfigRevisionKey        [32]byte
+	lndConfigRevisionErr        error
+	financialIntentOnce         sync.Once
+	financialIntents            *financialIntentStore
+	financialIntentErr          error
+	financialIntentDir          string
+	financialNativeOps          *financialNativeOperations
 	networkMapMu                sync.Mutex
 	networkMapGeoCache          map[string]networkMapGeoCacheEntry
 	db                          *pgxpool.Pool
@@ -62,6 +71,9 @@ type Server struct {
 	auditLogErr                 string
 	auditRetentionOnce          sync.Once
 	spendingGuardInitAt         time.Time
+	lnurlInvoiceMu              sync.Mutex
+	lnurlInvoices               map[string]cachedLNURLInvoice
+	lnurlInvoiceResolutions     singleflight.Group
 	spendingGuardMu             sync.Mutex
 	spendingGuard               *SpendingGuardService
 	spendingGuardErr            string
@@ -218,6 +230,7 @@ func (s *Server) Run() error {
 	s.initNotifications()
 	s.initAppVersions()
 	s.initAuditLog()
+	s.startKernelTCPAuditMonitor()
 	s.initSpendingGuard()
 	s.startSpendingGuardReconciler()
 	s.initReports()
@@ -315,6 +328,8 @@ func (s *Server) Run() error {
 		Addr:              addr,
 		Handler:           s.routes(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       requestBodyReadTimeout,
+		IdleTimeout:       90 * time.Second,
 		TLSConfig:         tlsCfg,
 	}
 

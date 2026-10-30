@@ -67,7 +67,34 @@ create index if not exists audit_events_ts_idx on audit_events (ts desc);
 create index if not exists audit_events_session_idx on audit_events (session_id, ts desc);
 create index if not exists audit_events_action_idx on audit_events (action, ts desc);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.migrateSessionIDs(ctx)
+}
+
+func (s *AuditService) migrateSessionIDs(ctx context.Context) error {
+	// Commit bounded batches so initialization can resume after cancellation.
+	// SHA-256 is built into supported PostgreSQL versions; no extension needed.
+	for {
+		tag, err := s.db.Exec(ctx, `
+with batch as (
+ select id, btrim(session_id, E' \t\r\n') as legacy_id
+ from audit_events
+ where session_id <> 'anonymous' and session_id !~ $1
+ order by id limit 500 for update
+)
+update audit_events e set session_id = case
+ when b.legacy_id = '' then 'anonymous'
+ else $2 || encode(sha256(convert_to($3 || b.legacy_id, 'UTF8')), 'hex') end
+from batch b where e.id = b.id`, auditSessionPattern, auditSessionPrefix, auditSessionDomain)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return nil
+		}
+	}
 }
 
 func (s *AuditService) Insert(ctx context.Context, event AuditEventInsert) error {
@@ -78,7 +105,7 @@ func (s *AuditService) Insert(ctx context.Context, event AuditEventInsert) error
 	if action == "" {
 		return errors.New("audit action required")
 	}
-	sessionID := strings.TrimSpace(event.SessionID)
+	sessionID := auditCorrelationID(event.SessionID)
 	target := strings.TrimSpace(event.Target)
 	ip := strings.TrimSpace(event.IP)
 
@@ -114,7 +141,9 @@ func (s *AuditService) List(ctx context.Context, filter AuditEventFilter) ([]Aud
 		where = append(where, fmt.Sprintf("%s = $%d", column, len(args)))
 	}
 	addFilter("action", filter.Action)
-	addFilter("session_id", filter.SessionID)
+	if strings.TrimSpace(filter.SessionID) != "" {
+		addFilter("session_id", auditCorrelationID(filter.SessionID))
+	}
 	addFilter("target", filter.Target)
 
 	args = append(args, limit)
@@ -141,6 +170,8 @@ limit $%d`, strings.Join(where, " and "), len(args))
 		if len(raw) == 0 {
 			raw = []byte("{}")
 		}
+		// Defense in depth for historical rows or writers running an old build.
+		item.SessionID = auditCorrelationID(item.SessionID)
 		item.Metadata = append(json.RawMessage(nil), raw...)
 		items = append(items, item)
 	}

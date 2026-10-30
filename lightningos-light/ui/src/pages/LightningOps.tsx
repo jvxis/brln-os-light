@@ -4498,7 +4498,7 @@ export default function LightningOps() {
   }
 
   const isBalancedOpenProposeEligible = (state: string) => {
-    return state === 'session_created'
+    return state === 'session_created' || state === 'proposal_sent'
   }
 
   const canAcceptBalancedSession = (session: BalancedOpenSession) => {
@@ -6133,12 +6133,20 @@ export default function LightningOps() {
       }
 
       setBalancedOpenStatus(t('lightningOps.balancedOpenProposing'))
-      await proposeBalancedOpenSession(sessionID)
-      setBalancedOpenStatus(t('lightningOps.balancedOpenProposalSent'))
       setBalancedPeer('')
       setBalancedCapacity('')
       setBalancedCloseAddress('')
       setBalancedPrivate(false)
+      try {
+        await proposeBalancedOpenSession(sessionID)
+      } catch (err: any) {
+        if (queueFundsReauth(err, () => handleBalancedOpenAction(created as BalancedOpenSession, 'propose'))) {
+          await refreshBalancedOpen()
+          return
+        }
+        throw err
+      }
+      setBalancedOpenStatus(t('lightningOps.balancedOpenProposalSent'))
       await refreshBalancedOpen()
       load()
     } catch (err: any) {
@@ -6188,7 +6196,7 @@ export default function LightningOps() {
       await refreshBalancedOpen()
       load()
     } catch (err: any) {
-      if (action === 'execute' && queueFundsReauth(err, () => handleBalancedOpenAction(session, action))) return
+      if (['propose', 'accept', 'execute'].includes(action) && queueFundsReauth(err, () => handleBalancedOpenAction(session, action))) return
       setBalancedOpenStatus(err?.message || t('lightningOps.balancedOpenActionFailed'))
     } finally {
       setBalancedOpenActionBusyID('')
@@ -9780,6 +9788,7 @@ export default function LightningOps() {
           <div>
             <h3 className="text-lg font-semibold">{t('lightningOps.balancedOpenTitle')}</h3>
             <p className="text-sm text-fog/60">{t('lightningOps.balancedOpenSubtitle')}</p>
+            <p className="mt-2 text-sm text-brass">{t('lightningOps.balancedOpenApprovalNotice')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className={`text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full ${balancedOpenInfo?.enabled ? 'bg-emerald-500/15 text-emerald-200 border border-emerald-400/30' : 'bg-white/10 text-fog/60 border border-white/10'}`}>
@@ -10873,6 +10882,7 @@ export default function LightningOps() {
                           age: peer.last_error_time ? ` (${formatAge(peer.last_error_time)})` : '',
                           error: peer.last_error
                         })}
+                        <span className="block text-fog/50">{t('lightningOps.peerErrorHistoryHint')}</span>
                       </p>
                     )}
                   </div>

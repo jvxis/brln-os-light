@@ -1,6 +1,7 @@
 package lndclient
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -82,6 +83,7 @@ func (c *Client) SendCoinsAdvanced(ctx context.Context, params SendCoinsParams) 
 // OpenChannelParams mirrors OpenChannelWithPush's arguments and adds outpoint
 // pinning. Callers without a selection should keep using OpenChannelWithPush.
 type OpenChannelParams struct {
+	Memo            string
 	PubkeyHex       string
 	LocalFundingSat int64
 	PushSat         int64
@@ -127,6 +129,7 @@ func (c *Client) OpenChannelWithOutpoints(ctx context.Context, params OpenChanne
 
 	client := lnrpc.NewLightningClient(conn)
 	req := &lnrpc.OpenChannelRequest{
+		Memo:               params.Memo,
 		NodePubkey:         pubkey,
 		LocalFundingAmount: params.LocalFundingSat,
 		PushSat:            params.PushSat,
@@ -156,6 +159,14 @@ type LeaseInfo struct {
 	Expiration uint64 `json:"expiration"`
 	Value      uint64 `json:"value"`
 	ID         string `json:"id"`
+	PkScript   []byte `json:"-"`
+}
+
+// ManagedByUtxoManager distinguishes our deterministic leases from LND/PSBT
+// leases. Never claim an external lease can be released with our lease ID.
+func (lease LeaseInfo) ManagedByUtxoManager() bool {
+	id, err := hex.DecodeString(lease.ID)
+	return err == nil && bytes.Equal(id, deriveLeaseID(lease.Outpoint))
 }
 
 // LeaseOutput locks an outpoint for the given expiry window (seconds). The
@@ -230,7 +241,10 @@ func (c *Client) ListLeases(ctx context.Context) (map[string]LeaseInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	return leasesFromRPC(resp), nil
+}
 
+func leasesFromRPC(resp *walletrpc.ListLeasesResponse) map[string]LeaseInfo {
 	leases := make(map[string]LeaseInfo, len(resp.GetLockedUtxos()))
 	for _, lease := range resp.GetLockedUtxos() {
 		if lease == nil {
@@ -246,14 +260,15 @@ func (c *Client) ListLeases(ctx context.Context) (map[string]LeaseInfo, error) {
 		}
 		leases[outpoint] = LeaseInfo{
 			Outpoint:   outpoint,
-			Txid:       strings.ToLower(strings.TrimSpace(point.GetTxidStr())),
+			Txid:       strings.SplitN(outpoint, ":", 2)[0],
 			Vout:       point.GetOutputIndex(),
 			Expiration: lease.GetExpiration(),
 			Value:      lease.GetValue(),
 			ID:         hex.EncodeToString(lease.GetId()),
+			PkScript:   append([]byte(nil), lease.GetPkScript()...),
 		}
 	}
-	return leases, nil
+	return leases
 }
 
 func deriveLeaseID(outpoint string) []byte {

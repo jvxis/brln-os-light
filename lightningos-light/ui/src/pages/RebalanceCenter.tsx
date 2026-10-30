@@ -32,6 +32,7 @@ import OverviewHero from '../components/rebalance/OverviewHero'
 import { PairStatsPanel } from '../components/rebalance/PairStatsPanel'
 import ChannelRebalanceControls from '../components/rebalance/ChannelRebalanceControls'
 import { RebalanceInAction } from '../components/rebalance/RebalanceInAction'
+import { manualRebalanceReason } from '../utils/manualRebalanceReason'
 import type { RebalanceInOverrides } from '../components/rebalance/RebalanceInAction'
 import { SettingsSubcard } from '../components/rebalance/SettingsSubcard'
 import type {
@@ -4421,6 +4422,7 @@ export default function RebalanceCenter() {
                     peerAlias={ch.peer_alias}
                     targetOutboundPct={editTargets[channelKey(ch)] ? Number(editTargets[channelKey(ch)]) : ch.target_outbound_pct}
                     disabled={!ch.eligible_as_manual_target}
+                    disabledReason={t(`rebalanceCenter.manualDisabled.${manualRebalanceReason(ch, config?.deadband_pct ?? 0)}`, { budget: ch.fee_budget_ppm })}
                     onRun={(overrides) => handleRunRebalance(ch, overrides)}
                   />
 
@@ -4657,6 +4659,7 @@ export default function RebalanceCenter() {
                         peerAlias={ch.peer_alias}
                         targetOutboundPct={editTargets[channelKey(ch)] ? Number(editTargets[channelKey(ch)]) : ch.target_outbound_pct}
                         disabled={!ch.eligible_as_manual_target}
+                        disabledReason={t(`rebalanceCenter.manualDisabled.${manualRebalanceReason(ch, config?.deadband_pct ?? 0)}`, { budget: ch.fee_budget_ppm })}
                         onRun={(overrides) => handleRunRebalance(ch, overrides)}
                       />
 

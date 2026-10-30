@@ -20,7 +20,7 @@ type successionConfigPostRequest struct {
 	SweepSatPerVbyte      *int64  `json:"sweep_sat_per_vbyte"`
 	CheckPeriodDays       *int    `json:"check_period_days"`
 	ReminderPeriodDays    *int    `json:"reminder_period_days"`
-	ConfirmPassword       string  `json:"confirm_password"`
+	ConfirmPassword       string  `json:"confirm_password,omitempty"`
 }
 
 func (s *Server) handleSuccessionStatusGet(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +94,9 @@ func (s *Server) handleSuccessionConfigPost(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Freeze omitted policy fields against this read. A concurrent save must
+	// not turn an unapproved partial update into a different live policy.
+	req = freezeSuccessionConfigRequest(current, req)
 	if successionConfigPostRequiresLiveReauth(current, req) {
 		if !s.requireSensitiveReauth(
 			w,

@@ -425,6 +425,9 @@ func (s *BalancedOpenService) ExecuteSession(ctx context.Context, sessionID stri
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
+	if err := validateFinancialSnapshot(ctx, "balanced_open", balancedFinancialTerms(session)); err != nil {
+		return BalancedOpenSession{}, err
+	}
 	if isBalancedOpenTerminalState(session.State) {
 		return BalancedOpenSession{}, ErrBalancedOpenTerminalState
 	}
@@ -461,7 +464,7 @@ func (s *BalancedOpenService) executeSessionPush(ctx context.Context, session Ba
 		"capacity_sat":      session.CapacitySat,
 		"local_funding_sat": session.CapacitySat,
 		"push_sat":          pushSat,
-	})
+	}, session.State)
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
@@ -475,6 +478,9 @@ func (s *BalancedOpenService) executeSessionPush(ctx context.Context, session Ba
 		}
 	}
 
+	if err := commitFinancialWorkflow(ctx, submitted.SessionID); err != nil {
+		return BalancedOpenSession{}, err
+	}
 	channelPoint, err := s.lnd.OpenChannelWithPush(
 		ctx,
 		submitted.PeerPubkey,
@@ -561,7 +567,7 @@ func (s *BalancedOpenService) executeSessionDual(ctx context.Context, session Ba
 		"funding_tx_id":   plan.FundingTxID,
 		"funding_tx_vout": plan.FundingVout,
 		"funding_tx_hex":  plan.TxHex,
-	})
+	}, session.State)
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
@@ -640,6 +646,9 @@ func (s *BalancedOpenService) executeSessionDual(ctx context.Context, session Ba
 		return BalancedOpenSession{}, err
 	}
 
+	if err := commitFinancialWorkflow(ctx, submitted.SessionID); err != nil {
+		return BalancedOpenSession{}, err
+	}
 	channelPoint, err := s.lnd.OpenChannelWithShim(ctx, lndclient.OpenChannelWithShimParams{
 		PubkeyHex:       submitted.PeerPubkey,
 		CapacitySat:     submitted.CapacitySat,
@@ -1142,6 +1151,9 @@ func (s *BalancedOpenService) ProposeSession(ctx context.Context, sessionID stri
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
+	if err := validateFinancialSnapshot(ctx, "balanced_open", balancedFinancialTerms(session)); err != nil {
+		return BalancedOpenSession{}, err
+	}
 	if isBalancedOpenTerminalState(session.State) {
 		return BalancedOpenSession{}, ErrBalancedOpenTerminalState
 	}
@@ -1153,6 +1165,10 @@ func (s *BalancedOpenService) ProposeSession(ctx context.Context, sessionID stri
 	}
 
 	meta, err := decodeBalancedOpenMetadata(session.Metadata)
+	if err != nil {
+		return BalancedOpenSession{}, err
+	}
+	meta, err = s.reconcileBalancedPrefund(ctx, session, meta)
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
@@ -1203,7 +1219,7 @@ func (s *BalancedOpenService) ProposeSession(ctx context.Context, sessionID stri
 		if created {
 			patched, err := s.transitionSessionWithMetadata(ctx, session.SessionID, session.State, "", "funding_artifacts_prepared", map[string]any{
 				"execution_mode": balancedOpenExecutionModeDual,
-			}, balancedEncodeMetadata(meta))
+			}, balancedEncodeMetadata(meta), session.State)
 			if err != nil {
 				return BalancedOpenSession{}, err
 			}
@@ -1243,25 +1259,29 @@ func (s *BalancedOpenService) ProposeSession(ctx context.Context, sessionID stri
 		}
 	}
 
-	if err := s.sendProtocolMessage(ctx, session.PeerPubkey, msg); err != nil {
-		return BalancedOpenSession{}, err
-	}
-
-	updated, err := s.transitionSessionWithMetadata(ctx, session.SessionID, balancedOpenStateProposalSent, "", "proposal_sent", map[string]any{
+	// Publish the expected phase before sending so an immediate reply can be
+	// accepted, and never overwrite an acceptance that races the RPC return.
+	updated, err := s.transitionSessionWithMetadata(ctx, session.SessionID, balancedOpenStateProposalSent, "", "proposal_prepared", map[string]any{
 		"kind":           msg.Kind,
 		"execution_mode": mode,
 		"sent_at_unix":   msg.SentAtUnix,
-	}, balancedEncodeMetadata(meta))
+	}, balancedEncodeMetadata(meta), session.State)
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
+	if err := s.sendProtocolMessage(ctx, session.PeerPubkey, msg); err != nil {
+		return BalancedOpenSession{}, err
+	}
 	s.notifyBalancedOpenStart(ctx, updated, meta, msg.FromPubkey)
-	return updated, nil
+	return s.GetSession(ctx, session.SessionID)
 }
 
 func (s *BalancedOpenService) AcceptSession(ctx context.Context, sessionID string) (BalancedOpenSession, error) {
 	session, err := s.GetSession(ctx, sessionID)
 	if err != nil {
+		return BalancedOpenSession{}, err
+	}
+	if err := validateFinancialSnapshot(ctx, "balanced_open", balancedFinancialTerms(session)); err != nil {
 		return BalancedOpenSession{}, err
 	}
 	if isBalancedOpenTerminalState(session.State) {
@@ -1270,11 +1290,22 @@ func (s *BalancedOpenService) AcceptSession(ctx context.Context, sessionID strin
 	if session.Role != balancedOpenRoleAccepter {
 		return BalancedOpenSession{}, ErrBalancedOpenInvalidAction
 	}
+	if session.State == balancedOpenStateAccepted {
+		return session, nil
+	}
 	if session.State != balancedOpenStateProposalReceived && session.State != balancedOpenStateFundingTxHalfSigned {
 		return BalancedOpenSession{}, ErrBalancedOpenInvalidAction
 	}
-
 	meta, err := decodeBalancedOpenMetadata(session.Metadata)
+	if err != nil {
+		return BalancedOpenSession{}, err
+	}
+	rawMeta, _ := decodeBalancedOpenMetadataMap(session.Metadata)
+	_, attempted := rawMeta[balancedOpenRoleAccepter+"_prefund_attempted"]
+	if session.State == balancedOpenStateProposalReceived && time.Since(session.StateUpdatedAt) > balancedProposalLifetime && !attempted && !hasBalancedTransit(meta.AccepterTransit, true) {
+		return BalancedOpenSession{}, ErrBalancedOpenProposalExpired
+	}
+	meta, err = s.reconcileBalancedPrefund(ctx, session, meta)
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
@@ -1321,7 +1352,7 @@ func (s *BalancedOpenService) AcceptSession(ctx context.Context, sessionID strin
 			patched, err := s.transitionSessionWithMetadata(ctx, session.SessionID, session.State, "", "funding_artifacts_prepared", map[string]any{
 				"execution_mode": mode,
 				"side":           balancedOpenRoleAccepter,
-			}, balancedEncodeMetadata(meta))
+			}, balancedEncodeMetadata(meta), session.State)
 			if err != nil {
 				return BalancedOpenSession{}, err
 			}
@@ -1335,7 +1366,7 @@ func (s *BalancedOpenService) AcceptSession(ctx context.Context, sessionID strin
 		patched, err := s.transitionSessionWithMetadata(ctx, session.SessionID, balancedOpenStateFundingTxHalfSigned, "", "funding_tx_half_signed", map[string]any{
 			"execution_mode": mode,
 			"side":           balancedOpenRoleAccepter,
-		}, balancedEncodeMetadata(meta))
+		}, balancedEncodeMetadata(meta), session.State)
 		if err != nil {
 			return BalancedOpenSession{}, err
 		}
@@ -1378,7 +1409,7 @@ func (s *BalancedOpenService) AcceptSession(ctx context.Context, sessionID strin
 		"kind":           msg.Kind,
 		"execution_mode": mode,
 		"sent_at_unix":   msg.SentAtUnix,
-	}, balancedEncodeMetadata(meta))
+	}, balancedEncodeMetadata(meta), session.State)
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
@@ -1819,6 +1850,10 @@ func (s *BalancedOpenService) RecoverSessionTransit(ctx context.Context, session
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
+	meta, err = s.reconcileBalancedPrefund(ctx, session, meta)
+	if err != nil {
+		return BalancedOpenSession{}, err
+	}
 	if normalizeBalancedExecutionMode(meta.ExecutionMode) != balancedOpenExecutionModeDual {
 		return BalancedOpenSession{}, ErrBalancedOpenInvalidAction
 	}
@@ -1982,7 +2017,7 @@ func (s *BalancedOpenService) RetrySessionBroadcast(ctx context.Context, session
 }
 
 func (s *BalancedOpenService) handleIncomingCustomMessage(msg lndclient.CustomPeerMessage) {
-	if msg.Type != balancedOpenCustomMsgType {
+	if msg.Type != balancedOpenCustomMsgType || len(msg.Data) > 65536 {
 		return
 	}
 
@@ -2004,9 +2039,24 @@ func (s *BalancedOpenService) handleIncomingCustomMessage(msg lndclient.CustomPe
 	if envelope.FromPubkey == "" {
 		envelope.FromPubkey = sender
 	}
+	if !strings.EqualFold(strings.TrimSpace(envelope.FromPubkey), sender) {
+		return
+	}
+	if validateBalancedEnvelope(sender, envelope, envelope.Kind) != nil {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if envelope.ToPubkey != "" {
+		if s.lnd == nil {
+			return
+		}
+		self, err := s.lnd.SelfPubkey(ctx)
+		if err != nil || !strings.EqualFold(strings.TrimSpace(self), strings.TrimSpace(envelope.ToPubkey)) {
+			return
+		}
+	}
 
 	switch envelope.Kind {
 	case balancedOpenMessageKindProposal:
@@ -2035,6 +2085,10 @@ func (s *BalancedOpenService) handleIncomingCustomMessage(msg lndclient.CustomPe
 }
 
 func (s *BalancedOpenService) upsertSessionFromProposal(ctx context.Context, sender string, msg balancedOpenProtocolMessage) (BalancedOpenSession, error) {
+	sender = strings.ToLower(strings.TrimSpace(sender))
+	if err := validateBalancedEnvelope(sender, msg, balancedOpenMessageKindProposal); err != nil {
+		return BalancedOpenSession{}, err
+	}
 	if !isValidPubkeyHex(sender) {
 		return BalancedOpenSession{}, ErrBalancedOpenInvalidPeerKey
 	}
@@ -2051,6 +2105,13 @@ func (s *BalancedOpenService) upsertSessionFromProposal(ctx context.Context, sen
 	if mode == balancedOpenExecutionModeDual {
 		if !isValidPubkeyHex(msg.MultisigPubkey) {
 			return BalancedOpenSession{}, errors.New("proposal missing multisig pubkey")
+		}
+		expected, err := balancedTransitContribution(msg.CapacitySat, balancedEffectiveFeeRate(msg.FeeRateSatVb))
+		if err != nil {
+			return BalancedOpenSession{}, err
+		}
+		if msg.TransitOutputSat != expected {
+			return BalancedOpenSession{}, ErrBalancedOpenTermsConflict
 		}
 		if !isBalancedOpenTxID(msg.TransitTxID) {
 			return BalancedOpenSession{}, errors.New("proposal missing transit tx id")
@@ -2069,9 +2130,20 @@ func (s *BalancedOpenService) upsertSessionFromProposal(ctx context.Context, sen
 	}
 	defer tx.Rollback(ctx)
 
+	preallocated := false
+	if existing, found, err := s.existingProposal(ctx, tx, sender, msg); err != nil {
+		return BalancedOpenSession{}, err
+	} else if found {
+		if existing.State != balancedOpenStateSessionCreated {
+			return existing, tx.Commit(ctx)
+		}
+		preallocated = true
+	}
+
 	metaPatch := map[string]any{
-		"execution_mode":   mode,
-		"protocol_version": msg.Version,
+		"proposal_pending_chan_id": strings.ToLower(strings.TrimSpace(msg.PendingChanIDHex)),
+		"execution_mode":           mode,
+		"protocol_version":         msg.Version,
 		"last_message": map[string]any{
 			"kind":         msg.Kind,
 			"from_pubkey":  sender,
@@ -2101,7 +2173,11 @@ func (s *BalancedOpenService) upsertSessionFromProposal(ctx context.Context, sen
 		return BalancedOpenSession{}, err
 	}
 
-	row := tx.QueryRow(ctx, `
+	var row pgx.Row
+	if preallocated {
+		row = tx.QueryRow(ctx, `update balanced_open_sessions set state='proposal_received',state_updated_at=now(),updated_at=now(),metadata=metadata || $2::jsonb,peer_host=case when peer_host='' then $3 else peer_host end where session_id=$1 and state='session_created' and role='accepter' returning `+balancedSessionColumns, msg.SessionID, meta, strings.TrimSpace(msg.PeerHost))
+	} else {
+		row = tx.QueryRow(ctx, `
 insert into balanced_open_sessions (
   session_id,
   role,
@@ -2116,24 +2192,7 @@ insert into balanced_open_sessions (
   metadata
 )
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10::jsonb)
-on conflict (session_id) do update
-set
-  peer_pubkey = excluded.peer_pubkey,
-  peer_host = case when balanced_open_sessions.peer_host = '' then excluded.peer_host else balanced_open_sessions.peer_host end,
-  capacity_sat = excluded.capacity_sat,
-  fee_rate_sat_vb = excluded.fee_rate_sat_vb,
-  is_private = excluded.is_private,
-  close_address = excluded.close_address,
-  state = case
-    when balanced_open_sessions.state in ('active', 'failed', 'canceled', 'recovered') then balanced_open_sessions.state
-    else $9
-  end,
-  state_updated_at = case
-    when balanced_open_sessions.state in ('active', 'failed', 'canceled', 'recovered') then balanced_open_sessions.state_updated_at
-    else now()
-  end,
-  metadata = coalesce(balanced_open_sessions.metadata, '{}'::jsonb) || $10::jsonb,
-  updated_at = now()
+on conflict (session_id) do nothing
 returning
   id,
   session_id,
@@ -2153,17 +2212,18 @@ returning
   created_at,
   updated_at
 `,
-		msg.SessionID,
-		balancedOpenRoleAccepter,
-		sender,
-		strings.TrimSpace(msg.PeerHost),
-		msg.CapacitySat,
-		msg.FeeRateSatVb,
-		msg.Private,
-		strings.TrimSpace(msg.CloseAddress),
-		balancedOpenStateProposalReceived,
-		meta,
-	)
+			msg.SessionID,
+			balancedOpenRoleAccepter,
+			sender,
+			strings.TrimSpace(msg.PeerHost),
+			msg.CapacitySat,
+			msg.FeeRateSatVb,
+			msg.Private,
+			strings.TrimSpace(msg.CloseAddress),
+			balancedOpenStateProposalReceived,
+			meta,
+		)
+	}
 
 	session, err := scanBalancedOpenSession(row)
 	if err != nil {
@@ -2192,15 +2252,30 @@ returning
 }
 
 func (s *BalancedOpenService) markAcceptedFromPeer(ctx context.Context, sender string, msg balancedOpenProtocolMessage) (BalancedOpenSession, error) {
-	session, err := s.GetSession(ctx, msg.SessionID)
+	sender = strings.ToLower(strings.TrimSpace(sender))
+	if err := validateBalancedEnvelope(sender, msg, balancedOpenMessageKindAccept); err != nil {
+		return BalancedOpenSession{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return BalancedOpenSession{}, err
+	}
+	defer tx.Rollback(ctx)
+	session, err := scanBalancedOpenSession(tx.QueryRow(ctx, `select `+balancedSessionColumns+` from balanced_open_sessions where session_id=$1 for update`, msg.SessionID))
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
 	if !strings.EqualFold(strings.TrimSpace(session.PeerPubkey), sender) {
 		return BalancedOpenSession{}, ErrBalancedOpenInvalidPeerKey
 	}
-	if isBalancedOpenTerminalState(session.State) {
-		return session, nil
+	if session.Role != balancedOpenRoleInitiator {
+		return BalancedOpenSession{}, ErrBalancedOpenInvalidAction
+	}
+	if session.State != balancedOpenStateProposalSent {
+		if session.State != balancedOpenStateSessionCreated && balancedAcceptMatches(session, msg) {
+			return session, tx.Commit(ctx)
+		}
+		return BalancedOpenSession{}, ErrBalancedOpenInvalidAction
 	}
 
 	meta, err := decodeBalancedOpenMetadata(session.Metadata)
@@ -2215,10 +2290,27 @@ func (s *BalancedOpenService) markAcceptedFromPeer(ctx context.Context, sender s
 	if mode == "" {
 		mode = balancedOpenExecutionModePush
 	}
+	currentMode := normalizeBalancedExecutionMode(meta.ExecutionMode)
+	if currentMode == "" {
+		currentMode = balancedOpenExecutionModePush
+	}
+	if mode != currentMode {
+		return BalancedOpenSession{}, ErrBalancedOpenTermsConflict
+	}
+	if (meta.AccepterMultisigKey.PublicKey != "" || meta.AccepterTransit.TxID != "" || len(meta.AccepterInputWitness) > 0) && !balancedAcceptMatches(session, msg) {
+		return BalancedOpenSession{}, ErrBalancedOpenTermsConflict
+	}
 
 	if mode == balancedOpenExecutionModeDual {
 		if !isValidPubkeyHex(msg.MultisigPubkey) {
 			return BalancedOpenSession{}, errors.New("accept missing multisig pubkey")
+		}
+		expected, err := balancedTransitContribution(session.CapacitySat, balancedEffectiveFeeRate(session.FeeRateSatVb))
+		if err != nil {
+			return BalancedOpenSession{}, err
+		}
+		if msg.TransitOutputSat != expected {
+			return BalancedOpenSession{}, ErrBalancedOpenTermsConflict
 		}
 		if !isBalancedOpenTxID(msg.TransitTxID) {
 			return BalancedOpenSession{}, errors.New("accept missing transit tx id")
@@ -2259,15 +2351,22 @@ func (s *BalancedOpenService) markAcceptedFromPeer(ctx context.Context, sender s
 		meta.AccepterInputWitness = append([]string(nil), msg.TransitInputStack...)
 	}
 
-	updated, err := s.transitionSessionWithMetadata(ctx, session.SessionID, balancedOpenStateAccepted, "", "proposal_accepted_remote", map[string]any{
-		"from_pubkey":    sender,
-		"execution_mode": mode,
-		"sent_at_unix":   msg.SentAtUnix,
-	}, balancedEncodeMetadata(meta))
+	patch, err := marshalBalancedOpenJSON(balancedEncodeMetadata(meta))
 	if err != nil {
 		return BalancedOpenSession{}, err
 	}
-	return updated, nil
+	updated, err := scanBalancedOpenSession(tx.QueryRow(ctx, `update balanced_open_sessions set state='accepted', state_updated_at=now(), updated_at=now(), last_error='', metadata=metadata || $2::jsonb where session_id=$1 returning `+balancedSessionColumns, session.SessionID, patch))
+	if err != nil {
+		return BalancedOpenSession{}, err
+	}
+	if err := s.appendEventTx(ctx, tx, session.SessionID, "proposal_accepted_remote", map[string]any{
+		"from_pubkey":    sender,
+		"execution_mode": mode,
+		"sent_at_unix":   msg.SentAtUnix,
+	}); err != nil {
+		return BalancedOpenSession{}, err
+	}
+	return updated, tx.Commit(ctx)
 }
 
 func (s *BalancedOpenService) markCanceledFromPeer(ctx context.Context, sender string, msg balancedOpenProtocolMessage) (BalancedOpenSession, error) {
@@ -2681,11 +2780,11 @@ func (s *BalancedOpenService) sweepLocalOrphanRecoveredOutput(ctx context.Contex
 	}, patch)
 }
 
-func (s *BalancedOpenService) transitionSession(ctx context.Context, sessionID string, nextState string, lastError string, eventType string, detail any) (BalancedOpenSession, error) {
-	return s.transitionSessionWithMetadata(ctx, sessionID, nextState, lastError, eventType, detail, nil)
+func (s *BalancedOpenService) transitionSession(ctx context.Context, sessionID string, nextState string, lastError string, eventType string, detail any, expectedStates ...string) (BalancedOpenSession, error) {
+	return s.transitionSessionWithMetadata(ctx, sessionID, nextState, lastError, eventType, detail, nil, expectedStates...)
 }
 
-func (s *BalancedOpenService) transitionSessionWithMetadata(ctx context.Context, sessionID string, nextState string, lastError string, eventType string, detail any, metadataPatch any) (BalancedOpenSession, error) {
+func (s *BalancedOpenService) transitionSessionWithMetadata(ctx context.Context, sessionID string, nextState string, lastError string, eventType string, detail any, metadataPatch any, expectedStates ...string) (BalancedOpenSession, error) {
 	if !isBalancedOpenState(nextState) {
 		return BalancedOpenSession{}, ErrBalancedOpenInvalidState
 	}
@@ -2720,7 +2819,8 @@ set
   updated_at = now(),
   last_error = $3,
   metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb
-where session_id = $1
+where session_id = $1 and state = $5
+  and (coalesce(cardinality($6::text[]),0) = 0 or state = any($6::text[]))
 returning
   id,
   session_id,
@@ -2739,9 +2839,12 @@ returning
   metadata,
   created_at,
   updated_at
-`, strings.TrimSpace(sessionID), nextState, strings.TrimSpace(lastError), rawMeta)
+`, strings.TrimSpace(sessionID), nextState, strings.TrimSpace(lastError), rawMeta, current.State, expectedStates)
 	session, err := scanBalancedOpenSession(row)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return BalancedOpenSession{}, ErrBalancedOpenInvalidAction
+		}
 		return BalancedOpenSession{}, err
 	}
 
@@ -3071,65 +3174,7 @@ func balancedOpenLocalTransitForRole(role string, meta balancedOpenMetadata) (ba
 }
 
 func (s *BalancedOpenService) ensureInitiatorDualArtifacts(ctx context.Context, session BalancedOpenSession, meta balancedOpenMetadata) (balancedOpenMetadata, bool, error) {
-	if normalizeBalancedExecutionMode(meta.ExecutionMode) == balancedOpenExecutionModeDual &&
-		isValidPubkeyHex(meta.InitiatorMultisigKey.PublicKey) &&
-		hasBalancedTransit(meta.InitiatorTransit, true) {
-		return meta, false, nil
-	}
-
-	feeRate := balancedEffectiveFeeRate(session.FeeRateSatVb)
-	transitAmount, err := balancedTransitContribution(session.CapacitySat, feeRate)
-	if err != nil {
-		return meta, false, err
-	}
-	if _, err := s.ensureBalancedOnchainBudget(ctx, transitAmount, balancedOpenAnchorSafetySat); err != nil {
-		return meta, false, err
-	}
-
-	multisigKey, err := s.lnd.DeriveNextKey(ctx, balancedOpenMultiSigKeyFamily)
-	if err != nil {
-		return meta, false, err
-	}
-	transitKey, err := s.lnd.DeriveNextKey(ctx, balancedOpenTransitKeyFamily)
-	if err != nil {
-		return meta, false, err
-	}
-	transitScript, err := balancedP2WPKHScriptHex(transitKey.PublicKey)
-	if err != nil {
-		return meta, false, err
-	}
-
-	sendResult, err := s.lnd.SendOutputScript(ctx, lndclient.SendOutputScriptParams{
-		SatPerVbyte:      feeRate,
-		OutputScriptHex:  transitScript,
-		AmountSat:        transitAmount,
-		Label:            fmt.Sprintf("balanced-open-%s-initiator", session.SessionID),
-		MinConfs:         0,
-		SpendUnconfirmed: true,
-	})
-	if err != nil {
-		return meta, false, err
-	}
-
-	meta.ExecutionMode = balancedOpenExecutionModeDual
-	meta.InitiatorMultisigKey = balancedOpenKeyDescriptor{
-		PublicKey: strings.ToLower(strings.TrimSpace(multisigKey.PublicKey)),
-		Family:    multisigKey.Family,
-		Index:     multisigKey.Index,
-	}
-	meta.InitiatorTransit = balancedOpenTransitDetails{
-		TxID:         strings.ToLower(strings.TrimSpace(sendResult.TxID)),
-		Vout:         sendResult.Vout,
-		OutputSat:    transitAmount,
-		OutputScript: strings.ToLower(strings.TrimSpace(transitScript)),
-		Key: balancedOpenKeyDescriptor{
-			PublicKey: strings.ToLower(strings.TrimSpace(transitKey.PublicKey)),
-			Family:    transitKey.Family,
-			Index:     transitKey.Index,
-		},
-	}
-
-	return meta, true, nil
+	return s.ensureBalancedTransit(ctx, session, balancedOpenRoleInitiator)
 }
 
 func (s *BalancedOpenService) ensureAccepterDualArtifacts(ctx context.Context, session BalancedOpenSession, meta balancedOpenMetadata) (balancedOpenMetadata, []string, bool, error) {
@@ -3146,58 +3191,11 @@ func (s *BalancedOpenService) ensureAccepterDualArtifacts(ctx context.Context, s
 
 	created := false
 	if !isValidPubkeyHex(meta.AccepterMultisigKey.PublicKey) || !hasBalancedTransit(meta.AccepterTransit, true) {
-		feeRate := balancedEffectiveFeeRate(session.FeeRateSatVb)
-		transitAmount, err := balancedTransitContribution(session.CapacitySat, feeRate)
+		var err error
+		meta, created, err = s.ensureBalancedTransit(ctx, session, balancedOpenRoleAccepter)
 		if err != nil {
-			return meta, nil, false, err
+			return meta, nil, created, err
 		}
-		if _, err := s.ensureBalancedOnchainBudget(ctx, transitAmount, balancedOpenAnchorSafetySat); err != nil {
-			return meta, nil, false, err
-		}
-
-		multisigKey, err := s.lnd.DeriveNextKey(ctx, balancedOpenMultiSigKeyFamily)
-		if err != nil {
-			return meta, nil, false, err
-		}
-		transitKey, err := s.lnd.DeriveNextKey(ctx, balancedOpenTransitKeyFamily)
-		if err != nil {
-			return meta, nil, false, err
-		}
-		transitScript, err := balancedP2WPKHScriptHex(transitKey.PublicKey)
-		if err != nil {
-			return meta, nil, false, err
-		}
-
-		sendResult, err := s.lnd.SendOutputScript(ctx, lndclient.SendOutputScriptParams{
-			SatPerVbyte:      feeRate,
-			OutputScriptHex:  transitScript,
-			AmountSat:        transitAmount,
-			Label:            fmt.Sprintf("balanced-open-%s-accepter", session.SessionID),
-			MinConfs:         0,
-			SpendUnconfirmed: true,
-		})
-		if err != nil {
-			return meta, nil, false, err
-		}
-
-		meta.ExecutionMode = balancedOpenExecutionModeDual
-		meta.AccepterMultisigKey = balancedOpenKeyDescriptor{
-			PublicKey: strings.ToLower(strings.TrimSpace(multisigKey.PublicKey)),
-			Family:    multisigKey.Family,
-			Index:     multisigKey.Index,
-		}
-		meta.AccepterTransit = balancedOpenTransitDetails{
-			TxID:         strings.ToLower(strings.TrimSpace(sendResult.TxID)),
-			Vout:         sendResult.Vout,
-			OutputSat:    transitAmount,
-			OutputScript: strings.ToLower(strings.TrimSpace(transitScript)),
-			Key: balancedOpenKeyDescriptor{
-				PublicKey: strings.ToLower(strings.TrimSpace(transitKey.PublicKey)),
-				Family:    transitKey.Family,
-				Index:     transitKey.Index,
-			},
-		}
-		created = true
 	}
 
 	derivedPendingID, err := balancedPendingChanIDHexFromMultisig(meta.InitiatorMultisigKey.PublicKey, meta.AccepterMultisigKey.PublicKey)
@@ -3483,6 +3481,9 @@ func balancedTransitContribution(capacitySat int64, feeRateSatVb int64) (int64, 
 	if feeRateSatVb <= 0 {
 		return 0, ErrBalancedOpenInvalidFeeRate
 	}
+	if feeRateSatVb > (int64(1<<63-1)-capacitySat)/balancedOpenFundingVBytes || feeRateSatVb > int64(1<<63-1)/250 {
+		return 0, ErrBalancedOpenInvalidFeeRate
+	}
 	return (capacitySat + (balancedOpenFundingVBytes * feeRateSatVb)) / 2, nil
 }
 
@@ -3595,6 +3596,9 @@ func (s *BalancedOpenService) publishBalancedTxWithRetry(ctx context.Context, tx
 	}
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := commitFinancialWorkflow(ctx, label); err != nil {
+			return err
+		}
 		err := s.lnd.PublishTransaction(ctx, txHex, label)
 		if err == nil || isBalancedOpenAlreadyPublishedError(err) {
 			return nil
@@ -3688,7 +3692,7 @@ func isBalancedOpenOutpointUnavailableError(err error) bool {
 
 func validateBalancedCapacityByMode(capacitySat int64, mode string) error {
 	_ = mode
-	if capacitySat < balancedOpenMinCapacitySat || capacitySat%2 != 0 {
+	if capacitySat < balancedOpenMinCapacitySat || capacitySat > 21000000*100000000 || capacitySat%2 != 0 {
 		return ErrBalancedOpenInvalidCapacity
 	}
 	return nil
@@ -4179,6 +4183,9 @@ func balancedOpenOnchainFundingByRole(role string, meta balancedOpenMetadata) (i
 func (s *BalancedOpenService) sendProtocolMessage(ctx context.Context, peerPubkey string, msg balancedOpenProtocolMessage) error {
 	raw, err := marshalBalancedOpenJSON(msg)
 	if err != nil {
+		return err
+	}
+	if err := commitFinancialWorkflow(ctx, msg.SessionID); err != nil {
 		return err
 	}
 	return s.lnd.SendCustomMessage(ctx, peerPubkey, balancedOpenCustomMsgType, raw)

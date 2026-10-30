@@ -19,6 +19,7 @@ const spendingGuardWindow = 24 * time.Hour
 
 var (
 	ErrSpendingGuardUnavailable = errors.New("spending guard unavailable")
+	ErrSpendingGuardReauth      = errors.New("spending policy reauthentication required")
 	ErrSpendingGuardLimit       = errors.New("spending guard limit exceeded")
 )
 
@@ -158,6 +159,8 @@ create index if not exists spending_guard_entries_window_idx
   on spending_guard_entries (status, created_at desc);
 create index if not exists spending_guard_entries_hash_idx
   on spending_guard_entries (payment_hash) where payment_hash <> '';
+create index if not exists spending_guard_entries_reconcile_idx
+  on spending_guard_entries (updated_at,created_at,id) where status='reserved';
 `)
 	return err
 }
@@ -183,22 +186,43 @@ func (s *SpendingGuardService) Settings(ctx context.Context) (SpendingGuardSetti
 	return settings, err
 }
 
-func (s *SpendingGuardService) UpdateSettings(ctx context.Context, settings SpendingGuardSettings) (SpendingGuardSettings, error) {
+func (s *SpendingGuardService) UpdateSettings(ctx context.Context, settings SpendingGuardSettings, authorized bool) (SpendingGuardSettings, error) {
 	if err := validateSpendingGuardSettings(settings); err != nil {
 		return SpendingGuardSettings{}, err
 	}
 	if s == nil || s.db == nil {
 		return SpendingGuardSettings{}, ErrSpendingGuardUnavailable
 	}
+	// Serialize policy decisions with updates and payment reservations. Checking
+	// an earlier, unlocked snapshot could authorize a relaxation of a newer policy.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return SpendingGuardSettings{}, err
+	}
+	defer tx.Rollback(ctx)
+	var current SpendingGuardSettings
+	err = tx.QueryRow(ctx, `select enabled,max_payment_sat,rolling_24h_limit_sat,updated_at from spending_guard_settings where id=1 for update`).Scan(&current.Enabled, &current.MaxPaymentSat, &current.Rolling24hLimitSat, &current.UpdatedAt)
+	if err != nil {
+		return SpendingGuardSettings{}, err
+	}
+	if spendingGuardNeedsReauth(current, settings) && !authorized {
+		return SpendingGuardSettings{}, ErrSpendingGuardReauth
+	}
 	var updated SpendingGuardSettings
-	err := s.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 update spending_guard_settings
 set enabled=$1,max_payment_sat=$2,rolling_24h_limit_sat=$3,updated_at=now()
 where id=1
 returning enabled,max_payment_sat,rolling_24h_limit_sat,updated_at`,
 		settings.Enabled, settings.MaxPaymentSat, settings.Rolling24hLimitSat,
 	).Scan(&updated.Enabled, &updated.MaxPaymentSat, &updated.Rolling24hLimitSat, &updated.UpdatedAt)
-	return updated, err
+	if err != nil {
+		return SpendingGuardSettings{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SpendingGuardSettings{}, err
+	}
+	return updated, nil
 }
 
 func (s *SpendingGuardService) Status(ctx context.Context) (SpendingGuardStatus, error) {
@@ -329,9 +353,15 @@ func (s *SpendingGuardService) Bind(ctx context.Context, reservation SpendingRes
 	if !reservation.Active || strings.TrimSpace(reservation.ID) == "" || strings.TrimSpace(paymentHash) == "" {
 		return nil
 	}
-	_, err := s.db.Exec(ctx, `update spending_guard_entries set payment_hash=$2,updated_at=now() where id=$1 and status='reserved'`,
+	result, err := s.db.Exec(ctx, `update spending_guard_entries set payment_hash=$2,updated_at=now() where id=$1 and status='reserved'`,
 		reservation.ID, strings.ToLower(strings.TrimSpace(paymentHash)))
-	return err
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return errors.New("spending reservation is no longer active")
+	}
+	return nil
 }
 
 func (s *SpendingGuardService) pending(ctx context.Context, limit int) ([]pendingSpendingReservation, error) {
@@ -341,7 +371,7 @@ func (s *SpendingGuardService) pending(ctx context.Context, limit int) ([]pendin
 	rows, err := s.db.Query(ctx, `
 select id,amount_sat,max_fee_sat,reserved_sat,payment_hash,created_at
 from spending_guard_entries where status='reserved'
-order by created_at asc limit $1`, limit)
+order by updated_at asc,created_at asc,id asc limit $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +386,11 @@ order by created_at asc limit $1`, limit)
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (s *SpendingGuardService) markReconciled(ctx context.Context, id string) error {
+	_, err := s.db.Exec(ctx, `update spending_guard_entries set updated_at=now() where id=$1 and status='reserved'`, id)
+	return err
 }
 
 func (s *SpendingGuardService) Release(ctx context.Context, reservation SpendingReservation, reason string) error {
@@ -382,9 +417,9 @@ func (s *SpendingGuardService) windowTotals(ctx context.Context, query spendingG
 select
  coalesce(sum(case when status='settled' then actual_debit_sat else 0 end),0),
  coalesce(sum(case when status='reserved' then reserved_sat else 0 end),0),
- min(case when status in ('settled','reserved') then coalesce(settled_at,created_at) end)
+ min(case when status='settled' then settled_at end)
 from spending_guard_entries
-where (status='settled' and settled_at >= $1) or (status='reserved' and created_at >= $1)`, windowStart).Scan(&used, &reserved, &oldest)
+where (status='settled' and settled_at >= $1) or status='reserved'`, windowStart).Scan(&used, &reserved, &oldest)
 	return used, reserved, oldest, err
 }
 
@@ -422,8 +457,12 @@ func spendingGuardNeedsReauth(current, next SpendingGuardSettings) bool {
 	if current.Enabled && !next.Enabled {
 		return true
 	}
-	if next.MaxPaymentSat > current.MaxPaymentSat || next.Rolling24hLimitSat > current.Rolling24hLimitSat {
+	if spendingLimitRelaxed(current.MaxPaymentSat, next.MaxPaymentSat) || spendingLimitRelaxed(current.Rolling24hLimitSat, next.Rolling24hLimitSat) {
 		return true
 	}
 	return false
+}
+
+func spendingLimitRelaxed(current, next int64) bool {
+	return current > 0 && (next == 0 || next > current)
 }

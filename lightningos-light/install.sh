@@ -17,7 +17,7 @@ if [[ ! -r "$ARTIFACT_VERIFY_SCRIPT" ]]; then
 fi
 source "$ARTIFACT_VERIFY_SCRIPT"
 
-LND_VERSION="0.21.4-beta"
+LND_VERSION="0.21.5-beta"
 
 GOTTY_VERSION="1.8.0"
 GOTTY_ARTIFACT="gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"
@@ -1611,6 +1611,7 @@ main() {
   bash "$REPO_ROOT/scripts/install-lnd-onion-recovery.sh"
   trap '/usr/local/libexec/lightningos-lnd-onion recover || true' EXIT
   install_packages
+  bash "$REPO_ROOT/scripts/install-kernel-tcp-mitigation.sh"
   configure_tor
   create_lnd_user
   ensure_group_member lnd debian-tor

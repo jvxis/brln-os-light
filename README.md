@@ -12,6 +12,9 @@ Upgrade stopped at Go preparation on 0.5.40/0.5.41? See the
 [optional legacy-owner diagnosis and recovery guide](docs/GO_PARENT_OWNER_RECOVERY.md).
 For upgrades to 0.5.48 or later from 0.5.47 or earlier, also read the
 [one-time Node/npm preparation instructions](docs/NODE_TOOLCHAIN_UPGRADE.md).
+Blocked entering **0.5.49** by a newer Node version? The same guide provides a
+separate, explicit recovery script. From **0.5.50**, compatible global runtimes
+are retained instead of requiring the exact recommended Node/npm versions.
 
 > [!IMPORTANT]
 > LightningOS is a local node-control plane and is **not designed for direct public Internet exposure**. Run it only on a trusted LAN or through a private VPN such as Tailscale, behind a host or network firewall. Never forward port `8443` or App Store ports from the public Internet. The installers restrict `8443` to the detected LAN and `tailscale0` only when UFW is already installed and active; they do not enable UFW automatically. Always verify `sudo ufw status` or provide an equivalent external firewall before using the node.
@@ -84,8 +87,8 @@ First node? The step-by-step guide, in Portuguese, covers what you need, the ins
 The installer provisions everything needed on a clean Ubuntu box:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort enabled) + i2pd enabled by default
-- Go pinned by `lightningos-light/scripts/go-toolchain.conf` (currently 1.26.8); global Node.js 24.22.1 with bundled npm 11.19.1, verified and installed/upgraded automatically by the 0.5.48+ installers. The host is considered dedicated to LOS; see the [existing-node preparation and compatibility precautions](docs/NODE_TOOLCHAIN_UPGRADE.md).
-- LND binaries pinned by the selected release (currently `v0.21.4-beta` for new nodes)
+- Go pinned by `lightningos-light/scripts/go-toolchain.conf` (currently 1.26.8). From 0.5.50, compatible global Node >=22.12.0 / npm >=10 are retained; missing/older toolchains use the verified Node 24.22.1 / npm 11.19.1 installation. Build compatibility is not security certification. The host is considered dedicated to LOS; see the [existing-node preparation and compatibility precautions](docs/NODE_TOOLCHAIN_UPGRADE.md).
+- LND binaries pinned by the selected release (currently `v0.21.5-beta` for new nodes)
 - LightningOS Manager binary (compiled locally)
 - UI build (compiled locally)
 - systemd services and config templates
@@ -1022,6 +1025,69 @@ Selecting a mode only previews the change; **Apply mode** activates it after pas
 
 Physical pairing with a second radio and actual payment settlement remain acceptance tests for this experimental feature; simulated pairing and wallet tests do not replace those checks.
 
+### Temporary kernel TCP protection (0.5.50)
+
+Production installers and application upgrades install a dedicated nftables
+filter for **CVE-2026-98432**, rejecting
+TCP/IPv4 packets with IPv4 header options. Ordinary TCP options such as MSS,
+timestamps and window scaling remain allowed. Existing ordinary connections
+do not require an LND or Bitcoin restart. A timer checks and restores the filter
+every 30 seconds; a global firewall flush can leave a gap until reconciliation.
+
+LOS also defaults its Go binaries and managed native LND services to ordinary
+TCP instead of MPTCP, preserving other configured `GODEBUG` options. The LND
+environment change takes effect on its next start; upgrading LOS does not
+restart LND for this setting. Existing-node installs retain the existing service
+commands and configuration.
+
+Verify the loaded filter with `sudo /usr/local/libexec/lightningos-kernel-tcp status`.
+**System Check → Security** reports recent verification, and **Audit Log** records
+verification/state changes and repairs. This is temporary mitigation, not proof
+of a patched kernel. Install the distribution's fixed kernel and boot into it
+when available. See [scope, diagnostics and explicit removal](docs/KERNEL_TCP_MITIGATION.md).
+
+### Updating Store-managed BTCPay Server (0.5.50)
+
+The Store offers **BTCPay Server 2.4.7** and **NBXplorer 2.6.21**, with PostgreSQL
+remaining on major version 16. BTCPay 2.4.7 includes security and payment-accounting
+fixes; see the [official release notes](https://github.com/btcpayserver/btcpayserver/releases/tag/v2.4.7).
+
+After updating LOS, open **Apps → BTCPay Server**, click **Stop**, wait for the
+stack to stop, then click **Start**. Starting prepares the catalog images and
+applies them to the existing installation. Keep the app installed: use the
+existing data directories, store database, invoices and credentials. Updating
+LOS alone does not replace an already-running BTCPay container.
+
+The dedicated LND credential keeps its existing limited permissions. The
+PostgreSQL major version, Bitcoin source selection and Tor integration follow
+the existing LOS configuration. BTCPay's upstream Docker deployment changes do
+not regenerate the separate LOS-managed stack.
+
+### Updating Store-managed Bitcoin Core (0.5.50)
+
+The Store offers **Bitcoin Core 31.2**. Updating LOS updates the available
+version; it does not automatically replace a running Bitcoin container.
+
+1. Open **Apps → Bitcoin Core** and check the installed/available versions.
+2. Click **Stop**, confirm the temporary interruption, and wait for shutdown.
+3. Click **Start** to prepare the authenticated official image and apply it.
+
+Keep the app installed. The existing storage volume, blocks, indexes, wallets,
+configuration and RPC credentials are retained; there is no automatic reset or
+reindex. LND and dependent apps temporarily lose their Bitcoin connection.
+The broker checks mainnet, the expected version and local RPC/ZMQ endpoints
+before reporting a successful start. A new full node may still need to sync.
+
+Shutdown does not schedule a forced kill after a short timeout. If the request
+times out, check the status and wait for Core to finish; retry **Stop** if needed,
+then **Start**. Do not use **Uninstall** to update. Verification/startup failure
+is reported as an error; it must not be treated as a completed update. The old
+image/data are retained, but automatic binary downgrade is not promised.
+
+This procedure applies to the Docker app managed by the Store, not an external
+or manually installed Bitcoin node. Native developer regtest binaries are managed
+by their separate lab installer.
+
 ## App Store architecture
 - Each app implements a handler in `internal/server/apps_<app>.go`.
 - Apps are registered in `internal/server/apps_registry.go`.
@@ -1048,6 +1114,285 @@ Release-by-release notes are tracked in GitHub Releases:
 - [Historical releases through 0.5.40](https://github.com/jvxis/brln-os-light/releases)
 
 ## Development
+
+### Regtest lab for developers and beginners
+
+You do not need to be a developer: this lab also lets beginners get to know LOS,
+explore its screens and practise on-chain and Lightning operations before setting
+up a production node. It installs Bitcoin Core 31.2, three LND nodes
+(Alice/Bob/Charlie), PostgreSQL and three isolated LOS panels. The coins are
+fictitious and have no value. Moving to production means a separate mainnet
+installation; lab wallets, channels and balances are not migrated.
+
+Use a **fresh, dedicated Ubuntu 24.04 amd64 VM or WSL2 distribution on Windows 11**,
+with `systemd`, 4 GiB RAM and at least 20 GiB free Linux disk space recommended.
+Internet access is required for verified toolchains, packages and builds. The
+normal production installers remain mainnet-only.
+
+#### Quick installation with curl
+
+On a dedicated Ubuntu VM, prepare its hostname with
+`sudo hostnamectl set-hostname los-regtest`. For WSL2, prepare it as described
+below. Then run inside Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/agent/0.5.50-release/lo_regtest_bootstrap.sh | sudo bash -s -- --disposable-host
+```
+
+The dedicated bootstrap fetches a clean private source checkout and runs
+`install_regtest.sh`, then removes only its temporary checkout. It never resets
+your working repository. Its default source is `agent/0.5.50-release`; it prints
+the exact installed commit. This is development source, not an immutable
+production release. Developers can select a branch, tag or full commit by adding
+`LOS_REGTEST_REF=<ref>` after `sudo` in the command above. Repeating it preserves
+existing lab wallets and passwords; it does not reset the lab.
+
+#### Ubuntu on Windows 11 (WSL2)
+
+Reserve a new Ubuntu distribution for this lab. In PowerShell,
+`wsl --install -d Ubuntu-24.04` installs Ubuntu 24.04; check `wsl --list --verbose`
+for version **2**. If that distribution already contains your work or node data,
+use a separate one. Follow Microsoft's [WSL installation commands](https://learn.microsoft.com/en-us/windows/wsl/basic-commands).
+WSL1 and Windows on ARM are outside this amd64 profile.
+
+Inside Ubuntu, edit `/etc/wsl.conf` with `sudo nano /etc/wsl.conf`. Merge these
+settings with any existing sections, preserving other settings:
+
+```ini
+[boot]
+systemd=true
+[network]
+hostname=los-regtest
+```
+
+Save your work and close that lab's terminals. In PowerShell, run
+`wsl --terminate Ubuntu-24.04` (replace the name if your lab has a different name),
+then `wsl -d Ubuntu-24.04`. This stops only the named distribution. Check inside
+Ubuntu that `ps -p 1 -o comm=` reports `systemd` and `hostname` reports
+`los-regtest`, then run the curl installation above. See Microsoft's
+[systemd setup](https://learn.microsoft.com/en-us/windows/wsl/systemd) and
+[per-distribution configuration](https://learn.microsoft.com/en-us/windows/wsl/wsl-config).
+Keep the lab and its data on the Linux filesystem, not under `/mnt/c`.
+
+With WSL2 localhost forwarding enabled and free host ports, open
+`https://alice.localhost:8443`, `https://bob.localhost:8543` and
+`https://charlie.localhost:8643` from Windows. Trust only the lab's public CA and
+retrieve each password as described below. The SSH-forward URLs below are for
+remote/VM access; they use different local ports. See Microsoft's
+[WSL networking guide](https://learn.microsoft.com/en-us/windows/wsl/networking).
+Keep the distribution running while using the lab; closing/stopping WSL is not
+an always-on production setup. Installation integration checks currently use
+Ubuntu VMs; native WSL2 validation remains separate.
+
+#### Installation from a source checkout (developers)
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git python3
+git clone --branch agent/0.5.50-release https://github.com/jvxis/brln-os-light.git
+cd brln-os-light
+sudo hostnamectl set-hostname los-regtest
+sudo bash lightningos-light/install_regtest.sh --disposable-host
+```
+
+The installer refuses existing node data, production service definitions, unowned
+lab directories and dirty checkouts. Commit your development changes before
+running it again. Repeated runs retain wallets and login credentials; each run
+makes small regtest transfers to validate the installation. A failed build leaves
+the current panels running; a failed Manager deployment restores the previous
+Manager/UI, with interrupted deployment recovery on the next attempt.
+
+Access from your workstation through SSH, replacing `user@lab-host`:
+
+```bash
+ssh -N -L 127.0.0.1:19043:127.0.0.1:8443 -L 127.0.0.1:19053:127.0.0.1:8543 -L 127.0.0.1:19063:127.0.0.1:8643 user@lab-host
+```
+
+Open the three panels:
+
+| Node alias | Panel through SSH |
+| --- | --- |
+| `LOS-Regtest-Alice` | `https://alice.localhost:19043` |
+| `LOS-Regtest-Bob` | `https://bob.localhost:19053` |
+| `LOS-Regtest-Charlie` | `https://charlie.localhost:19063` |
+
+All three native LNDs and LOS panels start automatically at boot. Each has its
+own wallet, login, TLS key, state and database. A fresh lab starts with a triangle
+Alice → Bob → Charlie → Alice: three 1,000,000-sat channels, each opened with 500,000 sats
+pushed to the peer. This enables multi-hop payments and circular rebalance tests;
+it does not imply every routing/rebalance scenario has already been validated.
+Repeated installation reuses existing/pending channels and preserves extra user
+channels. Old built-in aliases migrate to the names above; custom aliases remain.
+Alias migration can briefly restart an affected lab LND. Production installers
+and mainnet aliases are unaffected.
+
+Use the distinct `*.localhost` browser names above so the three login cookies do
+not overwrite one another. Browsers resolve them to loopback without editing DNS
+or the hosts file. Keep the SSH forwards bound to `127.0.0.1`. When upgrading an
+older lab, the existing CA and private TLS keys are retained; leaf certificates
+are reissued only as needed to cover the per-node names.
+
+Copy the **public** CA `/etc/los-regtest/ca.crt` over verified SSH and trust it in
+your test browser; keep TLS verification enabled. Retrieve each UI password
+privately on the VM with `sudo cat /etc/los-regtest/alice/ui-password` or the Bob/Charlie
+equivalent. Mine confirmations with `sudo python3 /opt/los-regtest/control.py mine 6`.
+Use an explicit fee rate such as `2 sat/vB`; a short regtest chain may not yet
+have automatic estimates, and public fee services are outside this profile.
+
+#### Supported workflows and visible limitations
+
+Expand the yellow **O que funciona / Supported features** notice in any panel
+to check this scope before using a production menu.
+
+Select **Português** or **English** in the panel toolbar to read one language
+at a time. The scrollable table uses distinct status badges; language controls
+remain available while you scroll.
+
+| Validated workflow | What you can test |
+| --- | --- |
+| Wallet and channels | Login, on-chain/Lightning balances, receiving addresses and channel reads. |
+| Lightning payments | Create invoices and pay between Alice/Bob/Charlie, with password confirmation. |
+| On-chain payments | Deposit/send fictitious coins, wait for automatic or manual confirmations and check the received balance. |
+
+**Lightning operations:** use the following distinction in this profile. The
+same bilingual matrix is available in the yellow notice on every page, including
+the Lightning operations screens.
+
+| Operation | Lab status |
+| --- | --- |
+| Read channels and balances | Validated. |
+| Initial channel created by setup through `lncli` | Validated in setup; this does not validate opening through the LOS UI. |
+| Open a single channel through the UI | Validated with manual fees, password confirmation and native active-channel verification. |
+| Batch-open channels through the UI | Validated: two distinct peers, one funding transaction, both channels active. |
+| Balanced channel opening through the UI | Validated: Alice proposes, Bob accepts, Alice executes; active 50/50 channel. |
+| Cooperative channel close through the UI | Validated after correcting native error reconciliation and fee hints ([#343](https://github.com/jvxis/brln-os-light/issues/343), [#344](https://github.com/jvxis/brln-os-light/issues/344)). Manual and Auto closes verified against native txids. |
+| Force-close a channel through the UI | Validated through confirmation, CSV maturity and native balance recovery. |
+| Edit one channel’s fees | Validated: outbound/base fees and timelock matched native LND policy. |
+| Manual rebalance through the UI | Validated: moved 49,824 sats for 2 sats and correctly recorded the partial result. A rebalance attempt does not need to move 100% of the requested amount to validate the workflow. |
+| Manual AutoFee | Validated: Dry run preserved policy; Run now applied a change to a test channel. |
+| Scheduled automations and failure recovery | Not yet validated: automatic rebalance, auto-heal, HTLC Manager and failure scenarios require dedicated tests. |
+| Node Retirement | Validated dry-run and live flow: cooperative close, offline-peer decision, force-close maturity/recovery and final reconciliation. Use a dedicated test node; this retires all its channels. |
+| Succession | Validated: proof of life, grace period, automatic deadline trigger, retirement and on-chain transfer respecting minimum confirmations. Test database dates were advanced. The whole-wallet transfer waits for all current funds to mature; new unconfirmed deposits can postpone it. |
+Telegram notification delivery is a separate integration: configure its token and destination to use it. External delivery was not tested in this localhost-only lab; that does not downgrade the successful Succession workflow. Likewise, an expected partial rebalance is a valid execution result. Historical reports retain the exact observed amounts and timing fixtures.
+
+Additional authenticated LOS API checks, independently verified against native LND (these do not claim that every related UI control was exercised):
+
+| Operation | Lab status |
+| --- | --- |
+| Sign messages | Validated: peer LND verifies the signer; changing the message does not retain that identity, and empty input is rejected. |
+| Organize UTXOs | Validated: labels/tags/colors and group create, assign, detach and delete; original metadata restored. |
+| Audit Log | Validated: native lock/release actions persisted and queried by action, target and limit; unauthenticated access and invalid limits rejected. |
+| Lock and unlock UTXOs | Validated after [#349](https://github.com/jvxis/brln-os-light/issues/349): locked rows and metadata stay visible; UI release, expiry and unchanged spending-preview exclusion verified. |
+
+See the [additional operations report](docs/REGTEST_COVERAGE_2026-10-29.md) and
+[opt-in check instructions](scripts/regtest-lab/README.md).
+
+See the [dated test report](docs/REGTEST_LIGHTNING_VALIDATION_2026-10-28.md)
+for the environment, procedures, observed results and coverage limits. Manual
+runs do not validate scheduled execution or long-term automation economics.
+
+The [Retirement/Succession follow-up](docs/REGTEST_RETIREMENT_SUCCESSION_VALIDATION_2026-10-28.md)
+records the later corrections and the native confirmation-policy boundary test.
+
+**Not yet validated** means the end-to-end UI workflow has not been exercised on
+this lab installation. It does not mean it is known to fail, and it must not be
+confused with the explicitly unsupported production controls listed below. An
+existing channel or a successful status request alone does not validate opening
+or closing channels. The notice contains Portuguese and English descriptions.
+
+Automatic mining starts after a successful installation: one block every 60 seconds.
+Pause it for tests that need precise block heights; the pause and interval survive
+reinstallation and reboot. Existing labs can install the new helper from a reviewed
+checkout without reinitializing wallets or reopening channels:
+
+```bash
+sudo install -o root -g root -m 0755 scripts/regtest-lab/automine.py /opt/los-regtest/automine.py
+sudo python3 /opt/los-regtest/automine.py install
+sudo python3 /opt/los-regtest/automine.py status
+sudo python3 /opt/los-regtest/automine.py pause
+sudo python3 /opt/los-regtest/automine.py resume
+sudo python3 /opt/los-regtest/automine.py interval 60
+```
+
+The interval accepts 10 to 3600 seconds; changing it preserves a pause. Mining only
+runs while the lab host is running, with no catch-up blocks after downtime.
+Each automatic block advances confirmations, coinbase maturity, CSV/CLTV timelocks
+and force-close deadlines. This is an accelerated simulation, not mainnet timing.
+The service checks the dedicated lab and Bitcoin `regtest` network before mining.
+It never starts or restarts Bitcoin/LND. Manual `control.py mine 6` remains available.
+If mining is paused or the host was asleep, mine one block manually and wait for
+LND synchronization before testing payments. Intervals near one hour can also
+leave LND reporting stale blocks; the default is recommended for routine use.
+
+**Outside this profile:** LND configuration through the UI (including name/alias,
+color and network settings), maintenance/restart controls, LND/LOS UI upgrades,
+App Store and external integrations. Other features require their own validation.
+The standard UI retains these menus; visibility does not imply regtest support.
+Health panels may also report missing production services.
+
+Each lab Manager is restricted to localhost and has the production privileged
+broker disabled. GitHub update checks can therefore time out, and the LND config
+page can fail to read the production configuration path. These are documented
+lab limitations; do not change production permissions/networking to make the
+menus work. The production installers and application remain unchanged.
+
+#### On-chain test funds and confirmations
+
+The installer funds all three native LND wallets with fictitious coins. Open **Wallet**
+in Alice's or Bob's panel to see the confirmed balance in the **On-chain** card.
+Mining credits block rewards to the separate laboratory miner wallet. To deposit
+more coins into Alice or Bob, open **Wallet → Add funds** in the receiving panel
+and copy its regtest address (`bcrt1...`).
+
+After a Bitcoin restart, the miner wallet may need to be loaded first. Check
+the loaded wallets:
+
+```bash
+sudo /opt/los-regtest/bin/bitcoin-cli \
+  -datadir=/var/lib/los-regtest/bitcoin -regtest listwallets
+```
+
+If `los-regtest-miner` is absent from that list, load the existing wallet:
+
+```bash
+sudo /opt/los-regtest/bin/bitcoin-cli \
+  -datadir=/var/lib/los-regtest/bitcoin -regtest \
+  loadwallet "los-regtest-miner"
+```
+
+Run this command **inside the disposable VM**, replacing the placeholder with
+that address. The final argument is the amount in BTC; this example deposits
+1 fictitious BTC (100,000,000 sats):
+
+```bash
+sudo /opt/los-regtest/bin/bitcoin-cli \
+  -datadir=/var/lib/los-regtest/bitcoin \
+  -regtest \
+  -rpcwallet=los-regtest-miner \
+  sendtoaddress "REPLACE_WITH_THE_REGTEST_WALLET_ADDRESS" 1
+```
+
+Mine six blocks to confirm the deposit, then refresh the receiving **Wallet**:
+
+```bash
+sudo python3 /opt/los-regtest/control.py mine 6
+```
+
+Use the same mining command after test transfers between Alice and Bob. To
+generate and mature new miner rewards, use `mine 101` instead of `mine 6`, then
+send the desired amount from the miner wallet as above. Mining alone does not
+deposit those rewards directly into Alice's or Bob's LND wallet. All these coins
+remain local regtest coins with no value.
+
+App Store lifecycle, production installation/upgrades and external integrations
+are outside this profile. System health panels may report missing production
+services. Never install this profile on a mainnet node or import a real wallet.
+See the [regtest lab guide](scripts/regtest-lab/README.md) for service names,
+recovery and detailed boundaries. Allocate resources according to your host's
+capacity and keep the laboratory isolated from nodes with real funds.
+
 See `DEVELOPMENT.md` for local dev setup and build instructions.
 
 ## License

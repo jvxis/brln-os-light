@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { isRegtestLab } from '../utils/labProfile'
 import { type AuthState, type TLSAccessInfo, getTLSAccessInfo, loginAuth, recoverAuth, setupAuth } from '../api'
 import brlnOsLogo from '../assets/brln-os.png'
 
@@ -189,7 +190,7 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
                   <span className="auth-kicker__dot" aria-hidden="true" />
                   {t('auth.kicker')}
                 </p>
-                <span className="auth-mainnet-pill">{t('auth.mainnet')}</span>
+                <span className="auth-mainnet-pill">{t(isRegtestLab() ? 'auth.regtest' : 'auth.mainnet')}</span>
               </div>
 
               <div className="auth-hero__copy">

@@ -2,6 +2,72 @@
 
 Base URL: https://127.0.0.1:8443
 
+## Browser security policy
+
+The Manager enforces CSP with same-origin scripts, API/SSE/WebSocket connections,
+fonts and core frames, no inline scripts or eval, no plugins/objects or document base
+URL changes, and same-origin framing/forms. Inline styles remain necessary for
+React/graph layouts. QR workers may use same-origin or blob URLs, and camera
+media may use blob URLs. Images allow same-origin, data/blob and HTTP(S) because
+custom shortcut icons and provider QR images may be external; these permissions
+do not allow external scripts. Fonts may also use embedded data URLs. GoTTY and
+same-origin terminal frames use the same policy, with `wasm-unsafe-eval` only
+under `/terminal/` for GoTTY 1.8's WebAssembly renderer. This exception does not
+permit JavaScript eval or inline scripts.
+The existing Hardwallet frame on the same node's HTTPS port 4449 remains allowed;
+this is a narrow frame-origin allowance, not a policy or security review of App
+Store applications.
+
+HSTS defaults to off to preserve private-CA installation and rotation. An
+operator who has established certificate trust for a DNS origin may opt in via
+`server.hsts_max_age_seconds` in the Manager config (0 through 31536000; start
+with 300). HSTS is sent only on direct TLS for qualified DNS names, without
+`includeSubDomains` or `preload`; client forwarding headers cannot enable it.
+IP literals and localhost never receive HSTS, retaining the certificate
+bootstrap/recovery path through a certificate-covered node IP. An HTTPS reverse
+proxy may manage its own host-only HSTS after its certificate trust is ready.
+
+Before changing a CA/certificate, provision client trust or retain a trusted
+certificate during the transition. Disabling the server option does not clear
+an HSTS policy already cached in a browser: use the covered IP recovery URL to
+install trust, or wait for the previous max-age to expire. HSTS does not justify
+exposing the Manager publicly. This policy follows
+[CSP Level 3](https://www.w3.org/TR/CSP3/) and
+[RFC 6797](https://www.rfc-editor.org/rfc/rfc6797).
+
+## Terminal connection lifecycle
+
+An established terminal WebSocket is bound to the live login session and the
+terminal runtime configuration. Logout, session expiration, password change or
+recovery (which revoke prior sessions), credential rotation, disabling the
+terminal, and changing its write mode close existing connections within one
+second. An unreadable or invalid runtime file also closes the connection.
+Reconnection runs the normal session and same-origin checks again, using the
+current terminal configuration. GoTTY continues to enforce its configured
+view-only/write mode; the proxy does not grant shell privileges. Background
+monitoring never extends the login session. The Manager session cookie is
+removed before requests reach GoTTY. GoTTY retains its native authenticated
+frontend handshake with a separate terminal-only credential; terminal responses
+are marked `no-store`. This credential is not a Linux login password or a wallet
+credential.
+
+## HTTP request budgets
+
+Request bodies are fully bounded before handlers run: 16 KiB for `/api/auth/*`,
+16 MiB for `/api/lnops/channel/scb/restore`, 16 MiB plus 64 KiB for the
+`/api/financial/intents` envelope, and 1 MiB otherwise. This includes
+chunked bodies and trailing data after a JSON value. Oversized bodies return
+`413` (`request_too_large`, or `auth_request_too_large` for authentication).
+Uploads have a 30-second read budget; expiration returns `408`
+(`request_read_timeout`). A shared 32 MiB reservation budget bounds simultaneous
+uploads; capacity exhaustion returns `503` (`request_capacity_exceeded`) with
+`Retry-After: 1`. Reservations last until the handler returns. Retrying a
+financial mutation still requires checking its result before resubmission.
+
+Headers retain their 10-second read budget, and idle keep-alive connections have
+a 90-second timeout. There is no global response write timeout: reports, SSE and
+upgraded terminal connections retain their existing response lifetimes.
+
 ## Channel auto-heal: connected-peer recovery (0.5.41)
 
 `GET/POST /api/lnops/channel/auto-heal` preserve existing fields and POST
@@ -64,12 +130,116 @@ Underlying transport errors and credential contents are not returned to the UI.
 - Authenticated auth endpoints:
   - `POST /api/auth/logout`
   - `POST /api/auth/reauth`
-- Manual external on-chain sends (`POST /api/wallet/send`) require a fresh reauthentication step.
+- With login protection enabled, every manual on-chain send (`POST /api/wallet/send`) requires fresh reauthentication, including consolidations and destinations listed in imported/watch-only accounts. Address classification never exempts a send from approval.
+- Covered core financial operations use the intent protocol below. Existing challenge codes remain, with `requires_financial_intent=true`; a reusable `wallet_send_external` or `lightning_funds` grant and inline `confirm_password` cannot authorize these operations. Session/CSRF protection and password quotas remain enforced.
+- `POST /api/wallet/send/preview` stays read-only and does not require reauthentication. Its `requires_password_confirmation` is true whenever login protection is enabled, including for `wallet_internal`; this classification only means a known address and is not proof of private-key control. The flag is false when login protection is disabled.
+- Preview funding uses LND's `default` account, matching the account used by manual sends. Monitored/imported and custom-account balances remain visible in the full wallet UTXO listing but are not counted as default funding. Explicit inputs outside that account return an unavailable-selection preview; an unselected preview lets LND choose inputs. Default-account remote signers are not filtered by key ownership. Temporary preview leases are released with an independent bounded context even when the HTTP request is canceled.
+- Inline password confirmations and `POST /api/auth/reauth` share global, client-IP and session quotas. Exhaustion returns HTTP 429 with `code=auth_rate_limited` and `Retry-After`. Client identity uses the direct connection; untrusted forwarded headers do not create additional quotas.
 - Sensitive scopes accepted by `POST /api/auth/reauth` include:
   - `wallet_send_external`
   - `macaroon_export`
   - `node_retirement_control`
   - `succession_live_control`
+  - `financial_intent:<32 lowercase hexadecimal characters>` for a live draft owned by this session.
+
+## Financial approval and retry protocol (0.5.50)
+
+With login enabled, prepare an immutable operation before asking for its password:
+
+1. `POST /api/financial/intents` with `{ "method":"POST", "path":"/api/wallet/send", "payload":{ "address":"bc1...", "amount_sat":1000, "sat_per_vbyte":5 } }`.
+2. Review the returned `summary` and normalized `payload`. A required approval returns HTTP 201 with `intent_id`, `scope`, `method`, `path`, `expires_at` and `required:true`. Confirm the returned `scope` using `POST /api/auth/reauth`.
+3. Submit **that normalized payload**, method and path with `X-LOS-Financial-Intent: <intent_id>` and the usual session cookie/CSRF header. Do not rebuild the body from a mutable form. Passwords are not part of the prepared/persisted payload.
+
+Drafts expire after three minutes. The approval is consumed once, only for its
+session and exact method, escaped URL, invoice/destination, amount, funding
+selection, fee settings and resource snapshot. Changed bodies/terms return 409;
+an absent approval returns 428. A broad grant cannot authorize a different
+operation. Logout, password change/recovery and session expiration revoke unused
+approval. An already submitted native operation may still finish after logout.
+
+`GET /api/financial/intents/{id}` returns `state`, `running`, `can_confirm`,
+operation/method, expiration and a safe summary. States are `draft`, `executing`,
+`uncertain`, `completed`, `rejected` and `cancelled`. An owned live draft also
+returns its normalized `payload` and `scope`; native proof is never returned.
+Terminal states return the original HTTP `status` and `result`. A new
+authenticated administrative session can inspect prior results, but cannot
+inherit an old session's execution approval.
+
+After a lost response, consult that same ID. An identical completed request
+replays its cached result with `X-LOS-Financial-Replay: true`; an executing or
+uncertain request returns 409 `financial_intent_pending` without calling the
+financial handler again. `POST /api/financial/intents/{id}/reconcile` observes
+native/recorded state and returns a proven original result, or 409 while the
+outcome is still uncertain. It never creates another payment, funds/signs a new
+transaction, or rebroadcasts. Missing native history alone does not prove that a
+dispatched operation failed. Unresolved spending reservations remain held.
+
+Balanced-open prefunding can be located even when the proposal or signing step
+did not finish. Reconciliation only locates the original output and updates its
+existing workflow record; it does not call funding, signing or protocol-send
+RPCs again. This known partial result includes
+`financial_intent_needs_review:true` and `financial_intent_message` alongside
+the current session. It is a recorded financial result, **not** a claim that the
+channel/protocol completed. The UI reports that continuation needs review. An
+explicit subsequent continuation requires a new intent/password confirmation
+against the now-funded workflow snapshot, and the native prefund ledger reuses
+that original output. Identical retries of the old intent only replay its
+partial result. If the existing output cannot be proven, the result stays
+uncertain and no continuation is submitted automatically.
+
+`POST /api/financial/intents/{id}/cancel` cancels only a draft, including one
+owned by a previous session. It cannot discard an executing/uncertain operation.
+The browser retains only opaque references and hashed request keys in session
+storage, requires that reference to be saved before confirmation/execution, and
+offers result review after reload. It does not store passwords, invoices or
+backup bodies there. Result review and reconciliation never repeat execution.
+
+Covered core mutations:
+
+| Family | Operations |
+| --- | --- |
+| Wallet | On-chain send; standard, validated-route and MPP Lightning payments; Chat keysend |
+| Channels | Single/batch open, close, pending-open fee bump, SCB restore |
+| On-chain management | UTXO fee bump; lock/unlock when their optional reauthentication setting is enabled |
+| Workflows | Balanced open propose/accept/execute; Close Manager force-close/bump; live retirement creation/coop confirmation/force decision; live succession policy updates |
+| Spending policy | Relaxation/disabling of the spending guard, using its independent policy scope |
+
+Previews, decoding, simulations, policy tightening and disabling live automation
+retain their existing behavior. Preparation returns `required:false` when no
+approval is required. Recovery endpoints for previously prepared balanced-open
+transactions retain their existing safeguards and do not create a fresh funding
+approval. App Store operations and nonfinancial administrative grants retain
+their own contracts; they are outside this protocol.
+
+On-chain approval fixes the positive fee rate and eligible default-account input
+set before execution; a maximum send cannot include later deposits. Execution
+continues through native LND SendCoins and preserves anchor reserves and native
+validation. Recovery checks the actual transaction inputs, destination, amount,
+change, fees and native/mempool/chain evidence. A tracking label is restored to
+the operator's original label only after the result is durably committed.
+
+Lightning Addresses resolve to one validated invoice before confirmation.
+Payment hash, exact millisatoshis, routing fee ceiling and outgoing channel IDs
+are bound. `amount_msat` and `max_fee_msat` in summaries are decimal strings to
+preserve integer precision in browsers. A zero requested routing fee keeps the
+existing deterministic native default; preparation reports that exact ceiling.
+Amountless invoice execution is not supported. Keysend records the native hash
+before submission; retries cannot generate another keysend payment.
+
+Channel funding retains native LND funding/coin-selection contracts at the fixed
+approved fee rate. Cooperative close reports its bounded negotiation ceiling;
+force close uses the existing commitment transaction. Fee bumps freeze explicit
+outpoints, rates and native budgets. Workflow terms are checked again within
+their services before effects. All intent responses are `no-store`.
+
+Execution metadata is kept in private durable storage under
+`/var/lib/lightningos/financial-intents`. A process lock prevents two Managers
+from owning it. Disk/commit failures block new execution; process interruption
+leaves an uncertain record instead of an executable draft. Unknown records are
+not discarded by age. Capacity exhaustion fails closed. Preparation and native
+reconciliation have per-session quotas with HTTP 429/`Retry-After`. Audit entries
+use intent IDs/digests and safe outcomes, without copying private request/proof
+or raw session cookies.
 
 ## Local TLS trust
 
@@ -215,6 +385,7 @@ GET /api/lnd/status
 - Rate and ETA appear after at least two minutes of progress samples and use a rolling 15-minute window.
 
 GET /api/lnd/config
+- `raw_user_conf` is redacted. Stored credential values never appear in this response. `sensitive_options` lists `{id,section,key,configured}`; `config_revision` is an opaque editor revision that expires when the Manager restarts. Responses use `Cache-Control: no-store`.
 - Supported settings, current values, detected network mode, and raw lnd.conf.
 - `current.network_mode` is `private`, `hybrid`, or `custom`.
 - `private` routes clearnet and onion peers through Tor with stream isolation.
@@ -238,9 +409,19 @@ Body:
 POST /api/lnd/config/raw
 Body:
 {
-  "raw_user_conf": "full lnd.conf text",
-  "apply_now": true
+  "raw_user_conf": "redacted lnd.conf text from GET, with non-secret edits",
+  "config_revision": "opaque revision from GET",
+  "secret_updates": {
+    "bitcoind/bitcoind.rpcpass": {"action": "keep"}
+  },
+  "apply_now": true,
+  "confirm_password": "current admin password, or use prior lnd_config reauth"
 }
+- Both structured and raw writes require fresh `lnd_config` reauthentication when login is enabled; `lnd_maintenance` does not authorize configuration writes. Missing approval returns 428. The UI uses `/api/auth/reauth` before submitting its captured change.
+- Raw writes require the current revision (409 `lnd_config_revision_conflict` on stale/missing revision). Reload before retrying after another writer or a Manager restart.
+- Omitted secret updates or `{action:"keep"}` preserve server values, even if their placeholder rows are omitted. `{action:"replace",value:"new credential"}` replaces one value; `{action:"clear"}` explicitly removes it. Keep/clear cannot include `value`. Only advertised sensitive IDs are accepted; the common Bitcoind/Btcd RPC slots remain available when unset. Plaintext credentials in the editor and unknown placeholders are rejected. Never persist `__LOS_KEEP_SECRET__` as a credential.
+- Existing storage/credential/startup paths are preserved; new paths, public RPC listeners, disabling RPC authentication or REST TLS, and unsafe Tor combinations are rejected before writing. Existing secure nonlocal REST listeners are preserved. Unknown operator settings remain supported and are validated by LND at startup.
+- Applying waits for a fresh uncached State/GetState and authenticated GetInfo after a blocking restart. Manual unlock/setup may return `wallet_unlock_required`/`wallet_setup_required`; this is explicitly pending verification. Startup failure restores the prior file, restarts and verifies recovery with an independent bounded context even if the client disconnects. Errors report `config_restored` and `rollback_verified` separately; pending/unverified recovery is never reported as verified. Writes preserve the existing inode/ownership/mode; this is not a crash-atomic file replacement.
 
 GET /api/lnd/maintenance
 - Returns the persisted maintenance state, effective LND protection flags, rebalance/Magma automation state, LND reachability, and the current pending HTLC count.
@@ -309,6 +490,7 @@ Body:
 GET /api/system-check
 - Returns grouped read-only diagnostics for the app, LND, Bitcoin, Postgres, Tor, host system, and security.
 - The `security` group reports whether UFW is installed/active and whether manager port `8443` is restricted to the saved LAN CIDR. This endpoint never enables or changes firewall rules.
+- The `kernel_tcp` item reports recent root-verified IPv4 TCP-options filtering for CVE-2026-98432. Missing, stale (over 90 seconds), unsafe or operator-disabled status is a warning, never proof of protection. A verified filter is a temporary mitigation and does not certify that the running kernel is patched.
 
 GET /api/security/manager-exposure
 - Returns the effective Manager exposure state, including the selected access mode, UFW availability/activity, verified LAN or Tailscale rules, broad rules, and explicit unprotected acknowledgement.
@@ -333,6 +515,9 @@ Body:
 GET /api/audit/events?limit=100&action=utxo.lock
 - Returns recent structured audit events.
 - Optional filters: `action`, `session_id`, `target`.
+- `session_id` is a non-authenticating `audit:v1:<SHA-256>` correlation reference (or `anonymous`), never the login cookie. Existing records are converted on initialization; inserts and responses also normalize legacy identifiers.
+- IP records the direct connection peer. Forwarding headers are not trusted; behind a proxy this is the proxy's IP.
+- Responses use `Cache-Control: no-store`. Session-reference conversion preserves other event fields and retention behavior.
 - `limit` defaults to 100 and is capped at 500.
 - Authentication outcomes, rate-limit blocks, payments, on-chain sends, and manual channel fund operations are recorded without passwords, invoices, tokens, macaroons, or destination addresses.
 
@@ -372,11 +557,12 @@ Body:
 {
   "enabled": true,
   "max_payment_sat": 100000,
-  "rolling_24h_limit_sat": 500000,
-  "confirm_password": "required when increasing a limit or disabling an active guard"
+  "rolling_24h_limit_sat": 500000
 }
 - At least one positive limit is required while enabled. `0` means no cap for that dimension.
+- Removing a positive limit with `0`, increasing it, or disabling an active guard requires an exact financial intent with independent spending-policy authorization. A payment intent or reusable policy grant does not authorize a different policy change. Missing approval returns HTTP 428 with `code=spending_guard_reauth_required` and `requires_financial_intent=true`.
 - The protected debit is the payment amount plus its maximum routing fee. Reservations are atomic, so concurrent protected requests cannot spend the same allowance.
+- Unresolved reservations continue consuming allowance regardless of age. The rolling window applies to settled debits, starting at settlement. Inconclusive LND lookups or transport errors do not release allowance; reconciliation uses definitive payment outcomes. Legacy reservations without a payment hash are retained for investigation, rather than automatically released on age.
 - Covers Wallet Lightning payments, Chat Keysend, and Loop Out BRLN tranches. It intentionally excludes routing forwards, LOS rebalances, channel operations, on-chain sends, and apps connected directly to LND.
 - A blocked payment returns HTTP 429 with code `spending_guard_limit_exceeded`.
 
@@ -399,10 +585,10 @@ Body:
 POST /api/wallet/pay
 Body:
 {
-  "payment_request": "lnbc...",
-  "confirm_password": "optional fresh admin confirmation"
+  "payment_request": "lnbc..."
 }
-- Final Lightning payment routes (`/pay`, `/pay/validated-route`, and `/pay/mpp`) require recent `lightning_funds` reauthentication when login protection is enabled. A missing confirmation returns HTTP 428; previews remain available without reauthentication.
+- Final Lightning payment routes (`/pay`, `/pay/validated-route`, and `/pay/mpp`) require the financial approval protocol above when login protection is enabled. A missing confirmation returns HTTP 428; previews remain available without reauthentication.
+- Lightning Address invoices are decoded by LND and checked for exact requested millisatoshis, mainnet, expiry and the LUD-06 metadata description hash. Preview/preparation reuse one validated invoice per session/address/amount/comment until invoice expiry or five minutes. Execution uses the exact prepared invoice rather than resolving the address again. Changed invoice, amount, maximum fee or channel selection invalidates its `financial_intent:<id>` approval. Previews continue to work without password confirmation.
 
 POST /api/wallet/send
 Body:
@@ -414,6 +600,9 @@ Body:
 
 GET /api/onchain/utxos?limit=500
 - Returns wallet UTXOs enriched with local UTXO Manager metadata and lease state.
+- Includes active leased outputs omitted by native spendable `ListUnspent`, with native wallet ownership, value/script/address, confirmations and spend-history reconciliation. Reads do not create/release leases or make locked outputs spendable. An incomplete native inventory returns an error rather than pruning metadata from partial results.
+- `locked`, `lease_expiration` and `lease_managed_here` describe the current native lease. `lease_managed_here` is true only for the deterministic UTXO Manager lease ID; native/external lease IDs are never returned.
+- `include_unconfirmed`, `min_conf` and `max_conf` filter the displayed rows after full inventory enrichment; they do not discard live metadata from filtered-out outputs.
 - `limit` caps the response size only. The backend intentionally lists and enriches the full wallet UTXO set before slicing so metadata maintenance sees the complete live outpoint set.
 
 GET /api/onchain/provenance/metrics
@@ -650,7 +839,11 @@ Body:
   "close_address": "optional",
   "confirm_password": "optional fresh admin confirmation"
 }
-- Manual single/batch channel opens, balanced-open execution, and assisted Magma channel funding require recent `lightning_funds` reauthentication when login protection is enabled.
+- Manual single/batch channel opens, balanced-open propose/accept/execute, and assisted Magma channel funding require recent `lightning_funds` reauthentication when login protection is enabled. Balanced-open propose/accept accept an optional `{ "confirm_password": "..." }` body; an absent/expired grant yields HTTP 428 with `lightning_funds_reauth_required` before prefunding, key derivation or signing. The existing three-minute scope grant remains; per-intent single-use approval is separate work (#312).
+- Incoming Balanced Open sessions bind ID, peer, role and terms at first receipt. Identical proposals/acceptances are idempotent; conflicting peers, terms, remote artifacts, roles or execution modes are rejected. Accept messages advance only an initiator in `proposal_sent`; a draft cannot be activated by a peer.
+- Protocol payloads are capped at 64 KiB. Session IDs contain at most 128 ASCII letters/digits or `._:-`; sender identity must match the transport peer and an explicit recipient must match the local node. Pending incoming proposals are limited to 16 per peer and 256 globally, with serialized quota checks. Unfunded sessions idle in `proposal_received` for seven days expire for acceptance; cancellation/recovery and already-funded progress remain available.
+- Prefunding records the unique derived script/key and a durable attempt marker before SendOutputs. An ambiguous RPC/DB response returns HTTP 409, `balanced_open_prefund_unresolved`. Retries reconcile the same output by script and amount and never issue another transfer for that attempt. Custom key-family outputs may be absent from LND's managed UTXOs; in that case reconciliation reads the originating wallet transaction, verifies its raw transaction hash and exact output plus the attempt's label, and rejects ambiguous candidates and known spends. Wallet history is not a chain-wide proof of unspentness; LND validates subsequent spends. If the output cannot be established, the session stays unresolved for inspection/recovery; the marker is not automatically cleared. Existing sessions with complete artifacts remain reusable.
+- Proposal state is persisted before sending to the peer, so an immediate acceptance cannot be lost or reset. `proposal_sent` permits resend without recreating the session or prefunding. Funding-submission state changes use compare-and-set to reject concurrent duplicate execution.
 
 POST /api/lnops/channel/close
 Body:
@@ -782,10 +975,13 @@ POST /api/apps/{id}/install
 - Mempool uses a closed lightweight default of `MEMPOOL_INDEXING_BLOCKS_AMOUNT=8` to avoid saturating shared rotational storage during its initial history load. Arbitrary environment overrides remain rejected.
 
 POST /api/apps/{id}/start
+- In 0.5.50, Store-managed Bitcoin Core uses the pinned, authenticated 31.2 image. A normal local 31.1 runtime must first be stopped; it remains observable and does not require legacy-migration confirmation. Start preserves enrolled storage/configuration/credentials and reports success only after mainnet RPC, expected version and loopback RPC/ZMQ checks pass. Verification errors are not recorded as an applied catalog version. A failed start can be retried; this is not an automatic binary-downgrade contract.
 - Starting a detected legacy `bitcoincore` runtime requires `{"confirm_legacy_migration":true}` and follows the same transactional migration and rollback contract as installation.
 - Starting `electrs` against App Store Bitcoin accepts the same
   `confirm_bitcoin_restart` body and restart policy as installation.
 POST /api/apps/{id}/stop
+- Bitcoin Core shutdown uses an infinite Docker graceful-stop timeout (`-1`), so a request/broker deadline does not schedule SIGKILL. If the request expires, wait for shutdown and check/retry Stop before Start. No new payload is required; the UI asks for confirmation of the temporary Bitcoin connection interruption.
+- Bitcoin Core install/start/stop outcomes are also recorded in the UI Audit as `app.bitcoincore.install`, `app.bitcoincore.start` and `app.bitcoincore.stop`, with HTTP status, success/error and target catalog version. Request bodies and raw errors are excluded; broker audit remains independent.
 POST /api/apps/{id}/uninstall
 - Requires JSON body `{"confirm":true,"app_id":"{id}"}`. Missing or mismatched confirmation is rejected before any lifecycle operation begins.
 - Uninstalling `bitcoincore` is rejected while LND uses the local source. When the source is remote, LightningOS verifies that the configured remote RPC is reachable and synchronized; uninstall never switches the source or restarts LND automatically.
@@ -1009,6 +1205,8 @@ POST   /api/chat/send
 ```
 
 `POST /api/chat/read` marks the latest inbound message for one `peer_pubkey` as read. The read timestamp is persisted on the node and returned as `last_read_at` by the inbox, so unread state is shared across browsers. Existing browser-local state is migrated by the UI when possible.
+
+`POST /api/chat/send` accepts `peer_pubkey`, `message`, optional positive `amount_sat` (default 1), and optional `confirm_password`. Because Chat sends sats through Keysend, it requires recent `lightning_funds` reauthentication when login is enabled. Missing approval returns HTTP 428 with `code=lightning_funds_reauth_required`. Reading messages and inboxes does not require reauthentication. Sending is blocked with HTTP 503 when Spending Guard cannot be initialized; a policy explicitly loaded as disabled preserves uncapped operation. Wallet invoice payment paths also block when the policy cannot be loaded.
 # LOS Mesh API
 
 `GET /api/apps/los-mesh/status` returns `app` (installed/status/device/devices),

@@ -28,7 +28,7 @@ func (s *Server) auditUtxoLockAction(r *http.Request, action string, outpoints [
 	}
 	user := "anonymous"
 	if session, ok := authSessionFromContext(r.Context()); ok {
-		user = session.ID
+		user = auditCorrelationID(session.ID)
 	}
 	if expirySec > 0 {
 		s.logger.Printf("utxo %s by session=%s outpoints=%v expiry_sec=%d", action, user, outpoints, expirySec)
@@ -42,7 +42,7 @@ func utxoLockRequiresReauth() bool {
 }
 
 func (s *Server) requireUtxoLockReauth(w http.ResponseWriter, r *http.Request, confirmPassword string, action string) bool {
-	if !utxoLockRequiresReauth() || s.auth == nil || !s.auth.Enabled() {
+	if !utxoLockRequiresReauth() || s.auth == nil || !s.auth.Enabled() || financialIntentApproved(r, authScopeWalletSendExternal) {
 		return true
 	}
 
@@ -64,7 +64,10 @@ func (s *Server) requireUtxoLockReauth(w http.ResponseWriter, r *http.Request, c
 		})
 		return false
 	}
-	if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+	if _, err := s.auth.reauth(w, r, session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+		if err == errReauthRateLimited {
+			return false
+		}
 		writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
 		return false
 	}
@@ -87,28 +90,23 @@ type EnrichedOnchainUtxo struct {
 // enrichOnchainUtxos merges UTXO metadata + lease state onto LND's list. It
 // records the current live set for the background prune loop, keeping the read
 // path focused on enrichment.
-func (s *Server) enrichOnchainUtxos(ctx context.Context, items []lndclient.OnchainUtxo) []EnrichedOnchainUtxo {
+func (s *Server) enrichOnchainUtxos(ctx context.Context, items []lndclient.OnchainUtxo, leases map[string]lndclient.LeaseInfo) []EnrichedOnchainUtxo {
 	enriched := make([]EnrichedOnchainUtxo, 0, len(items))
 	for _, item := range items {
 		enriched = append(enriched, EnrichedOnchainUtxo{OnchainUtxo: item})
 	}
 
-	leases, leaseErr := s.listCachedUtxoLeases(ctx)
-	if leaseErr != nil {
-		s.logger.Printf("utxo manager: list leases failed: %v", leaseErr)
-	} else {
-		for i := range enriched {
-			outpoint := strings.ToLower(strings.TrimSpace(enriched[i].Outpoint))
-			if outpoint == "" {
-				continue
-			}
-			if lease, ok := leases[outpoint]; ok {
-				enriched[i].Locked = true
-				enriched[i].LeaseExpiration = lease.Expiration
-				// The lease ID is deterministic from the outpoint when we
-				// created it; report whether this lease was ours.
-				enriched[i].LeaseManagedHere = lease.ID != ""
-			}
+	for i := range enriched {
+		outpoint := strings.ToLower(strings.TrimSpace(enriched[i].Outpoint))
+		if outpoint == "" {
+			continue
+		}
+		if lease, ok := leases[outpoint]; ok {
+			enriched[i].Locked = true
+			enriched[i].LeaseExpiration = lease.Expiration
+			// The lease ID is deterministic from the outpoint when we
+			// created it; report whether this lease was ours.
+			enriched[i].LeaseManagedHere = lease.ManagedByUtxoManager()
 		}
 	}
 
@@ -418,9 +416,9 @@ func (s *Server) handleUtxoBump(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// CPFP burns sats from the wallet, so it needs the same reauth posture as
-	// /api/wallet/send (external destination). Reuses authScopeWalletSendExternal
-	// so a recent reauth on either path covers both.
-	if s.auth != nil && s.auth.Enabled() {
+	// /api/wallet/send (external destination). A core API intent binds the
+	// outpoint and fee budget; a grant for a different transfer cannot cover it.
+	if s.auth != nil && s.auth.Enabled() && !financialIntentApproved(r, authScopeWalletSendExternal) {
 		session, ok := authSessionFromContext(r.Context())
 		if !ok {
 			writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
@@ -436,7 +434,10 @@ func (s *Server) handleUtxoBump(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+			if _, err := s.auth.reauth(w, r, session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+				if err == errReauthRateLimited {
+					return
+				}
 				writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
 				return
 			}
@@ -446,7 +447,7 @@ func (s *Server) handleUtxoBump(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
-	if err := s.lnd.BumpFee(ctx, lndclient.BumpFeeParams{
+	if err := s.bumpFinancialFee(ctx, lndclient.BumpFeeParams{
 		Outpoint:    req.Outpoint,
 		SatPerVbyte: req.SatPerVbyte,
 		TargetConf:  req.TargetConf,

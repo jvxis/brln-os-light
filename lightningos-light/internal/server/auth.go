@@ -55,7 +55,9 @@ const (
 	authScopeTerminalCredential  = "terminal_credential"
 	authScopeTerminalControl     = "terminal_control"
 	authScopeLightningFunds      = "lightning_funds"
+	authScopeSpendingGuardPolicy = "spending_guard_policy"
 	authScopeLNDMaintenance      = "lnd_maintenance"
+	authScopeLNDConfig           = "lnd_config"
 	authScopeBarkSeedReveal      = "bark_seed_reveal"
 	authScopeBRLNCommunitySigner = "brln_community_signer"
 )
@@ -97,11 +99,12 @@ type AuthStatus struct {
 }
 
 type AuthService struct {
-	enabled bool
-	logger  *log.Logger
-	now     func() time.Time
-	limiter *authRateLimiter
-	audit   func(*http.Request, string, string, any)
+	enabled                 bool
+	logger                  *log.Logger
+	now                     func() time.Time
+	limiter                 *authRateLimiter
+	audit                   func(*http.Request, string, string, any)
+	financialScopeValidator func(sessionID, scope string) bool
 
 	mu       sync.Mutex
 	sessions map[string]*authSession
@@ -336,9 +339,6 @@ func (a *AuthService) HandleReauth(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	if !a.allowAuthRequest(w, r, "reauth") {
-		return
-	}
 
 	session, ok := authSessionFromContext(r.Context())
 	if !ok {
@@ -354,8 +354,11 @@ func (a *AuthService) HandleReauth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expiresAt, err := a.reauth(session.ID, req.Password, req.Scope)
+	expiresAt, err := a.reauth(w, r, session.ID, req.Password, req.Scope)
 	if err != nil {
+		if err == errReauthRateLimited {
+			return
+		}
 		target := "invalid_scope"
 		if authScopeValid(req.Scope) {
 			target = strings.TrimSpace(req.Scope)
@@ -499,13 +502,27 @@ func (a *AuthService) changePassword(sessionID string, currentPassword string, p
 	return a.resetSessionsAndCreateNew()
 }
 
-func (a *AuthService) reauth(sessionID string, password string, scope string) (time.Time, error) {
+var errReauthRateLimited = errors.New("reauthentication rate limited")
+
+func (a *AuthService) reauth(w http.ResponseWriter, r *http.Request, sessionID string, password string, scope string) (time.Time, error) {
+	if !a.allowReauthRequest(w, r, sessionID) {
+		return time.Time{}, errReauthRateLimited
+	}
 	scope = strings.TrimSpace(scope)
 	if !authScopeValid(scope) {
 		return time.Time{}, errInvalidScope
 	}
+	if strings.HasPrefix(scope, financialIntentScopePrefix) && !a.financialScopeAllowed(sessionID, scope) {
+		return time.Time{}, errInvalidScope
+	}
+	if len(password) > 4*authPasswordMaxRunes || utf8.RuneCountInString(password) > authPasswordMaxRunes {
+		return time.Time{}, errInvalidCredentials
+	}
 	if err := authVerifyPassword(password); err != nil {
 		return time.Time{}, err
+	}
+	if strings.HasPrefix(scope, financialIntentScopePrefix) && !a.financialScopeAllowed(sessionID, scope) {
+		return time.Time{}, errInvalidScope
 	}
 
 	now := a.currentTime()
@@ -526,12 +543,50 @@ func (a *AuthService) reauth(sessionID string, password string, scope string) (t
 }
 
 func authScopeValid(scope string) bool {
+	if strings.HasPrefix(scope, financialIntentScopePrefix) {
+		return financialIntentIDValid(strings.TrimPrefix(scope, financialIntentScopePrefix))
+	}
+	if strings.HasPrefix(scope, lnurlInvoiceScopePrefix) {
+		suffix := strings.TrimPrefix(scope, lnurlInvoiceScopePrefix)
+		decoded, err := hex.DecodeString(suffix)
+		return err == nil && len(decoded) == sha256.Size && suffix == strings.ToLower(suffix)
+	}
 	switch strings.TrimSpace(scope) {
-	case authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeBarkSeedReveal, authScopeBRLNCommunitySigner:
+	case authScopeSpendingGuardPolicy, authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeLNDConfig, authScopeBarkSeedReveal, authScopeBRLNCommunitySigner:
 		return true
 	default:
 		return false
 	}
+}
+
+func (a *AuthService) setFinancialScopeValidator(validator func(string, string) bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.financialScopeValidator = validator
+}
+
+func (a *AuthService) financialScopeAllowed(sessionID, scope string) bool {
+	a.mu.Lock()
+	validator := a.financialScopeValidator
+	a.mu.Unlock()
+	return validator != nil && validator(sessionID, scope)
+}
+
+// Financial approval is consumed for one immutable intent. Scope grants used
+// by nonfinancial administration retain their existing behavior.
+func (a *AuthService) consumeFinancialApproval(sessionID, scope string) bool {
+	if a == nil || !a.Enabled() || !strings.HasPrefix(scope, financialIntentScopePrefix) {
+		return false
+	}
+	now := a.currentTime()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	session := a.sessions[sessionID]
+	if session == nil || !now.Before(session.ExpiresAt) || !now.Before(session.ReauthScopes[scope]) {
+		return false
+	}
+	delete(session.ReauthScopes, scope)
+	return true
 }
 
 func (a *AuthService) HasRecentReauth(sessionID string, scope string) bool {

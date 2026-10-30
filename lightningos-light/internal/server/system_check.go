@@ -147,6 +147,10 @@ func (s *Server) systemCheckSecurity(ctx context.Context) systemCheckGroup {
 	}
 
 	return newSystemCheckGroup("security", "Security", []systemCheckItem{
+		func() systemCheckItem {
+			status, available := readKernelTCPStatus()
+			return kernelTCPSystemCheckItem(status, available)
+		}(),
 		{
 			ID:     "ufw",
 			Label:  "Host firewall (UFW)",

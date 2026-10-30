@@ -54,6 +54,7 @@ type telegramNotificationSettings struct {
 	SystemSummaryEnabled     bool
 	SystemSummaryIntervalMin int
 	SystemSummaryLastSentAt  *time.Time
+	ResourceAlertsEnabled    bool
 	LastUpdateID             int64
 }
 
@@ -65,6 +66,7 @@ type telegramNotificationUpdate struct {
 	SummaryIntervalMin       *int
 	SystemSummaryEnabled     *bool
 	SystemSummaryIntervalMin *int
+	ResourceAlertsEnabled    *bool
 }
 
 func defaultTelegramNotificationSettings() telegramNotificationSettings {
@@ -74,6 +76,7 @@ func defaultTelegramNotificationSettings() telegramNotificationSettings {
 		SummaryIntervalMin:       telegramSummaryIntervalDefault,
 		SystemSummaryEnabled:     false,
 		SystemSummaryIntervalMin: telegramSummaryIntervalDefault,
+		ResourceAlertsEnabled:    true,
 	}
 }
 
@@ -108,6 +111,7 @@ select scb_backup_enabled,
   system_summary_enabled,
   system_summary_interval_min,
   system_summary_last_sent_at,
+  resource_alerts_enabled,
   last_update_id
 from telegram_notification_settings
 where id=$1
@@ -121,6 +125,7 @@ where id=$1
 		&settings.SystemSummaryEnabled,
 		&settings.SystemSummaryIntervalMin,
 		&systemLastSent,
+		&settings.ResourceAlertsEnabled,
 		&settings.LastUpdateID,
 	)
 	if err != nil {
@@ -156,9 +161,10 @@ insert into telegram_notification_settings (
   system_summary_enabled,
   system_summary_interval_min,
   system_summary_last_sent_at,
+  resource_alerts_enabled,
   last_update_id,
   updated_at
- ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
+ ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())
 on conflict (id) do update set
   scb_backup_enabled=excluded.scb_backup_enabled,
   activity_mirror_enabled=excluded.activity_mirror_enabled,
@@ -169,6 +175,7 @@ on conflict (id) do update set
   system_summary_enabled=excluded.system_summary_enabled,
   system_summary_interval_min=excluded.system_summary_interval_min,
   system_summary_last_sent_at=excluded.system_summary_last_sent_at,
+  resource_alerts_enabled=excluded.resource_alerts_enabled,
   last_update_id=excluded.last_update_id,
   updated_at=now()
 	`, telegramSettingsID,
@@ -181,6 +188,7 @@ on conflict (id) do update set
 		settings.SystemSummaryEnabled,
 		settings.SystemSummaryIntervalMin,
 		settings.SystemSummaryLastSentAt,
+		settings.ResourceAlertsEnabled,
 		settings.LastUpdateID,
 	)
 	return err
@@ -219,6 +227,9 @@ func updateTelegramNotificationSettings(ctx context.Context, db *pgxpool.Pool, u
 			return settings, fmt.Errorf("system_summary_interval_min must be between %d and %d", telegramSummaryIntervalMin, telegramSummaryIntervalMax)
 		}
 		settings.SystemSummaryIntervalMin = value
+	}
+	if update.ResourceAlertsEnabled != nil {
+		settings.ResourceAlertsEnabled = *update.ResourceAlertsEnabled
 	}
 	settings.SummaryIntervalMin = normalizeTelegramSummaryInterval(settings.SummaryIntervalMin)
 	settings.SystemSummaryIntervalMin = normalizeTelegramSummaryInterval(settings.SystemSummaryIntervalMin)
@@ -294,6 +305,7 @@ func (s *Server) handleTelegramNotificationsGet(w http.ResponseWriter, r *http.R
 		"summary_interval_min":        settings.SummaryIntervalMin,
 		"system_summary_enabled":      settings.SystemSummaryEnabled,
 		"system_summary_interval_min": settings.SystemSummaryIntervalMin,
+		"resource_alerts_enabled":     settings.ResourceAlertsEnabled,
 	})
 }
 
@@ -317,6 +329,7 @@ func (s *Server) handleTelegramNotificationsPost(w http.ResponseWriter, r *http.
 		SummaryIntervalMin       *int    `json:"summary_interval_min"`
 		SystemSummaryEnabled     *bool   `json:"system_summary_enabled"`
 		SystemSummaryIntervalMin *int    `json:"system_summary_interval_min"`
+		ResourceAlertsEnabled    *bool   `json:"resource_alerts_enabled"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -363,7 +376,7 @@ func (s *Server) handleTelegramNotificationsPost(w http.ResponseWriter, r *http.
 		}
 	}
 
-	if req.ScbBackupEnabled != nil || req.ActivityMirrorEnabled != nil || req.AutofeeSummaryEnabled != nil || req.SummaryEnabled != nil || req.SummaryIntervalMin != nil || req.SystemSummaryEnabled != nil || req.SystemSummaryIntervalMin != nil {
+	if req.ScbBackupEnabled != nil || req.ActivityMirrorEnabled != nil || req.AutofeeSummaryEnabled != nil || req.SummaryEnabled != nil || req.SummaryIntervalMin != nil || req.SystemSummaryEnabled != nil || req.SystemSummaryIntervalMin != nil || req.ResourceAlertsEnabled != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 		settings, err := updateTelegramNotificationSettings(ctx, s.db, telegramNotificationUpdate{
@@ -374,6 +387,7 @@ func (s *Server) handleTelegramNotificationsPost(w http.ResponseWriter, r *http.
 			SummaryIntervalMin:       req.SummaryIntervalMin,
 			SystemSummaryEnabled:     req.SystemSummaryEnabled,
 			SystemSummaryIntervalMin: req.SystemSummaryIntervalMin,
+			ResourceAlertsEnabled:    req.ResourceAlertsEnabled,
 		})
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -393,6 +407,7 @@ func (s *Server) startTelegramNotifications() {
 	}
 	go s.runTelegramCommandLoop()
 	go s.runTelegramSummaryLoop()
+	go s.runTelegramResourceAlertLoop()
 	cfg := readTelegramBackupConfig()
 	if strings.TrimSpace(cfg.BotToken) != "" {
 		go s.ensureTelegramBotCommands(cfg.BotToken)
@@ -934,12 +949,16 @@ func (s *Server) buildTelegramSystemSummary(ctx context.Context) (string, error)
 		if header != "" {
 			lines = append(lines, header)
 		}
-		lines = append(lines, fmt.Sprintf("  ⏳ Power on hours: %s", formatInt(disk.PowerOnHours)))
-		lines = append(lines, fmt.Sprintf("  🧪 Wear: %d%% | Days left: %s", disk.WearPercentUsed, formatInt(disk.DaysLeftEstimate)))
-		if disk.TemperatureC > 0 {
-			lines = append(lines, fmt.Sprintf("  🌡️ Temp: %.1f C", disk.TemperatureC))
+		if strings.EqualFold(strings.TrimSpace(disk.SmartStatus), sysinfo.DiskSmartUnavailable) {
+			lines = append(lines, "  ℹ️ SMART not available (common on virtual/VPS disks)")
 		} else {
-			lines = append(lines, "  🌡️ Temp: N/A")
+			lines = append(lines, fmt.Sprintf("  ⏳ Power on hours: %s", formatInt(disk.PowerOnHours)))
+			lines = append(lines, fmt.Sprintf("  🧪 Wear: %d%% | Days left: %s", disk.WearPercentUsed, formatInt(disk.DaysLeftEstimate)))
+			if disk.TemperatureC > 0 {
+				lines = append(lines, fmt.Sprintf("  🌡️ Temp: %.1f C", disk.TemperatureC))
+			} else {
+				lines = append(lines, "  🌡️ Temp: N/A")
+			}
 		}
 		if disk.TotalGB > 0 {
 			used := formatFloat(disk.UsedGB, 1)

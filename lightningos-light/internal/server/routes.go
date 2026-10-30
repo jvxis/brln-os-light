@@ -12,11 +12,21 @@ import (
 func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-	r.Use(securityHeadersMiddleware())
+	hstsMaxAge := 0
+	if s.cfg != nil {
+		hstsMaxAge = s.cfg.Server.HSTSMaxAgeSeconds
+	}
+	r.Use(securityHeadersMiddleware(hstsMaxAge))
 	r.Use(s.requestLogger())
+	r.Use(requestBodyMiddleware(requestBodyReadTimeout))
 	if s.auth != nil {
+		s.auth.setFinancialScopeValidator(func(session, scope string) bool {
+			store, err := s.financialIntentService()
+			return err == nil && store.approvalAllowed(strings.TrimPrefix(scope, financialIntentScopePrefix), session)
+		})
 		r.Use(s.auth.Middleware())
 	}
+	r.Use(s.financialIntentMiddleware)
 
 	r.Get("/api/auth/state", s.auth.HandleState)
 	r.Post("/api/auth/setup", s.auth.HandleSetup)
@@ -26,6 +36,10 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/auth/enable-login", s.handleAuthEnableLogin)
 	r.Post("/api/auth/change-password", s.auth.HandleChangePassword)
 	r.Post("/api/auth/reauth", s.auth.HandleReauth)
+	r.Get("/api/financial/intents/{id}", s.handleFinancialIntentStatus)
+	r.Post("/api/financial/intents", s.handleFinancialIntentPrepare)
+	r.Post("/api/financial/intents/{id}/reconcile", s.handleFinancialIntentReconcile)
+	r.Post("/api/financial/intents/{id}/cancel", s.handleFinancialIntentCancel)
 	r.Get("/api/tls/info", s.handleTLSAccessInfo)
 	r.Get("/api/tls/ca", s.handleTLSCADownload)
 	r.Get("/api/tls/windows", s.handleTLSWindowsInstallerDownload)
@@ -382,7 +396,8 @@ func (s *Server) handleSPA(staticDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			path := strings.TrimPrefix(r.URL.Path, "/")
-			if _, err := http.Dir(staticDir).Open(path); err == nil {
+			if file, err := http.Dir(staticDir).Open(path); err == nil {
+				_ = file.Close()
 				fileServer.ServeHTTP(w, r)
 				return
 			}

@@ -550,6 +550,7 @@ export default function CoreHealthGrid({
             {disks.map((disk) => {
               const usedPercent = disk.used_percent ?? 0
               const wearPercent = disk.wear_percent_used ?? 0
+              const smartAvailable = String(disk.smart_status || '').toUpperCase() !== 'UNAVAILABLE'
               const partitions = Array.isArray(disk.partitions) ? disk.partitions : []
               return (
                 <div key={disk.device} className="rounded-3xl border border-white/10 bg-white/5 p-4">
@@ -567,9 +568,15 @@ export default function CoreHealthGrid({
                       })}</p>
                     </div>
                     <div className="grid gap-2 text-sm text-fog/65 sm:grid-cols-3">
-                      <div>{t('dashboard.powerOnHours', { count: disk.power_on_hours ?? 0 })}</div>
-                      <div>{t('dashboard.wearDaysLeft', { wear: wearPercent, days: disk.days_left_estimate ?? 0 })}</div>
-                      <div>{t('disks.temp')}: {formatTemp(locale, disk.temperature_c)}</div>
+                      {smartAvailable ? (
+                        <>
+                          <div>{t('dashboard.powerOnHours', { count: disk.power_on_hours ?? 0 })}</div>
+                          <div>{t('dashboard.wearDaysLeft', { wear: wearPercent, days: disk.days_left_estimate ?? 0 })}</div>
+                          <div>{t('disks.temp')}: {formatTemp(locale, disk.temperature_c)}</div>
+                        </>
+                      ) : (
+                        <div className="sm:col-span-3">{t('dashboard.smartUnavailableHint')}</div>
+                      )}
                     </div>
                   </div>
 
@@ -581,13 +588,15 @@ export default function CoreHealthGrid({
                       valueLabel={`${formatPercent(locale, usedPercent)}%`}
                       tone={usedPercent >= 90 ? 'danger' : usedPercent >= 75 ? 'warn' : 'ok'}
                     />
-                    <HorizontalBarGauge
-                      label={t('dashboard.wear')}
-                      value={wearPercent}
-                      max={100}
-                      valueLabel={`${formatPercent(locale, wearPercent)}%`}
-                      tone={wearPercent >= 80 ? 'danger' : wearPercent >= 60 ? 'warn' : 'ok'}
-                    />
+                    {smartAvailable && (
+                      <HorizontalBarGauge
+                        label={t('dashboard.wear')}
+                        value={wearPercent}
+                        max={100}
+                        valueLabel={`${formatPercent(locale, wearPercent)}%`}
+                        tone={wearPercent >= 80 ? 'danger' : wearPercent >= 60 ? 'warn' : 'ok'}
+                      />
+                    )}
                   </div>
 
                   {partitions.length > 0 && (

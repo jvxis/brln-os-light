@@ -1,3 +1,5 @@
+import { financialRequest, cancelFinancialConfirmations } from './financialIntents'
+
 const base = ''
 
 export type MeshPeer = { correlated_replies?: boolean; last_response?: string; node: number; name: string; paired: boolean; allow_relay: boolean; fingerprint: string }
@@ -102,12 +104,12 @@ const setCSRFToken = (value?: string) => {
   csrfToken = typeof value === 'string' ? value.trim() : ''
 }
 
-async function request(path: string, options?: RequestInit) {
+const request = (path: string, options?: RequestInit) => financialRequest(path, options, requestRaw)
+
+async function requestRaw(path: string, options?: RequestInit) {
   const method = String(options?.method || 'GET').toUpperCase()
-  const headers = new Headers({
-    'Content-Type': 'application/json',
-    ...(options?.headers || {})
-  })
+  const headers = new Headers(options?.headers)
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   if (csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-CSRF-Token', csrfToken)
   }
@@ -139,6 +141,7 @@ async function request(path: string, options?: RequestInit) {
       }
     }
     if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      cancelFinancialConfirmations()
       setCSRFToken('')
       window.dispatchEvent(new CustomEvent('auth:required'))
     }
@@ -197,6 +200,7 @@ export const loginAuth = async (payload: { password: string }) => {
   return data
 }
 export const logoutAuth = async () => {
+  cancelFinancialConfirmations()
   const data = await request('/api/auth/logout', { method: 'POST', body: JSON.stringify({}) })
   setCSRFToken('')
   return data
@@ -215,6 +219,9 @@ export const changePasswordAuth = async (payload: { current_password: string; pa
 }
 export const reauthAuth = (payload: { password: string; scope: string }) =>
   request('/api/auth/reauth', { method: 'POST', body: JSON.stringify(payload) })
+export const getFinancialIntent = (id: string) => request(`/api/financial/intents/${encodeURIComponent(id)}`, { cache: 'no-store' })
+export const reconcileFinancialIntent = (id: string) => request(`/api/financial/intents/${encodeURIComponent(id)}/reconcile`, { method: 'POST', body: '{}' })
+export const cancelFinancialIntent = (id: string) => request(`/api/financial/intents/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' })
 export const getMenuPreferences = () =>
   request('/api/ui/preferences/menu') as Promise<MenuPreferencesRecord>
 export const updateMenuPreferences = (payload: MenuPreferences) =>
@@ -355,6 +362,7 @@ export const queryLogs = (query: LogQuery, signal?: AbortSignal): Promise<LogQue
   request(`/api/logs/query${buildQuery(query)}`, { signal })
 
 export const updateLndConfig = (payload: {
+  confirm_password?: string
   alias?: string
   color?: string
   min_channel_size_sat?: number
@@ -365,7 +373,9 @@ export const updateLndConfig = (payload: {
   apply_now: boolean
 }) => request('/api/lnd/config', { method: 'POST', body: JSON.stringify(payload) })
 
-export const updateLndRawConfig = (payload: { raw_user_conf: string; apply_now: boolean }) =>
+export type LndSecretUpdate = { action: 'keep' | 'replace' | 'clear'; value?: string }
+export type LndSensitiveOption = { id: string; section: string; key: string; configured: boolean }
+export const updateLndRawConfig = (payload: { raw_user_conf: string; apply_now: boolean; config_revision: string; secret_updates?: Record<string, LndSecretUpdate>; confirm_password?: string }) =>
   request('/api/lnd/config/raw', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getMempoolFees = () => request('/api/mempool/fees')
@@ -663,7 +673,7 @@ export const getNodeRetirementSessionChannels = (sessionID: string) =>
 export const getNodeRetirementSessionTransfer = (sessionID: string) =>
   request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/transfer`)
 export const confirmNodeRetirementCoopClose = (sessionID: string, payload?: { confirm_password?: string }) =>
-  request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/confirm-coop`, { method: 'POST', body: payload ? JSON.stringify(payload) : undefined })
+  request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/confirm-coop`, { method: 'POST', body: JSON.stringify(payload || {}) })
 export const decideNodeRetirementChannel = (sessionID: string, payload: { channel_point: string; decision: 'wait' | 'force_close'; confirm_password?: string }) =>
   request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/decision`, { method: 'POST', body: JSON.stringify(payload) })
 export const getSuccessionStatus = () => request('/api/lnops/succession/status')
@@ -888,15 +898,15 @@ export const createBalancedOpenSession = (payload: {
   role?: 'initiator' | 'accepter'
   metadata?: Record<string, unknown>
 }) => request('/api/lnops/balanced-open/sessions', { method: 'POST', body: JSON.stringify(payload) })
-export const proposeBalancedOpenSession = (sessionId: string) =>
+export const proposeBalancedOpenSession = (sessionId: string, payload?: { confirm_password?: string }) =>
   request(`/api/lnops/balanced-open/sessions/${encodeURIComponent(sessionId)}/propose`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify(payload || {}),
   })
-export const acceptBalancedOpenSession = (sessionId: string) =>
+export const acceptBalancedOpenSession = (sessionId: string, payload?: { confirm_password?: string }) =>
   request(`/api/lnops/balanced-open/sessions/${encodeURIComponent(sessionId)}/accept`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify(payload || {}),
   })
 export const executeBalancedOpenSession = (sessionId: string, confirmPassword?: string) =>
   request(`/api/lnops/balanced-open/sessions/${encodeURIComponent(sessionId)}/execute`, {
@@ -928,7 +938,7 @@ export const getChatInbox = () =>
 export const markChatRead = (peerPubkey: string) =>
   request('/api/chat/read', { method: 'POST', body: JSON.stringify({ peer_pubkey: peerPubkey }) })
 
-export const sendChatMessage = (payload: { peer_pubkey: string; message: string; amount_sat?: number }) =>
+export const sendChatMessage = (payload: { peer_pubkey: string; message: string; amount_sat?: number; confirm_password?: string }) =>
   request('/api/chat/send', { method: 'POST', body: JSON.stringify(payload) })
 
 export type NotificationItem = {
@@ -996,6 +1006,7 @@ export const updateTelegramNotifications = (payload: {
   summary_interval_min?: number
   system_summary_enabled?: boolean
   system_summary_interval_min?: number
+  resource_alerts_enabled?: boolean
 }) => request('/api/notifications/telegram', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getTelegramBackupConfig = () =>

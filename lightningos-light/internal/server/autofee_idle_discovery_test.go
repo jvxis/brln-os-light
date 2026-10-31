@@ -121,7 +121,7 @@ func TestAutofeeIdleRefreshCannotUndoDiscoveryWithCheaperProtectedReference(t *t
 	e.automationIntentConfig = AutomationIntentConfig{Mode: automationIntentModeEnforce, MinConfidence: .70}
 	e.automationIntents = map[uint64][]AutomationIntent{ch.ChannelID: {{Kind: automationIntentKindProtectFeeFloor, Confidence: .95, FeeFloorPPM: 700}}}
 	st := &autofeeChannelState{LastPpm: 960, LastTs: now}
-	d := &decision{LocalPpm: 1000, NewPpm: 960, Target: 960, Apply: true, State: st}
+	d := &decision{LocalPpm: 1000, NewPpm: 960, Target: 960, Apply: true, ChannelAgeHours: 30 * 24, State: st}
 	d = e.maybeApplyIdleRefresh(context.Background(), ch, d, forwardStat{}, forwardStat{}, inboundStat{}, rebalStat{}, rebalStat{}, rebalStat{})
 	if d.NewPpm != 960 || !d.Apply || !st.LastIdleRefreshTs.IsZero() || !containsTag(d.Tags, "idle-refresh-preserve-decision") {
 		t.Fatalf("700 ppm floor is not permission to replace a bounded 960 ppm decrease: %+v", d)
@@ -203,7 +203,7 @@ func TestAutofeeIdleRefreshEngineIntervalAndEconomicFloor(t *testing.T) {
 			e.automationIntentConfig = AutomationIntentConfig{Mode: tc.mode, MinConfidence: .70}
 			e.automationIntents = map[uint64][]AutomationIntent{ch.ChannelID: {{Kind: automationIntentKindProtectFeeFloor, Confidence: .95, FeeFloorPPM: int64(tc.floor)}}}
 			st := &autofeeChannelState{LastIdleRefreshTs: now.Add(-tc.elapsed), LastIdleRefreshPpm: 650}
-			d := &decision{LocalPpm: 700, NewPpm: 700, Target: 700, State: st}
+			d := &decision{LocalPpm: 700, NewPpm: 700, Target: 700, ChannelAgeHours: 30 * 24, State: st}
 			d = e.maybeApplyIdleRefresh(context.Background(), ch, d, forwardStat{}, forwardStat{}, inboundStat{}, rebalStat{}, rebalStat{}, rebalStat{})
 			if d.NewPpm != tc.want || !containsTag(d.Tags, tc.tag) {
 				t.Fatalf("got %d want %d tag=%s tags=%v", d.NewPpm, tc.want, tc.tag, d.Tags)

@@ -428,9 +428,12 @@ type AutofeeRefreshItem struct {
 	// MagmaCapped marks a target the Magma commitment pulled down, so the preview
 	// and the log show the fee that will actually be written, not the one the
 	// reference asked for.
-	MagmaCapped bool   `json:"magma_capped,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Error       string `json:"error,omitempty"`
+	MagmaCapped bool `json:"magma_capped,omitempty"`
+	// ChannelMinApplied marks a target raised to the operator's per-channel
+	// minimum fee.
+	ChannelMinApplied bool   `json:"channel_min_applied,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 type AutofeeRefreshResult struct {
@@ -2423,6 +2426,48 @@ func applyChannelMinPpm(finalPpm int, localPpm int, minPpm int, apply bool) (int
 	return minPpm, true, true
 }
 
+// enforceAutofeeChannelMinPpm applies the operator floor to the decision about
+// to be published. Idle refresh and price experiments run after
+// evaluateChannel and replace its fee, so the floor applied there does not
+// cover them: on 2026-10-31 an idle refresh published 800 ppm over a 1600 ppm
+// floor on Friendspool.
+func enforceAutofeeChannelMinPpm(d *decision, minPpm int, now time.Time) *decision {
+	if d == nil || minPpm <= 0 {
+		return d
+	}
+	outboundApply := d.Apply && d.NewPpm != d.LocalPpm
+	finalPpm, _, raised := applyChannelMinPpm(d.NewPpm, d.LocalPpm, minPpm, outboundApply)
+	if !raised {
+		return d
+	}
+	d.Tags = appendAutofeeTagOnce(d.Tags, "channel-min")
+	return pinAutofeeOutboundFee(d, finalPpm, now)
+}
+
+// pinAutofeeOutboundFee sets the outbound fee the decision publishes and the
+// channel state that follows it. The inbound discount decided by the engine is
+// kept.
+func pinAutofeeOutboundFee(d *decision, ppm int, now time.Time) *decision {
+	if d == nil || ppm <= 0 {
+		return d
+	}
+	d.NewPpm = ppm
+	d.TargetFinal = ppm
+	d.Apply = ppm != d.LocalPpm || d.InboundDiscount != d.PrevInboundDiscount
+	if st := d.State; st != nil {
+		st.LastPpm = ppm
+		if ppm != d.LocalPpm {
+			st.LastTs = now
+			if ppm > d.LocalPpm {
+				st.LastDir = "up"
+			} else {
+				st.LastDir = "down"
+			}
+		}
+	}
+	return d
+}
+
 func (s *AutofeeService) resolveChannelID(ctx context.Context, channelPoint string) (uint64, bool) {
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
@@ -2917,7 +2962,9 @@ func (s *AutofeeService) Run(ctx context.Context, dryRun bool, reason string) er
 		return nil
 	}
 
+	blockHeight := int64(0)
 	if status, err := s.lnd.GetStatus(ctx); err == nil {
+		blockHeight = status.BlockHeight
 		if !status.SyncedToChain || !status.SyncedToGraph {
 			if reason == "manual" {
 				runID := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -2945,6 +2992,7 @@ func (s *AutofeeService) Run(ctx context.Context, dryRun bool, reason string) er
 	}
 
 	engine := newAutofeeEngine(s, cfg)
+	engine.blockHeight = blockHeight
 	if engine.channelMinPpm, err = s.loadChannelMinPpm(ctx); err != nil {
 		s.setLastError(err)
 		return err
@@ -2992,6 +3040,7 @@ type autofeeEngine struct {
 	nativeSeedCache        map[string]autofeeSeedResult
 	nativeSeedV2Cache      map[string]autofeeSeedV2Result
 	selfPubkey             string
+	blockHeight            int64
 	channelMinPpm          map[uint64]int
 	priceExperiments       *autofeePriceExperimentRuntime
 	policyCache            map[string]lndclient.ChannelPolicy
@@ -3675,6 +3724,12 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 		}
 
 		targetPpm = clampInt(targetPpm, cfg.MinPpm, cfg.MaxPpm)
+		// The operator's per-channel minimum holds for the reference reset as
+		// it does for every AutoFee run.
+		if channelMin := engine.channelMinPpm[ch.ChannelID]; channelMin > 0 && targetPpm < channelMin {
+			targetPpm = channelMin
+			item.ChannelMinApplied = true
+		}
 		// Refresh writes to LND on its own instead of going through
 		// applyChannelFeesWithRetry, so the clamp that guards Autofee does not
 		// reach here. A channel sold on Magma carries a contractual ceiling until
@@ -4197,6 +4252,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			)
 		}
 		decision = e.applyPriceExperiment(ctx, ch, decision, forwardStats7d[ch.ChannelID], inboundStats7d[ch.ChannelID], dryRun)
+		decision = enforceAutofeeChannelMinPpm(decision, e.channelMinPpm[ch.ChannelID], e.now)
 		summary.eligible++
 		summary.addTags(decision.Tags)
 		if !dryRun && e.automationIntentConfig.Mode != automationIntentModeOff {
@@ -5708,6 +5764,20 @@ func shouldAutofeeIdleRefreshChannel(cfg AutofeeConfig, forward7d forwardStat, i
 		!hasAutofeeRebalanceMovement(rebal7d)
 }
 
+// autofeeIdleRefreshChannelTooYoung: an idle refresh answers "no movement in
+// the whole 7-day window", which a channel younger than the window cannot
+// show. Its age comes from the SCID block height (as for the ranking close
+// guards); when that is unknown (no block height, alias SCID) the engine's own
+// first-seen age is used. On 2026-10-31 an 8-hour-old channel opened at the
+// operator's price was refreshed to half of it as if it had sat idle for a week.
+func autofeeIdleRefreshChannelTooYoung(channelID uint64, blockHeight int64, firstSeenAgeHours float64) bool {
+	ageHours := channelRankingChannelAgeHours(channelID, blockHeight)
+	if ageHours <= 0 {
+		ageHours = firstSeenAgeHours
+	}
+	return ageHours < float64(autofeeIdleRefreshWindowDays*24)
+}
+
 func shouldSkipAutofeeIdleRefreshRepeat(st *autofeeChannelState, now time.Time, localPpm int, targetPpm int) bool {
 	if st == nil || targetPpm <= 0 || st.LastIdleRefreshTs.IsZero() {
 		return false
@@ -5898,6 +5968,10 @@ func resolveAutofeeIdleRefreshIntent(localPpm, refreshTargetPpm int, intents []A
 
 func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.ChannelInfo, d *decision, forward7d forwardStat, forward21d forwardStat, inbound7d inboundStat, rebalMovement7d rebalStat, rebal7d rebalStat, rebal21d rebalStat) *decision {
 	if d == nil || !shouldAutofeeIdleRefreshChannel(e.cfg, forward7d, inbound7d, rebalMovement7d) {
+		return d
+	}
+	if autofeeIdleRefreshChannelTooYoung(ch.ChannelID, e.blockHeight, d.ChannelAgeHours) {
+		d.Tags = appendAutofeeTagOnce(d.Tags, "idle-refresh-young-channel")
 		return d
 	}
 	targetPpm, referencePpm, source, ok := selectAutofeeRefreshReference(

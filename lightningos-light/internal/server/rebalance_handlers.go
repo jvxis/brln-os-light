@@ -59,6 +59,7 @@ type rebalanceConfigPayload struct {
 	DiscoveryCeilingPct                    *int     `json:"discovery_ceiling_pct,omitempty"`
 	DiscoveryDailyBudgetSat                *int64   `json:"discovery_daily_budget_sat,omitempty"`
 	RealizedPriceCapEnabled                *bool    `json:"realized_price_cap_enabled,omitempty"`
+	PeerFeeAsCostEnabled                   *bool    `json:"peer_fee_as_cost_enabled,omitempty"`
 	BudgetMode                             *string  `json:"budget_mode,omitempty"`
 	BudgetUnlimited                        *bool    `json:"budget_unlimited,omitempty"`
 	BudgetAutoOnly                         *bool    `json:"budget_auto_only,omitempty"`
@@ -457,6 +458,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.RealizedPriceCapEnabled != nil {
 		cfg.RealizedPriceCapEnabled = *payload.RealizedPriceCapEnabled
+	}
+	if payload.PeerFeeAsCostEnabled != nil {
+		cfg.PeerFeeAsCostEnabled = *payload.PeerFeeAsCostEnabled
 	}
 	if payload.DiscoveryDailyBudgetSat != nil {
 		cfg.DiscoveryDailyBudgetSat = *payload.DiscoveryDailyBudgetSat

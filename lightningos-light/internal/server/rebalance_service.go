@@ -407,6 +407,7 @@ type RebalanceConfig struct {
 	DiscoveryCeilingPct                   int     `json:"discovery_ceiling_pct"`
 	DiscoveryDailyBudgetSat               int64   `json:"discovery_daily_budget_sat"`
 	RealizedPriceCapEnabled               bool    `json:"realized_price_cap_enabled"`
+	PeerFeeAsCostEnabled                  bool    `json:"peer_fee_as_cost_enabled"`
 	BudgetMode                            string  `json:"budget_mode"`
 	BudgetUnlimited                       bool    `json:"budget_unlimited"`
 	BudgetAutoOnly                        bool    `json:"budget_auto_only"`
@@ -1646,6 +1647,7 @@ type RebalanceService struct {
 	lastSovereignExpectedProfitSat  int64
 	lastSovereignBudgetRemainingSat int64
 	lastSovereignDecisions          []RebalanceSovereignDecision
+	lastSovereignFunnelSkips        map[uint64]string
 	lastManualRestartAt             time.Time
 	lastManualRestartQueued         int
 	lastManualRestartReasons        map[string]int
@@ -1774,6 +1776,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		DiscoveryCeilingPct:                    discoveryCeilingPctDefault,
 		DiscoveryDailyBudgetSat:                discoveryDailyBudgetSatDefault,
 		RealizedPriceCapEnabled:                false,
+		PeerFeeAsCostEnabled:                   false,
 		BudgetMode:                             rebalanceBudgetModeHybridRevenue,
 		BudgetUnlimited:                        false,
 		BudgetAutoOnly:                         true,
@@ -4181,6 +4184,7 @@ func (s *RebalanceService) runAutoScan() {
 		sovereignResult = includeGuaranteedRebalanceSlot(sovereignResult, guaranteedSlot)
 		s.recordRebalanceIntentEffects(ctx, sovereignPlan, cfg, scanAt, schedulerMode, sovereignResult.Decisions)
 		s.recordSovereignAutopilot(ctx, scanAt, schedulerMode, sovereignResult)
+		s.recordSovereignFunnelSkips(sovereignPlan.SkippedDetails)
 		scanStatus = sovereignResult.Status
 		scanDetail = sovereignResult.Detail
 		scanCandidates = sovereignResult.Candidates
@@ -4613,7 +4617,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		if inventoryProbe {
 			targetAmount = inventoryAmount
 			budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
-			estimatedCost = estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg)
+			estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, targetCfg)
 			target.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
 			target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
 		}
@@ -4629,7 +4633,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			if keepaliveAmount := sovereignKeepaliveRefillAmount(target.Channel, targetCfg); keepaliveAmount > 0 && keepaliveAmount < targetAmount {
 				targetAmount = keepaliveAmount
 				budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
-				estimatedCost = estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg)
+				estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, targetCfg)
 				target.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
 				target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
 			}
@@ -4790,7 +4794,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					continue
 				}
 				decision.AmountSat = targetAmount
-				resizedEstimatedCost := estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg)
+				resizedEstimatedCost := applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, targetCfg)
 				decision.EstimatedCostSat = resizedEstimatedCost
 				decision.BudgetCostSat = budgetCost
 				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
@@ -4905,6 +4909,24 @@ func (s *RebalanceService) recordSovereignAutopilot(ctx context.Context, scanAt 
 	if err := s.persistSovereignAutopilotHistory(ctx, scanAt, mode, result); err != nil && s.logger != nil {
 		s.logger.Printf("rebalance sovereign history persist failed: %v", err)
 	}
+}
+
+// recordSovereignFunnelSkips keeps why each channel left the candidate list
+// before ranking (roi_guardrail, below_execute_min, ...). Those channels have
+// no sovereign decision, so without this the channel list shows them as
+// eligible_not_ranked.
+func (s *RebalanceService) recordSovereignFunnelSkips(details []RebalanceSkipDetail) {
+	skips := make(map[uint64]string, len(details))
+	for _, detail := range details {
+		if reason := strings.TrimSpace(detail.Reason); reason != "" && detail.ChannelID != 0 {
+			if _, seen := skips[detail.ChannelID]; !seen {
+				skips[detail.ChannelID] = reason
+			}
+		}
+	}
+	s.mu.Lock()
+	s.lastSovereignFunnelSkips = skips
+	s.mu.Unlock()
 }
 
 func (s *RebalanceService) recordManualRestartWatch(scanAt time.Time, queued int, reasons map[string]int) {
@@ -5293,6 +5315,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		} else {
 			estimatedCost = estimateHistoricalCost(targetAmount, snapshot.RebalanceCost7dPpm)
 		}
+		estimatedCost = applyPeerFeeCostFloor(estimatedCost, targetAmount, snapshot.PeerFeeRatePpm, targetCfg)
 		expectedGain := estimateTargetGainForConfig(targetCfg, snapshot, targetAmount)
 		expectedROI, roiValid := estimateTargetROI(expectedGain, estimatedCost, targetAmount, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
 		if input.Cfg.ROIMin > 0 && roiValid && expectedROI < input.Cfg.ROIMin {
@@ -11001,6 +11024,25 @@ func estimateSovereignTargetCostWithReference(amountSat int64, historicalFeePpm 
 	return estimatedCost
 }
 
+// applyPeerFeeCostFloor keeps the estimated cost of a rebalance into a channel
+// at or above the peer's last-hop fee plus the route floor: the payment
+// always crosses peer -> us. Only with peer_fee_as_cost_enabled, which takes
+// the peer fee out of the gain; a cost measured before the peer raised its
+// fee would otherwise look cheaper than any future job can be.
+func applyPeerFeeCostFloor(estimatedCostSat int64, amountSat int64, peerFeeRatePpm int64, cfg RebalanceConfig) int64 {
+	if !cfg.PeerFeeAsCostEnabled || amountSat <= 0 || peerFeeRatePpm <= 0 {
+		return estimatedCostSat
+	}
+	floorPpm := peerFeeRatePpm
+	if cfg.RebalanceCostFloorPpm > 0 {
+		floorPpm += cfg.RebalanceCostFloorPpm
+	}
+	if floor := estimateHistoricalCost(amountSat, floorPpm); floor > estimatedCostSat {
+		return floor
+	}
+	return estimatedCostSat
+}
+
 func hasReliableSovereignCostHistory(amountSat int64, historicalAmountSat int64) bool {
 	if amountSat <= 0 || historicalAmountSat <= 0 {
 		return false
@@ -11030,15 +11072,22 @@ func estimateTargetGain(amountSat int64, revenue7dSat int64, localBalanceSat int
 }
 
 func estimateTargetGainForConfig(cfg RebalanceConfig, snapshot RebalanceChannel, amountSat int64) int64 {
+	// A rebalance into the channel pays the peer's fee on the last hop and
+	// the sale earns our full outgoing fee. With peer_fee_as_cost_enabled that
+	// fee is counted on the cost side (applyPeerFeeCostFloor), not here.
+	peerFeeRatePpm := snapshot.PeerFeeRatePpm
+	if cfg.PeerFeeAsCostEnabled {
+		peerFeeRatePpm = 0
+	}
 	if cfg.GainModelVersion >= 3 {
 		coldStart := cfg.SovereignGainV3ColdStartPct
 		if coldStart < sovereignGainV3ColdStartPctMin || coldStart > sovereignGainV3ColdStartPctMax {
 			coldStart = sovereignGainV3ColdStartPct
 		}
-		return estimateTargetGainV3(amountSat, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm, snapshot.Revenue7dSat, snapshot.LocalBalanceSat, snapshot.CapacitySat, snapshot.DrainRateSatPerHour, coldStart)
+		return estimateTargetGainV3(amountSat, snapshot.OutgoingFeePpm, peerFeeRatePpm, snapshot.Revenue7dSat, snapshot.LocalBalanceSat, snapshot.CapacitySat, snapshot.DrainRateSatPerHour, coldStart)
 	}
 	if cfg.GainModelVersion >= 2 {
-		return estimateTargetGainV2(amountSat, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
+		return estimateTargetGainV2(amountSat, snapshot.OutgoingFeePpm, peerFeeRatePpm)
 	}
 	return estimateTargetGain(amountSat, snapshot.Revenue7dSat, snapshot.LocalBalanceSat, snapshot.CapacitySat)
 }
@@ -13002,6 +13051,7 @@ end $$;
     source_routeability_quarantine_hours integer not null default 6,
     stock_gate_enabled boolean not null default false,
     realized_price_cap_enabled boolean not null default false,
+    peer_fee_as_cost_enabled boolean not null default false,
     stock_gate_min_stock_pct double precision not null default 10,
     stock_gate_cover_days integer not null default 3,
     discovery_steps integer not null default 0,
@@ -13293,6 +13343,8 @@ end $$;
     add column if not exists auto_target_max_downs_per_cycle integer not null default 5;
   alter table rebalance_config
     add column if not exists auto_target_idle_up_days integer not null default 0;
+  alter table rebalance_config
+    add column if not exists peer_fee_as_cost_enabled boolean not null default false;
 
   alter table if exists rebalance_channel_settings
     add column if not exists manual_restart_enabled boolean not null default false;
@@ -13669,7 +13721,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
     daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours,
     stock_gate_enabled, stock_gate_min_stock_pct, stock_gate_cover_days, discovery_steps, discovery_ceiling_pct, discovery_daily_budget_sat,
-    realized_price_cap_enabled, auto_target_idle_up_days
+    realized_price_cap_enabled, auto_target_idle_up_days, peer_fee_as_cost_enabled
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -13779,6 +13831,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.DiscoveryDailyBudgetSat,
 		&cfg.RealizedPriceCapEnabled,
 		&cfg.AutoTargetIdleUpDays,
+		&cfg.PeerFeeAsCostEnabled,
 	)
 	if err != nil {
 		return cfg, err
@@ -13807,9 +13860,9 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
     daily_budget_min_sat, daily_budget_base_days, sovereign_budget_efficiency_autofee_aligned, keepalive_refill_enabled, keepalive_refill_after_hours, keepalive_refill_pct, source_routeability_quarantine_hours,
     stock_gate_enabled, stock_gate_min_stock_pct, stock_gate_cover_days, discovery_steps, discovery_ceiling_pct, discovery_daily_budget_sat,
-    realized_price_cap_enabled, auto_target_idle_up_days,
+    realized_price_cap_enabled, auto_target_idle_up_days, peer_fee_as_cost_enabled,
     updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,$98,$99,$100,$101,$102,$103,$104,$105,$106,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,$92,$93,$94,$95,$96,$97,$98,$99,$100,$101,$102,$103,$104,$105,$106,$107,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -13916,6 +13969,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     discovery_daily_budget_sat = excluded.discovery_daily_budget_sat,
     realized_price_cap_enabled = excluded.realized_price_cap_enabled,
     auto_target_idle_up_days = excluded.auto_target_idle_up_days,
+    peer_fee_as_cost_enabled = excluded.peer_fee_as_cost_enabled,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates, cfg.Profile,
@@ -13923,7 +13977,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
 		cfg.AutoTargetUpSellThroughFactor, cfg.AutoTargetDownSellThroughFactor, cfg.AutoTargetMaxDownsPerCycle,
 		cfg.DailyBudgetMinSat, cfg.DailyBudgetBaseDays, cfg.SovereignEfficiencyAutofeeAligned, cfg.KeepaliveRefillEnabled, cfg.KeepaliveRefillAfterHours, cfg.KeepaliveRefillPct, cfg.SourceRouteabilityQuarantineHours,
 		cfg.StockGateEnabled, cfg.StockGateMinStockPct, cfg.StockGateCoverDays, cfg.DiscoverySteps, cfg.DiscoveryCeilingPct, cfg.DiscoveryDailyBudgetSat,
-		cfg.RealizedPriceCapEnabled, cfg.AutoTargetIdleUpDays,
+		cfg.RealizedPriceCapEnabled, cfg.AutoTargetIdleUpDays, cfg.PeerFeeAsCostEnabled,
 	)
 	if err != nil {
 		return err
@@ -16303,6 +16357,11 @@ func (s *RebalanceService) annotateAutopilotReasons(cfg RebalanceConfig, channel
 	for _, d := range s.lastSovereignDecisions {
 		if _, seen := decisions[d.ChannelID]; !seen || d.Selected {
 			decisions[d.ChannelID] = d
+		}
+	}
+	for channelID, reason := range s.lastSovereignFunnelSkips {
+		if _, seen := decisions[channelID]; !seen {
+			decisions[channelID] = RebalanceSovereignDecision{ChannelID: channelID, Reason: reason}
 		}
 	}
 	s.mu.Unlock()

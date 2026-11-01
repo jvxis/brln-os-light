@@ -85,7 +85,7 @@ O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Tor (ControlPort habilitado) + i2pd habilitado por padrão
 - Go fixado em `lightningos-light/scripts/go-toolchain.conf` (atualmente 1.26.8). Da 0.5.50 em diante, Node global >=22.12.0 / npm >=10 compatíveis são mantidos; ferramentas ausentes/antigas usam a instalação verificada Node 24.22.1 / npm 11.19.1. Compatibilidade de build não certifica segurança. A máquina é considerada dedicada ao LOS; veja a [preparação de nodes existentes e os cuidados de compatibilidade](NODE_TOOLCHAIN_UPGRADE.md).
 
-- Binários do LND fixados pela release selecionada (atualmente `v0.21.5-beta` para nodes novos)
+- Binários do LND fixados pela release selecionada (atualmente `v0.21.6-beta` para nodes novos)
 
 - Binário do LightningOS Manager (compilado localmente)
 - Build da UI (compilada localmente)

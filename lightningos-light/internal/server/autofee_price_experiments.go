@@ -621,24 +621,7 @@ func (e *autofeeEngine) finishOrphanPriceExperiments(ctx context.Context, channe
 // cooldowns and floors computed by evaluateChannel are bypassed for this
 // channel only; the inbound discount decided by the engine is kept.
 func overridePriceExperimentFee(d *decision, ppm int, now time.Time) *decision {
-	if d == nil || ppm <= 0 {
-		return d
-	}
-	d.NewPpm = ppm
-	d.TargetFinal = ppm
-	d.Apply = ppm != d.LocalPpm || d.InboundDiscount != d.PrevInboundDiscount
-	if st := d.State; st != nil {
-		st.LastPpm = ppm
-		if ppm != d.LocalPpm {
-			st.LastTs = now
-			if ppm > d.LocalPpm {
-				st.LastDir = "up"
-			} else {
-				st.LastDir = "down"
-			}
-		}
-	}
-	return d
+	return pinAutofeeOutboundFee(d, ppm, now)
 }
 
 // --- persistence ---

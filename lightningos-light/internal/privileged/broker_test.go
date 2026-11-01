@@ -988,6 +988,22 @@ func TestBrokerBitcoinStorageEnrollmentIsTypedLockedAndSanitized(t *testing.T) {
 	}
 }
 
+func TestBrokerBitcoinStorageSpaceFailureIsActionableAndSanitized(t *testing.T) {
+	params, err := MarshalParams(BitcoinCoreStorageParams{DataDir: "/data/bitcoin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.BitcoinStorage = &recordingBitcoinStorage{err: fmt.Errorf("sensitive mount detail: %w", errBitcoinStorageSpaceLow)}
+	response := broker.Handle(context.Background(), Request{
+		Version: ProtocolVersion, RequestID: "bitcoin_space_1", Operation: OperationBitcoinStorageEnsure, Params: params,
+	})
+	if response.OK || response.Error == nil || response.Error.Code != "bitcoin_storage_space_low" ||
+		response.Error.Message != "Bitcoin storage needs 10 GiB free for initial enrollment, or 1 GiB for a verified existing volume" {
+		t.Fatalf("unexpected space failure: %#v", response)
+	}
+}
+
 func TestBrokerBitcoinConsumerNetworkIsClosedLockedAndSanitized(t *testing.T) {
 	params, err := MarshalParams(struct{}{})
 	if err != nil {

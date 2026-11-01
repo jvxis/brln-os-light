@@ -39,10 +39,10 @@ fetch bitcoin-31.2-x86_64-linux-gnu.tar.gz https://bitcoincore.org/bin/bitcoin-c
 tar -xzf bitcoin-31.2-x86_64-linux-gnu.tar.gz -C /opt/los-regtest/downloads
 install_native_binary bitcoin-31.2/bin/bitcoind /opt/los-regtest/bin/bitcoind
 install_native_binary bitcoin-31.2/bin/bitcoin-cli /opt/los-regtest/bin/bitcoin-cli
-fetch lnd-linux-amd64-v0.21.5-beta.tar.gz https://github.com/lightningnetwork/lnd/releases/download/v0.21.5-beta/lnd-linux-amd64-v0.21.5-beta.tar.gz 2127d4794ea9cbd98e762ba16283615158743646d2d6d2a5bf88664dd6255ce7
-tar -xzf lnd-linux-amd64-v0.21.5-beta.tar.gz -C /opt/los-regtest/downloads
-install_native_binary lnd-linux-amd64-v0.21.5-beta/lnd /opt/los-regtest/bin/lnd
-install_native_binary lnd-linux-amd64-v0.21.5-beta/lncli /opt/los-regtest/bin/lncli
+fetch lnd-linux-amd64-v0.21.6-beta.tar.gz https://github.com/lightningnetwork/lnd/releases/download/v0.21.6-beta/lnd-linux-amd64-v0.21.6-beta.tar.gz 47db47290df2d183393259a7b313ddcfc7376e9cd941bd691858250246fc763e
+tar -xzf lnd-linux-amd64-v0.21.6-beta.tar.gz -C /opt/los-regtest/downloads
+install_native_binary lnd-linux-amd64-v0.21.6-beta/lnd /opt/los-regtest/bin/lnd
+install_native_binary lnd-linux-amd64-v0.21.6-beta/lncli /opt/los-regtest/bin/lncli
 cd /
 python3 - "$SCRIPT_DIR" <<'PY'
 from pathlib import Path

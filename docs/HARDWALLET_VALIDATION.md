@@ -99,6 +99,24 @@ after a confirmation it erases the whole chip before writing and checks that
 NVS and the SPIFFS data partition read back erased (MD5 of 0xFF) before booting.
 This also allows a single-board recovery test before any funds are received. Pin `f430249` labels the installer box as the hash of the firmware file to be written.
 
+0.5.51 (branch `agent/0.5.51-hardwallet-keypad`, issue #290) pins `d7b28dc`:
+recovery with the computer keypad. For each letter the Signer shows a 3 x 3 grid
+of letter groups, reshuffled with the hardware RNG. The app sends only the
+clicked cell over `brln-3`, and the Signer resolves and confirms each word.
+Older firmware keeps working with the button entry. Device hash
+`ac65fff567c7723024de2dd2147d0cab8bfda5998028a8518991ce86b1b83d3b`.
+
+On LOS-TEST2 (official 0.5.50-Beta plus this branch as overlay, backup
+`before-pin-d7b28dc-b`, LND untouched), the owner recovered the funded wallet
+`d11bc45b`:
+- an installer pass with **Apagar tudo**, after the paper backup had been
+  verified on the device;
+- the 24 words entered through the keypad;
+- the same public account, without a replacement prompt, and the same 359 sats
+  after sync.
+
+The member guide's part 6 now uses the keypad.
+
 ## Store card consistency (2026-10-15)
 
 Moved Hardwallet's Electrum/setup controls out of the card header and removed

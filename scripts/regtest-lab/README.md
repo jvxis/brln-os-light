@@ -2,7 +2,7 @@
 
 The production LightningOS installers remain mainnet-only. This separate lab
 profile runs the same reviewed Manager binary and React build against native
-Bitcoin Core 31.2 and three native LND 0.21.5-beta processes on a disposable Ubuntu
+Bitcoin Core 31.2 and three native LND 0.21.6-beta processes on a disposable Ubuntu
 24.04 amd64 VM. Regtest coins have no value. It does not create a production
 release or change the production configuration contract.
 
@@ -197,7 +197,7 @@ or `lightningos-manager` service. Downloaded binaries are checked against pinned
 SHA256 digests before extraction/execution. The Bitcoin digest matches the
 repository artifact manifest; the LND digest matches its official release asset.
 Sources: [Bitcoin Core 31.2](https://bitcoincore.org/bin/bitcoin-core-31.2/),
-[LND 0.21.5-beta](https://github.com/lightningnetwork/lnd/releases/tag/v0.21.5-beta).
+[LND 0.21.6-beta](https://github.com/lightningnetwork/lnd/releases/tag/v0.21.6-beta).
 
 Wallet creation holds seed words only in process memory; they are never saved,
 printed or included in reports. LND keeps its normal encrypted wallet database.

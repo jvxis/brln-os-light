@@ -16,8 +16,13 @@ const (
 	bitcoinCoreStorageDataDirFile = "storage-data-dir"
 	bitcoinCoreStorageIDFile      = "storage-id"
 	bitcoinCoreStorageMinFreeKiB  = uint64(10 * 1024 * 1024)
-	defaultLegacyBitcoinStorageID = "/var/lib/lightningos/apps-data/bitcoincore/storage_id"
+	// Reusing the same enrolled volume does not allocate a second blockchain.
+	// Keep an operational reserve; Core also checks its own write requirements.
+	bitcoinCoreStorageExistingMinFreeKiB = uint64(1024 * 1024)
+	defaultLegacyBitcoinStorageID        = "/var/lib/lightningos/apps-data/bitcoincore/storage_id"
 )
+
+var errBitcoinStorageSpaceLow = errors.New("bitcoin storage has insufficient free space")
 
 type BitcoinCoreStorageManager struct {
 	PrivilegedAppsRoot  string
@@ -167,10 +172,38 @@ func (manager *BitcoinCoreStorageManager) validateFreeSpace(path string) error {
 		minimum = bitcoinCoreStorageMinFreeKiB
 	}
 	available, err := storageAvailableKiB(path)
-	if err != nil || available < minimum {
-		return errors.New("bitcoin storage has insufficient free space")
+	if err != nil {
+		return errors.New("bitcoin storage free space is unavailable")
 	}
-	return nil
+	if available >= minimum {
+		return nil
+	}
+	if available >= bitcoinCoreStorageExistingMinFreeKiB && manager.hasMatchingEnrolledVolume(path) {
+		return nil
+	}
+	return errBitcoinStorageSpaceLow
+}
+
+func (manager *BitcoinCoreStorageManager) hasMatchingEnrolledVolume(dataDir string) bool {
+	root := manager.storageRoot()
+	if validateExistingDirectoryTree(dataDir) != nil || validateExistingDirectoryTree(root) != nil ||
+		validateRootOwnedDirectory(root, 0700) != nil {
+		return false
+	}
+	storedDataDir, err := readStorageMetadata(filepath.Join(root, bitcoinCoreStorageDataDirFile))
+	if err != nil || storedDataDir != dataDir {
+		return false
+	}
+	idPath := filepath.Join(root, bitcoinCoreStorageIDFile)
+	storageID, err := readStorageMetadata(idPath)
+	if err != nil || !validStorageID(storageID) {
+		return false
+	}
+	// Reuse the strict ownership/mode/content checks, without creating or
+	// repairing a marker. Missing, swapped or partial enrollment stays subject
+	// to the initial-install reserve and cannot opt into the restart policy.
+	markerID, exists, err := readLegacyBitcoinCoreStorageID(idPath, dataDir)
+	return err == nil && exists && markerID == storageID
 }
 
 func (manager *BitcoinCoreStorageManager) storageRoot() string {

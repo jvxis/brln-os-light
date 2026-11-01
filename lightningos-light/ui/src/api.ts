@@ -478,6 +478,24 @@ export const createInvoice = (payload: {
   request('/api/wallet/invoice', { method: 'POST', body: JSON.stringify(payload) })
 export const decodeInvoice = (payload: { payment_request: string }) =>
   request('/api/wallet/decode', { method: 'POST', body: JSON.stringify(payload) })
+export type LNURLWithdrawPreview = {
+  token: string
+  service: string
+  callback_service: string
+  description: string
+  min_sat: number
+  max_sat: number
+  expires_at: string
+}
+export type LNURLWithdrawResult = {
+  status: 'accepted' | 'unknown' | 'rejected'
+  payment_hash: string
+  amount_sat: number
+}
+export const previewLNURLWithdraw = (lnurl: string): Promise<LNURLWithdrawPreview> =>
+  request('/api/wallet/lnurl-withdraw/preview', { method: 'POST', body: JSON.stringify({ lnurl }) })
+export const redeemLNURLWithdraw = (token: string, amount_sat: number): Promise<LNURLWithdrawResult> =>
+  request('/api/wallet/lnurl-withdraw', { method: 'POST', body: JSON.stringify({ token, amount_sat }) })
 export const previewWalletPayment = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number }) =>
   request('/api/wallet/pay/preview', { method: 'POST', body: JSON.stringify(payload) })
 export const payInvoiceValidatedRoute = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; route_token?: string; amount_sat?: number; max_fee_sat?: number; confirm_password?: string }) =>
@@ -1231,6 +1249,7 @@ export const updateRebalanceConfig = (payload: {
   source_routeability_quarantine_hours?: number
   stock_gate_enabled?: boolean
   realized_price_cap_enabled?: boolean
+  peer_fee_as_cost_enabled?: boolean
   stock_gate_min_stock_pct?: number
   stock_gate_cover_days?: number
   discovery_steps?: number

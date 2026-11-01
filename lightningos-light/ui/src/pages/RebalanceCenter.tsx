@@ -241,6 +241,7 @@ export default function RebalanceCenter() {
     keepalive_refill_pct: typeof raw.keepalive_refill_pct === 'number' && raw.keepalive_refill_pct > 0 ? raw.keepalive_refill_pct : 5,
     stock_gate_enabled: raw.stock_gate_enabled ?? false,
     realized_price_cap_enabled: raw.realized_price_cap_enabled ?? false,
+    peer_fee_as_cost_enabled: raw.peer_fee_as_cost_enabled ?? false,
     stock_gate_min_stock_pct: typeof raw.stock_gate_min_stock_pct === 'number' && raw.stock_gate_min_stock_pct > 0 ? raw.stock_gate_min_stock_pct : 10,
     stock_gate_cover_days: typeof raw.stock_gate_cover_days === 'number' && raw.stock_gate_cover_days >= 0 ? raw.stock_gate_cover_days : 3,
     discovery_steps: typeof raw.discovery_steps === 'number' && raw.discovery_steps > 0 ? raw.discovery_steps : 0,
@@ -332,6 +333,7 @@ export default function RebalanceCenter() {
       keepalive_refill_pct: cfg.keepalive_refill_pct,
       stock_gate_enabled: cfg.stock_gate_enabled,
       realized_price_cap_enabled: cfg.realized_price_cap_enabled,
+      peer_fee_as_cost_enabled: cfg.peer_fee_as_cost_enabled,
       stock_gate_min_stock_pct: cfg.stock_gate_min_stock_pct,
       stock_gate_cover_days: cfg.stock_gate_cover_days,
       discovery_steps: cfg.discovery_steps,
@@ -425,6 +427,7 @@ export default function RebalanceCenter() {
       keepalive_refill_pct: cfg.keepalive_refill_pct ?? 5,
       stock_gate_enabled: cfg.stock_gate_enabled ?? false,
       realized_price_cap_enabled: cfg.realized_price_cap_enabled ?? false,
+      peer_fee_as_cost_enabled: cfg.peer_fee_as_cost_enabled ?? false,
       stock_gate_min_stock_pct: cfg.stock_gate_min_stock_pct ?? 10,
       stock_gate_cover_days: cfg.stock_gate_cover_days ?? 3,
       discovery_steps: cfg.discovery_steps ?? 0,
@@ -863,6 +866,7 @@ export default function RebalanceCenter() {
           keepalive_refill_pct: Math.max(1, Math.min(25, Number(config.keepalive_refill_pct) || 5)),
           stock_gate_enabled: config.stock_gate_enabled,
           realized_price_cap_enabled: config.realized_price_cap_enabled,
+          peer_fee_as_cost_enabled: config.peer_fee_as_cost_enabled,
           stock_gate_min_stock_pct: Math.max(1, Math.min(50, Number(config.stock_gate_min_stock_pct) || 10)),
           stock_gate_cover_days: Math.max(0, Math.min(14, Math.round(Number(config.stock_gate_cover_days) || 0))),
           discovery_steps: Math.max(0, Math.min(4, Math.round(Number(config.discovery_steps) || 0))),
@@ -1051,6 +1055,7 @@ export default function RebalanceCenter() {
         keepalive_refill_pct: Math.max(1, Math.min(25, Number(config.keepalive_refill_pct) || 5)),
         stock_gate_enabled: config.stock_gate_enabled,
         realized_price_cap_enabled: config.realized_price_cap_enabled,
+        peer_fee_as_cost_enabled: config.peer_fee_as_cost_enabled,
         stock_gate_min_stock_pct: Math.max(1, Math.min(50, Number(config.stock_gate_min_stock_pct) || 10)),
         stock_gate_cover_days: Math.max(0, Math.min(14, Math.round(Number(config.stock_gate_cover_days) || 0))),
         discovery_steps: Math.max(0, Math.min(4, Math.round(Number(config.discovery_steps) || 0))),
@@ -1108,6 +1113,7 @@ export default function RebalanceCenter() {
           keepalive_refill_pct: normalizedSaved.keepalive_refill_pct,
           stock_gate_enabled: normalizedSaved.stock_gate_enabled,
           realized_price_cap_enabled: normalizedSaved.realized_price_cap_enabled,
+          peer_fee_as_cost_enabled: normalizedSaved.peer_fee_as_cost_enabled,
           stock_gate_min_stock_pct: normalizedSaved.stock_gate_min_stock_pct,
           stock_gate_cover_days: normalizedSaved.stock_gate_cover_days,
           discovery_steps: normalizedSaved.discovery_steps,
@@ -2998,6 +3004,15 @@ export default function RebalanceCenter() {
                   onChange={(e) => setConfig({ ...config, realized_price_cap_enabled: e.target.checked })}
                 />
                 <span>{t('rebalanceCenter.settings.realizedPriceCapEnabled')}</span>
+              </label>
+              <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.peerFeeAsCostEnabled')}>
+                <input
+                  type="checkbox"
+                  checked={config.peer_fee_as_cost_enabled}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  onChange={(e) => setConfig({ ...config, peer_fee_as_cost_enabled: e.target.checked })}
+                />
+                <span>{t('rebalanceCenter.settings.peerFeeAsCostEnabled')}</span>
               </label>
               <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.sovereignBudgetEfficiencyAutofeeAligned')}>
                 <input

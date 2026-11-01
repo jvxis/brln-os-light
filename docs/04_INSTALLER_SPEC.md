@@ -13,7 +13,7 @@ Install and configure the LightningOS stack:
 - Ubuntu Server 22.04 or 24.04
 
 ## Pinned installer defaults
-- LND_VERSION (default 0.21.3-beta)
+- LND_VERSION (default 0.21.6-beta)
 - Go 1.26.8, with Linux amd64/arm64 SHA-256 checksums in
   `lightningos-light/scripts/go-toolchain.conf`
 - NODE_VERSION (default 24)

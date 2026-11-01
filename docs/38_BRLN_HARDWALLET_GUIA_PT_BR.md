@@ -1,4 +1,4 @@
-# BR⚡LN Hardwallet: guia do piloto (LightningOS 0.5.49)
+# BR⚡LN Hardwallet: guia do piloto (LightningOS 0.5.51)
 
 Este guia leva você do Signer novo, ainda com o firmware de fábrica, até o
 primeiro envio e a conferência do backup. Depois de instalar o app (parte 1),
@@ -20,7 +20,8 @@ Signer: elas nunca passam pelo computador.
 
 **Você precisa de:**
 
-- Um node com BR⚡LN LightningOS **0.5.49** ou mais recente.
+- Um node com BR⚡LN LightningOS **0.5.51** ou mais recente (a carteira existe
+  desde a 0.5.49; a recuperação pelo teclado do computador, desde a 0.5.51).
 - Uma **LilyGO T-Display original** (ESP32, tela de 1,14″, dois botões). Para
   a recuperação completa (opcional) da parte 6, de preferência uma segunda placa.
 - Um **cabo USB de dados**. Muitos cabos só carregam: se a placa não aparecer no
@@ -73,13 +74,13 @@ substitui esse firmware pelo do BR⚡LN Signer, direto pelo navegador.
 3. No passo **1. Instale o firmware**, confira o quadro **Hash do firmware que
    será gravado**. Ele aparece antes de conectar a placa, porque é calculado a
    partir do arquivo fornecido pelo LightningOS. São 64 dígitos em 4 linhas. Para
-   a 0.5.49, o valor é:
+   a 0.5.51, o valor é:
 
    ```text
-   f15ca565b627bed0
-   7a3063704a069272
-   33d97a13662810fc
-   3c8dc52bd1843dad
+   ac65fff567c77230
+   24de2dd2147d0cab
+   8bfda5998028a851
+   8991ce86b1b83d3b
    ```
 
    Se o quadro do app mostrar outro valor, pare e avise no grupo do piloto.
@@ -260,10 +261,17 @@ compatível com BIP39 e BIP84 (caminho `m/84'/0'/0'`).
 
 ### Recuperação completa (opcional)
 
-Para testar a recuperação em uma placa, digite as 24 palavras nos botões do
-Signer. Isso leva de **20 a 30 minutos**, porque cada letra é escolhida
-avançando pelo alfabeto. **Não digite as palavras em computador ou celular:** a
-recuperação acontece só nos botões do Signer.
+Para testar a recuperação em uma placa, as 24 palavras entram por uma **grade
+embaralhada**:
+
+- o Signer mostra 9 grupos de letras (abc, def, ghi...) numa grade 3×3, em
+  outra ordem a cada letra;
+- o app mostra a mesma grade em branco, e você clica na posição do grupo que
+  tem a próxima letra.
+
+O computador só recebe as posições clicadas. Como a grade muda a cada letra,
+ele não descobre as letras nem as palavras. A recuperação leva uns **10
+minutos**. **Nunca digite as palavras em si em computador ou celular.**
 
 Há dois jeitos de fazer o teste:
 
@@ -284,14 +292,25 @@ Há dois jeitos de fazer o teste:
    2. **Senha da carteira** e **Repita a senha**: crie uma senha para esta placa.
       Ela pode ser diferente da senha da primeira placa.
    3. **Recuperar backup**: escolha **24 palavras** com **ESCOLHER**.
-   4. **Palavra 1/24 ... Palavra 24/24**: monte cada palavra letra por letra.
-      **PROXIMO** passa para a próxima letra possível e **ESCOLHER** adiciona a
-      letra. Quando só sobra uma palavra possível, o Signer mostra a palavra
-      inteira: confira com o papel e aperte **CONFIRMAR**. Se a palavra
-      completa também for o começo de outra, escolha **USAR**.
+   4. **Palavra 1/24 ... Palavra 24/24**: no app aparece o quadro
+      **Recuperação pelo teclado**, com um teclado 3×3 em branco. Para cada
+      letra, ache na tela do Signer o grupo que a contém e clique na mesma
+      posição no app. O teclado numérico do computador também funciona, na
+      mesma disposição: 7 8 9 é a linha de cima.
+      - Quando só sobra uma palavra possível, o Signer a mostra: confira com o
+        papel e aperte **CONFIRMAR**. **CANCELAR** desfaz a última letra.
+      - Se você digitou a palavra inteira e ela não apareceu, clique em **Fim da
+        palavra** (ou **FIM** no Signer). Se houver mais de uma palavra
+        possível, escolha a certa no Signer com **PROXIMO** e **ESCOLHER**.
+      - **Apagar letra** (ou **APAGAR** no Signer) desfaz a última letra.
    5. O Signer mostra as palavras de volta (**Anote 1/24...**), para você
       conferir com o papel, e pergunta **Anotou a seed?**: **CONFIRMAR**.
    6. **Recuperando / Aguarde**, e depois **Carteira pronta**.
+
+   Se aparecer **Palavras invalidas**, alguma palavra está errada ou fora de
+   ordem: confira o papel e recomece. Para digitar as palavras nos botões do
+   Signer, como antes, use **Prefiro digitar as palavras nos botões do Signer**,
+   embaixo das opções do passo 3 (leva de 20 a 30 minutos).
 4. Confira no app:
    - a **Conta pública** (por exemplo `d11bc45b`) deve ser **a mesma** da
      primeira placa;

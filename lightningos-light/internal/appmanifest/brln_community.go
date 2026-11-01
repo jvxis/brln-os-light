@@ -42,9 +42,9 @@ const (
 	BRLNCommunityPairingUID = 65528
 	BRLNCommunityPairingGID = 65528
 
-	BRLNCommunityRelease             = "0.1.68"
-	BRLNCommunityWebDigest           = "cacbe32e0dab1f5309fdd22a9e5866433a5a479c3866d995dd38b94e04191878"
-	BRLNCommunitySignerDigest        = "7a808a6ac9d9ae28dc4c5d48b00551b87c2c51b84efffcddfb0c22482ce42473"
+	BRLNCommunityRelease             = "0.1.69"
+	BRLNCommunityWebDigest           = "4a7ec3e8203f211013dbf6dbdfbe141c79acac7a984eda2b4565f7be8bc919e7"
+	BRLNCommunitySignerDigest        = "a35e6c2feec83b78b47e04c2d0ca51a2ab776e9cf467a15d0f82f3706dca1f32"
 	BRLNCommunitySignerVersionOutput = "brln-signer " + BRLNCommunityRelease
 
 	BRLNCommunityWebImage    = "ghcr.io/jvxis/brln-community-web:" + BRLNCommunityRelease + "@sha256:" + BRLNCommunityWebDigest
@@ -329,4 +329,5 @@ var BRLNCommunityPreviousReleases = []BRLNCommunityImagePair{
 	{"0.1.57", "cc604bd7abe739bdc75941bd71de5edf0c87df6b45849b09542ffa1d0a3aa2e8", "12a0f89a5d4f1999314c1347dad45ad2e817656b23cd09282972cf662c622792"},
 	{"0.1.58", "98944af254afc9c3ed5168dfe2ccb8961f7152dbb1b8aeb0f7536452d98634f2", "23a0b6383cf9944729db829a5cd04bc0e9ac6f8e7884a6c7be33701131055d37"},
 	{"0.1.64", "d4a089e1c8a61484bbc079ccc4327e7ac12f7d554990878f8864e61b66b2fb53", "227e21f78cca34f599543172d8aa83147cae8cb6d656c298e3aa007c8008de3f"},
+	{"0.1.68", "cacbe32e0dab1f5309fdd22a9e5866433a5a479c3866d995dd38b94e04191878", "7a808a6ac9d9ae28dc4c5d48b00551b87c2c51b84efffcddfb0c22482ce42473"},
 }

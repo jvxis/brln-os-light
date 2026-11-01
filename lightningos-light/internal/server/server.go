@@ -74,6 +74,8 @@ type Server struct {
 	lnurlInvoiceMu              sync.Mutex
 	lnurlInvoices               map[string]cachedLNURLInvoice
 	lnurlInvoiceResolutions     singleflight.Group
+	lnurlWithdrawMu             sync.Mutex
+	lnurlWithdrawals            map[string]*lnurlWithdrawal
 	spendingGuardMu             sync.Mutex
 	spendingGuard               *SpendingGuardService
 	spendingGuardErr            string

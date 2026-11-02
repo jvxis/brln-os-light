@@ -1303,7 +1303,7 @@
       "source": "Servidor Electrum",
       "local": "Meu Electrs local (padrão)",
       "club": "Electrs do clube (servidor público)",
-      "privacy": "Sem fallback automático. O clube usa electrum.br-ln.com:50001 por TCP sem TLS. O servidor e intermediários de rede podem observar suas consultas.",
+      "privacy": "Sem fallback automático. O clube usa electrum.br-ln.com:50002 com TLS e certificado verificado. O operador do servidor pode observar quais endereços você consulta.",
       "apply": "Aplicar servidor e iniciar"
     },
     "bitcoinLegacyMigrationTitle": "Migração do Bitcoin Core legado necessária",

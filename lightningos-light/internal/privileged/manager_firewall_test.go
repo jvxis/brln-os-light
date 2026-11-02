@@ -118,6 +118,36 @@ func TestManagerFirewallConfigureIsBrokerLocked(t *testing.T) {
 	}
 }
 
+func TestManagerFirewallRejectsPublicLANStatus(t *testing.T) {
+	for _, cidr := range []string{"203.0.112.0/20", "0.0.0.0/0", "10.0.0.0/7", "100.64.0.0/10"} {
+		t.Run(cidr, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "manager-firewall.conf")
+			if err := os.WriteFile(path, []byte("ACCESS_MODE=lan\nLAN_CIDR="+cidr+"\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			state := readManagerFirewallConfig(path, ManagerFirewallState{Installed: true, StatusAvailable: true})
+			state = classifyManagerFirewallState(parseManagerFirewallOutput("Status: active\n8443/tcp ALLOW IN "+cidr+"\n", state))
+			if state.ConfigValid || state.ManagerAccessBound || !state.BroadRulePresent {
+				t.Fatalf("non-private LAN incorrectly protected: %+v", state)
+			}
+		})
+	}
+}
+
+func TestManagerFirewallProtocolRejectsPublicLAN(t *testing.T) {
+	for _, cidr := range []string{"203.0.112.0/20", "10.0.0.0/7", "172.16.0.0/11", "192.168.0.0/15", "100.64.0.0/10", "0.0.0.0/0"} {
+		params, err := MarshalParams(ManagerFirewallConfigureParams{Mode: "lan", LANCIDR: cidr})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := Request{Version: ProtocolVersion, RequestID: "reject_public_lan", Operation: OperationManagerFirewallConfigure, Params: params}
+		if err := ValidateRequest(request); err == nil {
+			t.Errorf("accepted non-private LAN %s", cidr)
+		}
+	}
+}
+
 type recordingManagerFirewall struct {
 	calls          int
 	configureCalls int

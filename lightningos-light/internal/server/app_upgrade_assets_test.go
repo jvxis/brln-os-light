@@ -55,11 +55,11 @@ func TestEmbeddedSystemIntegrationAssetsAreSafe(t *testing.T) {
 		"ufw --force delete allow \"${MANAGER_PORT}/tcp\"",
 		"ufw allow from \"$lan_cidr\"",
 		"ufw allow in on tailscale0",
-		"Ignoring invalid saved local network",
+		"Saved LAN is not a private IPv4 network",
 		"so stdout contains only the selected CIDR",
 		"Restart=always",
 		"setup-manager-tls-mdns.sh",
-		"/var/lib/lightningos-privileged/system-integrations-20261030-v11",
+		"/var/lib/lightningos-privileged/system-integrations-20261101-v12",
 	} {
 		combined := embeddedTerminalHelper + embeddedManagerFirewallHelper + embeddedManagerTLSMDNSHelper + embeddedAppUpgradeScript + systemIntegrationsMarkerPath
 		if !strings.Contains(combined, fragment) {

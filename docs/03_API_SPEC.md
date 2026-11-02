@@ -501,8 +501,9 @@ Body:
 {"mode":"lan","lan_cidr":"192.168.1.0/24"}
 ```
 - Supported modes are `lan`, `vpn`, and `unprotected`.
-- `lan` requires an active UFW, a valid IPv4 CIDR, and the current client must be inside that CIDR (loopback is allowed for local recovery).
+- `lan` requires an active UFW, an IPv4 CIDR entirely within RFC1918 (`10/8`, `172.16/12`, `192.168/16`), and the current client must be inside that CIDR (loopback is allowed for local recovery). Public, CGNAT, IPv6, and private/public-spanning CIDRs are rejected with `manager_exposure_invalid_cidr` before invoking the broker.
 - `vpn` requires an active UFW and `tailscale0`; a non-loopback request must already arrive from a Tailscale address.
+- VPN-only policy permits `8443/tcp` on `tailscale0` and explicitly blocks that port on the default uplink (IPv4/IPv6), preserving restricted Docker bridge access used by apps. On installation/upgrade, no detected private LAN defaults to this policy; a saved non-private LAN is re-evaluated. If Tailscale is absent, the helper blocks the uplink but returns a warning rather than verified success. An inactive/missing UFW is never automatically enabled.
 - `unprotected` requires `{"acknowledge_unprotected":true}` and records that LightningOS cannot verify protection for port 8443.
 - This endpoint never installs or enables UFW, changes SSH rules, switches the Manager bind address, or restarts Bitcoin/LND.
 
@@ -565,6 +566,22 @@ Body:
 - Unresolved reservations continue consuming allowance regardless of age. The rolling window applies to settled debits, starting at settlement. Inconclusive LND lookups or transport errors do not release allowance; reconciliation uses definitive payment outcomes. Legacy reservations without a payment hash are retained for investigation, rather than automatically released on age.
 - Covers Wallet Lightning payments, Chat Keysend, and Loop Out BRLN tranches. It intentionally excludes routing forwards, LOS rebalances, channel operations, on-chain sends, and apps connected directly to LND.
 - A blocked payment returns HTTP 429 with code `spending_guard_limit_exceeded`.
+
+GET /api/wallet/onchain-spending-guard
+- Returns the independent on-chain policy (`enabled`, `max_send_sat`, `rolling_24h_limit_sat`, `updated_at`) and `used_sat`, `reserved_sat`, `remaining_sat`. Responses are authenticated and `Cache-Control: no-store`.
+- Disabled by default. A zero cap is unlimited for that dimension. The Lightning guard, its database tables and accounting are unchanged.
+
+PUT /api/wallet/onchain-spending-guard
+Body: `{"enabled":true,"max_send_sat":100000,"rolling_24h_limit_sat":500000}`
+- Limits are whole sats, between zero and 2100000000000000. At least one positive cap is required when enabled. Both caps apply independently.
+- Relaxing/removing an active cap or disabling the guard requires a single-use exact financial intent under `onchain_spending_guard_policy`. Missing approval returns HTTP 428, `onchain_spending_guard_reauth_required`, `requires_financial_intent=true`. Tightening a policy does not require spending approval. Existing authentication and CSRF checks still apply.
+- Protects **manual `POST /api/wallet/send` requests**, including the Wallet and On-chain Hub, selected inputs, send-all, imported and watch-only destinations. Protection is server-side, including when UI login is disabled; it is not a global LND restriction.
+- A fixed send consumes its external destination amount only: not input debit, mining fee or change. Transfers verified against WalletKit's non-watch-only `default` account and derived-address metadata are exempt; unavailable/unknown/imported/watch-only ownership is not exempt. All manual sends, including exempt consolidations, retain their existing reauthentication requirements.
+- Send-all initially reserves the **selected input total** because native SendCoins determines its final mining fee. Once the native transaction is verified, only the destination output is settled and unused reservation is released. Near a cap, a fixed amount avoids conservative sweep rejection; fee previews are not trusted as exact native fees.
+- Reservations are durable and serialized with policy updates in `financial-intents/onchain-spending-guard.state` (private permissions and the existing process lock). Concurrent sends cannot reuse allowance. A restarted Manager retains policy/holds. Existing intent replay never dispatches again; settlement/reconciliation is idempotent by operation ID, not replacement txid. RBF/CPFP fee operations do not create another outgoing-value charge.
+- A native dispatch error/lost reply remains reserved unless non-dispatch is proven. Pending holds do not expire merely because 24 hours passed. Reconciliation observes native transaction evidence and never resubmits; settled value expires from the rolling window 24 hours after settlement. This can conservatively extend usage after a delayed native result.
+- Channel operations, maintenance sweeps, Loop/PeerSwap funding, OP_RETURN, retirement/succession and apps/CLI with direct LND access are outside this first scope. Their operational fees are not blocked by this guard; normal fee controls remain in force.
+- Limit rejection: HTTP 429, `onchain_spending_guard_limit_exceeded`, with `reason` (`per_send` or `rolling_24h`), `requested_sat`, `remaining_sat`. Storage failure/unsafe state: HTTP 503, `onchain_spending_guard_unavailable`; no new manual send is submitted. Never interpret unavailable as disabled. Filesystem capacity/read/write/fsync errors fail closed.
 
 POST /api/wallet/address
 - Returns a new on-chain address.
@@ -651,6 +668,10 @@ GET /api/lnops/channels
 - Channel rows with pending HTLCs may include `forwarding_channel_alias` and `forwarding_channel_short_id` in each pending HTLC entry, alongside the existing numeric `forwarding_channel_id`.
 - Pending opening rows include `funding_initiator` (`local`, `remote`, `both`, or `unknown`). When the public transaction lookup is attempted, they also include `funding_tx_status` (`mempool`, `confirmed`, `not_found`, or `unavailable`) and may include `funding_tx_fee_sat`, `funding_tx_vsize`, `funding_tx_effective_fee_rate_sat_vb`, and `funding_tx_rbf`.
 - `funding_tx_effective_fee_rate_sat_vb` is calculated from the observed funding transaction fee and weight. It is distinct from `funding_fee_rate_sat_vb`, which is the LND funding/commitment fee reference used by the existing bump workflow.
+
+GET /api/lnops/closed-channels
+- Returns the existing `channels` history, including `peer_alias` when available from the local graph index. Missing peer names are looked up in one deduplicated batch with a two-second deadline; graph unavailability does not fail or remove the history.
+- Missing aliases remain empty so clients can display `remote_pubkey`. Channel identifiers, close/sweep transactions, balances, ordering and close types are unchanged. This read-only enrichment does not query LND for each peer or alter financial close/reconciliation callers.
 
 GET /api/lnops/channel-db-impact
 - Returns a channel.db maintenance report for nodes using LND's Bolt channel database.
@@ -964,7 +985,7 @@ POST /api/lnops/succession/simulate
 
 - App ID: `brln-hardwallet`. Uses the standard install/start/stop/uninstall endpoints and requires enabled LOS login, broker enforce mode, and a private LAN/VPN IPv4 address. Tailscale is optional.
 - `POST /api/apps/brln-hardwallet/install` accepts optional JSON `{"electrum_source":"local"}` or `{"electrum_source":"club"}`. Omitting the source preserves the saved selection, or defaults to local on first installation. Calling install again applies the selection and starts the app. Other source values are rejected.
-- `GET /api/apps` includes `electrum_source` for this app. Local uses the managed Electrs Docker network; club uses the public `electrum.br-ln.com:50001` endpoint over TCP without TLS. The node's HTTPS app access is separate from its outgoing Electrum connection. There is no automatic fallback between sources.
+- `GET /api/apps` includes `electrum_source` for this app. Local uses the managed Electrs Docker network; club uses the public `electrum.br-ln.com:50002` endpoint over TLS with standard certificate verification and no plaintext fallback. The node's HTTPS app access is separate from its outgoing Electrum connection. There is no automatic fallback between sources.
 - `GET /api/apps/brln-hardwallet/authorization` is the HTTPS proxy session check: returns 204 only with enabled LOS login and a valid session; otherwise access is denied. It grants no signing authority. Every app route passes this check.
 - The app listens on HTTPS port 4449 on explicit private IPv4 addresses discovered from active host interfaces: RFC1918 LAN/VPN and optional Tailscale/CGNAT addresses. Loopback, down interfaces and Docker `docker0`, `br-*`, `veth*` interfaces are excluded; public/wildcard and IPv6 bindings are not enabled. Installation/start refreshes the addresses and app certificate. The certificate uses a separate key, includes the Manager's SANs and all app bind IPs, and is signed by the LOS CA. New DHCP/VPN addresses require starting/applying the app again; the Manager certificate must also be trusted for the address used to access LOS.
 - For an installed app, `GET /api/apps` supplies the relative `external_url` `/#hardwallet-open`. The UI registers this as an installed-app menu entry and the store opens it in the same tab, inside the normal Manager shell. The wallet is embedded from HTTPS port 4449 on the same host, retaining existing public-account storage and the authenticated session. Serial and clipboard permissions are delegated only to that exact app origin; its CSP permits only the same host's HTTPS Manager on port 8443 as an ancestor. Appearance changes propagate without reloading the signer session. If the session expired, normal Manager login appears first. Stopped apps retain their menu entry and show a recovery action. No session token is placed in a URL. The browser must trust the LOS CA and support Web Serial; the signer connects to the browser computer by USB.

@@ -1,6 +1,23 @@
 package server
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestManagerExposureRejectsPublicLANBeforeBroker(t *testing.T) {
+	for _, cidr := range []string{"203.0.112.0/20", "10.0.0.0/7", "100.64.0.0/10", "::/0"} {
+		r := httptest.NewRequest(http.MethodPost, "/api/security/manager-exposure", strings.NewReader(`{"mode":"lan","lan_cidr":"`+cidr+`"}`))
+		r.RemoteAddr = "127.0.0.1:50000"
+		w := httptest.NewRecorder()
+		(&Server{}).handleManagerExposurePost(w, r)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "manager_exposure_invalid_cidr") {
+			t.Fatalf("public CIDR %s reached broker: %d %s", cidr, w.Code, w.Body.String())
+		}
+	}
+}
 
 func TestParseManagerFirewallStatus(t *testing.T) {
 	tests := []struct {
@@ -11,6 +28,13 @@ func TestParseManagerFirewallStatus(t *testing.T) {
 		bound      bool
 		broad      bool
 	}{
+		{
+			name:       "public provider rule overrides private LAN",
+			output:     "Status: active\n8443/tcp ALLOW IN 192.168.68.0/24\n8443/tcp ALLOW IN 203.0.112.0/20\n",
+			configured: "192.168.68.0/24",
+			active:     true,
+			broad:      true,
+		},
 		{
 			name:       "inactive",
 			output:     "Status: inactive\n",

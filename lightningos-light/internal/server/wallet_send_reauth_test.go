@@ -114,7 +114,13 @@ func onchainReauthServer(t *testing.T, account string) (*Server, *onchainReauthR
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Server{cfg: cfg, auth: auth, lnd: client, logger: logger, auditLogInitAt: time.Now()}, rpc, session
+	s := &Server{cfg: cfg, auth: auth, lnd: client, logger: logger, auditLogInitAt: time.Now(), financialIntentDir: filepath.Join(dir, "intents")}
+	t.Cleanup(func() {
+		if s.financialIntents != nil {
+			s.financialIntents.Close()
+		}
+	})
+	return s, rpc, session
 }
 func onchainReauthRequest(s *Server, session authSessionSnapshot, path, body string, csrf bool, intentIDs ...string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("POST", "https://node.example"+path, strings.NewReader(body))

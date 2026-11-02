@@ -10,6 +10,56 @@ https://github.com/jvxis/brln-hardwallet, branch `brln/tdisplay-los`. Member
 guide: [38_BRLN_HARDWALLET_GUIA_PT_BR.md](38_BRLN_HARDWALLET_GUIA_PT_BR.md).
 No independent audit yet: pilot members use small amounts only.
 
+## Club Electrum over TLS (2026-11-01, 0.5.52)
+
+The club server now serves Electrum over TLS on `electrum.br-ln.com:50002`.
+Club mode uses that address with transport `tls`, replacing plain TCP on 50001.
+The companion verifies the certificate against the CA bundle in its image, with
+TLS 1.2 or later. It never falls back to TCP after a handshake or certificate
+failure. Local Electrs is unchanged, and so is the absence of automatic
+fallback between sources. The companion image is unchanged: `tls` is already a
+supported transport, covered by its tests.
+
+Checked from the workstation before the change:
+- TLS 1.3, certificate `CN=electrum.br-ln.com`, valid until 2027-01-25, verified
+  with the system roots and hostname;
+- `server.version` returned `electrs/0.10.8`, protocol 1.4;
+- `blockchain.headers.subscribe` returned height 974193.
+
+On LOS-TEST2 (official 0.5.51-Beta `4fe36d36` plus only this Go change, as
+an overlay; backup in
+`/var/backups/lightningos-hardwallet-pr260/before-club-tls`):
+- the hash-guarded deploy, Hardwallet tests and broker self-test passed;
+- reinstalling with source `club` rendered `BRLN_ELECTRUM_ADDR=electrum.br-ln.com:50002`
+  and `BRLN_ELECTRUM_TRANSPORT=tls`, the image was unchanged (`sha-d7b28dc`),
+  and the container became healthy;
+- authenticated `/api/v1/status` returned mainnet, height 974194, and
+  `/api/v1/fees` answered;
+- a 20-script batch returned 20 results in about 4 s, including the history of
+  the BIP84 test-vector address;
+- anonymous requests got 401, a bad origin got 403, and access was revoked after
+  logout;
+- LND kept running (PID 3263).
+
+The companion page still said "Servidor público · TCP sem TLS", so the pin moved
+to `sha-7a078acf0e00378b42f898653bf29c695d97135e`
+(`sha256:7aac88e936825c34eab0e0ab5e8ae2235e1c42ee16ce14c785ac8f5316475994`).
+Its status endpoint reports `electrum_tls`, and the page describes the club
+connection from it: TLS for this catalog, the TCP warning for older ones. Its
+OCI index was verified for amd64 and arm64. The firmware inside it is
+unchanged: device hash `ac65fff567c7723024de2dd2147d0cab8bfda5998028a8518991ce86b1b83d3b`.
+
+That pin and the store copy were deployed on TEST2 with a second hash-guarded
+overlay (backup `before-club-tls-2`). After reinstalling with `club`, the
+container ran `sha-7a078ac` healthy, and status returned
+`"electrum_tls": true` at height 974197. The store bundle carries the new
+privacy text. LND kept running (PID 3263).
+
+The privacy copy now says TLS hides the queries from the network path, but
+the server operator can still see the addresses queried. The certificate
+expires on 2027-01-25: renewal on the server must keep the same hostname.
+Otherwise, club sync fails closed with `electrum unavailable`.
+
 ## 0.5.48 base and brln-3 companion (2026-10-24)
 
 The PR #260 branch merged cleanly onto 0.5.48-Beta; only the image pin changed:
@@ -608,6 +658,8 @@ and `/opt/lightningos/ui-before-open-fix` for UI. Existing physical-signer,
 native-arm64 and certificate lifecycle validation gaps remain; PR stays draft.
 
 ## Public club Electrum correction (2026-10-14)
+
+Superseded on 2026-11-01: club mode now uses TLS on 50002 (section above).
 
 The original pilot incorrectly made the owner's personal tailnet a requirement
 for querying the club Electrs. The current catalog instead selects the public

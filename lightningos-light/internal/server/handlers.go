@@ -2257,6 +2257,7 @@ func (s *Server) handleLNClosedChannels(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	enrichClosedChannelTimes(ctx, channels)
+	channels = s.enrichClosedChannelAliases(ctx, channels)
 
 	writeJSON(w, http.StatusOK, map[string]any{"channels": channels})
 }
@@ -5338,6 +5339,8 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 	)
 	if _, bound := r.Context().Value(financialIntentContextKey{}).(*financialIntentExecution); bound {
 		txid, sendErr = s.executeFinancialOnchainIntent(ctx, r, req)
+	} else if handled, guardedTxid, guardedErr := s.executeUnboundOnchainGuard(ctx, req); handled {
+		txid, sendErr = guardedTxid, guardedErr
 	} else if len(req.Outpoints) > 0 || strings.TrimSpace(req.Label) != "" {
 		txid, sendErr = s.lnd.SendCoinsAdvanced(ctx, lndclient.SendCoinsParams{
 			Address:     address,
@@ -5351,6 +5354,10 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 		txid, sendErr = s.lnd.SendCoins(ctx, address, req.AmountSat, req.SatPerVbyte, req.SweepAll)
 	}
 	if sendErr != nil {
+		if writeOnchainGuardError(w, sendErr) {
+			s.recordAuditEventAsync(r, "wallet.onchain_spending_guard.blocked", "onchain", nil)
+			return
+		}
 		s.recordAuditEventAsync(r, "wallet.onchain_send.failed", destinationClassification, map[string]any{
 			"amount_sat":         req.AmountSat,
 			"sat_per_vbyte":      req.SatPerVbyte,

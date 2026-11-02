@@ -60,18 +60,21 @@ type financialIntentRecord struct {
 }
 
 type financialIntentStore struct {
-	mu          sync.Mutex
-	dir         string
-	lock        *os.File
-	now         func() time.Time
-	records     map[string]*financialIntentRecord
-	running     map[string]bool
-	maxPending  int
-	maxRecords  int
-	maxBytes    int64
-	totalBytes  int64
-	sizes       map[string]int64
-	persistHook func(*financialIntentRecord) error // unit fault injection only
+	onchainGuard            *onchainGuardState
+	onchainGuardErr         error
+	onchainGuardPersistHook func() error // unit fault injection only
+	mu                      sync.Mutex
+	dir                     string
+	lock                    *os.File
+	now                     func() time.Time
+	records                 map[string]*financialIntentRecord
+	running                 map[string]bool
+	maxPending              int
+	maxRecords              int
+	maxBytes                int64
+	totalBytes              int64
+	sizes                   map[string]int64
+	persistHook             func(*financialIntentRecord) error // unit fault injection only
 }
 
 func financialIntentIDValid(id string) bool {

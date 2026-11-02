@@ -66,10 +66,17 @@ func (s *Server) executeFinancialOnchainIntent(ctx context.Context, r *http.Requ
 		}
 		delete(allowed, point)
 	}
+	guarded, err := s.beginOnchainGuard(ctx, execution.store, execution.record.ID, binding, request.Label)
+	if err != nil {
+		return "", err
+	}
 	proof, _ := json.Marshal(financialNativeProof{Kind: "onchain_send", DispatchStarted: true, NativeLabel: binding.NativeLabel, StartedAt: time.Now()})
 	// This durable barrier is the only gateway to native SendCoins. Neither
 	// an HTTP retry nor reconciliation may invoke SendCoins a second time.
 	if err := execution.store.saveProof(execution.record.ID, proof); err != nil {
+		if guarded {
+			_ = execution.store.finishOnchainGuard(execution.record.ID, "", 0, true)
+		}
 		return "", errors.New("financial dispatch could not be committed; native send was not submitted")
 	}
 	ops := s.financialNativeOperations()
@@ -80,9 +87,13 @@ func (s *Server) executeFinancialOnchainIntent(ctx context.Context, r *http.Requ
 	if txid == "" {
 		return "", errors.New("native send outcome unavailable; reconcile the intent before retrying")
 	}
+	guardSettled := !guarded || s.completeOnchainGuard(ctx, execution.store, execution.record.ID, binding, txid)
 	// Keep the managed label while the response might be lost. Restore the
 	// operator's original label only after the result is durably committed.
 	execution.postCommit = func() {
+		if !guardSettled {
+			return
+		} // retain managed label for safe reconciliation
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
 		label := request.Label

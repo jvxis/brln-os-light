@@ -53,8 +53,9 @@ fonte da placa.
 2. Em **Servidor Electrum**, escolha de onde vêm as consultas:
    - **Meu Electrs local (padrão)**: mais privado. Requer o Electrs instalado e
      sincronizado no seu node.
-   - **Electrs do clube (servidor público)**: funciona sem Electrs local, mas o
-     servidor do clube e a rede podem observar quais endereços você consulta.
+   - **Electrs do clube (servidor público)**: funciona sem Electrs local. A
+     conexão usa TLS (`electrum.br-ln.com:50002`), mas o servidor do clube pode
+     observar quais endereços você consulta.
 3. Clique em **Aplicar servidor e iniciar** e aguarde o app ficar em execução.
 4. Abra o app pelo menu lateral: **Apps e liquidez → BR⚡LN Hardwallet**.
 

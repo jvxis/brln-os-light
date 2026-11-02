@@ -1,4 +1,24 @@
 {
+  "onchainGuard": {
+    "title": "Proteção de Gastos On-chain",
+    "unverified": "NÃO VERIFICADO",
+    "description": "Limites independentes para valores enviados para fora desta carteira LND pelo LOS. Os dois limites configurados se aplicam; taxas de mineração e troco não consomem o limite contabilizado.",
+    "feesExcluded": "Taxas de mineração não entram no valor gasto contabilizado.",
+    "summary": "Por envio: {{perSend}} sats · Saídas protegidas em 24h: {{used}} / {{limit}} sats",
+    "usage": "Valor de saída protegido — últimas 24 horas",
+    "broadcast": "Transmitido: {{amount}} sats",
+    "perSend": "Valor externo máximo por envio (sats)",
+    "rolling": "Valor externo máximo em quaisquer 24 horas (sats)",
+    "scope": "Protege envios manuais da Wallet e do On-chain Hub, incluindo Enviar tudo. Transferências comprovadas para a carteira padrão não watch-only do node são isentas. Destinos importados, watch-only ou sem comprovação contam como externos. Vazio/zero remove aquele limite; habilitar a proteção exige ao menos um limite.",
+    "sweep": "Enviar tudo reserva temporariamente o total dos inputs selecionados, pois o LND determina a taxa final no envio. A taxa é liberada ao verificar a transação nativa. Perto do limite, use um valor explícito. Envios incertos mantêm a reserva, mesmo após 24 horas, até a reconciliação; retries e aumentos de taxa por RBF não geram uma segunda cobrança da mesma operação.",
+    "exclusions": "Não protege: operações de canais, sweeps de manutenção, funding do Loop/PeerSwap, OP_RETURN, aposentadoria/sucessão e apps ou comandos CLI com acesso direto ao LND. As taxas dessas operações ficam fora deste guard. Não é uma restrição global da carteira LND.",
+    "save": "Salvar Proteção On-chain",
+    "saved": "Proteção de Gastos On-chain atualizada.",
+    "saveFailed": "Não foi possível salvar a política on-chain.",
+    "invalid": "Informe limites inteiros e não negativos em satoshis. A proteção habilitada exige ao menos um limite positivo.",
+    "unavailable": "Não foi possível verificar a proteção on-chain. Novos envios manuais ficam bloqueados até o armazenamento estar disponível.",
+    "blocked": "Este envio ultrapassa o limite da Proteção de Gastos On-chain. Nenhuma transação foi enviada."
+  },
   "rebalanceEligibility": {
     "details": "Estado e elegibilidade do rebalance — expandir detalhes",
     "unavailable": "Estado do rebalance indisponível",
@@ -1303,7 +1323,7 @@
       "source": "Servidor Electrum",
       "local": "Meu Electrs local (padrão)",
       "club": "Electrs do clube (servidor público)",
-      "privacy": "Sem fallback automático. O clube usa electrum.br-ln.com:50001 por TCP sem TLS. O servidor e intermediários de rede podem observar suas consultas.",
+      "privacy": "Sem fallback automático. O clube usa electrum.br-ln.com:50002 com TLS e certificado verificado. O operador do servidor pode observar quais endereços você consulta.",
       "apply": "Aplicar servidor e iniciar"
     },
     "bitcoinLegacyMigrationTitle": "Migração do Bitcoin Core legado necessária",

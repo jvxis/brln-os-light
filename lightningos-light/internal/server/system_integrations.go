@@ -11,7 +11,7 @@ import (
 	"lightningos-light/internal/system"
 )
 
-const systemIntegrationsMarkerPath = "/var/lib/lightningos-privileged/system-integrations-20261030-v11"
+const systemIntegrationsMarkerPath = "/var/lib/lightningos-privileged/system-integrations-20261101-v12"
 
 //go:embed assets/kernel-tcp.py
 var embeddedKernelTCPHelper string

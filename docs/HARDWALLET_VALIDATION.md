@@ -10,6 +10,27 @@ https://github.com/jvxis/brln-hardwallet, branch `brln/tdisplay-los`. Member
 guide: [38_BRLN_HARDWALLET_GUIA_PT_BR.md](38_BRLN_HARDWALLET_GUIA_PT_BR.md).
 No independent audit yet: pilot members use small amounts only.
 
+## Club Electrum over TLS (2026-11-01, 0.5.52)
+
+The club server now serves Electrum over TLS on `electrum.br-ln.com:50002`.
+Club mode uses that address with transport `tls`, replacing plain TCP on 50001.
+The companion verifies the certificate against the CA bundle in its image, with
+TLS 1.2 or later. It never falls back to TCP after a handshake or certificate
+failure. Local Electrs is unchanged, and so is the absence of automatic
+fallback between sources. The companion image is unchanged: `tls` is already a
+supported transport, covered by its tests.
+
+Checked from the workstation before the change:
+- TLS 1.3, certificate `CN=electrum.br-ln.com`, valid until 2027-01-25, verified
+  with the system roots and hostname;
+- `server.version` returned `electrs/0.10.8`, protocol 1.4;
+- `blockchain.headers.subscribe` returned height 974193.
+
+The privacy copy now says TLS hides the queries from the network path, but
+the server operator can still see the addresses queried. The certificate
+expires on 2027-01-25: renewal on the server must keep the same hostname.
+Otherwise, club sync fails closed with `electrum unavailable`.
+
 ## 0.5.48 base and brln-3 companion (2026-10-24)
 
 The PR #260 branch merged cleanly onto 0.5.48-Beta; only the image pin changed:
@@ -608,6 +629,8 @@ and `/opt/lightningos/ui-before-open-fix` for UI. Existing physical-signer,
 native-arm64 and certificate lifecycle validation gaps remain; PR stays draft.
 
 ## Public club Electrum correction (2026-10-14)
+
+Superseded on 2026-11-01: club mode now uses TLS on 50002 (section above).
 
 The original pilot incorrectly made the owner's personal tailnet a requirement
 for querying the club Electrs. The current catalog instead selects the public

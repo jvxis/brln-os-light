@@ -17,7 +17,7 @@ const (
 	HardwalletImage         = "ghcr.io/jvxis/brln-hardwallet:sha-d7b28dc328010835dc51b3b81a5647f44a84d584@sha256:97784da534df8a8a7d6ee8a080f92fe184420fa1c45da7f62e1d4b29b0750796"
 	HardwalletProxyImage    = BarkWalletProxyImage
 	HardwalletVersionOutput = "brln-hardwallet 0.1.0-dev"
-	HardwalletClubAddress   = "electrum.br-ln.com:50001"
+	HardwalletClubAddress   = "electrum.br-ln.com:50002"
 )
 
 type HardwalletPaths struct{ Root, Compose, Caddy, Token, Settings, Certificate, PrivateKey, ManagerCA string }
@@ -117,8 +117,10 @@ func HardwalletCompose(p HardwalletPaths, s HardwalletSettings) (string, error) 
 	}
 	address, transport, network, networks := "electrs:50001", "local", "      - electrum\n", "  electrum:\n    external: true\n    name: electrs_default\n"
 	if s.Source == "club" {
+		// TLS with standard certificate verification; the companion has no
+		// plaintext fallback.
 		address = HardwalletClubAddress
-		transport = "tcp"
+		transport = "tls"
 		network = ""
 		networks = ""
 	}

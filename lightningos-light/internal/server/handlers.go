@@ -2257,6 +2257,7 @@ func (s *Server) handleLNClosedChannels(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	enrichClosedChannelTimes(ctx, channels)
+	channels = s.enrichClosedChannelAliases(ctx, channels)
 
 	writeJSON(w, http.StatusOK, map[string]any{"channels": channels})
 }

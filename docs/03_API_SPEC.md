@@ -652,6 +652,10 @@ GET /api/lnops/channels
 - Pending opening rows include `funding_initiator` (`local`, `remote`, `both`, or `unknown`). When the public transaction lookup is attempted, they also include `funding_tx_status` (`mempool`, `confirmed`, `not_found`, or `unavailable`) and may include `funding_tx_fee_sat`, `funding_tx_vsize`, `funding_tx_effective_fee_rate_sat_vb`, and `funding_tx_rbf`.
 - `funding_tx_effective_fee_rate_sat_vb` is calculated from the observed funding transaction fee and weight. It is distinct from `funding_fee_rate_sat_vb`, which is the LND funding/commitment fee reference used by the existing bump workflow.
 
+GET /api/lnops/closed-channels
+- Returns the existing `channels` history, including `peer_alias` when available from the local graph index. Missing peer names are looked up in one deduplicated batch with a two-second deadline; graph unavailability does not fail or remove the history.
+- Missing aliases remain empty so clients can display `remote_pubkey`. Channel identifiers, close/sweep transactions, balances, ordering and close types are unchanged. This read-only enrichment does not query LND for each peer or alter financial close/reconciliation callers.
+
 GET /api/lnops/channel-db-impact
 - Returns a channel.db maintenance report for nodes using LND's Bolt channel database.
 - For Postgres-backed LND nodes, returns HTTP 200 with `available=false` and `db_backend="postgres"`.

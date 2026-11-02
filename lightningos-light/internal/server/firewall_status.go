@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"lightningos-light/internal/networkpolicy"
 	"lightningos-light/internal/system"
 )
 
@@ -68,8 +69,8 @@ func (s *Server) handleManagerExposurePost(w http.ResponseWriter, r *http.Reques
 	switch req.Mode {
 	case "lan":
 		ip, network, err := net.ParseCIDR(req.LANCIDR)
-		if err != nil || ip.To4() == nil {
-			writeErrorCode(w, http.StatusBadRequest, "manager_exposure_invalid_cidr", "LAN mode requires a valid IPv4 CIDR")
+		if err != nil || ip.To4() == nil || !networkpolicy.PrivateLAN(req.LANCIDR) {
+			writeErrorCode(w, http.StatusBadRequest, "manager_exposure_invalid_cidr", "LAN mode requires a CIDR entirely within a private IPv4 network")
 			return
 		}
 		if clientIP != nil && !clientIP.IsLoopback() && !network.Contains(clientIP) {
@@ -147,7 +148,7 @@ func inspectManagerFirewall(ctx context.Context) managerFirewallStatus {
 	if status.ConfiguredCIDR == "" {
 		status.ConfigValid = false
 	} else if !strings.EqualFold(status.ConfiguredCIDR, "none") {
-		if _, _, err := net.ParseCIDR(status.ConfiguredCIDR); err != nil {
+		if !networkpolicy.PrivateLAN(status.ConfiguredCIDR) {
 			status.ConfigValid = false
 		}
 	}
@@ -186,13 +187,13 @@ func parseManagerFirewallStatus(output string, status managerFirewallStatus) man
 		if !strings.Contains(line, "8443") || !strings.Contains(line, "allow") {
 			continue
 		}
-		if configuredLower != "" && configuredLower != "none" && strings.Contains(line, configuredLower) {
+		if networkpolicy.PrivateLAN(configuredLower) && strings.Contains(line, configuredLower) {
 			status.LANRulePresent = true
 		}
 		if strings.Contains(line, "tailscale0") {
 			status.TailscaleRule = true
 		}
-		if strings.Contains(line, "anywhere") && !strings.Contains(line, "tailscale0") {
+		if networkpolicy.PublicManagerAllow(line) {
 			status.BroadRulePresent = true
 		}
 	}

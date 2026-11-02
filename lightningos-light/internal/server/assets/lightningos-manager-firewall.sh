@@ -30,24 +30,40 @@ valid_ipv4_cidr() {
   done
 }
 
+private_lan_cidr() {
+  local value="$1" first second prefix
+  valid_ipv4_cidr "$value" || return 1
+  IFS=. read -r first second _ <<<"${value%/*}"
+  first=$((10#$first)); second=$((10#$second)); prefix="${value##*/}"; prefix=$((10#$prefix))
+  (( (first == 10 && prefix >= 8) ||
+     (first == 172 && second >= 16 && second <= 31 && prefix >= 12) ||
+     (first == 192 && second == 168 && prefix >= 16) ))
+}
+
+default_interface() {
+  command -v ip >/dev/null 2>&1 || return 0
+  ip -4 route show default 2>/dev/null |
+    awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }'
+}
+
 detect_lan_cidr() {
   command -v ip >/dev/null 2>&1 || return 0
-  local default_device=""
-  default_device="$(ip -4 route show default 2>/dev/null | awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
+  local default_device candidate
+  default_device="$(default_interface)"
   if [[ -n "$default_device" ]]; then
-    ip -o -4 route show dev "$default_device" scope link 2>/dev/null |
-      awk '$1 ~ /^[0-9]+\./ && $1 ~ /\// { print $1; exit }'
-    return 0
+    while read -r candidate _; do
+      if private_lan_cidr "$candidate"; then echo "$candidate"; return 0; fi
+    done < <(ip -o -4 route show dev "$default_device" scope link 2>/dev/null)
   fi
-  ip -o -4 route show scope link 2>/dev/null |
-    awk '$1 ~ /^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/ && $1 ~ /\// { print $1; exit }'
+  # Never mistake a provider subnet or an unrelated Docker bridge for the LAN.
+  return 0
 }
 
 choose_lan_cidr() {
   local configured detected selected
   configured="$(read_config_value LAN_CIDR)"
-  if [[ -n "$configured" && "${configured,,}" != "none" ]] && ! valid_ipv4_cidr "$configured"; then
-    print_warn "Ignoring invalid saved local network '${configured}' and detecting it again."
+  if [[ -n "$configured" && "${configured,,}" != "none" ]] && ! private_lan_cidr "$configured"; then
+    print_warn "Saved LAN is not a private IPv4 network; selecting private LAN or Tailscale-only access."
     configured=""
   fi
   detected="$(detect_lan_cidr)"
@@ -64,8 +80,8 @@ choose_lan_cidr() {
     echo "none"
     return 0
   fi
-  if ! valid_ipv4_cidr "$selected"; then
-    print_warn "Invalid local network '${selected}'. Expected CIDR such as 192.168.1.0/24."
+  if ! private_lan_cidr "$selected"; then
+    print_warn "LAN must be entirely within 10/8, 172.16/12 or 192.168/16. Use VPN-only access on a VPS."
     return 1
   fi
   echo "$selected"
@@ -99,27 +115,36 @@ tailscale_is_available() {
 }
 
 verify_firewall() {
-  local mode="$1" lan_cidr="$2" status
+  local mode="$1" lan_cidr="$2" status source line device
   status="$(LC_ALL=C ufw status 2>/dev/null)" || return 1
   grep -qiE '^status:[[:space:]]+active' <<<"$status" || return 1
-  if grep -Fi "$MANAGER_PORT" <<<"$status" | grep -i 'allow' | grep -i 'anywhere' | grep -qiv 'tailscale0'; then
-    print_warn "Port ${MANAGER_PORT} still has a broad allow rule."
-    return 1
-  fi
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    [[ "$line" == *"$MANAGER_PORT"* && "${line,,}" == *allow* ]] || continue
+    [[ "$line" == *" on tailscale0 "* ]] && continue
+    source="$(awk '{ for (i=1; i<=NF; i++) if (toupper($i)=="ALLOW") { i++; if (toupper($i)=="IN") i++; print $i; exit } }' <<<"$line")"
+    [[ "$source" == */* ]] || source="${source}/32"
+    if ! private_lan_cidr "$source"; then
+      print_warn "Port ${MANAGER_PORT} still has an allow rule outside private LAN/Tailscale."
+      return 1
+    fi
+  done <<<"$status"
   case "$mode" in
     lan)
       grep -Fi "$MANAGER_PORT" <<<"$status" | grep -i 'allow' | grep -Fqi "$lan_cidr" || return 1
       ! grep -Fi "$MANAGER_PORT" <<<"$status" | grep -i 'allow' | grep -qi 'tailscale0'
       ;;
     vpn)
-      grep -Fi "$MANAGER_PORT" <<<"$status" | grep -i 'allow' | grep -qi 'tailscale0'
+      grep -Fi "$MANAGER_PORT" <<<"$status" | grep -i 'allow' | grep -qi 'tailscale0' || return 1
+      device="$(default_interface)"
+      grep -Fi "$MANAGER_PORT" <<<"$status" | grep -F " on ${device} " | grep -qi 'deny'
       ;;
     *) return 1 ;;
   esac
 }
 
 configure_firewall() {
-  local previous previous_mode mode lan_cidr
+  local previous previous_mode mode lan_cidr default_device vpn_available=0
   previous="$(read_config_value LAN_CIDR)"
   previous_mode="$(read_config_value ACCESS_MODE)"
   mode="${REQUESTED_MODE:-$previous_mode}"
@@ -154,40 +179,57 @@ configure_firewall() {
   if [[ "$mode" == "lan" ]]; then
     if [[ -n "$REQUESTED_LAN_CIDR" ]]; then
       lan_cidr="$REQUESTED_LAN_CIDR"
-      valid_ipv4_cidr "$lan_cidr" || { print_warn "Invalid LAN CIDR '${lan_cidr}'."; return 2; }
+      private_lan_cidr "$lan_cidr" || { print_warn "LAN CIDR must be entirely private IPv4."; return 2; }
     else
-      lan_cidr="$(choose_lan_cidr)"
+      lan_cidr="$(choose_lan_cidr)" || return 2
     fi
     if [[ "$lan_cidr" == "none" ]]; then
-      print_warn "LAN mode requires a valid local IPv4 CIDR."
-      return 2
+      mode="vpn"
+      print_warn "No private LAN selected; restricting Manager access to Tailscale."
     fi
-  else
+  fi
+  if [[ "$mode" == "vpn" ]]; then
     lan_cidr="none"
-    if ! tailscale_is_available; then
-      print_warn "VPN-only mode requires the tailscale0 interface."
-      return 3
-    fi
+    if tailscale_is_available; then vpn_available=1; fi
   fi
 
   # Add the requested access path before removing the previous LightningOS
   # rule. This preserves access if a later command fails.
   if [[ "$mode" == "lan" ]]; then
-    ufw allow from "$lan_cidr" to any port "$MANAGER_PORT" proto tcp comment 'LightningOS LAN'
-    ufw allow from "$lan_cidr" to 224.0.0.251 port 5353 proto udp comment 'LightningOS mDNS'
+    ufw allow from "$lan_cidr" to any port "$MANAGER_PORT" proto tcp comment 'LightningOS LAN' || return 5
+    ufw allow from "$lan_cidr" to 224.0.0.251 port 5353 proto udp comment 'LightningOS mDNS' || return 5
   else
-    ufw allow in on tailscale0 to any port "$MANAGER_PORT" proto tcp comment 'LightningOS Tailscale'
+    if (( vpn_available == 1 )); then
+      ufw allow in on tailscale0 to any port "$MANAGER_PORT" proto tcp comment 'LightningOS Tailscale' || return 5
+    fi
+    default_device="$(default_interface)"
+    if [[ -z "$default_device" || "$default_device" == "tailscale0" || "$default_device" == "lo" ]]; then
+      print_warn "Cannot identify the uplink to block public Manager access; firewall policy was not verified."
+      return 3
+    fi
+    # Block this port on the physical uplink (IPv4 and IPv6), not on Docker
+    # bridges. Prepend so a provider-wide legacy ALLOW cannot override it.
+    ufw insert 1 deny in on "$default_device" to any port "$MANAGER_PORT" proto tcp comment 'LightningOS Manager uplink block' || return 5
   fi
 
   if [[ -n "$previous" && "$previous" != "none" && "$previous" != "$lan_cidr" ]]; then
-    ufw --force delete allow from "$previous" to any port "$MANAGER_PORT" proto tcp >/dev/null 2>&1 || true
-    ufw --force delete allow from "$previous" to 224.0.0.251 port 5353 proto udp >/dev/null 2>&1 || true
+    ufw --force delete allow from "$previous" to any port "$MANAGER_PORT" proto tcp >/dev/null 2>&1 || return 5
+    ufw --force delete allow from "$previous" to 224.0.0.251 port 5353 proto udp >/dev/null 2>&1 || return 5
   fi
   if [[ "$mode" == "lan" ]]; then
+    default_device="$(default_interface)"
+    if [[ -n "$default_device" && "$default_device" != "tailscale0" && "$default_device" != "lo" ]]; then
+      ufw --force delete deny in on "$default_device" to any port "$MANAGER_PORT" proto tcp comment 'LightningOS Manager uplink block' >/dev/null 2>&1 || return 5
+    fi
     ufw --force delete allow in on tailscale0 to any port "$MANAGER_PORT" proto tcp >/dev/null 2>&1 || true
   fi
   ufw --force delete allow "${MANAGER_PORT}/tcp" >/dev/null 2>&1 || true
 
+  if [[ "$mode" == "vpn" && "$vpn_available" == "0" ]]; then
+    save_config "$mode" "$lan_cidr" 0
+    print_warn "Manager port blocked on the uplink, but tailscale0 is unavailable. Configure Tailscale through SSH/console; protection is not verified."
+    return 3
+  fi
   if ! verify_firewall "$mode" "$lan_cidr"; then
     print_warn "The requested Manager access policy could not be verified."
     return 5

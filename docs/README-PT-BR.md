@@ -19,7 +19,8 @@ oferece um script separado de recuperação com migração explícita. A partir 
 
 
 > [!IMPORTANT]
-> O LightningOS é um painel local de controle do node e **não foi projetado para exposição direta à Internet pública**. Use-o somente em uma LAN confiável ou por uma VPN privada, como o Tailscale, sempre protegido por firewall no host ou na rede. Nunca encaminhe a porta `8443` nem as portas da App Store para a Internet. Os instaladores restringem a `8443` à LAN detectada e à interface `tailscale0` somente quando o UFW já está instalado e ativo; eles não ativam o UFW automaticamente. Confirme sempre com `sudo ufw status` ou configure um firewall externo equivalente antes de usar o node.
+> O LightningOS é um painel local de controle do node e **não foi projetado para exposição direta à Internet pública**. Use-o somente em uma LAN privada confiável ou pelo Tailscale, sempre protegido por firewall no host ou na rede. Em VPS, acesse a porta `8443` pelo Tailscale, não pelo IP público. Nunca encaminhe a porta `8443` nem as portas da App Store para a Internet. Os instaladores configuram as regras de acesso somente quando o UFW já está instalado e ativo; eles não ativam o UFW automaticamente. Confirme sempre com `sudo ufw status` ou configure um firewall externo equivalente antes de usar o node.
+
 
 [Arquitetura de segurança](#arquitetura-de-segurança) · [Relato privado de vulnerabilidades](../SECURITY.md)
 
@@ -119,7 +120,12 @@ sudo ./install.sh
 Para desenvolvimento a partir do checkout local exato, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install.sh`. Isso pula a seleção/verificação da release; não torna o instalador offline (pacotes e dependências de compilação ainda exigem acesso à rede).
 
 
-Quando o UFW já está instalado e ativo, o instalador detecta automaticamente qual rede IPv4 local pode acessar o manager (por exemplo, `192.168.1.0/24`). Ele remove a regra pública antiga de `8443/tcp`, libera a descoberta mDNS na LAN em `5353/udp` e também libera o acesso pela interface `tailscale0` quando o Tailscale está disponível. O instalador deliberadamente não ativa o UFW em um host existente, pois isso poderia bloquear o SSH ou outros serviços do node; portanto, UFW ausente ou inativo exige que o operador configure um firewall equivalente para LAN/VPN.
+Quando o UFW já está instalado e ativo, o modo LAN mantém o acesso pela rede IPv4 privada detectada (por exemplo, `192.168.1.0/24`) e a descoberta mDNS apenas nessa rede, em `5353/udp`. O CIDR inteiro deve pertencer a `10/8`, `172.16/12` ou `192.168/16`; a sub-rede pública do provedor nunca é uma LAN confiável. Sem LAN privada detectada, o instalador seleciona acesso somente pelo Tailscale: libera `8443/tcp` na `tailscale0` e bloqueia essa porta na interface da rota padrão, em IPv4 e IPv6. O acesso interno restrito dos apps pelas bridges é preservado.
+
+**Upgrade em VPS:** conecte-se pelo Tailscale antes de atualizar. Uma LAN não privada salva é reavaliada, e suas permissões antigas do Manager/mDNS são removidas ao aplicar a política substituta. Sem `tailscale0`, o bloqueio na interface de entrada ainda é aplicado, mas o helper avisa que o acesso não foi verificado; configure o Tailscale por SSH/console. As regras de SSH, Bitcoin/LND e serviços não relacionados não são alteradas. O modo `unprotected` explicitamente reconhecido pelo operador não é sobrescrito silenciosamente.
+
+O instalador deliberadamente não ativa o UFW em um host existente, pois isso poderia bloquear o SSH ou outros serviços do node. UFW ausente ou inativo exige um firewall equivalente para LAN/VPN configurado pelo operador; instalar ou atualizar o LOS, por si só, **não** comprova que o acesso público foi bloqueado. Verifique `sudo ufw status` e o estado de exposição do Manager em System Check. Hosts com outras interfaces de entrada precisam de proteção correspondente nessas interfaces também.
+
 
 ### Instalação via curl (bootstrap)
 Com os pré-requisitos acima, o bootstrap seleciona a release **Latest** publicada, imutável e não marcada como prerelease no catálogo de updates. Faz checkout da tag correspondente no repositório oficial de código, confere o commit com a tag imutável do catálogo e verifica `version.txt` antes de executar `lightningos-light/install.sh`. O sufixo `-Beta` das nossas versões não é a marcação de prerelease do GitHub. Falhas de descoberta/verificação interrompem a instalação; não há fallback para a 0.5.40 ou para a `main` de desenvolvimento.

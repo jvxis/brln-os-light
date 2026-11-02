@@ -41,7 +41,19 @@ an overlay; backup in
   logout;
 - LND kept running (PID 3263).
 
-The UI copy was not deployed on TEST2.
+The companion page still said "Servidor público · TCP sem TLS", so the pin moved
+to `sha-7a078acf0e00378b42f898653bf29c695d97135e`
+(`sha256:7aac88e936825c34eab0e0ab5e8ae2235e1c42ee16ce14c785ac8f5316475994`).
+Its status endpoint reports `electrum_tls`, and the page describes the club
+connection from it: TLS for this catalog, the TCP warning for older ones. Its
+OCI index was verified for amd64 and arm64. The firmware inside it is
+unchanged: device hash `ac65fff567c7723024de2dd2147d0cab8bfda5998028a8518991ce86b1b83d3b`.
+
+That pin and the store copy were deployed on TEST2 with a second hash-guarded
+overlay (backup `before-club-tls-2`). After reinstalling with `club`, the
+container ran `sha-7a078ac` healthy, and status returned
+`"electrum_tls": true` at height 974197. The store bundle carries the new
+privacy text. LND kept running (PID 3263).
 
 The privacy copy now says TLS hides the queries from the network path, but
 the server operator can still see the addresses queried. The certificate

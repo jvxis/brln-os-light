@@ -48,14 +48,22 @@ default_interface() {
 
 detect_lan_cidr() {
   command -v ip >/dev/null 2>&1 || return 0
-  local default_device candidate
+  local default_device candidate route device
   default_device="$(default_interface)"
   if [[ -n "$default_device" ]]; then
     while read -r candidate _; do
       if private_lan_cidr "$candidate"; then echo "$candidate"; return 0; fi
     done < <(ip -o -4 route show dev "$default_device" scope link 2>/dev/null)
+    return 0
   fi
-  # Never mistake a provider subnet or an unrelated Docker bridge for the LAN.
+  # Preserve isolated private LANs without a default route, but never pick an
+  # unrelated container/VPN interface as their replacement.
+  while read -r candidate route; do
+    private_lan_cidr "$candidate" || continue
+    device="$(awk '{ for (i=1; i<NF; i++) if ($i=="dev") { print $(i+1); exit } }' <<<"$route")"
+    case "$device" in ""|lo|tailscale*|docker*|br-*|veth*) continue ;; esac
+    echo "$candidate"; return 0
+  done < <(ip -o -4 route show scope link 2>/dev/null)
   return 0
 }
 

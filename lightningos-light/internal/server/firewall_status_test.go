@@ -9,7 +9,7 @@ import (
 
 func TestManagerExposureRejectsPublicLANBeforeBroker(t *testing.T) {
 	for _, cidr := range []string{"203.0.112.0/20", "10.0.0.0/7", "100.64.0.0/10", "::/0"} {
-		r := httptest.NewRequest(http.MethodPost, "/api/system/manager-exposure", strings.NewReader(`{"mode":"lan","lan_cidr":"`+cidr+`"}`))
+		r := httptest.NewRequest(http.MethodPost, "/api/security/manager-exposure", strings.NewReader(`{"mode":"lan","lan_cidr":"`+cidr+`"}`))
 		r.RemoteAddr = "127.0.0.1:50000"
 		w := httptest.NewRecorder()
 		(&Server{}).handleManagerExposurePost(w, r)

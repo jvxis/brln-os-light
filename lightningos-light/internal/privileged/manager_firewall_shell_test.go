@@ -68,6 +68,20 @@ fixture_route='10.0.0.0/7 proto kernel scope link src 10.0.0.2'
 `)
 }
 
+func TestManagerFirewallShellPreservesIsolatedPrivateLAN(t *testing.T) {
+	runManagerFirewallShell(t, `
+ip() {
+  case "$*" in
+    '-4 route show default') return 0 ;;
+    '-o -4 route show scope link')
+      printf '172.18.0.0/16 dev docker0 scope link\n10.1.0.0/16 dev br-0123456789ab scope link\n192.168.68.0/24 dev enp0s3 scope link\n' ;;
+    *) return 1 ;;
+  esac
+}
+[[ "$(detect_lan_cidr)" == 192.168.68.0/24 ]]
+`)
+}
+
 const managerFirewallShellFixture = `
 command_log="${helper}.commands"
 : >"$command_log"

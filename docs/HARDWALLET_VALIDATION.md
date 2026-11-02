@@ -26,6 +26,23 @@ Checked from the workstation before the change:
 - `server.version` returned `electrs/0.10.8`, protocol 1.4;
 - `blockchain.headers.subscribe` returned height 974193.
 
+On LOS-TEST2 (official 0.5.51-Beta `4fe36d36` plus only this Go change, as
+an overlay; backup in
+`/var/backups/lightningos-hardwallet-pr260/before-club-tls`):
+- the hash-guarded deploy, Hardwallet tests and broker self-test passed;
+- reinstalling with source `club` rendered `BRLN_ELECTRUM_ADDR=electrum.br-ln.com:50002`
+  and `BRLN_ELECTRUM_TRANSPORT=tls`, the image was unchanged (`sha-d7b28dc`),
+  and the container became healthy;
+- authenticated `/api/v1/status` returned mainnet, height 974194, and
+  `/api/v1/fees` answered;
+- a 20-script batch returned 20 results in about 4 s, including the history of
+  the BIP84 test-vector address;
+- anonymous requests got 401, a bad origin got 403, and access was revoked after
+  logout;
+- LND kept running (PID 3263).
+
+The UI copy was not deployed on TEST2.
+
 The privacy copy now says TLS hides the queries from the network path, but
 the server operator can still see the addresses queried. The certificate
 expires on 2027-01-25: renewal on the server must keep the same hostname.

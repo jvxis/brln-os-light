@@ -72,9 +72,14 @@ func TestHardwalletTransportBoundary(t *testing.T) {
 			if err != nil || net.ParseIP(host) != nil {
 				t.Fatal("club access must use its public DNS name, not a personal tailnet IP")
 			}
-			if !strings.Contains(raw, `BRLN_ELECTRUM_TRANSPORT: "tcp"`) || strings.Contains(raw, `BRLN_ELECTRUM_TRANSPORT: "tailscale"`) {
-				t.Fatal("club Electrum must not require tailnet membership")
+			if !strings.Contains(raw, `BRLN_ELECTRUM_TRANSPORT: "tls"`) {
+				t.Fatal("club Electrum must use verified TLS, without tailnet membership")
 			}
+			if !strings.Contains(raw, `BRLN_ELECTRUM_ADDR: "electrum.br-ln.com:50002"`) {
+				t.Fatal("club Electrum must use the TLS port")
+			}
+		} else if !strings.Contains(raw, `BRLN_ELECTRUM_TRANSPORT: "local"`) {
+			t.Fatal("local Electrs keeps the Docker network transport")
 		}
 	}
 	for _, ip := range []string{"127.0.0.1", "0.0.0.0", "8.8.8.8", "100.128.0.1"} {

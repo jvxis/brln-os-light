@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"regexp"
 	"strings"
 
 	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/networkpolicy"
 )
 
 const (
@@ -796,9 +796,8 @@ func ValidateRequest(request Request) error {
 		}
 		switch params.Mode {
 		case "lan":
-			ip, _, err := net.ParseCIDR(params.LANCIDR)
-			if err != nil || ip.To4() == nil {
-				return errors.New("manager LAN CIDR is invalid")
+			if !networkpolicy.PrivateLAN(params.LANCIDR) {
+				return errors.New("manager LAN CIDR must be entirely within a private IPv4 network")
 			}
 			if params.AcknowledgeUnprotected {
 				return errors.New("unprotected acknowledgement is not valid for LAN mode")

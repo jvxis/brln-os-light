@@ -17,7 +17,7 @@ separate, explicit recovery script. From **0.5.50**, compatible global runtimes
 are retained instead of requiring the exact recommended Node/npm versions.
 
 > [!IMPORTANT]
-> LightningOS is a local node-control plane and is **not designed for direct public Internet exposure**. Run it only on a trusted LAN or through a private VPN such as Tailscale, behind a host or network firewall. Never forward port `8443` or App Store ports from the public Internet. The installers restrict `8443` to the detected LAN and `tailscale0` only when UFW is already installed and active; they do not enable UFW automatically. Always verify `sudo ufw status` or provide an equivalent external firewall before using the node.
+> LightningOS is a local node-control plane and is **not designed for direct public Internet exposure**. Run it only on a trusted private LAN or through Tailscale, behind a host or network firewall. On a VPS, access port `8443` through Tailscale, not the public IP. Never forward port `8443` or App Store ports from the public Internet. The installers configure access rules only when UFW is already installed and active; they do not enable UFW automatically. Always verify `sudo ufw status` or provide an equivalent external firewall before using the node.
 
 [Security architecture](#security-architecture) · [Private vulnerability reporting](SECURITY.md)
 
@@ -119,7 +119,11 @@ sudo ./install.sh
 
 For development from the exact local checkout, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install.sh`. This bypasses release selection/verification; it does not make the installer offline (packages and build dependencies still require network access).
 
-When UFW is already installed and active, the installer automatically detects which local IPv4 network may access the manager (for example, `192.168.1.0/24`). It removes the old public `8443/tcp` rule, allows LAN-only mDNS discovery on `5353/udp`, and also allows access through `tailscale0` when Tailscale is available. The installer deliberately does not activate UFW on an existing host because doing so could block SSH or unrelated node services; an inactive or missing UFW therefore requires an equivalent LAN/VPN firewall configured by the operator.
+When UFW is already installed and active, LAN mode keeps access through the detected private IPv4 network (for example, `192.168.1.0/24`) and LAN-only mDNS discovery on `5353/udp`. The whole LAN CIDR must belong to `10/8`, `172.16/12`, or `192.168/16`; a provider's public subnet is never a trusted LAN. With no private LAN detected, the installer selects Tailscale-only access: `8443/tcp` is allowed on `tailscale0` and blocked on the default uplink for IPv4 and IPv6. Restricted internal app-bridge access is preserved.
+
+**VPS upgrades:** connect through Tailscale before upgrading. A saved non-private LAN is re-evaluated and its old Manager/mDNS permissions are removed when the replacement policy is applied. Without `tailscale0`, the public-uplink block is still applied, but the helper warns that access is not verified; configure Tailscale through SSH/console. SSH, Bitcoin/LND and unrelated service rules are not changed. A deliberately acknowledged `unprotected` mode is not silently overridden.
+
+The installer deliberately does not activate UFW on an existing host because doing so could block SSH or unrelated node services. An inactive or missing UFW therefore requires an equivalent LAN/VPN firewall configured by the operator; installing or upgrading LOS alone does **not** prove that public access is blocked. Verify `sudo ufw status` and the Manager exposure status in System Check. Hosts with additional uplinks require corresponding protection on those interfaces as well.
 
 ### Install via curl (bootstrap)
 

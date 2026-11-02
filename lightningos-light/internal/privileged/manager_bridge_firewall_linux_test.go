@@ -66,6 +66,19 @@ func TestManagerBridgeFirewallLinuxGate(t *testing.T) {
 	if info, err := os.Stat(helper); err != nil || !info.Mode().IsRegular() {
 		t.Fatal("provide the checkout's lightningos-manager-firewall.sh through LIGHTNINGOS_MANAGER_FIREWALL_TEST_HELPER")
 	}
+	// The VPS-safe helper now blocks 8443 explicitly on the default uplink.
+	// Account for that exact fixture-owned rule during cleanup as well.
+	uplink := ""
+	routeFields := strings.Fields(run("/usr/sbin/ip", "-4", "route", "show", "default"))
+	for i, field := range routeFields {
+		if field == "dev" && i+1 < len(routeFields) {
+			uplink = routeFields[i+1]
+			break
+		}
+	}
+	if uplink == "" {
+		t.Fatal("default uplink required for the VPN firewall test")
+	}
 	image := "busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
 	run(dockerPath, "image", "inspect", image)
 	projects := []string{"brln-community", "bark-wallet", "los-firewall-unrelated"}
@@ -84,6 +97,7 @@ func TestManagerBridgeFirewallLinuxGate(t *testing.T) {
 	// Every mutation is confined to this fresh disposable host. Restore the inactive
 	// state first, then delete only rules created by this gate. No UFW reset is used.
 	var rules [][]string
+	rules = append(rules, []string{"deny", "in", "on", uplink, "to", "any", "port", "8443", "proto", "tcp", "comment", "LightningOS Manager uplink block"})
 	var networks []string
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)

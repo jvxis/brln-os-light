@@ -5,6 +5,7 @@ import QrScanner from 'qr-scanner'
 import QRCode from 'qrcode'
 import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getSpendingGuard, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, markWalletActivity, payInvoice, payInvoiceMPP, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain, updateSpendingGuard, type SpendingGuardStatus } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
+import OnchainSpendingGuard from '../components/OnchainSpendingGuard'
 import StatusBadge from '../components/dashboard/StatusBadge'
 import LNURLWithdraw from '../components/LNURLWithdraw'
 import { getLocale } from '../i18n'
@@ -1114,7 +1115,7 @@ export default function Wallet() {
         return
       }
       setSendTxid('')
-      setSendStatus(err?.message || t('wallet.onchainSendFailed'))
+      setSendStatus(err?.code === 'onchain_spending_guard_limit_exceeded' ? t('onchainGuard.blocked') : err?.code === 'onchain_spending_guard_unavailable' ? t('onchainGuard.unavailable') : err?.message || t('wallet.onchainSendFailed'))
     } finally {
       setSendRunning(false)
     }
@@ -2455,6 +2456,8 @@ export default function Wallet() {
           </div>
         )}
       </div>
+
+      <OnchainSpendingGuard />
 
       {mobileQrScannerOpen && (
         <div className="fixed inset-0 z-50 bg-ink/95 px-4 py-5 sm:hidden">

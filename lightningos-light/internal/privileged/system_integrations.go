@@ -19,14 +19,14 @@ const (
 	defaultReportsServicePath        = "/etc/systemd/system/lightningos-reports.service"
 	defaultReportsTimerPath          = "/etc/systemd/system/lightningos-reports.timer"
 	defaultManagerTLSCertificatePath = "/etc/lightningos/tls/server.crt"
-	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20261030-v11"
+	defaultSystemIntegrationsMarker  = "/var/lib/lightningos-privileged/system-integrations-20261101-v12"
 	defaultKernelTCPHelperPath       = "/usr/local/libexec/lightningos-kernel-tcp"
 	kernelTCPHelperSHA256            = "ec673fc074416fef37db6681c53c8f66f83543ee13fd6f09dd4e22b72bf156ce"
 	envExecutablePath                = "/usr/bin/env"
 	idExecutablePath                 = "/usr/bin/id"
 
 	terminalHelperSHA256        = "6958cc1aaee60b009774014a95cdee080e011944aa6ef23457ef5788a7ccd859"
-	managerFirewallHelperSHA256 = "cb0c9e4e0ef773b67a9b08218f29c4020e29202eea342d11cc9b502e2f4c9dc8"
+	managerFirewallHelperSHA256 = "6472e456f0757261c7e0f59a309e1546c65fd5255aa13858b87194c0fc7821f3"
 	managerTLSMDNSHelperSHA256  = "7ff9f17061eec00aec8eedc389044b0cf283e639f8e8f0cfda4ca47c6074b8f9"
 
 	lndIntegrationDropIn       = "[Service]\nRestart=always\nRestartSec=60\n"

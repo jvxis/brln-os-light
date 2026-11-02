@@ -3,9 +3,10 @@ package privileged
 import (
 	"context"
 	"errors"
-	"net"
 	"os"
 	"strings"
+
+	"lightningos-light/internal/networkpolicy"
 )
 
 const defaultManagerFirewallConfigPath = "/etc/lightningos/manager-firewall.conf"
@@ -98,7 +99,7 @@ func readManagerFirewallConfig(path string, state ManagerFirewallState) ManagerF
 		state.ConfigValid = true
 		return state
 	}
-	if _, _, err := net.ParseCIDR(configured); err != nil {
+	if !networkpolicy.PrivateLAN(configured) {
 		return state
 	}
 	state.ConfigValid = true
@@ -198,13 +199,13 @@ func parseManagerFirewallOutput(output string, state ManagerFirewallState) Manag
 		if !strings.Contains(line, "8443") || !strings.Contains(line, "allow") {
 			continue
 		}
-		if configuredLower != "" && configuredLower != "none" && strings.Contains(line, configuredLower) {
+		if networkpolicy.PrivateLAN(configuredLower) && strings.Contains(line, configuredLower) {
 			state.LANRulePresent = true
 		}
 		if strings.Contains(line, "tailscale0") {
 			state.TailscaleRule = true
 		}
-		if strings.Contains(line, "anywhere") && !strings.Contains(line, "tailscale0") {
+		if networkpolicy.PublicManagerAllow(line) {
 			state.BroadRulePresent = true
 		}
 	}

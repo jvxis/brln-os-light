@@ -501,8 +501,9 @@ Body:
 {"mode":"lan","lan_cidr":"192.168.1.0/24"}
 ```
 - Supported modes are `lan`, `vpn`, and `unprotected`.
-- `lan` requires an active UFW, a valid IPv4 CIDR, and the current client must be inside that CIDR (loopback is allowed for local recovery).
+- `lan` requires an active UFW, an IPv4 CIDR entirely within RFC1918 (`10/8`, `172.16/12`, `192.168/16`), and the current client must be inside that CIDR (loopback is allowed for local recovery). Public, CGNAT, IPv6, and private/public-spanning CIDRs are rejected with `manager_exposure_invalid_cidr` before invoking the broker.
 - `vpn` requires an active UFW and `tailscale0`; a non-loopback request must already arrive from a Tailscale address.
+- VPN-only policy permits `8443/tcp` on `tailscale0` and explicitly blocks that port on the default uplink (IPv4/IPv6), preserving restricted Docker bridge access used by apps. On installation/upgrade, no detected private LAN defaults to this policy; a saved non-private LAN is re-evaluated. If Tailscale is absent, the helper blocks the uplink but returns a warning rather than verified success. An inactive/missing UFW is never automatically enabled.
 - `unprotected` requires `{"acknowledge_unprotected":true}` and records that LightningOS cannot verify protection for port 8443.
 - This endpoint never installs or enables UFW, changes SSH rules, switches the Manager bind address, or restarts Bitcoin/LND.
 

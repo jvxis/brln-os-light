@@ -1,4 +1,24 @@
 {
+  "onchainGuard": {
+    "title": "On-chain Spending Guard",
+    "unverified": "UNVERIFIED",
+    "description": "Independent limits for value sent outside this LND wallet through LOS. Both enabled limits apply; mining fees and change do not consume the settled allowance.",
+    "feesExcluded": "Mining fees are excluded from settled spending.",
+    "summary": "Per send: {{perSend}} sats · Protected outgoing value over 24h: {{used}} / {{limit}} sats",
+    "usage": "Protected outgoing value — last 24 hours",
+    "broadcast": "Broadcast: {{amount}} sats",
+    "perSend": "Maximum external value per send (sats)",
+    "rolling": "Maximum external value in any 24 hours (sats)",
+    "scope": "Covers manual Wallet and On-chain Hub sends, including Send all. Verified transfers to the node's non-watch-only default wallet are exempt. Imported, watch-only and unverified destinations count as external. Blank/zero removes that limit; enabling protection requires at least one limit.",
+    "sweep": "Send all temporarily reserves the selected input total because LND determines its final fee during submission. The fee is released when the native transaction is verified. Near a limit, use an explicit amount. Uncertain sends retain their reservation, even after 24 hours, until reconciled; retries and RBF fee bumps do not create a second charge for the same operation.",
+    "exclusions": "Not covered: channel operations, maintenance sweeps, Loop/PeerSwap funding, OP_RETURN, retirement/succession workflows and apps or CLI calls with direct LND access. Their fees remain outside this guard. This is not a global LND wallet restriction.",
+    "save": "Save On-chain Spending Guard",
+    "saved": "On-chain Spending Guard updated.",
+    "saveFailed": "Unable to save the on-chain policy.",
+    "invalid": "Enter whole, non-negative satoshi limits. At least one positive limit is required when protection is enabled.",
+    "unavailable": "On-chain spending protection could not be verified. New manual sends are blocked until its storage is available.",
+    "blocked": "This send exceeds the On-chain Spending Guard limit. No transaction was submitted."
+  },
   "rebalanceEligibility": {
     "details": "Rebalance status and eligibility — expand for details",
     "unavailable": "Rebalance status unavailable",

@@ -395,6 +395,18 @@ export type SpendingGuardStatus = {
   updated_at?: string
 }
 export const getSpendingGuard = (): Promise<SpendingGuardStatus> => request('/api/wallet/spending-guard')
+export type OnchainSpendingGuardStatus = {
+  enabled: boolean
+  max_send_sat: number
+  rolling_24h_limit_sat: number
+  used_sat: number
+  reserved_sat: number
+  remaining_sat: number
+  updated_at?: string
+}
+export const getOnchainSpendingGuard = (): Promise<OnchainSpendingGuardStatus> => request('/api/wallet/onchain-spending-guard')
+export const updateOnchainSpendingGuard = (payload: { enabled: boolean; max_send_sat: number; rolling_24h_limit_sat: number }): Promise<OnchainSpendingGuardStatus> =>
+  request('/api/wallet/onchain-spending-guard', { method: 'PUT', body: JSON.stringify(payload) })
 export const updateSpendingGuard = (payload: {
   enabled: boolean
   max_payment_sat: number

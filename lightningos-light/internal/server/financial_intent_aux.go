@@ -71,6 +71,26 @@ func validateFinancialSnapshot(ctx context.Context, kind string, snapshot any) e
 func (s *Server) prepareAuxFinancialIntent(ctx context.Context, path string, payload []byte) ([]byte, financialIntentBinding, error) {
 	binding := financialIntentBinding{Kind: "request", Summary: financialIntentSummary{Operation: strings.TrimPrefix(path, "/api/"), Details: payload}}
 	switch path {
+	case "/api/wallet/onchain-spending-guard":
+		var request onchainGuardSettings
+		if err := decodeFinancialRequest(payload, &request); err != nil {
+			return nil, binding, err
+		}
+		if err := validateOnchainGuardSettings(request); err != nil {
+			return nil, binding, err
+		}
+		store, err := s.financialIntentService()
+		if err != nil {
+			return nil, binding, errOnchainGuardUnavailable
+		}
+		current, err := store.onchainGuardStatus()
+		if err != nil {
+			return nil, binding, err
+		}
+		if !onchainGuardNeedsReauth(current.onchainGuardSettings, request) {
+			binding.Kind = "not_required"
+		}
+		return payload, binding, nil
 	case "/api/wallet/spending-guard":
 		var request struct {
 			Enabled            bool  `json:"enabled"`

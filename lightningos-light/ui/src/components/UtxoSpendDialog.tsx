@@ -142,7 +142,11 @@ export default function UtxoSpendDialog({
     } catch (err: any) {
       const message: string = err?.message || t('onchainHub.spend.errorSendFailed')
       const code: string | undefined = err?.code
-      if (code === 'wallet_send_external_reauth_required' || message.toLowerCase().includes('password')) {
+      if (code === 'onchain_spending_guard_limit_exceeded') {
+        setSubmitError(t('onchainGuard.blocked'))
+      } else if (code === 'onchain_spending_guard_unavailable') {
+        setSubmitError(t('onchainGuard.unavailable'))
+      } else if (code === 'wallet_send_external_reauth_required' || message.toLowerCase().includes('password')) {
         setNeedsPassword(true)
         setSubmitError(t('onchainHub.spend.errorReauthRequired'))
       } else {

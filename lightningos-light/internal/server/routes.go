@@ -219,6 +219,8 @@ func (s *Server) routes() http.Handler {
 	r.Route("/api/wallet", func(r chi.Router) {
 		r.Get("/summary", s.handleWalletSummary)
 		r.Get("/spending-guard", s.handleSpendingGuardGet)
+		r.Get("/onchain-spending-guard", s.handleOnchainSpendingGuardGet)
+		r.Put("/onchain-spending-guard", s.handleOnchainSpendingGuardUpdate)
 		r.Put("/spending-guard", s.handleSpendingGuardUpdate)
 		r.Get("/activity", s.handleWalletActivity)
 		r.Post("/activity/mark", s.handleWalletActivityMark)

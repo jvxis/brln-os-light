@@ -25,6 +25,8 @@ type financialOperation struct{ scope, code string }
 
 func coreFinancialOperation(path string) (financialOperation, bool) {
 	switch path {
+	case "/api/wallet/onchain-spending-guard":
+		return financialOperation{authScopeOnchainGuardPolicy, "onchain_spending_guard_reauth_required"}, true
 	case "/api/wallet/spending-guard":
 		return financialOperation{authScopeSpendingGuardPolicy, "spending_guard_reauth_required"}, true
 	case "/api/lnops/node-retirement/sessions":
@@ -59,14 +61,14 @@ func coreFinancialOperation(path string) (financialOperation, bool) {
 }
 
 func financialOperationMethod(operation financialOperation) string {
-	if operation.scope == authScopeSpendingGuardPolicy {
+	if operation.scope == authScopeSpendingGuardPolicy || operation.scope == authScopeOnchainGuardPolicy {
 		return http.MethodPut
 	}
 	return http.MethodPost
 }
 
 func financialOperationConditional(operation financialOperation) bool {
-	return operation.scope == authScopeSpendingGuardPolicy || operation.scope == authScopeNodeRetirement || operation.scope == authScopeSuccessionLive
+	return operation.scope == authScopeOnchainGuardPolicy || operation.scope == authScopeSpendingGuardPolicy || operation.scope == authScopeNodeRetirement || operation.scope == authScopeSuccessionLive
 }
 
 func (s *Server) financialIntentService() (*financialIntentStore, error) {

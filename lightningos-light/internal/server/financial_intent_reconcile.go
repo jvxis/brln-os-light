@@ -131,6 +131,14 @@ func (s *Server) observeFinancialIntent(ctx context.Context, record *financialIn
 		}
 	}
 	body, _ := json.Marshal(map[string]string{"txid": transaction.GetTxHash()})
+	store, err := s.financialIntentService()
+	if err != nil {
+		return 0, nil, errOnchainGuardUnavailable
+	}
+	amount, err := onchainGuardTransactionAmount(binding, transaction)
+	if err != nil || store.finishOnchainGuard(record.ID, transaction.GetTxHash(), amount, false) != nil {
+		return 0, nil, errOnchainGuardUnavailable
+	}
 	return 200, body, nil
 }
 

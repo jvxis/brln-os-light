@@ -66,6 +66,7 @@ func (s *Server) startSpendingGuardReconciler() {
 		defer ticker.Stop()
 		for {
 			s.reconcileSpendingGuard()
+			s.reconcileOnchainSpendingGuard()
 			select {
 			case <-s.shutdownContext().Done():
 				return

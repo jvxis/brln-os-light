@@ -567,6 +567,22 @@ Body:
 - Covers Wallet Lightning payments, Chat Keysend, and Loop Out BRLN tranches. It intentionally excludes routing forwards, LOS rebalances, channel operations, on-chain sends, and apps connected directly to LND.
 - A blocked payment returns HTTP 429 with code `spending_guard_limit_exceeded`.
 
+GET /api/wallet/onchain-spending-guard
+- Returns the independent on-chain policy (`enabled`, `max_send_sat`, `rolling_24h_limit_sat`, `updated_at`) and `used_sat`, `reserved_sat`, `remaining_sat`. Responses are authenticated and `Cache-Control: no-store`.
+- Disabled by default. A zero cap is unlimited for that dimension. The Lightning guard, its database tables and accounting are unchanged.
+
+PUT /api/wallet/onchain-spending-guard
+Body: `{"enabled":true,"max_send_sat":100000,"rolling_24h_limit_sat":500000}`
+- Limits are whole sats, between zero and 2100000000000000. At least one positive cap is required when enabled. Both caps apply independently.
+- Relaxing/removing an active cap or disabling the guard requires a single-use exact financial intent under `onchain_spending_guard_policy`. Missing approval returns HTTP 428, `onchain_spending_guard_reauth_required`, `requires_financial_intent=true`. Tightening a policy does not require spending approval. Existing authentication and CSRF checks still apply.
+- Protects **manual `POST /api/wallet/send` requests**, including the Wallet and On-chain Hub, selected inputs, send-all, imported and watch-only destinations. Protection is server-side, including when UI login is disabled; it is not a global LND restriction.
+- A fixed send consumes its external destination amount only: not input debit, mining fee or change. Transfers verified against WalletKit's non-watch-only `default` account and derived-address metadata are exempt; unavailable/unknown/imported/watch-only ownership is not exempt. All manual sends, including exempt consolidations, retain their existing reauthentication requirements.
+- Send-all initially reserves the **selected input total** because native SendCoins determines its final mining fee. Once the native transaction is verified, only the destination output is settled and unused reservation is released. Near a cap, a fixed amount avoids conservative sweep rejection; fee previews are not trusted as exact native fees.
+- Reservations are durable and serialized with policy updates in `financial-intents/onchain-spending-guard.state` (private permissions and the existing process lock). Concurrent sends cannot reuse allowance. A restarted Manager retains policy/holds. Existing intent replay never dispatches again; settlement/reconciliation is idempotent by operation ID, not replacement txid. RBF/CPFP fee operations do not create another outgoing-value charge.
+- A native dispatch error/lost reply remains reserved unless non-dispatch is proven. Pending holds do not expire merely because 24 hours passed. Reconciliation observes native transaction evidence and never resubmits; settled value expires from the rolling window 24 hours after settlement. This can conservatively extend usage after a delayed native result.
+- Channel operations, maintenance sweeps, Loop/PeerSwap funding, OP_RETURN, retirement/succession and apps/CLI with direct LND access are outside this first scope. Their operational fees are not blocked by this guard; normal fee controls remain in force.
+- Limit rejection: HTTP 429, `onchain_spending_guard_limit_exceeded`, with `reason` (`per_send` or `rolling_24h`), `requested_sat`, `remaining_sat`. Storage failure/unsafe state: HTTP 503, `onchain_spending_guard_unavailable`; no new manual send is submitted. Never interpret unavailable as disabled. Filesystem capacity/read/write/fsync errors fail closed.
+
 POST /api/wallet/address
 - Returns a new on-chain address.
 

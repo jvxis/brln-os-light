@@ -17,6 +17,21 @@ func (s *Server) observeFinancialWorkflow(ctx context.Context, record *financial
 	if len(record.Proof) > 0 && (json.Unmarshal(record.Proof, &proof) != nil || proof.Kind != binding.Kind || !proof.DispatchStarted) {
 		return 0, nil, errFinancialIntentPending
 	}
+	if record.Path == "/api/wallet/onchain-spending-guard" {
+		var request onchainGuardSettings
+		if json.Unmarshal(record.Request, &request) != nil {
+			return 0, nil, errFinancialIntentPending
+		}
+		store, err := s.financialIntentService()
+		if err != nil {
+			return 0, nil, errFinancialIntentPending
+		}
+		status, err := store.onchainGuardStatus()
+		if err != nil || status.Enabled != request.Enabled || status.MaxSendSat != request.MaxSendSat || status.Rolling24hLimitSat != request.Rolling24hLimitSat {
+			return 0, nil, errFinancialIntentPending
+		}
+		return financialObservedResult(200, status)
+	}
 	if record.Path == "/api/wallet/spending-guard" {
 		var request struct {
 			Enabled            bool  `json:"enabled"`

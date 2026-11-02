@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:20px;background:#0b1017;color:#eef2f6"><main id="root"></main>
+<script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import i18n from '../src/i18n'
+import OnchainSpendingGuard from '../src/components/OnchainSpendingGuard'
+import '../src/styles/main.css'
+const fixture = window.guardFixture = {
+  status: { enabled:false,max_send_sat:0,rolling_24h_limit_sat:0,used_sat:0,reserved_sat:0,remaining_sat:0 },
+  writes: [], fail:false, poll:null, language:language=>i18n.changeLanguage(language)
+}
+const originalInterval=window.setInterval.bind(window)
+window.setInterval=(callback,delay,...args)=>{
+  if(delay===30000) fixture.poll=callback
+  return originalInterval(callback,delay,...args)
+}
+window.fetch=async(input,options={})=>{
+  if(!String(input).endsWith('/api/wallet/onchain-spending-guard')) throw new Error('Unexpected fixture request: '+input)
+  if(fixture.fail) return new Response(JSON.stringify({error:'Fixture unavailable',code:'onchain_spending_guard_unavailable'}),{status:503})
+  if(options.method==='PUT') {
+    const payload=JSON.parse(options.body)
+    fixture.writes.push(payload)
+    fixture.status={...fixture.status,...payload}
+  }
+  return new Response(JSON.stringify(fixture.status),{status:200,headers:{'Content-Type':'application/json'}})
+}
+createRoot(document.getElementById('root')).render(React.createElement(OnchainSpendingGuard))
+</script></body></html>

@@ -131,7 +131,7 @@ acertar esses casos e não gerar ruído no resto do histórico.
 ### R1. Vendedor vazio, rebalance preso no teto → repor por outra ferramenta
 
 Condição:
-- `revenue_7d` no topo do nó (percentil 80) ou `≥ X sats/dia`;
+- `revenue_7d` entre os 20% maiores do nó (percentil 80);
 - local `≤` alvo e intent `refill_target` ativa há `≥ 12h`;
 - jobs de 24h para o canal todos falhos com "all sources failed" / "no route",
   ou `autopilot_reason` em `target_structural_cooldown`,
@@ -139,8 +139,11 @@ Condição:
 
 Ação, na ordem:
 1. Se o último custo pago (`rebalance_cost_7d_ppm`) estiver entre 90% e 100%
-   do teto, e `sale × 0,9 − custo ≥ margem mínima`, sugerir
-   `econ_ratio_override` 0,9 no canal. Mostrar o teto novo e a margem que sobra.
+   do teto, e o preço de venda ainda cobrir o custo pelo mesmo piso do AutoFee
+   (`venda ≥ custo × 1,10`; sink: `× (1,10 + margem extra do perfil)`,
+   0,03–0,06), sugerir `econ_ratio_override` 0,9 no canal. Mostrar o teto
+   novo e a margem que sobra. A margem mínima não é um número novo: é a
+   regra de piso que o AutoFee já aplica.
 2. Senão, sugerir **Loop In com último salto no peer**. O botão "cotar" chama
    `POST /api/apps/loop/quote` com `last_hop_pubkey`. A cotação só sai por
    clique, porque é chamada a serviço externo. Com a cotação, a tela mostra a
@@ -152,9 +155,10 @@ maior vendedor sink do FP (Loop In de 1.249 contra venda de ~2.150).
 ### R2. Esgota rápido → mais capacidade com o peer
 
 Condição: o canal vendeu `≥ 60%` da capacidade em `≤ 2` dias pelo menos duas
-vezes em 14 dias, e a margem da R1 é positiva.
+vezes em 14 dias, e a venda cobre o custo pelo piso do AutoFee (R1).
 
-Ação: abrir mais capacidade. A tela mostra dois caminhos e o custo de cada um:
+Ação: abrir mais capacidade. A tela mostra sempre os dois caminhos, com o
+custo de cada um, e o operador escolhe:
 - **canal maior que substitui o atual** (fechar depois de esvaziar). Mantém um
   canal só com o peer, então o rebalance segue usando o caminho rápido e a
   escada;
@@ -188,8 +192,8 @@ assistida 30d abaixo de um piso. Um canal isca que traz assistida não é
 capital parado.
 
 Guardas (bloqueiam):
-- peer é membro do clube BR⚡LN (lista configurável, não só o alias);
-- compromisso Magma ativo (`/api/apps/magma-sales/commitments`);
+- compromisso Magma ativo (`/api/apps/magma-sales/commitments`), quando o
+  app Magma está instalado;
 - canal com menos de 30 dias;
 - modo parked não é ação desta regra: parked é só para canal que já vai
   fechar.
@@ -237,6 +241,11 @@ barrados por estoque pago.
   fechar (R4), não baixar fee.
 - **Lucro do nó, não do canal:** antes de R3, R4 e R6 a regra lê a receita
   assistida.
+- **Independente de quem opera.** As regras usam só dados do próprio nó e
+  dos apps instalados. Nada depende do BR⚡LN, de listas de peers ou de
+  configuração externa: o produto é de uso geral. Preferências do operador
+  (por exemplo, nunca sugerir fechar certos peers) ficam para uma lista de
+  exclusão local, opcional, numa fase posterior.
 
 ## Medição do resultado (fase 2)
 
@@ -295,11 +304,10 @@ Dados para janelas longas:
 Tabela `insights_outcomes`, job diário que fecha a medição de 7 dias, e o
 quadro de acerto por regra.
 
-### Fase 3: atalhos e alertas
+### Fase 3: atalhos
 
-- botões preenchidos para Loop In, abertura e fechamento de canal;
-- opcional: alerta no Telegram para recomendação nova de prioridade alta
-  (desligado por padrão).
+- botões preenchidos para Loop In, abertura e fechamento de canal.
+- Sem alerta no Telegram: a tela basta (decisão de 03/11).
 
 ## Fora do escopo
 
@@ -307,13 +315,17 @@ quadro de acerto por regra.
 - LLM ou texto livre gerado: o texto vem de modelos fixos com os números;
 - recomendações entre nós (FP × HUB). Cada nó roda as suas.
 
+## Decisões (03/11/2026)
+
+- "Vendedor" = percentil 80 de `revenue_7d` do nó. Sem piso absoluto em sats.
+- Margem mínima da R1 = piso do AutoFee (custo × 1,10; sink com margem extra
+  do perfil). Nenhum limiar novo.
+- R2 mostra sempre as duas opções (canal maior que substitui × segundo canal).
+- Sem Telegram.
+- Nenhuma dependência do clube BR⚡LN ou de listas externas: o app é de uso
+  geral.
+
 ## Perguntas em aberto
 
-1. **Limiares iniciais:** venda mínima para "vendedor" (proposta: 1.000
-   sats/7d ou percentil 80), margem mínima para R1 (proposta: 300 ppm) e piso
-   de assistida para R4.
-2. **Membros do clube:** a lista vem de configuração manual ou de alguma fonte
-   do BR⚡LN?
-3. **Canal maior que substitui o atual × segundo canal (R2):** quer a
-   recomendação com as duas opções, ou uma preferência fixa?
-4. **Telegram (fase 3):** interessa, ou a tela basta?
+1. **Piso de receita assistida para a R4** (capital parado): proposta inicial,
+   assistida 30d menor que 10% da direta média dos canais do nó.

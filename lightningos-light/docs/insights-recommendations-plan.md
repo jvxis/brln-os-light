@@ -40,8 +40,8 @@ que diga, em sats, o que fazer agora e por quê.
 | Fonte | O que entrega | Limite para recomendar |
 |---|---|---|
 | Channel Ranking (`/api/lnops/channel-ranking`) | estado por canal (expand/keep/monitor/close), score 7d/30d, receita direta e assistida, `recommendations` com códigos como `consider_more_capacity` | diz **o que o canal é**, não **o que fazer agora**; não sabe se o rebalance já falhou no teto, nem quanto vale cada ferramenta |
-| Rebalance (`/api/rebalance/channels`) | `autopilot_reason`, `sale_price_ppm`, `fee_budget_ppm`, `econ_ratio_override`, `revenue_7d_sat`, `no_sale_30d` | motivo de um scan, sem contexto de dias; histórico de jobs da API cobre só 24h |
-| Sovereign history (`/api/rebalance/sovereign-history?include_decisions=1`) | decisão por canal em cada scan, inclusive degraus da escada | ~24h |
+| Rebalance (`/api/rebalance/channels`) | `autopilot_reason`, `sale_price_ppm`, `fee_budget_ppm`, `econ_ratio_override`, `revenue_7d_sat`, `no_sale_30d` | motivo de um scan, sem contexto de dias; `/api/rebalance/history` lê só 24h, embora o banco guarde tudo |
+| Sovereign history (`/api/rebalance/sovereign-history?include_decisions=1`) | decisão por canal em cada scan, inclusive degraus da escada | apagado após 48h |
 | Interlock (`/api/lnops/automation-intents`) | `refill_target` (drained, extreme, low_outbound, productive) com `first_seen_at`; `protect_fee_floor` | diz que o canal está vazio, não o que fazer se o rebalance não repõe |
 | AutoFee (`/api/lnops/autofee/{outcomes,price-experiments}`) | resposta a cada mudança de fee; vereditos `shadow_sold` / `shadow_no_demand` | demanda por canal, sem decisão de capital |
 | Novos Canais (`/api/channel-ranking/open-candidates`) | candidatos a peer novo com `demand_score`, `route_cost_ppm`, razões | não considera o capital disponível nem o que já fazemos com peers existentes |
@@ -249,9 +249,21 @@ intents. Mede:
 - para R1 e R2, quanto o operador teria ganho seguindo, usando a venda que de
   fato aconteceu depois.
 
-Limite: o histórico de jobs falhos só existe por 24h na API, então R1 só pode
-ser testada pelo `autopilot_reason` e pela ausência de compra. A fase 1 passa a
-gravar um retrato diário para resolver isso.
+Dados para janelas longas:
+
+- `rebalance_jobs` e `rebalance_attempts` não têm limpeza: o histórico
+  completo, inclusive jobs falhos, está no banco. Só a leitura
+  `GET /api/rebalance/history` filtra `completed_at >= now() - 1 day`.
+  Pré-requisito da fase 0: aceitar `from`/`to` (ou `days`) nesse endpoint,
+  só leitura, com limite de linhas. Assim o HUB, que só tem acesso pela API,
+  também entra no teste;
+- `GET /api/rebalance/metrics/baseline?days=N` já dá jobs, falhas e custo por
+  dia, mas do nó inteiro, sem quebra por canal;
+- `GET /api/rebalance/pair-stats?target_channel_id=` dá sucesso e falha
+  acumulados por par fonte → alvo (até 60 dias), sem série diária;
+- `rebalance_sovereign_history` (decisão e motivo por canal a cada scan) é
+  apagado depois de 48h. Para dias anteriores, o motivo do autopilot não é
+  recuperável. A fase 1 grava um retrato diário por canal para cobrir isso.
 
 ### Fase 1: serviço e tela só de leitura
 

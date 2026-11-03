@@ -51,6 +51,20 @@ que diga, em sats, o que fazer agora e por quê.
 Todas as regras abaixo usam só essas fontes. A funcionalidade não cria
 heurística de preço própria; cruza o que os motores já calculam.
 
+### Histórico que já existe (não refazer)
+
+| Dado | Retenção | Onde foi feito |
+|---|---|---|
+| Policies (fee) do próprio nó, `fee_logs` do detalhe do canal | 365 d (`own_history_retention_days`, máx 730) | 0.5.48, `docs/own-policy-history-retention-0.5.48.md` |
+| Forwards e rebalances liquidados (notificações) | 1 ano | existente |
+| `rebalance_jobs` / `rebalance_attempts`, inclusive falhos | sem poda | existente; só a leitura `/history` filtra 1 dia |
+| Lotes pagos do stock gate | 2× a janela de inventário | 0.5.42 |
+| Outcomes e experimentos do AutoFee | tabelas próprias, sem janela de 24 h | 0.5.43 |
+| `rebalance_sovereign_history` (motivo por canal por scan) | **48 h** | único dado que a fase 1 precisa passar a guardar |
+
+Qualquer item deste plano que pareça "ampliar histórico" deve antes conferir
+esta tabela e o código de poda (`delete from <tabela>`).
+
 ## Onde fica
 
 Item novo **Insights** (pt-BR: **Insights**) no grupo **Lightning** do menu,

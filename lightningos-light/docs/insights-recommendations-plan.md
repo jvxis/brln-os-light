@@ -325,7 +325,11 @@ quadro de acerto por regra.
 - Nenhuma dependência do clube BR⚡LN ou de listas externas: o app é de uso
   geral.
 
+- Piso de receita assistida da R4 (capital parado): assistida 30d menor que
+  10% da receita direta média dos canais do nó. Valor inicial, a revisar na
+  fase 0.
+
 ## Perguntas em aberto
 
-1. **Piso de receita assistida para a R4** (capital parado): proposta inicial,
-   assistida 30d menor que 10% da direta média dos canais do nó.
+Nenhuma. O próximo passo é o plano detalhado da fase 0 (arquivos, o que já
+existe, testes de regressão), para aprovação antes de qualquer código.

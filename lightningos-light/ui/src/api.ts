@@ -573,6 +573,62 @@ export const getChannelOpenCandidates = (params?: { limit?: number }) =>
   request(`/api/lnops/channel-ranking/open-candidates${buildQuery(params)}`)
 export const recomputeChannelOpenCandidates = () =>
   request('/api/lnops/channel-ranking/open-candidates/recompute', { method: 'POST' })
+
+export type InsightEvidence = {
+  key: string
+  value: number
+  unit?: string
+  compare?: number
+  extra?: string
+  source: string
+}
+
+export type InsightAction = {
+  step: number
+  tool: 'rebalance_target' | 'loop_in' | 'econ_override' | 'open_channel' | 'close_channel' | 'autofee_review' | 'use_as_source' | 'none'
+  params?: Record<string, string>
+}
+
+export type InsightGuard = { code: string; passed: boolean }
+
+export type InsightItem = {
+  id: string
+  kind: 'repor_vendedor' | 'mais_capacidade' | 'parar_compra' | 'capital_parado' | 'abrir_canal' | 'preco_fora' | 'bloqueio_esperado'
+  rule: string
+  priority: number
+  confidence: 'high' | 'medium' | 'low'
+  confidence_reason?: Record<string, number>
+  channel_id?: number
+  channel_point?: string
+  peer_alias?: string
+  peer_pubkey?: string
+  value_sat_day: number
+  cost_sat: number
+  evidence: InsightEvidence[]
+  actions: InsightAction[]
+  guards?: InsightGuard[]
+  invalidate_when: string
+  status: 'open' | 'dismissed' | 'done' | 'expired'
+  dismiss_reason?: string
+  first_seen_at: string
+  last_seen_at: string
+  resolved_at?: string
+}
+
+export type InsightSource = { id: string; ok: boolean; age_sec?: number; error?: string }
+
+export type InsightsPayload = {
+  computed_at: string
+  sources: InsightSource[]
+  summary: { value_sat_day: number; open: number; open_high: number; followed_30d: number; idle_capital_sat: number }
+  items: InsightItem[]
+}
+
+export const getInsights = (): Promise<InsightsPayload> => request('/api/lnops/insights')
+export const recomputeInsights = (): Promise<InsightsPayload> =>
+  request('/api/lnops/insights/recompute', { method: 'POST' })
+export const setInsightStatus = (id: string, status: 'open' | 'dismissed' | 'done', reason?: string) =>
+  request(`/api/lnops/insights/${encodeURIComponent(id)}/status`, { method: 'POST', body: JSON.stringify({ status, reason }) })
 export const getCloseManagerStatus = () => request('/api/lnops/close-manager/status')
 export const getCloseManagerSessions = (limit = 100) =>
   request(`/api/lnops/close-manager/sessions?limit=${encodeURIComponent(String(limit))}`)

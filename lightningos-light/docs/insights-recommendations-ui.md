@@ -206,7 +206,7 @@ Tudo que vira texto tem chave i18n: `insights.kind.*`, `insights.evidence.*`,
 | `ui/src/pages/insights/SignalMap.tsx` | SVG das fontes |
 | `ui/src/pages/insights/RuleGlossary.tsx` | gaveta "Como funciona" + diagrama |
 | `ui/src/pages/insights/types.ts` | tipos do contrato acima |
-| `ui/src/lib/links.ts` | mover `pages/channel-ranking/links.ts` (manter re-export no lugar antigo) |
+| `ui/src/pages/insights/links.ts` | links profundos próprios (mesmo padrão de `channel-ranking/links.ts`; nada foi movido para não tocar em página existente) |
 | `ui/src/api.ts` | `getInsights`, `recomputeInsights`, `dismissInsight`, `markInsightDone` |
 | `ui/src/App.tsx` | rota `insights`, item primeiro no grupo `lightning` |
 | `ui/src/i18n/{en,pt-BR}.json` | `nav.insights` + bloco `insights.*` |

@@ -769,6 +769,7 @@
     "feeCenter": "Fee Center",
     "channelRanking": "Channel Ranking",
     "newChannels": "New Channels",
+    "insights": "Insights",
     "onchainHub": "On-chain Hub",
     "lndConfig": "LND Config",
     "lndInfo": "LND Info",
@@ -6414,6 +6415,187 @@
       "off": "Off",
       "shadow": "Shadow",
       "enforce": "Enforce"
+    }
+  },
+  "insights": {
+    "title": "Insights",
+    "subtitle": "What to do today so this node earns more, based on what already happened. The screen only recommends: every button leads to the screen that does the work.",
+    "computedAt": "Computed {{value}}",
+    "recompute": "Recompute",
+    "recomputing": "Recomputing…",
+    "how": "How it works",
+    "teachOn": "Teaching mode: on",
+    "teachOff": "Teaching mode: off",
+    "teachHint": "Shows the source of each number and the full explanation on every card.",
+    "loading": "Reading signals…",
+    "unavailable": "Insights unavailable.",
+    "empty": {
+      "title": "Nothing to recommend right now — and that is good.",
+      "body": "Every rule below ran against the latest signals and found no case to raise.",
+      "watching": "Watched rules"
+    },
+    "summary": {
+      "valueAtStake": "Value at stake",
+      "valueHint": "How much more per day if every open recommendation is followed. Counts observed sales only, never a forecast.",
+      "open": "Open recommendations",
+      "openHigh": "{{count}} high confidence",
+      "openHint": "Sorted by value × confidence, with a floor per type.",
+      "followed": "Followed in 30 days",
+      "followedHint": "Recommendations you marked as done. The before/after measurement comes next.",
+      "idle": "Idle capital",
+      "idleHint": "Local balance ≥ 60% with no sales in 30 days."
+    },
+    "sources": {
+      "title": "Where the signals come from",
+      "hint": "Insights creates no new data: it reads what these screens already compute. A hollow dot means the source has no recent reading, and the rules that depend on it stay silent.",
+      "center": "Insights",
+      "centerHint": "only cross-checks, never invents",
+      "ok": "fresh",
+      "stale": "stale",
+      "missing": "no data",
+      "age": "{{value}} ago",
+      "ranking": "Channel Ranking",
+      "rebalance": "Rebalance",
+      "interlock": "Interlock",
+      "autofee": "AutoFee",
+      "open_candidates": "New Channels"
+    },
+    "filters": {
+      "all": "All",
+      "confidence": "Confidence",
+      "search": "Search channel or peer",
+      "showHidden": "Show dismissed and done"
+    },
+    "kind": {
+      "repor_vendedor": { "label": "Refill", "title": "Refill {{alias}} by another tool" },
+      "mais_capacidade": { "label": "Capacity", "title": "More capacity with {{alias}}" },
+      "parar_compra": { "label": "Stop buying", "title": "Stop buying for {{alias}}" },
+      "capital_parado": { "label": "Idle capital", "title": "Idle capital in {{alias}}" },
+      "abrir_canal": { "label": "Open channel", "title": "Open a channel with {{alias}}" },
+      "preco_fora": { "label": "Price", "title": "Price out of line in {{alias}}" },
+      "bloqueio_esperado": { "label": "Expected block", "title": "{{alias}} is waiting on purpose" }
+    },
+    "confidence": {
+      "high": "high",
+      "medium": "medium",
+      "low": "low",
+      "reason": {
+        "sales_7d": "{{count}} sales in 7 days",
+        "observed_days": "{{count}} days observed",
+        "route_hits_30d": "{{count}} routes in 30 days",
+        "candidate_confidence": "candidate confidence {{count}}"
+      }
+    },
+    "card": {
+      "why": "Why",
+      "what": "What to do",
+      "gone": "Goes away when",
+      "guards": "Guards",
+      "dismiss": "Dismiss",
+      "done": "Mark as done",
+      "reopen": "Reopen",
+      "rule": "Why does this rule exist?",
+      "value": "+{{value}} sat/day",
+      "valueAvoid": "avoids −{{value}} sat/day",
+      "valueNone": "informational",
+      "firstSeen": "first seen {{value}}",
+      "source": "source: {{value}}",
+      "quote": "Quote Loop In",
+      "quoting": "Quoting…",
+      "quoteResult": "Quote: {{fee}} sat all-in for {{amount}} sat ≈ {{ppm}} ppm · margin vs sale {{margin}} ppm",
+      "quoteError": "Quote failed: {{value}}",
+      "copyPubkey": "Copy peer key",
+      "copied": "Copied",
+      "statusDismissed": "dismissed · {{reason}}",
+      "statusDone": "done",
+      "guardPassed": "ok",
+      "guardFailed": "blocked",
+      "guardWarn": "warning"
+    },
+    "evidence": {
+      "local_pct": "local balance",
+      "sell_ppm_7d": "sale price (7d)",
+      "rebal_cost_ppm_7d": "refill cost (7d)",
+      "fee_7d_sat": "revenue (7d)",
+      "intent_age_h": "refill request age",
+      "jobs_24h": "rebalance jobs (24h)",
+      "jobs_24h_extra": "{{failed}} failed · {{partial}} partial",
+      "autopilot_reason": "rebalance state",
+      "turnover_7d": "capacity turned over (7d)",
+      "capacity_sat": "capacity",
+      "hours_to_drain": "hours to drain",
+      "lot_sold_pct": "lot sold (7d)",
+      "rebal_fee_7d_sat": "rebalance cost (7d)",
+      "local_sat": "local balance",
+      "fee_30d_sat": "revenue (30d)",
+      "assisted_fee_30d_sat": "assisted revenue (30d)",
+      "rebal_fee_30d_sat": "rebalance cost (30d)",
+      "route_hits_30d": "routes through this peer (30d)",
+      "route_volume_30d_sat": "volume routed (30d)",
+      "candidate_score": "candidate score",
+      "route_cost_ppm_30d": "route cost (30d)",
+      "fee_ppm": "current fee",
+      "floor_ppm": "AutoFee floor",
+      "compare": {
+        "target": "target {{value}}",
+        "cap": "cap {{value}}",
+        "min": "minimum {{value}}",
+        "max": "maximum {{value}}"
+      }
+    },
+    "tool": {
+      "rebalance_target": { "label": "Rebalance Center", "step": "Open the channel in the Rebalance Center and check target, cap and the last attempts." },
+      "rebalance_target_disable": { "label": "Rebalance Center", "step": "Turn the channel off as a rebalance target until the paid lot sells." },
+      "loop_in": { "label": "Loop In", "step": "Loop In with the last hop at this peer. Quote on click only: it calls an external service." },
+      "econ_override": { "label": "Raise the cap", "step": "Try econ ratio {{ratio}} on this channel: new cap {{cap}} ppm, {{margin}}% margin left over the sale price." },
+      "open_channel": { "label": "Lightning Ops", "step": "Preview a new channel with this peer in Lightning Ops." },
+      "close_channel": { "label": "Lightning Ops", "step": "Consider a cooperative close in Lightning Ops. The close fee is ours only when we funded the channel." },
+      "autofee_review": { "label": "Fee Center", "step": "Review the fee in the Fee Center against the real sale price and the floor." },
+      "use_as_source": { "label": "Rebalance Center", "step": "Keep it as a rebalance source: the idle balance feeds channels that sell." },
+      "none": { "label": "Nothing to do", "step": "A rebalance guard ({{reason}}) is holding this channel on purpose. It releases on its own." }
+    },
+    "guard": {
+      "not_parked": "not parked",
+      "magma_commitment": "no Magma commitment",
+      "sell_covers_floor": "sale covers the AutoFee floor",
+      "loop_installed": "Loop app installed",
+      "parallel_channel_leaves_fast_path": "a second channel with the same peer leaves the rebalance fast path",
+      "we_are_funder": "we funded the channel (we pay the close fee)"
+    },
+    "invalidate": {
+      "local_at_target_24h": "local balance at target for 24h, or the channel leaves the top 20% sellers",
+      "guard_released": "the rebalance guard releases",
+      "turnover_below_2x": "capacity turnover drops below 2× per week",
+      "lot_sold_50pct": "at least half the paid lot sells",
+      "sales_30d_positive": "any sale in 30 days",
+      "channel_opened_or_candidate_gone": "the channel is opened or the candidate leaves the list",
+      "fee_within_band": "fee back within ±30% of the sale price and above the floor"
+    },
+    "dismissReason": {
+      "later": "later (24h)",
+      "disagree": "I disagree",
+      "done_manually": "already handled"
+    },
+    "glossary": {
+      "title": "How it works",
+      "intro": "Each rule is a condition observed in this node's history, an action that already exists in the system, and the condition that makes the recommendation disappear. Nothing is executed from this screen.",
+      "condition": "Condition",
+      "action": "Action",
+      "gone": "Gone when",
+      "example": "Example",
+      "valueTitle": "How value is computed",
+      "valueBody": "value/day = volume sold per day × (sale ppm − refill ppm) ÷ 1,000,000. Example: 440k sat/day × (2,500 − 1,250) ÷ 1e6 = 550 sat/day. Only volume already sold counts.",
+      "confidenceTitle": "What confidence means",
+      "confidenceBody": "High: at least 7 sales in 7 days and a full week observed. Medium: 3 to 6 sales. Low: less than that. Low confidence is shown but never reaches the top.",
+      "rules": {
+        "R1": { "name": "Good seller, empty, and the rebalance cannot reach it", "condition": "Top 20% in 7-day revenue, local balance at or below target, refill request open for 12h or more, and every rebalance job in 24h failed for lack of a route.", "action": "Check the Rebalance Center; if the paid price is already near the cap and the sale covers the AutoFee floor, try a 0.9 econ ratio; otherwise Loop In with the last hop at the peer.", "gone": "Local balance at target for 24h.", "example": "A new channel selling at 2,500 ppm while every route cost more than the 2,000 ppm cap." },
+        "R2": { "name": "Drains fast: not enough capacity with this peer", "condition": "Top seller that turns its whole capacity over at least twice a week and sits below 20% local.", "action": "Preview a second channel or a larger one with the peer. Warning: a parallel channel leaves the rebalance fast path.", "gone": "Turnover below 2× per week.", "example": "A 5M channel moving 12M a week and always empty." },
+        "R3": { "name": "Buying without selling: stop buying this target", "condition": "Rebalance paid for stock in the last 7 days, less than 20% of that volume sold, and the stock still sits at 15% local or more.", "action": "Turn the channel off as a rebalance target until the lot sells; review the fee.", "gone": "Half the paid lot sells.", "example": "2.25M bought for 612 sats with zero sales in a week." },
+        "R4": { "name": "Idle capital: close or reallocate", "condition": "Local balance at 60% or more, zero direct revenue in 30 days, assisted revenue below 10% of the node's average channel, capacity of 1M or more.", "action": "Keep it as a rebalance source, or consider a cooperative close when we funded it and no Magma commitment protects it.", "gone": "Any sale in 30 days.", "example": "Three channels with 15M local, 5k sold and 9.7k spent in 30 days." },
+        "R5": { "name": "Open a new channel", "condition": "A New Channels candidate with score 60 or more, routed through at least three times in 30 days, and no channel with that peer yet.", "action": "Open the candidate in New Channels, then preview the open in Lightning Ops.", "gone": "The channel is opened or the candidate leaves the list.", "example": "A peer the node paid to route through every week." },
+        "R6": { "name": "Price out of line with the real price", "condition": "Fee 30% or more above the price the channel actually sells at while holding stock, or below the floor the rebalance cost implies.", "action": "Review in the Fee Center.", "gone": "Fee back within the band.", "example": "A channel priced at 1,300 ppm whose sales clear at 900 ppm." },
+        "R7": { "name": "Expected block (informational)", "condition": "A top seller below target that a known rebalance guard is holding: stock gate, cost gate, unsold cooldown, ROI guardrail.", "action": "None. The card explains why the system waits.", "gone": "The guard releases.", "example": "A channel whose last paid lot has not sold yet, so the stock gate holds the next purchase." }
+      }
     }
   }
 }

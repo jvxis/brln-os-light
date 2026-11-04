@@ -6435,7 +6435,8 @@
       "watching": "Regras vigiadas"
     },
     "node": {
-      "pill": "Nó {{size}} · {{liquidity}} · {{days}} dias de dados",
+      "pill_one": "Nó {{size}} · {{liquidity}} · {{count}} dia de dados",
+      "pill_other": "Nó {{size}} · {{liquidity}} · {{count}} dias de dados",
       "hint": "Limiares lidos na escala deste nó: capital parado a partir de {{idle}}M sat com {{idlePct}}% local, candidatos a abrir a partir de {{open}}M sat roteados em 30 dias, parar de comprar a partir de {{stop}} sat gastos em 7 dias.",
       "size": { "small": "pequeno", "medium": "médio", "large": "grande", "xl": "extra grande", "unknown": "sem classe" },
       "liquidity": { "drained": "drenado", "balanced": "equilibrado", "full": "cheio" }

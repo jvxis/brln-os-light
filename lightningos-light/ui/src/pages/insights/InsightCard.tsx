@@ -126,7 +126,7 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
                         <p>{stepText(action)}</p>
                         <div className="mt-1 flex flex-wrap items-center gap-2">
                           {action.tool !== 'none' && (
-                            <a href={insightActionHash(item, action)} className="text-xs text-cyan-200 hover:text-cyan-100">{t(`insights.tool.${action.tool}.label`)} →</a>
+                            <a href={insightActionHash(item, action)} className="text-xs text-emerald-200 hover:text-emerald-100">{t(`insights.tool.${action.tool}.label`)} →</a>
                           )}
                           {action.tool === 'loop_in' && (
                             <>
@@ -193,7 +193,7 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
           ) : (
             <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => onStatus(item, 'open')}>{t('insights.card.reopen')}</button>
           )}
-          <button type="button" className="text-xs text-cyan-200 hover:text-cyan-100" onClick={() => onRule(item.rule)}>{t('insights.card.rule')}</button>
+          <button type="button" className="text-xs text-emerald-200 hover:text-emerald-100" onClick={() => onRule(item.rule)}>{t('insights.card.rule')}</button>
         </div>
       </div>
     </article>

@@ -152,7 +152,7 @@ export default function Insights() {
               {t('insights.node.pill', {
                 size: t(`insights.node.size.${node.node_class}`),
                 liquidity: t(`insights.node.liquidity.${node.liquidity_class}`),
-                days: Math.min(node.observed_days, 30),
+                count: Math.min(node.observed_days, 30),
               })}
             </span>
           )}

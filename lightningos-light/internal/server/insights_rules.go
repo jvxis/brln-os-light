@@ -166,7 +166,7 @@ func insightNodeInfoFor(ranking []ChannelRankingItem) insightNodeInfo {
 		insightScale:     scale,
 		ChannelCount:     calib.ChannelCount,
 		TotalCapacitySat: calib.TotalCapacitySat,
-		LocalRatio:       round1(calib.LocalRatio*100) / 100,
+		LocalRatio:       math.Round(calib.LocalRatio*1000) / 1000,
 	}
 }
 

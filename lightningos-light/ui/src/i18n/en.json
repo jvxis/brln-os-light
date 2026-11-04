@@ -6435,7 +6435,8 @@
       "watching": "Watched rules"
     },
     "node": {
-      "pill": "{{size}} node · {{liquidity}} · {{days}} days of data",
+      "pill_one": "{{size}} node · {{liquidity}} · {{count}} day of data",
+      "pill_other": "{{size}} node · {{liquidity}} · {{count}} days of data",
       "hint": "Thresholds read on this node's scale: idle capital from {{idle}}M sat at {{idlePct}}% local, open candidates from {{open}}M sat routed in 30 days, stop-buying from {{stop}} sat spent in 7 days.",
       "size": { "small": "small", "medium": "medium", "large": "large", "xl": "extra large", "unknown": "unclassified" },
       "liquidity": { "drained": "drained", "balanced": "balanced", "full": "full" }

@@ -218,6 +218,9 @@ func (s *Server) collectInsights(ctx context.Context, svc *InsightsService, forc
 		s.logger.Printf("insights: reconcile failed: %v", err)
 	}
 	followed, _ := svc.FollowedSince(ctx, now.Add(-insightsFollowedWindow))
+	if items == nil {
+		items = []Insight{}
+	}
 
 	payload := insightsPayload{ComputedAt: now, Sources: sources, Node: insightNodeInfoFor(in.Ranking), Items: items}
 	payload.Summary.Followed30d = followed

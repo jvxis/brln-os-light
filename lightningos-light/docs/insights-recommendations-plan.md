@@ -364,6 +364,39 @@ R1 no FP (Loop In), canal novo do HUB em R1 (sem econ 0,9 porque é sink e o
 piso ×1,14 não cobre; Loop In), BitGo e lancrypt em R3, bfx-lnd0 não aparece
 em R4 porque vendeu 5k em 30 dias (regra exige zero venda direta).
 
+### Calibração por tamanho do nó e portão de 7 dias (04/11, tarde)
+
+Os insights precisam funcionar em qualquer nó, não só nos dois do operador.
+Dois mecanismos, ambos no motor (`insights_rules.go`), sem parâmetro novo:
+
+- **Portão de maturidade.** `insightReadinessFor` lê o maior
+  `peer_sample_count_30d` do ranking; abaixo de 7 dias inteiros o motor não
+  roda regra nenhuma e a API devolve `node.ready=false` com
+  `observed_days/required_days`. A tela mostra "Aquecendo: N de 7 dias" com
+  barra de progresso e o mapa dos sinais, em vez do estado vazio. Nó recém
+  instalado não recebe recomendação.
+- **Escala pelo nó.** `insightCalibrate` passa o ranking pela mesma
+  `classifyRebalanceNode` que o Rebalance Center usa (espelho do
+  `calibrateNode` do AutoFee) e mapeia a classe nos três limiares que eram
+  sats fixos:
+
+  | Classe | Capital parado (R4) ≥ | Volume do candidato (R5) ≥ | Custo do lote (R3) ≥ |
+  |---|---|---|---|
+  | small / unknown | 250k | 250k | 30 sat |
+  | medium | 500k | 500k | 60 sat |
+  | large | 1M | 1M | 100 sat |
+  | xl | 2M | 2M | 200 sat |
+
+  O limiar de capital parado nunca passa de metade da capacidade média do
+  nó (piso 100k), para um nó de canais pequenos enxergar o próprio capital.
+  A liquidez muda o corte de saldo local do R4: 60% equilibrado, 70% cheio,
+  50% drenado. Percentis e razões (vendedor p80, 20% vendido, 30% de margem,
+  piso do AutoFee) são iguais em qualquer nó. `large` mantém os valores da
+  calibração acima; no replay FP é `large/balanced` (19, igual) e HUB é
+  `medium/balanced` (13, igual). A API expõe tudo em `node` e a tela mostra
+  a pílula "Nó médio · equilibrado · 30 dias de dados" com os limiares no
+  tooltip e um bloco na gaveta "Como funciona".
+
 Pendente para a 0.5.53: validar a tela num nó de verdade (deploy), fase 2
 (resultado antes × depois) fica para depois.
 

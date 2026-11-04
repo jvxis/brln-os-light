@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"lightningos-light/internal/lndclient"
 )
 
 // Insights cross-reads the signals that other modules already compute
@@ -44,8 +46,6 @@ const (
 	insightSellerPercentile   = 0.8
 	insightRefillIntentMinAge = 12 * time.Hour
 	insightStuckJobsMin       = 3
-	insightIdleLocalPct       = 60.0
-	insightIdleMinCapacity    = 1_000_000
 	insightAssistedShare      = 0.10
 	insightPriceOverMult      = 1.3
 	insightStopBuyingSellMax  = 0.20
@@ -53,13 +53,122 @@ const (
 	insightTurnoverPerWeek    = 2.0
 	insightOpenMinScore       = 60
 	insightOpenMinRouteHits   = 3
-	insightOpenMinVolumeSat   = 1_000_000
 	insightOpenMaxItems       = 5
-	insightStopBuyingMinFee   = 100
 	insightPriceUnderGap      = 0.10
 	insightEconOverrideRatio  = 0.9
 	insightEconNearCapShare   = 0.9
+	insightRequiredDays       = 7
 )
+
+// insightScale holds the thresholds that cannot be the same number of sats
+// on every node. They are derived from the node calibration that AutoFee
+// and the Rebalance Center already share (classifyRebalanceNode), so a 20-
+// channel node and a 150-channel node are judged on their own scale.
+type insightScale struct {
+	NodeClass           string  `json:"node_class"`
+	LiquidityClass      string  `json:"liquidity_class"`
+	IdleMinCapacitySat  int64   `json:"idle_min_capacity_sat"`
+	IdleLocalPct        float64 `json:"idle_local_pct"`
+	OpenMinVolumeSat    int64   `json:"open_min_volume_sat"`
+	StopBuyingMinFeeSat int64   `json:"stop_buying_min_fee_sat"`
+}
+
+// insightReadiness says whether the node has enough history for the rules
+// to mean anything. Every rule reads 7-day windows, so a node observed for
+// less than a full week produces nothing instead of noise.
+type insightReadiness struct {
+	Ready        bool `json:"ready"`
+	ObservedDays int  `json:"observed_days"`
+	RequiredDays int  `json:"required_days"`
+}
+
+// insightNodeInfo is the calibration the payload shows the operator, so the
+// page can say which scale the thresholds were read on.
+type insightNodeInfo struct {
+	insightReadiness
+	insightScale
+	ChannelCount     int     `json:"channel_count"`
+	TotalCapacitySat int64   `json:"total_capacity_sat"`
+	LocalRatio       float64 `json:"local_ratio"`
+}
+
+// insightCalibrate classifies the node from the ranking rows with the same
+// function the Rebalance Center uses on the live channel list, then maps the
+// class onto the sats thresholds. "large" keeps the values the rules were
+// calibrated on; the other classes scale from there.
+func insightCalibrate(ranking []ChannelRankingItem) (RebalanceNodeCalibration, insightScale) {
+	channels := make([]lndclient.ChannelInfo, 0, len(ranking))
+	for _, item := range ranking {
+		channels = append(channels, lndclient.ChannelInfo{
+			Active:           item.Active,
+			CapacitySat:      item.CapacitySat,
+			LocalBalanceSat:  item.LocalBalanceSat,
+			RemoteBalanceSat: item.RemoteBalanceSat,
+		})
+	}
+	calib := classifyRebalanceNode(channels)
+	scale := insightScale{NodeClass: calib.NodeClass, LiquidityClass: calib.LiquidityClass}
+	switch calib.NodeClass {
+	case "xl":
+		scale.IdleMinCapacitySat, scale.OpenMinVolumeSat, scale.StopBuyingMinFeeSat = 2_000_000, 2_000_000, 200
+	case "large":
+		scale.IdleMinCapacitySat, scale.OpenMinVolumeSat, scale.StopBuyingMinFeeSat = 1_000_000, 1_000_000, 100
+	case "medium":
+		scale.IdleMinCapacitySat, scale.OpenMinVolumeSat, scale.StopBuyingMinFeeSat = 500_000, 500_000, 60
+	default: // small, unknown
+		scale.IdleMinCapacitySat, scale.OpenMinVolumeSat, scale.StopBuyingMinFeeSat = 250_000, 250_000, 30
+	}
+	// A node made of small channels should still see its idle capital: never
+	// ask for more than half the average channel, with a floor of 100k.
+	if calib.AvgCapacitySat > 0 {
+		if half := calib.AvgCapacitySat / 2; half < scale.IdleMinCapacitySat {
+			scale.IdleMinCapacitySat = half
+		}
+	}
+	if scale.IdleMinCapacitySat < 100_000 {
+		scale.IdleMinCapacitySat = 100_000
+	}
+	// On a node that is mostly local, 60% local is the norm rather than a
+	// signal; on a drained node even 50% local stands out.
+	switch calib.LiquidityClass {
+	case "full":
+		scale.IdleLocalPct = 70
+	case "drained":
+		scale.IdleLocalPct = 50
+	default:
+		scale.IdleLocalPct = 60
+	}
+	return calib, scale
+}
+
+// insightObservedDays is the longest observation window the ranking has for
+// any channel of this node, in whole days (capped by the 30-day window the
+// ranking keeps). A fresh install starts at zero.
+func insightObservedDays(ranking []ChannelRankingItem) int {
+	maxSamples := 0
+	for _, item := range ranking {
+		if item.PeerSampleCount30d > maxSamples {
+			maxSamples = item.PeerSampleCount30d
+		}
+	}
+	return maxSamples / 24
+}
+
+func insightReadinessFor(ranking []ChannelRankingItem) insightReadiness {
+	days := insightObservedDays(ranking)
+	return insightReadiness{Ready: days >= insightRequiredDays, ObservedDays: days, RequiredDays: insightRequiredDays}
+}
+
+func insightNodeInfoFor(ranking []ChannelRankingItem) insightNodeInfo {
+	calib, scale := insightCalibrate(ranking)
+	return insightNodeInfo{
+		insightReadiness: insightReadinessFor(ranking),
+		insightScale:     scale,
+		ChannelCount:     calib.ChannelCount,
+		TotalCapacitySat: calib.TotalCapacitySat,
+		LocalRatio:       round1(calib.LocalRatio*100) / 100,
+	}
+}
 
 type InsightEvidence struct {
 	Key     string  `json:"key"`
@@ -118,6 +227,7 @@ type insightsInput struct {
 	LoopInstalled   bool
 	LoopKnown       bool
 	AutofeeProfile  autofeeProfile
+	scale           insightScale // filled by buildInsights from the ranking
 }
 
 type insightChannel struct {
@@ -141,6 +251,12 @@ func (t insightJobTally) allStuck() bool {
 }
 
 func buildInsights(in insightsInput, now time.Time) []Insight {
+	// A node observed for less than a week has no 7-day window to judge by:
+	// stay silent rather than recommend on a partial picture.
+	if !insightReadinessFor(in.Ranking).Ready {
+		return nil
+	}
+	_, in.scale = insightCalibrate(in.Ranking)
 	channels := assembleInsightChannels(in)
 	if len(channels) == 0 && len(in.OpenCandidates) == 0 {
 		return nil
@@ -169,7 +285,7 @@ func buildInsights(in insightsInput, now time.Time) []Insight {
 		if ins, ok := insightMoreCapacity(ch, now); ok {
 			out = append(out, ins)
 		}
-		if ins, ok := insightStopBuying(ch, now); ok {
+		if ins, ok := insightStopBuying(ch, in.scale, now); ok {
 			out = append(out, ins)
 		}
 		if ins, ok := insightIdleCapital(ch, in, nodeAvgDirect30d, nodeOutPpm30d, now); ok {
@@ -183,7 +299,7 @@ func buildInsights(in insightsInput, now time.Time) []Insight {
 	// peers that would move real volume.
 	opens := make([]Insight, 0, len(in.OpenCandidates))
 	for _, cand := range in.OpenCandidates {
-		if ins, ok := insightOpenChannel(cand, peers, nodeOutPpm30d, now); ok {
+		if ins, ok := insightOpenChannel(cand, peers, nodeOutPpm30d, in.scale, now); ok {
 			opens = append(opens, ins)
 		}
 	}
@@ -567,8 +683,8 @@ func insightMoreCapacity(ch *insightChannel, now time.Time) (Insight, bool) {
 
 // R3: the rebalance keeps paying for stock that does not sell. Stop buying
 // for this target until the lot moves.
-func insightStopBuying(ch *insightChannel, now time.Time) (Insight, bool) {
-	if ch.parked || ch.rank.RebalFee7dSat < insightStopBuyingMinFee || ch.rank.RebalAmt7dSat <= 0 {
+func insightStopBuying(ch *insightChannel, scale insightScale, now time.Time) (Insight, bool) {
+	if ch.parked || ch.rank.RebalFee7dSat < scale.StopBuyingMinFeeSat || ch.rank.RebalAmt7dSat <= 0 {
 		return Insight{}, false
 	}
 	if ch.rank.LocalBalancePct < insightStopBuyingMinStock {
@@ -597,7 +713,7 @@ func insightStopBuying(ch *insightChannel, now time.Time) (Insight, bool) {
 	ins.Evidence = append(ins.Evidence,
 		InsightEvidence{Key: "local_pct", Value: round1(ch.rank.LocalBalancePct), Unit: "pct", Source: "ranking"},
 		InsightEvidence{Key: "lot_sold_pct", Value: round1(soldShare * 100), Unit: "pct", Compare: insightStopBuyingSellMax * 100, Source: "ranking"},
-		InsightEvidence{Key: "rebal_fee_7d_sat", Value: float64(ch.rank.RebalFee7dSat), Unit: "sat", Source: "ranking"},
+		InsightEvidence{Key: "rebal_fee_7d_sat", Value: float64(ch.rank.RebalFee7dSat), Unit: "sat", Compare: float64(scale.StopBuyingMinFeeSat), Source: "ranking"},
 		InsightEvidence{Key: "fee_7d_sat", Value: float64(ch.rank.ForwardFee7dSat), Unit: "sat", Source: "ranking"},
 	)
 	ins.Actions = append(ins.Actions,
@@ -612,7 +728,7 @@ func insightStopBuying(ch *insightChannel, now time.Time) (Insight, bool) {
 // not even assisted. Candidate to close or to use as a source.
 func insightIdleCapital(ch *insightChannel, in insightsInput, nodeAvgDirect30d float64, nodeOutPpm30d int64, now time.Time) (Insight, bool) {
 	rank := ch.rank
-	if ch.parked || rank.CapacitySat < insightIdleMinCapacity || rank.LocalBalancePct < insightIdleLocalPct {
+	if ch.parked || rank.CapacitySat < in.scale.IdleMinCapacitySat || rank.LocalBalancePct < in.scale.IdleLocalPct {
 		return Insight{}, false
 	}
 	if rank.ForwardFee30dSat > 0 {
@@ -636,7 +752,7 @@ func insightIdleCapital(ch *insightChannel, in insightsInput, nodeAvgDirect30d f
 	}
 	ins.Evidence = append(ins.Evidence,
 		InsightEvidence{Key: "local_sat", Value: float64(rank.LocalBalanceSat), Unit: "sat", Source: "ranking"},
-		InsightEvidence{Key: "local_pct", Value: round1(rank.LocalBalancePct), Unit: "pct", Compare: insightIdleLocalPct, Source: "ranking"},
+		InsightEvidence{Key: "local_pct", Value: round1(rank.LocalBalancePct), Unit: "pct", Compare: in.scale.IdleLocalPct, Source: "ranking"},
 		InsightEvidence{Key: "fee_30d_sat", Value: 0, Unit: "sat", Source: "ranking"},
 		InsightEvidence{Key: "assisted_fee_30d_sat", Value: float64(rank.AssistedForwardFee30dSat), Unit: "sat", Compare: math.Round(insightAssistedShare * nodeAvgDirect30d), Source: "ranking"},
 		InsightEvidence{Key: "rebal_fee_30d_sat", Value: float64(rank.RebalFee30dSat), Unit: "sat", Source: "ranking"},
@@ -655,12 +771,12 @@ func insightIdleCapital(ch *insightChannel, in insightsInput, nodeAvgDirect30d f
 
 // R5: a peer the node keeps routing through, with a strong open-candidate
 // score and no channel yet.
-func insightOpenChannel(cand ChannelOpenCandidateItem, peers map[string]bool, nodeOutPpm30d int64, now time.Time) (Insight, bool) {
+func insightOpenChannel(cand ChannelOpenCandidateItem, peers map[string]bool, nodeOutPpm30d int64, scale insightScale, now time.Time) (Insight, bool) {
 	key := strings.ToLower(strings.TrimSpace(cand.PeerPubkey))
 	if key == "" || peers[key] {
 		return Insight{}, false
 	}
-	if cand.Score < insightOpenMinScore || cand.RouteHitCount30d < insightOpenMinRouteHits || cand.RouteVolumeSat30d < insightOpenMinVolumeSat {
+	if cand.Score < insightOpenMinScore || cand.RouteHitCount30d < insightOpenMinRouteHits || cand.RouteVolumeSat30d < scale.OpenMinVolumeSat {
 		return Insight{}, false
 	}
 	ins := Insight{
@@ -686,7 +802,7 @@ func insightOpenChannel(cand ChannelOpenCandidateItem, peers map[string]bool, no
 	}
 	ins.Evidence = append(ins.Evidence,
 		InsightEvidence{Key: "route_hits_30d", Value: float64(cand.RouteHitCount30d), Compare: insightOpenMinRouteHits, Source: "open_candidates"},
-		InsightEvidence{Key: "route_volume_30d_sat", Value: float64(cand.RouteVolumeSat30d), Unit: "sat", Source: "open_candidates"},
+		InsightEvidence{Key: "route_volume_30d_sat", Value: float64(cand.RouteVolumeSat30d), Unit: "sat", Compare: float64(scale.OpenMinVolumeSat), Source: "open_candidates"},
 		InsightEvidence{Key: "candidate_score", Value: float64(cand.Score), Compare: insightOpenMinScore, Source: "open_candidates"},
 		InsightEvidence{Key: "route_cost_ppm_30d", Value: float64(cand.RouteCostPpm30d), Unit: "ppm", Source: "open_candidates"},
 	)

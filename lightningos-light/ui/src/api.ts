@@ -617,9 +617,25 @@ export type InsightItem = {
 
 export type InsightSource = { id: string; ok: boolean; age_sec?: number; error?: string }
 
+export type InsightNodeInfo = {
+  ready: boolean
+  observed_days: number
+  required_days: number
+  node_class: 'small' | 'medium' | 'large' | 'xl' | 'unknown'
+  liquidity_class: 'drained' | 'balanced' | 'full'
+  idle_min_capacity_sat: number
+  idle_local_pct: number
+  open_min_volume_sat: number
+  stop_buying_min_fee_sat: number
+  channel_count: number
+  total_capacity_sat: number
+  local_ratio: number
+}
+
 export type InsightsPayload = {
   computed_at: string
   sources: InsightSource[]
+  node: InsightNodeInfo
   summary: { value_sat_day: number; open: number; open_high: number; followed_30d: number; idle_capital_sat: number }
   items: InsightItem[]
 }

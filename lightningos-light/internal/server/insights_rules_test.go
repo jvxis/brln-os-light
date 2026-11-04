@@ -339,3 +339,65 @@ func TestInsightEffectiveStatus(t *testing.T) {
 		})
 	}
 }
+
+// A fresh install has no 7-day window to judge by: the engine must stay
+// silent even when a channel looks like a textbook case.
+func TestInsightsWarmingUpNodeStaysSilent(t *testing.T) {
+	now := insightTestNow()
+	ranking := insightTestBackground()
+	idle := insightTestRank("idle:0", "idle", 0, 0, 5_000_000, 90)
+	idle.ForwardFee30dSat, idle.ForwardAmt30dSat, idle.ForwardOutCount7d = 0, 0, 0
+	ranking = append(ranking, idle)
+	for i := range ranking {
+		ranking[i].PeerSampleCount30d = 6 * 24 // six days observed
+	}
+	in := insightsInput{Ranking: ranking, RefillIntents: map[uint64][]AutomationIntent{}, AutofeeProfile: autofeeProfiles[autofeeProfileDefault]}
+	if items := buildInsights(in, now); len(items) != 0 {
+		t.Fatalf("expected no insights on a node observed for 6 days, got %d", len(items))
+	}
+	node := insightNodeInfoFor(ranking)
+	if node.Ready || node.ObservedDays != 6 || node.RequiredDays != insightRequiredDays {
+		t.Fatalf("unexpected readiness: %+v", node.insightReadiness)
+	}
+	ranking[len(ranking)-1].PeerSampleCount30d = 7 * 24 // the idle channel itself reaches a week
+	in.Ranking = ranking
+	if by := insightsByRule(buildInsights(in, now)); len(by["R4"]) != 1 {
+		t.Fatalf("expected R4 once the node has a full week, got %+v", by)
+	}
+}
+
+// The sats thresholds follow the node class AutoFee and the Rebalance Center
+// already compute, so a small node sees its own idle capital and candidates.
+func TestInsightScaleFollowsNodeClass(t *testing.T) {
+	small := []ChannelRankingItem{
+		insightTestRank("s1:0", "s1", 50, 100_000, 600_000, 50),
+		insightTestRank("s2:0", "s2", 60, 100_000, 600_000, 50),
+	}
+	calib, scale := insightCalibrate(small)
+	if calib.NodeClass != "small" || scale.IdleMinCapacitySat != 250_000 || scale.OpenMinVolumeSat != 250_000 || scale.StopBuyingMinFeeSat != 30 {
+		t.Fatalf("small node scale: calib=%+v scale=%+v", calib, scale)
+	}
+	large := make([]ChannelRankingItem, 0, 70)
+	for i := 0; i < 70; i++ {
+		item := insightTestRank("l:0", "l", 100, 1_000_000, 5_000_000, 85)
+		item.ChannelPoint = item.ChannelPoint + string(rune('a'+i%26))
+		large = append(large, item)
+	}
+	calib, scale = insightCalibrate(large)
+	if calib.NodeClass != "large" || calib.LiquidityClass != "full" || scale.IdleMinCapacitySat != 1_000_000 || scale.IdleLocalPct != 70 || scale.OpenMinVolumeSat != 1_000_000 || scale.StopBuyingMinFeeSat != 100 {
+		t.Fatalf("large/full node scale: calib=%+v scale=%+v", calib, scale)
+	}
+
+	// The same 600k idle channel is invisible on a large node and a finding on a small one.
+	now := insightTestNow()
+	idle := insightTestRank("idle:0", "idle", 0, 0, 600_000, 90)
+	idle.ForwardFee30dSat, idle.ForwardAmt30dSat, idle.ForwardOutCount7d = 0, 0, 0
+	in := insightsInput{Ranking: append(append([]ChannelRankingItem{}, small...), idle), RefillIntents: map[uint64][]AutomationIntent{}, AutofeeProfile: autofeeProfiles[autofeeProfileDefault]}
+	if by := insightsByRule(buildInsights(in, now)); len(by["R4"]) != 1 {
+		t.Fatalf("small node should flag a 600k idle channel, got %+v", by)
+	}
+	in.Ranking = append(append([]ChannelRankingItem{}, large...), idle)
+	if by := insightsByRule(buildInsights(in, now)); len(by["R4"]) != 0 {
+		t.Fatalf("large node should ignore a 600k idle channel, got %d", len(by["R4"]))
+	}
+}

@@ -57,6 +57,10 @@ export default function RuleGlossary({ open, focusRule, onClose }: Props) {
             <p className="mt-1 text-fog/70">{t('insights.glossary.valueBody')}</p>
           </div>
           <div>
+            <h4 className="font-semibold text-fog">{t('insights.glossary.scaleTitle')}</h4>
+            <p className="mt-1 text-fog/70">{t('insights.glossary.scaleBody')}</p>
+          </div>
+          <div>
             <h4 className="font-semibold text-fog">{t('insights.glossary.confidenceTitle')}</h4>
             <p className="mt-1 text-fog/70">{t('insights.glossary.confidenceBody')}</p>
           </div>

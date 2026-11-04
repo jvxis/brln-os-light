@@ -30,6 +30,7 @@ type insightsSummary struct {
 type insightsPayload struct {
 	ComputedAt time.Time       `json:"computed_at"`
 	Sources    []insightSource `json:"sources"`
+	Node       insightNodeInfo `json:"node"`
 	Summary    insightsSummary `json:"summary"`
 	Items      []Insight       `json:"items"`
 }
@@ -218,7 +219,7 @@ func (s *Server) collectInsights(ctx context.Context, svc *InsightsService, forc
 	}
 	followed, _ := svc.FollowedSince(ctx, now.Add(-insightsFollowedWindow))
 
-	payload := insightsPayload{ComputedAt: now, Sources: sources, Items: items}
+	payload := insightsPayload{ComputedAt: now, Sources: sources, Node: insightNodeInfoFor(in.Ranking), Items: items}
 	payload.Summary.Followed30d = followed
 	for _, item := range items {
 		if item.Status != insightStatusOpen {

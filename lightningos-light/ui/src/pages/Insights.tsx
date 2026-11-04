@@ -123,7 +123,10 @@ export default function Insights() {
     })
   }, [items, showHidden, kindFilter, confFilter, search])
   const summary = payload?.summary
+  const node = payload?.node
   const openCount = items.filter((item) => item.status === 'open').length
+  const warming = Boolean(node && !node.ready)
+  const warmingPct = node ? Math.min(100, Math.round((node.observed_days / Math.max(1, node.required_days)) * 100)) : 0
 
   return (
     <section className="space-y-6">
@@ -136,6 +139,23 @@ export default function Insights() {
           <button type="button" className={`rounded-full border px-3 py-1 text-xs ${teach ? 'border-sky-400/40 bg-sky-500/15 text-fog' : 'border-white/10 bg-white/5 text-fog/70'}`} title={t('insights.teachHint')} onClick={toggleTeach}>
             {teach ? t('insights.teachOn') : t('insights.teachOff')}
           </button>
+          {node && node.node_class !== 'unknown' && (
+            <span
+              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-fog/70"
+              title={t('insights.node.hint', {
+                idle: formatNumber(node.idle_min_capacity_sat / 1e6),
+                idlePct: node.idle_local_pct,
+                open: formatNumber(node.open_min_volume_sat / 1e6),
+                stop: node.stop_buying_min_fee_sat,
+              })}
+            >
+              {t('insights.node.pill', {
+                size: t(`insights.node.size.${node.node_class}`),
+                liquidity: t(`insights.node.liquidity.${node.liquidity_class}`),
+                days: Math.min(node.observed_days, 30),
+              })}
+            </span>
+          )}
           {payload && <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-fog/70">{t('insights.computedAt', { value: formatRelative(payload.computed_at) })}</span>}
           <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={refreshing} onClick={() => void load(true)}>
             {refreshing ? t('insights.recomputing') : t('insights.recompute')}
@@ -148,6 +168,19 @@ export default function Insights() {
 
       {loading ? (
         <p className="text-sm text-fog/70">{t('insights.loading')}</p>
+      ) : payload && warming && node ? (
+        <>
+          <div className="rounded-3xl border border-sky-400/30 bg-sky-500/10 p-6">
+            <p className="text-base font-semibold text-fog">{t('insights.warming.title')}</p>
+            <p className="mt-1 max-w-3xl text-sm text-fog/70">{t('insights.warming.body', { observed: node.observed_days, required: node.required_days })}</p>
+            <div className="mt-4 h-2 w-full max-w-xl overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-sky-400 transition-all" style={{ width: `${warmingPct}%` }} />
+            </div>
+            <p className="mt-2 text-xs text-fog/60">{t('insights.warming.progress', { observed: node.observed_days, required: node.required_days })}</p>
+            {teach && <p className="mt-4 max-w-3xl text-xs text-fog/60">{t('insights.warming.teach')}</p>}
+          </div>
+          <SignalMap sources={payload.sources} teach={teach} formatAge={formatAge} />
+        </>
       ) : payload ? (
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

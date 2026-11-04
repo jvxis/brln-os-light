@@ -154,8 +154,15 @@ barras; agregado no topo (acertou/errou/neutro). Lê `outcome` da tabela
 
 ### 8. Estados
 
+- **Aquecendo** (`node.ready=false`): nó com menos de 7 dias inteiros de
+  histórico no ranking. Painel azul "Aquecendo: o Insights precisa de uma
+  semana inteira" com barra N de 7 dias e, no modo didático, o porquê da
+  semana; o mapa dos sinais continua embaixo. Nenhuma regra roda.
 - **Vazio**: "Nada a recomendar agora — e isso é bom." + lista do que está
   sendo vigiado (as 7 regras com ✓) + último cálculo. Nunca tela branca.
+- **Pílula de calibração** no cabeçalho: "Nó médio · equilibrado · 30 dias
+  de dados" (classes de `classifyRebalanceNode`, as mesmas do AutoFee e do
+  Rebalance Center); o tooltip diz os limiares em sats lidos nessa escala.
 - **Sem dado**: fonte com ○ no mapa explica o porquê (ex.: Novos Canais sem
   sync) e quais regras ficam mudas por isso.
 - **Carregando/erro**: padrão das outras páginas (`status` em texto no topo).

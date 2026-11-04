@@ -6434,6 +6434,18 @@
       "body": "Every rule below ran against the latest signals and found no case to raise.",
       "watching": "Watched rules"
     },
+    "node": {
+      "pill": "{{size}} node · {{liquidity}} · {{days}} days of data",
+      "hint": "Thresholds read on this node's scale: idle capital from {{idle}}M sat at {{idlePct}}% local, open candidates from {{open}}M sat routed in 30 days, stop-buying from {{stop}} sat spent in 7 days.",
+      "size": { "small": "small", "medium": "medium", "large": "large", "xl": "extra large", "unknown": "unclassified" },
+      "liquidity": { "drained": "drained", "balanced": "balanced", "full": "full" }
+    },
+    "warming": {
+      "title": "Warming up: Insights needs a full week of this node's history.",
+      "body": "Every rule compares 7-day windows (sales, refills, idle capital). With {{observed}} of {{required}} days observed there is no window to judge by, so nothing is recommended yet. The signals below keep accumulating on their own.",
+      "progress": "{{observed}} of {{required}} days",
+      "teach": "Why a week: a channel that sold nothing in 3 days is normal; one that sold nothing in 7 days with stock on our side is a finding. The same week is what AutoFee and the Rebalance Center use to judge a channel."
+    },
     "summary": {
       "valueAtStake": "Value at stake",
       "valueHint": "How much more per day if every open recommendation is followed. Counts observed sales only, never a forecast.",
@@ -6585,14 +6597,16 @@
       "example": "Example",
       "valueTitle": "How value is computed",
       "valueBody": "value/day = volume sold per day × (sale ppm − refill ppm) ÷ 1,000,000. Example: 440k sat/day × (2,500 − 1,250) ÷ 1e6 = 550 sat/day. Only volume already sold counts.",
+      "scaleTitle": "How thresholds follow the node",
+      "scaleBody": "Insights reads the same size (small, medium, large, extra large) and liquidity (drained, balanced, full) classification that AutoFee and the Rebalance Center compute. The sats thresholds scale with it: on a large node idle capital starts at 1M and a candidate needs 1M routed; on a small node 250k is enough. Percentages and ratios (seller percentile, 20% sold, 30% margin) are the same on every node. Nothing is recommended before a full week of history.",
       "confidenceTitle": "What confidence means",
       "confidenceBody": "High: at least 7 sales in 7 days and a full week observed. Medium: 3 to 6 sales. Low: less than that. Low confidence is shown but never reaches the top.",
       "rules": {
         "R1": { "name": "Good seller, empty, and the rebalance cannot reach it", "condition": "Top 20% in 7-day revenue, local balance at or below target, refill request open for 12h or more, and every rebalance job in 24h failed for lack of a route.", "action": "Check the Rebalance Center; if the paid price is already near the cap and the sale covers the AutoFee floor, try a 0.9 econ ratio; otherwise Loop In with the last hop at the peer.", "gone": "Local balance at target for 24h.", "example": "A new channel selling at 2,500 ppm while every route cost more than the 2,000 ppm cap." },
         "R2": { "name": "Drains fast: not enough capacity with this peer", "condition": "Top seller that turns its whole capacity over at least twice a week and sits below 20% local.", "action": "Preview a second channel or a larger one with the peer. Warning: a parallel channel leaves the rebalance fast path.", "gone": "Turnover below 2× per week.", "example": "A 5M channel moving 12M a week and always empty." },
-        "R3": { "name": "Buying without selling: stop buying this target", "condition": "Rebalance paid for stock in the last 7 days, less than 20% of that volume sold, and the stock still sits at 15% local or more.", "action": "Turn the channel off as a rebalance target until the lot sells; review the fee.", "gone": "Half the paid lot sells.", "example": "2.25M bought for 612 sats with zero sales in a week." },
-        "R4": { "name": "Idle capital: close or reallocate", "condition": "Local balance at 60% or more, zero direct revenue in 30 days, assisted revenue below 10% of the node's average channel, capacity of 1M or more.", "action": "Keep it as a rebalance source, or consider a cooperative close when we funded it and no Magma commitment protects it.", "gone": "Any sale in 30 days.", "example": "Three channels with 15M local, 5k sold and 9.7k spent in 30 days." },
-        "R5": { "name": "Open a new channel", "condition": "A New Channels candidate with score 60 or more, routed through at least three times in 30 days, and no channel with that peer yet.", "action": "Open the candidate in New Channels, then preview the open in Lightning Ops.", "gone": "The channel is opened or the candidate leaves the list.", "example": "A peer the node paid to route through every week." },
+        "R3": { "name": "Buying without selling: stop buying this target", "condition": "Rebalance paid for stock in the last 7 days (at least 100 sat on a large node), less than 20% of that volume sold, and the stock still sits at 15% local or more.", "action": "Turn the channel off as a rebalance target until the lot sells; review the fee.", "gone": "Half the paid lot sells.", "example": "2.25M bought for 612 sats with zero sales in a week." },
+        "R4": { "name": "Idle capital: close or reallocate", "condition": "Local balance at 60% or more (70% on a full node, 50% on a drained one), zero direct revenue in 30 days, assisted revenue below 10% of the node's average channel, capacity above the node's idle threshold (1M on a large node).", "action": "Keep it as a rebalance source, or consider a cooperative close when we funded it and no Magma commitment protects it.", "gone": "Any sale in 30 days.", "example": "Three channels with 15M local, 5k sold and 9.7k spent in 30 days." },
+        "R5": { "name": "Open a new channel", "condition": "A New Channels candidate with score 60 or more, routed through at least three times in 30 days with volume above the node's threshold (1M on a large node), and no channel with that peer yet.", "action": "Open the candidate in New Channels, then preview the open in Lightning Ops.", "gone": "The channel is opened or the candidate leaves the list.", "example": "A peer the node paid to route through every week." },
         "R6": { "name": "Price out of line with the real price", "condition": "Fee 30% or more above the price the channel actually sells at while holding stock, or below the floor the rebalance cost implies.", "action": "Review in the Fee Center.", "gone": "Fee back within the band.", "example": "A channel priced at 1,300 ppm whose sales clear at 900 ppm." },
         "R7": { "name": "Expected block (informational)", "condition": "A top seller below target that a known rebalance guard is holding: stock gate, cost gate, unsold cooldown, ROI guardrail.", "action": "None. The card explains why the system waits.", "gone": "The guard releases.", "example": "A channel whose last paid lot has not sold yet, so the stock gate holds the next purchase." }
       }

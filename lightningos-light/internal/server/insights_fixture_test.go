@@ -91,6 +91,10 @@ func TestInsightsFixture(t *testing.T) {
 	}
 
 	items := buildInsights(in, time.Now().UTC())
+	node := insightNodeInfoFor(ranking.Items)
+	t.Logf("node %s/%s: %d active channels, %.1fM cap, local %.0f%%, observed %d/%d days -> idle>=%d sat & %.0f%% local, open>=%d sat, stop-buying>=%d sat",
+		node.NodeClass, node.LiquidityClass, node.ChannelCount, float64(node.TotalCapacitySat)/1e6, node.LocalRatio*100, node.ObservedDays, node.RequiredDays,
+		node.IdleMinCapacitySat, node.IdleLocalPct, node.OpenMinVolumeSat, node.StopBuyingMinFeeSat)
 	t.Logf("%d channels, %d rebalance rows, %d jobs 24h, %d refill intents, %d candidates -> %d insights",
 		len(ranking.Items), len(channels.Channels), len(history.Jobs), len(in.RefillIntents), len(candidates.Items), len(items))
 	for _, item := range items {

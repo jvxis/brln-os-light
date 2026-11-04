@@ -53,6 +53,10 @@ const (
 	insightTurnoverPerWeek    = 2.0
 	insightOpenMinScore       = 60
 	insightOpenMinRouteHits   = 3
+	insightOpenMinVolumeSat   = 1_000_000
+	insightOpenMaxItems       = 5
+	insightStopBuyingMinFee   = 100
+	insightPriceUnderGap      = 0.10
 	insightEconOverrideRatio  = 0.9
 	insightEconNearCapShare   = 0.9
 )
@@ -175,11 +179,19 @@ func buildInsights(in insightsInput, now time.Time) []Insight {
 			out = append(out, ins)
 		}
 	}
+	// The candidate list is long by design; the page shows only the few
+	// peers that would move real volume.
+	opens := make([]Insight, 0, len(in.OpenCandidates))
 	for _, cand := range in.OpenCandidates {
 		if ins, ok := insightOpenChannel(cand, peers, nodeOutPpm30d, now); ok {
-			out = append(out, ins)
+			opens = append(opens, ins)
 		}
 	}
+	sort.SliceStable(opens, func(i, j int) bool { return opens[i].ValueSatDay > opens[j].ValueSatDay })
+	if len(opens) > insightOpenMaxItems {
+		opens = opens[:insightOpenMaxItems]
+	}
+	out = append(out, opens...)
 	for i := range out {
 		out[i].Priority = insightPriority(out[i])
 		out[i].Status = insightStatusOpen
@@ -556,7 +568,7 @@ func insightMoreCapacity(ch *insightChannel, now time.Time) (Insight, bool) {
 // R3: the rebalance keeps paying for stock that does not sell. Stop buying
 // for this target until the lot moves.
 func insightStopBuying(ch *insightChannel, now time.Time) (Insight, bool) {
-	if ch.parked || ch.rank.RebalFee7dSat <= 0 || ch.rank.RebalAmt7dSat <= 0 {
+	if ch.parked || ch.rank.RebalFee7dSat < insightStopBuyingMinFee || ch.rank.RebalAmt7dSat <= 0 {
 		return Insight{}, false
 	}
 	if ch.rank.LocalBalancePct < insightStopBuyingMinStock {
@@ -648,7 +660,7 @@ func insightOpenChannel(cand ChannelOpenCandidateItem, peers map[string]bool, no
 	if key == "" || peers[key] {
 		return Insight{}, false
 	}
-	if cand.Score < insightOpenMinScore || cand.RouteHitCount30d < insightOpenMinRouteHits {
+	if cand.Score < insightOpenMinScore || cand.RouteHitCount30d < insightOpenMinRouteHits || cand.RouteVolumeSat30d < insightOpenMinVolumeSat {
 		return Insight{}, false
 	}
 	ins := Insight{
@@ -687,6 +699,10 @@ func insightOpenChannel(cand ChannelOpenCandidateItem, peers map[string]bool, no
 
 // R6: the fee sits far above the price the channel actually sells at while
 // it still holds stock, or below the floor that the rebalance cost implies.
+// The over-price case only applies to a fee the operator fixed by hand:
+// AutoFee already caps its own channels by the real price, and second-
+// guessing it here would be noise. The under-floor case needs a gap that
+// matters, not a few ppm of rounding.
 func insightPriceOff(ch *insightChannel, profile autofeeProfile, now time.Time) (Insight, bool) {
 	if !ch.hasReb || ch.parked {
 		return Insight{}, false
@@ -696,12 +712,13 @@ func insightPriceOff(ch *insightChannel, profile autofeeProfile, now time.Time) 
 	if fee <= 0 {
 		return Insight{}, false
 	}
-	over := reb.SalePricePpm > 0 && float64(fee) >= insightPriceOverMult*float64(reb.SalePricePpm) && reb.LocalPct >= 20
+	fixedFee := ch.rank.FixedFeePPM != nil || reb.FixedFeePPM != nil
+	over := fixedFee && reb.SalePricePpm > 0 && float64(fee) >= insightPriceOverMult*float64(reb.SalePricePpm) && reb.LocalPct >= 20
 	floor := 0
 	if reb.RebalanceCost7dPpm > 0 {
 		floor = rebalSeedFloorFromCost(int(reb.RebalanceCost7dPpm), ch.rank.ClassLabel, profile, false)
 	}
-	under := floor > 0 && fee < int64(floor) && reb.RebalanceAmount7dSat > 0
+	under := floor > 0 && reb.RebalanceAmount7dSat > 0 && float64(int64(floor)-fee) >= insightPriceUnderGap*float64(floor)
 	if !over && !under {
 		return Insight{}, false
 	}

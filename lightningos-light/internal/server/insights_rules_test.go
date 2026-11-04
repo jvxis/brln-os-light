@@ -246,24 +246,52 @@ func TestInsightOpenChannelThinSampleStaysLow(t *testing.T) {
 
 func TestInsightPriceOffBothDirections(t *testing.T) {
 	now := insightTestNow()
+	fixed := int64(1300)
 	over := insightTestRank("over:0", "over", 100, 200_000, 5_000_000, 40)
+	over.FixedFeePPM = &fixed
+	autofeeManaged := insightTestRank("auto:0", "auto", 100, 200_000, 5_000_000, 40)
 	under := insightTestRank("under:0", "under", 100, 200_000, 5_000_000, 40)
 	under.ClassLabel = "sink"
+	nearFloor := insightTestRank("near:0", "near", 100, 200_000, 5_000_000, 40)
 	rebs := []RebalanceChannel{
 		{ChannelID: 1, ChannelPoint: "over:0", OutgoingFeePpm: 1300, SalePricePpm: 900, SalePriceSource: "7d", LocalPct: 40},
-		{ChannelID: 2, ChannelPoint: "under:0", OutgoingFeePpm: 500, RebalanceCost7dPpm: 600, RebalanceAmount7dSat: 700_000, LocalPct: 40},
+		{ChannelID: 2, ChannelPoint: "auto:0", OutgoingFeePpm: 1300, SalePricePpm: 900, SalePriceSource: "7d", LocalPct: 40},
+		{ChannelID: 3, ChannelPoint: "under:0", OutgoingFeePpm: 500, RebalanceCost7dPpm: 600, RebalanceAmount7dSat: 700_000, LocalPct: 40},
+		{ChannelID: 4, ChannelPoint: "near:0", OutgoingFeePpm: 372, RebalanceCost7dPpm: 329, RebalanceAmount7dSat: 700_000, LocalPct: 40},
 	}
-	in := insightsInput{Ranking: append(insightTestBackground(), over, under), Rebalance: rebs, AutofeeProfile: autofeeProfiles[autofeeProfileDefault]}
+	in := insightsInput{Ranking: append(insightTestBackground(), over, autofeeManaged, under, nearFloor), Rebalance: rebs, AutofeeProfile: autofeeProfiles[autofeeProfileDefault]}
 	r6 := insightsByRule(buildInsights(in, now))["R6"]
 	if len(r6) != 2 {
-		t.Fatalf("expected both price insights, got %+v", r6)
+		t.Fatalf("expected exactly the fixed-fee over and the clear under, got %+v", r6)
 	}
-	dirs := map[string]bool{}
+	dirs := map[string]string{}
 	for _, ins := range r6 {
-		dirs[ins.Actions[0].Params["direction"]] = true
+		dirs[ins.Actions[0].Params["direction"]] = ins.ChannelPoint
 	}
-	if !dirs["over"] || !dirs["under"] {
-		t.Fatalf("expected over and under, got %v", dirs)
+	if dirs["over"] != "over:0" || dirs["under"] != "under:0" {
+		t.Fatalf("AutoFee-managed over-price and a 1%% floor gap must stay silent, got %v", dirs)
+	}
+}
+
+func TestInsightOpenChannelKeepsOnlyTheStrongFew(t *testing.T) {
+	now := insightTestNow()
+	cands := make([]ChannelOpenCandidateItem, 0, 12)
+	for i := 0; i < 10; i++ {
+		cands = append(cands, ChannelOpenCandidateItem{PeerPubkey: "02c" + string(rune('a'+i)), Score: 90, Confidence: 90, RouteHitCount30d: 20, RouteVolumeSat30d: int64(2_000_000 + i*100_000)})
+	}
+	cands = append(cands, ChannelOpenCandidateItem{PeerPubkey: "02tiny", Score: 99, Confidence: 99, RouteHitCount30d: 50, RouteVolumeSat30d: 400})
+	in := insightsInput{Ranking: insightTestBackground(), OpenCandidates: cands}
+	r5 := insightsByRule(buildInsights(in, now))["R5"]
+	if len(r5) != insightOpenMaxItems {
+		t.Fatalf("expected the top %d candidates, got %d", insightOpenMaxItems, len(r5))
+	}
+	for _, ins := range r5 {
+		if ins.PeerPubkey == "02tiny" {
+			t.Fatalf("a candidate with 400 sat of volume must not be suggested")
+		}
+	}
+	if r5[0].PeerPubkey != "02cj" {
+		t.Fatalf("expected the highest volume first, got %s", r5[0].PeerPubkey)
 	}
 }
 

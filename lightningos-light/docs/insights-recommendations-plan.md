@@ -332,6 +332,41 @@ quadro de acerto por regra.
   10% da receita direta média dos canais do nó. Valor inicial, a revisar na
   fase 0.
 
+## Implementação (04/11/2026)
+
+Fases 0 e 1 feitas na branch `agent/0.5.53-insights`:
+
+- `internal/server/insights_rules.go` — motor puro R1–R7 (`buildInsights`);
+  `insights_service.go` — tabela `insights_recommendations` só com a decisão
+  do operador; `insights_handlers.go` — `GET /api/lnops/insights`,
+  `POST /api/lnops/insights/recompute`, `POST /api/lnops/insights/{id}/status`
+  (`open|dismissed|done`, motivo `later|disagree|done_manually`);
+  `insights_init.go` — padrão dos outros módulos. Cache de 5 min.
+- `insights_fixture_test.go` — a fase 0: roda o motor sobre JSON capturado
+  da API de um nó (`INSIGHTS_FIXTURE_DIR=<dir> go test ./internal/server -run
+  TestInsightsFixture -v`).
+- UI em `ui/src/pages/Insights.tsx` + `pages/insights/*`, item **Insights**
+  primeiro no grupo Lightning, namespace `insights` nos dois idiomas com
+  teste de paridade (`ui/tests/insights-i18n.test.mjs`).
+
+Calibração com os dois nós do operador em 04/11 (antes → depois):
+
+| Ajuste | Motivo | Resultado |
+|---|---|---|
+| R5 exige volume 30d ≥ 1M e mostra só os 5 maiores por valor | 30 candidatos no HUB, muitos com centenas de sats de volume | FP 11 → 5, HUB 30 → 5 |
+| R6 "acima do preço" só para fee fixada à mão | AutoFee já aplica o teto pelo preço real; apontar os canais dele seria ruído e contraria o desenho | FP 7 → 0 |
+| R6 "abaixo do piso" exige folga ≥ 10% do piso | RA⚡KO 372 vs 376 ppm não é decisão | FP 3 → 0 |
+| R3 exige custo 7d ≥ 100 sat | lotes de 14–78 sats | HUB 3 → 1 |
+
+Total: FP 37 → 19 recomendações (4 R1, 4 R3, 1 R4, 5 R5, 5 R7), HUB 40 → 13
+(2 R1, 1 R3, 4 R4, 5 R5, 1 R7). Os casos reais foram pegos: coinos e kappa em
+R1 no FP (Loop In), canal novo do HUB em R1 (sem econ 0,9 porque é sink e o
+piso ×1,14 não cobre; Loop In), BitGo e lancrypt em R3, bfx-lnd0 não aparece
+em R4 porque vendeu 5k em 30 dias (regra exige zero venda direta).
+
+Pendente para a 0.5.53: validar a tela num nó de verdade (deploy), fase 2
+(resultado antes × depois) fica para depois.
+
 ## Perguntas em aberto
 
 Nenhuma. O próximo passo é o plano detalhado da fase 0 (arquivos, o que já

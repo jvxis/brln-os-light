@@ -79,6 +79,9 @@ Não entra como aba do Channel Ranking por três motivos:
 - o Ranking continua sendo a visão "o que este canal é". Insights lê o Ranking
   e manda para lá quando a resposta é "olhe este canal".
 
+O desenho da tela (blocos, anatomia do card, contrato backend → UI, i18n,
+arquivos) está em [insights-recommendations-ui.md](insights-recommendations-ui.md).
+
 ## Modelo de uma recomendação
 
 ```text

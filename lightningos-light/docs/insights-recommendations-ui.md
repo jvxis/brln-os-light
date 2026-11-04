@@ -6,6 +6,10 @@ como artefato na sessão de 04/11/2026; este arquivo é a fonte de verdade.
 
 ## Princípios
 
+0. **Um nó só.** A tela roda dentro do LOS de cada nó e só fala dos canais
+   e do histórico daquele nó. Não há seletor de nó nem rótulo de nó nos cards;
+   os exemplos do protótipo vieram de dois nós do operador, mas na tela real
+   cada um veria só os seus.
 1. **Didática antes de densidade.** Quem abre a tela pela primeira vez entende
    em um minuto de onde vem cada recomendação, o que ela pede e o que ganha.
    Cada número tem a fonte ao lado (qual tela/API) e cada regra tem uma
@@ -43,7 +47,7 @@ como artefato na sessão de 04/11/2026; este arquivo é a fonte de verdade.
 │ Filtros: [Todas] [Repor] [Capacidade] [Parar compra] [Capital] [Abrir]   │
 │          [Preço] [Bloqueios]   Confiança: [alta][média][baixa]  🔍 canal │
 ├──────────────────────────────────────────────────────────────────────────┤
-│ ▌R1  Repor e960… via Loop In            ALTA ●●●   +1.1k sat/d   HUB     │
+│ ▌R1  Repor e960… via Loop In            ALTA ●●●   +1.1k sat/d   2 dias  │
 │ ▌    Por quê · O que fazer · Quando some · [Dispensar] [Feita] [Regra?]  │
 │ ▌R3  Parar de comprar BitGo             ALTA ●●●   evita −120/d          │
 │ ▌R4  Capital parado em bfx-lnd0 (15M)   MÉDIA ●●○  realocar 1.2k/d       │
@@ -86,7 +90,9 @@ estreitas vira lista vertical.
 
 ```
 ▌[ícone kind] Título (i18n: insights.kind.<kind>.title, {alias})
-▌ chips: <kind> · confiança ●●● · +N sat/dia · nó/canal · idade
+▌ chips: <kind> · confiança ●●● · +N sat/dia · idade
+▌ (a tela é do nó onde o LOS roda; nunca mistura nós — cada instância
+▌  calcula só sobre os próprios canais e histórico)
 ▌
 ▌ POR QUÊ (evidence[])                O QUE FAZER (action)
 ▌  local 1% ▂ alvo 30%  [HealthGauge]  1. Abrir no Rebalance Center →

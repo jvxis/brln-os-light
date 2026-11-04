@@ -13,13 +13,13 @@ import (
 )
 
 const (
-	insightDoneHideWindow   = 7 * 24 * time.Hour
-	insightSnoozeWindow     = 24 * time.Hour
-	insightDismissLater     = "later"
-	insightDismissDisagree  = "disagree"
-	insightDismissDoneByMe  = "done_manually"
-	insightsCacheTTL        = 5 * time.Minute
-	insightsFollowedWindow  = 30 * 24 * time.Hour
+	insightDoneHideWindow  = 7 * 24 * time.Hour
+	insightSnoozeWindow    = 24 * time.Hour
+	insightDismissLater    = "later"
+	insightDismissDisagree = "disagree"
+	insightDismissDoneByMe = "done_manually"
+	insightsCacheTTL       = 5 * time.Minute
+	insightsFollowedWindow = 30 * 24 * time.Hour
 )
 
 var errInsightNotFound = errors.New("insight not found")

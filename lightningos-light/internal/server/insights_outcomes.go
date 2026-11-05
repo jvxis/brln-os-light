@@ -213,7 +213,7 @@ func (s *InsightsService) EnqueueOutcome(ctx context.Context, id, decision, reas
 	}
 	_, err = s.db.Exec(ctx, `
 insert into insights_outcomes (insight_id, rule, kind, channel_id, channel_point, peer_alias, peer_pubkey, decision, decision_reason, decided_at, measure_at, window_days, predicted_sat_day, action_cost_sat, before_metrics, status, snapshot)
-values ($1,$2,$3,nullif($4,0),nullif($5,''),nullif($6,''),nullif($7,''),$8,nullif($9,''),$10,$11,$12,$13,$14,$15,$16,$17)`,
+values ($1,$2,$3,nullif($4::bigint,0),nullif($5,''),nullif($6,''),nullif($7,''),$8,nullif($9,''),$10,$11,$12,$13,$14,$15,$16,$17)`,
 		id, item.Rule, item.Kind, int64(item.ChannelID), item.ChannelPoint, item.PeerAlias, item.PeerPubkey, decision, reason, now, now.Add(insightOutcomeWindow),
 		int(insightOutcomeWindow.Hours()/24), item.ValueSatDay, item.CostSat, beforeJSON, insightOutcomeStatusPending, raw)
 	return err

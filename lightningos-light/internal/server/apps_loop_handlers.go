@@ -25,6 +25,14 @@ import (
 
 const loopSwapReauthRequiredCode = "loop_swap_reauth_required"
 
+// loopdRequestTimeout covers plain loopd reads. Quotes and swap starts make
+// the Loop server probe a route to this node first (always with a last hop
+// on Loop In), and that probe alone has been seen taking longer than 20s.
+const (
+	loopdRequestTimeout = 20 * time.Second
+	loopdProbeTimeout   = 60 * time.Second
+)
+
 type loopStatusResponse struct {
 	Installed    bool       `json:"installed"`
 	Running      bool       `json:"running"`
@@ -258,7 +266,7 @@ func (s *Server) handleLoopSwap(w http.ResponseWriter, r *http.Request) {
 		endpoint = "/v1/loop/in"
 	}
 	var result map[string]any
-	if err := s.loopdRequest(r.Context(), http.MethodPost, endpoint, payload, &result); err != nil {
+	if err := s.loopdRequestWithTimeout(r.Context(), loopdProbeTimeout, http.MethodPost, endpoint, payload, &result); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -367,7 +375,7 @@ func (s *Server) fetchLoopQuote(ctx context.Context, req loopQuoteRequest) (loop
 		}
 		var raw loopRawOutQuote
 		endpoint := "/v1/loop/out/quote/" + strconv.FormatInt(req.AmountSat, 10) + "?" + query.Encode()
-		if err := s.loopdRequest(ctx, http.MethodGet, endpoint, nil, &raw); err != nil {
+		if err := s.loopdRequestWithTimeout(ctx, loopdProbeTimeout, http.MethodGet, endpoint, nil, &raw); err != nil {
 			return loopQuoteResponse{}, err
 		}
 		quote.SwapFeeSat = parseLoopInt(raw.SwapFeeSat)
@@ -389,7 +397,7 @@ func (s *Server) fetchLoopQuote(ctx context.Context, req loopQuoteRequest) (loop
 		}
 		var raw loopRawInQuote
 		endpoint := "/v1/loop/in/quote/" + strconv.FormatInt(req.AmountSat, 10) + "?" + query.Encode()
-		if err := s.loopdRequest(ctx, http.MethodGet, endpoint, nil, &raw); err != nil {
+		if err := s.loopdRequestWithTimeout(ctx, loopdProbeTimeout, http.MethodGet, endpoint, nil, &raw); err != nil {
 			return loopQuoteResponse{}, err
 		}
 		quote.SwapFeeSat = parseLoopInt(raw.SwapFeeSat)
@@ -619,6 +627,10 @@ func loopSwapPayload(req loopSwapRequest, quote loopQuoteResponse) (map[string]a
 }
 
 func (s *Server) loopdRequest(ctx context.Context, method, endpoint string, body any, target any) error {
+	return s.loopdRequestWithTimeout(ctx, loopdRequestTimeout, method, endpoint, body, target)
+}
+
+func (s *Server) loopdRequestWithTimeout(ctx context.Context, timeout time.Duration, method, endpoint string, body any, target any) error {
 	paths := loopAppPaths()
 	if err := s.ensureLoopRuntimePermissions(ctx, paths); err != nil {
 		return err
@@ -656,7 +668,7 @@ func (s *Server) loopdRequest(ctx context.Context, method, endpoint string, body
 	req.Header.Set("Grpc-Metadata-macaroon", hex.EncodeToString(macaroon))
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{
-		Timeout: 20 * time.Second,
+		Timeout: timeout,
 		Transport: &http.Transport{
 			DisableKeepAlives: true,
 			TLSClientConfig:   &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},

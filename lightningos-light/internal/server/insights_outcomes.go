@@ -103,9 +103,12 @@ type InsightScorecard struct {
 	Rules    []InsightRuleScore `json:"rules"`
 	Measured int                `json:"measured"`
 	Pending  int                `json:"pending"`
-	Hits     int                `json:"hits"`
-	Followed int                `json:"followed"`
-	Recent   []InsightOutcome   `json:"recent"`
+	// Hits counts followed recommendations that landed; Confirmed counts
+	// dismissed ones that stood. Accuracy everywhere is (Hits + Confirmed) / Measured.
+	Hits      int              `json:"hits"`
+	Confirmed int              `json:"confirmed"`
+	Followed  int              `json:"followed"`
+	Recent    []InsightOutcome `json:"recent"`
 }
 
 func (s *InsightsService) ensureOutcomeSchema(ctx context.Context) error {
@@ -404,6 +407,7 @@ func (s *InsightsService) Scorecard(ctx context.Context) (InsightScorecard, erro
 				score.Misses++
 			case insightVerdictConfirmed:
 				score.Confirmed++
+				card.Confirmed++
 			case insightVerdictUnneeded:
 				score.Unneeded++
 			}

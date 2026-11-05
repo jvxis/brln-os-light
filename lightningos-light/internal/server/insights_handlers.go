@@ -25,7 +25,7 @@ type insightsSummary struct {
 	OpenHigh       int   `json:"open_high"`
 	Followed30d    int   `json:"followed_30d"`
 	IdleCapitalSat int64 `json:"idle_capital_sat"`
-	// Phase 2: measured outcomes, node-wide.
+	// Phase 2: measured outcomes, node-wide. Hits = landed + stood.
 	Measured int `json:"measured"`
 	Hits     int `json:"hits"`
 	Pending  int `json:"pending"`
@@ -257,7 +257,8 @@ func (s *Server) collectInsights(ctx context.Context, svc *InsightsService, forc
 	}
 	payload.Summary.Followed30d = followed
 	payload.Summary.Measured = card.Measured
-	payload.Summary.Hits = card.Hits
+	// Same accuracy the Results panel shows: landed + stood, over measured.
+	payload.Summary.Hits = card.Hits + card.Confirmed
 	payload.Summary.Pending = card.Pending
 	for _, item := range items {
 		if item.Status != insightStatusOpen {

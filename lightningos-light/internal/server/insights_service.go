@@ -204,15 +204,23 @@ func (s *InsightsService) SetStatus(ctx context.Context, id, status, reason stri
 		return errInsightNotFound
 	}
 	// Phase 2: a decision opens (or closes) its before/after measurement.
-	// "Later" is not a decision, so it only voids a pending one.
+	// "Later" is not a decision, so it only voids a pending one. The decision
+	// itself is already stored, so a measurement failure is logged, not
+	// returned: the operator's click must not bounce because the ledger
+	// could not be read at that moment.
+	var outcomeErr error
 	switch {
 	case status == insightStatusDone:
-		return s.EnqueueOutcome(ctx, id, insightOutcomeDecisionDone, "", now)
+		outcomeErr = s.EnqueueOutcome(ctx, id, insightOutcomeDecisionDone, "", now)
 	case status == insightStatusDismissed && reason != insightDismissLater:
-		return s.EnqueueOutcome(ctx, id, insightOutcomeDecisionSkip, reason, now)
+		outcomeErr = s.EnqueueOutcome(ctx, id, insightOutcomeDecisionSkip, reason, now)
 	default:
-		return s.CancelPendingOutcome(ctx, id)
+		outcomeErr = s.CancelPendingOutcome(ctx, id)
 	}
+	if outcomeErr != nil && s.logger != nil {
+		s.logger.Printf("insights: outcome bookkeeping for %s failed: %v", id, outcomeErr)
+	}
+	return nil
 }
 
 // FollowedSince counts recommendations the operator marked as done in the

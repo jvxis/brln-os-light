@@ -153,14 +153,15 @@ func (s *InsightsService) measureInsightWindow(ctx context.Context, channelID ui
 	const feeExpr = `case when fee_msat>0 then fee_msat when fee_sat>0 then fee_sat*1000
  when amount_in_msat>0 and amount_out_msat>0 and amount_in_msat>amount_out_msat then amount_in_msat-amount_out_msat else 0 end`
 	const amtExpr = `case when amount_out_msat>0 then amount_out_msat else amount_sat*1000 end`
+	// sum(bigint) is numeric in Postgres; cast back so pgx scans into int64.
 	if channelID > 0 {
 		id := int64(channelID)
 		err := s.db.QueryRow(ctx, `select
- coalesce(sum(`+feeExpr+`) filter (where type='forward' and coalesce(chan_id_out,channel_id)=$1),0)/1000,
- coalesce(sum(`+feeExpr+`) filter (where type='forward' and chan_id_in=$1),0)/1000,
- coalesce(sum(`+amtExpr+`) filter (where type='forward' and coalesce(chan_id_out,channel_id)=$1),0)/1000,
- coalesce(sum(`+feeExpr+`) filter (where type='rebalance' and status in ('SETTLED','SUCCEEDED') and coalesce(rebal_target_chan_id,channel_id)=$1),0)/1000,
- coalesce(sum(amount_sat) filter (where type='rebalance' and status in ('SETTLED','SUCCEEDED') and coalesce(rebal_target_chan_id,channel_id)=$1),0)
+ (coalesce(sum(`+feeExpr+`) filter (where type='forward' and coalesce(chan_id_out,channel_id)=$1),0)/1000)::bigint,
+ (coalesce(sum(`+feeExpr+`) filter (where type='forward' and chan_id_in=$1),0)/1000)::bigint,
+ (coalesce(sum(`+amtExpr+`) filter (where type='forward' and coalesce(chan_id_out,channel_id)=$1),0)/1000)::bigint,
+ (coalesce(sum(`+feeExpr+`) filter (where type='rebalance' and status in ('SETTLED','SUCCEEDED') and coalesce(rebal_target_chan_id,channel_id)=$1),0)/1000)::bigint,
+ coalesce(sum(amount_sat) filter (where type='rebalance' and status in ('SETTLED','SUCCEEDED') and coalesce(rebal_target_chan_id,channel_id)=$1),0)::bigint
  from notifications where occurred_at >= $2 and occurred_at < $3
  and ((type='forward' and (chan_id_out=$1 or (chan_id_out is null and channel_id=$1) or chan_id_in=$1))
  or (type='rebalance' and (rebal_target_chan_id=$1 or (rebal_target_chan_id is null and channel_id=$1))))`,
@@ -172,9 +173,9 @@ func (s *InsightsService) measureInsightWindow(ctx context.Context, channelID ui
 		return m, errors.New("no channel or peer to measure")
 	}
 	err := s.db.QueryRow(ctx, `select
- coalesce(sum(`+feeExpr+`) filter (where lower(peer_pubkey_out)=$1),0)/1000,
- coalesce(sum(`+feeExpr+`) filter (where lower(peer_pubkey_in)=$1),0)/1000,
- coalesce(sum(`+amtExpr+`) filter (where lower(peer_pubkey_out)=$1),0)/1000
+ (coalesce(sum(`+feeExpr+`) filter (where lower(peer_pubkey_out)=$1),0)/1000)::bigint,
+ (coalesce(sum(`+feeExpr+`) filter (where lower(peer_pubkey_in)=$1),0)/1000)::bigint,
+ (coalesce(sum(`+amtExpr+`) filter (where lower(peer_pubkey_out)=$1),0)/1000)::bigint
  from notifications where type='forward' and occurred_at >= $2 and occurred_at < $3
  and (lower(peer_pubkey_out)=$1 or lower(peer_pubkey_in)=$1)`,
 		peer, from, to).Scan(&m.DirectFeeSat, &m.AssistedFeeSat, &m.OutAmountSat)

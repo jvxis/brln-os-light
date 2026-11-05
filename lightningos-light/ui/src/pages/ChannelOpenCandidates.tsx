@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getChannelOpenCandidates, recomputeChannelOpenCandidates } from '../api'
 import { getLocale } from '../i18n'
+import { readHashParams } from './insights/links'
 
 type ChannelOpenCandidateReason = {
   code: string
@@ -39,6 +40,8 @@ const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
 
 const buildGraphExplorerHash = (pubkey: string) =>
   `#${GRAPH_EXPLORER_ROUTE_KEY}?pubkey=${encodeURIComponent(pubkey)}`
+
+const candidateCardID = (pubkey: string) => `open-candidate-${pubkey.toLowerCase().slice(0, 20)}`
 
 const categoryBadgeClass = (kind: 'demand' | 'relief' | 'graph') => {
   switch (kind) {
@@ -113,6 +116,19 @@ export default function ChannelOpenCandidates() {
     void load()
   }, [])
 
+  // Insights phase 3: #new-channels?pubkey=… highlights that candidate and
+  // scrolls to it once the list is in.
+  const [focusedPubkey, setFocusedPubkey] = useState(() => (readHashParams('new-channels').get('pubkey') || '').trim().toLowerCase())
+  useEffect(() => {
+    if (!focusedPubkey || loading || items.length === 0) return
+    const element = document.getElementById(candidateCardID(focusedPubkey))
+    if (!element) return
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    window.history.replaceState(null, '', '#new-channels')
+    const timer = window.setTimeout(() => setFocusedPubkey(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [focusedPubkey, loading, items])
+
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -163,7 +179,11 @@ export default function ChannelOpenCandidates() {
           <div className="max-h-[72vh] overflow-y-auto overflow-x-hidden pb-2 pr-1">
             <div className="grid min-w-0 gap-3 xl:grid-cols-2">
               {items.map((item) => (
-                <div key={item.peer_pubkey} className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div
+                  key={item.peer_pubkey}
+                  id={candidateCardID(item.peer_pubkey)}
+                  className={`min-w-0 rounded-2xl border p-4 transition ${item.peer_pubkey.toLowerCase() === focusedPubkey ? 'border-sky-400/60 bg-sky-500/10 shadow-[0_0_0_1px_rgba(56,189,248,.35)]' : 'border-white/10 bg-white/[0.03]'}`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 space-y-1">
                       <div className="truncate text-sm font-medium text-fog">{item.peer_alias || item.peer_pubkey}</div>

@@ -67,7 +67,10 @@ create table if not exists insights_recommendations (
 );
 create index if not exists insights_recommendations_status_idx on insights_recommendations (status, last_seen_at desc);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.ensureOutcomeSchema(ctx)
 }
 
 // Reconcile merges the freshly computed list with the stored decisions and
@@ -200,7 +203,16 @@ func (s *InsightsService) SetStatus(ctx context.Context, id, status, reason stri
 	if tag.RowsAffected() == 0 {
 		return errInsightNotFound
 	}
-	return nil
+	// Phase 2: a decision opens (or closes) its before/after measurement.
+	// "Later" is not a decision, so it only voids a pending one.
+	switch {
+	case status == insightStatusDone:
+		return s.EnqueueOutcome(ctx, id, insightOutcomeDecisionDone, "", now)
+	case status == insightStatusDismissed && reason != insightDismissLater:
+		return s.EnqueueOutcome(ctx, id, insightOutcomeDecisionSkip, reason, now)
+	default:
+		return s.CancelPendingOutcome(ctx, id)
+	}
 }
 
 // FollowedSince counts recommendations the operator marked as done in the

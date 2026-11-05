@@ -227,7 +227,10 @@ type insightsInput struct {
 	LoopInstalled   bool
 	LoopKnown       bool
 	AutofeeProfile  autofeeProfile
-	scale           insightScale // filled by buildInsights from the ranking
+	// RuleWeights come from the measured outcomes (phase 2): a rule that keeps
+	// missing drops in the order, one that keeps landing rises. Absent = 1.
+	RuleWeights map[string]float64
+	scale       insightScale // filled by buildInsights from the ranking
 }
 
 type insightChannel struct {
@@ -309,7 +312,7 @@ func buildInsights(in insightsInput, now time.Time) []Insight {
 	}
 	out = append(out, opens...)
 	for i := range out {
-		out[i].Priority = insightPriority(out[i])
+		out[i].Priority = insightPriorityWeighted(out[i], in.RuleWeights)
 		out[i].Status = insightStatusOpen
 		out[i].FirstSeenAt = now
 		out[i].LastSeenAt = now
@@ -482,6 +485,17 @@ func insightPriority(ins Insight) float64 {
 		value = 0
 	}
 	return math.Round(insightKindFloor(ins.Kind) + value*insightConfidenceWeight(ins.Confidence))
+}
+
+// insightPriorityWeighted applies the rule's measured weight on top of the
+// designed priority. The kind floor is weighted too, so a rule that never
+// lands can fall below a cheaper rule that does.
+func insightPriorityWeighted(ins Insight, weights map[string]float64) float64 {
+	base := insightPriority(ins)
+	if w, ok := weights[ins.Rule]; ok && w > 0 {
+		return math.Round(base * w)
+	}
+	return base
 }
 
 func insightID(rule, key string) string {

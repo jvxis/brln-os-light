@@ -48,6 +48,10 @@ func (s *Server) initInsights() {
 	}
 	s.insights = svc
 	s.insightsErr = ""
+	if !s.insightsLoopStarted {
+		s.insightsLoopStarted = true
+		s.startInsightsOutcomeLoop(svc)
+	}
 }
 
 func (s *Server) insightsService() (*InsightsService, string) {

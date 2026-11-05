@@ -4,6 +4,7 @@ import { getInsights, recomputeInsights, setInsightStatus, type InsightItem, typ
 import MetricTile from '../components/dashboard/MetricTile'
 import { getLocale } from '../i18n'
 import InsightCard from './insights/InsightCard'
+import OutcomePanel from './insights/OutcomePanel'
 import RuleGlossary from './insights/RuleGlossary'
 import SignalMap from './insights/SignalMap'
 
@@ -186,7 +187,13 @@ export default function Insights() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <MetricTile label={t('insights.summary.valueAtStake')} value={`+${formatNumber(summary?.value_sat_day || 0)} sat/d`} tone={summary && summary.value_sat_day > 0 ? 'ok' : 'muted'} sublabel={teach ? t('insights.summary.valueHint') : undefined} />
             <MetricTile label={t('insights.summary.open')} value={summary?.open ?? 0} tone="info" badgeLabel={summary ? t('insights.summary.openHigh', { count: summary.open_high }) : undefined} sublabel={teach ? t('insights.summary.openHint') : undefined} />
-            <MetricTile label={t('insights.summary.followed')} value={summary?.followed_30d ?? 0} tone="muted" sublabel={teach ? t('insights.summary.followedHint') : undefined} />
+            <MetricTile
+              label={t('insights.summary.followed')}
+              value={summary?.followed_30d ?? 0}
+              tone={summary && summary.measured > 0 && summary.hits * 2 >= summary.measured ? 'ok' : 'muted'}
+              badgeLabel={summary && summary.measured > 0 ? t('insights.summary.accuracy', { value: Math.round((summary.hits / summary.measured) * 100) }) : summary && summary.pending > 0 ? t('insights.summary.pendingBadge', { count: summary.pending }) : undefined}
+              sublabel={teach ? t('insights.summary.followedHint') : undefined}
+            />
             <MetricTile label={t('insights.summary.idle')} value={`${formatNumber((summary?.idle_capital_sat || 0) / 1e6)}M sat`} tone={summary && summary.idle_capital_sat > 0 ? 'warn' : 'muted'} sublabel={teach ? t('insights.summary.idleHint') : undefined} />
           </div>
 
@@ -241,6 +248,8 @@ export default function Insights() {
               ))}
             </div>
           )}
+
+          <OutcomePanel scorecard={payload.scorecard ?? []} teach={teach} formatNumber={formatNumber} formatRelative={formatRelative} onRule={(rule) => setGlossary({ open: true, rule })} />
         </>
       ) : null}
 

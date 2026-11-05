@@ -397,8 +397,62 @@ Dois mecanismos, ambos no motor (`insights_rules.go`), sem parâmetro novo:
   a pílula "Nó médio · equilibrado · 30 dias de dados" com os limiares no
   tooltip e um bloco na gaveta "Como funciona".
 
-Pendente para a 0.5.53: validar a tela num nó de verdade (deploy), fase 2
-(resultado antes × depois) fica para depois.
+Validação da tela: lab regtest (Alice/Bob/Charlie) em 04/11, ver PR #380.
+
+### Fases 2 e 3 na 0.5.53 (05/11)
+
+Decisão do operador em 05/11: só dá para medir em nó de produção (Friendspool
+e HUB), então as fases 2 e 3 entram na 0.5.53 e a produção vira o teste;
+correções ficam para a 0.5.54.
+
+**Fase 2 — resultado antes × depois** (`insights_outcomes.go`):
+
+- Tabela `insights_outcomes`. Ao marcar uma recomendação como **feita** ou
+  **dispensada** (`disagree`, `done_manually`; "depois" não é decisão), o
+  serviço congela o **antes**: os 7 dias anteriores do canal lidos do livro de
+  notificações (forwards e rebalances liquidados, retenção de 1 ano): receita
+  direta (`chan_id_out`), assistida (`chan_id_in`), volume vendido e custo de
+  reposição (`rebal_target_chan_id`). R5 (abrir canal) mede pelo peer
+  (`peer_pubkey_out/in`), já que não há canal. Reabrir cancela a medição
+  pendente. Com isso **não é preciso retrato diário por canal**: o livro já
+  guarda o passado, e o retrato do próprio card fica em `snapshot`.
+- Job de hora em hora (`startInsightsOutcomeLoop`, iniciado uma vez junto com
+  o schema) fecha as medições vencidas: lê os 7 dias **depois** da decisão e
+  dá o veredito (`insightOutcomeVerdict`, função pura testada):
+  - `realizado/dia` = (líquido depois − líquido antes) ÷ 7, líquido = direta +
+    assistida − custo de reposição;
+  - feita: **acertou** se realizado ≥ 50% do previsto; **errou** se ≤ 0;
+    **em parte** no meio. R3 (parar de comprar) olha o gasto: acertou se o
+    custo/dia caiu à metade, errou se não caiu;
+  - dispensada: **sustentou** se o canal não melhorou sozinho (a recomendação
+    estava certa), **não precisava** se melhorou;
+  - erro = |realizado − previsto| ÷ previsto, só nas feitas.
+- Placar por regra (`Scorecard`): medidas, feitas (acertou/em parte/errou),
+  dispensadas (sustentou/não precisava), acerto = (acertou + sustentou) ÷
+  medidas, erro médio. **Peso** = 0,5 + acerto (0,5–1,5), aplicado só com ≥ 5
+  medições; multiplica a prioridade da regra (`insightPriorityWeighted`), piso
+  incluído, então regra que nunca acerta cai abaixo de regra barata que acerta.
+- API: `GET /api/lnops/insights/outcomes` (placar + 60 decisões recentes);
+  o payload principal traz `scorecard` e `summary.{measured,hits,pending}`.
+- Tela: painel "Resultado: o que aconteceu uma semana depois" com a tabela por
+  regra e a lista de decisões (duas barras antes × depois, previsto × realizado,
+  erro, veredito). O tile "Seguidas em 30 dias" ganha o selo de acerto.
+
+**Fase 3 — atalhos preenchidos** (`pages/insights/links.ts`):
+
+- Loop In: `#lightning-loop?direction=in&amount_sat=…&last_hop=…`; a página
+  lê o hash e abre a aba Loop In com valor e último salto. Cotação e
+  confirmação continuam lá.
+- Teto (econ ratio): `#rebalance-center?channel_point=…&econ_ratio=0.90`; o
+  campo de override do canal recebe o valor como rascunho, não salvo.
+- Mais capacidade (R2): `#lightning-ops?section=open-channel-section&
+  peer_pubkey=…&amount_sat=…`; o formulário de abertura vem com peer e valor.
+- Abrir canal (R5): `#new-channels?pubkey=…` destaca e rola até o candidato.
+- Fechar (R4) e Fee Center já recebiam o canal.
+
+O que fica para a 0.5.54, com os dados da produção: ajustar os cortes do
+veredito (50%, metade do gasto), decidir se capital parado (R4) deve medir
+capital liberado em vez de líquido do canal, lista de exclusão local.
 
 ## Perguntas em aberto
 

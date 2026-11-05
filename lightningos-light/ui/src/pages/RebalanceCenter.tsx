@@ -111,6 +111,21 @@ const readHashChannelPoint = (routeKey: string) => {
 const buildHashWithChannelPoint = (routeKey: string, channelPoint: string) =>
   `#${routeKey}?${CHANNEL_HASH_PARAM}=${encodeURIComponent(channelPoint)}`
 
+// Optional econ ratio carried by an Insights link (0.01–0.99); anything else
+// is ignored.
+const readHashEconRatio = (routeKey: string) => {
+  if (typeof window === 'undefined') return ''
+  const rawHash = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.hash
+  const queryIndex = rawHash.indexOf('?')
+  if (queryIndex < 0 || rawHash.slice(0, queryIndex) !== routeKey) return ''
+  const raw = (new URLSearchParams(rawHash.slice(queryIndex + 1)).get('econ_ratio') || '').trim().replace(',', '.')
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0.01 || value > 0.99) return ''
+  return value.toFixed(2)
+}
+
 const desktopChannelRowID = (channelPoint: string) =>
   `rebalance-channel-desktop-${channelPoint.replace(/[^a-zA-Z0-9_-]/g, '_')}`
 
@@ -187,6 +202,7 @@ export default function RebalanceCenter() {
   const configRef = useRef<RebalanceConfig | null>(null)
   const autoOpenRef = useRef(false)
   const pendingScrollChannelRef = useRef('')
+  const pendingEconRatioRef = useRef('')
   const focusClearTimerRef = useRef<number | null>(null)
   const hasLoadedOnceRef = useRef(false)
   const loadInFlightRef = useRef(false)
@@ -663,6 +679,7 @@ export default function RebalanceCenter() {
   }, [channelSortDir])
   useEffect(() => {
     pendingScrollChannelRef.current = readHashChannelPoint(REBALANCE_ROUTE_KEY)
+    pendingEconRatioRef.current = readHashEconRatio(REBALANCE_ROUTE_KEY)
     return () => {
       if (focusClearTimerRef.current !== null) {
         window.clearTimeout(focusClearTimerRef.current)
@@ -686,6 +703,18 @@ export default function RebalanceCenter() {
     if (!targetElement) return
     targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
     setFocusedChannelPoint(targetChannelPoint)
+    // Insights phase 3: a suggested econ ratio arrives in the link and lands
+    // in the channel's draft field, unsaved, for the operator to confirm.
+    const suggestedEcon = pendingEconRatioRef.current
+    if (suggestedEcon) {
+      const target = sortedChannels.find((channel) => channel.channel_point === targetChannelPoint)
+      if (target) {
+        const key = target.channel_point || String(target.channel_id)
+        setEditUseDefaultEconRatio((prev) => ({ ...prev, [key]: false }))
+        setEditEconRatios((prev) => ({ ...prev, [key]: suggestedEcon }))
+      }
+      pendingEconRatioRef.current = ''
+    }
     pendingScrollChannelRef.current = ''
     window.history.replaceState(null, '', `#${REBALANCE_ROUTE_KEY}`)
     if (focusClearTimerRef.current !== null) {

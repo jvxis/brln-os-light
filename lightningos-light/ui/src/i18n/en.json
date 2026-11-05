@@ -6454,7 +6454,10 @@
       "openHigh": "{{count}} high confidence",
       "openHint": "Sorted by value × confidence, with a floor per type.",
       "followed": "Followed in 30 days",
-      "followedHint": "Recommendations you marked as done. The before/after measurement comes next.",
+      "followedHint": "Recommendations you marked as done. Each one is measured a week later: the badge is how often the rules landed.",
+      "accuracy": "{{value}}% landed",
+      "pendingBadge_one": "{{count}} being measured",
+      "pendingBadge_other": "{{count}} being measured",
       "idle": "Idle capital",
       "idleHint": "Local balance ≥ 60% with no sales in 30 days."
     },
@@ -6588,6 +6591,45 @@
       "later": "later (24h)",
       "disagree": "I disagree",
       "done_manually": "already handled"
+    },
+    "outcomes": {
+      "title": "Results: what happened a week later",
+      "none": "No measured decision yet. Mark a recommendation as done or dismiss it, and the result shows up here seven days later.",
+      "summary": "{{measured}} measured · {{accuracy}}% landed · {{pending}} being measured",
+      "open": "Show decisions",
+      "teach": "Each decision (done or dismissed) freezes the channel's previous 7 days — direct revenue, assisted revenue and refill cost from the ledger — and a week later reads the same 7 days after it. The verdict compares what changed per day with what the card predicted. A rule that keeps landing rises in the order; one that keeps missing drops, once it has 5 measurements.",
+      "decisionDone": "done",
+      "decisionDismissed": "dismissed · {{reason}}",
+      "decided": "decided {{value}}",
+      "measures": "measures {{value}}",
+      "measureError": "could not read the ledger, will retry",
+      "before": "before",
+      "after": "after",
+      "predicted": "predicted",
+      "realized": "realized",
+      "error": "error",
+      "windowHint": "{{days}}-day windows: net = direct + assisted − refill cost.",
+      "detail": "after: direct {{direct}} · assisted {{assisted}} · refill {{rebal}} sat",
+      "verdict": {
+        "pending": "being measured",
+        "hit": "landed",
+        "neutral": "partly",
+        "miss": "missed",
+        "confirmed": "stood",
+        "unneeded": "not needed"
+      },
+      "table": {
+        "rule": "Rule",
+        "measured": "Measured",
+        "followed": "Followed (landed/partly/missed)",
+        "dismissed": "Dismissed (stood/not needed)",
+        "accuracy": "Accuracy",
+        "error": "Mean error",
+        "weight": "Weight",
+        "weightPending_one": "after {{count}} more",
+        "weightPending_other": "after {{count}} more",
+        "legend": "Accuracy = landed + stood, over measured. Error = distance between predicted and realized sat/day, followed only. Weight multiplies the rule's priority: 1.0 at 50% accuracy, 0.5 when it never lands, 1.5 when it always does."
+      }
     },
     "glossary": {
       "title": "How it works",

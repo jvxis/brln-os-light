@@ -632,11 +632,72 @@ export type InsightNodeInfo = {
   local_ratio: number
 }
 
+export type InsightWindowMetrics = {
+  direct_fee_sat: number
+  assisted_fee_sat: number
+  out_amount_sat: number
+  rebal_cost_sat: number
+  rebal_amount_sat: number
+}
+
+export type InsightOutcome = {
+  id: number
+  insight_id: string
+  rule: string
+  kind: InsightItem['kind']
+  channel_id?: number
+  channel_point?: string
+  peer_alias?: string
+  peer_pubkey?: string
+  decision: 'done' | 'dismissed'
+  decision_reason?: string
+  decided_at: string
+  measure_at: string
+  window_days: number
+  predicted_sat_day: number
+  action_cost_sat: number
+  before: InsightWindowMetrics
+  after?: InsightWindowMetrics
+  realized_sat_day?: number
+  error_pct?: number
+  verdict?: 'hit' | 'neutral' | 'miss' | 'confirmed' | 'unneeded' | ''
+  status: 'pending' | 'measured' | 'cancelled'
+  measured_at?: string
+  measurement_error?: string
+}
+
+export type InsightRuleScore = {
+  rule: string
+  pending: number
+  measured: number
+  followed: number
+  hits: number
+  neutral: number
+  misses: number
+  dismissed: number
+  confirmed: number
+  unneeded: number
+  accuracy: number
+  mean_error_pct: number
+  weight: number
+  weight_applied: boolean
+}
+
+export type InsightScorecard = {
+  rules: InsightRuleScore[]
+  measured: number
+  pending: number
+  hits: number
+  followed: number
+  recent: InsightOutcome[]
+}
+
 export type InsightsPayload = {
   computed_at: string
   sources: InsightSource[]
   node: InsightNodeInfo
-  summary: { value_sat_day: number; open: number; open_high: number; followed_30d: number; idle_capital_sat: number }
+  summary: { value_sat_day: number; open: number; open_high: number; followed_30d: number; idle_capital_sat: number; measured: number; hits: number; pending: number }
+  scorecard: InsightRuleScore[]
   items: InsightItem[]
 }
 
@@ -645,6 +706,7 @@ export const recomputeInsights = (): Promise<InsightsPayload> =>
   request('/api/lnops/insights/recompute', { method: 'POST' })
 export const setInsightStatus = (id: string, status: 'open' | 'dismissed' | 'done', reason?: string) =>
   request(`/api/lnops/insights/${encodeURIComponent(id)}/status`, { method: 'POST', body: JSON.stringify({ status, reason }) })
+export const getInsightOutcomes = (): Promise<InsightScorecard> => request('/api/lnops/insights/outcomes')
 export const getCloseManagerStatus = () => request('/api/lnops/close-manager/status')
 export const getCloseManagerSessions = (limit = 100) =>
   request(`/api/lnops/close-manager/sessions?limit=${encodeURIComponent(String(limit))}`)

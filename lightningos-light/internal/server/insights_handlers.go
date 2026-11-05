@@ -25,14 +25,35 @@ type insightsSummary struct {
 	OpenHigh       int   `json:"open_high"`
 	Followed30d    int   `json:"followed_30d"`
 	IdleCapitalSat int64 `json:"idle_capital_sat"`
+	// Phase 2: measured outcomes, node-wide.
+	Measured int `json:"measured"`
+	Hits     int `json:"hits"`
+	Pending  int `json:"pending"`
 }
 
 type insightsPayload struct {
-	ComputedAt time.Time       `json:"computed_at"`
-	Sources    []insightSource `json:"sources"`
-	Node       insightNodeInfo `json:"node"`
-	Summary    insightsSummary `json:"summary"`
-	Items      []Insight       `json:"items"`
+	ComputedAt time.Time          `json:"computed_at"`
+	Sources    []insightSource    `json:"sources"`
+	Node       insightNodeInfo    `json:"node"`
+	Summary    insightsSummary    `json:"summary"`
+	Scorecard  []InsightRuleScore `json:"scorecard"`
+	Items      []Insight          `json:"items"`
+}
+
+func (s *Server) handleInsightOutcomesGet(w http.ResponseWriter, r *http.Request) {
+	svc, errMsg := s.insightsService()
+	if svc == nil {
+		writeError(w, http.StatusServiceUnavailable, insightsUnavailableMessage(errMsg))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	card, err := svc.Scorecard(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load insight outcomes")
+		return
+	}
+	writeJSON(w, http.StatusOK, card)
 }
 
 func (s *Server) handleInsightsGet(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +233,14 @@ func (s *Server) collectInsights(ctx context.Context, svc *InsightsService, forc
 		in.LoopInstalled = state.Installed
 	}
 
+	// Phase 2: measured outcomes reorder the rules before they run.
+	card, cardErr := svc.Scorecard(ctx)
+	if cardErr != nil {
+		s.logger.Printf("insights: scorecard failed: %v", cardErr)
+	} else {
+		in.RuleWeights = insightRuleWeightsFromScorecard(card)
+	}
+
 	items := buildInsights(in, now)
 	items, err := svc.Reconcile(ctx, items, now)
 	if err != nil {
@@ -222,8 +251,14 @@ func (s *Server) collectInsights(ctx context.Context, svc *InsightsService, forc
 		items = []Insight{}
 	}
 
-	payload := insightsPayload{ComputedAt: now, Sources: sources, Node: insightNodeInfoFor(in.Ranking), Items: items}
+	payload := insightsPayload{ComputedAt: now, Sources: sources, Node: insightNodeInfoFor(in.Ranking), Scorecard: card.Rules, Items: items}
+	if payload.Scorecard == nil {
+		payload.Scorecard = []InsightRuleScore{}
+	}
 	payload.Summary.Followed30d = followed
+	payload.Summary.Measured = card.Measured
+	payload.Summary.Hits = card.Hits
+	payload.Summary.Pending = card.Pending
 	for _, item := range items {
 		if item.Status != insightStatusOpen {
 			continue

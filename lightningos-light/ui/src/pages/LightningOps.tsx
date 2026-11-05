@@ -1081,6 +1081,17 @@ const readHashSection = (routeKey: string) => {
   return (params.get(SECTION_HASH_PARAM) || '').trim()
 }
 
+const readHashOpenAmount = (routeKey: string) => {
+  if (typeof window === 'undefined') return ''
+  const rawHash = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.hash
+  const queryIndex = rawHash.indexOf('?')
+  if (queryIndex < 0 || rawHash.slice(0, queryIndex) !== routeKey) return ''
+  const digits = (new URLSearchParams(rawHash.slice(queryIndex + 1)).get('amount_sat') || '').replace(/\D/g, '')
+  return digits && Number(digits) > 0 ? digits : ''
+}
+
 const normalizeHashSection = (section: string) => {
   switch (section) {
     case 'close_recovery':
@@ -3994,6 +4005,18 @@ export default function LightningOps() {
     pendingScrollChannelRef.current = readHashChannelPoint(LIGHTNING_OPS_ROUTE_KEY)
     pendingScrollPeerRef.current = readHashPeerPubKey(LIGHTNING_OPS_ROUTE_KEY)
     pendingScrollSectionRef.current = readHashSection(LIGHTNING_OPS_ROUTE_KEY)
+    // Insights phase 3: a link to the open-channel section may carry the
+    // peer and the amount the rule computed. The form opens filled in; the
+    // preview and the confirmation are unchanged.
+    if (pendingScrollSectionRef.current === OPEN_CHANNEL_SECTION_ID) {
+      const prefillPeer = pendingScrollPeerRef.current
+      const prefillAmount = readHashOpenAmount(LIGHTNING_OPS_ROUTE_KEY)
+      if (prefillPeer) {
+        setOpenPeer(prefillPeer)
+        pendingScrollPeerRef.current = ''
+      }
+      if (prefillAmount) setOpenAmount(prefillAmount)
+    }
     return () => {
       if (focusClearTimerRef.current !== null) {
         window.clearTimeout(focusClearTimerRef.current)

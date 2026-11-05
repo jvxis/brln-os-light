@@ -6454,7 +6454,10 @@
       "openHigh": "{{count}} de confiança alta",
       "openHint": "Ordenadas por valor × confiança, com piso por tipo.",
       "followed": "Seguidas em 30 dias",
-      "followedHint": "Recomendações que você marcou como feitas. A medição antes × depois vem em seguida.",
+      "followedHint": "Recomendações que você marcou como feitas. Cada uma é medida uma semana depois: o selo diz quantas vezes as regras acertaram.",
+      "accuracy": "{{value}}% acertaram",
+      "pendingBadge_one": "{{count}} em medição",
+      "pendingBadge_other": "{{count}} em medição",
       "idle": "Capital parado",
       "idleHint": "Saldo local ≥ 60% sem venda em 30 dias."
     },
@@ -6583,6 +6586,45 @@
       "sales_30d_positive": "qualquer venda em 30 dias",
       "channel_opened_or_candidate_gone": "o canal for aberto ou o candidato sair da lista",
       "fee_within_band": "a fee voltar para ±30% do preço de venda e acima do piso"
+    },
+    "outcomes": {
+      "title": "Resultado: o que aconteceu uma semana depois",
+      "none": "Nenhuma decisão medida ainda. Marque uma recomendação como feita ou dispense, e o resultado aparece aqui sete dias depois.",
+      "summary": "{{measured}} medidas · {{accuracy}}% acertaram · {{pending}} em medição",
+      "open": "Ver decisões",
+      "teach": "Cada decisão (feita ou dispensada) congela os 7 dias anteriores do canal — receita direta, assistida e custo de reposição, lidos do livro de forwards e rebalances — e uma semana depois lê os mesmos 7 dias seguintes. O veredito compara o que mudou por dia com o que o card previu. Regra que acerta sempre sobe na ordem; regra que erra sempre desce, a partir de 5 medições.",
+      "decisionDone": "feita",
+      "decisionDismissed": "dispensada · {{reason}}",
+      "decided": "decidida {{value}}",
+      "measures": "mede {{value}}",
+      "measureError": "não conseguiu ler o livro, tenta de novo",
+      "before": "antes",
+      "after": "depois",
+      "predicted": "previsto",
+      "realized": "realizado",
+      "error": "erro",
+      "windowHint": "Janelas de {{days}} dias: líquido = direta + assistida − custo de reposição.",
+      "detail": "depois: direta {{direct}} · assistida {{assisted}} · reposição {{rebal}} sat",
+      "verdict": {
+        "pending": "em medição",
+        "hit": "acertou",
+        "neutral": "em parte",
+        "miss": "errou",
+        "confirmed": "sustentou",
+        "unneeded": "não precisava"
+      },
+      "table": {
+        "rule": "Regra",
+        "measured": "Medidas",
+        "followed": "Feitas (acertou/em parte/errou)",
+        "dismissed": "Dispensadas (sustentou/não precisava)",
+        "accuracy": "Acerto",
+        "error": "Erro médio",
+        "weight": "Peso",
+        "weightPending_one": "faltam {{count}}",
+        "weightPending_other": "faltam {{count}}",
+        "legend": "Acerto = acertou + sustentou, sobre as medidas. Erro = distância entre sat/dia previsto e realizado, só nas feitas. Peso multiplica a prioridade da regra: 1,0 com 50% de acerto, 0,5 quando nunca acerta, 1,5 quando sempre acerta."
+      }
     },
     "dismissReason": {
       "later": "depois (24h)",

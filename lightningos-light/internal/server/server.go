@@ -139,6 +139,7 @@ type Server struct {
 	insightsMu                  sync.Mutex
 	insights                    *InsightsService
 	insightsErr                 string
+	insightsLoopStarted         bool
 	insightsCacheMu             sync.Mutex
 	insightsCache               *insightsPayload
 	graphExplorerInitAt         time.Time

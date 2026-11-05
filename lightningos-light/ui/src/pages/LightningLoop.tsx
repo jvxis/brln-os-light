@@ -1,5 +1,6 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { readHashParams } from './insights/links'
 import {
   APIError,
   getLnChannels,
@@ -123,6 +124,21 @@ export default function LightningLoop() {
     const timer = window.setInterval(() => void load(true), 15_000)
     return () => window.clearInterval(timer)
   }, [load])
+
+  // A link from Insights (or any screen) can open the form filled in:
+  // #lightning-loop?direction=in&amount_sat=…&last_hop=…  The quote and the
+  // confirmation still happen here.
+  useEffect(() => {
+    const params = readHashParams('lightning-loop')
+    const wantedDirection = params.get('direction')
+    const amount = (params.get('amount_sat') || '').replace(/\D/g, '')
+    const hop = (params.get('last_hop') || '').trim()
+    if (!wantedDirection && !amount && !hop) return
+    if (wantedDirection === 'in' || wantedDirection === 'out') setDirection(wantedDirection)
+    if (amount) setAmountSat(amount)
+    if (hop && wantedDirection !== 'out') setLastHop(hop)
+    window.history.replaceState(null, '', '#lightning-loop')
+  }, [])
 
   useEffect(() => {
     setConfTarget(direction === 'out' ? '9' : '6')

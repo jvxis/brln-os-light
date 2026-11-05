@@ -146,11 +146,28 @@ Abre por botão no cabeçalho ou pelo link do card. Conteúdo por regra R1–R7:
 Também explica o cálculo do valor (`volume_dia × (venda − reposição)`) com um
 mini-exemplo numérico, e o que significa cada nível de confiança.
 
-### 7. Histórico (fase 2)
+### 7. Resultado (fase 2, feito em 05/11)
 
-Lista de seguidas/dispensadas com data, ação, e **antes × depois** (7d) em duas
-barras; agregado no topo (acertou/errou/neutro). Lê `outcome` da tabela
-`insights_recommendations`.
+Painel `OutcomePanel` no fim da página, sempre visível quando o nó está
+pronto: título "Resultado: o que aconteceu uma semana depois", linha-resumo
+(medidas · % acertaram · em medição) e **tabela por regra** (medidas, feitas
+com acertou/em parte/errou, dispensadas com sustentou/não precisava, acerto,
+erro médio, peso ×). O botão "Ver decisões" carrega
+`GET /api/lnops/insights/outcomes` e lista as decisões recentes: regra, título
+do card, decisão (feita/dispensada · motivo), veredito, "decidida há…", duas
+barras **antes × depois** do líquido de 7 dias, previsto × realizado em
+sat/dia e erro. No modo didático cada item mostra a janela e a decomposição
+(direta · assistida · reposição). O tile "Seguidas em 30 dias" ganha o selo
+"{n}% acertaram" (ou "{n} em medição"). Nomes dos vereditos: acertou, em parte,
+errou, sustentou, não precisava, em medição.
+
+### 7b. Atalhos preenchidos (fase 3, feito em 05/11)
+
+Os links dos passos levam os parâmetros do card: Loop In abre com direção,
+valor e último salto; "Subir o teto" abre o Rebalance Center com o canal em
+foco e o econ ratio sugerido no campo de rascunho; "Mais capacidade" abre o
+formulário de abertura do Lightning Ops com peer e valor; "Abrir canal" rola
+até o candidato em Novos Canais. Nenhum deles executa nada.
 
 ### 8. Estados
 

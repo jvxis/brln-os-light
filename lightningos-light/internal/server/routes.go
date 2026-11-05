@@ -294,6 +294,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/channel-ranking/{channel_point}", s.handleChannelRankingItemGet)
 		r.Get("/insights", s.handleInsightsGet)
 		r.Post("/insights/recompute", s.handleInsightsRecomputePost)
+		r.Get("/insights/outcomes", s.handleInsightOutcomesGet)
 		r.Post("/insights/{id}/status", s.handleInsightStatusPost)
 		r.Get("/close-manager/status", s.handleCloseManagerStatusGet)
 		r.Get("/close-manager/sessions", s.handleCloseManagerSessionsGet)

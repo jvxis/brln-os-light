@@ -32,4 +32,5 @@ test('every backend code the Insights page renders has a translation', () => {
   for (const code of invalidate) assert.ok(en.invalidate[code], `invalidate ${code}`)
   for (const key of evidence) assert.ok(en.evidence[key], `evidence ${key}`)
   for (const rule of ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7']) assert.ok(en.glossary.rules[rule]?.name, `rule ${rule}`)
+  for (const verdict of ['pending', 'hit', 'neutral', 'miss', 'confirmed', 'unneeded']) assert.ok(en.outcomes.verdict[verdict], `verdict ${verdict}`)
 })

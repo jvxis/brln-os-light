@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   APIError,
@@ -90,6 +90,20 @@ export default function LightningLoop() {
   const [riskAccepted, setRiskAccepted] = useState(false)
   const [reauthOpen, setReauthOpen] = useState(false)
   const [password, setPassword] = useState('')
+  const [reauthError, setReauthError] = useState('')
+  const messageRef = useRef<HTMLDivElement | null>(null)
+
+  // The message banner lives at the top of a long page. Whoever is down at
+  // the execution plan would otherwise never see a swap error.
+  useEffect(() => {
+    if (message) messageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [message])
+
+  const closeReauth = () => {
+    setReauthOpen(false)
+    setPassword('')
+    setReauthError('')
+  }
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -266,14 +280,16 @@ export default function LightningLoop() {
       })
       setMessage(t('lightningLoop.swapStarted'))
       clearQuote()
-      setReauthOpen(false)
-      setPassword('')
+      closeReauth()
       await load(true)
     } catch (err: any) {
       if (err instanceof APIError && err.code === 'loop_swap_reauth_required') {
         setReauthOpen(true)
       } else {
+        // Password was fine; the swap itself failed. Close the modal so the
+        // error banner is not hidden behind it.
         if (err instanceof APIError && err.code === 'loop_quote_changed') setQuote(null)
+        closeReauth()
         setMessage(err?.message || t('lightningLoop.swapFailed'))
       }
     } finally {
@@ -285,11 +301,12 @@ export default function LightningLoop() {
     event.preventDefault()
     if (!password.trim()) return
     setBusy(true)
+    setReauthError('')
     try {
       await reauthAuth({ password, scope: 'loop_swap' })
       await execute()
     } catch (err: any) {
-      setMessage(err?.message || t('lightningLoop.reauthFailed'))
+      setReauthError(err?.message || t('lightningLoop.reauthFailed'))
       setBusy(false)
     }
   }
@@ -330,7 +347,7 @@ export default function LightningLoop() {
       <LoopHero direction={direction} status={status} onDirection={(next) => { setDirection(next); setMessage('') }} t={t} />
 
       {message && (
-        <div className="flex items-start gap-3 rounded-2xl border border-brass/25 bg-brass/10 px-4 py-3 text-sm text-fog shadow-panel">
+        <div ref={messageRef} className="flex items-start gap-3 rounded-2xl border border-brass/25 bg-brass/10 px-4 py-3 text-sm text-fog shadow-panel">
           <span className="mt-0.5 text-brass"><InfoIcon /></span><span>{message}</span>
         </div>
       )}
@@ -550,7 +567,8 @@ export default function LightningLoop() {
             <h3 className="mt-4 text-xl font-semibold">{t('lightningLoop.reauthTitle')}</h3>
             <p className="mt-2 text-sm leading-6 text-fog/65">{t('lightningLoop.reauthBody')}</p>
             <input className="input-field mt-5" type="password" autoFocus required value={password} onChange={(event) => setPassword(event.target.value)} />
-            <div className="mt-5 flex justify-end gap-2"><button className="btn-secondary" type="button" onClick={() => { setReauthOpen(false); setPassword('') }}>{t('common.cancel')}</button><button className="btn-primary" disabled={busy} type="submit">{t('lightningLoop.execute')}</button></div>
+            {reauthError && <p className="mt-3 rounded-xl border border-rose-400/25 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">{reauthError}</p>}
+            <div className="mt-5 flex justify-end gap-2"><button className="btn-secondary" type="button" onClick={closeReauth}>{t('common.cancel')}</button><button className="btn-primary" disabled={busy} type="submit">{t('lightningLoop.execute')}</button></div>
           </form>
         </div>
       )}

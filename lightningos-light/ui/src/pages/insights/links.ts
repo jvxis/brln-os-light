@@ -24,6 +24,9 @@ export const insightActionHash = (item: InsightItem, action: InsightAction) => {
       return paramsHash('rebalance-center', { channel_point: point, econ_ratio: action.params?.ratio })
     case 'autofee_review':
       return paramsHash('fee-center', { channel_point: point })
+    case 'set_fee':
+      // Lightning Ops scrolls to and highlights the channel card for this point.
+      return paramsHash('lightning-ops', { channel_point: point })
     case 'open_channel':
       return item.kind === 'abrir_canal'
         ? paramsHash('new-channels', { pubkey })

@@ -20,22 +20,25 @@ import (
 // languages.
 
 const (
-	insightKindRefillSeller   = "repor_vendedor"
-	insightKindMoreCapacity   = "mais_capacidade"
-	insightKindStopBuying     = "parar_compra"
-	insightKindIdleCapital    = "capital_parado"
-	insightKindOpenChannel    = "abrir_canal"
-	insightKindPriceOff       = "preco_fora"
-	insightKindExpectedBlock  = "bloqueio_esperado"
-	insightConfidenceHigh     = "high"
-	insightConfidenceMedium   = "medium"
-	insightConfidenceLow      = "low"
-	insightToolRebalance      = "rebalance_target"
-	insightToolLoopIn         = "loop_in"
-	insightToolEconOverride   = "econ_override"
-	insightToolOpenChannel    = "open_channel"
-	insightToolCloseChannel   = "close_channel"
-	insightToolAutofeeReview  = "autofee_review"
+	insightKindRefillSeller  = "repor_vendedor"
+	insightKindMoreCapacity  = "mais_capacidade"
+	insightKindStopBuying    = "parar_compra"
+	insightKindIdleCapital   = "capital_parado"
+	insightKindOpenChannel   = "abrir_canal"
+	insightKindPriceOff      = "preco_fora"
+	insightKindExpectedBlock = "bloqueio_esperado"
+	insightConfidenceHigh    = "high"
+	insightConfidenceMedium  = "medium"
+	insightConfidenceLow     = "low"
+	insightToolRebalance     = "rebalance_target"
+	insightToolLoopIn        = "loop_in"
+	insightToolEconOverride  = "econ_override"
+	insightToolOpenChannel   = "open_channel"
+	insightToolCloseChannel  = "close_channel"
+	insightToolAutofeeReview = "autofee_review"
+	// The fee itself is edited on the channel card in Lightning Ops; the Fee
+	// Center holds the AutoFee parameters around it.
+	insightToolSetFee         = "set_fee"
 	insightToolUseAsSource    = "use_as_source"
 	insightToolNone           = "none"
 	insightStatusOpen         = "open"
@@ -188,6 +191,9 @@ type InsightAction struct {
 type InsightGuard struct {
 	Code   string `json:"code"`
 	Passed bool   `json:"passed"`
+	// Advisory guards inform a cost or a caveat; they never block the
+	// recommendation, and the UI shows a failed one as a warning, not a stop.
+	Advisory bool `json:"advisory,omitempty"`
 }
 
 type Insight struct {
@@ -532,7 +538,7 @@ func insightCommonGuards(ch *insightChannel, in insightsInput) []InsightGuard {
 
 func insightGuardsPass(guards []InsightGuard) bool {
 	for _, g := range guards {
-		if !g.Passed {
+		if !g.Passed && !g.Advisory {
 			return false
 		}
 	}
@@ -690,7 +696,7 @@ func insightMoreCapacity(ch *insightChannel, now time.Time) (Insight, bool) {
 	ins.Actions = append(ins.Actions,
 		InsightAction{Step: 1, Tool: insightToolOpenChannel, Params: map[string]string{"peer_pubkey": ch.rank.PeerPubkey, "channel_point": ch.rank.ChannelPoint}},
 	)
-	ins.Guards = append(ins.Guards, InsightGuard{Code: "parallel_channel_leaves_fast_path", Passed: false})
+	ins.Guards = append(ins.Guards, InsightGuard{Code: "parallel_channel_leaves_fast_path", Passed: false, Advisory: true})
 	ins.InvalidateWhen = "turnover_below_2x"
 	return ins, true
 }
@@ -777,7 +783,9 @@ func insightIdleCapital(ch *insightChannel, in insightsInput, nodeAvgDirect30d f
 	)
 	ins.Guards = append(ins.Guards, insightCommonGuards(ch, in)...)
 	if ch.hasReb {
-		ins.Guards = append(ins.Guards, InsightGuard{Code: "we_are_funder", Passed: ch.reb.Initiator})
+		// Who pays the cooperative close. Peer-funded passes (closing costs us
+		// nothing); funded by us is a cost warning, not a blocker.
+		ins.Guards = append(ins.Guards, InsightGuard{Code: "peer_funded_close_free", Passed: !ch.reb.Initiator, Advisory: true})
 	}
 	ins.InvalidateWhen = "sales_30d_positive"
 	return ins, true
@@ -871,7 +879,10 @@ func insightPriceOff(ch *insightChannel, profile autofeeProfile, now time.Time) 
 		)
 		ins.ValueSatDay = int64(math.Round(float64(int64(floor)-fee) * float64(reb.RebalanceAmount7dSat) / 7 / 1e6))
 	}
-	ins.Actions = append(ins.Actions, InsightAction{Step: 1, Tool: insightToolAutofeeReview, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": direction}})
+	ins.Actions = append(ins.Actions,
+		InsightAction{Step: 1, Tool: insightToolSetFee, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": direction}},
+		InsightAction{Step: 2, Tool: insightToolAutofeeReview, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": direction}},
+	)
 	ins.InvalidateWhen = "fee_within_band"
 	return ins, true
 }

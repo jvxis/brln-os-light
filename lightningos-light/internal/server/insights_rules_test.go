@@ -198,6 +198,16 @@ func TestInsightIdleCapitalRespectsGuards(t *testing.T) {
 	if !insightGuardsPass(r4[0].Guards) {
 		t.Fatalf("guards should pass without magma or parked: %+v", r4[0].Guards)
 	}
+	// We funded it: the close fee is ours. That is a warning on the card, never a block.
+	var funder *InsightGuard
+	for i := range r4[0].Guards {
+		if r4[0].Guards[i].Code == "peer_funded_close_free" {
+			funder = &r4[0].Guards[i]
+		}
+	}
+	if funder == nil || funder.Passed || !funder.Advisory {
+		t.Fatalf("funder guard should be present, failed and advisory: %+v", r4[0].Guards)
+	}
 
 	// With a Magma commitment the guard fails but the card still explains it.
 	withMagma := base

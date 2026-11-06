@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -99,7 +100,7 @@ func (s *Server) handleInsightStatusPost(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, insightsUnavailableMessage(errMsg))
 		return
 	}
-	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	id := insightIDFromPath(chi.URLParam(r, "id"))
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "id required")
 		return
@@ -126,6 +127,18 @@ func (s *Server) handleInsightStatusPost(w http.ResponseWriter, r *http.Request)
 	s.insightsCache = nil
 	s.insightsCacheMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// insightIDFromPath undoes the percent-encoding the UI applies to the id.
+// Insight ids carry ":" (rule:channel_point), and when the client escapes
+// it chi routes on RawPath and hands the segment back still encoded, so
+// the stored row was never matched and every decision answered 404.
+func insightIDFromPath(raw string) string {
+	id := strings.TrimSpace(raw)
+	if decoded, err := url.PathUnescape(id); err == nil {
+		id = strings.TrimSpace(decoded)
+	}
+	return id
 }
 
 func insightsUnavailableMessage(errMsg string) string {

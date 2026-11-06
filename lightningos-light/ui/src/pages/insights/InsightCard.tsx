@@ -13,6 +13,9 @@ type Props = {
   formatRelative: (iso: string) => string
   onStatus: (item: InsightItem, status: 'open' | 'dismissed' | 'done', reason?: string) => void
   onRule: (rule: string) => void
+  // Error from the last decision on this card. Shown next to the buttons:
+  // a banner at the top of the page is out of sight when the card is far down.
+  actionError?: string
 }
 
 const KIND_ACCENT: Record<InsightItem['kind'], string> = {
@@ -27,7 +30,7 @@ const KIND_ACCENT: Record<InsightItem['kind'], string> = {
 
 const confidenceDots = (level: InsightItem['confidence']) => (level === 'high' ? '●●●' : level === 'medium' ? '●●○' : '●○○')
 
-export default function InsightCard({ item, teach, busy, formatNumber, formatRelative, onStatus, onRule }: Props) {
+export default function InsightCard({ item, teach, busy, formatNumber, formatRelative, onStatus, onRule, actionError }: Props) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(teach)
   const [dismissOpen, setDismissOpen] = useState(false)
@@ -100,6 +103,7 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
           <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-fog/60">{t('insights.card.firstSeen', { value: formatRelative(item.first_seen_at) })}</span>
           {item.status === 'dismissed' && <StatusBadge tone="muted" label={t('insights.card.statusDismissed', { reason: t(`insights.dismissReason.${item.dismiss_reason}` as any, { defaultValue: item.dismiss_reason }) })} />}
           {item.status === 'done' && <StatusBadge tone="ok" label={t('insights.card.statusDone')} />}
+          {item.status === 'expired' && <StatusBadge tone="muted" label={t('insights.card.statusExpired')} />}
         </div>
         {teach && item.confidence_reason && (
           <p className="mt-1 text-[11px] text-fog/55">
@@ -155,12 +159,15 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
                   <h4 className="text-[11px] uppercase tracking-[0.2em] text-fog/55">{t('insights.card.guards')}</h4>
                   <ul className="mt-1 flex flex-wrap gap-2 text-[11px]">
                     {item.guards.map((guard) => {
-                      const warn = guard.code === 'parallel_channel_leaves_fast_path'
+                      // Advisory guards are caveats (a cost, a limitation): failed ones warn, they never block.
+                      const warn = guard.advisory || guard.code === 'parallel_channel_leaves_fast_path'
                       const tone = guard.passed ? 'ok' : warn ? 'warn' : 'danger'
                       const mark = guard.passed ? '✓' : warn ? '⚠' : '✕'
+                      const passedLabel = t(`insights.guard.${guard.code}` as any, { defaultValue: guard.code })
+                      const label = guard.passed ? passedLabel : t(`insights.guardFailed.${guard.code}` as any, { defaultValue: passedLabel })
                       return (
                         <li key={guard.code}>
-                          <StatusBadge tone={tone} label={`${mark} ${t(`insights.guard.${guard.code}` as any, { defaultValue: guard.code })}`} />
+                          <StatusBadge tone={tone} label={`${mark} ${label}`} />
                         </li>
                       )
                     })}
@@ -177,7 +184,7 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
               <div className="relative">
                 <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => setDismissOpen((v) => !v)}>{t('insights.card.dismiss')} ▾</button>
                 {dismissOpen && (
-                  <div className="absolute left-0 top-full z-10 mt-1 w-48 rounded-2xl border border-white/10 bg-slate/95 p-1 shadow-panel">
+                  <div className="absolute bottom-full left-0 z-10 mb-1 w-48 rounded-2xl border border-white/10 bg-slate/95 p-1 shadow-panel">
                     {(['later', 'done_manually', 'disagree'] as const).map((reason) => (
                       <button key={reason} type="button" className="block w-full rounded-xl px-3 py-1.5 text-left text-xs text-fog/80 hover:bg-white/5" onClick={() => { setDismissOpen(false); onStatus(item, 'dismissed', reason) }}>
                         {t(`insights.dismissReason.${reason}`)}
@@ -190,11 +197,21 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
                 <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => onStatus(item, 'done')}>{t('insights.card.done')}</button>
               )}
             </>
+          ) : item.status === 'expired' ? (
+            // Resolved on its own: the operator may still record that they did it, which opens the measurement.
+            item.kind !== 'bloqueio_esperado' && (
+              <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => onStatus(item, 'done')}>{t('insights.card.doneAfterExpired')}</button>
+            )
           ) : (
             <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => onStatus(item, 'open')}>{t('insights.card.reopen')}</button>
           )}
           <button type="button" className="text-xs text-emerald-200 hover:text-emerald-100" onClick={() => onRule(item.rule)}>{t('insights.card.rule')}</button>
         </div>
+        {actionError && (
+          <p role="alert" className="mt-2 rounded-xl border border-rose-400/25 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
+            {actionError}
+          </p>
+        )}
       </div>
     </article>
   )

@@ -6480,7 +6480,7 @@
       "all": "All",
       "confidence": "Confidence",
       "search": "Search channel or peer",
-      "showHidden": "Show dismissed and done"
+      "showHidden": "Show dismissed, done and resolved"
     },
     "kind": {
       "repor_vendedor": { "label": "Refill", "title": "Refill {{alias}} by another tool" },
@@ -6524,6 +6524,8 @@
       "copied": "Copied",
       "statusDismissed": "dismissed · {{reason}}",
       "statusDone": "done",
+      "statusExpired": "resolved on its own",
+      "doneAfterExpired": "I did this (record it)",
       "guardPassed": "ok",
       "guardFailed": "blocked",
       "guardWarn": "warning"
@@ -6542,7 +6544,7 @@
       "hours_to_drain": "hours to drain",
       "lot_sold_pct": "lot sold (7d)",
       "rebal_fee_7d_sat": "rebalance cost (7d)",
-      "local_sat": "local balance",
+      "local_sat": "local balance (sat)",
       "fee_30d_sat": "revenue (30d)",
       "assisted_fee_30d_sat": "assisted revenue (30d)",
       "rebal_fee_30d_sat": "rebalance cost (30d)",
@@ -6566,7 +6568,8 @@
       "econ_override": { "label": "Raise the cap", "step": "Try econ ratio {{ratio}} on this channel: new cap {{cap}} ppm, {{margin}}% margin left over the sale price." },
       "open_channel": { "label": "Lightning Ops", "step": "Preview a new channel with this peer in Lightning Ops." },
       "close_channel": { "label": "Lightning Ops", "step": "Consider a cooperative close in Lightning Ops. The close fee is ours only when we funded the channel." },
-      "autofee_review": { "label": "Fee Center", "step": "Review the fee in the Fee Center against the real sale price and the floor." },
+      "autofee_review": { "label": "Fee Center", "step": "Review the AutoFee parameters for this channel in the Fee Center (floor, profile, reference) against the real sale price." },
+      "set_fee": { "label": "Lightning Ops", "step": "Adjust the fee on this channel's card in Lightning Ops." },
       "use_as_source": { "label": "Rebalance Center", "step": "Keep it as a rebalance source: the idle balance feeds channels that sell." },
       "none": { "label": "Nothing to do", "step": "A rebalance guard ({{reason}}) is holding this channel on purpose. It releases on its own." }
     },
@@ -6576,7 +6579,10 @@
       "sell_covers_floor": "sale covers the AutoFee floor",
       "loop_installed": "Loop app installed",
       "parallel_channel_leaves_fast_path": "a second channel with the same peer leaves the rebalance fast path",
-      "we_are_funder": "we funded the channel (we pay the close fee)"
+      "peer_funded_close_free": "peer funded the channel (closing costs us nothing)"
+    },
+    "guardFailed": {
+      "peer_funded_close_free": "we funded the channel (the close fee is ours)"
     },
     "invalidate": {
       "local_at_target_24h": "local balance at target for 24h, or the channel leaves the top 20% sellers",

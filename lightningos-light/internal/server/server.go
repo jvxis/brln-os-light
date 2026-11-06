@@ -135,6 +135,13 @@ type Server struct {
 	channelOpenCandidatesMu     sync.Mutex
 	channelOpenCandidates       *ChannelOpenCandidatesService
 	channelOpenCandidatesErr    string
+	insightsInitAt              time.Time
+	insightsMu                  sync.Mutex
+	insights                    *InsightsService
+	insightsErr                 string
+	insightsLoopStarted         bool
+	insightsCacheMu             sync.Mutex
+	insightsCache               *insightsPayload
 	graphExplorerInitAt         time.Time
 	graphExplorerMu             sync.Mutex
 	graphExplorer               *GraphExplorerService
@@ -250,6 +257,7 @@ func (s *Server) Run() error {
 	s.initUIPreferences()
 	s.initChannelRanking()
 	s.initChannelOpenCandidates()
+	s.initInsights()
 	s.initGraphExplorer()
 	s.initBalancedOpen()
 	s.initCloseManager()

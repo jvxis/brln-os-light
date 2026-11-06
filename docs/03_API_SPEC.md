@@ -1505,3 +1505,33 @@ is additive; old outcomes remain untouched. Set the manager environment
 `LIGHTNINGOS_AUTOFEE_EXPOSURE_ENABLED=0` before restart to disable this observer.
 Existing fee/job behavior is unchanged; diagnostic tables can remain in place
 through rollback. See [the measurement contract](AUTOFEE_EXPOSURE.md).
+
+## Insights and recommendations (0.5.53 Beta, experimental)
+
+These authenticated routes recommend actions; they do not execute swaps,
+payments, channel operations or automation configuration changes. Mutating
+requests retain the standard session/CSRF checks when login is enabled.
+
+- `GET /api/lnops/insights`: returns `computed_at`, `sources`, `node`,
+  `summary`, `scorecard` and `items`. `node.ready` remains false and no rules
+  run until seven full days of ranking history have been observed. Thresholds
+  adapt to node size/liquidity. Unavailable sources are reported separately.
+- `POST /api/lnops/insights/recompute`: forces recomputation and returns the
+  same payload. No financial action is executed.
+- `POST /api/lnops/insights/{id}/status`: accepts
+  `{"status":"open"|"dismissed"|"done","reason":"..."}` and returns
+  `{"ok":true}`. A dismissed item requires `later`, `disagree` or
+  `done_manually`; other statuses ignore the reason. Invalid values return
+  400, an unknown recommendation returns 404. `later` snoozes for 24 hours;
+  `done` hides the recommendation for seven days if the condition persists.
+- `GET /api/lnops/insights/outcomes`: returns the measured-results scorecard
+  and recent before/after outcomes. Decisions marked done or dismissed
+  (except `later`) record a seven-day baseline; an hourly job measures the
+  following seven days. Reopening or snoozing cancels a pending measurement.
+  A measurement-bookkeeping failure does not undo an already saved decision.
+
+Service initialization failures return 503; computation/storage failures may
+return 500. Result estimates and rule verdicts are experimental, not guaranteed
+profit or proof of causality. Prefilled shortcuts still require review and
+confirmation on the destination screen. See `insights_handlers.go`,
+`insights_service.go`, `insights_outcomes.go` and the typed helpers in `api.ts`.

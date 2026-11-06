@@ -36,12 +36,14 @@ func TestStockGateNeverBlocksTheFirstRefills(t *testing.T) {
 		t.Fatal("a single unsold lot must never block the next purchase")
 	}
 
-	// Two small lots below the working stock (10% of 5M = 500k): allowed.
+	// Two small lots below the working stock (10% of 5M = 500k) while the peer
+	// sells more than that share: allowed.
 	small := []rebalanceAttributionLot{
 		stockGateLot(1, 1, now.Add(-8*time.Hour), 150_000),
 		stockGateLot(2, 1, now.Add(-6*time.Hour), 150_000),
 	}
-	level = buildSovereignStockLevels(small, nil, channels, cfg, now)[1]
+	selling := []rebalanceAttributionForward{{ID: 1, TargetChannelID: 1, OccurredAt: now.Add(-48 * time.Hour), AmountSat: 600_000, FeeMsat: 1}}
+	level = buildSovereignStockLevels(small, selling, channels, cfg, now)[1]
 	if sovereignStockGateBlocks(level, capacity, cfg) {
 		t.Fatalf("300k unsold is below the 500k working stock, must not block: %+v", level)
 	}
@@ -51,9 +53,77 @@ func TestStockGateNeverBlocksTheFirstRefills(t *testing.T) {
 		stockGateLot(1, 1, now.Add(-8*time.Hour), 250_000),
 		stockGateLot(2, 1, now.Add(-6*time.Hour), 250_000),
 	}
-	level = buildSovereignStockLevels(full, nil, channels, cfg, now)[1]
+	level = buildSovereignStockLevels(full, selling, channels, cfg, now)[1]
 	if !sovereignStockGateBlocks(level, capacity, cfg) {
 		t.Fatalf("working stock reached with zero sales must block: %+v", level)
+	}
+}
+
+// 0.5.53: the capacity share is only the working stock while the peer's demand
+// is unknown or larger than it. A peer that sold less than the share in the
+// whole window gets its demand as working stock, never below the first two
+// lots, so paid stock stops piling up in channels that do not sell.
+func TestStockGateWorkingStockFollowsDemand(t *testing.T) {
+	cfg := stockGateTestConfig()
+	cfg.MinAmountSat = 100_000
+	now := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	const capacity = int64(50_000_000) // 10% = 5M of working stock on paper
+	channels := []sovereignStockChannel{{ChannelID: 1, PeerPubkey: "peer-bfx", LocalBalanceSat: 7_000_000}}
+
+	// No sale in the window: the working stock is the first two lots (200k).
+	noSale := sovereignStockLevel{Known: true, WindowDays: 7, UnsoldSat: 3_900_000, UnsoldLots: 4, LocalSat: 7_000_000}
+	if allowed := sovereignStockGateAllowedSat(noSale, capacity, cfg); allowed != 200_000 {
+		t.Fatalf("zero demand must bound the working stock to two start lots, got %d", allowed)
+	}
+	if !sovereignStockGateBlocks(noSale, capacity, cfg) {
+		t.Fatal("3.9M of unsold paid stock in a peer that sold nothing in 7 days must block")
+	}
+
+	// A little demand (600k in 7 days): the working stock is that demand, not 5M.
+	thin := sovereignStockLevel{Known: true, WindowDays: 7, UnsoldSat: 1_000_000, UnsoldLots: 2, DemandSat: 600_000, LocalSat: 7_000_000}
+	if allowed := sovereignStockGateAllowedSat(thin, capacity, cfg); allowed != 600_000 {
+		t.Fatalf("demand below the share must become the working stock, got %d", allowed)
+	}
+	if !sovereignStockGateBlocks(thin, capacity, cfg) {
+		t.Fatal("1M unsold against 600k of weekly demand must block")
+	}
+	thin.UnsoldSat = 500_000
+	if sovereignStockGateBlocks(thin, capacity, cfg) {
+		t.Fatal("unsold stock below the demand must still be refillable")
+	}
+
+	// Demand above the share: the old rule stands (share, then the cover).
+	seller := sovereignStockLevel{Known: true, WindowDays: 7, UnsoldSat: 4_800_000, UnsoldLots: 3, DemandSat: 7_000_000, LocalSat: 10_000_000}
+	if allowed := sovereignStockGateAllowedSat(seller, capacity, cfg); allowed != 5_000_000 {
+		t.Fatalf("a seller above the share keeps the 5M working stock, got %d", allowed)
+	}
+	seller.DemandSat = 21_000_000 // 3M/day → 9M of cover
+	if allowed := sovereignStockGateAllowedSat(seller, capacity, cfg); allowed != 9_000_000 {
+		t.Fatalf("cover_days must still deepen the stock of a proven seller, got %d", allowed)
+	}
+
+	// The first refills of a drained peer are untouched: one lot never blocks,
+	// and two lots below the start-amount floor do not either.
+	first := buildSovereignStockLevels([]rebalanceAttributionLot{stockGateLot(1, 1, now.Add(-6*time.Hour), 900_000)}, nil, channels, cfg, now)[1]
+	if sovereignStockGateBlocks(first, capacity, cfg) {
+		t.Fatal("a single unsold lot must never block, whatever the demand")
+	}
+	two := buildSovereignStockLevels([]rebalanceAttributionLot{
+		stockGateLot(1, 1, now.Add(-8*time.Hour), 90_000),
+		stockGateLot(2, 1, now.Add(-6*time.Hour), 90_000),
+	}, nil, channels, cfg, now)[1]
+	if sovereignStockGateBlocks(two, capacity, cfg) {
+		t.Fatalf("180k unsold is below the two-lot floor of 200k, must not block: %+v", two)
+	}
+
+	// The bound needs a pile: a peer that holds less than the working stock
+	// (the paid liquidity left by another path) keeps the capacity share.
+	empty := sovereignStockLevel{Known: true, WindowDays: 7, UnsoldSat: 900_000, UnsoldLots: 2, LocalSat: 900_000}
+	if allowed := sovereignStockGateAllowedSat(empty, capacity, cfg); allowed != 5_000_000 {
+		t.Fatalf("below the working stock the capacity share stands, got %d", allowed)
+	}
+	if sovereignStockGateBlocks(empty, capacity, cfg) {
+		t.Fatal("a peer holding less than the working stock must be refillable")
 	}
 }
 

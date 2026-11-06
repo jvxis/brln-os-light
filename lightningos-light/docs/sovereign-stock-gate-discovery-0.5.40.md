@@ -60,6 +60,31 @@ permitido = max(min_stock_pct × capacidade do canal alvo,
 trava se estoque não vendido >= permitido
 ```
 
+**0.5.53 — estoque de trabalho limitado pela demanda.** A fatia da capacidade
+é um primeiro estoque razoável enquanto a demanda do peer não é conhecida. Um
+peer que não vendeu nem essa fatia na janela inteira já mostrou a demanda, e a
+fatia passa a ser demais: na bfx-lnd0 do Friendspool (canal de 50M, 04/11/2026)
+10% eram 5M de estoque pago permitido, comprados em lotes de 1M a ~800 ppm sem
+venda nenhuma em 7 dias (2,3M em 24h; 11,7k pagos contra 1,1k vendidos em 30
+dias). Em 16 semanas (15/07→04/11) o peer vendeu 46k e custou 84k de rebalance;
+as semanas com venda foram as de pouca compra, com estoque que já estava lá.
+
+```
+fatia = min_stock_pct × capacidade
+se demanda da janela < fatia e saldo local do peer >= fatia:
+    fatia = max(demanda da janela, 2 × valor inicial do lote)
+permitido = max(fatia, cover_days × vendas por dia do peer)
+```
+
+Vendedores não mudam (a demanda deles supera a fatia, e a cobertura continua
+mandando). Canal drenado continua recebendo os primeiros refills: 1 lote nunca
+trava, 2 lotes abaixo do piso também não, e enquanto o peer não segura
+fisicamente a fatia (a liquidez paga saiu por outro caminho) vale a fatia da
+capacidade como antes. O limite só age quando há pilha. Simulação nas 47 seleções com dados
+de estoque das 24h de 04/11 no FP: só a bfx-lnd0 ficaria bloqueada (5 seleções,
+2,3M, ~2,1k sats); nos 4 meses, ~46k de custo evitado contra ~5,6k de receita
+estimada perdida em todo o nó.
+
 Regra fixa: **nunca trava antes de o peer ter 2 lotes não vendidos**
 (`sovereignStockGateMinLots`). Um lote conta como não vendido enquanto mais da
 metade dele ainda está lá. Assim um canal drenado sempre recebe os primeiros

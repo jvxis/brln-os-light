@@ -38,6 +38,8 @@ type sovereignStockLevel struct {
 	UnsoldSat  int64
 	UnsoldLots int
 	DemandSat  int64
+	// LocalSat is the peer's current local balance (all channels together).
+	LocalSat   int64
 	WindowDays float64
 }
 
@@ -155,7 +157,7 @@ func buildSovereignStockLevels(lots []rebalanceAttributionLot, forwards []rebala
 
 	windowDays := window.Hours() / 24
 	for channelID, peer := range peerOf {
-		level := sovereignStockLevel{Known: true, WindowDays: windowDays}
+		level := sovereignStockLevel{Known: true, WindowDays: windowDays, LocalSat: peerLocal[peer]}
 		if stock := peers[peer]; stock != nil {
 			level.UnsoldSat = stock.unsold
 			level.UnsoldLots = stock.lots
@@ -173,11 +175,36 @@ func buildSovereignStockLevels(lots []rebalanceAttributionLot, forwards []rebala
 // purchases pause: the working stock (a share of the target channel capacity)
 // or cover_days of what the peer actually sells per day, whichever is larger.
 // A proven seller therefore keeps a deeper stock than a channel with no sales.
+//
+// 0.5.53: the working stock is bounded by demand. A share of capacity is a
+// sensible first stock while the peer's demand is unknown, but a peer that
+// did not sell even that share in the whole demand window has shown its
+// demand, and the share is then too much: on a 50M channel with no sale in 7
+// days, 10% meant 5M of paid stock allowed, bought in 1M lots at ~800 ppm
+// and sitting there (bfx-lnd0, Friendspool, 2026-11-04: 2.3M bought in 24h,
+// nothing sold; 11.7k paid against 1.1k sold in 30 days). When the window's
+// demand is below the capacity share, the working stock becomes the demand
+// itself, never less than the first two lots (sovereignStockGateMinLots at
+// the start amount) so a drained peer still receives its first refills, and
+// only while the peer actually holds the working stock. The cover for proven
+// sellers is unchanged: their demand exceeds the share.
 func sovereignStockGateAllowedSat(level sovereignStockLevel, capacitySat int64, cfg RebalanceConfig) int64 {
 	if capacitySat <= 0 {
 		return 0
 	}
 	allowed := int64(math.Round(float64(capacitySat) * stockGateMinStockPctForConfig(cfg) / 100))
+	// The bound only applies once the peer physically holds the working stock:
+	// a channel that is empty again (stock left by another path) has nothing
+	// piling up and keeps its first refills.
+	if level.WindowDays > 0 && level.DemandSat < allowed && level.LocalSat >= allowed {
+		floor := int64(sovereignStockGateMinLots) * effectiveStartAmountSat(cfg)
+		if level.DemandSat > floor {
+			floor = level.DemandSat
+		}
+		if floor < allowed {
+			allowed = floor
+		}
+	}
 	if cfg.StockGateCoverDays > 0 && level.WindowDays > 0 && level.DemandSat > 0 {
 		cover := int64(math.Round(float64(level.DemandSat) / level.WindowDays * float64(cfg.StockGateCoverDays)))
 		if cover > allowed {

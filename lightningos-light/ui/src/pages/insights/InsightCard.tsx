@@ -13,6 +13,9 @@ type Props = {
   formatRelative: (iso: string) => string
   onStatus: (item: InsightItem, status: 'open' | 'dismissed' | 'done', reason?: string) => void
   onRule: (rule: string) => void
+  // Error from the last decision on this card. Shown next to the buttons:
+  // a banner at the top of the page is out of sight when the card is far down.
+  actionError?: string
 }
 
 const KIND_ACCENT: Record<InsightItem['kind'], string> = {
@@ -27,7 +30,7 @@ const KIND_ACCENT: Record<InsightItem['kind'], string> = {
 
 const confidenceDots = (level: InsightItem['confidence']) => (level === 'high' ? '●●●' : level === 'medium' ? '●●○' : '●○○')
 
-export default function InsightCard({ item, teach, busy, formatNumber, formatRelative, onStatus, onRule }: Props) {
+export default function InsightCard({ item, teach, busy, formatNumber, formatRelative, onStatus, onRule, actionError }: Props) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(teach)
   const [dismissOpen, setDismissOpen] = useState(false)
@@ -195,6 +198,11 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
           )}
           <button type="button" className="text-xs text-emerald-200 hover:text-emerald-100" onClick={() => onRule(item.rule)}>{t('insights.card.rule')}</button>
         </div>
+        {actionError && (
+          <p role="alert" className="mt-2 rounded-xl border border-rose-400/25 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
+            {actionError}
+          </p>
+        )}
       </div>
     </article>
   )

@@ -6480,7 +6480,7 @@
       "all": "All",
       "confidence": "Confidence",
       "search": "Search channel or peer",
-      "showHidden": "Show dismissed and done"
+      "showHidden": "Show dismissed, done and resolved"
     },
     "kind": {
       "repor_vendedor": { "label": "Refill", "title": "Refill {{alias}} by another tool" },
@@ -6524,6 +6524,8 @@
       "copied": "Copied",
       "statusDismissed": "dismissed · {{reason}}",
       "statusDone": "done",
+      "statusExpired": "resolved on its own",
+      "doneAfterExpired": "I did this (record it)",
       "guardPassed": "ok",
       "guardFailed": "blocked",
       "guardWarn": "warning"

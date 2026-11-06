@@ -20,6 +20,10 @@ const (
 	insightDismissDoneByMe = "done_manually"
 	insightsCacheTTL       = 5 * time.Minute
 	insightsFollowedWindow = 30 * 24 * time.Hour
+	// A card that resolved on its own stays listed (hidden by default) for a
+	// day, so an operator who acted first and came back later can still mark
+	// it done and open the measurement.
+	insightExpiredShowWindow = 24 * time.Hour
 )
 
 var errInsightNotFound = errors.New("insight not found")
@@ -123,8 +127,11 @@ on conflict (id) do update set
     snapshot = excluded.snapshot`,
 			item.ID, item.Kind, item.Rule, nullIfEmpty(item.ChannelPoint), nullIfEmpty(item.PeerPubkey), item.Status, item.DismissReason, item.FirstSeenAt, now, item.ResolvedAt, snapshot)
 	}
+	// Only open cards expire. A decision (done, dismissed) is the operator's
+	// record and must survive the condition clearing, otherwise "followed"
+	// drops to zero the moment the action works.
 	for id, row := range stored {
-		if seen[id] || row.Status == insightStatusExpired {
+		if seen[id] || row.Status != insightStatusOpen {
 			continue
 		}
 		batch.Queue(`update insights_recommendations set status = 'expired', resolved_at = coalesce(resolved_at, $2) where id = $1`, id, now)
@@ -141,7 +148,43 @@ on conflict (id) do update set
 			return items, err
 		}
 	}
-	return items, nil
+	expired, err := s.recentlyExpired(ctx, seen, now.Add(-insightExpiredShowWindow))
+	if err != nil {
+		return items, err
+	}
+	return append(items, expired...), nil
+}
+
+// recentlyExpired returns the stored snapshot of recommendations that stopped
+// applying within the window and are not in the current list, tagged expired.
+// The snapshot is what the operator last saw, which is what they acted on.
+func (s *InsightsService) recentlyExpired(ctx context.Context, seen map[string]bool, since time.Time) ([]Insight, error) {
+	rows, err := s.db.Query(ctx, `select id, snapshot, resolved_at from insights_recommendations where status = 'expired' and resolved_at >= $1 and snapshot is not null order by resolved_at desc`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Insight
+	for rows.Next() {
+		var id string
+		var snapshot []byte
+		var resolvedAt *time.Time
+		if err := rows.Scan(&id, &snapshot, &resolvedAt); err != nil {
+			return nil, err
+		}
+		if seen[id] {
+			continue
+		}
+		var item Insight
+		if err := json.Unmarshal(snapshot, &item); err != nil || item.ID == "" {
+			continue
+		}
+		item.Status = insightStatusExpired
+		item.DismissReason = ""
+		item.ResolvedAt = resolvedAt
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 // insightEffectiveStatus decides what a stored decision still means now: a
@@ -195,7 +238,13 @@ func (s *InsightsService) SetStatus(ctx context.Context, id, status, reason stri
 	default:
 		return errors.New("invalid status")
 	}
-	tag, err := s.db.Exec(ctx, `update insights_recommendations set status = $2, dismiss_reason = nullif($3,''), resolved_at = $4, snooze_until = $5 where id = $1`,
+	// Reopening is only for the operator's own decisions; a card the engine
+	// expired would just expire again on the next pass.
+	statusFilter := ""
+	if status == insightStatusOpen {
+		statusFilter = " and status <> 'expired'"
+	}
+	tag, err := s.db.Exec(ctx, `update insights_recommendations set status = $2, dismiss_reason = nullif($3,''), resolved_at = $4, snooze_until = $5 where id = $1`+statusFilter,
 		id, status, reason, resolved, snooze)
 	if err != nil {
 		return err

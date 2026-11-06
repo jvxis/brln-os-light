@@ -103,6 +103,7 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
           <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-fog/60">{t('insights.card.firstSeen', { value: formatRelative(item.first_seen_at) })}</span>
           {item.status === 'dismissed' && <StatusBadge tone="muted" label={t('insights.card.statusDismissed', { reason: t(`insights.dismissReason.${item.dismiss_reason}` as any, { defaultValue: item.dismiss_reason }) })} />}
           {item.status === 'done' && <StatusBadge tone="ok" label={t('insights.card.statusDone')} />}
+          {item.status === 'expired' && <StatusBadge tone="muted" label={t('insights.card.statusExpired')} />}
         </div>
         {teach && item.confidence_reason && (
           <p className="mt-1 text-[11px] text-fog/55">
@@ -196,6 +197,11 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
                 <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => onStatus(item, 'done')}>{t('insights.card.done')}</button>
               )}
             </>
+          ) : item.status === 'expired' ? (
+            // Resolved on its own: the operator may still record that they did it, which opens the measurement.
+            item.kind !== 'bloqueio_esperado' && (
+              <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => onStatus(item, 'done')}>{t('insights.card.doneAfterExpired')}</button>
+            )
           ) : (
             <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => onStatus(item, 'open')}>{t('insights.card.reopen')}</button>
           )}

@@ -6480,7 +6480,7 @@
       "all": "Todas",
       "confidence": "Confiança",
       "search": "Buscar canal ou peer",
-      "showHidden": "Mostrar dispensadas e feitas"
+      "showHidden": "Mostrar dispensadas, feitas e resolvidas"
     },
     "kind": {
       "repor_vendedor": { "label": "Repor", "title": "Repor {{alias}} por outra ferramenta" },
@@ -6524,6 +6524,8 @@
       "copied": "Copiado",
       "statusDismissed": "dispensada · {{reason}}",
       "statusDone": "feita",
+      "statusExpired": "resolvido sozinho",
+      "doneAfterExpired": "Fui eu que fiz (registrar)",
       "guardPassed": "ok",
       "guardFailed": "bloqueia",
       "guardWarn": "atenção"

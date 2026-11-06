@@ -20,7 +20,10 @@ como artefato na sessão de 04/11/2026; este arquivo é a fonte de verdade.
    Loop) sai por clique explícito.
 3. **Bilíngue de origem.** O backend devolve **códigos**, não frases:
    `kind`, `evidence[].key`, `action.tool`, `guards[].code`,
-   `invalidate_when.code`. Um guarda pode vir com `advisory: true`: é uma
+   `invalidate_when.code`. Itens com `status: "expired"` são cards que
+   deixaram de valer nas últimas 24h (snapshot do que o operador viu); só
+   aparecem com "mostrar dispensadas, feitas e resolvidas" e aceitam
+   "Fui eu que fiz", que grava `done` e abre a medição. Um guarda pode vir com `advisory: true`: é uma
    ressalva (custo, limitação), nunca bloqueia, e a UI mostra o reprovado em
    amarelo com o texto de `insights.guardFailed.<code>`. A UI monta título e textos via i18n
    (`insights.*` em `en.json` e `pt-BR.json`). Números com `Intl.NumberFormat`,

@@ -6576,7 +6576,10 @@
       "sell_covers_floor": "a venda cobre o piso do AutoFee",
       "loop_installed": "app Loop instalado",
       "parallel_channel_leaves_fast_path": "um segundo canal com o mesmo peer tira o canal do fast-path do rebalance",
-      "we_are_funder": "fomos nós que abrimos (a taxa de fechamento é nossa)"
+      "peer_funded_close_free": "o peer abriu o canal (fechar não custa nada para nós)"
+    },
+    "guardFailed": {
+      "peer_funded_close_free": "fomos nós que abrimos (a taxa de fechamento é nossa)"
     },
     "invalidate": {
       "local_at_target_24h": "saldo local no alvo por 24h, ou o canal sair dos 20% maiores vendedores",

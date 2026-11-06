@@ -589,7 +589,7 @@ export type InsightAction = {
   params?: Record<string, string>
 }
 
-export type InsightGuard = { code: string; passed: boolean }
+export type InsightGuard = { code: string; passed: boolean; advisory?: boolean }
 
 export type InsightItem = {
   id: string

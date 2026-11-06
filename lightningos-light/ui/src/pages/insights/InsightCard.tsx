@@ -158,12 +158,15 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
                   <h4 className="text-[11px] uppercase tracking-[0.2em] text-fog/55">{t('insights.card.guards')}</h4>
                   <ul className="mt-1 flex flex-wrap gap-2 text-[11px]">
                     {item.guards.map((guard) => {
-                      const warn = guard.code === 'parallel_channel_leaves_fast_path'
+                      // Advisory guards are caveats (a cost, a limitation): failed ones warn, they never block.
+                      const warn = guard.advisory || guard.code === 'parallel_channel_leaves_fast_path'
                       const tone = guard.passed ? 'ok' : warn ? 'warn' : 'danger'
                       const mark = guard.passed ? '✓' : warn ? '⚠' : '✕'
+                      const passedLabel = t(`insights.guard.${guard.code}` as any, { defaultValue: guard.code })
+                      const label = guard.passed ? passedLabel : t(`insights.guardFailed.${guard.code}` as any, { defaultValue: passedLabel })
                       return (
                         <li key={guard.code}>
-                          <StatusBadge tone={tone} label={`${mark} ${t(`insights.guard.${guard.code}` as any, { defaultValue: guard.code })}`} />
+                          <StatusBadge tone={tone} label={`${mark} ${label}`} />
                         </li>
                       )
                     })}

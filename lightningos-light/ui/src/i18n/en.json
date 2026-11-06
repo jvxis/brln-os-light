@@ -6576,7 +6576,10 @@
       "sell_covers_floor": "sale covers the AutoFee floor",
       "loop_installed": "Loop app installed",
       "parallel_channel_leaves_fast_path": "a second channel with the same peer leaves the rebalance fast path",
-      "we_are_funder": "we funded the channel (we pay the close fee)"
+      "peer_funded_close_free": "peer funded the channel (closing costs us nothing)"
+    },
+    "guardFailed": {
+      "peer_funded_close_free": "we funded the channel (the close fee is ours)"
     },
     "invalidate": {
       "local_at_target_24h": "local balance at target for 24h, or the channel leaves the top 20% sellers",

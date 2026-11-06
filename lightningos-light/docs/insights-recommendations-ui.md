@@ -20,7 +20,9 @@ como artefato na sessão de 04/11/2026; este arquivo é a fonte de verdade.
    Loop) sai por clique explícito.
 3. **Bilíngue de origem.** O backend devolve **códigos**, não frases:
    `kind`, `evidence[].key`, `action.tool`, `guards[].code`,
-   `invalidate_when.code`. A UI monta título e textos via i18n
+   `invalidate_when.code`. Um guarda pode vir com `advisory: true`: é uma
+   ressalva (custo, limitação), nunca bloqueia, e a UI mostra o reprovado em
+   amarelo com o texto de `insights.guardFailed.<code>`. A UI monta título e textos via i18n
    (`insights.*` em `en.json` e `pt-BR.json`). Números com `Intl.NumberFormat`,
    datas com o `locale` já usado nas outras páginas. Nada de texto em
    português vindo do Go.

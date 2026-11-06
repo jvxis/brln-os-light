@@ -4028,7 +4028,7 @@
     "autofeePriceExperimentsModeOff": "Off",
     "autofeePriceExperimentsModeShadow": "Shadow (record only)",
     "autofeePriceExperimentsModeEnforce": "Enforce (apply test fee)",
-    "autofeePriceExperimentsHint": "A channel with at least 10% stock and a week without meaningful sales gets one bounded cut (never below the seed floor; on a sink, never below replenishment cost plus margin), held for the test window while holds and locks are suspended for that channel only. Sold: the test fee becomes the channel's reference. Not sold: revert and wait 30 days. Shadow records what it would do and measures the channel at its unchanged fee; run it for a week before enforcing. Loop corridors and super sources are never tested.",
+    "autofeePriceExperimentsHint": "A channel with at least 10% stock, stocked for most of the past week, and without meaningful sales over the days it had stock gets one bounded cut (never below the seed floor; on a sink, never below replenishment cost plus margin), held for the test window while holds and locks are suspended for that channel only. Sold: the test fee becomes the channel's reference. Not sold: revert and wait 30 days. Shadow records what it would do and measures the channel at its unchanged fee; run it for a week before enforcing. Loop corridors and super sources are never tested.",
     "autofeePriceExperimentsMaxActive": "Channels in test at once",
     "autofeePriceExperimentsDays": "Test days",
     "autofeePriceExperimentsFloorSeedPct": "Cut floor (% of seed)",

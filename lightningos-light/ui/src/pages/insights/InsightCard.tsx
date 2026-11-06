@@ -177,7 +177,7 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
               <div className="relative">
                 <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => setDismissOpen((v) => !v)}>{t('insights.card.dismiss')} ▾</button>
                 {dismissOpen && (
-                  <div className="absolute left-0 top-full z-10 mt-1 w-48 rounded-2xl border border-white/10 bg-slate/95 p-1 shadow-panel">
+                  <div className="absolute bottom-full left-0 z-10 mb-1 w-48 rounded-2xl border border-white/10 bg-slate/95 p-1 shadow-panel">
                     {(['later', 'done_manually', 'disagree'] as const).map((reason) => (
                       <button key={reason} type="button" className="block w-full rounded-xl px-3 py-1.5 text-left text-xs text-fog/80 hover:bg-white/5" onClick={() => { setDismissOpen(false); onStatus(item, 'dismissed', reason) }}>
                         {t(`insights.dismissReason.${reason}`)}

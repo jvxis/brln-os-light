@@ -6542,7 +6542,7 @@
       "hours_to_drain": "horas até esvaziar",
       "lot_sold_pct": "lote vendido (7d)",
       "rebal_fee_7d_sat": "custo de rebalance (7d)",
-      "local_sat": "saldo local",
+      "local_sat": "saldo local (sat)",
       "fee_30d_sat": "receita (30d)",
       "assisted_fee_30d_sat": "receita assistida (30d)",
       "rebal_fee_30d_sat": "custo de rebalance (30d)",

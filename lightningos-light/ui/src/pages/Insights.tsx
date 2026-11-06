@@ -41,11 +41,12 @@ export default function Insights() {
 
   const formatNumber = useCallback((value: number) => numberFormatter.format(Math.round(value * 10) / 10), [numberFormatter])
   const formatAge = useCallback((seconds: number) => {
-    if (seconds < 90) return relativeFormatter.format(-Math.round(seconds), 'second').replace(/^.*?(\d)/, '$1')
+    // Bare durations only: the i18n "age" key adds "ago" / "há" around them.
+    if (seconds < 90) return `${Math.max(0, Math.round(seconds))} s`
     if (seconds < 5400) return `${Math.round(seconds / 60)} min`
     if (seconds < 172800) return `${Math.round(seconds / 3600)} h`
     return `${Math.round(seconds / 86400)} d`
-  }, [relativeFormatter])
+  }, [])
   const formatRelative = useCallback((iso: string) => {
     const date = new Date(iso)
     if (Number.isNaN(date.getTime())) return iso

@@ -6542,7 +6542,7 @@
       "hours_to_drain": "hours to drain",
       "lot_sold_pct": "lot sold (7d)",
       "rebal_fee_7d_sat": "rebalance cost (7d)",
-      "local_sat": "local balance",
+      "local_sat": "local balance (sat)",
       "fee_30d_sat": "revenue (30d)",
       "assisted_fee_30d_sat": "assisted revenue (30d)",
       "rebal_fee_30d_sat": "rebalance cost (30d)",

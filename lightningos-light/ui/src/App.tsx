@@ -15,6 +15,7 @@ import LightningOps from './pages/LightningOps'
 import FeeCenter from './pages/FeeCenter'
 import ChannelRanking from './pages/ChannelRanking'
 import ChannelOpenCandidates from './pages/ChannelOpenCandidates'
+import Insights from './pages/Insights'
 import RebalanceCenter from './pages/RebalanceCenter'
 import AutomationInterlock from './pages/AutomationInterlock'
 import OnchainHub from './pages/OnchainHub'
@@ -254,6 +255,7 @@ export default function App() {
       { key: 'wallet', label: t('nav.wallet'), element: <Wallet /> },
       { key: 'network-atlas', label: t('nav.networkAtlas'), element: <NetworkAtlas />, group: 'network' as const },
       { key: 'graph-explorer', label: t('nav.graphExplorer'), element: <GraphExplorer />, group: 'network' as const },
+      { key: 'insights', label: t('nav.insights'), element: <Insights />, group: 'lightning' as const },
       { key: 'lightning-ops', label: t('nav.lightningOps'), element: <LightningOps />, group: 'lightning' as const },
       { key: 'fee-center', label: t('nav.feeCenter'), element: <FeeCenter />, group: 'lightning' as const },
       { key: 'rebalance-center', label: t('nav.rebalanceCenter'), element: <RebalanceCenter />, group: 'lightning' as const },

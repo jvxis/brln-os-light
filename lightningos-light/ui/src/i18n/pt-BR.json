@@ -4028,7 +4028,7 @@
     "autofeePriceExperimentsModeOff": "Desligado",
     "autofeePriceExperimentsModeShadow": "Sombra (só registra)",
     "autofeePriceExperimentsModeEnforce": "Aplicar (muda a fee de teste)",
-    "autofeePriceExperimentsHint": "Canal com pelo menos 10% de estoque e uma semana sem venda relevante recebe um corte único e limitado (nunca abaixo do piso da seed; em sink, nunca abaixo do custo de reposição mais margem), mantido pela janela de teste com holds e locks suspensos só nesse canal. Vendeu: a fee de teste vira a referência do canal. Não vendeu: volta ao preço anterior e espera 30 dias. Sombra registra o que faria e mede o canal na fee atual; rode uma semana antes de aplicar. Corredores de loop e super sources nunca entram.",
+    "autofeePriceExperimentsHint": "Canal com pelo menos 10% de estoque, abastecido na maior parte da última semana e sem venda relevante nos dias em que teve estoque recebe um corte único e limitado (nunca abaixo do piso da seed; em sink, nunca abaixo do custo de reposição mais margem), mantido pela janela de teste com holds e locks suspensos só nesse canal. Vendeu: a fee de teste vira a referência do canal. Não vendeu: volta ao preço anterior e espera 30 dias. Sombra registra o que faria e mede o canal na fee atual; rode uma semana antes de aplicar. Corredores de loop e super sources nunca entram.",
     "autofeePriceExperimentsMaxActive": "Canais em teste ao mesmo tempo",
     "autofeePriceExperimentsDays": "Dias de teste",
     "autofeePriceExperimentsFloorSeedPct": "Piso do corte (% da seed)",

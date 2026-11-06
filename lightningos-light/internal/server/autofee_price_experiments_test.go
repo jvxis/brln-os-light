@@ -17,6 +17,8 @@ func testPriceExperimentInput(now time.Time) priceExperimentCandidateInput {
 		ClassLabel:      "router",
 		OutRatio:        0.62,
 		ChannelAgeHours: 24 * 90,
+		StockedFrac7d:   1,
+		StockedKnown:    true,
 		Forward7d:       forwardStat{},
 		Inbound7d:       inboundStat{Count: 3, AmtMsat: 500_000_000},
 		MedianKnown:     true,
@@ -36,6 +38,29 @@ func TestPriceExperimentCandidate(t *testing.T) {
 	}{
 		{name: "router with stock and no sales cuts to half seed", wantPpm: 322, wantOK: true},
 		{name: "no stock", mutate: func(in *priceExperimentCandidateInput) { in.OutRatio = 0.05 }, reason: "no_stock"},
+		{name: "no stock history yet", mutate: func(in *priceExperimentCandidateInput) { in.StockedKnown = false }, reason: "stock_history_unknown"},
+		{name: "refilled yesterday after an empty week", mutate: func(in *priceExperimentCandidateInput) { in.StockedFrac7d = 0.15 }, reason: "idle_week_unstocked"},
+		{
+			name: "half-stocked week is judged on its stocked days",
+			mutate: func(in *priceExperimentCandidateInput) {
+				// 700k over 3.5 stocked days = 200k/day, under a quarter of the median: still idle.
+				in.StockedFrac7d = 0.5
+				in.Forward7d = forwardStat{Count: 2, AmtMsat: 7 * 100_000 * 1000}
+				in.MedianSalePerDay = 1_000_000
+			},
+			wantPpm: 322,
+			wantOK:  true,
+		},
+		{
+			name: "half-stocked week that sold on its stocked days is selling",
+			mutate: func(in *priceExperimentCandidateInput) {
+				// Same 7-day total that qualifies at full stock reads 300k/day on 3.5 days: selling.
+				in.StockedFrac7d = 0.5
+				in.Forward7d = forwardStat{Count: 2, AmtMsat: 7 * 150_000 * 1000}
+				in.MedianSalePerDay = 1_000_000
+			},
+			reason: "selling",
+		},
 		{name: "fee already low", mutate: func(in *priceExperimentCandidateInput) { in.LocalPpm = 15 }, reason: "fee_already_low"},
 		{name: "super source", mutate: func(in *priceExperimentCandidateInput) { in.SuperSource = true }, reason: "super_source"},
 		{name: "loop corridor", mutate: func(in *priceExperimentCandidateInput) { in.LoopCorridor = true }, reason: "loop_corridor"},
@@ -313,6 +338,7 @@ func testPriceExperimentEngine(now time.Time, mode string) *autofeeEngine {
 			lastConcluded: map[uint64]autofeePriceExperiment{},
 			dailyMedian:   map[uint64]float64{},
 			corridors:     map[uint64]bool{},
+			stockedFrac7d: map[string]float64{"ab:0": 1},
 			known:         true,
 		},
 	}
@@ -464,6 +490,50 @@ func TestApplyPriceExperimentNeedsCompleteRuntime(t *testing.T) {
 	d = e.applyPriceExperiment(context.Background(), ch, testPriceExperimentDecision(1), forwardStat{}, inboundStat{Count: 2}, true)
 	if d.Apply || d.PriceExperiment != nil || !containsTag(d.Tags, "loop-corridor") {
 		t.Fatalf("corridor must be tagged and skipped: %+v", d)
+	}
+}
+
+func TestApplyPriceExperimentNeedsStockedWeek(t *testing.T) {
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	ch := lndclient.ChannelInfo{ChannelID: 1, ChannelPoint: "ab:0", CapacitySat: 5_000_000, LocalBalanceSat: 3_000_000}
+	// Refilled after an empty week: stock now, but no idle week to judge.
+	e := testPriceExperimentEngine(now, autofeePriceExperimentModeShadow)
+	e.priceExperiments.stockedFrac7d["ab:0"] = 0.2
+	d := e.applyPriceExperiment(ctx, ch, testPriceExperimentDecision(1), forwardStat{}, inboundStat{Count: 2}, true)
+	if d.PriceExperiment != nil || d.Apply {
+		t.Fatalf("refilled channel must not open an experiment: %+v", d)
+	}
+	// No history at all (channel new to the engine): same.
+	e = testPriceExperimentEngine(now, autofeePriceExperimentModeShadow)
+	delete(e.priceExperiments.stockedFrac7d, "ab:0")
+	d = e.applyPriceExperiment(ctx, ch, testPriceExperimentDecision(1), forwardStat{}, inboundStat{Count: 2}, true)
+	if d.PriceExperiment != nil {
+		t.Fatalf("unknown history must not open an experiment: %+v", d)
+	}
+	// Stocked 60% of the week with a trickle of sales: opens, and the
+	// baseline is per stocked day (4.2 days), not per calendar day.
+	e = testPriceExperimentEngine(now, autofeePriceExperimentModeShadow)
+	e.priceExperiments.stockedFrac7d["ab:0"] = 0.6
+	e.priceExperiments.dailyMedian[1] = 1_000_000
+	d = e.applyPriceExperiment(ctx, ch, testPriceExperimentDecision(1), forwardStat{Count: 1, AmtMsat: 420_000 * 1000}, inboundStat{Count: 2}, true)
+	if d.PriceExperiment == nil {
+		t.Fatalf("stocked week must open: %+v", d)
+	}
+	if got := d.PriceExperiment.BaselineSaleSatPerDay; got < 99_999 || got > 100_001 {
+		t.Fatalf("baseline per stocked day = %v, want 100000", got)
+	}
+}
+
+func TestPriceExperimentStockedDays(t *testing.T) {
+	if got := priceExperimentStockedDays(1); got != 7 {
+		t.Fatalf("full week = %v", got)
+	}
+	if got := priceExperimentStockedDays(0.5); got != 3.5 {
+		t.Fatalf("half week = %v", got)
+	}
+	if got := priceExperimentStockedDays(0.05); got != 1 {
+		t.Fatalf("thin history floors at one day, got %v", got)
 	}
 }
 

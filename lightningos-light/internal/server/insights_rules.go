@@ -20,22 +20,25 @@ import (
 // languages.
 
 const (
-	insightKindRefillSeller   = "repor_vendedor"
-	insightKindMoreCapacity   = "mais_capacidade"
-	insightKindStopBuying     = "parar_compra"
-	insightKindIdleCapital    = "capital_parado"
-	insightKindOpenChannel    = "abrir_canal"
-	insightKindPriceOff       = "preco_fora"
-	insightKindExpectedBlock  = "bloqueio_esperado"
-	insightConfidenceHigh     = "high"
-	insightConfidenceMedium   = "medium"
-	insightConfidenceLow      = "low"
-	insightToolRebalance      = "rebalance_target"
-	insightToolLoopIn         = "loop_in"
-	insightToolEconOverride   = "econ_override"
-	insightToolOpenChannel    = "open_channel"
-	insightToolCloseChannel   = "close_channel"
-	insightToolAutofeeReview  = "autofee_review"
+	insightKindRefillSeller  = "repor_vendedor"
+	insightKindMoreCapacity  = "mais_capacidade"
+	insightKindStopBuying    = "parar_compra"
+	insightKindIdleCapital   = "capital_parado"
+	insightKindOpenChannel   = "abrir_canal"
+	insightKindPriceOff      = "preco_fora"
+	insightKindExpectedBlock = "bloqueio_esperado"
+	insightConfidenceHigh    = "high"
+	insightConfidenceMedium  = "medium"
+	insightConfidenceLow     = "low"
+	insightToolRebalance     = "rebalance_target"
+	insightToolLoopIn        = "loop_in"
+	insightToolEconOverride  = "econ_override"
+	insightToolOpenChannel   = "open_channel"
+	insightToolCloseChannel  = "close_channel"
+	insightToolAutofeeReview = "autofee_review"
+	// The fee itself is edited on the channel card in Lightning Ops; the Fee
+	// Center holds the AutoFee parameters around it.
+	insightToolSetFee         = "set_fee"
 	insightToolUseAsSource    = "use_as_source"
 	insightToolNone           = "none"
 	insightStatusOpen         = "open"
@@ -876,7 +879,10 @@ func insightPriceOff(ch *insightChannel, profile autofeeProfile, now time.Time) 
 		)
 		ins.ValueSatDay = int64(math.Round(float64(int64(floor)-fee) * float64(reb.RebalanceAmount7dSat) / 7 / 1e6))
 	}
-	ins.Actions = append(ins.Actions, InsightAction{Step: 1, Tool: insightToolAutofeeReview, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": direction}})
+	ins.Actions = append(ins.Actions,
+		InsightAction{Step: 1, Tool: insightToolSetFee, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": direction}},
+		InsightAction{Step: 2, Tool: insightToolAutofeeReview, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": direction}},
+	)
 	ins.InvalidateWhen = "fee_within_band"
 	return ins, true
 }

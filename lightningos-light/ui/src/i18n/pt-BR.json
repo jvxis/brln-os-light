@@ -6568,7 +6568,8 @@
       "econ_override": { "label": "Subir o teto", "step": "Tentar econ ratio {{ratio}} neste canal: teto novo {{cap}} ppm, sobra {{margin}}% sobre o preço de venda." },
       "open_channel": { "label": "Lightning Ops", "step": "Fazer o preview de um canal novo com este peer no Lightning Ops." },
       "close_channel": { "label": "Lightning Ops", "step": "Avaliar fechamento cooperativo no Lightning Ops. A taxa de fechamento é nossa só quando fomos nós que abrimos." },
-      "autofee_review": { "label": "Fee Center", "step": "Rever a fee no Fee Center contra o preço real de venda e o piso." },
+      "autofee_review": { "label": "Fee Center", "step": "Rever no Fee Center os parâmetros do AutoFee deste canal (piso, perfil, referência) contra o preço real de venda." },
+      "set_fee": { "label": "Lightning Ops", "step": "Ajustar a fee no card deste canal no Lightning Ops." },
       "use_as_source": { "label": "Rebalance Center", "step": "Manter como fonte de rebalance: o saldo parado abastece os canais que vendem." },
       "none": { "label": "Nada a fazer", "step": "Uma guarda do rebalance ({{reason}}) está segurando este canal de propósito. Ela libera sozinha." }
     },

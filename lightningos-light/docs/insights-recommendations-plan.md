@@ -93,7 +93,7 @@ peer_pubkey     opcional
 title           frase curta: "Repor <canal> via Loop In"
 evidence[]      números com fonte: venda 7d, local %, falhas 24h, teto, custo
 action          { tool: loop_in | econ_override | open_channel | close_channel
-                         | rebalance_target | autofee_review | none,
+                         | rebalance_target | set_fee | autofee_review | none,
                   params: valor, último salto, teto sugerido }
 value_sat_day   estimativa do ganho diário se a ação for feita (ver abaixo)
 cost_sat        custo único estimado (swap, abertura, fechamento)

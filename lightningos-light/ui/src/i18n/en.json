@@ -6568,7 +6568,8 @@
       "econ_override": { "label": "Raise the cap", "step": "Try econ ratio {{ratio}} on this channel: new cap {{cap}} ppm, {{margin}}% margin left over the sale price." },
       "open_channel": { "label": "Lightning Ops", "step": "Preview a new channel with this peer in Lightning Ops." },
       "close_channel": { "label": "Lightning Ops", "step": "Consider a cooperative close in Lightning Ops. The close fee is ours only when we funded the channel." },
-      "autofee_review": { "label": "Fee Center", "step": "Review the fee in the Fee Center against the real sale price and the floor." },
+      "autofee_review": { "label": "Fee Center", "step": "Review the AutoFee parameters for this channel in the Fee Center (floor, profile, reference) against the real sale price." },
+      "set_fee": { "label": "Lightning Ops", "step": "Adjust the fee on this channel's card in Lightning Ops." },
       "use_as_source": { "label": "Rebalance Center", "step": "Keep it as a rebalance source: the idle balance feeds channels that sell." },
       "none": { "label": "Nothing to do", "step": "A rebalance guard ({{reason}}) is holding this channel on purpose. It releases on its own." }
     },

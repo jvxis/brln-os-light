@@ -16,12 +16,16 @@ import (
 )
 
 type loopRecordingRunner struct {
-	commands []recordedCommand
-	status   string
+	commands   []recordedCommand
+	status     string
+	missingACL bool
 }
 
 func (runner *loopRecordingRunner) Run(_ context.Context, path string, args ...string) (string, error) {
 	runner.commands = append(runner.commands, recordedCommand{path: path, args: append([]string(nil), args...)})
+	if path == setfaclPath && runner.missingACL {
+		return "", os.ErrNotExist
+	}
 	if path == systemctlPath && len(args) > 0 && args[0] == "show" {
 		if runner.status == "" {
 			return "ActiveState=active\nSubState=running\n", nil
@@ -29,6 +33,23 @@ func (runner *loopRecordingRunner) Run(_ context.Context, path string, args ...s
 		return runner.status, nil
 	}
 	return "", nil
+}
+
+func TestNativeLoopMissingACLDoesNotInstallPackages(t *testing.T) {
+	manager, runner := newLoopManagerFixture(t)
+	runner.missingACL = true
+	err := manager.EnsurePermissions(context.Background(), false)
+	if err == nil {
+		t.Fatal("missing ACL must fail before changing Loop directories")
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command.path, "apt") || strings.Contains(command.path, "dpkg") {
+			t.Fatalf("sandboxed broker attempted package installation: %s %v", command.path, command.args)
+		}
+	}
+	if _, err := os.Stat(manager.Paths.Root); !os.IsNotExist(err) {
+		t.Fatal("missing prerequisite must not create Loop app root")
+	}
 }
 
 func newLoopManagerFixture(t *testing.T) (*NativeLoopManager, *loopRecordingRunner) {

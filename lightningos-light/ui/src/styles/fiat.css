@@ -1,0 +1,21 @@
+.fiat-selector {
+  width: auto;
+  border: 1px solid rgb(var(--color-fog, 226 232 240) / 0.15);
+  border-radius: 999px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.75rem;
+  color: inherit;
+  background: transparent;
+}
+.fiat-selector option { color: #111827; background: #fff; }
+.fiat-selector:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.fiat-equivalent {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  font-weight: 400;
+  opacity: 0.6;
+  letter-spacing: normal;
+  font-variant-numeric: tabular-nums;
+}

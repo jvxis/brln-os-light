@@ -4,6 +4,7 @@ import AuthScreen from './components/AuthScreen'
 import FinancialIntentConfirmation from './components/FinancialIntentConfirmation'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
+import { FiatProvider } from './components/FiatDisplay'
 import ReportsReconciliationNotice from './components/ReportsReconciliationNotice'
 import Dashboard from './pages/Dashboard'
 import Reports from './pages/Reports'
@@ -573,6 +574,7 @@ export default function App() {
 
   return (
     <>
+      <FiatProvider>
       <FinancialIntentConfirmation />
       <div className="app-shell min-h-screen flex flex-col lg:flex-row text-fog">
         <div
@@ -616,6 +618,7 @@ export default function App() {
           </main>
         </div>
       </div>
+      </FiatProvider>
     </>
   )
 }

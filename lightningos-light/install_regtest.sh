@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Developer-only native regtest installation from this exact source checkout.
+# Isolated native regtest installation; latest release unless explicitly opting into a checkout.
 set -Eeuo pipefail
 umask 077
 
@@ -9,7 +9,8 @@ Usage: sudo ./lightningos-light/install_regtest.sh --disposable-host
 
 Install a learning/developer lab on dedicated Ubuntu 24.04 amd64, hostname los-regtest.
 Use a dedicated VM or WSL2 distribution with systemd enabled.
-Builds this committed checkout, native Bitcoin and three LND/LOS instances.
+Installs the latest published LOS release, native Bitcoin and three LND/LOS instances.
+Set LIGHTNINGOS_INSTALL_SOURCE=checkout to build this exact committed checkout.
 Requires Internet access. Repeated runs preserve wallets and login credentials.
 Each successful run performs small transfers of worthless regtest coins.
 Production nodes, App Store lifecycle and the production updater are unsupported.
@@ -25,6 +26,15 @@ source /etc/os-release
 for command in python3 git systemctl flock; do command -v "$command" >/dev/null || { echo "Missing prerequisite: $command" >&2; exit 1; }; done
 PROJECT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 REPO=$(cd -- "$PROJECT/.." && pwd -P)
+case ${LIGHTNINGOS_INSTALL_SOURCE:-latest} in
+  latest)
+    if [[ ${LIGHTNINGOS_REGTEST_BOOTSTRAPPED:-0} != 1 ]]; then
+      exec bash "$REPO/lo_regtest_bootstrap.sh" --disposable-host
+    fi
+    ;;
+  checkout) ;;
+  *) echo 'Invalid LIGHTNINGOS_INSTALL_SOURCE (use latest or checkout).' >&2; exit 1 ;;
+esac
 LAB="$REPO/scripts/regtest-lab"
 [[ -f "$LAB/safety.py" && -f "$LAB/deploy.py" ]] || { echo 'Use the complete source checkout.' >&2; exit 1; }
 LOCK_DIR=/run/los-regtest-installer

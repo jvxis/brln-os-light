@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { isRegtestLab } from '../utils/labProfile'
 import { getHealth, getLndConfig, getLndStatus, type AuthState } from '../api'
 import { setLanguage } from '../i18n'
+import { CurrencySelector } from './FiatDisplay'
 import { type Appearance, type PaletteKey, type ThemeMode, type VisualThemeKey } from '../theme'
 import AccountSecurityModal from './AccountSecurityModal'
 import AppearanceMenu from './AppearanceMenu'
@@ -380,6 +381,7 @@ export default function Topbar({
             <span className="text-fog/40">|</span>
             <span className={isPortuguese ? 'text-white' : 'text-fog/50'}>PT</span>
           </button>
+          <CurrencySelector />
           <button
             type="button"
             className="appearance-trigger"

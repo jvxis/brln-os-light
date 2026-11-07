@@ -6520,6 +6520,15 @@
       "quoting": "Quoting…",
       "quoteResult": "Quote: {{fee}} sat all-in for {{amount}} sat ≈ {{ppm}} ppm · margin vs sale {{margin}} ppm",
       "quoteError": "Quote failed: {{value}}",
+      "quoteWithinCap": "Within the rebalance cap ({{cap}} ppm): it pays.",
+      "quoteAboveCap": "Does not pay: above the rebalance cap of {{cap}} ppm (sale {{sale}} ppm). Loop In with a last hop includes what the peer charges to receive; with high-fee peers it rarely closes.",
+      "quoteOpenAlternative": "Opening a new channel instead would cost about {{cost}} sat on-chain at {{rate}} sat/vB ≈ {{ppm}} ppm for the same amount.",
+      "amountLimit": {
+        "target": "the deficit to the target",
+        "rebalance_lot": "the rebalance lot cap",
+        "onchain": "the spendable on-chain balance",
+        "onchain_short": "the on-chain balance is short even for the minimum lot"
+      },
       "copyPubkey": "Copy peer key",
       "copied": "Copied",
       "statusDismissed": "dismissed · {{reason}}",
@@ -6564,7 +6573,7 @@
     "tool": {
       "rebalance_target": { "label": "Rebalance Center", "step": "Open the channel in the Rebalance Center and check target, cap and the last attempts." },
       "rebalance_target_disable": { "label": "Rebalance Center", "step": "Turn the channel off as a rebalance target until the paid lot sells." },
-      "loop_in": { "label": "Loop In", "step": "Loop In with the last hop at this peer. Quote on click only: it calls an external service." },
+      "loop_in": { "label": "Loop In", "step": "Loop In of {{amount}} sat with the last hop at this peer (amount bounded by {{limit}}). Quote on click only: it calls an external service and includes the fee the peer charges to receive." },
       "econ_override": { "label": "Raise the cap", "step": "Try econ ratio {{ratio}} on this channel: new cap {{cap}} ppm, {{margin}}% margin left over the sale price." },
       "open_channel": { "label": "Lightning Ops", "step": "Preview a new channel with this peer in Lightning Ops." },
       "close_channel": { "label": "Lightning Ops", "step": "Consider a cooperative close in Lightning Ops. The close fee is ours only when we funded the channel." },
@@ -6578,11 +6587,13 @@
       "magma_commitment": "no Magma commitment",
       "sell_covers_floor": "sale covers the AutoFee floor",
       "loop_installed": "Loop app installed",
+      "onchain_funds": "on-chain balance covers the Loop In",
       "parallel_channel_leaves_fast_path": "a second channel with the same peer leaves the rebalance fast path",
       "peer_funded_close_free": "peer funded the channel (closing costs us nothing)"
     },
     "guardFailed": {
-      "peer_funded_close_free": "we funded the channel (the close fee is ours)"
+      "peer_funded_close_free": "we funded the channel (the close fee is ours)",
+      "onchain_funds": "on-chain balance does not cover even the minimum lot"
     },
     "invalidate": {
       "local_at_target_24h": "local balance at target for 24h, or the channel leaves the top 20% sellers",

@@ -174,6 +174,18 @@ foco e o econ ratio sugerido no campo de rascunho; "Mais capacidade" abre o
 formulário de abertura do Lightning Ops com peer e valor; "Abrir canal" rola
 até o candidato em Novos Canais. Nenhum deles executa nada.
 
+**Tamanho do Loop In (0.5.54).** O passo Loop In da R1 não cota mais o
+déficit inteiro até o alvo. O montante é o menor entre o déficit, o lote
+máximo do rebalance (`max_amount_sat`) e o saldo on-chain gastável menos um
+colchão de 20k; `params.amount_limit` diz qual limitou e o texto do passo
+repete. Quando a carteira não cobre nem 100k, o guarda consultivo
+`onchain_funds` falha e o card continua visível. A cotação é julgada contra
+`params.cap_ppm` (o mesmo teto que o rebalance paga): dentro do teto, "compensa";
+acima, o card diz que não compensa, lembra que a cotação com último salto
+embute a fee que o peer cobra para receber, e mostra o custo de abrir um canal
+novo no mesmo montante à taxa econômica do momento (154 vB), com link para o
+formulário de abertura.
+
 ### 8. Estados
 
 - **Aquecendo** (`node.ready=false`): nó com menos de 7 dias inteiros de

@@ -241,6 +241,17 @@ func (s *Server) collectInsights(ctx context.Context, svc *InsightsService, forc
 	}
 
 	in.Commitments, in.MagmaStateKnown = s.channelCapitalPlanCommitments(ctx)
+	if s.rebalance != nil {
+		if cfg, err := s.rebalance.GetConfig(ctx); err == nil {
+			in.RebalanceMaxAmountSat = cfg.MaxAmountSat
+		}
+	}
+	if s.lnd != nil {
+		if wallet, err := s.lnd.GetWalletBalanceDetails(ctx); err == nil {
+			in.OnchainKnown = true
+			in.OnchainSpendableSat = wallet.EstimatedSpendableSat
+		}
+	}
 	if handled, state, err := system.LoopStatusWithBroker(ctx); handled && err == nil {
 		in.LoopKnown = true
 		in.LoopInstalled = state.Installed

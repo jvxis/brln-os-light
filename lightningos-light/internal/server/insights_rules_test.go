@@ -411,3 +411,83 @@ func TestInsightScaleFollowsNodeClass(t *testing.T) {
 		t.Fatalf("large node should ignore a 600k idle channel, got %d", len(by["R4"]))
 	}
 }
+
+func TestInsightLoopInAmountBounds(t *testing.T) {
+	cases := []struct {
+		name                     string
+		deficit, maxLot, onchain int64
+		known                    bool
+		wantAmount               int64
+		wantLimit                string
+	}{
+		{"deficit only", 4_733_535, 0, 0, false, 4_733_535, insightLoopLimitTarget},
+		{"rebalance lot caps", 4_733_535, 1_000_000, 0, false, 1_000_000, insightLoopLimitRebalanceLot},
+		{"wallet caps below the lot", 4_733_535, 1_000_000, 620_000, true, 600_000, insightLoopLimitOnchain},
+		{"wallet covers the lot", 4_733_535, 1_000_000, 5_000_000, true, 1_000_000, insightLoopLimitRebalanceLot},
+		{"wallet short", 4_733_535, 1_000_000, 90_000, true, 100_000, insightLoopLimitOnchainShort},
+		{"small deficit", 60_000, 1_000_000, 5_000_000, true, 60_000, insightLoopLimitTarget},
+	}
+	for _, tc := range cases {
+		amount, limit := insightLoopInAmount(tc.deficit, tc.maxLot, tc.onchain, tc.known)
+		if amount != tc.wantAmount || limit != tc.wantLimit {
+			t.Errorf("%s: got %d/%s want %d/%s", tc.name, amount, limit, tc.wantAmount, tc.wantLimit)
+		}
+	}
+}
+
+func TestInsightRefillSellerLoopInSizedByLotAndWallet(t *testing.T) {
+	now := insightTestNow()
+	rank := insightTestRank("e960:1", "e960", 16342, 6_500_000, 5_000_000, 1.4)
+	rank.ChannelID = 42
+	rank.OutPpm7d = 2500
+	reb := RebalanceChannel{ChannelID: 42, ChannelPoint: "e960:1", RemotePubkey: "02e960", LocalPct: 1.4, TargetOutboundPct: 50,
+		TargetAmountSat: 4_733_535, FeeBudgetPpm: 1926, EffectiveEconRatio: 0.8, SalePricePpm: 2408, SalePriceSource: "7d",
+		RebalanceCost7dPpm: 0, AutoEnabled: true, AutopilotReason: "low_success_opportunity_below_floor", OutgoingFeePpm: 2408}
+	in := insightsInput{
+		Ranking:               append(insightTestBackground(), rank),
+		Rebalance:             []RebalanceChannel{reb},
+		RefillIntents:         map[uint64][]AutomationIntent{42: {{ChannelID: 42, Kind: automationIntentKindRefillTarget, Active: true, FirstSeenAt: now.Add(-135 * time.Hour), Consumer: automationIntentProducerRebalance}}},
+		LoopKnown:             true,
+		LoopInstalled:         true,
+		RebalanceMaxAmountSat: 1_000_000,
+		OnchainKnown:          true,
+		OnchainSpendableSat:   640_000,
+		AutofeeProfile:        autofeeProfiles[autofeeProfileDefault],
+	}
+	r1 := insightsByRule(buildInsights(in, now))["R1"]
+	if len(r1) != 1 {
+		t.Fatalf("expected one R1 insight, got %d", len(r1))
+	}
+	var loop *InsightAction
+	for i := range r1[0].Actions {
+		if r1[0].Actions[i].Tool == insightToolLoopIn {
+			loop = &r1[0].Actions[i]
+		}
+	}
+	if loop == nil {
+		t.Fatalf("expected loop in action: %+v", r1[0].Actions)
+	}
+	if loop.Params["amount_sat"] != "620000" || loop.Params["amount_limit"] != insightLoopLimitOnchain || loop.Params["cap_ppm"] != "1926" || loop.Params["onchain_sat"] != "640000" {
+		t.Fatalf("loop in must be sized by the wallet and carry the cap: %+v", loop.Params)
+	}
+	var funds *InsightGuard
+	for i := range r1[0].Guards {
+		if r1[0].Guards[i].Code == "onchain_funds" {
+			funds = &r1[0].Guards[i]
+		}
+	}
+	if funds == nil || !funds.Passed || !funds.Advisory {
+		t.Fatalf("expected a passing advisory onchain_funds guard: %+v", r1[0].Guards)
+	}
+
+	in.OnchainSpendableSat = 50_000
+	r1 = insightsByRule(buildInsights(in, now))["R1"]
+	if len(r1) != 1 {
+		t.Fatalf("a short wallet must not hide the insight, got %d", len(r1))
+	}
+	for _, g := range r1[0].Guards {
+		if g.Code == "onchain_funds" && g.Passed {
+			t.Fatalf("short wallet must fail the advisory guard: %+v", g)
+		}
+	}
+}

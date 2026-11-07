@@ -1,9 +1,12 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getLoopQuote, type InsightAction, type InsightItem } from '../../api'
+import { getLoopQuote, getMempoolFees, type InsightAction, type InsightItem } from '../../api'
 import StatusBadge from '../../components/dashboard/StatusBadge'
 import EvidenceWidget from './EvidenceWidget'
 import { insightActionHash, insightChannelHash } from './links'
+
+// Funding transaction of a plain channel open: one input, two outputs.
+const OPEN_CHANNEL_VBYTES = 154
 
 type Props = {
   item: InsightItem
@@ -34,7 +37,7 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(teach)
   const [dismissOpen, setDismissOpen] = useState(false)
-  const [quoteState, setQuoteState] = useState<{ loading: boolean; text?: string; error?: string }>({ loading: false })
+  const [quoteState, setQuoteState] = useState<{ loading: boolean; text?: string; verdict?: string; tooExpensive?: string; alternative?: string; error?: string }>({ loading: false })
   const [copied, setCopied] = useState(false)
   const open = teach || expanded
   const alias = item.peer_alias || (item.peer_pubkey ? `${item.peer_pubkey.slice(0, 10)}…` : item.channel_point || '')
@@ -50,15 +53,21 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
 
   const stepText = (action: InsightAction) => {
     const key = action.tool === 'rebalance_target' && action.params?.suggest === 'disable_target' ? 'rebalance_target_disable' : action.tool
+    const limit = action.params?.amount_limit
     return t(`insights.tool.${key}.step` as any, {
       ratio: action.params?.ratio,
       cap: action.params?.cap_ppm ? formatNumber(Number(action.params.cap_ppm)) : '',
       margin: action.params?.margin_pct,
       reason: action.params?.reason,
+      amount: action.params?.amount_sat ? formatNumber(Number(action.params.amount_sat)) : '',
+      limit: limit ? t(`insights.card.amountLimit.${limit}` as any, { defaultValue: limit }) : '',
       defaultValue: action.tool,
     })
   }
 
+  // The quote is judged against the same ceiling the rebalance pays (cap_ppm).
+  // Above it the swap does not pay; the card then prices the alternative the
+  // operator would reach for anyway: a new channel at today's chain fee.
   const runQuote = async (action: InsightAction) => {
     const amount = Number(action.params?.amount_sat || 0)
     if (!amount) return
@@ -67,7 +76,24 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
       const quote = await getLoopQuote({ direction: 'in', amount_sat: amount, last_hop_pubkey: action.params?.last_hop_pubkey })
       const fee = quote.estimated_all_in_fee_sat ?? quote.estimated_fee_sat
       const ppm = Math.round((fee / amount) * 1e6)
-      setQuoteState({ loading: false, text: t('insights.card.quoteResult', { fee: formatNumber(fee), amount: formatNumber(amount), ppm: formatNumber(ppm), margin: formatNumber(sellPpm - ppm) }) })
+      const cap = Number(action.params?.cap_ppm || 0)
+      const base = t('insights.card.quoteResult', { fee: formatNumber(fee), amount: formatNumber(amount), ppm: formatNumber(ppm), margin: formatNumber(sellPpm - ppm) })
+      if (!cap || ppm <= cap) {
+        setQuoteState({ loading: false, text: base, verdict: cap ? t('insights.card.quoteWithinCap', { cap: formatNumber(cap) }) : undefined })
+        return
+      }
+      let alternative: string | undefined
+      try {
+        const fees = await getMempoolFees()
+        const satPerVb = Number(fees?.economyFee || fees?.hourFee || 0)
+        if (satPerVb > 0) {
+          const openCost = Math.ceil(satPerVb * OPEN_CHANNEL_VBYTES)
+          alternative = t('insights.card.quoteOpenAlternative', { cost: formatNumber(openCost), rate: satPerVb, ppm: formatNumber(Math.round((openCost / amount) * 1e6)) })
+        }
+      } catch {
+        alternative = undefined
+      }
+      setQuoteState({ loading: false, text: base, tooExpensive: t('insights.card.quoteAboveCap', { cap: formatNumber(cap), sale: formatNumber(sellPpm) }), alternative })
     } catch (err: any) {
       setQuoteState({ loading: false, error: t('insights.card.quoteError', { value: err?.message || 'error' }) })
     }
@@ -143,7 +169,21 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
                             </>
                           )}
                         </div>
-                        {action.tool === 'loop_in' && quoteState.text && <p className="mt-1 rounded-xl border border-dashed border-white/15 px-2 py-1 text-xs text-emerald-200">{quoteState.text}</p>}
+                        {action.tool === 'loop_in' && quoteState.text && (
+                          <div className={`mt-1 space-y-1 rounded-xl border border-dashed px-2 py-1 text-xs ${quoteState.tooExpensive ? 'border-rose-400/30 text-rose-200' : 'border-white/15 text-emerald-200'}`}>
+                            <p>{quoteState.text}</p>
+                            {quoteState.verdict && <p>{quoteState.verdict}</p>}
+                            {quoteState.tooExpensive && <p>{quoteState.tooExpensive}</p>}
+                            {quoteState.alternative && (
+                              <p className="text-fog/80">
+                                {quoteState.alternative}{' '}
+                                <a href={insightActionHash(item, { step: action.step, tool: 'open_channel', params: { peer_pubkey: action.params?.last_hop_pubkey || '', amount_sat: action.params?.amount_sat || '' } })} className="text-emerald-200 hover:text-emerald-100">
+                                  {t('insights.tool.open_channel.label')} →
+                                </a>
+                              </p>
+                            )}
+                          </div>
+                        )}
                         {action.tool === 'loop_in' && quoteState.error && <p className="mt-1 text-xs text-rose-200">{quoteState.error}</p>}
                       </div>
                     </li>

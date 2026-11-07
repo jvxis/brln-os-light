@@ -48,19 +48,23 @@ const (
 	insightSellerMinSample    = 5
 	insightSellerPercentile   = 0.8
 	insightRefillIntentMinAge = 12 * time.Hour
-	insightStuckJobsMin       = 3
-	insightAssistedShare      = 0.10
-	insightPriceOverMult      = 1.3
-	insightStopBuyingSellMax  = 0.20
-	insightStopBuyingMinStock = 15.0
-	insightTurnoverPerWeek    = 2.0
-	insightOpenMinScore       = 60
-	insightOpenMinRouteHits   = 3
-	insightOpenMaxItems       = 5
-	insightPriceUnderGap      = 0.10
-	insightEconOverrideRatio  = 0.9
-	insightEconNearCapShare   = 0.9
-	insightRequiredDays       = 7
+	// Loop In quotes: keep a small on-chain buffer for the swap's own chain
+	// fee, and never suggest a swap below the smallest useful lot.
+	insightLoopInOnchainBufferSat int64 = 20_000
+	insightLoopInMinSat           int64 = 100_000
+	insightStuckJobsMin                 = 3
+	insightAssistedShare                = 0.10
+	insightPriceOverMult                = 1.3
+	insightStopBuyingSellMax            = 0.20
+	insightStopBuyingMinStock           = 15.0
+	insightTurnoverPerWeek              = 2.0
+	insightOpenMinScore                 = 60
+	insightOpenMinRouteHits             = 3
+	insightOpenMaxItems                 = 5
+	insightPriceUnderGap                = 0.10
+	insightEconOverrideRatio            = 0.9
+	insightEconNearCapShare             = 0.9
+	insightRequiredDays                 = 7
 )
 
 // insightScale holds the thresholds that cannot be the same number of sats
@@ -232,7 +236,13 @@ type insightsInput struct {
 	MagmaStateKnown bool
 	LoopInstalled   bool
 	LoopKnown       bool
-	AutofeeProfile  autofeeProfile
+	// Loop In sizing (R1): the rebalance lot cap and the confirmed on-chain
+	// balance bound the amount the card quotes, so a quote never asks for
+	// the whole deficit when neither the lot nor the wallet covers it.
+	RebalanceMaxAmountSat int64
+	OnchainSpendableSat   int64
+	OnchainKnown          bool
+	AutofeeProfile        autofeeProfile
 	// RuleWeights come from the measured outcomes (phase 2): a rule that keeps
 	// missing drops in the order, one that keeps landing rises. Absent = 1.
 	RuleWeights map[string]float64
@@ -626,17 +636,66 @@ func insightRefillSeller(ch *insightChannel, in insightsInput, now time.Time) (I
 			ins.Guards = append(ins.Guards, InsightGuard{Code: "sell_covers_floor", Passed: true})
 		}
 	}
+	loopAmount, loopLimit := insightLoopInAmount(reb.TargetAmountSat, in.RebalanceMaxAmountSat, in.OnchainSpendableSat, in.OnchainKnown)
 	loop := InsightAction{Step: step, Tool: insightToolLoopIn, Params: map[string]string{
 		"last_hop_pubkey": reb.RemotePubkey,
-		"amount_sat":      fmt.Sprintf("%d", reb.TargetAmountSat),
+		"amount_sat":      fmt.Sprintf("%d", loopAmount),
+		"amount_limit":    loopLimit,
+		// The same ceiling the rebalance pays: a quote above it does not pay.
+		"cap_ppm": fmt.Sprintf("%d", reb.FeeBudgetPpm),
 	}}
+	if in.OnchainKnown {
+		loop.Params["onchain_sat"] = fmt.Sprintf("%d", in.OnchainSpendableSat)
+	}
 	ins.Actions = append(ins.Actions, loop)
 	if in.LoopKnown {
 		ins.Guards = append(ins.Guards, InsightGuard{Code: "loop_installed", Passed: in.LoopInstalled})
 	}
+	if in.OnchainKnown {
+		ins.Guards = append(ins.Guards, InsightGuard{Code: "onchain_funds", Passed: loopLimit != insightLoopLimitOnchainShort, Advisory: true})
+	}
 	ins.Guards = append(ins.Guards, insightCommonGuards(ch, in)...)
 	ins.InvalidateWhen = "local_at_target_24h"
 	return ins, true
+}
+
+const (
+	insightLoopLimitTarget       = "target"
+	insightLoopLimitRebalanceLot = "rebalance_lot"
+	insightLoopLimitOnchain      = "onchain"
+	insightLoopLimitOnchainShort = "onchain_short"
+)
+
+// insightLoopInAmount sizes the Loop In the card quotes: the deficit to the
+// target, bounded by the rebalance lot cap and by what the wallet can spend.
+// It returns the amount and which bound won, so the card can say so. When the
+// wallet cannot even cover the minimum lot, the amount stays at that minimum
+// and the limit says the wallet is short; the guard reports it.
+func insightLoopInAmount(deficitSat, maxLotSat, onchainSat int64, onchainKnown bool) (int64, string) {
+	amount, limit := deficitSat, insightLoopLimitTarget
+	if maxLotSat > 0 && maxLotSat < amount {
+		amount, limit = maxLotSat, insightLoopLimitRebalanceLot
+	}
+	if onchainKnown {
+		available := onchainSat - insightLoopInOnchainBufferSat
+		if available < insightLoopInMinSat {
+			return minInt64(amount, insightLoopInMinSat), insightLoopLimitOnchainShort
+		}
+		if available < amount {
+			amount, limit = available, insightLoopLimitOnchain
+		}
+	}
+	if amount < insightLoopInMinSat {
+		amount = minInt64(deficitSat, insightLoopInMinSat)
+	}
+	return amount, limit
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // R7: a good seller is below target but a known rebalance guard is holding

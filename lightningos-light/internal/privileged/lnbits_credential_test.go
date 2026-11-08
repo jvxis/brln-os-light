@@ -74,7 +74,14 @@ func lnbitsRevokeFixture(t *testing.T, root uint64, keys []string) (*ComposeAppM
 	if err := os.MkdirAll(snapshotDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(snapshotDir, appmanifest.LNbitsMacaroonFile), raw, 0600); err != nil {
+	snapshotPath := filepath.Join(snapshotDir, appmanifest.LNbitsMacaroonFile)
+	if err := os.WriteFile(snapshotPath, raw, 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(snapshotPath, 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := setPrivilegedPathGroup(snapshotPath, appmanifest.LNbitsContainerGID); err != nil {
 		t.Fatal(err)
 	}
 	rpc := &lnbitsRevokeTestRPC{root: root, present: true, authenticated: true}
@@ -83,6 +90,32 @@ func lnbitsRevokeFixture(t *testing.T, root uint64, keys []string) (*ComposeAppM
 }
 
 var legacyLNbitsTestKeys = []string{"info:read", "invoices:read", "invoices:write", "offchain:read", "offchain:write", "onchain:read", "onchain:write", "peers:read", "peers:write"}
+
+func TestLNbitsBrokerRevocationAcceptsActualSnapshot(t *testing.T) {
+	m, rpc := lnbitsRevokeFixture(t, uint64(time.Now().Add(-time.Hour).UnixMilli()), legacyLNbitsTestKeys)
+	raw, err := os.ReadFile(filepath.Join(m.AppsDataRoot, appmanifest.LNbitsID, appmanifest.LNbitsLNDDir, appmanifest.LNbitsMacaroonFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := writeTestLNbitsFixture(t)
+	mustWriteTestFile(t, f.macaroonPath, raw, 0600)
+	files, err := f.manager.validatedLNbitsFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cleanup, err := f.manager.createLNbitsSnapshot(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	f.manager.lnbitsRevocationRPC = rpc
+	if err := f.manager.RevokeLNbitsLegacyCredential(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if rpc.deleted != 1 {
+		t.Fatal("actual enrolled credential was not revoked")
+	}
+}
 
 type lnbitsRecordingApps struct {
 	*recordingApps

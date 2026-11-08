@@ -98,7 +98,7 @@ func (manager *ComposeAppManager) RevokeLNbitsLegacyCredential(ctx context.Conte
 		}
 		snapshotPath := filepath.Join(snapshotDir, appmanifest.LNbitsMacaroonFile)
 		info, err := os.Lstat(snapshotPath)
-		if err != nil || !info.Mode().IsRegular() || !privilegedPathOwnerIsSafe(info) {
+		if err != nil || !info.Mode().IsRegular() || !lnbitsEnrollmentOwnerIsSafe(info) {
 			return errors.New("LNbits credential enrollment is unsafe")
 		}
 		enrolled, err := readRegularFile(snapshotPath, 64*1024)

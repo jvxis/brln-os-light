@@ -134,7 +134,22 @@ func (manager *ComposeAppManager) validatedLNDgFiles() (lndgValidatedFiles, erro
 		EntrypointPath: entrypointPath,
 	})
 	if !bytes.Equal(composeRaw, []byte(expectedCompose)) {
-		return files, errors.New("LNDg compose manifest does not match the catalog")
+		// The restricted Manager may not traverse an existing native LND data
+		// directory. It then writes the catalog's empty-placeholder declaration.
+		// Accept only that exact variant, but retain the broker's native path for
+		// execution. Never grant the Manager broader filesystem access.
+		placeholderPath := filepath.Join(lndDir, appmanifest.LNDgChannelDBFile)
+		info, placeholderErr := os.Lstat(placeholderPath)
+		if placeholderDB || placeholderErr != nil || !info.Mode().IsRegular() || info.Size() != 0 {
+			return files, errors.New("LNDg compose manifest does not match the catalog")
+		}
+		placeholderCompose := appmanifest.LNDgCompose(appmanifest.LNDgComposePaths{
+			DataDir: dataDir, PgDir: pgDir, LogPath: logPath, LndDir: lndDir,
+			ChannelDBPath: placeholderPath, EntrypointPath: entrypointPath,
+		})
+		if !bytes.Equal(composeRaw, []byte(placeholderCompose)) {
+			return files, errors.New("LNDg compose manifest does not match the catalog")
+		}
 	}
 
 	certificatePath := filepath.Join(lndDir, appmanifest.LNDgTLSCertFile)

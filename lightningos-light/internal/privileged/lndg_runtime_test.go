@@ -177,6 +177,43 @@ func TestLNDgValidationAndSnapshotAreClosedAndPrivate(t *testing.T) {
 	}
 }
 
+func TestLNDgManagerPlaceholderWithPrivateNativeDatabase(t *testing.T) {
+	f := writeTestLNDgFixture(t)
+	native := filepath.Join(f.lndDataRoot, "data", "graph", "mainnet", appmanifest.LNDgChannelDBFile)
+	placeholder := filepath.Join(f.dataRoot, appmanifest.LNDgLNDDir, appmanifest.LNDgChannelDBFile)
+	mustWriteTestFile(t, placeholder, nil, 0640)
+	compose := appmanifest.LNDgCompose(appmanifest.LNDgComposePaths{
+		DataDir: filepath.Join(f.dataRoot, "data"), PgDir: filepath.Join(f.dataRoot, "pgdata"),
+		LogPath: filepath.Join(f.dataRoot, "data", "lndg-controller.log"), LndDir: filepath.Dir(placeholder),
+		ChannelDBPath: placeholder, EntrypointPath: f.entrypointPath,
+	})
+	mustWriteTestFile(t, f.composePath, []byte(compose), 0640)
+	files, err := f.manager.validatedLNDgFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.placeholderDB || files.channelDBPath != native {
+		t.Fatal("broker did not retain native database selection")
+	}
+	snapshot, _, err := f.manager.createLNDgSnapshot(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(snapshot.composePath)
+	if err != nil || !strings.Contains(string(raw), native+":/etc/lnd/channel.db:ro") {
+		t.Fatal("native database not mounted read-only")
+	}
+	mustWriteTestFile(t, placeholder, []byte("not empty"), 0640)
+	if _, err := f.manager.validatedLNDgFiles(); err == nil {
+		t.Fatal("nonempty substitute accepted")
+	}
+	mustWriteTestFile(t, placeholder, nil, 0640)
+	mustWriteTestFile(t, f.composePath, []byte(strings.Replace(compose, ":/etc/lnd/channel.db:ro", ":/etc/lnd/channel.db:rw", 1)), 0640)
+	if _, err := f.manager.validatedLNDgFiles(); err == nil {
+		t.Fatal("modified mount accepted")
+	}
+}
+
 func TestLNDgPostgresBackedLNDUsesPrivateEmptyChannelDBPlaceholder(t *testing.T) {
 	fixture := writeTestLNDgFixture(t)
 	nativeChannelDB := filepath.Join(fixture.lndDataRoot, "data", "graph", "mainnet", appmanifest.LNDgChannelDBFile)

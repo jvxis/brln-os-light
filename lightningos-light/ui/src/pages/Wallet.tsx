@@ -9,6 +9,7 @@ import OnchainSpendingGuard from '../components/OnchainSpendingGuard'
 import StatusBadge from '../components/dashboard/StatusBadge'
 import LNURLWithdraw from '../components/LNURLWithdraw'
 import { getLocale } from '../i18n'
+import { FiatAmount } from '../components/FiatDisplay'
 
 const emptySummary = {
   balances: {
@@ -1608,6 +1609,7 @@ export default function Wallet() {
               <div>
                 <p className="text-fog/60">{t('wallet.onchain')}</p>
                 <p className="text-xl">{formatSats(onchainConfirmedBalance)} sats</p>
+                <FiatAmount sats={summary.updated_at ? onchainConfirmedBalance : null} />
                 {onchainUnconfirmedBalance > 0 && (
                   <p className="mt-1 text-xs text-fog/50">
                     {t('wallet.onchainUnconfirmed', { amount: formatSats(onchainUnconfirmedBalance) })}
@@ -1804,6 +1806,7 @@ export default function Wallet() {
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-fog/45">{t('wallet.lightningLocalSettled')}</p>
                 <p className="mt-1 text-xl">{formatSats(lightningLocalBalance)} sats</p>
+                <FiatAmount sats={summary.updated_at ? lightningLocalBalance : null} />
               </div>
               <div className="sm:text-right">
                 <p className="text-[10px] uppercase tracking-wide text-fog/35">{t('wallet.lightningRemoteInbound')}</p>

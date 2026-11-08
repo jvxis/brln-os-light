@@ -1,4 +1,8 @@
 {
+  "fiat": {
+    "currency": "Display currency",
+    "hint": "Approximate value at the current BTC quote, not the historical transaction price. Satoshi amounts remain authoritative."
+  },
   "onchainGuard": {
     "title": "On-chain Spending Guard",
     "unverified": "UNVERIFIED",

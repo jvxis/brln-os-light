@@ -1,4 +1,8 @@
 {
+  "fiat": {
+    "currency": "Moeda de exibição",
+    "hint": "Valor aproximado pela cotação atual do BTC, não pelo preço histórico da transação. Os valores em satoshis continuam sendo a referência."
+  },
   "onchainGuard": {
     "title": "Proteção de Gastos On-chain",
     "unverified": "NÃO VERIFICADO",

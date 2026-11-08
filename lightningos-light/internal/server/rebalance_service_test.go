@@ -5577,3 +5577,39 @@ func TestNewChannelAutoEnabledDefaultFollowsTheInitiator(t *testing.T) {
 		t.Fatal("a remotely opened channel waits for the operator")
 	}
 }
+
+func TestFilterGuaranteedRebalanceTargetsStructuralCooldown(t *testing.T) {
+	now := time.Date(2026, 11, 8, 9, 0, 0, 0, time.UTC)
+	cfg := RebalanceConfig{SovereignStructuralCooldownRepeatHours: 6}
+	targets := []RebalanceChannel{
+		{ChannelID: 1, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+		{ChannelID: 2, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+		{ChannelID: 3, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+		{ChannelID: 4, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+	}
+	cooldowns := map[uint64]sovereignTargetStructuralCooldownStat{
+		// first structural failure 30 min ago: inside the 2h window.
+		1: {TargetChannelID: 1, Failures: 1, LastFailureAttempts: 24, LastFailureAt: now.Add(-30 * time.Minute)},
+		// repeated failures, last one 5h ago: inside the 6h repeat window.
+		2: {TargetChannelID: 2, Failures: 4, LastFailureAttempts: 31, LastFailureAt: now.Add(-5 * time.Hour)},
+		// repeated failures but a success came after: cooldown cleared.
+		3: {TargetChannelID: 3, Failures: 4, LastFailureAttempts: 31, LastFailureAt: now.Add(-1 * time.Hour), LastSuccessAt: now.Add(-20 * time.Minute)},
+	}
+	kept, skipped := filterGuaranteedRebalanceTargets(targets, cooldowns, cfg, now)
+	if skipped != 2 {
+		t.Fatalf("expected 2 guaranteed targets skipped by structural cooldown, got %d", skipped)
+	}
+	if len(kept) != 2 || kept[0].ChannelID != 3 || kept[1].ChannelID != 4 {
+		t.Fatalf("expected channels 3 and 4 to stay eligible, got %+v", kept)
+	}
+	// Once the window elapses the target is eligible again.
+	kept, skipped = filterGuaranteedRebalanceTargets(targets, cooldowns, cfg, now.Add(7*time.Hour))
+	if skipped != 0 || len(kept) != 4 {
+		t.Fatalf("expected no skips after the repeat window, got skipped=%d kept=%d", skipped, len(kept))
+	}
+	// No cooldown data keeps the pool untouched.
+	kept, skipped = filterGuaranteedRebalanceTargets(targets, nil, cfg, now)
+	if skipped != 0 || len(kept) != 4 {
+		t.Fatalf("expected untouched pool without cooldown data, got skipped=%d kept=%d", skipped, len(kept))
+	}
+}

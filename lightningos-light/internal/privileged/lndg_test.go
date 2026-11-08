@@ -33,6 +33,43 @@ func TestLNDgImageBuildScriptPinsAndVerifiesSource(t *testing.T) {
 	}
 }
 
+func TestLNDgImageBuildHasBoundedSlowNodeBudget(t *testing.T) {
+	runner := &composeRecordingRunner{hook: func(path string, args []string) (string, error, bool) {
+		if path == dockerPath && len(args) > 1 && args[0] == "image" && args[1] == "inspect" {
+			return "", errors.New("image absent"), true
+		}
+		if path == systemctlPath {
+			return "LoadState=not-found\n", errors.New("not found"), true
+		}
+		return "", nil, false
+	}}
+	m := &ComposeAppManager{Runner: runner, PrivilegedAppsRoot: t.TempDir()}
+	state, err := m.PrepareImage(context.Background(), appmanifest.LNDgID, appmanifest.LNDgImageApp, false)
+	if err != nil || state.Status != "preparing" {
+		t.Fatalf("state/error=%#v/%v", state, err)
+	}
+	found := false
+	for _, cmd := range runner.commands {
+		if strings.Contains(strings.Join(cmd.args, " "), "--unit=lightningos-lndg-image-app") {
+			found = true
+			if !strings.Contains(strings.Join(cmd.args, " "), "--property=RuntimeMaxSec=30min") {
+				t.Fatal("LNDg build must have a bounded 30-minute budget")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("build was not scheduled")
+	}
+	state, err = m.PrepareImage(context.Background(), appmanifest.LNDgID, appmanifest.LNDgImagePostgres, false)
+	if err != nil || state.Status != "preparing" {
+		t.Fatalf("postgres state/error=%#v/%v", state, err)
+	}
+	last := runner.commands[len(runner.commands)-1]
+	if last.path != systemdRunPath || !strings.Contains(strings.Join(last.args, " "), "--property=RuntimeMaxSec=10min") {
+		t.Fatal("registry pull budget must remain unchanged")
+	}
+}
+
 func TestLNDgImageStatusRequiresMatchingAttestationAndImageID(t *testing.T) {
 	root := t.TempDir()
 	attestationPath := filepath.Join(root, appmanifest.LNDgID, lndgImageAttestationFile)

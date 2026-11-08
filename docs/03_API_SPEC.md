@@ -274,7 +274,29 @@ The legacy payment-detail `created_at` field retains its existing meaning
 (payment creation); the UI uses the explicit fields above to distinguish
 invoice creation from payment initiation. Missing dates are not estimated.
 
+## Optional native LND cooperative-close destination
+
+`GET /api/lnd/config/upfront-shutdown` returns `current: {mode, address}`,
+`origin` (`native`, `existing`, `unknown`), `editable`, `reason`, and an opaque
+`config_revision`. No unrelated LND options or credentials are returned.
+
+`POST /api/lnd/config/upfront-shutdown` accepts `mode` (`off`, `wallet`,
+`external`), `address` (empty except for external), `config_revision`, and
+`confirm_external` (required true for external). Uses the normal authenticated
+session/CSRF protection and fresh `lnd_config` reauthentication. The optional
+`confirm_password` follows the existing config API contract.
+
+Only a root-owned, non-writable native installation marker and reachable LND
+0.21+ permit changes. Unknown/install_existing origins receive 403; unsupported
+LND or stale configuration revisions receive 409. Invalid addresses, ambiguous
+existing options or missing external acknowledgement receive 400. Mainnet
+addresses only. Successful changes use the existing transactional config
+write/restart/readiness/rollback path and response shape. Maintenance blocks
+mutation. This changes defaults for future channels, never existing commitments.
+See [scope and validation](LND_UPFRONT_SHUTDOWN.md).
+
 ## Error format
+
 - Non-2xx responses return JSON: `{"error":"message","code":"optional_code"}`
 
 ## UI preferences

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { APIError, getBitcoinLocalStatus, getBitcoinSource, getLndConfig, getLndMaintenance, getLndStatus, getLndUpgradeStatus, getLogs, reauthAuth, setBitcoinSource, setLndMaintenance, startLndUpgrade, updateLndConfig, updateLndRawConfig, type LndMaintenanceStatus, type LndSecretUpdate, type LndSensitiveOption } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
+import UpfrontShutdownCard from '../components/UpfrontShutdownCard'
+import { updateUpfrontShutdown } from '../api'
 import { getLocale } from '../i18n'
 import { formatJournalLogLine, formatJournalLogLines } from '../utils/journalLogs'
 
@@ -18,6 +20,7 @@ type BitcoinLocalStatus = {
 const LND_ALIAS_MAX_BYTES = 32
 type LndNetworkMode = 'private' | 'hybrid' | 'custom'
 type PendingConfigChange =
+  | { kind: 'upfront'; payload: Parameters<typeof updateUpfrontShutdown>[0] }
   | { kind: 'structured'; payload: Parameters<typeof updateLndConfig>[0] }
   | { kind: 'raw'; payload: Parameters<typeof updateLndRawConfig>[0] }
 
@@ -431,7 +434,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
       setConfigPassword('')
       const result = change.kind === 'raw'
         ? await updateLndRawConfig(change.payload)
-        : await updateLndConfig(change.payload)
+        : change.kind === 'upfront' ? await updateUpfrontShutdown(change.payload) : await updateLndConfig(change.payload)
       setPendingConfig(null)
       setSecretUpdates({})
       setStatus(result?.wallet_unlock_required ? t('lndConfig.unlockPending')
@@ -916,6 +919,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
         </div>
         <button className="btn-primary" disabled={!config || configBusy || !!pendingConfig || maintenance?.enabled} onClick={handleSave}>{t('lndConfig.saveRestart')}</button>
         <p className="text-xs text-fog/50">{t('lndConfig.restartHint')}</p>
+        <UpfrontShutdownCard key={config?.config_revision} disabled={configBusy || !!pendingConfig || !!maintenance?.enabled} onSave={payload => openConfigConfirmation({ kind: 'upfront', payload })} />
       </div>
 
       {advanced && (

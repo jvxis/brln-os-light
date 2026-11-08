@@ -1,4 +1,25 @@
 {
+  "upfront": {
+    "title": "Cooperative close destination",
+    "optional": "Optional · new channels only",
+    "intro": "Agree on a payout address with the peer when a channel opens. This does not lock all node funds.",
+    "loading": "Checking configuration…",
+    "loadFailed": "Could not check configuration.",
+    "destination": "Default for future channels",
+    "off": "Do not set automatically",
+    "wallet": "Automatic address from the LND wallet",
+    "external": "External wallet address",
+    "offHint": "Keeps individual channel choices. Existing committed addresses are not removed.",
+    "walletHint": "Uses a new LND wallet address when the peer supports it. Funds remain in the hot wallet.",
+    "externalHint": "Applies to new incoming and outgoing channels, unless overridden per channel. Peers without support will be refused. Funds leave the LND wallet on cooperative close.",
+    "address": "Bitcoin mainnet address",
+    "confirmExternal": "I control this address and have its backup. I understand address reuse reduces privacy and some peers may not accept new channels.",
+    "limits": "No retroactive effect. Does not protect force closes or malicious Lightning payments. Changing this setting restarts LND; already negotiated destinations stay unchanged.",
+    "reload": "Reload",
+    "installation_origin_unverified": "Read-only: native LOS installation origin is not verified. Existing-node installations are outside this control's scope.",
+    "ambiguous_configuration": "Read-only: duplicate or nonstandard settings require an operator review.",
+    "lnd_version_unavailable_or_unsupported": "Read-only: a reachable LND 0.21 or newer is required."
+  },
   "fiat": {
     "currency": "Display currency",
     "hint": "Approximate value at the current BTC quote, not the historical transaction price. Satoshi amounts remain authoritative."

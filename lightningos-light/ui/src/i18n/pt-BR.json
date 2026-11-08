@@ -6594,7 +6594,8 @@
       "loop_installed": "app Loop instalado",
       "onchain_funds": "saldo on-chain cobre o Loop In",
       "parallel_channel_leaves_fast_path": "um segundo canal com o mesmo peer tira o canal do fast-path do rebalance",
-      "peer_funded_close_free": "o peer abriu o canal (fechar não custa nada para nós)"
+      "peer_funded_close_free": "o peer abriu o canal (fechar não custa nada para nós)",
+      "we_are_funder": "fomos nós que abrimos (a taxa de fechamento é nossa)"
     },
     "guardFailed": {
       "peer_funded_close_free": "fomos nós que abrimos (a taxa de fechamento é nossa)",

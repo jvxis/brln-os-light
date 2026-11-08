@@ -6594,7 +6594,8 @@
       "loop_installed": "Loop app installed",
       "onchain_funds": "on-chain balance covers the Loop In",
       "parallel_channel_leaves_fast_path": "a second channel with the same peer leaves the rebalance fast path",
-      "peer_funded_close_free": "peer funded the channel (closing costs us nothing)"
+      "peer_funded_close_free": "peer funded the channel (closing costs us nothing)",
+      "we_are_funder": "we funded the channel (the close fee is ours)"
     },
     "guardFailed": {
       "peer_funded_close_free": "we funded the channel (the close fee is ours)",

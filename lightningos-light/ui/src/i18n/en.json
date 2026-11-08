@@ -5286,6 +5286,7 @@
         "scanReasonTargetNotFound": "target not found",
         "scanReasonStartError": "start error",
         "scanReasonGuaranteedSlotQueued": "guaranteed slot queued",
+        "scanReasonGuaranteedStructuralCooldown": "guaranteed target paused: no route in recent attempts (structural cooldown)",
         "lastManualRestartQueued": "Manual restart watch queued: {{count}}",
         "manualRestartReasons": "Manual restart watch reasons: {{value}}.",
         "budgetPaused": {

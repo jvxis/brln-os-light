@@ -150,7 +150,13 @@ mesma faixa vence o que está há mais tempo sem job automático.
 
 Essa fila ignora score e filtros econômicos/históricos, mas continua sujeita
 ao budget automático, fee cap, canal ocupado, déficit/mínimo executável e
-viabilidade operacional de sources/rota. O ID também é exposto como
+viabilidade operacional de sources/rota. Desde a 0.5.54 ela também respeita o
+**cooldown estrutural** do Sovereign (`guaranteed_structural_cooldown`): se o
+último job do canal terminou em `all sources failed` depois de esgotar o pool
+de sources (≥ 20 tentativas), o slot pula o canal por 2h na primeira vez e por
+`sovereign_structural_cooldown_repeat_hours` (padrão 6h) nas seguintes, até um
+job bem-sucedido limpar o estado. Antes disso, um canal sem rota nenhuma era
+re-enfileirado a cada scan (≈ 90 jobs falhos/dia ocupando um worker). O ID também é exposto como
 `channel_id_str` para não perder precisão no JavaScript e manter separados
 canais paralelos do mesmo peer.
 

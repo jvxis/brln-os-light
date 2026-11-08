@@ -2856,13 +2856,55 @@ func orderGuaranteedRebalanceTargets(channels []RebalanceChannel, lastGuaranteed
 	return targets
 }
 
+const guaranteedStructuralCooldownReason = "guaranteed_structural_cooldown"
+
+// filterGuaranteedRebalanceTargets drops guaranteed targets that are inside
+// the same structural cooldown the sovereign scheduler applies: a job that
+// ended as "all sources failed" after exhausting the source pool means no
+// route exists right now, so re-queueing the same target every scan only
+// burns a worker. The first such failure pauses the target for 2h, repeats
+// for sovereign_structural_cooldown_repeat_hours (default 6h); a later
+// success clears it. Returns the targets still eligible and how many were
+// skipped.
+func filterGuaranteedRebalanceTargets(targets []RebalanceChannel, cooldowns map[uint64]sovereignTargetStructuralCooldownStat, cfg RebalanceConfig, now time.Time) ([]RebalanceChannel, int) {
+	if len(targets) == 0 || len(cooldowns) == 0 {
+		return targets, 0
+	}
+	kept := make([]RebalanceChannel, 0, len(targets))
+	skipped := 0
+	for _, target := range targets {
+		if stat, ok := cooldowns[target.ChannelID]; ok && shouldSkipSovereignTargetStructuralCooldown(stat, cfg, now) {
+			skipped++
+			continue
+		}
+		kept = append(kept, target)
+	}
+	return kept, skipped
+}
+
 // queueGuaranteedRebalanceSlot reserves at most one automatic job for the
 // operator-selected pool before either scheduler evaluates its normal plan.
 // It intentionally bypasses score/history/economic filters, while retaining
-// the manual-target safety checks, channel-busy guard, fee cap and auto budget.
+// the manual-target safety checks, channel-busy guard, fee cap, auto budget
+// and the structural (no-route) cooldown shared with the sovereign scheduler.
 func (s *RebalanceService) queueGuaranteedRebalanceSlot(ctx context.Context, cfg RebalanceConfig, channels []RebalanceChannel, settings map[uint64]channelSetting, lastAutoByTarget map[uint64]time.Time, lastGuaranteedByTarget map[uint64]time.Time, scanAt time.Time) guaranteedRebalanceSlotResult {
 	result := guaranteedRebalanceSlotResult{}
 	targets := orderGuaranteedRebalanceTargets(channels, lastGuaranteedByTarget)
+	if len(targets) == 0 {
+		return result
+	}
+	targetIDs := make([]uint64, 0, len(targets))
+	for _, target := range targets {
+		targetIDs = append(targetIDs, target.ChannelID)
+	}
+	cooldowns := s.loadSovereignTargetStructuralCooldowns(ctx, targetIDs, cfg, scanAt)
+	targets, structuralSkipped := filterGuaranteedRebalanceTargets(targets, cooldowns, cfg, scanAt)
+	if structuralSkipped > 0 {
+		result.SkipReason = guaranteedStructuralCooldownReason
+		if s.logger != nil {
+			s.logger.Printf("rebalance guaranteed slot: %d target(s) skipped by structural cooldown", structuralSkipped)
+		}
+	}
 	if len(targets) == 0 {
 		return result
 	}
@@ -12709,6 +12751,7 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int, qu
 	}
 	ordered := []reasonEntry{
 		{key: "guaranteed_slot_queued", label: "guaranteed slot queued"},
+		{key: guaranteedStructuralCooldownReason, label: "guaranteed target in structural cooldown"},
 		{key: "channel_busy", label: "channel busy"},
 		{key: "target_already_balanced", label: "target already balanced"},
 		{key: "recently_attempted", label: "recently attempted"},

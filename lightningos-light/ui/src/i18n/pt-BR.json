@@ -5286,6 +5286,7 @@
       "scanReasonTargetNotFound": "target não encontrado",
       "scanReasonStartError": "erro ao iniciar",
       "scanReasonGuaranteedSlotQueued": "vaga garantida enfileirada",
+      "scanReasonGuaranteedStructuralCooldown": "vaga garantida pausada: sem rota nas últimas tentativas (cooldown estrutural)",
       "lastManualRestartQueued": "Manual restart watch enfileirou: {{count}}",
       "manualRestartReasons": "Motivos do manual restart watch: {{value}}.",
       "budgetPaused": {

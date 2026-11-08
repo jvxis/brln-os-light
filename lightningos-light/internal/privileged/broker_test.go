@@ -1258,6 +1258,27 @@ func TestBrokerLoopFailureIsGeneric(t *testing.T) {
 	}
 }
 
+func TestBrokerLoopMissingACLIsActionableWithoutLeakingDetails(t *testing.T) {
+	params, err := MarshalParams(LoopEnsureParams{LNDTLSCertificate: []byte("secret-certificate")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := testBroker(&recordingRunner{}, &recordingAudit{}, &recordingLocker{})
+	broker.Loop = &recordingLoopManager{err: fmt.Errorf("secret-command-output: %w", errLoopACLUnavailable)}
+	for _, operation := range []Operation{OperationLoopEnsure, OperationLoopPermissionsEnsure} {
+		requestParams := params
+		if operation == OperationLoopPermissionsEnsure {
+			requestParams = json.RawMessage(`{}`)
+		}
+		response := broker.Handle(context.Background(), Request{
+			Version: ProtocolVersion, RequestID: "loop_acl_missing", Operation: operation, Params: requestParams,
+		})
+		if response.OK || response.Error == nil || response.Error.Code != "loop_prerequisite_missing" || response.Error.Message != errLoopACLUnavailable.Error() {
+			t.Fatalf("unexpected prerequisite response for %s: %#v", operation, response)
+		}
+	}
+}
+
 func TestBrokerPeerSwapOperationsAreTypedLockedAndNeverAuditSecrets(t *testing.T) {
 	params := peerSwapBrokerTestEnsureParams(t)
 	source := PeerSwapSource{Mode: appmanifest.PeerSwapElementsModeRemote, URL: "https://elements.example:7041", User: "rpc-user", Password: "peerswap-secret-never-audit", Wallet: "peerswap_node"}

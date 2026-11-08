@@ -952,6 +952,9 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 		}
 		state, err := broker.Loop.Ensure(ctx, params, request.DryRun)
 		if err != nil {
+			if errors.Is(err, errLoopACLUnavailable) {
+				return nil, "loop_prerequisite_missing", errLoopACLUnavailable
+			}
 			return nil, "loop_ensure_failed", errors.New("Lightning Loop preparation failed")
 		}
 		return state, "", nil
@@ -981,6 +984,9 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "broker_unavailable", errors.New("Lightning Loop manager is unavailable")
 		}
 		if err := broker.Loop.EnsurePermissions(ctx, request.DryRun); err != nil {
+			if errors.Is(err, errLoopACLUnavailable) {
+				return nil, "loop_prerequisite_missing", errLoopACLUnavailable
+			}
 			return nil, "loop_permissions_failed", errors.New("Lightning Loop permissions repair failed")
 		}
 		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil

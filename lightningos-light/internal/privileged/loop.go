@@ -24,10 +24,13 @@ const (
 	getentPath         = "/usr/bin/getent"
 	idPath             = "/usr/bin/id"
 	setfaclPath        = "/usr/bin/setfacl"
-	loopAptGetPath     = "/usr/bin/apt-get"
 	curlPath           = "/usr/bin/curl"
 	systemdAnalyzePath = "/usr/bin/systemd-analyze"
 )
+
+// Only this fixed prerequisite error may be exposed by the broker. Never expose
+// command output or credential validation errors in API responses.
+var errLoopACLUnavailable = errors.New("Lightning Loop requires working ACL support (setfacl); ask the node administrator to install or repair the acl package on the host, then retry")
 
 type NativeLoopManager struct {
 	Runner       CommandRunner
@@ -241,14 +244,9 @@ func (manager *NativeLoopManager) ensurePermissions(ctx context.Context) error {
 		}
 	}
 	if _, err := manager.Runner.Run(ctx, setfaclPath, "--version"); err != nil {
-		if _, err := manager.Runner.Run(ctx, loopAptGetPath, "install", "-y", "acl"); err != nil {
-			if _, updateErr := manager.Runner.Run(ctx, loopAptGetPath, "update"); updateErr != nil {
-				return errors.New("acl package is required by Lightning Loop")
-			}
-			if _, installErr := manager.Runner.Run(ctx, loopAptGetPath, "install", "-y", "acl"); installErr != nil {
-				return errors.New("acl package is required by Lightning Loop")
-			}
-		}
+		// ProtectSystem=full deliberately prevents package installation here.
+		// Host prerequisites belong to the installer/administrator, not the broker.
+		return errLoopACLUnavailable
 	}
 	for _, dir := range []string{manager.AppsRoot, manager.AppsDataRoot, manager.Paths.Root, manager.Paths.BinDir, manager.Paths.ClientDir, manager.Paths.DataDir, manager.Paths.LNDDir} {
 		if err := ensureFixedDirectory(manager.StateRoot, dir, 0750); err != nil {

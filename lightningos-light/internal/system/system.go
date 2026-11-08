@@ -1511,6 +1511,30 @@ func EnsureAppFirewallWithBroker(ctx context.Context, appID string) (bool, strin
 	}
 }
 
+func RevokeLNbitsLegacyCredentialWithBroker(ctx context.Context, dryRun bool) error {
+	privilegedState.RLock()
+	client := privilegedState.client
+	privilegedState.RUnlock()
+	if client == nil || client.Mode() != "enforce" {
+		return errors.New("LNbits credential migration requires privileged broker enforce mode")
+	}
+	revoker, ok := client.(interface {
+		RevokeLNbitsLegacyCredential(context.Context, bool) error
+	})
+	if !ok {
+		return errors.New("LNbits credential migration requires an updated broker")
+	}
+	if err := revoker.RevokeLNbitsLegacyCredential(ctx, dryRun); err != nil {
+		return err
+	}
+	if dryRun {
+		// Refuse to stop a running app whose declaration cannot be restarted
+		// under the current catalog. Explicit Start can reconcile that layout.
+		return client.AppLifecycle(ctx, appmanifest.LNbitsID, "start", true)
+	}
+	return nil
+}
+
 func ReadManagerFirewallStatusWithBroker(ctx context.Context) (string, bool, error) {
 	privilegedState.RLock()
 	client := privilegedState.client

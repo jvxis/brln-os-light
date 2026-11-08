@@ -1389,6 +1389,7 @@
     "elevatedLndAccessBadge": "Acesso LND sensível",
     "elevatedLndAccessTitle": "Acesso direto a operações sensíveis do LND",
     "elevatedLndAccessCardBody": "Este app recebe um macaroon dedicado e restrito, mas pode executar operações sensíveis diretamente no LND, fora das aprovações e reautenticações do LightningOS.",
+    "lnbitsWalletOnlyNotice": "Macaroon somente para carteira: as funções de gerenciamento de nó do LNbits não são suportadas. Abrir/fechar canais, enviar on-chain e gerenciar peers ficam bloqueados; use o LightningOS para essas operações. Faturas e pagamentos Lightning continuam habilitados, fora dos limites de gastos do LightningOS. Instalações existentes precisam concluir a migração da credencial para aplicar essas restrições.",
     "elevatedLndAccessInstallTitle": "Revise o acesso do {{app}} antes de instalar",
     "elevatedLndAccessInstallBody": "Este app recebe um macaroon dedicado e restrito que permite uma ou mais operações sensíveis, como pagamentos, swaps, canais, movimentações on-chain ou assinaturas. Se o app for comprometido, essas permissões poderão ser usadas sem confirmação do LightningOS.",
     "elevatedLndAccessRecommendation": "Instale somente se confiar neste aplicativo. Mantenha-o atualizado e restrinja sua interface à sua rede local confiável.",

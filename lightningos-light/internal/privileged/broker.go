@@ -315,7 +315,7 @@ func operationTimeout(configured time.Duration, operation Operation, dryRun bool
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}
-	case OperationAppLNDHostAccessEnsure:
+	case OperationAppLNDHostAccessEnsure, OperationLNbitsLegacyCredentialRevoke:
 		if configured < privilegedLongOperationTimeout {
 			return privilegedLongOperationTimeout
 		}
@@ -815,6 +815,17 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "app_lnd_host_access_failed", errors.New("app LND host access operation failed")
 		}
 		return map[string]any{"ready": true, "changed": !request.DryRun}, "", nil
+	case OperationLNbitsLegacyCredentialRevoke:
+		manager, ok := broker.Apps.(interface {
+			RevokeLNbitsLegacyCredential(context.Context, bool) error
+		})
+		if !ok {
+			return nil, "broker_unavailable", errors.New("LNbits credential migration requires an updated broker")
+		}
+		if err := manager.RevokeLNbitsLegacyCredential(ctx, request.DryRun); err != nil {
+			return nil, "lnbits_credential_revoke_failed", errors.New("LNbits legacy credential revocation failed; no general macaroon authority is granted to the Manager")
+		}
+		return map[string]any{"ready": true}, "", nil
 	case OperationBitcoinStorageEnsure:
 		if broker.BitcoinStorage == nil {
 			return nil, "broker_unavailable", errors.New("bitcoin storage manager is unavailable")
@@ -1415,6 +1426,8 @@ func (broker *Broker) now() time.Time {
 
 func knownOperation(operation Operation) bool {
 	switch operation {
+	case OperationLNbitsLegacyCredentialRevoke:
+		return true
 	case OperationMesh, OperationManagerFirewallConfigure:
 		return true
 	case OperationAppLNDHostAccessEnsure:
@@ -1432,6 +1445,8 @@ func knownOperation(operation Operation) bool {
 
 func mutatingOperation(operation Operation) bool {
 	switch operation {
+	case OperationLNbitsLegacyCredentialRevoke:
+		return true
 	case OperationMesh, OperationManagerFirewallConfigure:
 		return true
 	case OperationAppLNDHostAccessEnsure:

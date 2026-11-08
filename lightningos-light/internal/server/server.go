@@ -235,6 +235,7 @@ func (s *Server) Run() error {
 	s.startLNDRuntimeMonitor()
 	s.startLNDGraphProgressWarmup()
 	s.startLegacyPrivilegeTransitionReconciler()
+	s.startLNbitsCredentialReconciler()
 	s.startAppUpgradeChecker()
 	s.initNotifications()
 	s.initAppVersions()

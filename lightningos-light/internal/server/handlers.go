@@ -4406,6 +4406,11 @@ func (s *Server) handleOnchainTransactions(w http.ResponseWriter, r *http.Reques
 	if limit > 0 && len(items) > limit {
 		items = items[:limit]
 	}
+	// Best effort: a failed wallet lookup leaves own_addresses empty rather
+	// than hiding the listing.
+	if err := s.lnd.MarkOwnAddresses(ctx, items); err != nil && s.logger != nil {
+		s.logger.Printf("onchain transactions: own address marking failed: %v", err)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }

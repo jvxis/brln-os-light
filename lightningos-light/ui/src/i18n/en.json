@@ -3288,6 +3288,25 @@
   },
   "onchainHub": {
     "kicker": "ON-CHAIN HUB",
+    "ownership": {
+      "toggle": "Is this address mine?",
+      "placeholder": "Paste a bitcoin address to check whether it belongs to this node's wallet",
+      "check": "Check",
+      "checking": "Checking…",
+      "filter": "Show its UTXOs and transactions",
+      "mine": "mine",
+      "error": "Could not check the address.",
+      "status": {
+        "owned": "Mine, under this node's key",
+        "known": "Known, but not under this node's key",
+        "external": "Not this wallet"
+      },
+      "hint": {
+        "owned": "The address was derived from this node's seed. Funds sent to it are spendable by this node.",
+        "known": "The wallet can see this address (imported or watch-only), but it cannot spend from it. Do not use it as a close or sweep destination unless you control the key elsewhere.",
+        "external": "This address is not part of this node's wallet. Nothing is wrong with it; it just belongs to someone else or to another wallet."
+      }
+    },
     "title": "On-chain Hub",
     "subtitle": "Deep view of UTXOs and on-chain transactions with filters and explorer links.",
     "feeFast": "Fastest",

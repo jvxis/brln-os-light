@@ -201,6 +201,7 @@ func (s *Server) routes() http.Handler {
 	r.Route("/api/onchain", func(r chi.Router) {
 		r.Get("/utxos", s.handleOnchainUtxos)
 		r.Get("/transactions", s.handleOnchainTransactions)
+		r.Get("/address/ownership", s.handleOnchainAddressOwnership)
 		r.Post("/utxos/metadata", s.handleUtxoMetadataUpsert)
 		r.Post("/utxos/lock", s.handleUtxoLock)
 		r.Post("/utxos/unlock", s.handleUtxoUnlock)

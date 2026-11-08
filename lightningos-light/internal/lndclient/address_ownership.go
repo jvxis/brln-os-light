@@ -148,3 +148,49 @@ func canonicalWalletAddress(value string) string {
 	}
 	return trimmed
 }
+
+// WalletAddressNetwork reports the network a Bitcoin address encodes for, or
+// false when the string is not a valid address on any supported network.
+func WalletAddressNetwork(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", false
+	}
+	networks := []struct {
+		name   string
+		params *chaincfg.Params
+	}{
+		{"mainnet", &chaincfg.MainNetParams},
+		{"testnet", &chaincfg.TestNet3Params},
+		{"regtest", &chaincfg.RegressionNetParams},
+		{"signet", &chaincfg.SigNetParams},
+	}
+	for _, network := range networks {
+		decoded, err := btcutil.DecodeAddress(trimmed, network.params)
+		if err != nil || decoded == nil || !decoded.IsForNet(network.params) {
+			continue
+		}
+		return network.name, true
+	}
+	return "", false
+}
+
+// MarkOwnAddresses fills OwnAddresses on each transaction with the subset of
+// its addresses that belong to this wallet. The wallet address set is cached,
+// so a whole listing costs one WalletKit call.
+func (c *Client) MarkOwnAddresses(ctx context.Context, items []OnchainTransaction) error {
+	addresses, err := c.walletAddressSet(ctx)
+	if err != nil {
+		return err
+	}
+	for index := range items {
+		var own []string
+		for _, address := range items[index].Addresses {
+			if _, ok := addresses[canonicalWalletAddress(address)]; ok {
+				own = append(own, address)
+			}
+		}
+		items[index].OwnAddresses = own
+	}
+	return nil
+}

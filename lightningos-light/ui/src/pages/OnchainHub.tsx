@@ -5,6 +5,8 @@ import {
   deleteUtxoGroup,
   getMempoolFees,
   getOnchainTransactions,
+  getOnchainAddressOwnership,
+  type OnchainAddressOwnership,
   getOnchainUtxos,
   getProvenanceHealth,
   getWalletSummary,
@@ -62,6 +64,7 @@ type OnchainTx = {
   timestamp: string
   label?: string
   addresses?: string[]
+  own_addresses?: string[]
 }
 
 type MempoolFeeHint = {
@@ -88,6 +91,25 @@ export default function OnchainHub() {
   const [txLoading, setTxLoading] = useState(true)
   const [fees, setFees] = useState<MempoolFeeHint | null>(null)
   const [feesStatus, setFeesStatus] = useState('')
+  const [ownershipOpen, setOwnershipOpen] = useState(false)
+  const [ownershipInput, setOwnershipInput] = useState('')
+  const [ownershipResult, setOwnershipResult] = useState<OnchainAddressOwnership | null>(null)
+  const [ownershipError, setOwnershipError] = useState('')
+  const [ownershipBusy, setOwnershipBusy] = useState(false)
+  const checkOwnership = async () => {
+    const address = ownershipInput.trim()
+    if (!address) return
+    setOwnershipBusy(true)
+    setOwnershipError('')
+    setOwnershipResult(null)
+    try {
+      setOwnershipResult(await getOnchainAddressOwnership(address))
+    } catch (failure: any) {
+      setOwnershipError(failure?.message || t('onchainHub.ownership.error'))
+    } finally {
+      setOwnershipBusy(false)
+    }
+  }
   const [activePane, setActivePane] = useState<'utxos' | 'txs'>('txs')
   const [activeView, setActiveView] = useState<'hub' | 'walletflow'>('hub')
   const [walletFlowAvailable, setWalletFlowAvailable] = useState<boolean>(false)
@@ -569,6 +591,14 @@ export default function OnchainHub() {
             </div>
             <button
               type="button"
+              className={clsx('btn-secondary text-xs px-3 py-2', ownershipOpen && 'bg-white/10')}
+              aria-expanded={ownershipOpen}
+              onClick={() => setOwnershipOpen((value) => !value)}
+            >
+              {t('onchainHub.ownership.toggle')}
+            </button>
+            <button
+              type="button"
               className="btn-secondary text-xs px-3 py-2"
               onClick={() => void refreshOnchainHub()}
             >
@@ -577,6 +607,42 @@ export default function OnchainHub() {
           </div>
         </div>
         {feesStatus && <p className="relative z-10 mt-3 text-xs text-brass">{feesStatus}</p>}
+        {ownershipOpen && (
+          <form
+            className="relative z-10 mt-4 flex flex-wrap items-center gap-2"
+            onSubmit={(event) => { event.preventDefault(); void checkOwnership() }}
+          >
+            <input
+              className="input-field flex-1 min-w-[16rem] text-xs font-mono"
+              placeholder={t('onchainHub.ownership.placeholder')}
+              value={ownershipInput}
+              onChange={(e) => { setOwnershipInput(e.target.value); setOwnershipResult(null); setOwnershipError('') }}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            <button type="submit" className="btn-secondary text-xs px-3 py-2" disabled={ownershipBusy || !ownershipInput.trim()}>
+              {ownershipBusy ? t('onchainHub.ownership.checking') : t('onchainHub.ownership.check')}
+            </button>
+            {ownershipResult && (
+              <span className={clsx('onchain-badge', ownershipResult.status === 'owned' ? 'onchain-badge--ok' : ownershipResult.status === 'known' ? 'onchain-badge--warn' : 'text-fog/60 border-white/15')}>
+                {t(`onchainHub.ownership.status.${ownershipResult.status}`)}
+              </span>
+            )}
+            {ownershipResult && ownershipResult.status === 'owned' && (
+              <button
+                type="button"
+                className="text-xs text-fog/60 underline-offset-2 hover:underline"
+                onClick={() => { setUtxoQuery(ownershipResult.address); setTxQuery(ownershipResult.address) }}
+              >
+                {t('onchainHub.ownership.filter')}
+              </button>
+            )}
+            {ownershipResult && (
+              <p className="basis-full text-xs text-fog/55">{t(`onchainHub.ownership.hint.${ownershipResult.status}`)}</p>
+            )}
+            {ownershipError && <p role="alert" className="basis-full text-xs text-ember">{ownershipError}</p>}
+          </form>
+        )}
         <div className="relative z-10 mt-6 grid gap-4 lg:grid-cols-5">
           <div className="onchain-kpi">
             <p>{t('onchainHub.confirmed')}</p>
@@ -1092,7 +1158,12 @@ export default function OnchainHub() {
                     {item.addresses && item.addresses.length ? (
                       <>
                         {item.addresses.slice(0, 3).map((addr) => (
-                          <span key={addr}>{addr}</span>
+                          <span key={addr} className="inline-flex flex-wrap items-center gap-1">
+                            {addr}
+                            {item.own_addresses?.includes(addr) && (
+                              <span className="onchain-badge onchain-badge--ok" title={t('onchainHub.ownership.hint.owned')}>{t('onchainHub.ownership.mine')}</span>
+                            )}
+                          </span>
                         ))}
                         {item.addresses.length > 3 && (
                           <span className="text-fog/50">+{item.addresses.length - 3} {t('onchainHub.more')}</span>

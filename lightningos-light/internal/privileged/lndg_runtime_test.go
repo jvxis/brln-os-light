@@ -138,6 +138,10 @@ func TestLNDgValidationAndSnapshotAreClosedAndPrivate(t *testing.T) {
 	if snapshot.root != wantRoot {
 		t.Fatalf("snapshot root=%q want=%q", snapshot.root, wantRoot)
 	}
+	mountTarget := filepath.Join(wantRoot, appmanifest.LNDgLNDDir, appmanifest.LNDgChannelDBFile)
+	if info, err := os.Lstat(mountTarget); err != nil || !info.Mode().IsRegular() || info.Size() != 0 {
+		t.Fatal("native DB bind target must exist before mounting read-only LND directory")
+	}
 	composeRaw, err := os.ReadFile(snapshot.composePath)
 	if err != nil {
 		t.Fatal(err)

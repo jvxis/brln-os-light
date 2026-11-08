@@ -3,6 +3,7 @@ package privileged
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,6 +29,7 @@ func TestLNDgNativeRegtestCredentialLifecycle(t *testing.T) {
 	const tls = base + "/tls.cert"
 	const adminPath = base + "/data/chain/bitcoin/regtest/admin.macaroon"
 	admin := newLNDManagerCredentialClient("127.0.0.1:10009", tls, adminPath)
+	defer admin.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	info, err := admin.FinancialIntentNodeState(ctx)
@@ -144,6 +146,74 @@ func TestLNDgNativeRegtestCredentialLifecycle(t *testing.T) {
 	if err := f.manager.Remove(ctx, appmanifest.LNDgID, false); err != nil {
 		t.Fatal("second removal failed:", err)
 	}
+	for _, scenario := range []string{"down-failure", "revoke-failure", "interrupted-cleanup", "missing-enrollment"} {
+		t.Run(scenario, func(t *testing.T) {
+			raw, _ := bake(permissions)
+			enroll(raw)
+			switch scenario {
+			case "down-failure":
+				f.runner.hook = func(_ string, args []string) (string, error, bool) {
+					for _, arg := range args {
+						if arg == "down" {
+							return "", errors.New("injected Docker down failure"), true
+						}
+					}
+					return "", nil, false
+				}
+				if f.manager.Remove(ctx, appmanifest.LNDgID, false) == nil {
+					t.Fatal("down failure ignored")
+				}
+				f.runner.hook = nil
+				if err := admin.AuthenticateMacaroon(ctx, raw, permissions); err != nil {
+					t.Fatal("revoked before down")
+				}
+			case "revoke-failure":
+				f.manager.lndgRevocationRPC = &nativeLNDgFailedDelete{lnbitsRevocationRPC: admin}
+				if f.manager.Remove(ctx, appmanifest.LNDgID, false) == nil {
+					t.Fatal("revocation failure ignored")
+				}
+				f.manager.lndgRevocationRPC = admin
+				if err := admin.AuthenticateMacaroon(ctx, raw, permissions); err != nil {
+					t.Fatal("credential lost before successful revocation")
+				}
+			case "interrupted-cleanup":
+				p, err := f.manager.prepareLNDgCredentialRemoval(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := p.revoke(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if err := admin.AuthenticateMacaroon(ctx, raw, permissions); err == nil {
+					t.Fatal("old credential still accepted")
+				}
+			case "missing-enrollment":
+				path := filepath.Join(f.privilegedRoot, "lndg", "lnd", "lndg.macaroon")
+				if err := os.Rename(path, path+".saved"); err != nil {
+					t.Fatal(err)
+				}
+				before := len(f.runner.commands)
+				if f.manager.Remove(ctx, appmanifest.LNDgID, false) == nil {
+					t.Fatal("missing enrollment accepted")
+				}
+				if len(f.runner.commands) != before {
+					t.Fatal("Docker mutated before validation")
+				}
+				if err := admin.AuthenticateMacaroon(ctx, raw, permissions); err != nil {
+					t.Fatal("unenrolled credential revoked")
+				}
+				if err := os.Rename(path+".saved", path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := f.manager.Remove(ctx, appmanifest.LNDgID, false); err != nil {
+				t.Fatal("retry failed:", err)
+			}
+			if err := admin.AuthenticateMacaroon(ctx, raw, permissions); err == nil {
+				t.Fatal("copied credential accepted after retry")
+			}
+		})
+	}
 	final, err := admin.ListMacaroonIDs(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -164,4 +234,10 @@ func TestLNDgNativeRegtestCredentialLifecycle(t *testing.T) {
 		}
 	}
 	t.Log("Real regtest LND: old copied credential rejected; new root accepted; second removal succeeded; unrelated roots, TLS, config and admin unchanged. Docker calls were recorded, not executed.")
+}
+
+type nativeLNDgFailedDelete struct{ lnbitsRevocationRPC }
+
+func (*nativeLNDgFailedDelete) DeleteMacaroonID(context.Context, uint64) error {
+	return errors.New("injected unavailable revocation RPC")
 }

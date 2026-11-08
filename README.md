@@ -1142,14 +1142,15 @@ below. Then run inside Ubuntu:
 ```bash
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/agent/0.5.50-release/lo_regtest_bootstrap.sh | sudo bash -s -- --disposable-host
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_regtest_bootstrap.sh | sudo bash -s -- --disposable-host
 ```
 
 The dedicated bootstrap fetches a clean private source checkout and runs
 `install_regtest.sh`, then removes only its temporary checkout. It never resets
-your working repository. Its default source is `agent/0.5.50-release`; it prints
-the exact installed commit. This is development source, not an immutable
-production release. Developers can select a branch, tag or full commit by adding
+your working repository. By default it selects the latest published immutable
+release from `jvxis/brln-os-light-updates`, verifies the source tag/commit and
+version, and installs only the isolated regtest profile. A catalog failure stops
+installation; it never falls back to an old branch. Developers can explicitly select a branch, tag or full commit by adding
 `LOS_REGTEST_REF=<ref>` after `sudo` in the command above. Repeating it preserves
 existing lab wallets and passwords; it does not reset the lab.
 
@@ -1195,10 +1196,10 @@ Ubuntu VMs; native WSL2 validation remains separate.
 ```bash
 sudo apt-get update
 sudo apt-get install -y git python3
-git clone --branch agent/0.5.50-release https://github.com/jvxis/brln-os-light.git
+git clone https://github.com/jvxis/brln-os-light.git
 cd brln-os-light
 sudo hostnamectl set-hostname los-regtest
-sudo bash lightningos-light/install_regtest.sh --disposable-host
+sudo LIGHTNINGOS_INSTALL_SOURCE=checkout bash lightningos-light/install_regtest.sh --disposable-host
 ```
 
 The installer refuses existing node data, production service definitions, unowned

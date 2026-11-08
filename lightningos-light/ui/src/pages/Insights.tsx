@@ -38,14 +38,16 @@ export default function Insights() {
   const [showHidden, setShowHidden] = useState(false)
   const [glossary, setGlossary] = useState<{ open: boolean; rule?: string }>({ open: false })
   const [busyId, setBusyId] = useState('')
+  const [actionError, setActionError] = useState<{ id: string; message: string } | null>(null)
 
   const formatNumber = useCallback((value: number) => numberFormatter.format(Math.round(value * 10) / 10), [numberFormatter])
   const formatAge = useCallback((seconds: number) => {
-    if (seconds < 90) return relativeFormatter.format(-Math.round(seconds), 'second').replace(/^.*?(\d)/, '$1')
+    // Bare durations only: the i18n "age" key adds "ago" / "há" around them.
+    if (seconds < 90) return `${Math.max(0, Math.round(seconds))} s`
     if (seconds < 5400) return `${Math.round(seconds / 60)} min`
     if (seconds < 172800) return `${Math.round(seconds / 3600)} h`
     return `${Math.round(seconds / 86400)} d`
-  }, [relativeFormatter])
+  }, [])
   const formatRelative = useCallback((iso: string) => {
     const date = new Date(iso)
     if (Number.isNaN(date.getTime())) return iso
@@ -88,6 +90,7 @@ export default function Insights() {
 
   const onStatus = async (item: InsightItem, next: 'open' | 'dismissed' | 'done', reason?: string) => {
     setBusyId(item.id)
+    setActionError((current) => (current?.id === item.id ? null : current))
     try {
       await setInsightStatus(item.id, next, reason)
       setPayload((current) => {
@@ -96,7 +99,7 @@ export default function Insights() {
         return { ...current, items }
       })
     } catch (err: any) {
-      setStatus(err?.message || t('insights.unavailable'))
+      setActionError({ id: item.id, message: err?.message || t('insights.unavailable') })
     } finally {
       setBusyId('')
     }
@@ -244,7 +247,7 @@ export default function Insights() {
           ) : (
             <div className="grid min-w-0 gap-3">
               {visible.map((item) => (
-                <InsightCard key={item.id} item={item} teach={teach} busy={busyId === item.id} formatNumber={formatNumber} formatRelative={formatRelative} onStatus={(entry, next, reason) => void onStatus(entry, next, reason)} onRule={(rule) => setGlossary({ open: true, rule })} />
+                <InsightCard key={item.id} item={item} teach={teach} busy={busyId === item.id} actionError={actionError?.id === item.id ? actionError.message : undefined} formatNumber={formatNumber} formatRelative={formatRelative} onStatus={(entry, next, reason) => void onStatus(entry, next, reason)} onRule={(rule) => setGlossary({ open: true, rule })} />
               ))}
             </div>
           )}

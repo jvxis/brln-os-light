@@ -6480,7 +6480,7 @@
       "all": "Todas",
       "confidence": "Confiança",
       "search": "Buscar canal ou peer",
-      "showHidden": "Mostrar dispensadas e feitas"
+      "showHidden": "Mostrar dispensadas, feitas e resolvidas"
     },
     "kind": {
       "repor_vendedor": { "label": "Repor", "title": "Repor {{alias}} por outra ferramenta" },
@@ -6520,10 +6520,21 @@
       "quoting": "Cotando…",
       "quoteResult": "Cotação: {{fee}} sat no total para {{amount}} sat ≈ {{ppm}} ppm · margem sobre a venda {{margin}} ppm",
       "quoteError": "Cotação falhou: {{value}}",
+      "quoteWithinCap": "Dentro do teto do rebalance ({{cap}} ppm): compensa.",
+      "quoteAboveCap": "Não compensa: acima do teto do rebalance de {{cap}} ppm (venda {{sale}} ppm). Loop In com último salto embute a fee que o peer cobra para receber; em peers de fee alta raramente fecha a conta.",
+      "quoteOpenAlternative": "Abrir um canal novo custaria cerca de {{cost}} sat on-chain a {{rate}} sat/vB ≈ {{ppm}} ppm para o mesmo montante.",
+      "amountLimit": {
+        "target": "o déficit até o alvo",
+        "rebalance_lot": "o lote máximo do rebalance",
+        "onchain": "o saldo on-chain disponível",
+        "onchain_short": "o saldo on-chain não cobre nem o lote mínimo"
+      },
       "copyPubkey": "Copiar chave do peer",
       "copied": "Copiado",
       "statusDismissed": "dispensada · {{reason}}",
       "statusDone": "feita",
+      "statusExpired": "resolvido sozinho",
+      "doneAfterExpired": "Fui eu que fiz (registrar)",
       "guardPassed": "ok",
       "guardFailed": "bloqueia",
       "guardWarn": "atenção"
@@ -6542,7 +6553,7 @@
       "hours_to_drain": "horas até esvaziar",
       "lot_sold_pct": "lote vendido (7d)",
       "rebal_fee_7d_sat": "custo de rebalance (7d)",
-      "local_sat": "saldo local",
+      "local_sat": "saldo local (sat)",
       "fee_30d_sat": "receita (30d)",
       "assisted_fee_30d_sat": "receita assistida (30d)",
       "rebal_fee_30d_sat": "custo de rebalance (30d)",
@@ -6562,11 +6573,12 @@
     "tool": {
       "rebalance_target": { "label": "Rebalance Center", "step": "Abrir o canal no Rebalance Center e conferir alvo, teto e as últimas tentativas." },
       "rebalance_target_disable": { "label": "Rebalance Center", "step": "Desligar o canal como alvo de rebalance até o lote pago vender." },
-      "loop_in": { "label": "Loop In", "step": "Loop In com último salto neste peer. Cotação só por clique: chama um serviço externo." },
+      "loop_in": { "label": "Loop In", "step": "Loop In de {{amount}} sat com último salto neste peer (montante limitado por {{limit}}). Cotação só por clique: chama um serviço externo e inclui a fee que o peer cobra para receber." },
       "econ_override": { "label": "Subir o teto", "step": "Tentar econ ratio {{ratio}} neste canal: teto novo {{cap}} ppm, sobra {{margin}}% sobre o preço de venda." },
       "open_channel": { "label": "Lightning Ops", "step": "Fazer o preview de um canal novo com este peer no Lightning Ops." },
       "close_channel": { "label": "Lightning Ops", "step": "Avaliar fechamento cooperativo no Lightning Ops. A taxa de fechamento é nossa só quando fomos nós que abrimos." },
-      "autofee_review": { "label": "Fee Center", "step": "Rever a fee no Fee Center contra o preço real de venda e o piso." },
+      "autofee_review": { "label": "Fee Center", "step": "Rever no Fee Center os parâmetros do AutoFee deste canal (piso, perfil, referência) contra o preço real de venda." },
+      "set_fee": { "label": "Lightning Ops", "step": "Ajustar a fee no card deste canal no Lightning Ops." },
       "use_as_source": { "label": "Rebalance Center", "step": "Manter como fonte de rebalance: o saldo parado abastece os canais que vendem." },
       "none": { "label": "Nada a fazer", "step": "Uma guarda do rebalance ({{reason}}) está segurando este canal de propósito. Ela libera sozinha." }
     },
@@ -6575,8 +6587,13 @@
       "magma_commitment": "sem compromisso no Magma",
       "sell_covers_floor": "a venda cobre o piso do AutoFee",
       "loop_installed": "app Loop instalado",
+      "onchain_funds": "saldo on-chain cobre o Loop In",
       "parallel_channel_leaves_fast_path": "um segundo canal com o mesmo peer tira o canal do fast-path do rebalance",
-      "we_are_funder": "fomos nós que abrimos (a taxa de fechamento é nossa)"
+      "peer_funded_close_free": "o peer abriu o canal (fechar não custa nada para nós)"
+    },
+    "guardFailed": {
+      "peer_funded_close_free": "fomos nós que abrimos (a taxa de fechamento é nossa)",
+      "onchain_funds": "saldo on-chain não cobre nem o lote mínimo"
     },
     "invalidate": {
       "local_at_target_24h": "saldo local no alvo por 24h, ou o canal sair dos 20% maiores vendedores",

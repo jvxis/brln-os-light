@@ -1,9 +1,12 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getLoopQuote, type InsightAction, type InsightItem } from '../../api'
+import { getLoopQuote, getMempoolFees, type InsightAction, type InsightItem } from '../../api'
 import StatusBadge from '../../components/dashboard/StatusBadge'
 import EvidenceWidget from './EvidenceWidget'
 import { insightActionHash, insightChannelHash } from './links'
+
+// Funding transaction of a plain channel open: one input, two outputs.
+const OPEN_CHANNEL_VBYTES = 154
 
 type Props = {
   item: InsightItem
@@ -13,6 +16,9 @@ type Props = {
   formatRelative: (iso: string) => string
   onStatus: (item: InsightItem, status: 'open' | 'dismissed' | 'done', reason?: string) => void
   onRule: (rule: string) => void
+  // Error from the last decision on this card. Shown next to the buttons:
+  // a banner at the top of the page is out of sight when the card is far down.
+  actionError?: string
 }
 
 const KIND_ACCENT: Record<InsightItem['kind'], string> = {
@@ -27,11 +33,11 @@ const KIND_ACCENT: Record<InsightItem['kind'], string> = {
 
 const confidenceDots = (level: InsightItem['confidence']) => (level === 'high' ? '●●●' : level === 'medium' ? '●●○' : '●○○')
 
-export default function InsightCard({ item, teach, busy, formatNumber, formatRelative, onStatus, onRule }: Props) {
+export default function InsightCard({ item, teach, busy, formatNumber, formatRelative, onStatus, onRule, actionError }: Props) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(teach)
   const [dismissOpen, setDismissOpen] = useState(false)
-  const [quoteState, setQuoteState] = useState<{ loading: boolean; text?: string; error?: string }>({ loading: false })
+  const [quoteState, setQuoteState] = useState<{ loading: boolean; text?: string; verdict?: string; tooExpensive?: string; alternative?: string; error?: string }>({ loading: false })
   const [copied, setCopied] = useState(false)
   const open = teach || expanded
   const alias = item.peer_alias || (item.peer_pubkey ? `${item.peer_pubkey.slice(0, 10)}…` : item.channel_point || '')
@@ -47,15 +53,21 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
 
   const stepText = (action: InsightAction) => {
     const key = action.tool === 'rebalance_target' && action.params?.suggest === 'disable_target' ? 'rebalance_target_disable' : action.tool
+    const limit = action.params?.amount_limit
     return t(`insights.tool.${key}.step` as any, {
       ratio: action.params?.ratio,
       cap: action.params?.cap_ppm ? formatNumber(Number(action.params.cap_ppm)) : '',
       margin: action.params?.margin_pct,
       reason: action.params?.reason,
+      amount: action.params?.amount_sat ? formatNumber(Number(action.params.amount_sat)) : '',
+      limit: limit ? t(`insights.card.amountLimit.${limit}` as any, { defaultValue: limit }) : '',
       defaultValue: action.tool,
     })
   }
 
+  // The quote is judged against the same ceiling the rebalance pays (cap_ppm).
+  // Above it the swap does not pay; the card then prices the alternative the
+  // operator would reach for anyway: a new channel at today's chain fee.
   const runQuote = async (action: InsightAction) => {
     const amount = Number(action.params?.amount_sat || 0)
     if (!amount) return
@@ -64,7 +76,24 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
       const quote = await getLoopQuote({ direction: 'in', amount_sat: amount, last_hop_pubkey: action.params?.last_hop_pubkey })
       const fee = quote.estimated_all_in_fee_sat ?? quote.estimated_fee_sat
       const ppm = Math.round((fee / amount) * 1e6)
-      setQuoteState({ loading: false, text: t('insights.card.quoteResult', { fee: formatNumber(fee), amount: formatNumber(amount), ppm: formatNumber(ppm), margin: formatNumber(sellPpm - ppm) }) })
+      const cap = Number(action.params?.cap_ppm || 0)
+      const base = t('insights.card.quoteResult', { fee: formatNumber(fee), amount: formatNumber(amount), ppm: formatNumber(ppm), margin: formatNumber(sellPpm - ppm) })
+      if (!cap || ppm <= cap) {
+        setQuoteState({ loading: false, text: base, verdict: cap ? t('insights.card.quoteWithinCap', { cap: formatNumber(cap) }) : undefined })
+        return
+      }
+      let alternative: string | undefined
+      try {
+        const fees = await getMempoolFees()
+        const satPerVb = Number(fees?.economyFee || fees?.hourFee || 0)
+        if (satPerVb > 0) {
+          const openCost = Math.ceil(satPerVb * OPEN_CHANNEL_VBYTES)
+          alternative = t('insights.card.quoteOpenAlternative', { cost: formatNumber(openCost), rate: satPerVb, ppm: formatNumber(Math.round((openCost / amount) * 1e6)) })
+        }
+      } catch {
+        alternative = undefined
+      }
+      setQuoteState({ loading: false, text: base, tooExpensive: t('insights.card.quoteAboveCap', { cap: formatNumber(cap), sale: formatNumber(sellPpm) }), alternative })
     } catch (err: any) {
       setQuoteState({ loading: false, error: t('insights.card.quoteError', { value: err?.message || 'error' }) })
     }
@@ -100,6 +129,7 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
           <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-fog/60">{t('insights.card.firstSeen', { value: formatRelative(item.first_seen_at) })}</span>
           {item.status === 'dismissed' && <StatusBadge tone="muted" label={t('insights.card.statusDismissed', { reason: t(`insights.dismissReason.${item.dismiss_reason}` as any, { defaultValue: item.dismiss_reason }) })} />}
           {item.status === 'done' && <StatusBadge tone="ok" label={t('insights.card.statusDone')} />}
+          {item.status === 'expired' && <StatusBadge tone="muted" label={t('insights.card.statusExpired')} />}
         </div>
         {teach && item.confidence_reason && (
           <p className="mt-1 text-[11px] text-fog/55">
@@ -139,7 +169,21 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
                             </>
                           )}
                         </div>
-                        {action.tool === 'loop_in' && quoteState.text && <p className="mt-1 rounded-xl border border-dashed border-white/15 px-2 py-1 text-xs text-emerald-200">{quoteState.text}</p>}
+                        {action.tool === 'loop_in' && quoteState.text && (
+                          <div className={`mt-1 space-y-1 rounded-xl border border-dashed px-2 py-1 text-xs ${quoteState.tooExpensive ? 'border-rose-400/30 text-rose-200' : 'border-white/15 text-emerald-200'}`}>
+                            <p>{quoteState.text}</p>
+                            {quoteState.verdict && <p>{quoteState.verdict}</p>}
+                            {quoteState.tooExpensive && <p>{quoteState.tooExpensive}</p>}
+                            {quoteState.alternative && (
+                              <p className="text-fog/80">
+                                {quoteState.alternative}{' '}
+                                <a href={insightActionHash(item, { step: action.step, tool: 'open_channel', params: { peer_pubkey: action.params?.last_hop_pubkey || '', amount_sat: action.params?.amount_sat || '' } })} className="text-emerald-200 hover:text-emerald-100">
+                                  {t('insights.tool.open_channel.label')} →
+                                </a>
+                              </p>
+                            )}
+                          </div>
+                        )}
                         {action.tool === 'loop_in' && quoteState.error && <p className="mt-1 text-xs text-rose-200">{quoteState.error}</p>}
                       </div>
                     </li>
@@ -155,12 +199,15 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
                   <h4 className="text-[11px] uppercase tracking-[0.2em] text-fog/55">{t('insights.card.guards')}</h4>
                   <ul className="mt-1 flex flex-wrap gap-2 text-[11px]">
                     {item.guards.map((guard) => {
-                      const warn = guard.code === 'parallel_channel_leaves_fast_path'
+                      // Advisory guards are caveats (a cost, a limitation): failed ones warn, they never block.
+                      const warn = guard.advisory || guard.code === 'parallel_channel_leaves_fast_path'
                       const tone = guard.passed ? 'ok' : warn ? 'warn' : 'danger'
                       const mark = guard.passed ? '✓' : warn ? '⚠' : '✕'
+                      const passedLabel = t(`insights.guard.${guard.code}` as any, { defaultValue: guard.code })
+                      const label = guard.passed ? passedLabel : t(`insights.guardFailed.${guard.code}` as any, { defaultValue: passedLabel })
                       return (
                         <li key={guard.code}>
-                          <StatusBadge tone={tone} label={`${mark} ${t(`insights.guard.${guard.code}` as any, { defaultValue: guard.code })}`} />
+                          <StatusBadge tone={tone} label={`${mark} ${label}`} />
                         </li>
                       )
                     })}
@@ -177,7 +224,7 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
               <div className="relative">
                 <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => setDismissOpen((v) => !v)}>{t('insights.card.dismiss')} ▾</button>
                 {dismissOpen && (
-                  <div className="absolute left-0 top-full z-10 mt-1 w-48 rounded-2xl border border-white/10 bg-slate/95 p-1 shadow-panel">
+                  <div className="absolute bottom-full left-0 z-10 mb-1 w-48 rounded-2xl border border-white/10 bg-slate/95 p-1 shadow-panel">
                     {(['later', 'done_manually', 'disagree'] as const).map((reason) => (
                       <button key={reason} type="button" className="block w-full rounded-xl px-3 py-1.5 text-left text-xs text-fog/80 hover:bg-white/5" onClick={() => { setDismissOpen(false); onStatus(item, 'dismissed', reason) }}>
                         {t(`insights.dismissReason.${reason}`)}
@@ -190,11 +237,21 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
                 <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => onStatus(item, 'done')}>{t('insights.card.done')}</button>
               )}
             </>
+          ) : item.status === 'expired' ? (
+            // Resolved on its own: the operator may still record that they did it, which opens the measurement.
+            item.kind !== 'bloqueio_esperado' && (
+              <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => onStatus(item, 'done')}>{t('insights.card.doneAfterExpired')}</button>
+            )
           ) : (
             <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => onStatus(item, 'open')}>{t('insights.card.reopen')}</button>
           )}
           <button type="button" className="text-xs text-emerald-200 hover:text-emerald-100" onClick={() => onRule(item.rule)}>{t('insights.card.rule')}</button>
         </div>
+        {actionError && (
+          <p role="alert" className="mt-2 rounded-xl border border-rose-400/25 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
+            {actionError}
+          </p>
+        )}
       </div>
     </article>
   )

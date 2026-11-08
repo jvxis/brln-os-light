@@ -2882,6 +2882,7 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 		channelPoint, openErr = s.lnd.OpenChannelWithPush(openCtx, pubkey, req.LocalFundingSat, req.PushSat, req.CloseAddress, req.Private, req.SatPerVbyte)
 	}
 	if openErr != nil {
+		recordFinancialChannelDispatchFailure(openCtx, "channel_open", openErr)
 		s.recordAuditEventAsync(r, "channel.open.failed", pubkey, channelOpenPolicyAudit(map[string]any{
 			"local_funding_sat": req.LocalFundingSat,
 			"private":           req.Private,
@@ -3082,6 +3083,7 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 	}
 	results, err := s.lnd.BatchOpenChannel(openCtx, batch, req.SatPerVbyte)
 	if err != nil {
+		recordFinancialChannelDispatchFailure(openCtx, "channel_open_batch", err)
 		s.recordAuditEventAsync(r, "channel.open_batch.failed", "batch", map[string]any{
 			"channel_count":        len(batch),
 			"sat_per_vbyte":        req.SatPerVbyte,

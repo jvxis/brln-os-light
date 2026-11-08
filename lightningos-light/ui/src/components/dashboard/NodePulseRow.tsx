@@ -3,6 +3,7 @@ import { getLocale } from '../../i18n'
 import { calculateDisplayApyPct, formatApyPercent, totalBalanceFromPoint } from '../../utils/apy'
 import { clamp, formatPercent, formatSats, formatSignedSats, metricRoutingNet } from './formatters'
 import MetricTile from './MetricTile'
+import { FiatAmount } from '../FiatDisplay'
 import StackedRatioBar from './StackedRatioBar'
 import type { LiveResponse, LndStatus, MovementLiveResponse, ReportRangeResponse, SummaryResponse } from './types'
 
@@ -66,6 +67,7 @@ export default function NodePulseRow({
       <MetricTile
         label={t('reports.routingRevenue')}
         value={`${formatSats(locale, live?.forward_fee_revenue_sats)} sats`}
+        secondaryValue={<FiatAmount sats={live?.forward_fee_revenue_sats} />}
         sublabel={t('dashboard.todayWindow')}
         detail={monthDays > 0 ? t('dashboard.monthTrendHint', { count: monthDays }) : undefined}
         tone="info"
@@ -75,6 +77,7 @@ export default function NodePulseRow({
       <MetricTile
         label={t('reports.routingNet')}
         value={`${formatSignedSats(locale, metricRoutingNet(live))} sats`}
+        secondaryValue={<FiatAmount sats={live ? metricRoutingNet(live) : null} />}
         sublabel={t('dashboard.todayWindow')}
         detail={netTrendDetail}
         tone={metricRoutingNet(live) >= 0 ? 'ok' : 'danger'}

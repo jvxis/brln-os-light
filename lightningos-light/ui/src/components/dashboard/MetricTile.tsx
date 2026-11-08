@@ -7,6 +7,7 @@ import type { Tone } from './types'
 type MetricTileProps = {
   label: string
   value: ReactNode
+  secondaryValue?: ReactNode
   sublabel?: ReactNode
   detail?: ReactNode
   tone?: Tone
@@ -29,6 +30,7 @@ const accentClasses: Record<Tone, string> = {
 export default function MetricTile({
   label,
   value,
+  secondaryValue,
   sublabel,
   detail,
   tone = 'muted',
@@ -49,6 +51,7 @@ export default function MetricTile({
       </div>
       <div className="metric-tile__body mt-4">
         <div className="metric-tile__value text-2xl font-semibold leading-none text-fog">{value}</div>
+        {secondaryValue}
       </div>
       <div className="metric-tile__context">
         {sublabel ? <p className="mt-2 text-sm text-fog/68">{sublabel}</p> : null}

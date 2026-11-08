@@ -1624,6 +1624,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanDetailQueued')
       case 'guaranteed_slot_queued':
         return t('rebalanceCenter.overview.scanReasonGuaranteedSlotQueued')
+      case 'guaranteed_structural_cooldown':
+        return t('rebalanceCenter.overview.scanReasonGuaranteedStructuralCooldown')
       default:
         return reason
     }
@@ -1690,6 +1692,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonSovereignLive')
       case 'guaranteed_slot_queued':
         return t('rebalanceCenter.overview.scanReasonGuaranteedSlotQueued')
+      case 'guaranteed_structural_cooldown':
+        return t('rebalanceCenter.overview.scanReasonGuaranteedStructuralCooldown')
       case 'target_not_found':
         return t('rebalanceCenter.overview.scanReasonTargetNotFound')
       case 'start_error':

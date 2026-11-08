@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useBitcoinMarket } from '../FiatDisplay'
 import {
   getAmbossHealth,
   enableLoginAuth,
   getAppUpgradeStatus,
   getAutofeeStatus,
   getBitcoinActive,
-  getBitcoinMarket,
   getCloseManagerStatus,
   getDisk,
   getHealth,
@@ -93,7 +93,6 @@ type LoadState = 'loading' | 'ok' | 'unavailable'
 
 const LND_RESTART_POLL_INTERVAL_MS = 5000
 const LND_RESTART_TIMEOUT_MS = 2 * 60 * 60 * 1000
-const MARKET_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 const APP_UPGRADE_MARKER_KEY = 'lightningos.app-upgrade.pending.v1'
 const APP_UPGRADE_MARKER_MAX_AGE_MS = 48 * 60 * 60 * 1000
 
@@ -207,7 +206,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const [system, setSystem] = useState<SystemStats | null>(null)
   const [disk, setDisk] = useState<DiskSmart[]>([])
   const [bitcoin, setBitcoin] = useState<BitcoinStatus | null>(null)
-  const [bitcoinMarket, setBitcoinMarket] = useState<BitcoinMarketStatus | null>(null)
+  const bitcoinMarket = useBitcoinMarket()
   const [postgres, setPostgres] = useState<PostgresStatus | null>(null)
   const [lnd, setLnd] = useState<LndStatus | null>(null)
   const [lndPeers, setLndPeers] = useState<LndPeer[]>([])
@@ -397,27 +396,6 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
 
     load()
     const timer = setInterval(load, 30000)
-    return () => {
-      mounted = false
-      clearInterval(timer)
-    }
-  }, [])
-
-  useEffect(() => {
-    let mounted = true
-    const load = async () => {
-      try {
-        const data = await getBitcoinMarket()
-        if (!mounted) return
-        setBitcoinMarket((data ?? null) as BitcoinMarketStatus | null)
-      } catch {
-        if (!mounted) return
-        setBitcoinMarket(null)
-      }
-    }
-
-    load()
-    const timer = setInterval(load, MARKET_REFRESH_INTERVAL_MS)
     return () => {
       mounted = false
       clearInterval(timer)

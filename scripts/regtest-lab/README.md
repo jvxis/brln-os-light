@@ -6,29 +6,34 @@ Bitcoin Core 31.2 and three native LND 0.21.6-beta processes on a disposable Ubu
 24.04 amd64 VM. Regtest coins have no value. It does not create a production
 release or change the production configuration contract.
 
-## Developer installer (0.5.50)
+## Installation: latest release by default
 
-On a fresh **Ubuntu 24.04 amd64** VM, clone the release branch, name the VM's
+On a fresh **Ubuntu 24.04 amd64** VM, clone the official repository, name the VM's
 Linux host `los-regtest`, and explicitly acknowledge the disposable host:
 
 ```sh
 sudo apt-get update
 sudo apt-get install -y git python3
-git clone --branch agent/0.5.50-release https://github.com/jvxis/brln-os-light.git
+git clone https://github.com/jvxis/brln-os-light.git
 cd brln-os-light
 sudo hostnamectl set-hostname los-regtest
 sudo bash lightningos-light/install_regtest.sh --disposable-host
 ```
 
-Recommend 4 GiB RAM and at least 20 GiB free disk. The installer compiles the exact
-clean, committed checkout with the release-pinned Go/Node toolchains; dependency
+Recommend 4 GiB RAM and at least 20 GiB free disk. By default, the installer selects
+the latest immutable release from `jvxis/brln-os-light-updates`, verifies its source
+commit and version, and builds a private checkout with the release-pinned Go/Node toolchains; dependency
 downloads require Internet. The build runs as an unprivileged dedicated account.
 It provisions the native lab below, creates private login credentials, checks
 authenticated HTTPS/native balances, and verifies Lightning/on-chain sends using
 single-use financial intents. The retry check uses the identical intent/result.
 Each installer run deliberately creates new small regtest test transfers.
 
-This does not call the production installers or switch to a published release.
+This never calls the production installers. Use
+`sudo LIGHTNINGOS_INSTALL_SOURCE=checkout bash lightningos-light/install_regtest.sh --disposable-host`
+to build your exact clean, committed development checkout instead of selecting a release.
+The curl bootstrap supports `sudo LOS_REGTEST_REF=<ref> bash -s -- --disposable-host`
+as an explicit development override; this mode is not release-attested.
 It refuses existing standard node data/service definitions (even inactive), LOS
 configuration/state, unowned lab paths and symlinks in managed data. The explicit
 flag never bypasses these checks. No wallet, seed or credential is imported.

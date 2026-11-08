@@ -105,10 +105,15 @@ idle refresh:
 
 - fee atual ≥ 20 ppm e acima do mínimo global; não é super source; não é
   corredor de loop; canal com ≥ 7 dias;
-- estoque: `out_ratio` ≥ 10%;
-- venda: zero forwards de saída em 7 dias, ou volume/dia abaixo de 25% da
-  mediana diária do canal nos últimos 30 dias (dias sem venda contam zero,
-  medidos desde a primeira venda do canal na janela);
+- estoque: `out_ratio` ≥ 10% agora **e** em pelo menos 50% dos runs do
+  AutoFee dos últimos 7 dias (lido de `autofee_logs`; canal com menos de um
+  dia de runs não entra, `stock_history_unknown`). Sem isso um sink que passou
+  a semana vazio e foi reabastecido ontem entrava como "parado"
+  (`idle_week_unstocked`, 0.5.54);
+- venda: zero forwards de saída em 7 dias, ou volume por dia **com estoque**
+  abaixo de 25% da mediana diária do canal nos últimos 30 dias (dias sem venda
+  contam zero, medidos desde a primeira venda do canal na janela). A baseline
+  gravada no experimento usa a mesma conta;
 - sem experimento concluído há menos de 14 dias (30 dias depois de
   `no_demand`); vaga livre (`max_active`).
 
@@ -139,6 +144,15 @@ mas não muda nada; mede o canal na fee atual. O veredicto sai com prefixo
 no preço antigo (o gatilho estava certo); `shadow_sold` diz que teria vendido
 de qualquer jeito (o gatilho foi cedo). Uma semana de sombra nos dois nós antes
 de ligar `enforce`.
+
+Leitura da sombra em 06/11 (12/10 a 06/11): Friendspool 25 concluídas, 8
+`shadow_sold`, 15 `shadow_no_demand`; HUB 13 concluídas, 7 `shadow_sold`, 4
+`shadow_no_demand`. Os `shadow_sold` eram quase todos sinks grandes
+reabastecidos na véspera: o gatilho via "semana sem venda" sem saber que a
+semana foi sem estoque. Em `enforce` esses cortes teriam dado margem de graça
+e travado a referência dos melhores vendedores abaixo do preço. Daí a exigência de semana
+abastecida acima. `enforce` só depois de mais duas semanas de sombra com a
+seleção corrigida.
 
 Corredor de loop (antecipa a fase 3): par de canais A↔B em que ≥ 35% do que
 sai por B entrou por A e ≥ 35% do que sai por A entrou por B, com ≥ 100k sats

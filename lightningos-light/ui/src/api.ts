@@ -585,11 +585,11 @@ export type InsightEvidence = {
 
 export type InsightAction = {
   step: number
-  tool: 'rebalance_target' | 'loop_in' | 'econ_override' | 'open_channel' | 'close_channel' | 'autofee_review' | 'use_as_source' | 'none'
+  tool: 'rebalance_target' | 'loop_in' | 'econ_override' | 'open_channel' | 'close_channel' | 'autofee_review' | 'set_fee' | 'use_as_source' | 'none'
   params?: Record<string, string>
 }
 
-export type InsightGuard = { code: string; passed: boolean }
+export type InsightGuard = { code: string; passed: boolean; advisory?: boolean }
 
 export type InsightItem = {
   id: string

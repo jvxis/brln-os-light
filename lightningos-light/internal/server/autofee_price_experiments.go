@@ -56,6 +56,13 @@ const (
 	autofeePriceExperimentLowSalesFrac  = 0.25
 	autofeePriceExperimentMinAgeHours   = 7 * 24
 	autofeePriceExperimentMinLocalPpm   = 20
+	// The idle week only counts if the channel had stock for most of it. A
+	// sink that sat empty and was refilled yesterday is not "a week without
+	// sales": three and a half weeks of shadow picked several large sinks that
+	// way, and all of them sold at the unchanged fee. Needs a day of engine
+	// runs to be known at all.
+	autofeePriceExperimentIdleMinStockedFrac = 0.50
+	autofeePriceExperimentIdleMinStockRuns   = 12
 	// Cut: the test must be a real cut, and a sink never goes below the cost
 	// of the liquidity it would need to buy back, plus the engine's margin.
 	autofeePriceExperimentMinCutFrac    = 0.15
@@ -180,6 +187,10 @@ type autofeePriceExperimentRuntime struct {
 	lastConcluded map[uint64]autofeePriceExperiment
 	dailyMedian   map[uint64]float64
 	corridors     map[uint64]bool
+	// stockedFrac7d: per channel point, share of the last week's engine runs
+	// in which the channel held at least the minimum stock. Absent when the
+	// channel has fewer than a day of runs.
+	stockedFrac7d map[string]float64
 	known         bool
 }
 
@@ -201,6 +212,8 @@ type priceExperimentCandidateInput struct {
 	ClassLabel       string
 	OutRatio         float64
 	ChannelAgeHours  float64
+	StockedFrac7d    float64
+	StockedKnown     bool
 	Forward7d        forwardStat
 	Inbound7d        inboundStat
 	MedianSalePerDay float64
@@ -232,6 +245,12 @@ func priceExperimentCandidate(in priceExperimentCandidateInput) (int, string, bo
 	if in.OutRatio < autofeePriceExperimentMinStockRatio {
 		return 0, "no_stock", false
 	}
+	if !in.StockedKnown {
+		return 0, "stock_history_unknown", false
+	}
+	if in.StockedFrac7d < autofeePriceExperimentIdleMinStockedFrac {
+		return 0, "idle_week_unstocked", false
+	}
 	if in.LastConcluded != nil && !in.LastConcluded.ConcludedAt.IsZero() {
 		cooldown := autofeePriceExperimentCooldownDays
 		if in.LastConcluded.Verdict == autofeePriceExperimentVerdictNoDemand {
@@ -241,7 +260,9 @@ func priceExperimentCandidate(in priceExperimentCandidateInput) (int, string, bo
 			return 0, "cooldown", false
 		}
 	}
-	salePerDay := float64(in.Forward7d.AmtMsat) / 1000 / autofeePriceExperimentIdleDays
+	// Sales per day the channel actually had stock, so a half-stocked week
+	// is judged on its stocked half.
+	salePerDay := float64(in.Forward7d.AmtMsat) / 1000 / priceExperimentStockedDays(in.StockedFrac7d)
 	if in.Forward7d.Count > 0 {
 		if !in.MedianKnown || in.MedianSalePerDay <= 0 {
 			return 0, "selling", false
@@ -278,6 +299,16 @@ func priceExperimentCandidate(in priceExperimentCandidateInput) (int, string, bo
 		return 0, "cut_too_small", false
 	}
 	return floor, "", true
+}
+
+// priceExperimentStockedDays turns the stocked share of the idle week into
+// days, never below one so a thin history cannot inflate the per-day rate.
+func priceExperimentStockedDays(stockedFrac float64) float64 {
+	days := autofeePriceExperimentIdleDays * stockedFrac
+	if days < 1 {
+		return 1
+	}
+	return days
 }
 
 // ceilPpm rounds a fee up, forgiving the float noise that turns 440.0 into
@@ -369,6 +400,7 @@ func (e *autofeeEngine) loadPriceExperimentRuntime(ctx context.Context, dryRun b
 		lastConcluded: map[uint64]autofeePriceExperiment{},
 		dailyMedian:   map[uint64]float64{},
 		corridors:     map[uint64]bool{},
+		stockedFrac7d: map[string]float64{},
 	}
 	e.priceExperiments = rt
 	if rt.mode == autofeePriceExperimentModeOff || e.svc == nil || e.svc.db == nil {
@@ -439,6 +471,14 @@ func (e *autofeeEngine) loadPriceExperimentRuntime(ctx context.Context, dryRun b
 		return
 	}
 	rt.corridors = detectLoopCorridors(pairs)
+	stocked, err := e.fetchStockedFrac7d(ctx)
+	if err != nil {
+		if e.svc.logger != nil {
+			e.svc.logger.Printf("autofee: price experiment stock history unavailable: %v", err)
+		}
+		return
+	}
+	rt.stockedFrac7d = stocked
 	rt.known = true
 }
 
@@ -461,6 +501,7 @@ func (e *autofeeEngine) applyPriceExperiment(ctx context.Context, ch lndclient.C
 		return d
 	}
 	median, medianKnown := rt.dailyMedian[ch.ChannelID]
+	stockedFrac, stockedKnown := rt.stockedFrac7d[ch.ChannelPoint]
 	var last *autofeePriceExperiment
 	if prev, ok := rt.lastConcluded[ch.ChannelID]; ok {
 		last = &prev
@@ -473,6 +514,8 @@ func (e *autofeeEngine) applyPriceExperiment(ctx context.Context, ch lndclient.C
 		ClassLabel:       d.ClassLabel,
 		OutRatio:         d.OutRatio,
 		ChannelAgeHours:  d.ChannelAgeHours,
+		StockedFrac7d:    stockedFrac,
+		StockedKnown:     stockedKnown,
 		Forward7d:        forward7d,
 		Inbound7d:        inbound7d,
 		MedianSalePerDay: median,
@@ -501,8 +544,8 @@ func (e *autofeeEngine) applyPriceExperiment(ctx context.Context, ch lndclient.C
 		ClassLabel:            d.ClassLabel,
 		CapacitySat:           ch.CapacitySat,
 		StartLocalSat:         ch.LocalBalanceSat,
-		BaselineSaleSatPerDay: float64(forward7d.AmtMsat) / 1000 / autofeePriceExperimentIdleDays,
-		BaselineFeeSatPerDay:  float64(forward7d.FeeMsat) / 1000 / autofeePriceExperimentIdleDays,
+		BaselineSaleSatPerDay: float64(forward7d.AmtMsat) / 1000 / priceExperimentStockedDays(stockedFrac),
+		BaselineFeeSatPerDay:  float64(forward7d.FeeMsat) / 1000 / priceExperimentStockedDays(stockedFrac),
 		MedianSaleSatPerDay:   median,
 	}
 	if !dryRun {
@@ -802,6 +845,41 @@ group by 1, 2
 		out[id] = dailySaleMedian(values, days)
 	}
 	return out, nil
+}
+
+// fetchStockedFrac7d reads the engine's own per-channel log lines of the last
+// week and returns, per channel point, the share of runs with stock on hand.
+// out_ratio is omitted from the payload when it is zero, so a missing value
+// counts as empty. Channels with less than a day of runs are left out.
+func (e *autofeeEngine) fetchStockedFrac7d(ctx context.Context) (map[string]float64, error) {
+	rows, err := e.svc.db.Query(ctx, `
+select payload->>'channel_point',
+  count(*) filter (where coalesce(nullif(payload->>'out_ratio', ''), '0')::double precision >= $2),
+  count(*)
+from autofee_logs
+where occurred_at >= now() - ($1 * interval '1 day')
+  and payload is not null
+  and coalesce(payload->>'kind', '') = 'channel'
+  and coalesce(payload->>'channel_point', '') <> ''
+group by 1
+`, autofeePriceExperimentIdleDays, autofeePriceExperimentMinStockRatio)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var point string
+		var stocked, total int64
+		if err := rows.Scan(&point, &stocked, &total); err != nil {
+			return nil, err
+		}
+		if total < autofeePriceExperimentIdleMinStockRuns {
+			continue
+		}
+		out[point] = float64(stocked) / float64(total)
+	}
+	return out, rows.Err()
 }
 
 // fetchForwardPairs: outbound volume per (chan_id_in, chan_id_out) pair.

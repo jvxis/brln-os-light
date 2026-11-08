@@ -20,7 +20,12 @@ como artefato na sessão de 04/11/2026; este arquivo é a fonte de verdade.
    Loop) sai por clique explícito.
 3. **Bilíngue de origem.** O backend devolve **códigos**, não frases:
    `kind`, `evidence[].key`, `action.tool`, `guards[].code`,
-   `invalidate_when.code`. A UI monta título e textos via i18n
+   `invalidate_when.code`. Itens com `status: "expired"` são cards que
+   deixaram de valer nas últimas 24h (snapshot do que o operador viu); só
+   aparecem com "mostrar dispensadas, feitas e resolvidas" e aceitam
+   "Fui eu que fiz", que grava `done` e abre a medição. Um guarda pode vir com `advisory: true`: é uma
+   ressalva (custo, limitação), nunca bloqueia, e a UI mostra o reprovado em
+   amarelo com o texto de `insights.guardFailed.<code>`. A UI monta título e textos via i18n
    (`insights.*` em `en.json` e `pt-BR.json`). Números com `Intl.NumberFormat`,
    datas com o `locale` já usado nas outras páginas. Nada de texto em
    português vindo do Go.
@@ -168,6 +173,18 @@ valor e último salto; "Subir o teto" abre o Rebalance Center com o canal em
 foco e o econ ratio sugerido no campo de rascunho; "Mais capacidade" abre o
 formulário de abertura do Lightning Ops com peer e valor; "Abrir canal" rola
 até o candidato em Novos Canais. Nenhum deles executa nada.
+
+**Tamanho do Loop In (0.5.54).** O passo Loop In da R1 não cota mais o
+déficit inteiro até o alvo. O montante é o menor entre o déficit, o lote
+máximo do rebalance (`max_amount_sat`) e o saldo on-chain gastável menos um
+colchão de 20k; `params.amount_limit` diz qual limitou e o texto do passo
+repete. Quando a carteira não cobre nem 100k, o guarda consultivo
+`onchain_funds` falha e o card continua visível. A cotação é julgada contra
+`params.cap_ppm` (o mesmo teto que o rebalance paga): dentro do teto, "compensa";
+acima, o card diz que não compensa, lembra que a cotação com último salto
+embute a fee que o peer cobra para receber, e mostra o custo de abrir um canal
+novo no mesmo montante à taxa econômica do momento (154 vB), com link para o
+formulário de abertura.
 
 ### 8. Estados
 

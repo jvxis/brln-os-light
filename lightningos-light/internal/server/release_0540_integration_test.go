@@ -102,7 +102,7 @@ func TestRelease0540PostgresCompatibility(t *testing.T) {
 	for i := 0; i < sovereignTargetStructuralCooldownMinAttempts; i++ {
 		insertAttempt(failed, "failed", failedAt, 0)
 	}
-	before := rb.loadSovereignTargetStructuralCooldowns(ctx, []uint64{101}, rc, now)
+	before := rb.loadSovereignTargetStructuralCooldowns(ctx, []uint64{101}, rc, now, 0)
 	if len(before) != 1 {
 		t.Fatalf("normal structural failure must remain visible: %+v", before)
 	}
@@ -113,12 +113,35 @@ func TestRelease0540PostgresCompatibility(t *testing.T) {
 	if state.Unavailable || state.InFlight != 1 || state.SpentTodaySat != 100 || state.ByTarget[101].Jobs != 2 || !state.ByTarget[101].Succeeded {
 		t.Fatalf("discovery state: %+v", state)
 	}
-	after := rb.loadSovereignTargetStructuralCooldowns(ctx, []uint64{101}, rc, now)
+	after := rb.loadSovereignTargetStructuralCooldowns(ctx, []uint64{101}, rc, now, 0)
 	if len(after) != 1 || after[101].Failures != before[101].Failures {
 		t.Fatalf("discovery success cleared normal cooldown: %+v", after)
 	}
 	sources := rb.loadSourceRouteabilityCooldowns(ctx, now.Add(-time.Hour))
 	if sources[201].Failures != sovereignTargetStructuralCooldownMinAttempts || sources[201].Successes != 0 {
 		t.Fatalf("discovery must not reset source failure evidence: %+v", sources)
+	}
+
+	// A node with a small source pool exhausts it in fewer attempts than the
+	// fixed floor; the threshold must follow the live pool size (0.5.55).
+	smallPool := func() int64 {
+		var id int64
+		if err := db.QueryRow(ctx, `insert into rebalance_jobs(created_at,completed_at,source,status,trigger_reason,reason,target_channel_id,target_channel_point,target_outbound_pct,target_amount_sat) values($1,$1,'auto','failed',$2,'all sources failed',102,'fixture:1',50,100000) returning id`, failedAt, rebalanceSovereignReason).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}()
+	for i := 0; i < 12; i++ {
+		insertAttempt(smallPool, "failed", failedAt, 0)
+	}
+	if fixed := rb.loadSovereignTargetStructuralCooldowns(ctx, []uint64{102}, rc, now, 0); len(fixed) != 0 {
+		t.Fatalf("12 attempts must not count as structural with an unknown pool: %+v", fixed)
+	}
+	if large := rb.loadSovereignTargetStructuralCooldowns(ctx, []uint64{102}, rc, now, 32); len(large) != 0 {
+		t.Fatalf("12 attempts must not count as structural with a 32-source pool: %+v", large)
+	}
+	small := rb.loadSovereignTargetStructuralCooldowns(ctx, []uint64{102}, rc, now, 12)
+	if len(small) != 1 || small[102].LastFailureAttempts != 12 {
+		t.Fatalf("12 attempts must count as structural when the pool has 12 sources: %+v", small)
 	}
 }

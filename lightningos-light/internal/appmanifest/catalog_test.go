@@ -122,13 +122,13 @@ func TestCatalogImageVariantsAreClosedByApp(t *testing.T) {
 }
 
 func TestLNbitsCatalogPinsOfficialStableManifest(t *testing.T) {
-	if LNbitsRelease != "1.6.2" {
+	if LNbitsRelease != "1.7.0" {
 		t.Fatalf("unexpected LNbits release: %q", LNbitsRelease)
 	}
-	if LNbitsManifestSHA256 != "284b9c2a0df9a1f867b4c52b694699fccade513c09368879922ff90bc7bf850e" {
+	if LNbitsManifestSHA256 != "9fc5157f31339968537beedc9517d22a91b5f2e171fcb42f1ca76f5305502df1" {
 		t.Fatalf("unexpected LNbits manifest digest: %q", LNbitsManifestSHA256)
 	}
-	if LNbitsImage != "lnbits/lnbits:v1.6.2@sha256:"+LNbitsManifestSHA256 {
+	if LNbitsImage != "lnbits/lnbits:v1.7.0@sha256:"+LNbitsManifestSHA256 {
 		t.Fatalf("LNbits image is not pinned to the catalog digest: %q", LNbitsImage)
 	}
 	if len(LNbitsManifestSHA256) != 64 || strings.Contains(LNbitsImage, ":latest") {

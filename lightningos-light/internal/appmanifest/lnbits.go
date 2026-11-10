@@ -13,8 +13,8 @@ const (
 	LNbitsComposeFile                    = "docker-compose.yaml"
 	LNbitsEnvFile                        = ".env"
 	LNbitsPrimaryService                 = "lnbits"
-	LNbitsRelease                        = "1.6.2"
-	LNbitsManifestSHA256                 = "284b9c2a0df9a1f867b4c52b694699fccade513c09368879922ff90bc7bf850e"
+	LNbitsRelease                        = "1.7.0"
+	LNbitsManifestSHA256                 = "9fc5157f31339968537beedc9517d22a91b5f2e171fcb42f1ca76f5305502df1"
 	LNbitsImage                          = "lnbits/lnbits:v" + LNbitsRelease + "@sha256:" + LNbitsManifestSHA256
 	LNbitsMacaroonFile                   = "lnbits.macaroon"
 	LNbitsTLSCertFile                    = "tls.cert"
@@ -48,7 +48,7 @@ func LNbitsImageVariants() []AppImageVariant {
 	return []AppImageVariant{LNbitsImageApp}
 }
 
-// LNbitsManagedEnv is the closed funding-source contract enforced for every
+// LNbitsManagedEnv is the closed funding-source/startup contract enforced for every
 // App Store installation. Other LNbits configuration is preserved for
 // backwards compatibility, but it cannot replace these values.
 func LNbitsManagedEnv() [][2]string {
@@ -59,6 +59,9 @@ func LNbitsManagedEnv() [][2]string {
 		{"LND_REST_MACAROON", "/etc/lnd/" + LNbitsMacaroonFile},
 		{"LNBITS_DATA_FOLDER", "/app/data"},
 		{"LNBITS_EXTENSIONS_PATH", "/app/data/extensions"},
+		// Never fetch/install extensions automatically on startup. This does
+		// not remove previously installed or explicitly selected extensions.
+		{"LNBITS_EXTENSIONS_DEFAULT_INSTALL", "[]"},
 		{"LNBITS_HOST", "0.0.0.0"},
 		{"LNBITS_PORT", "5000"},
 		{"AUTH_HTTPS_ONLY", "false"},
@@ -100,8 +103,12 @@ func NormalizeLNbitsEnv(raw []byte) ([]byte, error) {
 		lines = nil
 	}
 	preserved := make([]string, 0, len(lines)+len(LNbitsManagedEnv())+1)
+	present := make(map[string]bool)
 	for _, line := range lines {
 		key, _, ok := strings.Cut(line, "=")
+		if ok {
+			present[key] = true
+		}
 		if ok && managed[key] {
 			continue
 		}
@@ -109,6 +116,18 @@ func NormalizeLNbitsEnv(raw []byte) ([]byte, error) {
 	}
 	for len(preserved) > 0 && preserved[len(preserved)-1] == "" {
 		preserved = preserved[:len(preserved)-1]
+	}
+	// Seed defaults only: preserve explicit operator choices, including MFA
+	// policy and encryption keys. LNbits persists admin settings in its DB;
+	// do not overwrite them or enroll users on their behalf. Enabling the
+	// feature is NOT enrollment and does not make 2FA mandatory.
+	for _, item := range [][2]string{
+		{"LNBITS_USER_DEFAULT_EXTENSIONS", "[]"},
+		{"LNBITS_TWO_FACTOR_ENABLED", "true"},
+	} {
+		if !present[item[0]] {
+			preserved = append(preserved, item[0]+"="+item[1])
+		}
 	}
 	for _, item := range LNbitsManagedEnv() {
 		preserved = append(preserved, item[0]+"="+item[1])

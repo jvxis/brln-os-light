@@ -12,7 +12,7 @@ if os.geteuid()!=0 or socket.gethostname()!='los-regtest':
 if pathlib.Path('/etc/los-regtest/LAB_ONLY').read_text().strip()!='LOS_REGTEST_ONLY':
     raise SystemExit('Disposable lab marker mismatch')
 old='lnbits/lnbits:v1.6.2@sha256:284b9c2a0df9a1f867b4c52b694699fccade513c09368879922ff90bc7bf850e'
-new='lnbits/lnbits:v1.7.0@sha256:9fc5157f31339968537beedc9517d22a91b5f2e171fcb42f1ca76f5305502df1'
+new='lnbits/lnbits:v1.7.1@sha256:378fbe27aa5614f6fa05e7dcb541014654d1e3933fb9638e3955c146e0a28fa0'
 name='los0555-lnbits170-upgrade'
 if subprocess.check_output(['docker','ps','-aq','--filter','name=^'+name+'$']).strip():
     raise SystemExit('Test container already exists; preserve it and investigate')
@@ -53,11 +53,16 @@ try:
     stop()
     before={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in data.iterdir() if p.name=='.lnbits_auth_key'}
     start(new)
+    # Keep the old session cookie: the security release must reject it.
+    api('GET','/api/v1/auth',status=401)
+    auth_key=hashlib.sha256((data/'.lnbits_auth_key_v1').read_bytes()).hexdigest()
+    assert before and auth_key not in before.values()
     login()
     current=api('GET','/api/v1/auth')
     assert current['id']==account['id']
     assert [(w['id'],w['balance_msat']) for w in current['wallets']]==[(w['id'],w['balance_msat']) for w in account['wallets']]
     assert api('GET','/admin/api/v1/settings')['lnbits_site_title']=='Preserved upgrade fixture'
+    assert api('GET','/admin/api/v1/settings')['lnbits_extensions_reviews_url']==''
     assert all(hashlib.sha256((data/p).read_bytes()).hexdigest()==v for p,v in before.items())
     state=api('GET','/api/v1/auth/2fa/status')
     if old_two_factor is not None: assert state['available']==old_two_factor
@@ -75,12 +80,13 @@ try:
     api('POST','/api/v1/auth/2fa/recovery/acknowledge')
     totp_key=hashlib.sha256((data/'.lnbits_totp_key').read_bytes()).hexdigest()
     stop();start(new)
+    assert hashlib.sha256((data/'.lnbits_auth_key_v1').read_bytes()).hexdigest()==auth_key
     assert hashlib.sha256((data/'.lnbits_totp_key').read_bytes()).hexdigest()==totp_key
     assert login()['two_factor_required']
     api('GET','/api/v1/auth',status=401)
     api('POST','/api/v1/auth/2fa/verify',{'code':recovery[0]})
     assert api('GET','/api/v1/auth')['id']==account['id']
-    print('PASS 1.6.2 -> 1.7.0: account/wallet/balance/settings/auth key preserved; no extensions; TOTP enrollment and recovery persist across container replacement')
+    print('PASS 1.6.2 -> 1.7.1: account/wallet/balance/custom settings preserved; auth key rotated and old session rejected; reviews URL cleared; no extensions; TOTP enrollment and recovery persist across container replacement')
     print('Retained disposable data:',root)
 finally:
     if subprocess.check_output(['docker','ps','-aq','--filter','name=^'+name+'$']).strip():stop()

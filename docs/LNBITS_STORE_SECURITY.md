@@ -2,7 +2,7 @@
 
 ## English
 
-Starting with the 0.5.55 candidate, the Store pins LNbits **1.7.0** by its
+Starting with the 0.5.55 candidate, the Store pins LNbits **1.7.1** by its
 official multi-architecture image digest. After upgrading LOS, stop LNbits in
 the Store and start it again to apply the catalog version. Keep a backup of
 the LNbits data directory before an application/database upgrade; changing an
@@ -36,7 +36,7 @@ restart, TLS regeneration or production-node operation is part of this change.
 
 ## Português
 
-A partir da candidata 0.5.55, a loja fixa o LNbits **1.7.0** pelo digest da
+A partir da candidata 0.5.55, a loja fixa o LNbits **1.7.1** pelo digest da
 imagem oficial multi-arquitetura. Depois de atualizar o LOS, pare o LNbits na
 loja e inicie novamente para aplicar a versão do catálogo. Antes de atualizar
 o aplicativo/banco de dados, faça backup dos dados do LNbits; voltar a imagem
@@ -72,6 +72,21 @@ alteração não reinicia LND, regenera TLS nem modifica nodes de produção.
 
 ## Upstream references
 
-- [LNbits v1.7.0](https://github.com/lnbits/lnbits/releases/tag/v1.7.0)
-- [Settings and persistent TOTP key](https://github.com/lnbits/lnbits/blob/v1.7.0/lnbits/settings.py)
-- [2FA API](https://github.com/lnbits/lnbits/blob/v1.7.0/lnbits/core/views/two_factor_api.py)
+### 1.7.1 security update / atualização de segurança
+
+LNbits 1.7.1 rotates the default login signing key to `.lnbits_auth_key_v1`:
+expect to sign in again. It also clears the extension reviews URL as an
+upstream security migration. This is separate from the persistent TOTP key;
+do not delete `.lnbits_totp_key`. An explicitly configured `AUTH_SECRET_KEY`
+bypasses upstream file-based key generation; operators using that override
+must review and rotate it securely themselves. LOS does not overwrite it.
+
+O LNbits 1.7.1 troca a chave padrão das sessões para `.lnbits_auth_key_v1`:
+será necessário entrar novamente. A migração de segurança também limpa a URL
+de avaliações de extensões. Isso não é a chave do TOTP: não apague
+`.lnbits_totp_key`. Quem configurou `AUTH_SECRET_KEY` explicitamente precisa
+revisar e trocar esse segredo com segurança; o LOS não o sobrescreve.
+
+- [LNbits v1.7.1](https://github.com/lnbits/lnbits/releases/tag/v1.7.1)
+- [Settings and persistent TOTP key](https://github.com/lnbits/lnbits/blob/v1.7.1/lnbits/settings.py)
+- [2FA API](https://github.com/lnbits/lnbits/blob/v1.7.1/lnbits/core/views/two_factor_api.py)

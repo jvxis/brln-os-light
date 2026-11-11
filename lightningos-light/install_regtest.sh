@@ -92,6 +92,7 @@ runuser -u los-regtest-build -- env -i HOME=/var/lib/los-regtest-build \
   ' build "$BUILD"
 
 # Native helpers remain separate from all production installers and services.
+# The LND version/archive checksum is pinned in scripts/regtest-lab/provision.sh.
 for file in nodes.py control.py automine.py configure-los.py verify-los.py safety.py deploy.py; do
   install -o root -g root -m 0755 "$LAB/$file" "/opt/los-regtest/$file"
 done

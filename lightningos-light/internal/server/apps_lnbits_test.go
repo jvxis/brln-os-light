@@ -176,7 +176,7 @@ func TestEnsureLnbitsEnvMigratesLegacyAdminCredentialSelectors(t *testing.T) {
 	}
 }
 
-func TestLnbitsMacaroonPermissionsMatchUpstreamRESTInventory(t *testing.T) {
+func TestLnbitsMacaroonPermissionsWalletOnly(t *testing.T) {
 	got := lndclient.MacaroonPermissionStrings(lnbitsMacaroonPermissions())
 	want := []string{
 		"info:read",
@@ -184,15 +184,12 @@ func TestLnbitsMacaroonPermissionsMatchUpstreamRESTInventory(t *testing.T) {
 		"invoices:write",
 		"offchain:read",
 		"offchain:write",
-		"onchain:read",
-		"onchain:write",
-		"peers:read",
-		"peers:write",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("LNbits permissions=%v want=%v", got, want)
 	}
 	for _, forbidden := range []string{
+		"onchain:read", "onchain:write", "peers:read", "peers:write",
 		"address:read", "address:write", "info:write", "macaroon:generate",
 		"macaroon:read", "macaroon:write", "message:write", "signer:generate",
 		"signer:read",

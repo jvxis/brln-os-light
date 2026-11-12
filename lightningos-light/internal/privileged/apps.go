@@ -46,6 +46,7 @@ type ComposeAppManager struct {
 	TempRoot              string
 	ElectrsRPCProbe       electrsRPCProbeFunc
 	BitcoinMigrationProbe func(context.Context, string) error
+	lnbitsRevocationRPC   lnbitsRevocationRPC
 }
 
 type composeAppSnapshot struct {

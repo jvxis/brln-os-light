@@ -59,6 +59,7 @@ const (
 	OperationAppImageStatus                  Operation = "app.image.status"
 	OperationAppImageProbe                   Operation = "app.image.probe"
 	OperationAppFirewallEnsure               Operation = "app.firewall.ensure"
+	OperationLNbitsLegacyCredentialRevoke    Operation = "app.lnbits.legacy-credential.revoke"
 	OperationAppLNDHostAccessEnsure          Operation = "app.lnd-host-access.ensure"
 	OperationBitcoinStorageEnsure            Operation = "app.bitcoincore.storage.ensure"
 	OperationBitcoinConfigEnsure             Operation = "app.bitcoincore.config.ensure"
@@ -1027,6 +1028,11 @@ func ValidateRequest(request Request) error {
 		}
 		if _, err := appmanifest.CatalogExternalTCPPort(params.AppID); err != nil {
 			return errors.New("app external access manifest is not allowed")
+		}
+	case OperationLNbitsLegacyCredentialRevoke:
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return errors.New("LNbits credential revocation accepts no paths or IDs")
 		}
 	case OperationAppLNDHostAccessEnsure:
 		var params AppLNDHostAccessParams

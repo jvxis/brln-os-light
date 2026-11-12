@@ -1121,6 +1121,20 @@ func (client *Client) EnsureAppFirewall(ctx context.Context, appID string, dryRu
 	}
 }
 
+func (client *Client) RevokeLNbitsLegacyCredential(ctx context.Context, dryRun bool) error {
+	response, err := client.call(ctx, OperationLNbitsLegacyCredentialRevoke, struct{}{}, dryRun)
+	if err != nil {
+		return err
+	}
+	var result struct {
+		Ready bool `json:"ready"`
+	}
+	if decodeStrict(response.Result, &result) != nil || !result.Ready {
+		return errors.New("invalid LNbits credential revocation response")
+	}
+	return nil
+}
+
 func (client *Client) EnsureAppLNDHostAccess(ctx context.Context, appID string, dryRun bool) error {
 	response, err := client.call(ctx, OperationAppLNDHostAccessEnsure, AppLNDHostAccessParams{AppID: appID}, dryRun)
 	if err != nil {

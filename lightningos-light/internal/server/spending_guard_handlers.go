@@ -157,6 +157,13 @@ func (s *Server) finishSpendingReservation(reservation SpendingReservation, paym
 	}
 	if trackErr == nil && found && strings.EqualFold(details.Status, "FAILED") {
 		_ = svc.Release(ctx, reservation, "LND reported payment failed")
+		return
+	}
+	if trackErr == nil && !found && !isAmbiguousPaymentError(paymentErr) {
+		// The send returned a definite error and LND has no payment under
+		// this hash: nothing was dispatched, so the reservation must not wait
+		// for the reconciler (which would only release it after its grace).
+		_ = svc.Release(ctx, reservation, "LND has no record of this payment; it was never initiated")
 	}
 }
 

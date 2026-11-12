@@ -89,7 +89,9 @@ func (s *Server) reconcileSpendingGuard() {
 	}
 	for _, item := range items {
 		// Rotate attempted entries so an old, inconclusive batch cannot hide
-		// newer payments forever. A failed query is not evidence of failure.
+		// newer payments forever, and grow this entry's backoff so one stuck
+		// reservation does not query LND every minute. A failed query is not
+		// evidence of failure.
 		if err := svc.markReconciled(ctx, item.ID); err != nil {
 			return
 		}
@@ -99,14 +101,12 @@ func (s *Server) reconcileSpendingGuard() {
 			continue
 		}
 		details, found, trackErr := s.lnd.TrackPaymentDetails(ctx, item.PaymentHash)
-		if trackErr != nil || !found {
-			continue
-		}
-		switch strings.ToUpper(strings.TrimSpace(details.Status)) {
-		case "SUCCEEDED":
+		action, reason := spendingGuardReconcileDecision(found, trackErr, details.Status, item.CreatedAt, time.Now())
+		switch action {
+		case spendingGuardReconcileSettle:
 			_ = svc.Settle(ctx, item.SpendingReservation, paymentDetailsFeeSat(details, item.MaxFeeSat), item.PaymentHash)
-		case "FAILED":
-			_ = svc.Release(ctx, item.SpendingReservation, "LND reported payment failed")
+		case spendingGuardReconcileRelease:
+			_ = svc.Release(ctx, item.SpendingReservation, reason)
 		}
 	}
 }

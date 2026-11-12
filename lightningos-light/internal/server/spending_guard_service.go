@@ -88,8 +88,81 @@ type lightningSpendingGuard interface {
 
 type pendingSpendingReservation struct {
 	SpendingReservation
-	PaymentHash string
-	CreatedAt   time.Time
+	PaymentHash       string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	ReconcileAttempts int
+}
+
+const (
+	// spendingGuardReconcileBaseBackoff is the wait before the first LND lookup
+	// of a reservation and the base of the per-entry exponential backoff.
+	spendingGuardReconcileBaseBackoff = time.Minute
+	// spendingGuardReconcileMaxBackoff caps the per-entry backoff so a
+	// reservation that stays inconclusive is still revisited every hour.
+	spendingGuardReconcileMaxBackoff = time.Hour
+	// spendingGuardUnknownPaymentGrace is how old a reservation must be before
+	// "LND does not know this payment hash" counts as a terminal answer. A
+	// dispatch that is still in flight registers the payment within seconds.
+	spendingGuardUnknownPaymentGrace = 10 * time.Minute
+)
+
+// spendingGuardReconcileBackoff returns how long the reconciler waits after
+// its n-th inconclusive lookup of one reservation: 1, 2, 4, 8 ... minutes,
+// capped at one hour.
+func spendingGuardReconcileBackoff(attempts int) time.Duration {
+	if attempts <= 0 {
+		return spendingGuardReconcileBaseBackoff
+	}
+	if attempts >= 10 {
+		return spendingGuardReconcileMaxBackoff
+	}
+	backoff := spendingGuardReconcileBaseBackoff << uint(attempts)
+	if backoff > spendingGuardReconcileMaxBackoff {
+		return spendingGuardReconcileMaxBackoff
+	}
+	return backoff
+}
+
+// spendingGuardReconcileDue reports whether a reservation last touched at
+// updatedAt, after the given number of lookups, should be queried again now.
+func spendingGuardReconcileDue(updatedAt time.Time, attempts int, now time.Time) bool {
+	if updatedAt.IsZero() {
+		return true
+	}
+	return !now.Before(updatedAt.Add(spendingGuardReconcileBackoff(attempts)))
+}
+
+type spendingGuardReconcileAction int
+
+const (
+	spendingGuardReconcileKeep spendingGuardReconcileAction = iota
+	spendingGuardReconcileSettle
+	spendingGuardReconcileRelease
+)
+
+// spendingGuardReconcileDecision maps one LND lookup of a reserved payment to
+// what the reconciler should do with the reservation. A lookup error is never
+// evidence: the entry is kept. A payment LND does not know cannot start later
+// once the hash is bound, so after the grace period the reservation is
+// released instead of being polled forever.
+func spendingGuardReconcileDecision(found bool, trackErr error, status string, createdAt, now time.Time) (spendingGuardReconcileAction, string) {
+	if trackErr != nil {
+		return spendingGuardReconcileKeep, ""
+	}
+	if found {
+		switch strings.ToUpper(strings.TrimSpace(status)) {
+		case "SUCCEEDED":
+			return spendingGuardReconcileSettle, ""
+		case "FAILED":
+			return spendingGuardReconcileRelease, "LND reported payment failed"
+		}
+		return spendingGuardReconcileKeep, ""
+	}
+	if createdAt.IsZero() || now.Sub(createdAt) < spendingGuardUnknownPaymentGrace {
+		return spendingGuardReconcileKeep, ""
+	}
+	return spendingGuardReconcileRelease, "LND has no record of this payment hash; the payment was never initiated"
 }
 
 type spendingGuardLimitHandler func(context.Context, SpendingIntent, SpendingLimitError)
@@ -161,6 +234,7 @@ create index if not exists spending_guard_entries_hash_idx
   on spending_guard_entries (payment_hash) where payment_hash <> '';
 create index if not exists spending_guard_entries_reconcile_idx
   on spending_guard_entries (updated_at,created_at,id) where status='reserved';
+alter table spending_guard_entries add column if not exists reconcile_attempts integer not null default 0;
 `)
 	return err
 }
@@ -364,32 +438,40 @@ func (s *SpendingGuardService) Bind(ctx context.Context, reservation SpendingRes
 	return nil
 }
 
+// pending returns the reserved entries whose per-entry backoff has elapsed
+// (see spendingGuardReconcileDue), oldest first.
 func (s *SpendingGuardService) pending(ctx context.Context, limit int) ([]pendingSpendingReservation, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	rows, err := s.db.Query(ctx, `
-select id,amount_sat,max_fee_sat,reserved_sat,payment_hash,created_at
+select id,amount_sat,max_fee_sat,reserved_sat,payment_hash,created_at,updated_at,reconcile_attempts
 from spending_guard_entries where status='reserved'
 order by updated_at asc,created_at asc,id asc limit $1`, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	now := time.Now()
 	items := make([]pendingSpendingReservation, 0)
 	for rows.Next() {
 		var item pendingSpendingReservation
 		item.Active = true
-		if err := rows.Scan(&item.ID, &item.AmountSat, &item.MaxFeeSat, &item.ReservedSat, &item.PaymentHash, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.AmountSat, &item.MaxFeeSat, &item.ReservedSat, &item.PaymentHash, &item.CreatedAt, &item.UpdatedAt, &item.ReconcileAttempts); err != nil {
 			return nil, err
+		}
+		if !spendingGuardReconcileDue(item.UpdatedAt, item.ReconcileAttempts, now) {
+			continue
 		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
 }
 
+// markReconciled records one lookup of a reservation: it moves the entry to
+// the back of the queue and grows its backoff.
 func (s *SpendingGuardService) markReconciled(ctx context.Context, id string) error {
-	_, err := s.db.Exec(ctx, `update spending_guard_entries set updated_at=now() where id=$1 and status='reserved'`, id)
+	_, err := s.db.Exec(ctx, `update spending_guard_entries set updated_at=now(),reconcile_attempts=reconcile_attempts+1 where id=$1 and status='reserved'`, id)
 	return err
 }
 

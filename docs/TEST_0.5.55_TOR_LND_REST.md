@@ -107,6 +107,29 @@ review found the missing torrc write permission before publication.
 
 ## Reproducing the privileged test
 
+### Additional disposable network isolation (2026-11-12)
+
+- On `los-disposable-0555-lndg`, a fresh boot reported synchronized NTP, low
+  load, and successful HTTPS through Tor SOCKS (HTTP 200). Native Tor's
+  authenticated Control interface confirmed the same systemd PID and loaded
+  `HiddenServicePort 8080 127.0.0.1:8080`. HS_DESC events reported descriptor
+  creation/uploads, while client directory requests/streams timed out.
+- The broker-sandbox network run failed after 201.22s. A separate opt-in
+  `TestTorLNDRESTSinglePublication` performs one ensure without preceding fault
+  injection; it also timed out (385.89s). It remains a failed observation, not
+  a substitute pass or a reason to weaken the regression suite.
+- Independent baseline: a new ephemeral onion created directly through Tor
+  Control `ADD_ONION NEW:ED25519-V3 Flags=DiscardPK`, without any LOS operation,
+  also timed out in four SOCKS attempts (201s). No private key was requested,
+  identity logged, or persistent configuration changed. The ephemeral service
+  was removed when its controller disconnected. This demonstrates that the
+  failure also occurs outside LOS on this fixture; it does not prove all Tor
+  environments work or establish the underlying Tor/network cause.
+- Local full regression rerun passed: create/retry, root-only torrc repair,
+  rollback, operator-service reuse and invalid candidate rejection. LND,
+  Bitcoin and Tor process identities and all LND TLS hashes remained unchanged.
+- Windows amd64 `go test -p 2 ./...` and `go vet -p 2 ./...` passed again.
+
 Only on an explicitly authorized disposable regtest host with native Tor, Alice
 REST listening on 127.0.0.1:8080, and `/etc/los-regtest/LAB_ONLY` containing
 `LOS_REGTEST_ONLY`. Never enable this test on a production/funds-bearing node.
@@ -129,10 +152,14 @@ external Lightning Address provider's TLS configuration.
 ## Remaining release gates
 
 Keep the PR draft until installation/upgrade integration is complete: fresh
-`install.sh`, `install_existing.sh`, native ARM installer path, and old Manager UI
+`install.sh`, `install_existing.sh`, and old Manager UI
 upgrade deploying the changed broker unit. A root test under the correct sandbox
 is not a complete installer/old-updater test. Authenticated API/socket-activated
 broker deployment was additionally exercised on LOS-TEST2; it does not replace
-the installer matrix. No installer-matrix waiver was requested or assumed.
+the installer matrix. The owner explicitly waived ARM for this PR on 2026-11-12;
+ARM is not recorded as tested. The amd64 fresh/existing/old-updater gates remain
+mandatory. Authorized fixtures are `los-disposable-0555-lndg`,
+`los-disposable-0555-tor-fresh` and `los-disposable-0555-tor-existing`, one running
+at a time, with normal shutdown and retained disks/evidence at completion.
 No funds-bearing node was used for payment, credential-revocation or failure
 injection fixtures; those tests remained isolated on disposable regtest.

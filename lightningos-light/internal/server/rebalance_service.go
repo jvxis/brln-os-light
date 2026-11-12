@@ -1087,6 +1087,9 @@ type RebalanceSovereignDecision struct {
 	Discovery                   bool    `json:"discovery,omitempty"`
 	DiscoveryStep               int     `json:"discovery_step,omitempty"`
 	DiscoveryFeeCapPpm          int64   `json:"discovery_fee_cap_ppm,omitempty"`
+	// DiscoveryBackoffUntil is set when the ladder skipped this target because
+	// its last ladders all ran out of steps without a route.
+	DiscoveryBackoffUntil time.Time `json:"discovery_backoff_until,omitzero"`
 	IntentKind                  string  `json:"intent_kind,omitempty"`
 	IntentReason                string  `json:"intent_reason,omitempty"`
 	IntentConfidence            float64 `json:"intent_confidence,omitempty"`

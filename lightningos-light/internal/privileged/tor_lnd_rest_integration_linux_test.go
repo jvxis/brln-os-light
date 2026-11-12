@@ -59,6 +59,14 @@ func TestTorLNDRESTLive(t *testing.T) {
 			t.Error(err)
 		}
 	}()
+	// Regression: systemctl reload succeeds even if the dropped-privilege Tor
+	// daemon cannot read a root:root 0600 file. Verify access as the actual user.
+	if err := os.Chmod(torrcPath, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if exec.Command("runuser", "-u", "debian-tor", "--", "test", "-r", torrcPath).Run() == nil {
+		t.Fatal("root-only permission fixture is unexpectedly readable")
+	}
 	state, err := manager.Status(ctx, false)
 	if err != nil || state.Status != "absent" || !state.RESTReachable {
 		t.Fatalf("baseline: %+v %v", state, err)
@@ -76,6 +84,10 @@ func TestTorLNDRESTLive(t *testing.T) {
 	if err != nil || first.Status != "configured" || !first.Managed || !validOnionHostname(first.Hostname) {
 		t.Fatalf("create: %+v %v", first, err)
 	}
+	if err := exec.Command("runuser", "-u", "debian-tor", "--", "test", "-r", torrcPath).Run(); err != nil {
+		t.Fatal("Tor cannot read replacement configuration after privilege drop")
+	}
+	t.Log("root-only torrc repaired to root:debian-tor 0640 before reload")
 	once, _, _ := readTorrc()
 	second, err := manager.Ensure(ctx, false)
 	if err != nil || first.Hostname != second.Hostname {

@@ -8,7 +8,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -96,7 +98,9 @@ func (manager *NativeTorLNDRESTManager) ensure(ctx context.Context) (TorLNDRESTS
 		return TorLNDRESTState{}, err
 	}
 	if found {
-		if err := manager.verifyTorConfigAt(ctx, torrcPath); err != nil {
+		// Even a pre-existing root-only torrc can be read at daemon startup
+		// but not after Tor drops privileges and processes SIGHUP.
+		if err := writeValidatedTorrc(torrc, info, func(candidate string) error { return manager.verifyTorConfigAt(ctx, candidate) }); err != nil {
 			return TorLNDRESTState{}, err
 		}
 	}
@@ -275,7 +279,9 @@ func readTorrc() (string, os.FileInfo, error) {
 	return string(data), info, nil
 }
 
-// writeTorrc replaces torrc atomically, keeping its mode and group.
+// writeTorrc replaces torrc atomically. The native Debian/Ubuntu Tor service
+// must retain read access after dropping root privileges; root-only mode 0600
+// otherwise makes a successful SIGHUP silently discard the configuration.
 func writeTorrc(content string, info os.FileInfo) error {
 	return writeValidatedTorrc(content, info, nil)
 }
@@ -285,9 +291,17 @@ func writeValidatedTorrc(content string, info os.FileInfo, validate func(string)
 	if err := validateRuntimeParent(parent); err != nil {
 		return err
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
+	_, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return errors.New("Tor configuration ownership is unknown")
+	}
+	account, err := user.Lookup("debian-tor")
+	if err != nil {
+		return errors.New("native Tor service account is unavailable")
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil || gid <= 0 {
+		return errors.New("native Tor service group is invalid")
 	}
 	temporary, err := os.CreateTemp(parent, ".lightningos-torrc-")
 	if err != nil {
@@ -301,10 +315,10 @@ func writeValidatedTorrc(content string, info os.FileInfo, validate func(string)
 			_ = os.Remove(temporaryPath)
 		}
 	}()
-	if err := temporary.Chmod(info.Mode().Perm()); err != nil {
+	if err := temporary.Chmod(0o640); err != nil {
 		return errors.New("set Tor configuration mode failed")
 	}
-	if err := temporary.Chown(0, int(stat.Gid)); err != nil {
+	if err := temporary.Chown(0, gid); err != nil {
 		return errors.New("set Tor configuration ownership failed")
 	}
 	if written, err := temporary.WriteString(content); err != nil || written != len(content) {

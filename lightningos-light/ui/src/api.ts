@@ -1204,6 +1204,15 @@ export const getOnchainTransactions = (params?: {
   limit?: number
 }) => request(`/api/onchain/transactions${buildQuery(params)}`)
 
+export type OnchainAddressOwnership = {
+  address: string
+  network: string
+  status: 'owned' | 'known' | 'external'
+}
+
+export const getOnchainAddressOwnership = (address: string) =>
+  request(`/api/onchain/address/ownership?address=${encodeURIComponent(address.trim())}`) as Promise<OnchainAddressOwnership>
+
 export const upsertUtxoMetadata = (payload: {
   outpoint: string
   label?: string

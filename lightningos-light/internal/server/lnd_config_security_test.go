@@ -20,6 +20,7 @@ func TestLNDConfigWritesRequireOwnReauthScope(t *testing.T) {
 		handler    func(*Server, http.ResponseWriter, *http.Request)
 	}{
 		{"structured", `{"alias":"` + strings.Repeat("x", 33) + `"}`, (*Server).handleLNDConfigPost},
+		{"upfront", `{"mode":"off"}`, (*Server).handleUpfrontShutdownPost},
 		{"raw", `{"raw_user_conf":"[tor]\ntor.skip-proxy-for-clearnet-targets=true\ntor.streamisolation=true\n"}`, (*Server).handleLNDConfigRaw},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

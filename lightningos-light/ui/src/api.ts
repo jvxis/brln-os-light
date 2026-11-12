@@ -373,6 +373,12 @@ export const updateLndConfig = (payload: {
   apply_now: boolean
 }) => request('/api/lnd/config', { method: 'POST', body: JSON.stringify(payload) })
 
+export type UpfrontShutdownMode = 'off' | 'wallet' | 'external'
+export type UpfrontShutdownUpdate = { mode: UpfrontShutdownMode; address: string; config_revision: string; confirm_external: boolean }
+export type UpfrontShutdownStatus = { current: { mode: UpfrontShutdownMode; address: string }; origin: string; editable: boolean; reason: string; config_revision: string }
+export const getUpfrontShutdown = (): Promise<UpfrontShutdownStatus> => request('/api/lnd/config/upfront-shutdown')
+export const updateUpfrontShutdown = (payload: UpfrontShutdownUpdate) => request('/api/lnd/config/upfront-shutdown', { method: 'POST', body: JSON.stringify(payload) })
+
 export type LndSecretUpdate = { action: 'keep' | 'replace' | 'clear'; value?: string }
 export type LndSensitiveOption = { id: string; section: string; key: string; configured: boolean }
 export const updateLndRawConfig = (payload: { raw_user_conf: string; apply_now: boolean; config_revision: string; secret_updates?: Record<string, LndSecretUpdate>; confirm_password?: string }) =>

@@ -3259,7 +3259,7 @@
       "password": "Senha do LOS (quando a proteção de login está habilitada)",
       "tls": "Este não é o onion P2P do node. Configurado não significa acesso pela rede Tor testado. O LND mantém seu certificado TLS: o cliente precisa confiar nele com segurança; o nome pode não corresponder ao onion. O LOS não desabilita a verificação TLS nem reinicia o LND.",
       "pending": "O arquivo público do endereço ainda não está disponível. Atualize em alguns segundos.",
-      "restDown": "O REST do LND não está respondendo em 127.0.0.1:8080.",
+      "restDown": "Não foi confirmado um listener REST local do LND acessível na porta 8080.",
       "manual": "Este endereço foi configurado à mão no torrc; o LightningOS só o mostra.",
       "failed": "Falha ao consultar o endereço .onion do REST.",
       "macaroon": "Use este endereço com um macaroon só de fatura (Operações Lightning → Macaroon customizado → preset Permissões de invoice). Nunca entregue o admin.macaroon: com ele e este endereço, quem tiver os dois controla o node."

@@ -3,8 +3,10 @@
 ## Scope and security
 
 The dashboard Tor card can explicitly create and copy a REST onion. Nothing is
-created by opening the dashboard. The fixed broker operation adds port 8080 to
-127.0.0.1:8080, or reuses a manually configured matching service. It does not
+created by opening the dashboard. The broker operation adds port 8080 to a
+kernel-reported listener owned by the native LND MainPID, or reuses a matching
+manual service. Loopback is preferred; legacy Docker-only REST is accepted only
+when its private address belongs to an active local Docker bridge. It does not
 create macaroons, change LND configuration, regenerate TLS, or restart LND.
 Tor reloads its configuration without a process restart.
 

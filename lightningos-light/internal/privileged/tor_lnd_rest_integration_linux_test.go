@@ -50,6 +50,7 @@ func TestTorLNDRESTLive(t *testing.T) {
 	defer cancel()
 	runner := &liveTorRunner{}
 	manager := NewNativeTorLNDRESTManager(runner)
+	manager.lndUnit = "los-regtest-alice.service"
 	defer func() {
 		if err := writeTorrc(original, info); err != nil {
 			t.Error(err)

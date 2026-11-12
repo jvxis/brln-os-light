@@ -3259,7 +3259,7 @@
       "password": "LOS password (when login protection is enabled)",
       "tls": "This is not the node's P2P onion. Configured does not mean Tor reachability was tested. LND keeps its existing TLS certificate: the client must securely trust that certificate; its name may not match the onion. LOS does not disable TLS verification or restart LND.",
       "pending": "Tor has not provided the hostname yet. Refresh in a few seconds; this does not confirm public reachability.",
-      "restDown": "LND REST is not answering on 127.0.0.1:8080.",
+      "restDown": "No reachable local LND REST listener was verified on port 8080.",
       "manual": "This address was configured by hand in torrc; LightningOS only shows it.",
       "failed": "Failed to read the REST .onion address.",
       "macaroon": "Use this address with an invoice-only macaroon (Lightning Ops → Custom macaroon → Invoice permissions preset). Never hand out admin.macaroon: whoever holds it and this address controls the node."

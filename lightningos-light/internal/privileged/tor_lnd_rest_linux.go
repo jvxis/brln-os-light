@@ -19,15 +19,23 @@ import (
 const torLNDRESTHostnameWait = 30 * time.Second
 
 func (manager *NativeTorLNDRESTManager) status(ctx context.Context) (TorLNDRESTState, error) {
+	targets, err := manager.restTargets(ctx)
+	if err != nil {
+		return TorLNDRESTState{}, err
+	}
 	torrc, _, err := readTorrc()
 	if err != nil {
 		return TorLNDRESTState{}, err
 	}
-	if err := validateLNDRESTTorrc(torrc); err != nil {
+	if err := validateLNDRESTTorrc(torrc, targets...); err != nil {
 		return TorLNDRESTState{}, err
 	}
-	state := TorLNDRESTState{Status: "absent", RESTReachable: lndRESTReachable(ctx)}
-	dir, found := findLNDRESTService(torrc)
+	state := TorLNDRESTState{Status: "absent"}
+	dir, target, found := existingTorRESTTarget(torrc, targets)
+	if !found && len(targets) > 0 {
+		target = targets[0]
+	}
+	state.RESTReachable = target != "" && lndRESTReachable(ctx, target)
 	if !found {
 		return state, nil
 	}
@@ -42,22 +50,40 @@ func (manager *NativeTorLNDRESTManager) status(ctx context.Context) (TorLNDRESTS
 }
 
 func (manager *NativeTorLNDRESTManager) ensure(ctx context.Context) (TorLNDRESTState, error) {
-	if !lndRESTReachable(ctx) {
-		return TorLNDRESTState{}, errors.New("LND REST is not listening on 127.0.0.1:8080")
+	targets, err := manager.restTargets(ctx)
+	if err != nil {
+		return TorLNDRESTState{}, err
+	}
+	if len(targets) == 0 {
+		return TorLNDRESTState{}, errors.New("no verified local LND REST listener on port 8080")
 	}
 	torrc, info, err := readTorrc()
 	if err != nil {
 		return TorLNDRESTState{}, err
 	}
-	if err := validateLNDRESTTorrc(torrc); err != nil {
+	if err := validateLNDRESTTorrc(torrc, targets...); err != nil {
 		return TorLNDRESTState{}, err
 	}
-	dir, found := findLNDRESTService(torrc)
+	dir, target, found := existingTorRESTTarget(torrc, targets)
+	if !found {
+		// An existing port-8080 service with a different/unavailable target needs
+		// review, not a second onion or silent retargeting.
+		for _, line := range strings.Split(torrc, "\n") {
+			fields := strings.Fields(strings.SplitN(line, "#", 2)[0])
+			if len(fields) >= 2 && strings.EqualFold(fields[0], "HiddenServicePort") && fields[1] == torLNDRESTPort {
+				return TorLNDRESTState{}, errors.New("existing REST onion target requires manual review")
+			}
+		}
+		target = targets[0]
+	}
+	if !lndRESTReachable(ctx, target) {
+		return TorLNDRESTState{}, errors.New("verified local LND REST listener is unavailable")
+	}
 	if !found {
 		if err := validateOnionPath(torLNDRESTDir); err != nil {
 			return TorLNDRESTState{}, err
 		}
-		updated := appendLNDRESTService(torrc)
+		updated := appendLNDRESTService(torrc, target)
 		if err := writeValidatedTorrc(updated, info, func(candidate string) error { return manager.verifyTorConfigAt(ctx, candidate) }); err != nil {
 			return TorLNDRESTState{}, err
 		}
@@ -145,14 +171,73 @@ func (manager *NativeTorLNDRESTManager) reloadTor(ctx context.Context) error {
 	return errors.New("no running native Tor daemon found")
 }
 
-func lndRESTReachable(ctx context.Context) bool {
+func lndRESTReachable(ctx context.Context, targets ...string) bool {
+	target := torLNDRESTTarget
+	if len(targets) > 0 {
+		target = targets[0]
+	}
 	dialer := net.Dialer{Timeout: 2 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", torLNDRESTTarget)
+	conn, err := dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
 		return false
 	}
 	_ = conn.Close()
 	return true
+}
+
+func existingTorRESTTarget(torrc string, targets []string) (string, string, bool) {
+	for _, target := range targets {
+		if dir, found := findLNDRESTService(torrc, target); found {
+			return dir, target, true
+		}
+	}
+	return "", "", false
+}
+
+func (manager *NativeTorLNDRESTManager) restTargets(ctx context.Context) ([]string, error) {
+	unit := manager.lndUnit
+	if unit == "" {
+		unit = "lnd.service"
+	}
+	pid, err := manager.runner.Run(ctx, "/usr/bin/systemctl", "show", unit, "--property=MainPID", "--value")
+	if err != nil {
+		return nil, errors.New("cannot identify native LND service")
+	}
+	pid = strings.TrimSpace(pid)
+	if pid == "0" || pid == "" {
+		return nil, nil
+	}
+	sockets, err := manager.runner.Run(ctx, "/usr/bin/ss", "-H", "-ltnp", "sport = :8080")
+	if err != nil {
+		return nil, errors.New("cannot inspect native LND REST listeners")
+	}
+	bridges := map[string]bool{}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, errors.New("cannot inspect local interfaces")
+	}
+	for _, iface := range interfaces {
+		if iface.Name != "docker0" && !strings.HasPrefix(iface.Name, "br-") {
+			continue
+		}
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join("/sys/class/net", iface.Name, "bridge")); err != nil || !info.IsDir() {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err == nil && ip.IsPrivate() {
+				bridges[ip.String()] = true
+			}
+		}
+	}
+	return selectTorRESTTargets(sockets, pid, bridges), nil
 }
 
 func readTorrc() (string, os.FileInfo, error) {

@@ -442,16 +442,19 @@ Body:
 
 GET /api/tor/lnd-rest
 - Read-only, authenticated status through the privileged broker: `status`
-  (`absent`, `pending`, `configured`), `rest_reachable` (TCP reachability at
-  `127.0.0.1:8080`), optional `hostname`, `url`, and `managed`.
+  (`absent`, `pending`, `configured`), `rest_reachable` (TCP reachability of a
+  verified local native-LND listener on port 8080), optional `hostname`, `url`, and `managed`.
 - `configured` means a matching torrc block and a public hostname file exist;
   it does not certify external Tor connectivity or the client's TLS trust.
 
 POST /api/tor/lnd-rest/ensure
 - Body: `{"confirm":true,"confirm_password":"..."}`. Requires normal session/
   CSRF protection and fresh `lnd_config` reauthentication when login is enabled.
-- No caller-selected port, target, path or command. Creates the fixed service
-  `8080 -> 127.0.0.1:8080`, or reuses a matching manually configured service.
+- No caller-selected port, target, path or command. Prefers a loopback listener
+  owned by the running native LND PID; also accepts a private address assigned
+  to an active local Docker bridge. Remote/private LAN addresses are not accepted.
+  Creates virtual port 8080 or reuses a matching manually configured service;
+  an existing unmatched port-8080 service requires review instead of duplication.
 - Requires native Tor and the local REST listener. Checks the candidate with
   Tor before atomically replacing `/etc/tor/torrc`, then reloads the running
   native Tor daemon. A failed reload restores the previous configuration.

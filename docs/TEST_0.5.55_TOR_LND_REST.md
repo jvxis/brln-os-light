@@ -130,6 +130,22 @@ review found the missing torrc write permission before publication.
   Bitcoin and Tor process identities and all LND TLS hashes remained unchanged.
 - Windows amd64 `go test -p 2 ./...` and `go vet -p 2 ./...` passed again.
 
+### Fresh-install harness finding (2026-11-12)
+
+The first full `install.sh` run on a new Ubuntu 24.04.3 amd64 clone used an
+incorrect harness `umask 077`. The installer built the Manager directory and
+binary as root:root 0700; systemd's `lightningos` user failed with 203/EXEC.
+`namei`, `stat`, a user execute check and mount options identified the exact
+permission failure (not noexec). The complete `install_manager()` function is
+byte-for-byte identical to released 0.5.54; this permission sensitivity predates
+this PR. It is not counted as a passed fresh-install test or silently ignored.
+
+The harness was corrected to the normal 022 mask. Only the two identified,
+root-owned, non-symlink Manager paths were normalized to 0755 on that disposable,
+and the broker self-test then passed. The original failed log/exit record were
+retained before a complete installer retry. This repaired/repeated scenario is
+distinct from a clean first-install result; a separate clean rerun is pending.
+
 Only on an explicitly authorized disposable regtest host with native Tor, Alice
 REST listening on 127.0.0.1:8080, and `/etc/los-regtest/LAB_ONLY` containing
 `LOS_REGTEST_ONLY`. Never enable this test on a production/funds-bearing node.

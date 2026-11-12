@@ -90,7 +90,11 @@ review found the missing torrc write permission before publication.
   returned. Added a real root-only-file regression, including a read check as
   debian-tor. The subsequent network rerun timed out after 201.64s; permission
   recovery alone is not recorded as an external-connectivity pass. A separate
-  fresh-identity disposable retry retains the previous test keys as evidence.
+  fresh-identity disposable retry also timed out (201.87s); the previous test
+  keys were retained as evidence. An independent SOCKS client on LOS-TEST2 also
+  timed out connecting to the disposable onion. Tor reported bootstrap 100%,
+  network liveness up and six built circuits. Root cause remains unresolved;
+  do not dismiss these failures solely as publication delay.
 - The integrated Manager, broker, UI and broker unit were deployed to LOS-TEST2
   with retained rollback artifacts. This is a candidate deployment, **not** an
   old-Manager UI upgrade-path test. LND remains on its existing 0.21.4 runtime;

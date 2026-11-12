@@ -2900,7 +2900,7 @@ func (s *RebalanceService) queueGuaranteedRebalanceSlot(ctx context.Context, cfg
 	for _, target := range targets {
 		targetIDs = append(targetIDs, target.ChannelID)
 	}
-	cooldowns := s.loadSovereignTargetStructuralCooldowns(ctx, targetIDs, cfg, scanAt)
+	cooldowns := s.loadSovereignTargetStructuralCooldowns(ctx, targetIDs, cfg, scanAt, countEligibleRebalanceSources(channels))
 	targets, structuralSkipped := filterGuaranteedRebalanceTargets(targets, cooldowns, cfg, scanAt)
 	if structuralSkipped > 0 {
 		result.SkipReason = guaranteedStructuralCooldownReason
@@ -4190,7 +4190,7 @@ func (s *RebalanceService) runAutoScan() {
 		sovereignPairStats := s.loadPairStatsSummaryForTargets(ctx, sovereignTargetIDs, scanAt)
 		sovereignRecentStats := s.loadRecentSovereignTargetStats(ctx, cfg, sovereignTargetIDs, scanAt)
 		mergeRecentSovereignTargetStats(sovereignPairStats, sovereignRecentStats)
-		sovereignStructuralCooldowns := s.loadSovereignTargetStructuralCooldowns(ctx, sovereignTargetIDs, cfg, scanAt)
+		sovereignStructuralCooldowns := s.loadSovereignTargetStructuralCooldowns(ctx, sovereignTargetIDs, cfg, scanAt, countEligibleRebalanceSources(snapshots))
 		sovereignUnsoldLiquidity := s.loadSovereignUnsoldPaidLiquidityStats(ctx, cfg, sovereignTargetIDs, scanAt)
 		sovereignPlan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
 			Channels:                      snapshots,
@@ -9770,9 +9770,36 @@ group by target_channel_id
 	return stats
 }
 
+// sovereignStructuralCooldownMinAttempts returns how many attempts an
+// "all sources failed" job needs before it counts as a structural (no-route)
+// failure. The fixed floor of 20 was tuned for a large source pool; a node
+// with fewer eligible sources exhausts its whole pool in fewer attempts and
+// would otherwise never enter the cooldown, re-queueing the same dead target
+// every scan. An unknown pool size (<= 0) keeps the fixed floor.
+func sovereignStructuralCooldownMinAttempts(eligibleSources int) int {
+	if eligibleSources <= 0 || eligibleSources >= sovereignTargetStructuralCooldownMinAttempts {
+		return sovereignTargetStructuralCooldownMinAttempts
+	}
+	return eligibleSources
+}
+
+// countEligibleRebalanceSources reports how many channels can currently act
+// as a rebalance source, i.e. the pool an "all sources failed" job exhausts.
+func countEligibleRebalanceSources(channels []RebalanceChannel) int {
+	count := 0
+	for _, channel := range channels {
+		if channel.EligibleAsSource {
+			count++
+		}
+	}
+	return count
+}
+
 // Discovery probes are left out: a success above the fee cap must not clear
-// the cooldown the target earned at the normal cap.
-func (s *RebalanceService) loadSovereignTargetStructuralCooldowns(ctx context.Context, targetIDs []uint64, cfg RebalanceConfig, now time.Time) map[uint64]sovereignTargetStructuralCooldownStat {
+// the cooldown the target earned at the normal cap. eligibleSources is the
+// current source pool size; it lowers the attempt threshold on small nodes
+// (see sovereignStructuralCooldownMinAttempts).
+func (s *RebalanceService) loadSovereignTargetStructuralCooldowns(ctx context.Context, targetIDs []uint64, cfg RebalanceConfig, now time.Time, eligibleSources int) map[uint64]sovereignTargetStructuralCooldownStat {
 	stats := map[uint64]sovereignTargetStructuralCooldownStat{}
 	if s.db == nil || len(targetIDs) == 0 {
 		return stats
@@ -9837,7 +9864,7 @@ select target_channel_id,
   max(last_success_at) as last_success_at
 from failure_jobs
 group by target_channel_id
-`, ids, since, sovereignTargetStructuralCooldownMinAttempts)
+`, ids, since, sovereignStructuralCooldownMinAttempts(eligibleSources))
 	if err != nil {
 		return stats
 	}

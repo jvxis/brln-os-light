@@ -20,6 +20,9 @@ The broker systemd template gains only `ReadWritePaths=-/etc/tor`, needed for
 atomic torrc replacement under `ProtectSystem=full`; the Manager gains no access.
 Missing Tor does not prevent broker startup. The candidate configuration is
 checked by Tor before replacement. Reload failures restore the original torrc.
+Atomic writes use root:debian-tor 0640: Tor must still read the file after
+dropping privileges. A legacy root:root 0600 file can load at startup yet fail
+on SIGHUP; systemctl's successful signal delivery does not prove reload success.
 Removal was optional in the issue and is deliberately outside this first version.
 
 The onion exposes the REST API, not an invoice-only proxy. Any valid macaroon
@@ -59,7 +62,44 @@ review found the missing torrc write permission before publication.
   but timed out connecting to the onion, before TLS. Local REST TLS
   validated against Alice's public certificate and rejected a no-macaroon call
   as expected. This is an unresolved integration failure, not a passed test or
-  evidence that the network is merely slow. It must be resolved before readiness.
+  evidence that the network is merely slow. See the later integration results below.
+
+## Integrated candidate follow-up — 2026-11-12
+
+- Assembled PRs #395–#405 and #408 in a separate
+  local validation branch; #403/#396 retain their #395 dependency. No release
+  or main/release-branch merge was performed. The App Store merge preserves
+  both the LNDg spending warning and LNbits extension/2FA warning.
+- Full candidate: Windows amd64 `go test -p 2 ./...`, `go vet -p 2 ./...`,
+  `npm ci --ignore-scripts`, `npm run build` passed. PT/EN desktop/mobile Tor
+  and LNbits/LNDg browser fixtures passed. One browser harness run hung and was
+  stopped; bounded CDP timeouts were added in the integration branch.
+- Ubuntu 24 amd64 disposable: `TestLNbitsNativeDockerMigration` passed with
+  LNbits 1.7.1, native regtest LND 0.21.8, all three nodes synchronized. Covers
+  clean-data install, no default extensions, real 2FA enrollment/login/recovery,
+  running/stopped migration, failed stop, interrupted bake/retry, and real
+  invoice/subscription/payment/tracking using only regtest coins. Native LND,
+  Bitcoin and Tor identities and TLS hashes remained unchanged.
+- Tor network validation under the actual broker sandbox passed in 41.68s:
+  SOCKS5 → onion → REST with verified TLS, no macaroon, expected authentication
+  rejection. A bounded publication window replaced six immediate retries.
+  Earlier failures remain recorded; this does not guarantee Tor availability.
+- LOS-TEST2 exposed a root:root 0600 torrc: SIGHUP returned success while Tor
+  logged permission denied and closed its Control listener. Corrected to
+  root:debian-tor 0640 and reloaded (no daemon restart). The Control listener
+  returned. Added a real root-only-file regression, including a read check as
+  debian-tor. The subsequent network rerun timed out after 201.64s; permission
+  recovery alone is not recorded as an external-connectivity pass. A separate
+  fresh-identity disposable retry retains the previous test keys as evidence.
+- The integrated Manager, broker, UI and broker unit were deployed to LOS-TEST2
+  with retained rollback artifacts. This is a candidate deployment, **not** an
+  old-Manager UI upgrade-path test. LND remains on its existing 0.21.4 runtime;
+  the installer pin does not automatically upgrade a running LND.
+- Authenticated API → socket-activated broker correctly detected LOS-TEST2's
+  existing 172.17.0.1:8080 listener as local Docker, created the onion, and the
+  onion reached LND using its verified existing TLS certificate. A no-macaroon
+  request was rejected. LNbits HTTP 200 and its running container were confirmed.
+  LND/Tor PIDs, LND configuration and TLS were preserved; Friendspool was untouched.
 
 ## Reproducing the privileged test
 
@@ -87,5 +127,8 @@ external Lightning Address provider's TLS configuration.
 Keep the PR draft until installation/upgrade integration is complete: fresh
 `install.sh`, `install_existing.sh`, native ARM installer path, and old Manager UI
 upgrade deploying the changed broker unit. A root test under the correct sandbox
-is not the complete authenticated UI → socket-activated broker deployment test.
-No installer-matrix waiver was requested or assumed. No production node was used.
+is not a complete installer/old-updater test. Authenticated API/socket-activated
+broker deployment was additionally exercised on LOS-TEST2; it does not replace
+the installer matrix. No installer-matrix waiver was requested or assumed.
+No funds-bearing node was used for payment, credential-revocation or failure
+injection fixtures; those tests remained isolated on disposable regtest.

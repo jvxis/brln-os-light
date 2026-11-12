@@ -9,7 +9,88 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+// financialChannelOpenStaleAfter bounds how long a dispatched channel open may
+// stay unresolved with no channel carrying its memo. A published funding shows
+// up in PendingChannels (with the memo) within seconds, so an hour without any
+// open, pending or closing channel for the intent means LND never funded it.
+const financialChannelOpenStaleAfter = time.Hour
+
+// financialChannelOpenFailureDefinitive reports whether an OpenChannel /
+// BatchOpenChannel error proves that no funding was dispatched. Timeouts,
+// cancellation and transport failures stay uncertain: LND may still be
+// negotiating and publish the funding after we gave up waiting.
+func financialChannelOpenFailureDefinitive(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if st, ok := status.FromError(err); ok {
+		switch st.Code() {
+		case codes.DeadlineExceeded, codes.Canceled, codes.Unavailable, codes.Aborted, codes.Internal:
+			return false
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{"deadline exceeded", "context canceled", "connection refused", "transport is closing", "unavailable", "connection reset", "broken pipe"} {
+		if strings.Contains(msg, needle) {
+			return false
+		}
+	}
+	return true
+}
+
+// recordFinancialChannelDispatchFailure marks the intent proof with a
+// definitive native rejection. It is a no-op outside an intent execution or
+// when the error may still have left a funding in flight.
+func recordFinancialChannelDispatchFailure(ctx context.Context, kind string, openErr error) {
+	execution, bound := ctx.Value(financialIntentContextKey{}).(*financialIntentExecution)
+	if !bound || execution == nil || execution.store == nil || execution.record == nil {
+		return
+	}
+	if !financialChannelOpenFailureDefinitive(openErr) {
+		return
+	}
+	latest, _, err := execution.store.get(execution.record.ID)
+	if err != nil {
+		return
+	}
+	var proof financialNativeProof
+	if len(latest.Proof) == 0 || json.Unmarshal(latest.Proof, &proof) != nil || proof.Kind != kind || !proof.DispatchStarted {
+		return
+	}
+	proof.DispatchFailed = true
+	proof.FailedAt = time.Now()
+	proof.FailureReason = lndDetailedErrorMessage(openErr)
+	if encoded, err := json.Marshal(proof); err == nil {
+		_ = execution.store.saveProof(latest.ID, encoded)
+	}
+}
+
+// financialChannelOpenRejection decides whether a dispatched channel open
+// with no channel carrying its memo can be closed as rejected. It returns the
+// 409 body to commit, or false while the outcome must stay uncertain.
+func financialChannelOpenRejection(proof financialNativeProof, now time.Time) ([]byte, bool) {
+	if proof.DispatchFailed {
+		reason := strings.TrimSpace(proof.FailureReason)
+		if reason == "" {
+			reason = "LND rejected the channel open"
+		}
+		body, _ := json.Marshal(map[string]string{"code": "channel_open_rejected", "error": reason + "; no channel was funded"})
+		return body, true
+	}
+	if !proof.StartedAt.IsZero() && now.Sub(proof.StartedAt) >= financialChannelOpenStaleAfter {
+		body, _ := json.Marshal(map[string]string{"code": "channel_open_not_found", "error": "no open, pending or closing channel carried this intent memo within 1h of dispatch; LND did not fund a channel for it"})
+		return body, true
+	}
+	return nil, false
+}
 
 type financialChannelOpenRequest struct {
 	PeerAddress     string   `json:"peer_address,omitempty"`
@@ -156,7 +237,18 @@ func (s *Server) observeFinancialChannelOpen(ctx context.Context, record *financ
 		return 0, nil, errFinancialIntentPending
 	}
 	channels, err := s.lnd.FinancialIntentChannels(ctx, "los-intent:"+record.ID)
-	if err != nil || len(channels) != len(batch.Channels) || len(channels) == 0 {
+	if err != nil {
+		return 0, nil, errFinancialIntentPending
+	}
+	if len(channels) == 0 {
+		// A channel that exists always wins over a recorded failure; only an
+		// empty native result may close the intent as rejected.
+		if body, ok := financialChannelOpenRejection(proof, time.Now()); ok {
+			return 409, body, nil
+		}
+		return 0, nil, errFinancialIntentPending
+	}
+	if len(channels) != len(batch.Channels) {
 		return 0, nil, errFinancialIntentPending
 	}
 	results := make([]lndclient.BatchOpenChannelResult, len(batch.Channels))

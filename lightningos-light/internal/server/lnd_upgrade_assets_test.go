@@ -9,6 +9,7 @@ func TestLNDUpgradeAuthenticatesReleaseBeforeExtraction(t *testing.T) {
 	script := embeddedUpgradeScript
 	required := []string{
 		`MIN_REQUIRED_SIGNATURES=5`,
+		`7530B54D5E45A68760E68926019A44857735FD20:gijswijs`,
 		`/v${VERSION}/scripts/keys/${username}.asc`,
 		`--import "$key_path"`,
 		`"VALIDSIG"`,

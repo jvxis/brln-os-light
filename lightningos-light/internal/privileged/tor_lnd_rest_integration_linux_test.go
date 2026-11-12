@@ -116,11 +116,16 @@ func TestTorLNDRESTLive(t *testing.T) {
 		defer transport.CloseIdleConnections()
 		client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
 		var reachable bool
-		for attempt := 0; attempt < 6; attempt++ {
+		publicationDeadline := time.Now().Add(3 * time.Minute)
+		for time.Now().Before(publicationDeadline) && ctx.Err() == nil {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+first.Hostname+":8080/v1/getinfo", nil)
 			resp, err := client.Do(req)
 			if err != nil {
 				t.Log("Tor attempt:", strings.ReplaceAll(err.Error(), first.Hostname, "[test-onion]"))
+				select {
+				case <-ctx.Done():
+				case <-time.After(10 * time.Second):
+				}
 				continue
 			}
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

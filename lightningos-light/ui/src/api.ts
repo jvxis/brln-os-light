@@ -327,6 +327,10 @@ export const getTorUpgradeStatus = (force?: boolean) =>
   request(`/api/tor/upgrade/status${buildQuery({ force: force ? 1 : undefined })}`)
 export const startTorUpgrade = () =>
   request('/api/tor/upgrade/start', { method: 'POST', body: JSON.stringify({}) })
+export type TorLndRestStatus = { status: 'absent' | 'pending' | 'configured'; hostname?: string; url?: string; managed?: boolean; rest_reachable: boolean }
+export const getTorLndRest = (): Promise<TorLndRestStatus> => request('/api/tor/lnd-rest')
+export const ensureTorLndRest = (confirm_password: string): Promise<TorLndRestStatus> =>
+  request('/api/tor/lnd-rest/ensure', { method: 'POST', body: JSON.stringify({ confirm: true, confirm_password }) })
 export const getWizardStatus = () => request('/api/wizard/status')
 
 export const postBitcoinRemote = (payload: { rpcuser: string; rpcpass: string }) =>

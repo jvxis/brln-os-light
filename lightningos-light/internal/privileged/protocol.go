@@ -37,6 +37,8 @@ const (
 	OperationLNDUpgradeStart                 Operation = "upgrade.lnd.start"
 	OperationTorMetadataRefresh              Operation = "packages.tor.refresh"
 	OperationTorUpgradeStart                 Operation = "upgrade.tor.start"
+	OperationTorLNDRESTStatus                Operation = "tor.lnd_rest.status"
+	OperationTorLNDRESTEnsure                Operation = "tor.lnd_rest.ensure"
 	OperationLightningOSUpgradeStart         Operation = "upgrade.lightningos.start"
 	OperationAppLifecycle                    Operation = "app.compose.lifecycle"
 	OperationAppSnapshot                     Operation = "app.compose.snapshot"
@@ -279,6 +281,16 @@ type TorUpgradeState struct {
 	Status     string `json:"status"`
 	Unit       string `json:"unit,omitempty"`
 	VerifyOnly bool   `json:"verify_only,omitempty"`
+}
+
+// TorLNDRESTState reports the onion service that forwards port 8080 to the
+// local LND REST listener. Hostname is the public onion name only; the
+// private key never leaves /var/lib/tor.
+type TorLNDRESTState struct {
+	Status        string `json:"status"`
+	Hostname      string `json:"hostname,omitempty"`
+	Managed       bool   `json:"managed,omitempty"`
+	RESTReachable bool   `json:"rest_reachable"`
 }
 
 type LightningOSUpgradeStartParams struct {
@@ -836,6 +848,11 @@ func ValidateRequest(request Request) error {
 		}
 		if len(params.HelperContent) == 0 || len(params.HelperContent) > 48*1024 {
 			return errors.New("Tor upgrade helper content is invalid")
+		}
+	case OperationTorLNDRESTStatus, OperationTorLNDRESTEnsure:
+		var params struct{}
+		if err := decodeStrict(request.Params, &params); err != nil {
+			return fmt.Errorf("invalid %s params: %w", request.Operation, err)
 		}
 	case OperationLightningOSUpgradeStart:
 		var params LightningOSUpgradeStartParams

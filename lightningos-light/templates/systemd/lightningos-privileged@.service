@@ -15,6 +15,8 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
 ReadWritePaths=/usr/local /etc/lightningos /etc/ufw /etc/systemd/system -/etc/avahi/services
+# Optional native Tor: fixed broker-only onion REST operation, atomic torrc update.
+ReadWritePaths=-/etc/tor
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true

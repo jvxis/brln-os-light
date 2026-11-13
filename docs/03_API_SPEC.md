@@ -462,6 +462,37 @@ Body:
 
 ## Tor status and upgrade
 
+GET /api/tor/lnd-rest
+- Read-only, authenticated status through the privileged broker: `status`
+  (`absent`, `pending`, `configured`), `rest_reachable` (TCP reachability of a
+  verified local native-LND listener on port 8080), optional `hostname`, `url`, and `managed`.
+- `configured` means a matching torrc block and a public hostname file exist;
+  it does not certify external Tor connectivity or the client's TLS trust.
+
+POST /api/tor/lnd-rest/ensure
+- Body: `{"confirm":true,"confirm_password":"..."}`. Requires normal session/
+  CSRF protection and fresh `lnd_config` reauthentication when login is enabled.
+- No caller-selected port, target, path or command. Prefers a loopback listener
+  owned by the running native LND PID; also accepts a private address assigned
+  to an active local Docker bridge. Remote/private LAN addresses are not accepted.
+  Creates virtual port 8080 or reuses a matching manually configured service;
+  an existing unmatched port-8080 service requires review instead of duplication.
+- Requires native Tor and the local REST listener. Checks the candidate with
+  Tor before atomically replacing `/etc/tor/torrc`, then reloads the running
+  native Tor daemon. A failed reload restores the previous configuration.
+- Does not restart LND/Tor, edit lnd.conf, regenerate TLS material, create a
+  macaroon or open a clearnet firewall port. Include-based/quoted/ambiguous
+  configurations and unsafe paths require manual review and are not rewritten.
+- The onion exposes the REST API with **any valid macaroon's permissions**.
+  External invoice services should receive only a dedicated invoice macaroon,
+  never admin. This is not the node's P2P onion. Existing TLS certificates may
+  not contain the onion name: clients must establish TLS trust securely; this
+  operation does not disable certificate validation or change certificates.
+- Returns the same status shape as GET; `pending` allows a later GET refresh.
+  `400` invalid confirmation/input, `428` reauthentication required, `409`
+  preparation failure, `503` enforcing broker unavailable. Removal is not
+  provided in this first version.
+
 GET /api/tor/upgrade/status
 - Returns the installed Tor/runtime version, current APT candidate, package source, service/port health, update availability, transient upgrade state, and check timestamp.
 - `force=1` refreshes APT metadata before returning status.

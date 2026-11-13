@@ -4,6 +4,7 @@ import { getLogs, getTorUpgradeStatus, startTorUpgrade } from '../../api'
 import { getLocale } from '../../i18n'
 import { formatJournalLogLine, formatJournalLogLines } from '../../utils/journalLogs'
 import StatusBadge from './StatusBadge'
+import TorLndRestOnion from './TorLndRestOnion'
 import type { Tone } from './types'
 
 type TorUpgradeStatus = {
@@ -265,6 +266,8 @@ export default function TorUpgradeCard() {
         </div>
 
         <p className="text-xs text-fog/50">{t('torUpgrade.warning')}</p>
+
+        <TorLndRestOnion />
       </div>
 
       {modalOpen && (

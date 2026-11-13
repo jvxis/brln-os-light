@@ -1,6 +1,12 @@
 package appmanifest
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
+	"strings"
+)
 
 const (
 	BTCPayID                     = "btcpay"
@@ -226,4 +232,57 @@ networks:
 		torEnvironment,
 		torVolumes,
 	)
+}
+
+// BTCPayComposeWiringFromEnv derives the two Compose wiring choices of an
+// installed BTCPay declaration from its existing environment, offline: whether
+// NBXplorer joins the Bitcoin consumer network (App Store bitcoind or the
+// native host gateway) and whether the isolated Tor proxy is declared (Onion
+// P2P endpoint). These are the host rules the privileged broker applies when it
+// validates that environment; the broker still performs the complete
+// validation before any lifecycle command. Only the RPC and P2P hosts are
+// inspected. Credentials are never returned and no value appears in errors.
+func BTCPayComposeWiringFromEnv(raw []byte) (joinBitcoinNetwork bool, useTorProxy bool, err error) {
+	if len(raw) == 0 || len(raw) > 32*1024 || raw[len(raw)-1] != '\n' || strings.ContainsAny(string(raw), "\r\x00") {
+		return false, false, errors.New("BTCPay environment encoding is invalid")
+	}
+	values := make(map[string]string)
+	lines := strings.Split(string(raw), "\n")
+	for _, line := range lines[:len(lines)-1] {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || key == "" || value == "" {
+			return false, false, errors.New("BTCPay environment entry is invalid")
+		}
+		if _, duplicate := values[key]; duplicate {
+			return false, false, errors.New("BTCPay environment entry is duplicated")
+		}
+		values[key] = value
+	}
+	rpcURL, err := url.Parse(values["NBXPLORER_BTCRPCURL"])
+	if err != nil || rpcURL.Hostname() == "" {
+		return false, false, errors.New("BTCPay Bitcoin RPC wiring is invalid")
+	}
+	nodeHost, _, err := net.SplitHostPort(values["NBXPLORER_BTCNODEENDPOINT"])
+	if err != nil || nodeHost == "" {
+		return false, false, errors.New("BTCPay Bitcoin P2P wiring is invalid")
+	}
+	switch strings.ToLower(rpcURL.Hostname()) {
+	case "bitcoind", BitcoinConsumerHostGateway:
+		joinBitcoinNetwork = true
+	}
+	return joinBitcoinNetwork, isBTCPayOnionHost(nodeHost), nil
+}
+
+func isBTCPayOnionHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	label := strings.TrimSuffix(host, ".onion")
+	if label == host || len(label) != 56 {
+		return false
+	}
+	for _, char := range label {
+		if (char < 'a' || char > 'z') && (char < '2' || char > '7') {
+			return false
+		}
+	}
+	return true
 }

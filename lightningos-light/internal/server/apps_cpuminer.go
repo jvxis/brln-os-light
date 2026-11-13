@@ -242,6 +242,11 @@ func (s *Server) uninstallCpuMiner(ctx context.Context) error {
 
 func removeCpuMinerApp(ctx context.Context, paths cpuMinerPaths) error {
 	if fileExists(paths.ComposePath) {
+		// The Compose is static catalog content; the environment (payout and
+		// pool settings) is never rewritten here.
+		if err := reconcileInstalledCatalogFile(paths.ComposePath, cpuMinerComposeContents()); err != nil {
+			return fmt.Errorf("failed to reconcile CPU Lottery Miner declaration: %w", err)
+		}
 		if handled, err := system.RemoveAppWithBroker(ctx, cpuMinerAppID); !handled {
 			return errors.New("CPU Lottery Miner removal requires privileged broker enforce mode")
 		} else if err != nil {

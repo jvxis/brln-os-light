@@ -84,8 +84,14 @@ func (a mempoolApp) Stop(ctx context.Context) error {
 }
 
 func (a mempoolApp) Uninstall(ctx context.Context) error {
-	paths := mempoolAppPaths()
+	return removeMempoolApp(ctx, mempoolAppPaths())
+}
+
+func removeMempoolApp(ctx context.Context, paths mempoolPaths) error {
 	if fileExists(paths.ComposePath) {
+		if err := reconcileMempoolCatalogDeclaration(paths); err != nil {
+			return fmt.Errorf("failed to reconcile Mempool declaration: %w", err)
+		}
 		if handled, err := system.RemoveAppWithBroker(ctx, mempoolAppID); !handled {
 			return errors.New("Mempool removal requires privileged broker enforce mode")
 		} else if err != nil {
@@ -96,6 +102,27 @@ func (a mempoolApp) Uninstall(ctx context.Context) error {
 		return fmt.Errorf("failed to remove app files: %w", err)
 	}
 	return nil
+}
+
+// reconcileMempoolCatalogDeclaration refreshes only the Compose declaration
+// left by an older catalog, derived offline from the existing runtime
+// environment exactly as the broker derives it. The secret-bearing environment
+// is only read, never rewritten; one the catalog cannot parse leaves the
+// Compose untouched for the broker to refuse as before.
+func reconcileMempoolCatalogDeclaration(paths mempoolPaths) error {
+	envRaw, err := readInstalledCatalogInput(paths.EnvPath, 2048)
+	if err != nil {
+		return nil
+	}
+	runtime, err := appmanifest.ParseMempoolRuntimeEnv(envRaw)
+	if err != nil {
+		return nil
+	}
+	compose, err := appmanifest.MempoolCompose(runtime)
+	if err != nil {
+		return nil
+	}
+	return reconcileInstalledCatalogFile(paths.ComposePath, compose)
 }
 
 func mempoolAppPaths() mempoolPaths {

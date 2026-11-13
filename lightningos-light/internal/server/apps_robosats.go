@@ -133,6 +133,9 @@ func (s *Server) uninstallRobosats(ctx context.Context) error {
 
 func removeRoboSatsApp(ctx context.Context, paths robosatsPaths) error {
 	if fileExists(paths.ComposePath) {
+		if err := reconcileRoboSatsCatalogDeclaration(paths); err != nil {
+			return fmt.Errorf("failed to reconcile RoboSats declaration: %w", err)
+		}
 		if handled, err := system.RemoveAppWithBroker(ctx, appmanifest.RoboSatsID); !handled {
 			return errors.New("RoboSats removal requires privileged broker enforce mode")
 		} else if err != nil {
@@ -172,6 +175,16 @@ func (s *Server) stopRobosats(ctx context.Context) error {
 	} else {
 		return err
 	}
+}
+
+// reconcileRoboSatsCatalogDeclaration refreshes the static catalog Compose and
+// proxy configuration left by an older catalog. Neither depends on node state.
+// The TLS key pair is never touched and a missing proxy file is not created.
+func reconcileRoboSatsCatalogDeclaration(paths robosatsPaths) error {
+	if err := reconcileInstalledCatalogFileIfPresent(paths.CaddyfilePath, robosatsCaddyfileContents()); err != nil {
+		return err
+	}
+	return reconcileInstalledCatalogFile(paths.ComposePath, robosatsComposeContents(paths))
 }
 
 func robosatsComposeContents(paths robosatsPaths) string {

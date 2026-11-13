@@ -87,7 +87,7 @@ func (manager *ComposeAppManager) validatedElectrsFiles() (electrsValidatedFiles
 	}
 	runtime, err := appmanifest.ParseElectrsRuntimeEnv(envRaw)
 	if err != nil {
-		return files, errors.New("Electrs environment does not match the catalog")
+		return files, catalogMismatchError("Electrs environment does not match the catalog")
 	}
 	composeRaw, err := readRegularFile(filepath.Join(appRoot, appmanifest.ElectrsComposeFile), 64*1024)
 	if err != nil {
@@ -95,7 +95,7 @@ func (manager *ComposeAppManager) validatedElectrsFiles() (electrsValidatedFiles
 	}
 	expectedCompose, err := appmanifest.ElectrsCompose(runtime)
 	if err != nil || !bytes.Equal(composeRaw, []byte(expectedCompose)) {
-		return files, errors.New("Electrs compose manifest does not match the catalog")
+		return files, catalogMismatchError("Electrs compose manifest does not match the catalog")
 	}
 	cookiePath := filepath.Join(appRoot, appmanifest.ElectrsCookieFile)
 	if err := validateSecretFileMode(cookiePath); err != nil {

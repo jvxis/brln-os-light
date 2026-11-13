@@ -93,17 +93,17 @@ func (manager *ComposeAppManager) RevokeLNbitsLegacyCredential(ctx context.Conte
 		snapshotDir := filepath.Join(privateRoot, appmanifest.LNbitsID, appmanifest.LNbitsLNDDir)
 		for _, dir := range []string{privateRoot, filepath.Dir(snapshotDir), snapshotDir} {
 			if err := validateRegularDirectory(dir); err != nil {
-				return errors.New("LNbits credential enrollment requires operator review")
+				return lnbitsCredentialNotEnrolledError("LNbits credential enrollment requires operator review")
 			}
 		}
 		snapshotPath := filepath.Join(snapshotDir, appmanifest.LNbitsMacaroonFile)
 		info, err := os.Lstat(snapshotPath)
 		if err != nil || !info.Mode().IsRegular() || !lnbitsEnrollmentOwnerIsSafe(info) {
-			return errors.New("LNbits credential enrollment is unsafe")
+			return lnbitsCredentialNotEnrolledError("LNbits credential enrollment is unsafe")
 		}
 		enrolled, err := readRegularFile(snapshotPath, 64*1024)
 		if err != nil || !bytes.Equal(enrolled, raw) {
-			return errors.New("LNbits credential differs from its broker enrollment")
+			return lnbitsCredentialNotEnrolledError("LNbits credential differs from its broker enrollment")
 		}
 	}
 	rpc := manager.lnbitsRevocationRPC
@@ -112,7 +112,7 @@ func (manager *ComposeAppManager) RevokeLNbitsLegacyCredential(ctx context.Conte
 	}
 	ids, err := rpc.ListMacaroonIDs(ctx)
 	if err != nil {
-		return errors.New("LND unavailable for LNbits credential migration")
+		return lnbitsCredentialLNDUnavailableError("LND unavailable for LNbits credential migration")
 	}
 	found := false
 	for _, id := range ids {

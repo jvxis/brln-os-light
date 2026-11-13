@@ -25,6 +25,13 @@ type financialNativeProof struct {
 	StartedAt       time.Time `json:"started_at"`
 	PaymentHash     string    `json:"payment_hash,omitempty"`
 	WorkflowID      string    `json:"workflow_id,omitempty"`
+	// DispatchFailed records that the native call returned a definitive
+	// rejection after the dispatch barrier (no funding was published). It
+	// lets reconciliation close the intent instead of waiting forever for a
+	// channel that will never appear.
+	DispatchFailed bool      `json:"dispatch_failed,omitempty"`
+	FailedAt       time.Time `json:"failed_at,omitzero"`
+	FailureReason  string    `json:"failure_reason,omitempty"`
 }
 
 func (s *Server) financialNativeOperations() financialNativeOperations {

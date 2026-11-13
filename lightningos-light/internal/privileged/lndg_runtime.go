@@ -84,7 +84,7 @@ func (manager *ComposeAppManager) validatedLNDgFiles() (lndgValidatedFiles, erro
 	}
 	runtime, err := appmanifest.ParseLNDgRuntimeEnv(envRaw)
 	if err != nil {
-		return files, errors.New("LNDg environment does not match the catalog")
+		return files, catalogMismatchError("LNDg environment does not match the catalog")
 	}
 	for _, secret := range []struct {
 		path string
@@ -107,7 +107,7 @@ func (manager *ComposeAppManager) validatedLNDgFiles() (lndgValidatedFiles, erro
 		return files, errors.New("LNDg entrypoint is unavailable")
 	}
 	if !bytes.Equal(entrypointRaw, []byte(appmanifest.LNDgEntrypoint)) {
-		return files, errors.New("LNDg entrypoint does not match the catalog")
+		return files, catalogMismatchError("LNDg entrypoint does not match the catalog")
 	}
 
 	composePath := filepath.Join(appRoot, appmanifest.LNDgComposeFile)
@@ -141,14 +141,14 @@ func (manager *ComposeAppManager) validatedLNDgFiles() (lndgValidatedFiles, erro
 		placeholderPath := filepath.Join(lndDir, appmanifest.LNDgChannelDBFile)
 		info, placeholderErr := os.Lstat(placeholderPath)
 		if placeholderDB || placeholderErr != nil || !info.Mode().IsRegular() || info.Size() != 0 {
-			return files, errors.New("LNDg compose manifest does not match the catalog")
+			return files, catalogMismatchError("LNDg compose manifest does not match the catalog")
 		}
 		placeholderCompose := appmanifest.LNDgCompose(appmanifest.LNDgComposePaths{
 			DataDir: dataDir, PgDir: pgDir, LogPath: logPath, LndDir: lndDir,
 			ChannelDBPath: placeholderPath, EntrypointPath: entrypointPath,
 		})
 		if !bytes.Equal(composeRaw, []byte(placeholderCompose)) {
-			return files, errors.New("LNDg compose manifest does not match the catalog")
+			return files, catalogMismatchError("LNDg compose manifest does not match the catalog")
 		}
 	}
 

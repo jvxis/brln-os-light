@@ -113,8 +113,14 @@ func (a electrsApp) Stop(ctx context.Context) error {
 }
 
 func (a electrsApp) Uninstall(ctx context.Context) error {
-	paths := electrsAppPaths()
+	return removeElectrsApp(ctx, electrsAppPaths())
+}
+
+func removeElectrsApp(ctx context.Context, paths electrsPaths) error {
 	if fileExists(paths.ComposePath) {
+		if err := reconcileElectrsCatalogDeclaration(paths); err != nil {
+			return fmt.Errorf("failed to reconcile Electrs declaration: %w", err)
+		}
 		if handled, err := system.RemoveAppWithBroker(ctx, electrsAppID); !handled {
 			return errors.New("Electrs removal requires privileged broker enforce mode")
 		} else if err != nil {
@@ -125,6 +131,27 @@ func (a electrsApp) Uninstall(ctx context.Context) error {
 		return fmt.Errorf("failed to remove app files: %w", err)
 	}
 	return nil
+}
+
+// reconcileElectrsCatalogDeclaration refreshes only the Compose declaration
+// left by an older catalog, derived offline from the existing runtime
+// environment exactly as the broker derives it. The environment and the
+// Bitcoin credential are never rewritten; an environment the catalog cannot
+// parse leaves the Compose untouched for the broker to refuse as before.
+func reconcileElectrsCatalogDeclaration(paths electrsPaths) error {
+	envRaw, err := readInstalledCatalogInput(paths.EnvPath, 256)
+	if err != nil {
+		return nil
+	}
+	runtime, err := appmanifest.ParseElectrsRuntimeEnv(envRaw)
+	if err != nil {
+		return nil
+	}
+	compose, err := appmanifest.ElectrsCompose(runtime)
+	if err != nil {
+		return nil
+	}
+	return reconcileInstalledCatalogFile(paths.ComposePath, compose)
 }
 
 func electrsAppPaths() electrsPaths {

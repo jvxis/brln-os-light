@@ -1,3 +1,4 @@
 *.sh text eol=lf
+lightningos-light/internal/appmanifest/assets/*.py text eol=lf
 lightningos-light/internal/privileged/assets/*.py text eol=lf
 lightningos-light/internal/server/assets/kernel-tcp.py text eol=lf

@@ -3251,6 +3251,17 @@
     "noLogs": "Sem logs ainda.",
     "completed": "Upgrade do Tor concluído com sucesso.",
     "lndRest": {
+      "configure": "Configurar",
+      "configured": "Configurado",
+      "absent": "Não configurado",
+      "unknown": "Status indisponível",
+      "waiting": "Pendente",
+      "unreachable": "Configurado · REST indisponível",
+      "invoiceTitle": "Macaroon de faturas para Lightning Address",
+      "invoiceHelp": "Copie o endereço REST acima e gere aqui um macaroon somente de faturas. Cole o valor base64 no pay.br-ln.com. Isso não cadastra um endereço nem envia credenciais automaticamente para esse serviço.",
+      "invoiceConfirm": "Autorizo criar uma nova credencial para consultar e criar faturas, sem permissões de pagamento, envio on-chain ou gestão de canais.",
+      "invoiceGenerate": "Gerar macaroon de faturas",
+      "invoiceOnce": "Copie agora e guarde o ID da chave raiz para revogação. A credencial sai deste card ao recolher ou sair; não é salva no armazenamento do navegador. Limpar não revoga a credencial, e gerar outra não invalida as anteriores. Trate a área de transferência como sensível.",
       "title": "Endereço .onion do REST do LND",
       "subtitle": "Para serviços de Lightning Address, como o pay.br-ln.com, falarem com o seu node pelo Tor, sem abrir porta no roteador.",
       "create": "Criar endereço .onion do REST",
@@ -3262,7 +3273,7 @@
       "restDown": "Não foi confirmado um listener REST local do LND acessível na porta 8080.",
       "manual": "Este endereço foi configurado à mão no torrc; o LightningOS só o mostra.",
       "failed": "Falha ao consultar o endereço .onion do REST.",
-      "macaroon": "Use este endereço com um macaroon só de fatura (Operações Lightning → Macaroon customizado → preset Permissões de invoice). Nunca entregue o admin.macaroon: com ele e este endereço, quem tiver os dois controla o node."
+      "macaroon": "Use apenas um macaroon de faturas com serviços de Lightning Address. Nunca entregue o admin.macaroon: com ele e este endereço, quem tiver os dois controla o node. Gerar uma credencial de faturas não restringe outros macaroons nem filtra a API REST."
     }
   },
   "appUpgrade": {

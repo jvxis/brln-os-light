@@ -2,6 +2,28 @@
 
 ## Scope and security
 
+### Collapsible setup and invoice credential (2026-11-13)
+
+The subcard starts collapsed, showing configuration state (not an assertion of
+external reachability). Expanding and refreshing perform no mutations. Separate
+explicit actions create the onion and generate an invoice macaroon using the
+existing `/api/lnops/macaroon/bake` invoice_permissions preset and its existing
+reauthentication/CSRF protections. No broker/API permission expansion was added.
+The UI sends no custom permissions or external-permission override. It displays
+base64 and the root key ID; credentials/passwords are not persisted in browser
+storage and are cleared when collapsed/unmounted. Clearing does not revoke a
+credential and regeneration does not revoke predecessors; the UI says so.
+Nothing is automatically sent to pay.br-ln.com or registered there.
+
+Baseline browser suite passed before this UI change after installing missing
+local npm dependencies. Updated real Edge browser fixture passes EN/PT, desktop
+and mobile, collapse/expand, no implicit bake, confirmation/password gates,
+exact preset-only request, auth error/retry, base64 copy, memory clearing,
+manual onion reuse and REST unavailable. Browser test uses synthetic credentials,
+not node secrets. Focused Go Macaroon/TorLNDREST tests and UI build pass.
+No real credential was generated on LOS-TEST2 for this UI test: the operator
+will exercise that step. Existing native macaroon backend behavior is reused.
+
 The dashboard Tor card can explicitly create and copy a REST onion. Nothing is
 created by opening the dashboard. The broker operation adds port 8080 to a
 kernel-reported listener owned by the native LND MainPID, or reuses a matching

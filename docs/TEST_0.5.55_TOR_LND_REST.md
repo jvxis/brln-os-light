@@ -146,6 +146,130 @@ and the broker self-test then passed. The original failed log/exit record were
 retained before a complete installer retry. This repaired/repeated scenario is
 distinct from a clean first-install result; a separate clean rerun is pending.
 
+The repaired installer retry completed with exit 0 and the installed broker
+self-test passed. A separate owner-authorized `los-disposable-0555-tor-fresh-clean`
+clone then started a genuinely clean first installation with umask 022, Ubuntu
+24.04.3 amd64, 6 GiB and 4 vCPUs. Baseline contained neither LOS nor LND. It
+installed the prerequisites, PostgreSQL and the signed LND 0.21.8 archive and
+reached Manager compilation. At that point SSH authentication timed out and
+the guest console reported CPU soft lockups; VirtualBox also reported missed
+guest heartbeats. Windows had approximately 1.3--1.5 GiB available RAM.
+This is an incomplete run, not a successful installer result or a demonstrated
+LOS regression. No REST-onion API mutation had run on this clone.
+
+Only one disposable was running. The owner separately authorized normal shutdown
+of LOS-TEST2 to free resources; its Manager, broker socket and LND were active
+before shutdown. It must be started and checked again after validation. The
+unrelated `brln-e2e-tempo-real` VM was not stopped without separate authorization.
+Normal ACPI shutdown of the stalled clean clone was requested; disks and logs
+remain intact. Existing-install and old-updater gates remain outstanding.
+
+After normal shutdown failed, the owner explicitly authorized power-off of that
+exact stalled clone and normal shutdown of `brln-e2e-tempo-real`. With both
+non-disposable VMs off, the clone resumed at 4 GiB/2 vCPUs and the installer at
+GOMAXPROCS=1/GOMEMLIMIT=1GiB. Windows available RAM recovered to about 12 GiB.
+The original interrupted log was retained separately; the full install.sh retry
+completed with exit 0, native-origin marker, active Manager/PostgreSQL/broker
+socket and successful broker self-test. This covers first LOS provisioning on
+an initially empty host plus interrupted-install recovery, not an uninterrupted
+one-shot run. No installer/product code was changed to obtain this result.
+
+After isolated regtest wallet initialization, the installed authenticated API
+through the real socket-activated broker passed wrong-password/no-write,
+create and identical-repeat checks. Native LND/Tor process identities, lnd.conf
+and TLS cert/key were unchanged. Health and LND status APIs responded HTTP 200.
+An initial harness assertion incorrectly matched commented HiddenServiceDir
+examples in the distro torrc; inspection found two comments, zero active
+directives and no generated service directory. It was replaced by exact before/
+after byte comparison plus the absence of the managed directory, and rerun.
+The fresh fixture uses Tor 0.4.9.16 from the installer repository; NTP was synced
+and Tor reported bootstrap 100%. Network forwarding is checked separately.
+
+The clean fixture's six-attempt onion network run timed out. A subsequent
+instrumented rerun confirmed timeouts in SOCKS connection establishment, before
+TLS (three failures observed, then deliberately stopped with normal VM shutdown
+to continue the remaining installer matrix). An independent client-only Tor
+instance with its own data/guards eventually bootstrapped to 100% but its bounded
+probe also failed; its first attempts occurred before bootstrap completed and
+are not treated as valid service tests. The native client successfully fetched
+the Tor Project's public blog onion (HTTP 200, 8.13s) and clearnet HTTPS through
+SOCKS (HTTP 200, 2.43s). The public control hostname came from
+https://onion.torproject.org/. This narrows the observation but does not resolve
+the new-service publication/connectivity failure. Local config/API success is
+not being relabeled as network success. The clean clone was shut down normally,
+preserving its logs, generated test service and independent-client data.
+
+The separate Ubuntu 24.04.3 amd64 existing-node fixture completed the full
+`install_existing.sh` with exit 0 (4 GiB/2 vCPUs). Before LOS installation it
+had native LND 0.21.8, a zero-peer/zero-fund Bitcoin mainnet fixture and distro
+Tor 0.4.9.11. Original LND/Bitcoin configuration, LND TLS cert/key and all three
+native process identities were preserved; Manager, PostgreSQL and broker socket
+were active and broker self-test passed. Through the installed authenticated
+Manager and real broker, wrong-password/no-write, create and identical retry
+passed without LND/Tor restart or LND config/TLS changes. The actual onion
+network probe passed in 18 seconds: SOCKS5, verified native TLS, and an HTTP 500
+response rejecting the absent macaroon. This does not erase the separate
+fresh-fixture network failure with Tor 0.4.9.16. The existing fixture was shut
+down normally and its evidence retained before moving to the old-updater test.
+
+On `los-disposable-0555-lndg`, the original tagged 0.5.54 installer completed
+successfully. The authenticated original Manager then offered the full candidate
+through a private loopback HTTPS catalog; only that disposable trusted its test
+CA/Git redirect, with no public release/tag. The original Manager/broker binaries
+were hashed and unchanged before starting. The generated helper matched the
+old embedded source byte-for-byte (SHA256
+`5dfce2b88b9d67e7cb9d4b854111d783752513c8d4590cf88ecd052bb3348397`).
+The first attempt correctly refused the harness's manually selected regtest
+macaroon path before cutover: production credential configuration accepts fixed
+mainnet paths, not that lab adaptation. Original installed binaries remained
+unchanged. Its journal was retained. The fixture was corrected to a separate
+empty mainnet chain with zero peers/funds/channels (regtest data preserved),
+without changing product code, and the actual old Manager API retried.
+
+That retry completed at 2026-11-12 23:58:31 UTC with successful systemd exit,
+installed version 0.5.55-Beta, active services, successful broker self-test and
+the new `ReadWritePaths=-/etc/tor` unit directive. Native LND/Tor identities and
+LND config/TLS hashes matched the pre-upgrade baseline. Post-upgrade real API
+wrong-password/no-write, create and identical retry also passed. The reused
+fixture retained a test onion directory from earlier runs; a harness assertion
+requiring its absence was corrected to exact before/after directory metadata
+and content hashes, retaining the no-write invariant. Network validation and
+restoration of the private catalog follow separately.
+
+The post-upgrade fixture ran Tor 0.4.9.16. Six 30-second-circuit attempts failed
+before TLS. A new ephemeral onion created directly via authenticated Tor Control
+(`ADD_ONION`, without LOS/broker/torrc changes) also failed two 90-second-circuit
+attempts; closing its owning Control connection removed it. In that same run,
+the official Tor Project public onion returned HTTP 200 in 15.29s and ordinary
+HTTPS through Tor returned HTTP 200 in 2.15s. This independently reproduces a
+new-onion connectivity failure outside LOS, but does not establish its precise
+network/upstream cause. Temporary catalog hosts/Git redirects/trust CA were
+restored and the catalog service stopped. Failed network runs remain failures.
+
+On resuming the fresh fixture, the retained managed onion still failed four
+90-second-circuit attempts after clock synchronization and Tor bootstrap 100%.
+No Tor-related AppArmor denial appeared in the boot journal. Effective settings
+included PublishHidServDescriptors=1 and DisableNetwork=0. An isolated comparison
+then used an APT-authenticated Ubuntu Tor 0.4.9.11 binary, extracted without
+installing/downgrading any package, and a separate unprivileged process/data/onion
+on SOCKS 19050. It reached the same native LND with verified TLS and missing-
+macaroon rejection in 14s. Cross-client probes: the separate 0.4.9.11 client
+could not reach the native 0.4.9.16 service (90s timeout), whereas the native
+0.4.9.16 client reached the separate 0.4.9.11 service in 8s.
+
+Keeping that separate process's configuration, data, onion and user, changing
+only its executable to the installed upstream 0.4.9.16 binary resulted in two
+90-second-circuit failures. Returning to the 0.4.9.11 binary passed again in 16s.
+Both comparison executables were outside the native AppArmor profile; native
+Tor/config/package were untouched. This A/B/A result reproduces a package/runtime
+dependent service failure without LOS, but live network/time and package build
+differences prevent claiming the exact upstream defect is proven. It is not a
+recommendation to downgrade Tor, and is not a passing native 0.4.9.16 result.
+All comparison processes were transient; the VM was shut down normally with
+data/evidence preserved. The native production-layout fixture added to the
+reused regtest VM was disabled for future boots to avoid competing with its
+original enabled lab services; the original lab data were retained.
+
 Only on an explicitly authorized disposable regtest host with native Tor, Alice
 REST listening on 127.0.0.1:8080, and `/etc/los-regtest/LAB_ONLY` containing
 `LOS_REGTEST_ONLY`. Never enable this test on a production/funds-bearing node.
@@ -167,15 +291,17 @@ external Lightning Address provider's TLS configuration.
 
 ## Remaining release gates
 
-Keep the PR draft until installation/upgrade integration is complete: fresh
-`install.sh`, `install_existing.sh`, and old Manager UI
-upgrade deploying the changed broker unit. A root test under the correct sandbox
-is not a complete installer/old-updater test. Authenticated API/socket-activated
-broker deployment was additionally exercised on LOS-TEST2; it does not replace
-the installer matrix. The owner explicitly waived ARM for this PR on 2026-11-12;
-ARM is not recorded as tested. The amd64 fresh/existing/old-updater gates remain
-mandatory. Authorized fixtures are `los-disposable-0555-lndg`,
-`los-disposable-0555-tor-fresh` and `los-disposable-0555-tor-existing`, one running
-at a time, with normal shutdown and retained disks/evidence at completion.
+Keep the PR draft for the native Tor 0.4.9.16 service-connectivity failure above.
+The amd64 installer/old-updater matrix now has real results: full install.sh on
+an initially empty host with interrupted-install recovery (not an uninterrupted
+one-shot pass), full first install_existing.sh preserving native state, and
+actual original 0.5.54 Manager/broker/helper upgrade to the full candidate.
+Installed authenticated API/broker checks passed in all three scenarios.
+Network access passed on LOS-TEST2 and the distro-Tor existing fixture; failures
+on the two upstream-Tor fixtures remain explicitly unpassed. Resolving that
+dependency/network condition or changing release scope requires a separate
+decision; no package downgrade or security-policy relaxation was shipped.
+The owner explicitly waived ARM on 2026-11-12; ARM is not recorded as tested.
+Only one disposable ran at a time, with disks/evidence retained after shutdown.
 No funds-bearing node was used for payment, credential-revocation or failure
 injection fixtures; those tests remained isolated on disposable regtest.

@@ -27,11 +27,18 @@ export default function PendingFinancialOperations({ confirming }: { confirming:
   const check = async (id: string) => {
     setBusy(true)
     setError('')
+    let reconcileError = ''
+    try { await reconcileFinancialIntent(id) }
+    catch (failure: any) {
+      // A rejected outcome is replayed with its own 4xx status, so a failed
+      // reconcile call does not mean the intent is still uncertain.
+      reconcileError = failure?.message || 'Outcome remains uncertain. No new operation was submitted.'
+    }
     try {
-      await reconcileFinancialIntent(id)
       const state = await getFinancialIntent(id)
       setStates(current => ({ ...current, [id]: state }))
-    } catch (failure: any) { setError(failure?.message || 'Outcome remains uncertain. No new operation was submitted.') }
+      if (reconcileError && !['completed', 'rejected', 'cancelled'].includes(state?.state)) setError(reconcileError)
+    } catch (failure: any) { setError(reconcileError || failure?.message || 'Unable to read operation status.') }
     finally { setBusy(false) }
   }
   const cancel = async (id: string) => {

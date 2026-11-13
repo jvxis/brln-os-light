@@ -1389,6 +1389,7 @@
     "elevatedLndAccessBadge": "Sensitive LND access",
     "elevatedLndAccessTitle": "Direct access to sensitive LND operations",
     "elevatedLndAccessCardBody": "This app receives a dedicated, restricted macaroon, but can perform sensitive operations directly in LND outside LightningOS approval and reauthentication controls.",
+    "lndgSpendingNotice": "LNDg can send Lightning payments, spend on-chain funds, open/close channels and sign messages or transactions. These permissions support its node-management features and bypass LightningOS spending guards and confirmations. Install only if you trust the app and protect access to it. A dedicated macaroon is not a spending limit.",
     "lnbitsWalletOnlyNotice": "Wallet-only macaroon: LNbits node-management functions are not supported. Opening/closing channels, on-chain sends and peer management are blocked; use LightningOS for these operations. Lightning invoices and payments remain enabled, outside LightningOS spending guards. Existing installations must complete credential migration before these restrictions apply.",
     "lnbitsSecurityDefaultsNotice": "New installations start without extensions. Install only extensions you trust. Two-factor authentication is available by default: enroll your authenticator in your LNbits account and save the recovery codes. Existing extensions and security settings are preserved during upgrades; 2FA is not automatically enrolled or required.",
     "elevatedLndAccessInstallTitle": "Review {{app}} access before installing",

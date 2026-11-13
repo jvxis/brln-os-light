@@ -13,7 +13,7 @@ window.i18n=i18n;window.mutations=[];
 window.fetch=async(input,options={})=>{
  const path=String(input).split('?')[0];if(options.method&&options.method!=='GET'){window.mutations.push(path);throw Error('Unexpected mutation')}
  let data={};
- if(path==='/api/apps')data=[{id:'lnbits',name:'LNbits',installed:false,status:'not_installed',port:5000,security_notices:['elevated_lnd_access']},{id:'btcpay',name:'BTCPay Server',installed:false,status:'not_installed',port:23000,security_notices:['limited_lnd_access']}];
+ if(path==='/api/apps')data=[{id:'lnbits',name:'LNbits',installed:false,status:'not_installed',port:5000,security_notices:['elevated_lnd_access']},{id:'lndg',name:'LNDg',installed:false,status:'not_installed',port:8889,security_notices:['elevated_lnd_access']},{id:'btcpay',name:'BTCPay Server',installed:false,status:'not_installed',port:23000,security_notices:['limited_lnd_access']}];
  if(path==='/api/bitcoin/source')data={source:'remote'};
  if(path==='/api/bitcoin-local/status')data={source:'none'};
  return new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json'}});
@@ -31,23 +31,23 @@ try{
  browser=await connect('ws://127.0.0.1:'+port[0]+port[1]);const target=await(await fetch('http://127.0.0.1:'+port[0]+'/json/new?about:blank',{method:'PUT'})).json();page=await connect(target.webSocketDebuggerUrl);
  const ev=async expression=>{const r=await page.call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value};
  const wait=async exp=>{for(let i=0;i<150;i++){if(await ev(exp))return;await sleep(100)}throw Error('Timed out: '+exp)};
- for(const language of ['en','pt-BR'])for(const width of [1280,390]){
+ for(const language of ['en','pt-BR'])for(const width of [1280,390])for(const [app,key] of [['LNbits','lnbitsWalletOnlyNotice'],['LNDg','lndgSpendingNotice']]){
   await page.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:width===390});
-  await page.call('Page.navigate',{url:base+'/fixture'});await wait(`!!window.i18n && document.querySelectorAll('h3').length===2`);
+  await page.call('Page.navigate',{url:base+'/fixture'});await wait(`!!window.i18n && document.querySelectorAll('h3').length===3`);
   await ev(`i18n.changeLanguage('${language}')`);await sleep(150);
-  const notice=await ev(`i18n.t('appStore.lnbitsWalletOnlyNotice')`);assert(!notice.startsWith('appStore.'));
-  const card=await ev(`[...document.querySelectorAll('h3')].find(x=>x.textContent==='LNbits').closest('.section-card').textContent`);
+  const notice=await ev(`i18n.t('appStore.${key}')`);assert(!notice.startsWith('appStore.'));
+  const card=await ev(`[...document.querySelectorAll('h3')].find(x=>x.textContent==='${app}').closest('.section-card').textContent`);
   assert(card.includes(notice));assert(card.includes(await ev(`i18n.t('appStore.elevatedLndAccessCardBody')`)));
   const defaultsNotice=await ev(`i18n.t('appStore.lnbitsSecurityDefaultsNotice')`);
-  assert(!defaultsNotice.startsWith('appStore.'));assert(card.includes(defaultsNotice));
+  assert(!defaultsNotice.startsWith('appStore.'));assert.equal(card.includes(defaultsNotice),app==='LNbits');
   const other=await ev(`[...document.querySelectorAll('h3')].find(x=>x.textContent==='BTCPay Server').closest('.section-card').textContent`);
   assert(!other.includes(notice));assert(other.includes(await ev(`i18n.t('appStore.limitedLndAccessCardBody')`)));
   assert(!other.includes(defaultsNotice));
   assert(await ev(`document.documentElement.scrollWidth<=innerWidth`));
-  await ev(`[...[...document.querySelectorAll('h3')].find(x=>x.textContent==='LNbits').closest('.section-card').querySelectorAll('button')].find(x=>x.textContent.trim()===i18n.t('appStore.install')).click()`);
-  await wait(`document.body.textContent.split(i18n.t('appStore.lnbitsWalletOnlyNotice')).length===3`);
-  await wait(`document.body.textContent.split(i18n.t('appStore.lnbitsSecurityDefaultsNotice')).length===3`);
+  await ev(`[...[...document.querySelectorAll('h3')].find(x=>x.textContent==='${app}').closest('.section-card').querySelectorAll('button')].find(x=>x.textContent.trim()===i18n.t('appStore.install')).click()`);
+  await wait(`document.body.textContent.split(i18n.t('appStore.${key}')).length===3`);
+  if(app==='LNbits') await wait(`document.body.textContent.split(i18n.t('appStore.lnbitsSecurityDefaultsNotice')).length===3`);
   assert.deepEqual(await ev('window.mutations'),[]);
  }
- console.log('PASS: LNbits notice + Lightning spending warning, unchanged BTCPay, PT/EN desktop/mobile, install confirmation, no mutations.')
+ console.log('PASS: LNbits and LNDg notices, unchanged BTCPay, PT/EN desktop/mobile, install confirmation, no mutations.')
 }finally{page?.ws.close();if(browser){try{await browser.call('Browser.close')}catch{}browser.ws.close()}else child?.kill();await server.close()}

@@ -24,6 +24,20 @@ not node secrets. Focused Go Macaroon/TorLNDREST tests and UI build pass.
 No real credential was generated on LOS-TEST2 for this UI test: the operator
 will exercise that step. Existing native macaroon backend behavior is reused.
 
+Deployed the integrated UI on LOS-TEST2 and, at the owner's request, removed
+only the exact managed REST block from torrc, with config verification and
+root-only rollback backup at `/var/backups/lightningos/rest-reset-20261113`.
+Tor was reloaded (not restarted); LND/Tor process identities and LND config/TLS
+hashes were preserved. Onion identity files were retained, so recreation can
+reuse the address. Initial reset harness stopped before any writes because
+Tor's empty authorized_clients directory was not a regular file; the harness
+was corrected to explicitly validate that directory rather than traverse it.
+Post-reset API reports absent with local REST reachable. Manager/broker/LND
+are healthy, LND chain/graph synced, two active channels; LNbits and Hardwallet
+remain running. No macaroon was baked or revoked. UI rollback directory:
+`/opt/lightningos/ui.rest-card-before`. PR remains draft for the previously
+documented Tor 0.4.9.16 connectivity gap; this UI change does not waive it.
+
 The dashboard Tor card can explicitly create and copy a REST onion. Nothing is
 created by opening the dashboard. The broker operation adds port 8080 to a
 kernel-reported listener owned by the native LND MainPID, or reuses a matching

@@ -72,13 +72,17 @@ export default function OnchainSpendingGuard() {
   const limit = status?.rolling_24h_limit_sat || 0
   return (
     <div className="section-card overflow-hidden p-0">
-      <button type="button" className="flex w-full flex-col gap-3 px-5 py-4 text-left sm:flex-row sm:items-center sm:justify-between" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>
+      <button type="button" className="flex w-full flex-col gap-3 px-5 py-4 text-left transition hover:bg-white/[0.025] sm:flex-row sm:items-center sm:justify-between" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h3 className="text-base font-semibold">{t('onchainGuard.title')}</h3>
           <StatusBadge tone={error || !status ? 'warn' : status.enabled ? 'ok' : 'muted'} label={error || !status ? t('onchainGuard.unverified') : status.enabled ? t('wallet.spendingGuardActive') : t('wallet.spendingGuardDisabled')} />
-          <span className="text-xs text-fog/60">{status?.enabled ? t('onchainGuard.summary', { perSend: status.max_send_sat > 0 ? sats(status.max_send_sat) : t('wallet.spendingGuardUnlimited'), used: sats(consumed), limit: limit > 0 ? sats(limit) : t('wallet.spendingGuardUnlimited') }) : t('onchainGuard.feesExcluded')}</span>
+          <span className="hidden text-fog/25 sm:inline" aria-hidden="true">|</span>
+          <span className="min-w-0 text-xs text-fog/60">{status?.enabled ? t('onchainGuard.summary', { perSend: status.max_send_sat > 0 ? sats(status.max_send_sat) : t('wallet.spendingGuardUnlimited'), used: sats(consumed), limit: limit > 0 ? sats(limit) : t('wallet.spendingGuardUnlimited') }) : t('onchainGuard.feesExcluded')}</span>
         </div>
-        <span className="shrink-0 text-xs text-fog/60">{expanded ? t('wallet.spendingGuardHideSettings') : t('wallet.spendingGuardShowSettings')}</span>
+        <span className="flex shrink-0 items-center gap-2 text-xs font-medium text-fog/60">
+          {expanded ? t('wallet.spendingGuardHideSettings') : t('wallet.spendingGuardShowSettings')}
+          <span className={`transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden="true">▼</span>
+        </span>
       </button>
       {expanded && <div className="space-y-4 border-t border-white/10 px-5 py-5">
         <div className="flex flex-wrap items-start justify-between gap-3">

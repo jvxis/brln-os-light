@@ -3291,6 +3291,25 @@
   },
   "onchainHub": {
     "kicker": "ON-CHAIN HUB",
+    "ownership": {
+      "toggle": "Este endereço é meu?",
+      "placeholder": "Cole um endereço bitcoin para saber se ele pertence à carteira deste nó",
+      "check": "Verificar",
+      "checking": "Verificando…",
+      "filter": "Mostrar UTXOs e transações dele",
+      "mine": "meu",
+      "error": "Não foi possível verificar o endereço.",
+      "status": {
+        "owned": "Meu, sob a chave deste nó",
+        "known": "Conhecido, mas fora da chave deste nó",
+        "external": "Não é desta carteira"
+      },
+      "hint": {
+        "owned": "O endereço foi derivado da seed deste nó. Fundos enviados para ele são gastáveis por este nó.",
+        "known": "A carteira enxerga este endereço (importado ou watch-only), mas não consegue gastar dele. Não use como destino de fechamento ou de varredura, a menos que você controle a chave em outro lugar.",
+        "external": "Este endereço não faz parte da carteira deste nó. Não há nada de errado com ele; só pertence a outra pessoa ou a outra carteira."
+      }
+    },
     "title": "On-chain Hub",
     "subtitle": "Visão profunda de UTXOs e transações on-chain com filtros e links externos.",
     "feeFast": "Rápido",

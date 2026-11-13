@@ -242,6 +242,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/channels", s.handleLNChannels)
 		r.Get("/channel-db-impact", s.handleLNChannelDBImpact)
 		r.Get("/peers", s.handleLNPeers)
+		r.Get("/forwards", s.handleLNForwardHistoryGet)
 		r.Get("/channel/detail", s.handleLNChannelDetail)
 		r.Post("/channel/notes", s.handleLNChannelNotesPost)
 		r.Post("/channel/automation", s.handleLNChannelAutomationPost)

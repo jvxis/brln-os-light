@@ -38,11 +38,15 @@ try{
   const notice=await ev(`i18n.t('appStore.${key}')`);assert(!notice.startsWith('appStore.'));
   const card=await ev(`[...document.querySelectorAll('h3')].find(x=>x.textContent==='${app}').closest('.section-card').textContent`);
   assert(card.includes(notice));assert(card.includes(await ev(`i18n.t('appStore.elevatedLndAccessCardBody')`)));
+  const defaultsNotice=await ev(`i18n.t('appStore.lnbitsSecurityDefaultsNotice')`);
+  assert(!defaultsNotice.startsWith('appStore.'));assert.equal(card.includes(defaultsNotice),app==='LNbits');
   const other=await ev(`[...document.querySelectorAll('h3')].find(x=>x.textContent==='BTCPay Server').closest('.section-card').textContent`);
   assert(!other.includes(notice));assert(other.includes(await ev(`i18n.t('appStore.limitedLndAccessCardBody')`)));
+  assert(!other.includes(defaultsNotice));
   assert(await ev(`document.documentElement.scrollWidth<=innerWidth`));
   await ev(`[...[...document.querySelectorAll('h3')].find(x=>x.textContent==='${app}').closest('.section-card').querySelectorAll('button')].find(x=>x.textContent.trim()===i18n.t('appStore.install')).click()`);
   await wait(`document.body.textContent.split(i18n.t('appStore.${key}')).length===3`);
+  if(app==='LNbits') await wait(`document.body.textContent.split(i18n.t('appStore.lnbitsSecurityDefaultsNotice')).length===3`);
   assert.deepEqual(await ev('window.mutations'),[]);
  }
  console.log('PASS: LNbits and LNDg notices, unchanged BTCPay, PT/EN desktop/mobile, install confirmation, no mutations.')

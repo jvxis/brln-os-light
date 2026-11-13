@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +23,9 @@ import (
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/privileged"
 )
+
+//go:embed testdata/lnbits_security_defaults.py
+var lnbitsSecurityDefaultsTest string
 
 type nativeLNbitsMigrationRPC struct {
 	*lndclient.Client
@@ -168,7 +173,9 @@ func TestLNbitsNativeDockerMigration(t *testing.T) {
 			t.Fatal(e)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		if key != "" {
+		if strings.HasPrefix(key, "Bearer ") {
+			req.Header.Set("Authorization", key)
+		} else if key != "" {
 			req.Header.Set("X-Api-Key", key)
 		}
 		r, e := (&http.Client{Timeout: 45 * time.Second}).Do(req)
@@ -218,7 +225,20 @@ print('funding TLS/auth reads passed')`
 	}
 	password := hex.EncodeToString(passwordBytes)
 	api("PUT", "/api/v1/auth/first_install", "", map[string]any{"username": "losregtest", "password": password, "password_repeat": password})
-	account := api("POST", "/api/v1/account", "", map[string]any{"name": "LOS regtest migration"})
+	securityCheck := exec.CommandContext(ctx, "docker", "exec", "-i", "lnbits", "/app/.venv/bin/python", "-c", lnbitsSecurityDefaultsTest)
+	loginJSON, _ := json.Marshal(map[string]string{"username": "losregtest", "password": password})
+	securityCheck.Stdin = bytes.NewReader(loginJSON)
+	if output, e := securityCheck.CombinedOutput(); e != nil {
+		// The script never prints credentials, responses or TOTP material.
+		t.Fatalf("LNbits security defaults: %v\n%s", e, output)
+	}
+	t.Log("fresh extension defaults and real 2FA enrollment/login/recovery passed")
+	login := api("POST", "/api/v1/auth", "", map[string]any{"username": "losregtest", "password": password})
+	token, ok := login["access_token"].(string)
+	if !ok || token == "" {
+		t.Fatal("authenticated test login unavailable")
+	}
+	account := api("POST", "/api/v1/wallet", "Bearer "+token, map[string]any{"name": "LOS regtest migration"})
 	key, ok := account["adminkey"].(string)
 	if !ok || key == "" {
 		t.Fatal("wallet key unavailable")

@@ -20,6 +20,38 @@ func TestValidateLNbitsEnvPreservesSafeCustomSettings(t *testing.T) {
 	}
 }
 
+func TestNormalizeLNbitsEnvStartsWithoutExtensionsAndOffersTwoFactor(t *testing.T) {
+	raw, err := NormalizeLNbitsEnv(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []string{"LNBITS_EXTENSIONS_DEFAULT_INSTALL=[]\n", "LNBITS_USER_DEFAULT_EXTENSIONS=[]\n", "LNBITS_TWO_FACTOR_ENABLED=true\n"} {
+		if !strings.Contains(string(raw), entry) {
+			t.Errorf("missing safe default %q", entry)
+		}
+	}
+	again, err := NormalizeLNbitsEnv(raw)
+	if err != nil || string(again) != string(raw) {
+		t.Fatal("normalization is not idempotent")
+	}
+}
+
+func TestNormalizeLNbitsEnvPreservesAccountSecurityChoicesButNeverAutoInstallsExtensions(t *testing.T) {
+	raw := []byte("LNBITS_EXTENSIONS_DEFAULT_INSTALL=lnurlp,splitpayments\nLNBITS_USER_DEFAULT_EXTENSIONS=lnurlp\nLNBITS_TWO_FACTOR_ENABLED=false\nLNBITS_TWO_FACTOR_MANDATORY=true\nTOTP_ENCRYPTION_KEY=existing-private-key\n")
+	normalized, err := NormalizeLNbitsEnv(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []string{"LNBITS_EXTENSIONS_DEFAULT_INSTALL=[]\n", "LNBITS_USER_DEFAULT_EXTENSIONS=lnurlp\n", "LNBITS_TWO_FACTOR_ENABLED=false\n", "LNBITS_TWO_FACTOR_MANDATORY=true\n", "TOTP_ENCRYPTION_KEY=existing-private-key\n"} {
+		if !strings.Contains(string(normalized), entry) {
+			t.Errorf("missing preserved/default field %q", entry)
+		}
+	}
+	if strings.Contains(string(normalized), "splitpayments") {
+		t.Fatal("automatic extension installation retained")
+	}
+}
+
 func TestNormalizeLNbitsEnvPreservesCustomSettingsAndScrubsLegacyCredentials(t *testing.T) {
 	legacy := []byte(strings.Join([]string{
 		"LNBITS_SITE_TITLE=Preserved Node",
@@ -69,6 +101,9 @@ func TestValidateLNbitsEnvRejectsRuntimeAndCredentialOverrides(t *testing.T) {
 
 func TestValidateLNbitsEnvRejectsManagedDriftAndDuplicates(t *testing.T) {
 	base := string(canonicalLNbitsEnvForTest())
+	if err := ValidateLNbitsEnv([]byte(strings.Replace(base, "LNBITS_EXTENSIONS_DEFAULT_INSTALL=[]", "LNBITS_EXTENSIONS_DEFAULT_INSTALL=lnurlp", 1))); err == nil {
+		t.Fatal("expected automatic extension installation to be rejected")
+	}
 	if err := ValidateLNbitsEnv([]byte(strings.Replace(base, "LND_REST_ENDPOINT=https://127.0.0.1:8080/", "LND_REST_ENDPOINT=https://elsewhere:8080/", 1))); err == nil {
 		t.Fatal("expected managed endpoint drift to be rejected")
 	}

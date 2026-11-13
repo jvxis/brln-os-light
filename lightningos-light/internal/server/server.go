@@ -140,6 +140,9 @@ type Server struct {
 	insights                    *InsightsService
 	insightsErr                 string
 	insightsLoopStarted         bool
+	forwardHistoryAliasMu       sync.Mutex
+	forwardHistoryAliasAt       time.Time
+	forwardHistoryAliases       map[uint64]forwardChannelIdentity
 	insightsCacheMu             sync.Mutex
 	insightsCache               *insightsPayload
 	graphExplorerInitAt         time.Time
@@ -235,6 +238,7 @@ func (s *Server) Run() error {
 	s.startLNDRuntimeMonitor()
 	s.startLNDGraphProgressWarmup()
 	s.startLegacyPrivilegeTransitionReconciler()
+	s.startLNbitsCredentialReconciler()
 	s.startAppUpgradeChecker()
 	s.initNotifications()
 	s.initAppVersions()

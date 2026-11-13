@@ -5613,3 +5613,32 @@ func TestFilterGuaranteedRebalanceTargetsStructuralCooldown(t *testing.T) {
 		t.Fatalf("expected untouched pool without cooldown data, got skipped=%d kept=%d", skipped, len(kept))
 	}
 }
+
+func TestSovereignStructuralCooldownMinAttemptsFollowsSourcePool(t *testing.T) {
+	cases := map[int]int{
+		0:  sovereignTargetStructuralCooldownMinAttempts, // unknown pool keeps the fixed floor
+		-1: sovereignTargetStructuralCooldownMinAttempts,
+		1:  1,
+		12: 12,
+		14: 14,
+		20: sovereignTargetStructuralCooldownMinAttempts,
+		32: sovereignTargetStructuralCooldownMinAttempts, // never above the fixed floor
+	}
+	for pool, want := range cases {
+		if got := sovereignStructuralCooldownMinAttempts(pool); got != want {
+			t.Fatalf("pool=%d: min attempts=%d want %d", pool, got, want)
+		}
+	}
+	channels := []RebalanceChannel{
+		{ChannelID: 1, EligibleAsSource: true},
+		{ChannelID: 2},
+		{ChannelID: 3, EligibleAsSource: true},
+		{ChannelID: 4, EligibleAsSource: false},
+	}
+	if got := countEligibleRebalanceSources(channels); got != 2 {
+		t.Fatalf("expected 2 eligible sources, got %d", got)
+	}
+	if got := countEligibleRebalanceSources(nil); got != 0 {
+		t.Fatalf("expected 0 eligible sources for empty pool, got %d", got)
+	}
+}

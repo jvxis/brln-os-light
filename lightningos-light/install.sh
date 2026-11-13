@@ -17,7 +17,7 @@ if [[ ! -r "$ARTIFACT_VERIFY_SCRIPT" ]]; then
 fi
 source "$ARTIFACT_VERIFY_SCRIPT"
 
-LND_VERSION="0.21.6-beta"
+LND_VERSION="0.21.8-beta"
 
 GOTTY_VERSION="1.8.0"
 GOTTY_ARTIFACT="gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"
@@ -1017,9 +1017,21 @@ fix_permissions() {
     fi
     ensure_secrets_env_defaults
     if [[ ! -s "$LND_CONF" ]]; then
+      # Only a new native LND initialized here establishes origin. Never
+      # infer an old installation's origin from Bitcoin or retrofit its config.
+      local record_native_origin=0
+      if [[ ! -e "$LND_CONF" && ! -L "$LND_CONF" && ! -e "$LND_DIR/data" && ! -L "$LND_DIR/data" ]]; then
+        record_native_origin=1
+      fi
       cp "$REPO_ROOT/templates/lnd.conf" "$LND_CONF"
       chown lnd:lnd "$LND_CONF"
       chmod 660 "$LND_CONF"
+      if [[ "$record_native_origin" == 1 && ! -e /etc/lightningos/installation-origin && ! -L /etc/lightningos/installation-origin ]]; then
+        [[ ! -L /etc/lightningos ]] || { print_warn "Unsafe installation origin directory"; return 1; }
+        (set -o noclobber; umask 022; printf 'native-v1\n' > /etc/lightningos/installation-origin)
+        chown root:root /etc/lightningos/installation-origin
+        chmod 0644 /etc/lightningos/installation-origin
+      fi
   fi
   strip_crlf /etc/lightningos/config.yaml
   strip_crlf "$LND_CONF"

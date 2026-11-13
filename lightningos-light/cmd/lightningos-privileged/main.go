@@ -94,6 +94,7 @@ func main() {
 		ManagerFirewall:      privileged.NewManagerFirewallManager(runner),
 		LNDUpgrade:           privileged.NewNativeLNDUpgradeManager(runner),
 		TorUpgrade:           privileged.NewNativeTorUpgradeManager(runner),
+		TorLNDREST:           privileged.NewNativeTorLNDRESTManager(runner),
 		LightningOSUpgrade:   privileged.NewNativeLightningOSUpgradeManager(runner),
 		Apps:                 privileged.NewComposeAppManager(runner),
 		Packages:             privileged.NewCatalogPackageManager(runner),

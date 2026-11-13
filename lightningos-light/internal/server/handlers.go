@@ -2882,6 +2882,7 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 		channelPoint, openErr = s.lnd.OpenChannelWithPush(openCtx, pubkey, req.LocalFundingSat, req.PushSat, req.CloseAddress, req.Private, req.SatPerVbyte)
 	}
 	if openErr != nil {
+		recordFinancialChannelDispatchFailure(openCtx, "channel_open", openErr)
 		s.recordAuditEventAsync(r, "channel.open.failed", pubkey, channelOpenPolicyAudit(map[string]any{
 			"local_funding_sat": req.LocalFundingSat,
 			"private":           req.Private,
@@ -3082,6 +3083,7 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 	}
 	results, err := s.lnd.BatchOpenChannel(openCtx, batch, req.SatPerVbyte)
 	if err != nil {
+		recordFinancialChannelDispatchFailure(openCtx, "channel_open_batch", err)
 		s.recordAuditEventAsync(r, "channel.open_batch.failed", "batch", map[string]any{
 			"channel_count":        len(batch),
 			"sat_per_vbyte":        req.SatPerVbyte,
@@ -4405,6 +4407,11 @@ func (s *Server) handleOnchainTransactions(w http.ResponseWriter, r *http.Reques
 
 	if limit > 0 && len(items) > limit {
 		items = items[:limit]
+	}
+	// Best effort: a failed wallet lookup leaves own_addresses empty rather
+	// than hiding the listing.
+	if err := s.lnd.MarkOwnAddresses(ctx, items); err != nil && s.logger != nil {
+		s.logger.Printf("onchain transactions: own address marking failed: %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})

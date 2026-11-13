@@ -46,6 +46,8 @@ type ComposeAppManager struct {
 	TempRoot              string
 	ElectrsRPCProbe       electrsRPCProbeFunc
 	BitcoinMigrationProbe func(context.Context, string) error
+	lnbitsRevocationRPC   lnbitsRevocationRPC
+	lndgRevocationRPC     lnbitsRevocationRPC
 }
 
 type composeAppSnapshot struct {
@@ -960,6 +962,26 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 	if manager == nil || manager.Runner == nil {
 		return errors.New("compose app manager is unavailable")
 	}
+	var lndgRemoval *lndgCredentialRemoval
+	if appID == appmanifest.LNDgID {
+		var err error
+		lndgRemoval, err = manager.prepareLNDgCredentialRemoval(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Lstat(lndgRemoval.path); os.IsNotExist(err) {
+			// Retry after a completed broker removal but interrupted Manager cleanup.
+			root := filepath.Join(filepath.Dir(lndgRemoval.receiptPath), appmanifest.LNDgID)
+			if _, err := os.Lstat(root); !os.IsNotExist(err) {
+				return errors.New("LNDg removal snapshot still exists")
+			}
+			output, err := manager.Runner.Run(ctx, dockerPath, "ps", "-aq", "--filter", "label=com.docker.compose.project=lndg")
+			if err != nil || strings.TrimSpace(output) != "" {
+				return errors.New("LNDg removal still has containers")
+			}
+			return nil
+		}
+	}
 	if appID == appmanifest.ElectrsID {
 		root := filepath.Join(defaultPrivilegedAppsRoot, appmanifest.HardwalletID)
 		if err := hardwalletAllowsElectrsRemoval(ctx, manager.Runner, root); err != nil {
@@ -1112,6 +1134,11 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 	if _, err := manager.Runner.Run(ctx, commandPath, args...); err != nil {
 		return errors.New("app remove command failed")
 	}
+	if lndgRemoval != nil {
+		if err := lndgRemoval.revoke(ctx); err != nil {
+			return err
+		}
+	}
 	if removePersistentSnapshot && appID == appmanifest.RoboSatsID {
 		if err := manager.removeRoboSatsExecutionSnapshot(snapshot.root); err != nil {
 			return errors.New("failed to remove app execution snapshot")
@@ -1127,6 +1154,9 @@ func (manager *ComposeAppManager) Remove(ctx context.Context, appID string, dryR
 	} else if removePersistentSnapshot && appID == appmanifest.LNDgID {
 		if err := manager.removeLNDgExecutionSnapshot(snapshot.root); err != nil {
 			return errors.New("failed to remove app execution snapshot")
+		}
+		if err := lndgRemoval.discardRevokedFile(); err != nil {
+			return err
 		}
 	} else if removePersistentSnapshot && appID == appmanifest.LNbitsID {
 		if err := manager.removeLNbitsExecutionSnapshot(snapshot.root); err != nil {

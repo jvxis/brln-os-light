@@ -1179,6 +1179,15 @@ export default function AppStore() {
                       {readsLndDataDirectory && (
                         <p className="text-xs leading-relaxed text-amber-100/80">{t('appStore.lndDataDirectoryReadBody')}</p>
                       )}
+                      {app.id === 'lnbits' && (
+                        <>
+                          <p className="text-xs leading-relaxed text-amber-100/80">{t('appStore.lnbitsWalletOnlyNotice')}</p>
+                          <p className="text-xs leading-relaxed text-amber-100/80">{t('appStore.lnbitsSecurityDefaultsNotice')}</p>
+                        </>
+                      )}
+                      {app.id === 'lndg' && (
+                        <p className="text-xs leading-relaxed text-amber-100/80">{t('appStore.lndgSpendingNotice')}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1452,6 +1461,9 @@ export default function AppStore() {
 
             <div className="mt-5 space-y-3 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm leading-relaxed text-fog/80">
               <p>{t(pendingElevatedInstall.app.security_notices?.includes(limitedLndAccessNotice) ? 'appStore.limitedLndAccessInstallBody' : 'appStore.elevatedLndAccessInstallBody')}</p>
+              {pendingElevatedInstall.app.id === 'lnbits' && <p>{t('appStore.lnbitsWalletOnlyNotice')}</p>}
+              {pendingElevatedInstall.app.id === 'lndg' && <p>{t('appStore.lndgSpendingNotice')}</p>}
+              {pendingElevatedInstall.app.id === 'lnbits' && <p>{t('appStore.lnbitsSecurityDefaultsNotice')}</p>}
               {pendingElevatedInstall.app.security_notices?.includes(lndDataDirectoryReadNotice) && (
                 <p className="text-amber-100/85">{t('appStore.lndDataDirectoryReadInstallBody')}</p>
               )}

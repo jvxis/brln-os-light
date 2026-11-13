@@ -39,7 +39,10 @@ func (manager *ComposeAppManager) prepareLNDgImage(ctx context.Context, unit str
 		"--collect",
 		"--unit=" + unit,
 		"--property=Type=exec",
-		"--property=RuntimeMaxSec=10min",
+		// Building Python dependencies and committing image layers can exceed
+		// a registry pull budget on slower disks. Keep this LNDg-only bound
+		// below the Manager's existing 62-minute image preparation wait.
+		"--property=RuntimeMaxSec=30min",
 		"/bin/sh",
 		"-c",
 		lndgImageBuildScript(attestationPath),

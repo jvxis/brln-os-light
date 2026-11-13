@@ -208,6 +208,32 @@ func (client *Client) RefreshTorMetadata(ctx context.Context, dryRun bool) (stri
 	return state.Status, nil
 }
 
+// TorLNDREST reads (or, with ensure, creates) the onion service for the local
+// LND REST listener.
+func (client *Client) TorLNDREST(ctx context.Context, ensure bool) (TorLNDRESTState, error) {
+	operation := OperationTorLNDRESTStatus
+	if ensure {
+		operation = OperationTorLNDRESTEnsure
+	}
+	response, err := client.call(ctx, operation, struct{}{}, false)
+	if err != nil {
+		return TorLNDRESTState{}, err
+	}
+	var state TorLNDRESTState
+	if err := decodeStrict(response.Result, &state); err != nil {
+		return TorLNDRESTState{}, errors.New("invalid broker Tor LND REST response")
+	}
+	switch state.Status {
+	case "absent", "pending", "configured":
+	default:
+		return TorLNDRESTState{}, errors.New("invalid broker Tor LND REST state")
+	}
+	if state.Hostname != "" && !validOnionHostname(state.Hostname) {
+		return TorLNDRESTState{}, errors.New("invalid broker Tor LND REST hostname")
+	}
+	return state, nil
+}
+
 func (client *Client) StartTorUpgrade(ctx context.Context, helperContent string, verifyOnly bool, dryRun bool) (string, string, error) {
 	response, err := client.call(ctx, OperationTorUpgradeStart, TorUpgradeStartParams{HelperContent: helperContent, VerifyOnly: verifyOnly}, dryRun)
 	if err != nil {
@@ -1119,6 +1145,20 @@ func (client *Client) EnsureAppFirewall(ctx context.Context, appID string, dryRu
 	default:
 		return "", errors.New("invalid broker app firewall state")
 	}
+}
+
+func (client *Client) RevokeLNbitsLegacyCredential(ctx context.Context, dryRun bool) error {
+	response, err := client.call(ctx, OperationLNbitsLegacyCredentialRevoke, struct{}{}, dryRun)
+	if err != nil {
+		return err
+	}
+	var result struct {
+		Ready bool `json:"ready"`
+	}
+	if decodeStrict(response.Result, &result) != nil || !result.Ready {
+		return errors.New("invalid LNbits credential revocation response")
+	}
+	return nil
 }
 
 func (client *Client) EnsureAppLNDHostAccess(ctx context.Context, appID string, dryRun bool) error {

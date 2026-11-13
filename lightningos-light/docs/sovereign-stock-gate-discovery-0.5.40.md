@@ -142,6 +142,16 @@ Limites fixos:
   começava direto no teto.
 - O orçamento da descoberta é conferido à parte, então ela roda mesmo com o
   orçamento normal esgotado. O que ela gasta entra no gasto diário (`auto`).
+- Recuo após escadas sem rota (0.5.55): se as duas últimas escadas do canal
+  subiram todos os degraus e todas as sondas falharam por falta de rota, a
+  próxima escada espera 2 janelas (48h) a partir do início da última; com três
+  seguidas, 4 janelas (96h), que é o teto. Qualquer sucesso, sonda pulada
+  (fast-path indisponível) ou escada interrompida pelo orçamento zera a
+  contagem. Motivo: a escada roda 1 sonda por scan e reserva o custo da sonda
+  no orçamento diário; dois alvos sem rota nenhuma repetindo os mesmos degraus
+  todo dia ocupavam 4 scans e a reserva do orçamento antes de a sonda de um
+  alvo com rota entrar. A decisão do scan traz `discovery_backoff_until`
+  enquanto o canal espera; o motivo continua o gate de rota que barrou o canal.
 
 Por que não repete o incidente do keepalive (0.5.37):
 

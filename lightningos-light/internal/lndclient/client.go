@@ -8372,6 +8372,7 @@ type OnchainTransaction struct {
 	Timestamp     time.Time `json:"timestamp"`
 	Label         string    `json:"label,omitempty"`
 	Addresses     []string  `json:"addresses,omitempty"`
+	OwnAddresses  []string  `json:"own_addresses,omitempty"`
 }
 
 type OnchainUtxo struct {

@@ -274,7 +274,29 @@ The legacy payment-detail `created_at` field retains its existing meaning
 (payment creation); the UI uses the explicit fields above to distinguish
 invoice creation from payment initiation. Missing dates are not estimated.
 
+## Optional native LND cooperative-close destination
+
+`GET /api/lnd/config/upfront-shutdown` returns `current: {mode, address}`,
+`origin` (`native`, `existing`, `unknown`), `editable`, `reason`, and an opaque
+`config_revision`. No unrelated LND options or credentials are returned.
+
+`POST /api/lnd/config/upfront-shutdown` accepts `mode` (`off`, `wallet`,
+`external`), `address` (empty except for external), `config_revision`, and
+`confirm_external` (required true for external). Uses the normal authenticated
+session/CSRF protection and fresh `lnd_config` reauthentication. The optional
+`confirm_password` follows the existing config API contract.
+
+Only a root-owned, non-writable native installation marker and reachable LND
+0.21+ permit changes. Unknown/install_existing origins receive 403; unsupported
+LND or stale configuration revisions receive 409. Invalid addresses, ambiguous
+existing options or missing external acknowledgement receive 400. Mainnet
+addresses only. Successful changes use the existing transactional config
+write/restart/readiness/rollback path and response shape. Maintenance blocks
+mutation. This changes defaults for future channels, never existing commitments.
+See [scope and validation](LND_UPFRONT_SHUTDOWN.md).
+
 ## Error format
+
 - Non-2xx responses return JSON: `{"error":"message","code":"optional_code"}`
 
 ## UI preferences
@@ -439,6 +461,37 @@ Body:
 - Direct external clients using LND credentials are outside LightningOS API gates; `maxpendingchannels=0` still rejects remote-initiated opens.
 
 ## Tor status and upgrade
+
+GET /api/tor/lnd-rest
+- Read-only, authenticated status through the privileged broker: `status`
+  (`absent`, `pending`, `configured`), `rest_reachable` (TCP reachability of a
+  verified local native-LND listener on port 8080), optional `hostname`, `url`, and `managed`.
+- `configured` means a matching torrc block and a public hostname file exist;
+  it does not certify external Tor connectivity or the client's TLS trust.
+
+POST /api/tor/lnd-rest/ensure
+- Body: `{"confirm":true,"confirm_password":"..."}`. Requires normal session/
+  CSRF protection and fresh `lnd_config` reauthentication when login is enabled.
+- No caller-selected port, target, path or command. Prefers a loopback listener
+  owned by the running native LND PID; also accepts a private address assigned
+  to an active local Docker bridge. Remote/private LAN addresses are not accepted.
+  Creates virtual port 8080 or reuses a matching manually configured service;
+  an existing unmatched port-8080 service requires review instead of duplication.
+- Requires native Tor and the local REST listener. Checks the candidate with
+  Tor before atomically replacing `/etc/tor/torrc`, then reloads the running
+  native Tor daemon. A failed reload restores the previous configuration.
+- Does not restart LND/Tor, edit lnd.conf, regenerate TLS material, create a
+  macaroon or open a clearnet firewall port. Include-based/quoted/ambiguous
+  configurations and unsafe paths require manual review and are not rewritten.
+- The onion exposes the REST API with **any valid macaroon's permissions**.
+  External invoice services should receive only a dedicated invoice macaroon,
+  never admin. This is not the node's P2P onion. Existing TLS certificates may
+  not contain the onion name: clients must establish TLS trust securely; this
+  operation does not disable certificate validation or change certificates.
+- Returns the same status shape as GET; `pending` allows a later GET refresh.
+  `400` invalid confirmation/input, `428` reauthentication required, `409`
+  preparation failure, `503` enforcing broker unavailable. Removal is not
+  provided in this first version.
 
 GET /api/tor/upgrade/status
 - Returns the installed Tor/runtime version, current APT candidate, package source, service/port health, update availability, transient upgrade state, and check timestamp.

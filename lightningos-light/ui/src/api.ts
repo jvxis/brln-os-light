@@ -327,6 +327,10 @@ export const getTorUpgradeStatus = (force?: boolean) =>
   request(`/api/tor/upgrade/status${buildQuery({ force: force ? 1 : undefined })}`)
 export const startTorUpgrade = () =>
   request('/api/tor/upgrade/start', { method: 'POST', body: JSON.stringify({}) })
+export type TorLndRestStatus = { status: 'absent' | 'pending' | 'configured'; hostname?: string; url?: string; managed?: boolean; rest_reachable: boolean }
+export const getTorLndRest = (): Promise<TorLndRestStatus> => request('/api/tor/lnd-rest')
+export const ensureTorLndRest = (confirm_password: string): Promise<TorLndRestStatus> =>
+  request('/api/tor/lnd-rest/ensure', { method: 'POST', body: JSON.stringify({ confirm: true, confirm_password }) })
 export const getWizardStatus = () => request('/api/wizard/status')
 
 export const postBitcoinRemote = (payload: { rpcuser: string; rpcpass: string }) =>
@@ -372,6 +376,12 @@ export const updateLndConfig = (payload: {
   disconnect_unresponsive_peers?: boolean
   apply_now: boolean
 }) => request('/api/lnd/config', { method: 'POST', body: JSON.stringify(payload) })
+
+export type UpfrontShutdownMode = 'off' | 'wallet' | 'external'
+export type UpfrontShutdownUpdate = { mode: UpfrontShutdownMode; address: string; config_revision: string; confirm_external: boolean }
+export type UpfrontShutdownStatus = { current: { mode: UpfrontShutdownMode; address: string }; origin: string; editable: boolean; reason: string; config_revision: string }
+export const getUpfrontShutdown = (): Promise<UpfrontShutdownStatus> => request('/api/lnd/config/upfront-shutdown')
+export const updateUpfrontShutdown = (payload: UpfrontShutdownUpdate) => request('/api/lnd/config/upfront-shutdown', { method: 'POST', body: JSON.stringify(payload) })
 
 export type LndSecretUpdate = { action: 'keep' | 'replace' | 'clear'; value?: string }
 export type LndSensitiveOption = { id: string; section: string; key: string; configured: boolean }
@@ -518,6 +528,102 @@ export const payInvoice = (payload: { payment_request: string; channel_point?: s
   request('/api/wallet/pay', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getLnChannels = () => request('/api/lnops/channels')
+
+export type ForwardHistoryRange = '24h' | '7d' | '30d' | '90d'
+export type ForwardHistorySort = 'time' | 'amount' | 'fee' | 'ppm'
+
+export type ForwardHistoryTotals = {
+  count: number
+  amount_sat: number
+  fee_sat: number
+  fee_msat: number
+  avg_ppm: number
+}
+
+export type ForwardHistoryChannel = {
+  channel_id: number
+  channel_id_str: string
+  channel_point?: string
+  peer_pubkey?: string
+  peer_alias: string
+  open: boolean
+  in_count: number
+  in_amount_sat: number
+  in_fee_sat: number
+  out_count: number
+  out_amount_sat: number
+  out_fee_sat: number
+}
+
+export type ForwardHistoryFlowEntry = {
+  channel_id: number
+  channel_id_str: string
+  peer_alias: string
+  count: number
+  amount_sat: number
+  fee_sat: number
+}
+
+export type ForwardHistoryBucket = {
+  start: string
+  count: number
+  amount_sat: number
+  fee_sat: number
+}
+
+export type ForwardHistoryItem = {
+  id: number
+  occurred_at: string
+  chan_id_in: number
+  chan_id_in_str: string
+  chan_id_out: number
+  chan_id_out_str: string
+  peer_alias_in: string
+  peer_alias_out: string
+  peer_pubkey_in?: string
+  peer_pubkey_out?: string
+  amount_in_sat: number
+  amount_sat: number
+  fee_sat: number
+  fee_msat: number
+  ppm: number
+}
+
+export type ForwardHistoryResponse = {
+  range: ForwardHistoryRange
+  since: string
+  until: string
+  timezone: string
+  bucket_unit: 'hour' | 'day'
+  chan_in?: string
+  chan_out?: string
+  sort: ForwardHistorySort
+  order: 'asc' | 'desc'
+  limit: number
+  offset: number
+  has_more: boolean
+  totals: ForwardHistoryTotals
+  filtered: ForwardHistoryTotals
+  channels: ForwardHistoryChannel[]
+  flow_in: ForwardHistoryFlowEntry[]
+  flow_out: ForwardHistoryFlowEntry[]
+  buckets: ForwardHistoryBucket[]
+  items: ForwardHistoryItem[]
+}
+
+export type ForwardHistoryQuery = {
+  range?: ForwardHistoryRange
+  chan_in?: string
+  chan_out?: string
+  sort?: ForwardHistorySort
+  order?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
+  tz?: string
+}
+
+export const getLnForwardHistory = (params: ForwardHistoryQuery = {}): Promise<ForwardHistoryResponse> =>
+  request(`/api/lnops/forwards${buildQuery(params)}`)
 export const getLnChannelDBImpact = () => request('/api/lnops/channel-db-impact')
 export const getLnPeers = () => request('/api/lnops/peers')
 export const getLnChannelDetail = (channelPoint: string, limit = 30) =>
@@ -1203,6 +1309,15 @@ export const getOnchainTransactions = (params?: {
   include_unconfirmed?: boolean
   limit?: number
 }) => request(`/api/onchain/transactions${buildQuery(params)}`)
+
+export type OnchainAddressOwnership = {
+  address: string
+  network: string
+  status: 'owned' | 'known' | 'external'
+}
+
+export const getOnchainAddressOwnership = (address: string) =>
+  request(`/api/onchain/address/ownership?address=${encodeURIComponent(address.trim())}`) as Promise<OnchainAddressOwnership>
 
 export const upsertUtxoMetadata = (payload: {
   outpoint: string

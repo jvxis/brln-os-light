@@ -33,8 +33,18 @@ const (
 	// counted, so every later ladder skipped step 1 and probed twice at the
 	// ceiling (Ripio 900/900 ppm on 2026-10-22, 1263/1263 on 10-23).
 	sovereignDiscoveryWindow = 24 * time.Hour
-	// History read to find where the current ladder started.
+	// History read to find where the current ladder started and how many
+	// ladders before it ended without a route.
 	sovereignDiscoveryHistory = 7 * sovereignDiscoveryWindow
+	// A target whose last ladders all climbed to the ceiling without a route
+	// is not "unprobed", it is unreachable for now. After this many such
+	// ladders in a row the next one waits 2 windows, then 4, capped at
+	// sovereignDiscoveryBackoffMaxWindows (two Friendspool targets re-ran the
+	// same two no-route steps every day from 2026-11-03 to 11-09, taking the
+	// one-probe-per-scan slot and the budget reservation from targets that
+	// did have a route).
+	sovereignDiscoveryBackoffAfterLadders = 2
+	sovereignDiscoveryBackoffMaxWindows   = 4
 
 	// A probe below this amount measures base fees, not the route price:
 	// 1 sat on 1,000 sats is already 1,000 ppm. Operators with a smaller
@@ -49,11 +59,22 @@ type sovereignDiscoveryTargetStat struct {
 	Jobs      int
 	Succeeded bool
 	LastAt    time.Time
+	// Expired holds the target's finished ladders, oldest first, for the
+	// no-route backoff. Empty when the target was never probed in the history.
+	Expired []sovereignDiscoveryLadder
+}
+
+// sovereignDiscoveryLadder summarises one finished ladder.
+type sovereignDiscoveryLadder struct {
+	Start   time.Time
+	Jobs    int
+	NoRoute bool // every probe failed for lack of a route: no success, no skip, none in flight
 }
 
 type sovereignDiscoveryJob struct {
 	At        time.Time
 	Succeeded bool
+	NoRoute   bool
 }
 
 // sovereignDiscoveryCurrentLadder groups a target's discovery jobs (oldest
@@ -63,19 +84,60 @@ type sovereignDiscoveryJob struct {
 func sovereignDiscoveryCurrentLadder(jobs []sovereignDiscoveryJob, now time.Time) sovereignDiscoveryTargetStat {
 	var start time.Time
 	var stat sovereignDiscoveryTargetStat
+	var expired []sovereignDiscoveryLadder
+	ladder := sovereignDiscoveryLadder{NoRoute: true}
 	for _, job := range jobs {
 		if start.IsZero() || !job.At.Before(start.Add(sovereignDiscoveryWindow)) {
+			if !start.IsZero() {
+				expired = append(expired, ladder)
+			}
 			start = job.At
 			stat = sovereignDiscoveryTargetStat{}
+			ladder = sovereignDiscoveryLadder{Start: job.At, NoRoute: true}
 		}
 		stat.Jobs++
 		stat.Succeeded = stat.Succeeded || job.Succeeded
 		stat.LastAt = job.At
+		ladder.Jobs++
+		ladder.NoRoute = ladder.NoRoute && job.NoRoute && !job.Succeeded
 	}
-	if start.IsZero() || !now.Before(start.Add(sovereignDiscoveryWindow)) {
+	if start.IsZero() {
 		return sovereignDiscoveryTargetStat{}
 	}
+	if !now.Before(start.Add(sovereignDiscoveryWindow)) {
+		return sovereignDiscoveryTargetStat{Expired: append(expired, ladder)}
+	}
+	stat.Expired = expired
 	return stat
+}
+
+// sovereignDiscoveryBackoffUntil returns when a target whose recent ladders
+// all ran out of steps without a route may open a new ladder. It counts the
+// finished ladders from the newest backwards while each probed every step of
+// the current configuration and every probe failed for lack of a route; a
+// success, a skipped probe or a ladder cut short (budget) ends the streak.
+// Below sovereignDiscoveryBackoffAfterLadders there is no backoff.
+func sovereignDiscoveryBackoffUntil(cfg RebalanceConfig, stat sovereignDiscoveryTargetStat) (time.Time, bool) {
+	if cfg.DiscoverySteps <= 0 || len(stat.Expired) == 0 {
+		return time.Time{}, false
+	}
+	streak := 0
+	for i := len(stat.Expired) - 1; i >= 0; i-- {
+		ladder := stat.Expired[i]
+		if !ladder.NoRoute || ladder.Jobs < cfg.DiscoverySteps {
+			break
+		}
+		streak++
+	}
+	if streak < sovereignDiscoveryBackoffAfterLadders {
+		return time.Time{}, false
+	}
+	windows := 1 << (streak - 1)
+	if windows > sovereignDiscoveryBackoffMaxWindows {
+		windows = sovereignDiscoveryBackoffMaxWindows
+	}
+	last := stat.Expired[len(stat.Expired)-1]
+	return last.Start.Add(time.Duration(windows) * sovereignDiscoveryWindow), true
 }
 
 type sovereignDiscoveryState struct {
@@ -228,7 +290,8 @@ func (s *RebalanceService) loadSovereignDiscoveryState(ctx context.Context, now 
 select target_channel_id,
   created_at,
   status in ('succeeded','partial') as succeeded,
-  status in ('queued','running') as in_flight
+  status in ('queued','running') as in_flight,
+  status = 'failed' as no_route
 from rebalance_jobs
 where source='auto'
   and coalesce(trigger_reason, reason, '')=$1
@@ -244,7 +307,7 @@ order by target_channel_id, created_at
 		var channelID int64
 		var job sovereignDiscoveryJob
 		var inFlight bool
-		if err := rows.Scan(&channelID, &job.At, &job.Succeeded, &inFlight); err != nil {
+		if err := rows.Scan(&channelID, &job.At, &job.Succeeded, &inFlight, &job.NoRoute); err != nil {
 			rows.Close()
 			state.Unavailable = true
 			return state
@@ -262,7 +325,7 @@ order by target_channel_id, created_at
 		return state
 	}
 	for channelID, jobs := range jobsByTarget {
-		if stat := sovereignDiscoveryCurrentLadder(jobs, now); stat.Jobs > 0 {
+		if stat := sovereignDiscoveryCurrentLadder(jobs, now); stat.Jobs > 0 || len(stat.Expired) > 0 {
 			state.ByTarget[channelID] = stat
 		}
 	}
@@ -315,8 +378,13 @@ func (s *RebalanceService) maybeQueueSovereignDiscovery(ctx context.Context, dec
 	if run.state.Unavailable || run.state.InFlight > 0 {
 		return false
 	}
-	step, ok := sovereignDiscoveryNextStep(targetCfg, run.state.ByTarget[target.Channel.ChannelID])
+	stat := run.state.ByTarget[target.Channel.ChannelID]
+	step, ok := sovereignDiscoveryNextStep(targetCfg, stat)
 	if !ok {
+		return false
+	}
+	if until, backoff := sovereignDiscoveryBackoffUntil(targetCfg, stat); backoff && now.Before(until) {
+		decision.DiscoveryBackoffUntil = until
 		return false
 	}
 	baseFeeMsat, err := calcFeeLimitMsat(amount*1000, targetPolicy, nil, targetCfg)

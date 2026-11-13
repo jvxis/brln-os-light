@@ -153,7 +153,10 @@ ao budget automático, fee cap, canal ocupado, déficit/mínimo executável e
 viabilidade operacional de sources/rota. Desde a 0.5.54 ela também respeita o
 **cooldown estrutural** do Sovereign (`guaranteed_structural_cooldown`): se o
 último job do canal terminou em `all sources failed` depois de esgotar o pool
-de sources (≥ 20 tentativas), o slot pula o canal por 2h na primeira vez e por
+de sources (≥ 20 tentativas, ou ≥ o número de sources elegíveis no scan quando
+o pool é menor que 20 — desde a 0.5.55, para nós pequenos entrarem no cooldown
+em vez de re-enfileirar o mesmo alvo morto a cada scan), o slot pula o canal
+por 2h na primeira vez e por
 `sovereign_structural_cooldown_repeat_hours` (padrão 6h) nas seguintes, até um
 job bem-sucedido limpar o estado. Antes disso, um canal sem rota nenhuma era
 re-enfileirado a cada scan (≈ 90 jobs falhos/dia ocupando um worker). O ID também é exposto como

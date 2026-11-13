@@ -249,6 +249,9 @@ func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, amount
 			} else if paymentHash == "" || (trackErr == nil && found && strings.EqualFold(details.Status, "FAILED")) {
 				// An empty hash is the client's explicit pre-submission failure.
 				_ = guard.Release(trackCtx, reservation, "payment failed before submission or LND confirmed failure")
+			} else if trackErr == nil && !found && !isAmbiguousPaymentError(err) {
+				// Definite send error and LND never registered the hash.
+				_ = guard.Release(trackCtx, reservation, "LND has no record of this payment; it was never initiated")
 			}
 			cancel()
 		}

@@ -134,7 +134,22 @@ func (manager *ComposeAppManager) validatedLNDgFiles() (lndgValidatedFiles, erro
 		EntrypointPath: entrypointPath,
 	})
 	if !bytes.Equal(composeRaw, []byte(expectedCompose)) {
-		return files, errors.New("LNDg compose manifest does not match the catalog")
+		// The restricted Manager may not traverse an existing native LND data
+		// directory. It then writes the catalog's empty-placeholder declaration.
+		// Accept only that exact variant, but retain the broker's native path for
+		// execution. Never grant the Manager broader filesystem access.
+		placeholderPath := filepath.Join(lndDir, appmanifest.LNDgChannelDBFile)
+		info, placeholderErr := os.Lstat(placeholderPath)
+		if placeholderDB || placeholderErr != nil || !info.Mode().IsRegular() || info.Size() != 0 {
+			return files, errors.New("LNDg compose manifest does not match the catalog")
+		}
+		placeholderCompose := appmanifest.LNDgCompose(appmanifest.LNDgComposePaths{
+			DataDir: dataDir, PgDir: pgDir, LogPath: logPath, LndDir: lndDir,
+			ChannelDBPath: placeholderPath, EntrypointPath: entrypointPath,
+		})
+		if !bytes.Equal(composeRaw, []byte(placeholderCompose)) {
+			return files, errors.New("LNDg compose manifest does not match the catalog")
+		}
 	}
 
 	certificatePath := filepath.Join(lndDir, appmanifest.LNDgTLSCertFile)
@@ -252,14 +267,15 @@ func (manager *ComposeAppManager) createLNDgSnapshot(files lndgValidatedFiles) (
 			}
 		}
 	}
-	if files.placeholderDB {
-		placeholderPath := filepath.Join(lndDir, appmanifest.LNDgChannelDBFile)
-		if err := writeAtomicRegularFile(placeholderPath, nil, 0640); err != nil {
-			return snapshot, func() {}, errors.New("failed to write LNDg channel database placeholder")
-		}
-		if err := setPrivilegedPathGroup(placeholderPath, appmanifest.LNDgContainerGID); err != nil {
-			return snapshot, func() {}, errors.New("failed to assign LNDg placeholder group")
-		}
+	// The parent /etc/lnd mount is read-only. A native DB bind needs its
+	// destination present before runc applies that mount, just like the empty
+	// PostgreSQL-backed variant. This file is not the native database.
+	placeholderPath := filepath.Join(lndDir, appmanifest.LNDgChannelDBFile)
+	if err := writeAtomicRegularFile(placeholderPath, nil, 0640); err != nil {
+		return snapshot, func() {}, errors.New("failed to write LNDg channel database placeholder")
+	}
+	if err := setPrivilegedPathGroup(placeholderPath, appmanifest.LNDgContainerGID); err != nil {
+		return snapshot, func() {}, errors.New("failed to assign LNDg placeholder group")
 	}
 	return composeAppSnapshot{root: snapshotRoot, composePath: composePath, envPath: envPath}, func() {}, nil
 }

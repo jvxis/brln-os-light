@@ -2,13 +2,11 @@ package server
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"lightningos-light/internal/appmanifest"
 	"lightningos-light/internal/lndclient"
@@ -140,6 +138,9 @@ func (s *Server) applyLnbits(ctx context.Context) error {
 
 func (s *Server) uninstallLnbits(ctx context.Context) error {
 	paths := lnbitsAppPaths()
+	if err := pauseLNbitsCredentialMigration(paths); err != nil {
+		return err
+	}
 	if fileExists(paths.ComposePath) {
 		if err := reconcileLnbitsCatalogDeclaration(paths); err != nil {
 			return fmt.Errorf("failed to reconcile LNbits declaration: %w", err)
@@ -158,6 +159,9 @@ func (s *Server) uninstallLnbits(ctx context.Context) error {
 
 func (s *Server) stopLnbits(ctx context.Context) error {
 	paths := lnbitsAppPaths()
+	if err := pauseLNbitsCredentialMigration(paths); err != nil {
+		return err
+	}
 	if !fileExists(paths.ComposePath) {
 		return errors.New("LNbits is not installed")
 	}
@@ -241,58 +245,25 @@ func ensureLnbitsEnv(paths lnbitsPaths) error {
 }
 
 func (s *Server) ensureLnbitsMacaroon(ctx context.Context, paths lnbitsPaths) error {
-	if info, err := os.Lstat(paths.MacaroonPath); err == nil {
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("LNbits LND credential must be a regular file")
-		}
-		credential, err := os.ReadFile(paths.MacaroonPath)
-		if err != nil || len(credential) == 0 {
-			return errors.New("LNbits LND credential is unavailable")
-		}
-		if err := validateLnbitsCredentialNotAdmin(credential); err != nil {
-			return err
-		}
-		return os.Chmod(paths.MacaroonPath, 0600)
-	} else if !os.IsNotExist(err) {
-		return errors.New("LNbits LND credential is unavailable")
-	}
 	if s.lnd == nil {
 		return errors.New("LND client unavailable")
 	}
-	ids, err := s.lnd.ListMacaroonIDs(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list LND macaroon IDs: %w", err)
-	}
-	rootKeyID, err := lndclient.GenerateMacaroonRootKeyID(ids, time.Now())
-	if err != nil {
-		return err
-	}
-	result, err := s.lnd.BakeCustomMacaroon(ctx, lndclient.BakeCustomMacaroonRequest{
-		Permissions: lnbitsMacaroonPermissions(),
-		RootKeyID:   rootKeyID,
+	return ensureLNbitsWalletCredential(ctx, paths, lnbitsBrokerCredentialRPC{Client: s.lnd}, lnbitsCredentialRuntime{
+		inspect: func(ctx context.Context) (string, error) {
+			handled, status, _, _, err := system.InspectAppWithBroker(ctx, appmanifest.LNbitsID)
+			if !handled {
+				return "", errors.New("LNbits migration requires privileged broker")
+			}
+			return status, err
+		},
+		lifecycle: func(ctx context.Context, action string) error {
+			handled, err := system.AppLifecycleWithBroker(ctx, appmanifest.LNbitsID, action)
+			if !handled {
+				return errors.New("LNbits migration requires privileged broker")
+			}
+			return err
+		},
 	})
-	if err != nil {
-		return fmt.Errorf("failed to bake LNbits macaroon: %w", err)
-	}
-	raw, err := hex.DecodeString(result.MacaroonHex)
-	if err != nil || len(raw) == 0 {
-		return errors.New("invalid LND macaroon response")
-	}
-	if err := validateLnbitsCredentialNotAdmin(raw); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(paths.MacaroonPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to write LNbits macaroon: %w", err)
-	}
-	if _, err := file.Write(raw); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("failed to write LNbits macaroon: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("failed to close LNbits macaroon: %w", err)
-	}
-	return nil
 }
 
 func validateLnbitsCredentialNotAdmin(credential []byte) error {
@@ -306,9 +277,9 @@ func validateLnbitsCredentialNotAdmin(credential []byte) error {
 	return nil
 }
 
-// LNbits v1.6.1 uses this credential for both LndRestWallet and its built-in
-// LndRestNode manager. The latter adds node info, peer, channel, fee-policy,
-// and on-chain balance/open/close RPCs to the wallet's invoice/payment calls.
+// Wallet-only authority. LNbits also reuses this credential for LndRestNode;
+// node administration is deliberately unsupported. Keep Lightning spending
+// disclosed in the App Store: this is not an invoice-only credential.
 func lnbitsMacaroonPermissions() []lndclient.MacaroonPermission {
 	return []lndclient.MacaroonPermission{
 		{Entity: "info", Action: "read"},
@@ -316,10 +287,6 @@ func lnbitsMacaroonPermissions() []lndclient.MacaroonPermission {
 		{Entity: "invoices", Action: "write"},
 		{Entity: "offchain", Action: "read"},
 		{Entity: "offchain", Action: "write"},
-		{Entity: "onchain", Action: "read"},
-		{Entity: "onchain", Action: "write"},
-		{Entity: "peers", Action: "read"},
-		{Entity: "peers", Action: "write"},
 	}
 }
 

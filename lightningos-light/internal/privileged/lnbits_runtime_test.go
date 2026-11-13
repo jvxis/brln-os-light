@@ -193,6 +193,17 @@ func TestLNbitsValidationRejectsDeclarationAndCredentialDrift(t *testing.T) {
 		{name: "compose", mutate: func(t *testing.T, fixture *testLNbitsFixture) {
 			mustWriteTestFile(t, fixture.composePath, []byte("services: {}\n"), 0640)
 		}},
+		{name: "startup gate bypass", mutate: func(t *testing.T, fixture *testLNbitsFixture) {
+			raw, err := os.ReadFile(fixture.composePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			unsafe := strings.Replace(string(raw), "ssl.create_default_context(cafile=certificate)", "ssl._create_unverified_context()", 1)
+			if unsafe == string(raw) {
+				t.Fatal("startup gate fixture did not exercise the TLS boundary")
+			}
+			mustWriteTestFile(t, fixture.composePath, []byte(unsafe), 0640)
+		}},
 		{name: "environment", mutate: func(t *testing.T, fixture *testLNbitsFixture) {
 			mustWriteTestFile(t, fixture.envPath, append(testLNbitsEnv(), []byte("PYTHONPATH=/hostile\n")...), 0600)
 		}},

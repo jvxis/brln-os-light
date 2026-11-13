@@ -296,3 +296,78 @@ func TestDiscoveryNeverQueuesWithoutKnownState(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoveryBacksOffAfterRepeatedNoRouteLadders(t *testing.T) {
+	cfg := discoveryTestConfig() // 2 steps
+	day := func(d int) time.Time { return time.Date(2026, 11, 3, 3, 30, 0, 0, time.UTC).AddDate(0, 0, d) }
+	noRoute := func(at time.Time) []sovereignDiscoveryJob {
+		return []sovereignDiscoveryJob{{At: at, NoRoute: true}, {At: at.Add(15 * time.Minute), NoRoute: true}}
+	}
+
+	// One full no-route ladder: the next window probes again as before.
+	jobs := noRoute(day(0))
+	stat := sovereignDiscoveryCurrentLadder(jobs, day(1))
+	if len(stat.Expired) != 1 || !stat.Expired[0].NoRoute || stat.Expired[0].Jobs != 2 {
+		t.Fatalf("expired ladder not summarised: %+v", stat)
+	}
+	if _, ok := sovereignDiscoveryBackoffUntil(cfg, stat); ok {
+		t.Fatal("a single no-route ladder must not back off")
+	}
+
+	// Second ladder in a row without a route: wait two windows from its start.
+	jobs = append(jobs, noRoute(day(1))...)
+	stat = sovereignDiscoveryCurrentLadder(jobs, day(2))
+	until, ok := sovereignDiscoveryBackoffUntil(cfg, stat)
+	if !ok || !until.Equal(day(1).Add(2*sovereignDiscoveryWindow)) {
+		t.Fatalf("two no-route ladders must back off two windows, got %v %v", until, ok)
+	}
+	if step, ok := sovereignDiscoveryNextStep(cfg, stat); !ok || step != 1 {
+		t.Fatalf("the ladder itself is still at step 1 after the window, got %d %v", step, ok)
+	}
+
+	// Third: four windows. Fourth and later: still four (cap).
+	jobs = append(jobs, noRoute(day(3))...)
+	stat = sovereignDiscoveryCurrentLadder(jobs, day(4))
+	if until, ok := sovereignDiscoveryBackoffUntil(cfg, stat); !ok || !until.Equal(day(3).Add(4*sovereignDiscoveryWindow)) {
+		t.Fatalf("three no-route ladders must back off four windows, got %v %v", until, ok)
+	}
+	jobs = append(jobs, noRoute(day(7))...)
+	stat = sovereignDiscoveryCurrentLadder(jobs, day(8))
+	if until, ok := sovereignDiscoveryBackoffUntil(cfg, stat); !ok || !until.Equal(day(7).Add(4*sovereignDiscoveryWindow)) {
+		t.Fatalf("the backoff is capped at four windows, got %v %v", until, ok)
+	}
+
+	// A success anywhere in the newest ladder ends the streak.
+	success := append(noRoute(day(0)), noRoute(day(1))...)
+	success = append(success, sovereignDiscoveryJob{At: day(2), NoRoute: true}, sovereignDiscoveryJob{At: day(2).Add(15 * time.Minute), Succeeded: true})
+	if _, ok := sovereignDiscoveryBackoffUntil(cfg, sovereignDiscoveryCurrentLadder(success, day(3))); ok {
+		t.Fatal("a successful probe must reset the no-route streak")
+	}
+
+	// A ladder cut short (one probe, budget ran out) or a skipped probe does
+	// not count as "no route at every step".
+	short := append(noRoute(day(0)), sovereignDiscoveryJob{At: day(1), NoRoute: true})
+	if _, ok := sovereignDiscoveryBackoffUntil(cfg, sovereignDiscoveryCurrentLadder(short, day(2))); ok {
+		t.Fatal("a ladder that did not reach every step must not count toward the backoff")
+	}
+	skipped := append(noRoute(day(0)), sovereignDiscoveryJob{At: day(1), NoRoute: true}, sovereignDiscoveryJob{At: day(1).Add(15 * time.Minute)})
+	if _, ok := sovereignDiscoveryBackoffUntil(cfg, sovereignDiscoveryCurrentLadder(skipped, day(2))); ok {
+		t.Fatal("a skipped probe (fast path unavailable) must not count as no route")
+	}
+
+	// While a ladder is open the expired ones are still carried, but the open
+	// ladder is what gates the next step.
+	open := append(noRoute(day(0)), noRoute(day(1))...)
+	open = append(open, sovereignDiscoveryJob{At: day(3), NoRoute: true})
+	stat = sovereignDiscoveryCurrentLadder(open, day(3).Add(20*time.Minute))
+	if stat.Jobs != 1 || len(stat.Expired) != 2 {
+		t.Fatalf("open ladder must keep its own count and the expired list: %+v", stat)
+	}
+
+	// Discovery off: no backoff computed.
+	off := cfg
+	off.DiscoverySteps = 0
+	if _, ok := sovereignDiscoveryBackoffUntil(off, sovereignDiscoveryCurrentLadder(jobs, day(8))); ok {
+		t.Fatal("no backoff without a ladder configured")
+	}
+}

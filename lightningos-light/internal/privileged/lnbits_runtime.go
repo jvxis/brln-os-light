@@ -111,8 +111,11 @@ func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, 
 		return files, errors.New("LNbits environment is not private")
 	}
 	envRaw, err := readRegularFile(envPath, 64*1024)
-	if err != nil || appmanifest.ValidateLNbitsEnv(envRaw) != nil {
+	if err != nil {
 		return files, errors.New("LNbits environment does not match the catalog")
+	}
+	if appmanifest.ValidateLNbitsEnv(envRaw) != nil {
+		return files, catalogMismatchError("LNbits environment does not match the catalog")
 	}
 
 	certificatePath := filepath.Join(lndDataRoot, appmanifest.LNbitsTLSCertFile)
@@ -149,7 +152,7 @@ func (manager *ComposeAppManager) validatedLNbitsFiles() (lnbitsValidatedFiles, 
 		LNDDir:  lndDir,
 	})
 	if !bytes.Equal(composeRaw, []byte(expectedCompose)) {
-		return files, errors.New("LNbits compose manifest does not match the catalog")
+		return files, catalogMismatchError("LNbits compose manifest does not match the catalog")
 	}
 
 	return lnbitsValidatedFiles{envRaw: envRaw, certificateRaw: certificateRaw, macaroonRaw: macaroonRaw, restEndpoint: restEndpoint}, nil

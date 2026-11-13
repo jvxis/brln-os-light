@@ -87,21 +87,21 @@ func (manager *ComposeAppManager) validatedFedimintFiles(appID string) (fedimint
 	case appmanifest.FedimintGuardianID:
 		runtime, err := appmanifest.ParseFedimintGuardianRuntimeJSON(runtimeRaw)
 		if err != nil {
-			return fedimintValidatedFiles{}, errors.New("Fedimint Guardian runtime does not match the catalog")
+			return fedimintValidatedFiles{}, catalogMismatchError("Fedimint Guardian runtime does not match the catalog")
 		}
 		expected, err := appmanifest.FedimintGuardianCompose(runtime)
 		if err != nil || !bytes.Equal(composeRaw, []byte(expected)) {
-			return fedimintValidatedFiles{}, errors.New("Fedimint Guardian compose manifest does not match the catalog")
+			return fedimintValidatedFiles{}, catalogMismatchError("Fedimint Guardian compose manifest does not match the catalog")
 		}
 		files.guardian = &runtime
 	case appmanifest.FedimintGatewayID:
 		runtime, err := appmanifest.ParseFedimintGatewayRuntimeJSON(runtimeRaw)
 		if err != nil {
-			return fedimintValidatedFiles{}, errors.New("Fedimint Gateway runtime does not match the catalog")
+			return fedimintValidatedFiles{}, catalogMismatchError("Fedimint Gateway runtime does not match the catalog")
 		}
 		expected, err := appmanifest.FedimintGatewayCompose(runtime)
 		if err != nil || !bytes.Equal(composeRaw, []byte(expected)) {
-			return fedimintValidatedFiles{}, errors.New("Fedimint Gateway compose manifest does not match the catalog")
+			return fedimintValidatedFiles{}, catalogMismatchError("Fedimint Gateway compose manifest does not match the catalog")
 		}
 		certificatePath := filepath.Join(appRoot, appmanifest.FedimintGatewayTLSFile)
 		macaroonPath := filepath.Join(appRoot, appmanifest.FedimintGatewayMacaroonFile)

@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -86,6 +87,36 @@ func reconcileInstalledCatalogFile(path string, content string) error {
 		return fmt.Errorf("failed to reconcile installed catalog file %s: %w", path, err)
 	}
 	return nil
+}
+
+// reconcileInstalledCatalogFileIfPresent applies reconcileInstalledCatalogFile
+// to an auxiliary declaration file that an installation may lack. A missing
+// file stays missing: it is never created here, and the broker then refuses the
+// incomplete declaration exactly as before.
+func reconcileInstalledCatalogFileIfPresent(path string, content string) error {
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return nil
+	}
+	return reconcileInstalledCatalogFile(path, content)
+}
+
+// readInstalledCatalogInput reads an existing regular, non-link declaration
+// input (such as an app environment) that the current catalog content is
+// derived from. It is read only: secret-bearing inputs are never rewritten.
+// Errors never include the file content.
+func readInstalledCatalogInput(path string, maxBytes int64) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, errors.New("installed catalog input is unavailable")
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > maxBytes {
+		return nil, errors.New("installed catalog input is unsafe")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || int64(len(raw)) > maxBytes {
+		return nil, errors.New("installed catalog input is unavailable")
+	}
+	return raw, nil
 }
 
 func writeFile(path string, content string, mode os.FileMode) error {

@@ -40,7 +40,7 @@ func (manager *ComposeAppManager) validatedMempoolFiles() (mempoolValidatedFiles
 	}
 	runtime, err := appmanifest.ParseMempoolRuntimeEnv(envRaw)
 	if err != nil {
-		return files, errors.New("Mempool environment does not match the catalog")
+		return files, catalogMismatchError("Mempool environment does not match the catalog")
 	}
 	composeRaw, err := readRegularFile(filepath.Join(appRoot, appmanifest.MempoolComposeFile), 64*1024)
 	if err != nil {
@@ -48,7 +48,7 @@ func (manager *ComposeAppManager) validatedMempoolFiles() (mempoolValidatedFiles
 	}
 	expected, err := appmanifest.MempoolCompose(runtime)
 	if err != nil || !bytes.Equal(composeRaw, []byte(expected)) {
-		return files, errors.New("Mempool compose manifest does not match the catalog")
+		return files, catalogMismatchError("Mempool compose manifest does not match the catalog")
 	}
 	files = mempoolValidatedFiles{composeRaw: composeRaw, envRaw: envRaw, runtime: runtime}
 	return files, nil

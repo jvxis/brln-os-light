@@ -315,6 +315,15 @@ export default function AppStore() {
     if (err instanceof APIError && err.code === 'app_node_busy') {
       return t('appStore.nodeBusy')
     }
+    if (err instanceof APIError && err.code === 'app_catalog_mismatch') {
+      return t('appStore.catalogMismatch')
+    }
+    if (err instanceof APIError && err.code === 'lnbits_credential_enrollment_missing') {
+      return t('appStore.lnbitsCredentialNotEnrolled')
+    }
+    if (err instanceof APIError && err.code === 'lnbits_credential_lnd_unavailable') {
+      return t('appStore.lnbitsCredentialLndUnavailable')
+    }
     return err instanceof Error ? err.message : t(fallbackKey)
   }
 

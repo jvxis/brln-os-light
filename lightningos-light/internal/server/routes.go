@@ -77,6 +77,8 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/elements/mainchain", s.handleElementsMainchainPost)
 	r.Get("/api/lnd/status", s.handleLNDStatus)
 	r.Get("/api/lnd/config", s.handleLNDConfigGet)
+	r.Get("/api/lnd/config/upfront-shutdown", s.handleUpfrontShutdownGet)
+	r.Post("/api/lnd/config/upfront-shutdown", s.handleUpfrontShutdownPost)
 	r.Get("/api/lnd/maintenance", s.handleLNDMaintenanceGet)
 	r.Get("/api/lnd/upgrade/status", s.handleLNDUpgradeStatus)
 	r.Get("/api/app/upgrade/status", s.handleAppUpgradeStatus)

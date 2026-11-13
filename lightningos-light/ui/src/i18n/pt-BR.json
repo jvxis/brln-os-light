@@ -1,4 +1,25 @@
 {
+  "upfront": {
+    "title": "Destino do fechamento cooperativo",
+    "optional": "Opcional · somente novos canais",
+    "intro": "Combine o endereço de recebimento com o peer na abertura do canal. Isso não bloqueia todos os fundos do node.",
+    "loading": "Verificando configuração…",
+    "loadFailed": "Não foi possível verificar a configuração.",
+    "destination": "Padrão para canais futuros",
+    "off": "Não definir automaticamente",
+    "wallet": "Endereço automático da carteira LND",
+    "external": "Endereço de carteira externa",
+    "offHint": "Mantém as escolhas individuais por canal. Endereços já negociados não são removidos.",
+    "walletHint": "Usa um novo endereço da carteira LND quando o peer oferece suporte. Os fundos continuam na carteira quente.",
+    "externalHint": "Vale para novos canais recebidos e iniciados, salvo escolha individual por canal. Peers sem suporte serão recusados. No fechamento cooperativo, os fundos saem da carteira LND.",
+    "address": "Endereço Bitcoin mainnet",
+    "confirmExternal": "Controlo este endereço e tenho seu backup. Entendo que reutilizá-lo reduz a privacidade e que alguns peers poderão não aceitar novos canais.",
+    "limits": "Sem efeito retroativo. Não protege force closes nem pagamentos Lightning maliciosos. A alteração reinicia o LND; destinos já negociados permanecem iguais.",
+    "reload": "Recarregar",
+    "installation_origin_unverified": "Somente leitura: origem nativa do LOS não confirmada. Instalações com node preexistente estão fora do escopo deste controle.",
+    "ambiguous_configuration": "Somente leitura: opções duplicadas ou fora do padrão exigem revisão do operador.",
+    "lnd_version_unavailable_or_unsupported": "Somente leitura: é necessário LND 0.21 ou superior acessível."
+  },
   "fiat": {
     "currency": "Moeda de exibição",
     "hint": "Valor aproximado pela cotação atual do BTC, não pelo preço histórico da transação. Os valores em satoshis continuam sendo a referência."

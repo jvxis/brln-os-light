@@ -1423,14 +1423,14 @@ func (manager *ComposeAppManager) validatedCPUMinerFiles() ([]byte, []byte, erro
 		return nil, nil, errors.New("app compose manifest is unavailable")
 	}
 	if !bytes.Equal(composeRaw, []byte(appmanifest.CPUMinerCompose())) {
-		return nil, nil, errors.New("app compose manifest does not match the catalog")
+		return nil, nil, catalogMismatchError("app compose manifest does not match the catalog")
 	}
 	envRaw, err := readRegularFile(filepath.Join(appRoot, appmanifest.CPUMinerEnvFile), 16*1024)
 	if err != nil {
 		return nil, nil, errors.New("app environment is unavailable")
 	}
 	if err := appmanifest.ValidateCPUMinerEnv(envRaw); err != nil {
-		return nil, nil, errors.New("app environment does not match the catalog")
+		return nil, nil, catalogMismatchError("app environment does not match the catalog")
 	}
 	return composeRaw, envRaw, nil
 }
@@ -1524,14 +1524,14 @@ func (manager *ComposeAppManager) validatedRoboSatsFiles() (roboSatsValidatedFil
 	}
 	expectedCompose := appmanifest.RoboSatsCompose(caddyfilePath, tlsDir)
 	if !bytes.Equal(composeRaw, []byte(expectedCompose)) {
-		return fail("app compose manifest does not match the catalog")
+		return roboSatsValidatedFiles{}, catalogMismatchError("app compose manifest does not match the catalog")
 	}
 	caddyfileRaw, err := readRegularFile(caddyfilePath, 16*1024)
 	if err != nil {
 		return fail("app proxy configuration is unavailable")
 	}
 	if !bytes.Equal(caddyfileRaw, []byte(appmanifest.RoboSatsCaddyfile())) {
-		return fail("app proxy configuration does not match the catalog")
+		return roboSatsValidatedFiles{}, catalogMismatchError("app proxy configuration does not match the catalog")
 	}
 	certificateRaw, err := readRegularFile(filepath.Join(tlsDir, "server.crt"), 64*1024)
 	if err != nil {
@@ -1601,7 +1601,7 @@ func (manager *ComposeAppManager) validatedBTCPayFiles() (btcpayValidatedFiles, 
 	}
 	joinBitcoinNetwork, useTorProxy, err := validateBTCPayEnv(envRaw)
 	if err != nil {
-		return fail("BTCPay environment does not match the catalog")
+		return btcpayValidatedFiles{}, catalogMismatchError("BTCPay environment does not match the catalog")
 	}
 	managerPaths := appmanifest.BTCPayComposePaths{
 		DataDir:    filepath.Join(dataRoot, "data"),
@@ -1616,11 +1616,14 @@ func (manager *ComposeAppManager) validatedBTCPayFiles() (btcpayValidatedFiles, 
 	}
 	expectedCompose := appmanifest.BTCPayCompose(managerPaths, joinBitcoinNetwork, useTorProxy)
 	if !bytes.Equal(composeRaw, []byte(expectedCompose)) {
-		return fail("BTCPay compose manifest does not match the catalog")
+		return btcpayValidatedFiles{}, catalogMismatchError("BTCPay compose manifest does not match the catalog")
 	}
 	dbInitRaw, err := readRegularFile(managerPaths.DbInitPath, 8*1024)
-	if err != nil || !bytes.Equal(dbInitRaw, []byte(appmanifest.BTCPayDBInit())) {
+	if err != nil {
 		return fail("BTCPay database initialization does not match the catalog")
+	}
+	if !bytes.Equal(dbInitRaw, []byte(appmanifest.BTCPayDBInit())) {
+		return btcpayValidatedFiles{}, catalogMismatchError("BTCPay database initialization does not match the catalog")
 	}
 
 	certificatePath := filepath.Join(lndDir, appmanifest.BTCPayTLSCertFile)

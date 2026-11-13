@@ -761,7 +761,8 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "invalid_request", errors.New("invalid app.compose.remove params")
 		}
 		if err := broker.Apps.Remove(ctx, params.AppID, request.DryRun); err != nil {
-			return nil, "app_remove_failed", errors.New("app remove operation failed")
+			code, message := AppRemoveDiagnostic(err)
+			return nil, code, errors.New(message)
 		}
 		return map[string]any{"validated": true, "changed": !request.DryRun}, "", nil
 	case OperationAppAdminReset:
@@ -850,7 +851,8 @@ func (broker *Broker) execute(ctx context.Context, request Request) (any, string
 			return nil, "broker_unavailable", errors.New("LNbits credential migration requires an updated broker")
 		}
 		if err := manager.RevokeLNbitsLegacyCredential(ctx, request.DryRun); err != nil {
-			return nil, "lnbits_credential_revoke_failed", errors.New("LNbits legacy credential revocation failed; no general macaroon authority is granted to the Manager")
+			code, message := LNbitsCredentialRevokeDiagnostic(err)
+			return nil, code, errors.New(message)
 		}
 		return map[string]any{"ready": true}, "", nil
 	case OperationBitcoinStorageEnsure:

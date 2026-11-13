@@ -129,8 +129,14 @@ func (a btcpayApp) Stop(ctx context.Context) error {
 }
 
 func (a btcpayApp) Uninstall(ctx context.Context) error {
-	paths := btcpayAppPaths()
+	return removeBtcpayApp(ctx, btcpayAppPaths())
+}
+
+func removeBtcpayApp(ctx context.Context, paths btcpayPaths) error {
 	if fileExists(paths.ComposePath) {
+		if err := reconcileBtcpayCatalogDeclaration(paths); err != nil {
+			return fmt.Errorf("failed to reconcile BTCPay declaration: %w", err)
+		}
 		if handled, err := system.RemoveAppWithBroker(ctx, btcpayAppID); !handled {
 			return errors.New("BTCPay removal requires privileged broker enforce mode")
 		} else if err != nil {
@@ -143,6 +149,31 @@ func (a btcpayApp) Uninstall(ctx context.Context) error {
 		return fmt.Errorf("failed to remove app files: %w", err)
 	}
 	return nil
+}
+
+// reconcileBtcpayCatalogDeclaration refreshes only the catalog-derived BTCPay
+// declaration (Compose and database initialization) left by an older catalog,
+// so removal works without a prior start. The Compose wiring is derived
+// offline from the existing environment, as the broker derives it: removal
+// never probes bitcoind, pulls images or contacts the network. The environment
+// and LND material are never rewritten. An environment that cannot be read
+// leaves the Compose untouched for the broker to refuse as before.
+func reconcileBtcpayCatalogDeclaration(paths btcpayPaths) error {
+	if err := reconcileInstalledCatalogFileIfPresent(paths.DbInitPath, btcpayDbInitContents()); err != nil {
+		return err
+	}
+	envRaw, err := readInstalledCatalogInput(paths.EnvPath, 32*1024)
+	if err != nil {
+		return nil
+	}
+	joinBitcoinNetwork, useTorProxy, err := appmanifest.BTCPayComposeWiringFromEnv(envRaw)
+	if err != nil {
+		return nil
+	}
+	return reconcileInstalledCatalogFile(paths.ComposePath, btcpayComposeContents(paths, btcpayBitcoinWiring{
+		JoinBitcoinNetwork: joinBitcoinNetwork,
+		UseTorProxy:        useTorProxy,
+	}))
 }
 
 func btcpayAppPaths() btcpayPaths {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"lightningos-light/internal/appmanifest"
+	"lightningos-light/internal/privileged"
 	"lightningos-light/internal/system"
 
 	"github.com/go-chi/chi/v5"
@@ -173,9 +174,39 @@ func writeAppNodeBusyError(w http.ResponseWriter) {
 	writeErrorCode(w, http.StatusServiceUnavailable, "app_node_busy", appNodeBusyMessage)
 }
 
+const (
+	appCatalogMismatchMessage                = "The app files on this node were written by an older LightningOS version and no longer match the current App Store catalog. Start the app once so LightningOS refreshes them, then uninstall it again."
+	appLNbitsCredentialNotEnrolledMessage    = "The old LNbits LND credential was not registered by this LightningOS install, so LightningOS will not revoke it automatically. It needs the manual LNbits credential procedure: review and revoke it by hand, then start LNbits again."
+	appLNbitsCredentialLNDUnavailableMessage = "LND is unavailable, so the LNbits credential migration could not run. Make sure LND is running and unlocked, then try again."
+)
+
+// appBrokerDiagnostic turns the specific, fixed broker codes the user can act
+// on into a clear Manager message. Broker messages never carry secret paths,
+// credential bytes or root key IDs; these replacements do not either.
+func appBrokerDiagnostic(err error) (string, string, bool) {
+	var brokerErr *privileged.ClientError
+	if !errors.As(err, &brokerErr) {
+		return "", "", false
+	}
+	switch brokerErr.Code {
+	case privileged.ErrorCodeAppCatalogMismatch:
+		return brokerErr.Code, appCatalogMismatchMessage, true
+	case privileged.ErrorCodeLNbitsCredentialEnrollmentMissing:
+		return brokerErr.Code, appLNbitsCredentialNotEnrolledMessage, true
+	case privileged.ErrorCodeLNbitsCredentialLNDUnavailable:
+		return brokerErr.Code, appLNbitsCredentialLNDUnavailableMessage, true
+	default:
+		return "", "", false
+	}
+}
+
 func writeAppOperationError(w http.ResponseWriter, status int, err error) {
 	if isAppBrokerBusyError(err) {
 		writeAppNodeBusyError(w)
+		return
+	}
+	if code, message, ok := appBrokerDiagnostic(err); ok {
+		writeErrorCode(w, http.StatusConflict, code, message)
 		return
 	}
 	writeError(w, status, err.Error())

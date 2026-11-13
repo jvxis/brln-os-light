@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { APIError, acceptBalancedOpenSession, addLnWatchtower, bakeLnMacaroon, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelDBImpact, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnMacaroonOptions, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMagmaCommitments, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, reauthAuth, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker, type MagmaChannelCommitment, type LnMacaroonBakeResult, type LnMacaroonOptions, type LnMacaroonPermission } from '../api'
 import { getLocale } from '../i18n'
+import ForwardHistoryCard from '../components/lightningops/ForwardHistoryCard'
 import ChannelDetailModal from '../components/ChannelDetailModal'
 import SensitiveActionModal from '../components/SensitiveActionModal'
 
@@ -10830,6 +10831,8 @@ export default function LightningOps() {
           </div>
         )}
       </div>
+
+      <ForwardHistoryCard />
 
       <div id={PEERS_SECTION_ID} className="section-card order-3 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">

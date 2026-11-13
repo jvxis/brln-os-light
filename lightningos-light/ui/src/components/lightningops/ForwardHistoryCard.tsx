@@ -394,7 +394,7 @@ export default function ForwardHistoryCard() {
                                   title={item.peer_pubkey_in || item.chan_id_in_str}
                                   onClick={() => update({ chanIn: filters.chanIn === item.chan_id_in_str ? '' : item.chan_id_in_str })}
                                 >
-                                  {item.peer_alias_in}
+                                  {item.peer_alias_in || '—'}
                                 </button>
                                 <span className="text-fog/40" aria-hidden="true">→</span>
                                 <button
@@ -403,7 +403,7 @@ export default function ForwardHistoryCard() {
                                   title={item.peer_pubkey_out || item.chan_id_out_str}
                                   onClick={() => update({ chanOut: filters.chanOut === item.chan_id_out_str ? '' : item.chan_id_out_str })}
                                 >
-                                  {item.peer_alias_out}
+                                  {item.peer_alias_out || '—'}
                                 </button>
                               </div>
                             </td>

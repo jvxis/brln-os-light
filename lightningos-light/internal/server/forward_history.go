@@ -620,10 +620,12 @@ func (s *Server) forwardHistoryItems(ctx context.Context, opts forwardHistoryOpt
 				item.PeerPubkeyOut = identity.Pubkey
 			}
 		}
-		if inAlias == "" {
+		// Rows without a channel id (legacy seeds) keep an empty alias; the UI
+		// shows a dash instead of "0".
+		if inAlias == "" && item.ChanIDIn != 0 {
 			inAlias = item.ChanIDInStr
 		}
-		if outAlias == "" {
+		if outAlias == "" && item.ChanIDOut != 0 {
 			outAlias = item.ChanIDOutStr
 		}
 		item.PeerAliasIn, item.PeerAliasOut = inAlias, outAlias

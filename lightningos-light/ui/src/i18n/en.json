@@ -3275,6 +3275,17 @@
     "noLogs": "No logs yet.",
     "completed": "Tor upgrade completed successfully.",
     "lndRest": {
+      "configure": "Configure",
+      "configured": "Configured",
+      "absent": "Not configured",
+      "unknown": "Status unavailable",
+      "waiting": "Pending",
+      "unreachable": "Configured · REST unavailable",
+      "invoiceTitle": "Invoice macaroon for Lightning Address",
+      "invoiceHelp": "Copy the REST address above and generate an invoice-only macaroon here. Paste its base64 value into pay.br-ln.com. This does not register an address or send credentials to that service automatically.",
+      "invoiceConfirm": "I authorize creating a new credential to read and create invoices, without payment, on-chain send or channel-management permissions.",
+      "invoiceGenerate": "Generate invoice macaroon",
+      "invoiceOnce": "Copy now and keep the root key ID for revocation. This credential is cleared from this card when collapsed or left; it is not saved in browser storage. Clearing it does not revoke it, and generating another does not invalidate previous credentials. Treat your clipboard as sensitive.",
       "title": "LND REST .onion address",
       "subtitle": "Lets Lightning Address services such as pay.br-ln.com reach your node over Tor, without opening a router port.",
       "create": "Create REST .onion address",
@@ -3286,7 +3297,7 @@
       "restDown": "No reachable local LND REST listener was verified on port 8080.",
       "manual": "This address was configured by hand in torrc; LightningOS only shows it.",
       "failed": "Failed to read the REST .onion address.",
-      "macaroon": "Use this address with an invoice-only macaroon (Lightning Ops → Custom macaroon → Invoice permissions preset). Never hand out admin.macaroon: whoever holds it and this address controls the node."
+      "macaroon": "Use only an invoice macaroon with Lightning Address services. Never hand out admin.macaroon: whoever holds it and this address controls the node. Generating an invoice credential does not restrict other macaroons or filter the REST API."
     }
   },
   "appUpgrade": {

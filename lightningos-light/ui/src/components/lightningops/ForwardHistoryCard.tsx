@@ -408,7 +408,7 @@ export default function ForwardHistoryCard() {
                               </div>
                             </td>
                             <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-xs">{formatSats(item.amount_sat)}</td>
-                            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-xs text-emerald-200">{item.fee_msat % 1000 === 0 ? formatSats(item.fee_sat) : (item.fee_msat / 1000).toLocaleString(locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</td>
+                            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-xs text-emerald-200">{item.fee_msat % 1000 === 0 ? formatSats(item.fee_sat) : (item.fee_msat / 1000).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-xs text-fog/70">{item.ppm.toLocaleString(locale)}</td>
                           </tr>
                         ))}

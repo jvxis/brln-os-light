@@ -293,7 +293,7 @@ export default function Reports() {
   const [useDualScaleInCumulativeChart, setUseDualScaleInCumulativeChart] = useState(false)
   const [reportsRefreshKey, setReportsRefreshKey] = useState(0)
 
-  const formatter = useMemo(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 3 }), [locale])
+  const formatter = useMemo(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }), [locale])
   const compactFormatter = useMemo(() => new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }), [locale])
 
   const formatSats = (value: number) => `${formatter.format(value)} sats`

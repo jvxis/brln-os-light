@@ -1,10 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { bakeLnMacaroon, ensureTorLndRest, getTorLndRest, type LnMacaroonBakeResult, type TorLndRestStatus } from '../../api'
 
 // LND REST over a Tor onion service, for Lightning Address services such as
 // pay.br-ln.com. The broker owns the torrc block and the reload; this only
 // asks for the fixed status and the fixed "create if missing" operation.
+
+// Mount only after an explicit action. Do not invite a password manager to
+// fill the saved login password as soon as the dashboard opens.
+function ConfirmationPassword({ value, onChange, disabled }: { value: string; onChange: (value: string) => void; disabled: boolean }) {
+  const { t } = useTranslation()
+  const id = useId()
+  const [editable, setEditable] = useState(false)
+  return <label htmlFor={id} className="block max-w-sm text-xs text-fog/70">
+    {t('torUpgrade.lndRest.confirmPassword')}
+    <input id={id} name={`los-sensitive-confirm-${id}`} type="password" autoComplete="new-password"
+      readOnly={!editable} onFocus={() => setEditable(true)} data-lpignore="true" data-1p-ignore="true"
+      value={value} onChange={event => onChange(event.target.value)} disabled={disabled}
+      placeholder={t('torUpgrade.lndRest.passwordPlaceholder')}
+      className="input-field mt-2 min-h-[42px] w-full" />
+  </label>
+}
 
 export default function TorLndRestOnion() {
   const { t } = useTranslation()
@@ -20,12 +36,14 @@ export default function TorLndRestOnion() {
   const [invoicePassword, setInvoicePassword] = useState('')
   const [invoiceConfirmed, setInvoiceConfirmed] = useState(false)
   const [invoiceCopied, setInvoiceCopied] = useState(false)
+  const [invoiceSetup, setInvoiceSetup] = useState(false)
 
   const clearInvoice = () => {
     setInvoice(null)
     setInvoicePassword('')
     setInvoiceConfirmed(false)
     setInvoiceCopied(false)
+    setInvoiceSetup(false)
   }
 
   const toggle = () => {
@@ -108,16 +126,17 @@ export default function TorLndRestOnion() {
   const statusKey = !state || statusFailed ? 'unknown' : ready ? (state.rest_reachable ? 'configured' : 'unreachable') : state.status === 'pending' ? 'waiting' : 'absent'
   return (
     <div className="space-y-3 rounded-2xl border border-white/10 bg-ink/40 px-4 py-4">
-      <button type="button" onClick={toggle} disabled={busy} aria-expanded={expanded} aria-controls="tor-lnd-rest-settings" className="flex w-full flex-wrap items-center justify-between gap-2 text-left">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="text-sm font-semibold text-fog">{t('torUpgrade.lndRest.title')}</span>
-        <span className="flex items-center gap-2 text-xs text-fog/70">
-          <span role="status">{t(`torUpgrade.lndRest.${statusKey}`)}</span>
-          <span>{expanded ? t('common.hide') : t('torUpgrade.lndRest.configure')}</span>
-        </span>
-      </button>
+        <div className="flex items-center gap-3">
+          <span role="status" className={`rounded-full border px-2 py-1 text-[11px] ${ready && state.rest_reachable && !statusFailed ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200' : 'border-white/10 text-fog/60'}`}>{t(`torUpgrade.lndRest.${statusKey}`)}</span>
+          <button type="button" onClick={toggle} disabled={busy} aria-expanded={expanded} aria-controls="tor-lnd-rest-settings" className="text-xs text-fog/70 underline decoration-white/20 underline-offset-4 hover:text-fog">
+            {expanded ? t('common.hide') : t('torUpgrade.lndRest.details')} <span aria-hidden="true">{expanded ? '▴' : '▾'}</span>
+          </button>
+        </div>
+      </div>
       {expanded && <div id="tor-lnd-rest-settings" className="space-y-3">
         <p className="mt-1 text-xs text-fog/60">{t('torUpgrade.lndRest.subtitle')}</p>
-      <button type="button" className="btn-secondary" disabled={busy} onClick={() => void load()}>{t('common.refresh')}</button>
 
       {ready ? (
         <div className="space-y-2">
@@ -132,13 +151,10 @@ export default function TorLndRestOnion() {
       ) : (
         <div className="space-y-3">
           <label className="flex items-start gap-2 text-xs text-amber-200">
-            <input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={busy} />
+            <input type="checkbox" checked={confirmed} onChange={event => { setConfirmed(event.target.checked); if (!event.target.checked) setPassword('') }} disabled={busy} />
             {t('torUpgrade.lndRest.confirm')}
           </label>
-          <label className="block text-xs text-fog/70">
-            {t('torUpgrade.lndRest.password')}
-            <input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} disabled={busy} className="input mt-1 w-full" />
-          </label>
+          {confirmed && <ConfirmationPassword value={password} onChange={setPassword} disabled={busy} />}
           <button
             className="btn-secondary"
             onClick={() => void create()}
@@ -171,20 +187,26 @@ export default function TorLndRestOnion() {
             <button type="button" className="btn-secondary" onClick={() => void copyInvoice()}>{invoiceCopied ? t('common.copied') : t('lightningOps.macaroonCopyBase64')}</button>
             <button type="button" className="btn-secondary" onClick={clearInvoice}>{t('lightningOps.macaroonClear')}</button>
           </div>
-        </div> : <div className="space-y-2">
+        </div> : !invoiceSetup ? <div className="space-y-3">
+          <p className="text-xs text-fog/60">{t('torUpgrade.lndRest.invoiceReuse')}</p>
+          <button type="button" className="btn-secondary text-xs" disabled={busy || !state.rest_reachable} onClick={() => { setInvoiceSetup(true); setError('') }}>{t('torUpgrade.lndRest.invoiceNew')}</button>
+        </div> : <div className="space-y-3 rounded-xl border border-white/10 bg-ink/30 p-4">
           <label className="flex items-start gap-2 text-xs text-amber-200">
             <input type="checkbox" checked={invoiceConfirmed} onChange={event => setInvoiceConfirmed(event.target.checked)} disabled={busy} />
             {t('torUpgrade.lndRest.invoiceConfirm')}
           </label>
-          <label className="block text-xs text-fog/70">
-            {t('lightningOps.macaroonPassword')}
-            <input type="password" autoComplete="current-password" value={invoicePassword} onChange={event => setInvoicePassword(event.target.value)} disabled={busy} className="input mt-1 w-full" />
-          </label>
-          <button type="button" className="btn-secondary" disabled={busy || !invoiceConfirmed || !invoicePassword.trim() || !state.rest_reachable} onClick={() => void generateInvoice()}>
-            {busy ? t('lightningOps.macaroonGenerating') : t('torUpgrade.lndRest.invoiceGenerate')}
-          </button>
+          <ConfirmationPassword value={invoicePassword} onChange={setInvoicePassword} disabled={busy} />
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn-secondary" disabled={busy || !invoiceConfirmed || !invoicePassword.trim() || !state.rest_reachable} onClick={() => void generateInvoice()}>
+              {busy ? t('lightningOps.macaroonGenerating') : t('torUpgrade.lndRest.invoiceGenerate')}
+            </button>
+            <button type="button" className="btn-secondary" disabled={busy} onClick={clearInvoice}>{t('common.cancel')}</button>
+          </div>
         </div>}
       </div>}
+      <div className="flex justify-end border-t border-white/10 pt-2">
+        <button type="button" className="text-xs text-fog/50 underline decoration-white/20 underline-offset-4 hover:text-fog" title={t('torUpgrade.lndRest.refreshHelp')} disabled={busy} onClick={() => void load()}>{t('torUpgrade.lndRest.refreshStatus')}</button>
+      </div>
       </div>}
     </div>
   )

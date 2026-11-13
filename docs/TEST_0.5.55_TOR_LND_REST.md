@@ -4,6 +4,22 @@
 
 ### Collapsible setup and invoice credential (2026-11-13)
 
+Owner subsequently confirmed real end-to-end setup: registered
+lostest@pay.br-ln.com and received a 1-sat payment sent from BRLN HUB. This is
+owner-reported evidence on LOS-TEST2/Tor 0.4.9.14, not a pass for Tor 0.4.9.16.
+
+Visual follow-up separates the configuration badge from Details/Hide, moves the
+read-only status recheck to a discreet footer with explanatory tooltip, and
+hides the credential form behind Generate a new credential. Revisit copy states
+that the existing integration remains valid; no secret/status persistence is
+invented. Password controls use the shared input-field styling and mount only
+after explicit intent, with new-password hints and read-only-until-focus to
+discourage login autofill. Third-party password managers may override hints;
+we do not claim to control their behavior. Cancel/collapse clears the form.
+Expanded browser coverage passed for no password controls on configured revisit,
+empty deferred fields, geometry, cancellation, and unchanged preset/reauth gates.
+Synthetic desktop screenshots were visually inspected; EN/PT and mobile passed.
+
 The subcard starts collapsed, showing configuration state (not an assertion of
 external reachability). Expanding and refreshing perform no mutations. Separate
 explicit actions create the onion and generate an invoice macaroon using the

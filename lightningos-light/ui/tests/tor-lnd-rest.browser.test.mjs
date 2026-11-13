@@ -1,14 +1,14 @@
 // Real component and API client, local synthetic transport; no node credentials.
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 const html=`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module">
 import React from 'react';import {createRoot} from 'react-dom/client';import i18n from '/src/i18n';import Card from '/src/components/dashboard/TorLndRestOnion';import '/src/styles/main.css';
-window.i18n=i18n;window.posts=[];window.bakes=[];window.mode='absent';window.copied='';window.bakeFail=false;
+window.i18n=i18n;window.posts=[];window.bakes=[];window.mode=new URL(location.href).searchParams.get('mode')||'absent';window.copied='';window.bakeFail=false;
 Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>{window.copied=value}}});
 window.fetch=async(input,options={})=>{
  const path=String(input).split('?')[0];let data={};
@@ -45,6 +45,7 @@ try{
   assert.equal(await ev(`document.querySelector('button[aria-expanded]').getAttribute('aria-expanded')`),'false');
   assert.equal(await ev('window.posts.length+window.bakes.length'),0);
   await ev(`document.querySelector('button[aria-expanded]').click()`);await wait(`!!document.querySelector('input[type=checkbox]')`);
+  assert.equal(await ev(`!!document.querySelector('input[type=password]')`),false);
   assert(await ev(`${button('torUpgrade.lndRest.create')}.disabled`));
   await ev(`document.querySelector('input[type=checkbox]').click()`);
   await wait(`!${button('torUpgrade.lndRest.create')}.disabled`);
@@ -54,8 +55,16 @@ try{
   assert(await ev(`document.body.textContent.includes(i18n.t('torUpgrade.lndRest.macaroon'))`));
   assert(await ev(`document.documentElement.scrollWidth<=innerWidth`));
   assert.equal(await ev('window.bakes.length'),0);
+  assert.equal(await ev(`!!document.querySelector('input[type=password]')`),false);
+  assert(await ev(`document.body.textContent.includes(i18n.t('torUpgrade.lndRest.invoiceReuse'))`));
+  if(process.env.LOS_REST_SCREENSHOTS && language==='pt-BR' && width===1280){const shot=await page.call('Page.captureScreenshot',{format:'png'});await writeFile(join(process.env.LOS_REST_SCREENSHOTS,'los-rest-details.png'),Buffer.from(shot.data,'base64'))}
+  await ev(`${button('torUpgrade.lndRest.invoiceNew')}.click()`);await wait(`!!document.querySelector('input[type=password]')`);
+  assert.equal(await ev(`document.querySelector('input[type=password]').value`),'');
+  assert.equal(await ev(`document.querySelector('input[type=password]').autocomplete`),'new-password');
+  assert(await ev(`document.querySelector('input[type=password]').getBoundingClientRect().height>=40`));
   assert(await ev(`${button('torUpgrade.lndRest.invoiceGenerate')}.disabled`));
-  await ev(`(()=>{document.querySelector('input[type=checkbox]').click(); const input=document.querySelector('input[type=password]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'fixture-password');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  if(process.env.LOS_REST_SCREENSHOTS && language==='pt-BR' && width===1280){const shot=await page.call('Page.captureScreenshot',{format:'png'});await writeFile(join(process.env.LOS_REST_SCREENSHOTS,'los-rest-password.png'),Buffer.from(shot.data,'base64'))}
+  await ev(`(()=>{document.querySelector('input[type=checkbox]').click(); const input=document.querySelector('input[type=password]');input.focus(); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'fixture-password');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await wait(`!${button('torUpgrade.lndRest.invoiceGenerate')}.disabled`);
   await ev(`window.bakeFail=true;${button('torUpgrade.lndRest.invoiceGenerate')}.click()`);
   await wait(`document.body.textContent.includes('fixture auth denied')`);
@@ -68,13 +77,20 @@ try{
   await ev(`${button('lightningOps.macaroonCopyBase64')}.click()`);assert.equal(await ev('window.copied'),'Zml4dHVyZQ==');
   assert.equal(await ev(`JSON.stringify(localStorage).includes('Zml4dHVyZQ==')||JSON.stringify(sessionStorage).includes('Zml4dHVyZQ==')`),false);
   await ev(`document.querySelector('button[aria-expanded]').click()`);await wait(`!document.querySelector('textarea')`);
-  await ev(`document.querySelector('button[aria-expanded]').click()`);await wait(`!!${button('torUpgrade.lndRest.invoiceGenerate')}`);
+  await ev(`document.querySelector('button[aria-expanded]').click()`);await wait(`!!${button('torUpgrade.lndRest.invoiceNew')}`);
   assert.equal(await ev(`!!document.querySelector('textarea')`),false);
+  assert.equal(await ev(`!!document.querySelector('input[type=password]')`),false);
   assert.equal(await ev('window.bakes.length'),2);
-  await ev(`window.mode='manual';${button('common.refresh')}.click()`);await wait(`document.body.textContent.includes(i18n.t('torUpgrade.lndRest.manual'))`);
-  await ev(`window.mode='down';${button('common.refresh')}.click()`);await wait(`!!document.querySelector('input[type=checkbox]')`);
+  await ev(`${button('torUpgrade.lndRest.invoiceNew')}.click()`);await wait(`!!document.querySelector('input[type=password]')`);
+  await ev(`${button('common.cancel')}.click()`);await wait(`!document.querySelector('input[type=password]')`);
+  await ev(`window.mode='manual';${button('torUpgrade.lndRest.refreshStatus')}.click()`);await wait(`document.body.textContent.includes(i18n.t('torUpgrade.lndRest.manual'))`);
+  await ev(`window.mode='down';${button('torUpgrade.lndRest.refreshStatus')}.click()`);await wait(`!!document.querySelector('input[type=checkbox]')`);
   assert(await ev(`${button('torUpgrade.lndRest.create')}.disabled`));
   assert.equal(await ev('window.posts.length'),1);
+  await page.call('Page.navigate',{url:base+'/fixture?mode=configured'});await wait(`!!document.querySelector('button[aria-expanded]')`);
+  await ev(`document.querySelector('button[aria-expanded]').click()`);await wait(`!!document.querySelector('code')`);
+  assert.equal(await ev('window.posts.length+window.bakes.length'),0);
+  assert.equal(await ev(`!!document.querySelector('input[type=password]')`),false);
  }
- console.log('PASS: PT/EN desktop/mobile, collapsed state, explicit onion/invoice actions, preset-only request, auth failure/retry, memory clearing, copy, manual reuse, REST unavailable, read-only refresh.')
+ console.log('PASS: PT/EN desktop/mobile, revisit without credentials, deferred confirmation form, styled empty password, explicit preset-only bake, error/retry, cancel/collapse clearing, copy, manual reuse, unavailable REST, read-only status recheck.')
 }finally{page?.ws.close();if(browser){try{await browser.call('Browser.close')}catch{}browser.ws.close()}else child?.kill();await server.close()}

@@ -140,6 +140,9 @@ type Server struct {
 	insights                    *InsightsService
 	insightsErr                 string
 	insightsLoopStarted         bool
+	forwardHistoryAliasMu       sync.Mutex
+	forwardHistoryAliasAt       time.Time
+	forwardHistoryAliases       map[uint64]forwardChannelIdentity
 	insightsCacheMu             sync.Mutex
 	insightsCache               *insightsPayload
 	graphExplorerInitAt         time.Time

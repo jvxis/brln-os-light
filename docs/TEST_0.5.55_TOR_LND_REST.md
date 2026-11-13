@@ -20,6 +20,18 @@ Expanded browser coverage passed for no password controls on configured revisit,
 empty deferred fields, geometry, cancellation, and unchanged preset/reauth gates.
 Synthetic desktop screenshots were visually inspected; EN/PT and mobile passed.
 
+Deployed this visual refinement as the integrated UI (runtime source
+`18d6128ab2cc61ca9b6964680894c5a32351aed6`) on LOS-TEST2 without resetting
+configuration, baking/revoking credentials, or restarting any service. UI archive
+SHA256 `13f910e67c136b9b4095d83d542f3c48af715856cb23d727cce7b8256e7beeae`;
+rollback retained at `/opt/lightningos/ui.rest-visual-before`. Native LND/Tor
+and Manager process identities, torrc, LND config/TLS and onion hostname hashes
+were unchanged. Authenticated health/LND/REST status passed; REST configured and
+reachable locally, LNbits and Hardwallet still running. The public LNURL-pay
+discovery for lostest returned HTTP 200/payRequest, minimum 1000 msat. This last
+read-only discovery alone does not test invoice creation or settlement; the
+owner's earlier 1-sat payment is the end-to-end evidence. No new payment made.
+
 The subcard starts collapsed, showing configuration state (not an assertion of
 external reachability). Expanding and refreshing perform no mutations. Separate
 explicit actions create the onion and generate an invoice macaroon using the

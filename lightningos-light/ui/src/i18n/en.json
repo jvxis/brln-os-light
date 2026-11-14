@@ -121,6 +121,7 @@
       "below_execute_min": "amount below the execution minimum",
       "cycle_limit": "cycle job limit",
       "discovery_queued": "discovery probe queued",
+      "discovery_backoff": "discovery ladder in backoff",
       "fee_cap_zero": "fee cap is zero"
     }
   },
@@ -5522,6 +5523,7 @@
         "scanReasonPaidStockGate": "paid stock waiting for sales",
         "scanReasonNoSale30d": "no sale in 30 days, nothing to price against",
         "scanReasonDiscoveryQueued": "discovery probe above the fee cap",
+        "scanReasonDiscoveryBackoff": "discovery ladder paused after repeated no-route ladders",
         "scanReasonInventoryUnavailable": "paid inventory unavailable; replenishment paused",
         "scanReasonPaidLiquidityUnsoldPenalty": "unsold paid liquidity penalty",
         "scanReasonLowSuccessOpportunity": "low-success opportunity below floor",
@@ -6604,6 +6606,7 @@
       "capital_parado": { "label": "Idle capital", "title": "Idle capital in {{alias}}" },
       "abrir_canal": { "label": "Open channel", "title": "Open a channel with {{alias}}" },
       "preco_fora": { "label": "Price", "title": "Price out of line in {{alias}}" },
+      "desconto_entrada": { "label": "Inbound discount", "title": "Let {{alias}} refill itself with an inbound discount" },
       "bloqueio_esperado": { "label": "Expected block", "title": "{{alias}} is waiting on purpose" }
     },
     "confidence": {
@@ -6677,6 +6680,8 @@
       "candidate_score": "candidate score",
       "route_cost_ppm_30d": "route cost (30d)",
       "fee_ppm": "current fee",
+      "inbound_fee_ppm": "inbound fee",
+      "inbound_discount_suggested_ppm": "suggested inbound discount",
       "floor_ppm": "AutoFee floor",
       "compare": {
         "target": "target {{value}}",
@@ -6718,7 +6723,8 @@
       "lot_sold_50pct": "at least half the paid lot sells",
       "sales_30d_positive": "any sale in 30 days",
       "channel_opened_or_candidate_gone": "the channel is opened or the candidate leaves the list",
-      "fee_within_band": "fee back within ±30% of the sale price and above the floor"
+      "fee_within_band": "fee back within ±30% of the sale price and above the floor",
+      "inbound_discount_set_or_refilled": "an inbound discount is in place, or the channel is back above the reach-out level"
     },
     "dismissReason": {
       "later": "later (24h)",
@@ -6784,6 +6790,7 @@
         "R4": { "name": "Idle capital: close or reallocate", "condition": "Local balance at 60% or more (70% on a full node, 50% on a drained one), zero direct revenue in 30 days, assisted revenue below 10% of the node's average channel, capacity above the node's idle threshold (1M on a large node).", "action": "Keep it as a rebalance source, or consider a cooperative close when we funded it and no Magma commitment protects it.", "gone": "Any sale in 30 days.", "example": "Three channels with 15M local, 5k sold and 9.7k spent in 30 days." },
         "R5": { "name": "Open a new channel", "condition": "A New Channels candidate with score 60 or more, routed through at least three times in 30 days with volume above the node's threshold (1M on a large node), and no channel with that peer yet.", "action": "Open the candidate in New Channels, then preview the open in Lightning Ops.", "gone": "The channel is opened or the candidate leaves the list.", "example": "A peer the node paid to route through every week." },
         "R6": { "name": "Price out of line with the real price", "condition": "Fee 30% or more above the price the channel actually sells at while holding stock, or below the floor the rebalance cost implies.", "action": "Review in the Fee Center.", "gone": "Fee back within the band.", "example": "A channel priced at 1,300 ppm whose sales clear at 900 ppm." },
+        "R8": { "name": "Inbound discount for a seller that cannot be refilled", "condition": "A top-selling sink at or under the reach-out level, with at least 5 sales in 7 days and no inbound discount, when AutoFee will not set one: inbound passive is off, or the channel's fee is pinned by hand.", "action": "Turn on inbound passive in the Fee Center, or set a negative inbound fee on the channel.", "gone": "A discount is in place, or the channel refills above the reach-out level.", "example": "A 10M channel at 1% local that sold 28k sat in 7 days but never found a rebalance route: a 700 ppm inbound discount let a similar one refill to 47% in a day." },
         "R7": { "name": "Expected block (informational)", "condition": "A top seller below target that a known rebalance guard is holding: stock gate, cost gate, unsold cooldown, ROI guardrail.", "action": "None. The card explains why the system waits.", "gone": "The guard releases.", "example": "A channel whose last paid lot has not sold yet, so the stock gate holds the next purchase." }
       }
     }

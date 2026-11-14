@@ -491,3 +491,77 @@ func TestInsightRefillSellerLoopInSizedByLotAndWallet(t *testing.T) {
 		}
 	}
 }
+
+func TestInsightInboundDiscountOnlySpeaksWhenAutofeeWillNot(t *testing.T) {
+	now := insightTestNow()
+	fixed := int64(2961)
+	profile := autofeeProfiles[autofeeProfileDefault]
+	mk := func(point string) ChannelRankingItem {
+		r := insightTestRank(point, point, 28_000, 10_000_000, 10_000_000, 1)
+		r.ClassLabel = "sink"
+		return r
+	}
+	drained := mk("drained:0")
+	pinned := mk("pinned:0")
+	pinned.FixedFeePPM = &fixed
+	discounted := mk("discounted:0")
+	stocked := mk("stocked:0")
+	stocked.LocalBalancePct = 40
+	fewSales := mk("few:0")
+	fewSales.ForwardOutCount7d = 3
+	router := mk("router:0")
+	router.ClassLabel = "router"
+	rebs := []RebalanceChannel{
+		{ChannelID: 1, ChannelPoint: "drained:0", OutgoingFeePpm: 2961, SalePricePpm: 2867, SalePriceSource: "7d", LocalPct: 1, FeeBudgetPpm: 1900},
+		{ChannelID: 2, ChannelPoint: "pinned:0", OutgoingFeePpm: 2961, SalePricePpm: 2867, SalePriceSource: "7d", LocalPct: 1, RebalanceCost7dPpm: 1800},
+		{ChannelID: 3, ChannelPoint: "discounted:0", OutgoingFeePpm: 3500, SalePricePpm: 2571, LocalPct: 2, InboundFeePpm: -1869},
+		{ChannelID: 4, ChannelPoint: "stocked:0", OutgoingFeePpm: 1300, SalePricePpm: 1200, LocalPct: 40},
+		{ChannelID: 5, ChannelPoint: "few:0", OutgoingFeePpm: 1300, SalePricePpm: 1200, LocalPct: 1},
+		{ChannelID: 6, ChannelPoint: "router:0", OutgoingFeePpm: 1300, SalePricePpm: 1200, LocalPct: 1},
+	}
+	ranking := append(insightTestBackground(), drained, pinned, discounted, stocked, fewSales, router)
+
+	// Inbound passive off: both the AutoFee-managed and the pinned channel qualify.
+	in := insightsInput{Ranking: ranking, Rebalance: rebs, AutofeeProfile: profile, AutofeeConfigKnown: true}
+	r8 := insightsByRule(buildInsights(in, now))["R8"]
+	if len(r8) != 2 {
+		t.Fatalf("expected drained + pinned with inbound passive off, got %+v", r8)
+	}
+	byPoint := map[string]Insight{}
+	for _, ins := range r8 {
+		byPoint[ins.ChannelPoint] = ins
+	}
+	managed := byPoint["drained:0"]
+	if managed.Actions[0].Tool != insightToolAutofeeReview || managed.Actions[0].Params["reason"] != "inbound_passive_off" {
+		t.Fatalf("an AutoFee-managed channel must point at the Fee Center switch: %+v", managed.Actions)
+	}
+	if managed.ValueSatDay != 4000 || managed.InvalidateWhen != "inbound_discount_set_or_refilled" {
+		t.Fatalf("unexpected value/invalidate: %+v", managed)
+	}
+	var suggested float64
+	for _, ev := range managed.Evidence {
+		if ev.Key == "inbound_discount_suggested_ppm" {
+			suggested = ev.Value
+		}
+	}
+	// 2961 applied, anchor ceil(1900×1.002)=1904: gap 1057, retained spread 12% = 356 → 701.
+	if suggested != 701 {
+		t.Fatalf("suggested discount must follow the engine budget, got %v", suggested)
+	}
+	if got := byPoint["pinned:0"].Actions[0]; got.Tool != insightToolSetFee || got.Params["direction"] != "inbound_discount" {
+		t.Fatalf("a pinned fee must be set by hand: %+v", got)
+	}
+
+	// Inbound passive on: AutoFee owns the managed channel; only the pinned one remains.
+	in.AutofeeInboundPassive = true
+	r8 = insightsByRule(buildInsights(in, now))["R8"]
+	if len(r8) != 1 || r8[0].ChannelPoint != "pinned:0" || r8[0].Actions[0].Params["reason"] != "fixed_fee" {
+		t.Fatalf("with inbound passive on only the pinned channel qualifies, got %+v", r8)
+	}
+
+	// Unknown AutoFee config: stay silent rather than guess the switch.
+	in.AutofeeConfigKnown = false
+	if r8 = insightsByRule(buildInsights(in, now))["R8"]; len(r8) != 0 {
+		t.Fatalf("unknown config must be silent, got %+v", r8)
+	}
+}

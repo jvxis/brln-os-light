@@ -216,8 +216,12 @@ func (s *Server) collectInsights(ctx context.Context, svc *InsightsService, forc
 		src := insightSource{ID: "autofee", OK: err == nil}
 		if err != nil {
 			src.Error = err.Error()
-		} else if profile, ok := autofeeProfiles[effectiveAutofeeProfileName(cfg.Profile)]; ok {
-			in.AutofeeProfile = profile
+		} else {
+			in.AutofeeConfigKnown = true
+			in.AutofeeInboundPassive = cfg.InboundPassiveEnabled
+			if profile, ok := autofeeProfiles[effectiveAutofeeProfileName(cfg.Profile)]; ok {
+				in.AutofeeProfile = profile
+			}
 		}
 		sources = append(sources, src)
 	} else {

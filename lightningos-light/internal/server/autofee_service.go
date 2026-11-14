@@ -12425,13 +12425,19 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, inboundTags...)
 	} else {
 		var inboundSource string
+		inboundCostPpm, inboundCostSrc := autofeeInboundCostAnchor(baseCostPpm, baseCostSrc, seed, st.LastSeed, rebalGlobalPpm)
+		inboundMarginPpm7d := marginPpm7d
+		if inboundCostSrc != baseCostSrc {
+			inboundMarginPpm7d = outPpm7d - int(float64(inboundCostPpm)*1.10)
+			tags = appendAutofeeTagOnce(tags, "inbound-anchor-"+inboundCostSrc)
+		}
 		inboundDiscount, inboundSource = computeBalancedInboundDiscount(
 			e.cfg.InboundPassiveEnabled,
 			classLabel,
 			outRatio,
 			fwdCount,
-			marginPpm7d,
-			baseCostPpm,
+			inboundMarginPpm7d,
+			inboundCostPpm,
 			appliedPpm,
 			inboundDiscountMaxRatio,
 			inboundDiscountReachOutRatio,
@@ -13719,6 +13725,29 @@ func computeInboundDiscount(enabled bool, classLabel string, outRatio float64, f
 		retainedSpreadFrac = 0.12
 	}
 	return computeInboundDiscountBudget(baseCostPpm, appliedPpm, maxRatio, retainedSpreadFrac)
+}
+
+// autofeeInboundCostAnchor picks the cost reference the balanced inbound
+// discount is budgeted against. The outbound engine may fall back to the
+// channel's own sale price ("outrate") when it has no rebalance cost, which is
+// fine for the floor but makes the inbound margin zero by construction: a
+// seller that was never refilled (no route at any price) could never earn the
+// discount that would let it refill passively. For the inbound budget only,
+// that fallback is replaced by the native seed, then the node-wide rebalance
+// cost. Real rebalance costs and the seed anchor itself are left untouched.
+func autofeeInboundCostAnchor(baseCostPpm int, baseCostSrc string, seed float64, lastSeed int, rebalGlobalPpm int) (int, string) {
+	if baseCostSrc != "outrate" && baseCostSrc != "outrate-mem" {
+		return baseCostPpm, baseCostSrc
+	}
+	switch {
+	case seed > 0:
+		return int(math.Round(seed)), "seed"
+	case lastSeed > 0:
+		return lastSeed, "seed"
+	case rebalGlobalPpm > 0:
+		return rebalGlobalPpm, "rebal-global"
+	}
+	return baseCostPpm, baseCostSrc
 }
 
 func computeBalancedInboundDiscount(enabled bool, classLabel string, outRatio float64, fwdCount int, marginPpm7d int, baseCostPpm int, appliedPpm int, maxRatio float64, reachOutRatio float64, retainedSpreadFrac float64) (int, string) {

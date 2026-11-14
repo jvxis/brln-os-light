@@ -1090,13 +1090,13 @@ type RebalanceSovereignDecision struct {
 	// DiscoveryBackoffUntil is set when the ladder skipped this target because
 	// its last ladders all ran out of steps without a route.
 	DiscoveryBackoffUntil time.Time `json:"discovery_backoff_until,omitzero"`
-	IntentKind                  string  `json:"intent_kind,omitempty"`
-	IntentReason                string  `json:"intent_reason,omitempty"`
-	IntentConfidence            float64 `json:"intent_confidence,omitempty"`
-	IntentApplied               bool    `json:"intent_applied,omitempty"`
-	IntentShadow                bool    `json:"intent_shadow,omitempty"`
-	IntentScoreBefore           int64   `json:"intent_score_before,omitempty"`
-	IntentScoreAfter            int64   `json:"intent_score_after,omitempty"`
+	IntentKind            string    `json:"intent_kind,omitempty"`
+	IntentReason          string    `json:"intent_reason,omitempty"`
+	IntentConfidence      float64   `json:"intent_confidence,omitempty"`
+	IntentApplied         bool      `json:"intent_applied,omitempty"`
+	IntentShadow          bool      `json:"intent_shadow,omitempty"`
+	IntentScoreBefore     int64     `json:"intent_score_before,omitempty"`
+	IntentScoreAfter      int64     `json:"intent_score_after,omitempty"`
 }
 
 type RebalanceSovereignHistory struct {
@@ -1151,6 +1151,7 @@ type RebalanceChannel struct {
 	RemotePct                  float64  `json:"remote_pct"`
 	OutgoingFeePpm             int64    `json:"outgoing_fee_ppm"`
 	OutgoingBaseMsat           int64    `json:"outgoing_base_msat"`
+	InboundFeePpm              int64    `json:"inbound_fee_ppm"`
 	PeerFeeRatePpm             int64    `json:"peer_fee_rate_ppm"`
 	PeerBaseMsat               int64    `json:"peer_base_msat"`
 	SpreadPpm                  int64    `json:"spread_ppm"`
@@ -10521,6 +10522,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 
 	outgoingFee := int64(0)
 	outgoingBaseMsat := int64(0)
+	inboundFee := int64(0)
 	peerFeeRate := int64(0)
 	peerBaseMsat := int64(0)
 	peerPolicyKnown := false
@@ -10532,6 +10534,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		peerPolicyKnown = true
 		outgoingFee = policies.Local.FeeRatePpm
 		outgoingBaseMsat = policies.Local.BaseFeeMsat
+		inboundFee = policies.Local.InboundFeeRatePpm
 		peerFeeRate = policies.Remote.FeeRatePpm
 		peerBaseMsat = policies.Remote.BaseFeeMsat
 	}
@@ -10710,6 +10713,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		LocalPct:                   localPct,
 		RemotePct:                  remotePct,
 		OutgoingFeePpm:             outgoingFee,
+		InboundFeePpm:              inboundFee,
 		OutgoingBaseMsat:           outgoingBaseMsat,
 		PeerFeeRatePpm:             peerFeeRate,
 		PeerBaseMsat:               peerBaseMsat,

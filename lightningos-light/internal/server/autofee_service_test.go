@@ -4231,3 +4231,29 @@ func TestShouldHoldSurgeWithoutDemandEvidence(t *testing.T) {
 		t.Fatal("HTLC pressure is demand even without a settled forward")
 	}
 }
+
+func TestAutofeeInboundCostAnchorReplacesOutrateFallback(t *testing.T) {
+	// e960 (14/11): never refilled, cost fell back to its own sale price, so the
+	// inbound margin was negative by construction and no discount was budgeted.
+	if got, src := autofeeInboundCostAnchor(2867, "outrate", 1927, 0, 520); got != 1927 || src != "seed" {
+		t.Fatalf("outrate must be replaced by the seed: %d %s", got, src)
+	}
+	if got, src := autofeeInboundCostAnchor(2867, "outrate-mem", 0, 1800, 520); got != 1800 || src != "seed" {
+		t.Fatalf("outrate-mem must fall back to the remembered seed: %d %s", got, src)
+	}
+	if got, src := autofeeInboundCostAnchor(2867, "outrate", 0, 0, 520); got != 520 || src != "rebal-global" {
+		t.Fatalf("without a seed the node-wide cost anchors: %d %s", got, src)
+	}
+	if got, src := autofeeInboundCostAnchor(2867, "outrate", 0, 0, 0); got != 2867 || src != "outrate" {
+		t.Fatalf("nothing better than outrate keeps outrate: %d %s", got, src)
+	}
+	for _, src := range []string{"rebal", "rebal-21d", "rebal-mem", "seed", "rebal-global"} {
+		if got, gotSrc := autofeeInboundCostAnchor(1864, src, 1927, 0, 520); got != 1864 || gotSrc != src {
+			t.Fatalf("%s is a real anchor and must not change: %d %s", src, got, gotSrc)
+		}
+	}
+	// With the seed anchor the engine budgets a discount for the e960 case.
+	if budget := computeInboundDiscountBudget(1927, 2961, defaultInboundDiscountMaxRatio, 0.10); budget <= 0 {
+		t.Fatalf("seed anchor must leave room for a discount, got %d", budget)
+	}
+}

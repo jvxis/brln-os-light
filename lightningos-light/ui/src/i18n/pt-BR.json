@@ -121,6 +121,7 @@
       "below_execute_min": "valor abaixo do mínimo de execução",
       "cycle_limit": "limite de jobs do ciclo",
       "discovery_queued": "sonda de descoberta enfileirada",
+      "discovery_backoff": "escada de descoberta em recuo",
       "fee_cap_zero": "teto de fee zerado"
     }
   },
@@ -5522,6 +5523,7 @@
       "scanReasonPaidStockGate": "estoque pago aguardando venda",
       "scanReasonNoSale30d": "sem venda em 30 dias, sem preço para comprar",
       "scanReasonDiscoveryQueued": "sonda de descoberta acima do teto de fee",
+      "scanReasonDiscoveryBackoff": "escada de descoberta pausada após escadas seguidas sem rota",
       "scanReasonInventoryUnavailable": "estoque pago indisponível; reposição pausada",
       "scanReasonPaidLiquidityUnsoldPenalty": "liquidez paga não vendida penalizada",
       "scanReasonLowSuccessOpportunity": "oportunidade com baixo sucesso abaixo do piso",
@@ -6604,6 +6606,7 @@
       "capital_parado": { "label": "Capital parado", "title": "Capital parado em {{alias}}" },
       "abrir_canal": { "label": "Abrir canal", "title": "Abrir canal com {{alias}}" },
       "preco_fora": { "label": "Preço", "title": "Preço fora do real em {{alias}}" },
+      "desconto_entrada": { "label": "Desconto de entrada", "title": "Deixar {{alias}} encher sozinho com desconto de entrada" },
       "bloqueio_esperado": { "label": "Bloqueio esperado", "title": "{{alias}} está esperando de propósito" }
     },
     "confidence": {
@@ -6677,6 +6680,8 @@
       "candidate_score": "score do candidato",
       "route_cost_ppm_30d": "custo da rota (30d)",
       "fee_ppm": "fee atual",
+      "inbound_fee_ppm": "fee de entrada",
+      "inbound_discount_suggested_ppm": "desconto de entrada sugerido",
       "floor_ppm": "piso do AutoFee",
       "compare": {
         "target": "alvo {{value}}",
@@ -6718,7 +6723,8 @@
       "lot_sold_50pct": "metade do lote pago vender",
       "sales_30d_positive": "qualquer venda em 30 dias",
       "channel_opened_or_candidate_gone": "o canal for aberto ou o candidato sair da lista",
-      "fee_within_band": "a fee voltar para ±30% do preço de venda e acima do piso"
+      "fee_within_band": "a fee voltar para ±30% do preço de venda e acima do piso",
+      "inbound_discount_set_or_refilled": "houver desconto de entrada aplicado, ou o canal voltar acima do nível de alcance"
     },
     "outcomes": {
       "title": "Resultado: o que aconteceu uma semana depois",
@@ -6784,6 +6790,7 @@
         "R4": { "name": "Capital parado: fechar ou realocar", "condition": "Saldo local em 60% ou mais (70% em nó cheio, 50% em nó drenado), zero receita direta em 30 dias, receita assistida abaixo de 10% da média dos canais do nó, capacidade acima do limiar de capital parado do nó (1M em nó grande).", "action": "Manter como fonte de rebalance, ou avaliar fechamento cooperativo quando fomos nós que abrimos e nenhum compromisso do Magma protege.", "gone": "Qualquer venda em 30 dias.", "example": "Três canais com 15M de saldo local, 5k vendidos e 9,7k gastos em 30 dias." },
         "R5": { "name": "Abrir canal novo", "condition": "Candidato de Novos Canais com score 60 ou mais, roteado pelo menos três vezes em 30 dias com volume acima do limiar do nó (1M em nó grande) e ainda sem canal com esse peer.", "action": "Abrir o candidato em Novos Canais e depois o preview de abertura no Lightning Ops.", "gone": "O canal for aberto ou o candidato sair da lista.", "example": "Um peer pelo qual o nó pagou para rotear toda semana." },
         "R6": { "name": "Preço fora do preço real", "condition": "Fee 30% ou mais acima do preço pelo qual o canal de fato vende, com estoque, ou abaixo do piso que o custo de rebalance implica.", "action": "Rever no Fee Center.", "gone": "Fee de volta à faixa.", "example": "Canal a 1.300 ppm cujas vendas saem a 900 ppm." },
+        "R8": { "name": "Desconto de entrada para vendedor que não enche", "condition": "Sink entre os grandes vendedores, no nível de alcance ou abaixo, com 5 ou mais vendas em 7 dias e sem desconto de entrada, quando o AutoFee não vai aplicar um: inbound passivo desligado, ou fee do canal fixada à mão.", "action": "Ligar o inbound passivo no Fee Center, ou aplicar uma fee de entrada negativa no canal.", "gone": "Houver desconto aplicado, ou o canal voltar acima do nível de alcance.", "example": "Canal de 10M a 1% local que vendeu 28k sat em 7 dias mas nunca achou rota de rebalance: um desconto de 700 ppm na entrada encheu um parecido até 47% em um dia." },
         "R7": { "name": "Bloqueio esperado (informativo)", "condition": "Grande vendedor abaixo do alvo que uma guarda conhecida do rebalance está segurando: stock gate, cost gate, cooldown de lote sem venda, guardrail de ROI.", "action": "Nenhuma. O card explica por que o sistema espera.", "gone": "A guarda liberar.", "example": "Canal cujo último lote pago ainda não vendeu, então o stock gate segura a próxima compra." }
       }
     }

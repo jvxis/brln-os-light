@@ -8,10 +8,10 @@ import OutcomePanel from './insights/OutcomePanel'
 import RuleGlossary from './insights/RuleGlossary'
 import SignalMap from './insights/SignalMap'
 
-const KINDS: InsightItem['kind'][] = ['repor_vendedor', 'mais_capacidade', 'parar_compra', 'capital_parado', 'abrir_canal', 'preco_fora', 'bloqueio_esperado']
+const KINDS: InsightItem['kind'][] = ['repor_vendedor', 'mais_capacidade', 'parar_compra', 'capital_parado', 'abrir_canal', 'preco_fora', 'desconto_entrada', 'bloqueio_esperado']
 const CONFIDENCES: InsightItem['confidence'][] = ['high', 'medium', 'low']
 const TEACH_KEY = 'los-insights-teach'
-const RULES = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7']
+const RULES = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8']
 
 const readTeach = () => {
   try {

@@ -234,6 +234,7 @@ func (s *Server) Run() error {
 	runCtx, stopSignals := signal.NotifyContext(s.shutdownContext(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 
+	s.reconcileLNDBootstrapPeers()
 	s.startSystemIntegrationReconciler()
 	s.startLNDRuntimeMonitor()
 	s.startLNDGraphProgressWarmup()

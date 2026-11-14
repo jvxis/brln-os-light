@@ -67,7 +67,7 @@ func TestDecideAutoTargetAdjustment(t *testing.T) {
 				Revenue7dSat: 9000, SuccessRate: 0, Attempts: 8, SellThrough: 0.90,
 				HasHistory: true, IsRoundCandidate: true,
 			},
-			wantDir: autoTargetNoop, wantNew: 40, wantReason: "hold",
+			wantDir: autoTargetNoop, wantNew: 40, wantReason: autoTargetRouteDeadHoldReason,
 		},
 		{
 			name: "drain-first bootstrap (no history, strong earner + draining)",
@@ -177,7 +177,7 @@ func TestNormalizeRebalanceConfigAutoTarget(t *testing.T) {
 	cfg.AutoTargetStepPct = 0 // invalid
 	cfg.AutoTargetUpSellThroughFactor = 0.8
 	cfg.AutoTargetDownSellThroughFactor = 1.2 // >= up
-	cfg.AutoTargetMaxDownsPerCycle = 0         // invalid
+	cfg.AutoTargetMaxDownsPerCycle = 0        // invalid
 	got := normalizeRebalanceConfig(cfg)
 
 	if got.AutoTargetMinPct >= got.AutoTargetMaxPct {
@@ -282,5 +282,75 @@ func TestNormalizeAutoTargetIdleUpDays(t *testing.T) {
 	cfg.AutoTargetIdleUpDays = 400
 	if got := normalizeRebalanceConfig(cfg).AutoTargetIdleUpDays; got != autoTargetIdleUpDaysMax {
 		t.Fatalf("days are capped at %d, got %d", autoTargetIdleUpDaysMax, got)
+	}
+}
+
+func TestAutoTargetRouteDeadHoldsEarnedUp(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	base := autoTargetNodeBaseline{SellThrough: 0.65, MedianRevenue7dSat: 500, DrainP70: 30000}
+	earned := autoTargetSignals{
+		CurrentTargetPct: 40, CapacitySat: 5_000_000, DrainRateSatPerHr: 40000,
+		Revenue7dSat: 9000, SellThrough: 1.0, HasHistory: true, IsRoundCandidate: true,
+	}
+
+	// bxm, 12/11: 1% success over ~22k attempts was raised 65→70 on sell-through.
+	bxm := earned
+	bxm.SuccessRate, bxm.Attempts = 0.0098, 21916
+	if dec := decideAutoTargetAdjustment(bxm, base, cfg); dec.Direction != autoTargetNoop || dec.Reason != autoTargetRouteDeadHoldReason || dec.NewTarget != 40 {
+		t.Fatalf("near-zero success over a large sample must hold: %+v", dec)
+	}
+
+	// coinos / bfx-lnd1, 11/11: 1% local, structural cooldown, raised 60→70.
+	cooled := earned
+	cooled.SuccessRate, cooled.Attempts, cooled.InStructuralCooldown = 0.3, 6, true
+	if dec := decideAutoTargetAdjustment(cooled, base, cfg); dec.Reason != autoTargetRouteDeadHoldReason {
+		t.Fatalf("structural cooldown must hold an earned UP: %+v", dec)
+	}
+
+	// kappa: hard route but above the floor keeps rising (unchanged behaviour).
+	kappa := earned
+	kappa.SuccessRate, kappa.Attempts = 0.023, 1281
+	if dec := decideAutoTargetAdjustment(kappa, base, cfg); dec.Direction != autoTargetUp || dec.Reason != "sells_above_node" {
+		t.Fatalf("2.3%% success over 1.3k attempts is a hard route, not a dead one: %+v", dec)
+	}
+
+	// A small sample below the threshold is not judged by rate alone.
+	young := earned
+	young.SuccessRate, young.Attempts = 0.01, 12
+	if dec := decideAutoTargetAdjustment(young, base, cfg); dec.Direction != autoTargetUp {
+		t.Fatalf("12 attempts must not count as a dead route: %+v", dec)
+	}
+
+	// A dead route never blocks DOWN: fill-and-hold still lowers the target.
+	waste := autoTargetSignals{
+		CurrentTargetPct: 40, CapacitySat: 3_000_000, Revenue7dSat: 0, SuccessRate: 0, Attempts: 30,
+		SellThrough: 0.1, HasHistory: true, InStructuralCooldown: true,
+	}
+	if dec := decideAutoTargetAdjustment(waste, base, cfg); dec.Direction != autoTargetDown || dec.Reason != "fill_and_hold" {
+		t.Fatalf("DOWN must be unaffected by the route gate: %+v", dec)
+	}
+
+	// Without an earned UP, a dead route is a plain hold (not persisted).
+	quiet := earned
+	quiet.IsRoundCandidate, quiet.InStructuralCooldown = false, true
+	if dec := decideAutoTargetAdjustment(quiet, base, cfg); dec.Reason != "hold" {
+		t.Fatalf("no earned UP means a plain hold: %+v", dec)
+	}
+}
+
+func TestNoteAutoTargetRouteDeadHoldOncePerInterval(t *testing.T) {
+	s := &RebalanceService{}
+	at := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	if !s.noteAutoTargetRouteDeadHold(7, at, 12*time.Hour) {
+		t.Fatal("first hold must be recorded")
+	}
+	if s.noteAutoTargetRouteDeadHold(7, at.Add(15*time.Minute), 12*time.Hour) {
+		t.Fatal("a second hold inside the interval must be suppressed")
+	}
+	if !s.noteAutoTargetRouteDeadHold(8, at.Add(15*time.Minute), 12*time.Hour) {
+		t.Fatal("another channel is independent")
+	}
+	if !s.noteAutoTargetRouteDeadHold(7, at.Add(12*time.Hour), 12*time.Hour) {
+		t.Fatal("after the interval the hold is recorded again")
 	}
 }

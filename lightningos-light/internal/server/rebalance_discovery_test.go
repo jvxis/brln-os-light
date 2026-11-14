@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -369,5 +370,12 @@ func TestDiscoveryBacksOffAfterRepeatedNoRouteLadders(t *testing.T) {
 	off.DiscoverySteps = 0
 	if _, ok := sovereignDiscoveryBackoffUntil(off, sovereignDiscoveryCurrentLadder(jobs, day(8))); ok {
 		t.Fatal("no backoff without a ladder configured")
+	}
+}
+
+func TestDiscoveryBackoffReasonHasALabel(t *testing.T) {
+	detail := buildScanDetail(map[string]int{sovereignDiscoveryBackoffReason: 2}, 0, 2, 0)
+	if !strings.Contains(detail, "discovery ladder in backoff") {
+		t.Fatalf("%s must be labelled in the scan detail, got %q", sovereignDiscoveryBackoffReason, detail)
 	}
 }

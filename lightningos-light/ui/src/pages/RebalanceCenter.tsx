@@ -1608,6 +1608,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonDiscoveryQueued')
       case 'would_discover':
         return t('rebalanceCenter.overview.scanReasonDiscoveryQueued')
+      case 'discovery_backoff':
+        return t('rebalanceCenter.overview.scanReasonDiscoveryBackoff')
       case 'paid_liquidity_inventory_unavailable':
         return t('rebalanceCenter.overview.scanReasonInventoryUnavailable')
       case 'paid_liquidity_unsold_penalty':
@@ -1678,6 +1680,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonDiscoveryQueued')
       case 'would_discover':
         return t('rebalanceCenter.overview.scanReasonDiscoveryQueued')
+      case 'discovery_backoff':
+        return t('rebalanceCenter.overview.scanReasonDiscoveryBackoff')
       case 'paid_liquidity_inventory_unavailable':
         return t('rebalanceCenter.overview.scanReasonInventoryUnavailable')
       case 'paid_liquidity_unsold_penalty':

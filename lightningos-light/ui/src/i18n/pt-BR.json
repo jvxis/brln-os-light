@@ -121,6 +121,7 @@
       "below_execute_min": "valor abaixo do mínimo de execução",
       "cycle_limit": "limite de jobs do ciclo",
       "discovery_queued": "sonda de descoberta enfileirada",
+      "discovery_backoff": "escada de descoberta em recuo",
       "fee_cap_zero": "teto de fee zerado"
     }
   },
@@ -5522,6 +5523,7 @@
       "scanReasonPaidStockGate": "estoque pago aguardando venda",
       "scanReasonNoSale30d": "sem venda em 30 dias, sem preço para comprar",
       "scanReasonDiscoveryQueued": "sonda de descoberta acima do teto de fee",
+      "scanReasonDiscoveryBackoff": "escada de descoberta pausada após escadas seguidas sem rota",
       "scanReasonInventoryUnavailable": "estoque pago indisponível; reposição pausada",
       "scanReasonPaidLiquidityUnsoldPenalty": "liquidez paga não vendida penalizada",
       "scanReasonLowSuccessOpportunity": "oportunidade com baixo sucesso abaixo do piso",

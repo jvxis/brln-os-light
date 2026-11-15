@@ -1151,6 +1151,7 @@ type RebalanceChannel struct {
 	RemotePct                  float64  `json:"remote_pct"`
 	OutgoingFeePpm             int64    `json:"outgoing_fee_ppm"`
 	OutgoingBaseMsat           int64    `json:"outgoing_base_msat"`
+	InboundFeePpm              int64    `json:"inbound_fee_ppm"`
 	PeerFeeRatePpm             int64    `json:"peer_fee_rate_ppm"`
 	PeerBaseMsat               int64    `json:"peer_base_msat"`
 	SpreadPpm                  int64    `json:"spread_ppm"`
@@ -10529,6 +10530,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 
 	outgoingFee := int64(0)
 	outgoingBaseMsat := int64(0)
+	inboundFee := int64(0)
 	peerFeeRate := int64(0)
 	peerBaseMsat := int64(0)
 	peerPolicyKnown := false
@@ -10540,6 +10542,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		peerPolicyKnown = true
 		outgoingFee = policies.Local.FeeRatePpm
 		outgoingBaseMsat = policies.Local.BaseFeeMsat
+		inboundFee = policies.Local.InboundFeeRatePpm
 		peerFeeRate = policies.Remote.FeeRatePpm
 		peerBaseMsat = policies.Remote.BaseFeeMsat
 	}
@@ -10718,6 +10721,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		LocalPct:                   localPct,
 		RemotePct:                  remotePct,
 		OutgoingFeePpm:             outgoingFee,
+		InboundFeePpm:              inboundFee,
 		OutgoingBaseMsat:           outgoingBaseMsat,
 		PeerFeeRatePpm:             peerFeeRate,
 		PeerBaseMsat:               peerBaseMsat,

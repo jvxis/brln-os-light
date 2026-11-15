@@ -699,7 +699,7 @@ export type InsightGuard = { code: string; passed: boolean; advisory?: boolean }
 
 export type InsightItem = {
   id: string
-  kind: 'repor_vendedor' | 'mais_capacidade' | 'parar_compra' | 'capital_parado' | 'abrir_canal' | 'preco_fora' | 'bloqueio_esperado'
+  kind: 'repor_vendedor' | 'mais_capacidade' | 'parar_compra' | 'capital_parado' | 'abrir_canal' | 'preco_fora' | 'bloqueio_esperado' | 'desconto_entrada'
   rule: string
   priority: number
   confidence: 'high' | 'medium' | 'low'

@@ -20,22 +20,23 @@ import (
 // languages.
 
 const (
-	insightKindRefillSeller  = "repor_vendedor"
-	insightKindMoreCapacity  = "mais_capacidade"
-	insightKindStopBuying    = "parar_compra"
-	insightKindIdleCapital   = "capital_parado"
-	insightKindOpenChannel   = "abrir_canal"
-	insightKindPriceOff      = "preco_fora"
-	insightKindExpectedBlock = "bloqueio_esperado"
-	insightConfidenceHigh    = "high"
-	insightConfidenceMedium  = "medium"
-	insightConfidenceLow     = "low"
-	insightToolRebalance     = "rebalance_target"
-	insightToolLoopIn        = "loop_in"
-	insightToolEconOverride  = "econ_override"
-	insightToolOpenChannel   = "open_channel"
-	insightToolCloseChannel  = "close_channel"
-	insightToolAutofeeReview = "autofee_review"
+	insightKindRefillSeller    = "repor_vendedor"
+	insightKindMoreCapacity    = "mais_capacidade"
+	insightKindStopBuying      = "parar_compra"
+	insightKindIdleCapital     = "capital_parado"
+	insightKindOpenChannel     = "abrir_canal"
+	insightKindPriceOff        = "preco_fora"
+	insightKindExpectedBlock   = "bloqueio_esperado"
+	insightKindInboundDiscount = "desconto_entrada"
+	insightConfidenceHigh      = "high"
+	insightConfidenceMedium    = "medium"
+	insightConfidenceLow       = "low"
+	insightToolRebalance       = "rebalance_target"
+	insightToolLoopIn          = "loop_in"
+	insightToolEconOverride    = "econ_override"
+	insightToolOpenChannel     = "open_channel"
+	insightToolCloseChannel    = "close_channel"
+	insightToolAutofeeReview   = "autofee_review"
 	// The fee itself is edited on the channel card in Lightning Ops; the Fee
 	// Center holds the AutoFee parameters around it.
 	insightToolSetFee         = "set_fee"
@@ -243,6 +244,10 @@ type insightsInput struct {
 	OnchainSpendableSat   int64
 	OnchainKnown          bool
 	AutofeeProfile        autofeeProfile
+	// AutofeeInboundPassive mirrors the Fee Center's "inbound passive" switch
+	// (R8); AutofeeConfigKnown is false when the config could not be read.
+	AutofeeInboundPassive bool
+	AutofeeConfigKnown    bool
 	// RuleWeights come from the measured outcomes (phase 2): a rule that keeps
 	// missing drops in the order, one that keeps landing rises. Absent = 1.
 	RuleWeights map[string]float64
@@ -311,6 +316,9 @@ func buildInsights(in insightsInput, now time.Time) []Insight {
 			out = append(out, ins)
 		}
 		if ins, ok := insightPriceOff(ch, in.AutofeeProfile, now); ok {
+			out = append(out, ins)
+		}
+		if ins, ok := insightInboundDiscount(ch, in, now); ok {
 			out = append(out, ins)
 		}
 	}
@@ -490,6 +498,8 @@ func insightKindFloor(kind string) float64 {
 		return 200
 	case insightKindOpenChannel:
 		return 150
+	case insightKindInboundDiscount:
+		return 250
 	default:
 		return 0
 	}
@@ -943,6 +953,83 @@ func insightPriceOff(ch *insightChannel, profile autofeeProfile, now time.Time) 
 		InsightAction{Step: 2, Tool: insightToolAutofeeReview, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": direction}},
 	)
 	ins.InvalidateWhen = "fee_within_band"
+	return ins, true
+}
+
+// R8: a drained top seller that the rebalance cannot refill may refill for
+// free through an inbound fee discount: peers routing INTO us through that
+// channel pay less, so flow arrives on its own (coinos went 1%->47% in a day
+// that way). AutoFee already sets that discount for a "sink" with margin when
+// inbound passive is on, so the rule only speaks when nothing will: the
+// switch is off, or the channel's fee is pinned by hand (AutoFee not managing
+// it). Thresholds mirror the engine's: sink, local at or under the reach-out
+// ratio, at least 5 sales in 7 days, no discount in place yet.
+func insightInboundDiscount(ch *insightChannel, in insightsInput, now time.Time) (Insight, bool) {
+	if !ch.hasReb || ch.parked || !ch.seller || !in.AutofeeConfigKnown {
+		return Insight{}, false
+	}
+	reb := ch.reb
+	if !strings.EqualFold(strings.TrimSpace(ch.rank.ClassLabel), "sink") || reb.OutgoingFeePpm <= 0 || reb.InboundFeePpm < 0 {
+		return Insight{}, false
+	}
+	reachOut := in.AutofeeProfile.InboundDiscountReachOutRatio
+	if reachOut <= 0 {
+		reachOut = 0.10
+	}
+	if reb.LocalPct > reachOut*100 || ch.rank.ForwardOutCount7d < 5 {
+		return Insight{}, false
+	}
+	fixedFee := ch.rank.FixedFeePPM != nil || reb.FixedFeePPM != nil
+	if in.AutofeeInboundPassive && !fixedFee {
+		// AutoFee owns the discount here; a missing one is its decision.
+		return Insight{}, false
+	}
+	sellPpm := int64(ch.rank.OutPpm7d)
+	if reb.SalePricePpm > 0 {
+		sellPpm = reb.SalePricePpm
+	}
+	if sellPpm <= 0 {
+		return Insight{}, false
+	}
+	ins := insightBase("R8", insightKindInboundDiscount, ch)
+	ins.Confidence, ins.ConfidenceReason = insightConfidenceFromSales(ch.rank)
+	ins.Guards = insightCommonGuards(ch, in)
+	if !insightGuardsPass(ins.Guards) {
+		return Insight{}, false
+	}
+	// What the channel earns per day when it has stock is what a free refill
+	// keeps alive; the rebalance it replaces is not spent at all.
+	ins.ValueSatDay = ch.rank.ForwardFee7dSat / 7
+	ins.Evidence = append(ins.Evidence,
+		InsightEvidence{Key: "local_pct", Value: round1(reb.LocalPct), Unit: "pct", Compare: math.Round(reachOut * 100), Source: "rebalance"},
+		InsightEvidence{Key: "sell_ppm_7d", Value: float64(sellPpm), Unit: "ppm", Extra: reb.SalePriceSource, Source: "rebalance"},
+		InsightEvidence{Key: "fee_ppm", Value: float64(reb.OutgoingFeePpm), Unit: "ppm", Source: "rebalance"},
+		InsightEvidence{Key: "inbound_fee_ppm", Value: float64(reb.InboundFeePpm), Unit: "ppm", Source: "rebalance"},
+	)
+	anchor := int(reb.RebalanceCost7dPpm)
+	if anchor <= 0 {
+		anchor = int(reb.FeeBudgetPpm)
+	}
+	if anchor > 0 {
+		spread := in.AutofeeProfile.InboundDiscountMinRetainedSpreadFrac
+		if budget := computeInboundDiscountBudget(anchor, int(reb.OutgoingFeePpm), defaultInboundDiscountMaxRatio, spread); budget > 0 {
+			ins.Evidence = append(ins.Evidence, InsightEvidence{Key: "inbound_discount_suggested_ppm", Value: float64(budget), Unit: "ppm", Extra: "rebal_cost_anchor", Source: "autofee"})
+		}
+	}
+	reason := "inbound_passive_off"
+	if in.AutofeeInboundPassive {
+		reason = "fixed_fee"
+	}
+	if fixedFee {
+		ins.Actions = append(ins.Actions,
+			InsightAction{Step: 1, Tool: insightToolSetFee, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": "inbound_discount", "reason": reason}},
+		)
+	} else {
+		ins.Actions = append(ins.Actions,
+			InsightAction{Step: 1, Tool: insightToolAutofeeReview, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": "inbound_passive", "reason": reason}},
+		)
+	}
+	ins.InvalidateWhen = "inbound_discount_set_or_refilled"
 	return ins, true
 }
 

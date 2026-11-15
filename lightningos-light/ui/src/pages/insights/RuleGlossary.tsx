@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
-const RULES = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7']
+const RULES = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8']
 
 type Props = { open: boolean; focusRule?: string; onClose: () => void }
 

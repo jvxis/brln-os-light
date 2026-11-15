@@ -28,6 +28,7 @@ const KIND_ACCENT: Record<InsightItem['kind'], string> = {
   capital_parado: 'bg-slate-400',
   abrir_canal: 'bg-violet-400',
   preco_fora: 'bg-rose-400',
+  desconto_entrada: 'bg-teal-400',
   bloqueio_esperado: 'bg-fog/40',
 }
 

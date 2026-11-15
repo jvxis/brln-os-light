@@ -62,6 +62,10 @@ func validateLNbitsNativeStartupReadiness(t *testing.T, ctx context.Context, bro
 		t.Fatal("candidate startup command unavailable")
 	}
 	old := string(raw[:start]) + "    command: [/app/.venv/bin/lnbits, --port, '5000', --host, 0.0.0.0, '--forwarded-allow-ips=*']\n" + string(raw[end:])
+	// Reproduce the old image's /app working directory too: the direct command
+	// predates both the readiness gate and its private-workspace preparation.
+	old = strings.Replace(old, "    working_dir: /run/lnbits\n", "", 1)
+	old = strings.Replace(old, "      - /run/lnbits:rw,noexec,nosuid,nodev,size=25%,mode=0700,uid=65532,gid=65532\n", "", 1)
 	old = strings.Replace(old, "container_name: lnbits", "container_name: lnbits-baseline", 1)
 	old = strings.Replace(old, "./.env", filepath.Join(snapshot, appmanifest.LNbitsEnvFile), 1)
 	baseline := filepath.Join(filepath.Dir(broker.PrivilegedAppsRoot), "baseline-compose.yaml")

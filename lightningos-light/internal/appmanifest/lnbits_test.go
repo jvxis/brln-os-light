@@ -2,6 +2,7 @@ package appmanifest
 
 import (
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -187,6 +188,32 @@ func TestLNbitsComposeWaitsForLNDOnEveryContainerStart(t *testing.T) {
 	command := document.Services[LNbitsPrimaryService].Command
 	if len(command) != 4 || command[3] != lnbitsWaitLND {
 		t.Fatal("Compose YAML changed the embedded startup script")
+	}
+}
+
+func TestLNbitsBackupWorkspaceIsPrivateEphemeralAndOutsideData(t *testing.T) {
+	var document struct {
+		Services map[string]struct {
+			WorkingDir string   `yaml:"working_dir"`
+			ReadOnly   bool     `yaml:"read_only"`
+			Tmpfs      []string `yaml:"tmpfs"`
+			Volumes    []string `yaml:"volumes"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(LNbitsCompose(LNbitsComposePaths{DataDir: "/data/fixture", LNDDir: "/credentials/fixture"})), &document); err != nil {
+		t.Fatal(err)
+	}
+	service := document.Services[LNbitsPrimaryService]
+	if !service.ReadOnly || service.WorkingDir != "/run/lnbits" {
+		t.Fatal("LNbits needs a writable backup workspace without making /app writable")
+	}
+	if !slices.Contains(service.Tmpfs, "/run/lnbits:rw,noexec,nosuid,nodev,size=25%,mode=0700,uid=65532,gid=65532") {
+		t.Fatal("backup workspace must have a bounded private tmpfs owned by the app identity")
+	}
+	for _, volume := range service.Volumes {
+		if strings.Contains(volume, ":/run/lnbits") {
+			t.Fatal("backup workspace must not persist in a host volume or in the archived data")
+		}
 	}
 }
 

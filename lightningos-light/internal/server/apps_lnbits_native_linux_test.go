@@ -242,6 +242,9 @@ print('funding TLS/auth reads passed')`
 	if !ok || token == "" {
 		t.Fatal("authenticated test login unavailable")
 	}
+	if os.Getenv("LOS_LNBITS_BACKUP") == "1" {
+		validateLNbitsNativeBackup(t, ctx, broker, paths, token, waitApp)
+	}
 	account := api("POST", "/api/v1/wallet", "Bearer "+token, map[string]any{"name": "LOS regtest migration"})
 	key, ok := account["adminkey"].(string)
 	if !ok || key == "" {

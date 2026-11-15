@@ -70,6 +70,68 @@ anterior não constitui um rollback seguro do banco.
 Esses limites aparecem no card da loja e na confirmação de instalação. Esta
 alteração não reinicia LND, regenera TLS nem modifica nodes de produção.
 
+## Superuser backup / Backup do superusuário (0.5.58)
+
+The 0.5.58 candidate fixes **Server > Backup** for the Store's default SQLite
+installation. Upstream creates `lnbits-backup.zip` relative to its working
+directory; writing it in the read-only `/app` failed. The catalog now supplies
+a private `/run/lnbits` tmpfs working directory, outside `/app/data`. An alias
+to the immutable image package preserves LNbits' relative static/template
+paths. The image, wallet-only macaroon and read-only root are unchanged.
+
+- After upgrading LOS, **Stop > Start** LNbits once through the Store to adopt
+  the declaration. Existing wallet data, extensions and account/2FA settings
+  are retained; the LOS upgrade does not silently recreate a running app.
+- The workspace is owned by the app's non-root identity, mode `0700`, with
+  `noexec,nosuid,nodev`. Its limit is **25% of host physical RAM**, allocated
+  only as used; it is separate from the existing 64-MiB `/tmp`. This is not a
+  guarantee that arbitrarily large backups fit or that the host cannot run
+  short of memory. Beyond that budget, use an operator-managed private backup.
+- The last generated ZIP remains in the private tmpfs until overwritten or
+  the container is stopped/recreated. It is not mounted in persistent app
+  storage, included recursively in itself, or served as a public static file.
+  Host swap policy still applies: tmpfs does **not** imply encryption or a
+  guarantee of zero disk traces. Protect swap and downloaded copies accordingly.
+- The downloaded ZIP contains sensitive account/wallet material. Store it
+  securely outside the node; never post it in issues or diagnostic logs. The
+  download remains restricted to the LNbits superuser with `Cache-Control:
+  no-store`. This change does not redesign upstream's SQLite snapshot or
+  concurrent-backup behavior.
+- External PostgreSQL installations need their own tested database backup
+  plan. Do not assume `pg_dump` is absent from every image: the pinned amd64
+  image used in this validation has it. External PostgreSQL backup/restore
+  combinations are not validated by the Store's SQLite regression checks.
+
+A candidata 0.5.58 corrige **Server > Backup** na instalação SQLite padrão da
+loja. O LNbits cria `lnbits-backup.zip` no diretório de trabalho; a gravação em
+`/app`, somente leitura, falhava. O catálogo passa a fornecer `/run/lnbits` em
+tmpfs privado, fora de `/app/data`. Um alias para o código imutável da imagem
+preserva os caminhos relativos da interface. A imagem, o macaroon limitado à
+carteira e o filesystem raiz somente leitura não mudam.
+
+- Após atualizar o LOS, execute **Parar > Iniciar** no LNbits da loja uma vez.
+  Dados, extensões e configurações de contas/2FA são preservados; o upgrade do
+  LOS não recria silenciosamente o app em execução.
+- A área pertence ao usuário não-root do app, com modo `0700` e opções
+  `noexec,nosuid,nodev`. O limite é **25% da RAM física do host**, alocado sob
+  demanda e separado do `/tmp` de 64 MiB. Backups arbitrariamente grandes podem
+  não caber, e a memória geral do host continua precisando de atenção. Acima
+  desse limite, use um backup privado administrado pelo operador.
+- O último ZIP fica no tmpfs privado até ser sobrescrito ou o container ser
+  parado/recriado. Não fica em volume persistente, não entra recursivamente no
+  próprio backup nem é servido como arquivo estático público. A política de
+  swap do host continua valendo: tmpfs **não** significa criptografia nem
+  ausência garantida de vestígios em disco. Proteja o swap e as cópias baixadas.
+- O ZIP contém material sensível das contas/carteiras. Guarde-o com segurança
+  fora do node; nunca o publique em issues ou logs. O download continua restrito
+  ao superusuário do LNbits e com `Cache-Control: no-store`. A mudança não
+  redesenha o snapshot SQLite nem o comportamento de backups concorrentes do
+  próprio LNbits.
+- Bancos PostgreSQL externos precisam de um plano próprio de backup e restauração
+  validado. A imagem amd64 pinada usada neste teste **tem** `pg_dump`; não é
+  correto presumir que toda imagem não o possui. Esses bancos externos não
+  foram validados pelos testes SQLite desta correção.
+
 ## Upstream references
 
 ### 1.7.1 security update / atualização de segurança
@@ -90,3 +152,6 @@ revisar e trocar esse segredo com segurança; o LOS não o sobrescreve.
 - [LNbits v1.7.1](https://github.com/lnbits/lnbits/releases/tag/v1.7.1)
 - [Settings and persistent TOTP key](https://github.com/lnbits/lnbits/blob/v1.7.1/lnbits/settings.py)
 - [2FA API](https://github.com/lnbits/lnbits/blob/v1.7.1/lnbits/core/views/two_factor_api.py)
+- [Superuser backup endpoint](https://github.com/lnbits/lnbits/blob/v1.7.1/lnbits/core/views/admin_api.py)
+- [Relative static paths](https://github.com/lnbits/lnbits/blob/v1.7.1/lnbits/app.py)
+- [Linux tmpfs limits and swap behavior](https://docs.kernel.org/filesystems/tmpfs.html)

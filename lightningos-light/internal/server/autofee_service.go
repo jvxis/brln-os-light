@@ -301,6 +301,7 @@ type AutofeeConfig struct {
 	InboundDiscountMaxRatioOverride              float64                           `json:"inbound_discount_max_ratio_override"`
 	InboundDiscountReachOutRatioOverride         float64                           `json:"inbound_discount_reach_out_ratio_override"`
 	InboundDiscountMinRetainedSpreadFracOverride float64                           `json:"inbound_discount_min_retained_spread_frac_override"`
+	InboundDiscountExitShareMinOverride          float64                           `json:"inbound_discount_exit_share_min_override"`
 	OutrateFloorFactorLowOverride                float64                           `json:"outrate_floor_factor_low_override"`
 	SoftenMinOutRatioOverride                    float64                           `json:"soften_min_out_ratio_override"`
 	SoftenMaxDropToPegFracOverride               float64                           `json:"soften_max_drop_to_peg_frac_override"`
@@ -343,6 +344,7 @@ type AutofeeProfileDefaults struct {
 	InboundDiscountMaxRatio              float64 `json:"inbound_discount_max_ratio"`
 	InboundDiscountReachOutRatio         float64 `json:"inbound_discount_reach_out_ratio"`
 	InboundDiscountMinRetainedSpreadFrac float64 `json:"inbound_discount_min_retained_spread_frac"`
+	InboundDiscountExitShareMin          float64 `json:"inbound_discount_exit_share_min"`
 	OutrateFloorFactorLow                float64 `json:"outrate_floor_factor_low"`
 	SoftenMinOutRatio                    float64 `json:"soften_min_out_ratio"`
 	SoftenMaxDropToPegFrac               float64 `json:"soften_max_drop_to_peg_frac"`
@@ -365,6 +367,7 @@ type AutofeeConfigUpdate struct {
 	InboundDiscountMaxRatioOverride              *float64 `json:"inbound_discount_max_ratio_override,omitempty"`
 	InboundDiscountReachOutRatioOverride         *float64 `json:"inbound_discount_reach_out_ratio_override,omitempty"`
 	InboundDiscountMinRetainedSpreadFracOverride *float64 `json:"inbound_discount_min_retained_spread_frac_override,omitempty"`
+	InboundDiscountExitShareMinOverride          *float64 `json:"inbound_discount_exit_share_min_override,omitempty"`
 	OutrateFloorFactorLowOverride                *float64 `json:"outrate_floor_factor_low_override,omitempty"`
 	SoftenMinOutRatioOverride                    *float64 `json:"soften_min_out_ratio_override,omitempty"`
 	SoftenMaxDropToPegFracOverride               *float64 `json:"soften_max_drop_to_peg_frac_override,omitempty"`
@@ -590,6 +593,8 @@ type autofeeLogItem struct {
 	Tags                     []string `json:"tags,omitempty"`
 	InboundDiscount          int      `json:"inbound_discount,omitempty"`
 	PrevInboundDiscount      int      `json:"prev_inbound_discount,omitempty"`
+	InboundExitCapPpm        int      `json:"inbound_exit_cap_ppm,omitempty"`
+	InboundExitCapWindow     string   `json:"inbound_exit_cap_window,omitempty"`
 	ClassLabel               string   `json:"class_label,omitempty"`
 	LiquidityState           string   `json:"liquidity_state,omitempty"`
 	SkipReason               string   `json:"skip_reason,omitempty"`
@@ -688,6 +693,7 @@ type autofeeProfile struct {
 	ProfitProtectRelaxMinStepPpm         int
 	InboundDiscountReachOutRatio         float64
 	InboundDiscountMinRetainedSpreadFrac float64
+	InboundDiscountExitShareMin          float64
 	MarketRefillNetInboundTargetFrac     float64
 	MarketRefillCandidateOutRatioMax     float64
 	MarketRefillExploratoryOutRatioMax   float64
@@ -835,6 +841,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		ProfitProtectRelaxMinStepPpm:         10,
 		InboundDiscountReachOutRatio:         0.10,
 		InboundDiscountMinRetainedSpreadFrac: 0.20,
+		InboundDiscountExitShareMin:          0.05,
 		MarketRefillNetInboundTargetFrac:     0.35,
 		MarketRefillCandidateOutRatioMax:     0.10,
 		MarketRefillExploratoryOutRatioMax:   0.18,
@@ -971,6 +978,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		ProfitProtectRelaxMinStepPpm:         15,
 		InboundDiscountReachOutRatio:         0.15,
 		InboundDiscountMinRetainedSpreadFrac: 0.12,
+		InboundDiscountExitShareMin:          0.10,
 		MarketRefillNetInboundTargetFrac:     0.20,
 		MarketRefillCandidateOutRatioMax:     0.15,
 		MarketRefillExploratoryOutRatioMax:   0.25,
@@ -1107,6 +1115,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		ProfitProtectRelaxMinStepPpm:         20,
 		InboundDiscountReachOutRatio:         0.18,
 		InboundDiscountMinRetainedSpreadFrac: 0.08,
+		InboundDiscountExitShareMin:          0.15,
 		MarketRefillNetInboundTargetFrac:     0.10,
 		MarketRefillCandidateOutRatioMax:     0.20,
 		MarketRefillExploratoryOutRatioMax:   0.30,
@@ -1483,6 +1492,7 @@ alter table autofee_config add column if not exists stall_floor_relax_gap_frac_o
 alter table autofee_config add column if not exists inbound_discount_max_ratio_override double precision not null default 0;
 alter table autofee_config add column if not exists inbound_discount_reach_out_ratio_override double precision not null default 0;
 alter table autofee_config add column if not exists inbound_discount_min_retained_spread_frac_override double precision not null default 0;
+alter table autofee_config add column if not exists inbound_discount_exit_share_min_override double precision not null default 0;
 alter table autofee_config add column if not exists outrate_floor_factor_low_override double precision not null default 0;
 alter table autofee_config add column if not exists soften_min_out_ratio_override double precision not null default 0;
 alter table autofee_config add column if not exists soften_max_drop_to_peg_frac_override double precision not null default 0;
@@ -1632,6 +1642,7 @@ func autofeeProfileDefaultsPayload() map[string]AutofeeProfileDefaults {
 			InboundDiscountMaxRatio:              defaultInboundDiscountMaxRatio,
 			InboundDiscountReachOutRatio:         p.InboundDiscountReachOutRatio,
 			InboundDiscountMinRetainedSpreadFrac: p.InboundDiscountMinRetainedSpreadFrac,
+			InboundDiscountExitShareMin:          p.InboundDiscountExitShareMin,
 			OutrateFloorFactorLow:                p.OutrateFloorFactorLow,
 			SoftenMinOutRatio:                    p.SoftenMinOutRatio,
 			SoftenMaxDropToPegFrac:               p.SoftenMaxDropToPegFrac,
@@ -1664,7 +1675,8 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
   rebal_cost_mode, native_seed_enabled, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled, idle_refresh_enabled,
   super_source_enabled, super_source_base_fee_msat, revfloor_enabled, circuit_breaker_enabled, extreme_drain_enabled,
   htlc_signal_enabled, htlc_mode, min_ppm, max_ppm, native_seed_v2_enabled, stale_stock_down_enabled,
-  price_experiments_mode, price_experiments_max_active, price_experiments_days, price_experiments_floor_seed_pct
+  price_experiments_mode, price_experiments_max_active, price_experiments_days, price_experiments_floor_seed_pct,
+  inbound_discount_exit_share_min_override
 from autofee_config where id=$1
 `, autofeeConfigID).Scan(
 		&cfg.Enabled,
@@ -1709,6 +1721,7 @@ from autofee_config where id=$1
 		&cfg.PriceExperimentsMaxActive,
 		&cfg.PriceExperimentsDays,
 		&cfg.PriceExperimentsFloorSeedPct,
+		&cfg.InboundDiscountExitShareMinOverride,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1785,6 +1798,7 @@ set enabled=$2,
   price_experiments_max_active=$41,
   price_experiments_days=$42,
   price_experiments_floor_seed_pct=$43,
+  inbound_discount_exit_share_min_override=$44,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
@@ -1830,6 +1844,7 @@ where id=$1
 		cfg.PriceExperimentsMaxActive,
 		cfg.PriceExperimentsDays,
 		cfg.PriceExperimentsFloorSeedPct,
+		cfg.InboundDiscountExitShareMinOverride,
 	)
 	return err
 }
@@ -1879,6 +1894,9 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	}
 	if req.InboundDiscountMinRetainedSpreadFracOverride != nil {
 		current.InboundDiscountMinRetainedSpreadFracOverride = *req.InboundDiscountMinRetainedSpreadFracOverride
+	}
+	if req.InboundDiscountExitShareMinOverride != nil {
+		current.InboundDiscountExitShareMinOverride = *req.InboundDiscountExitShareMinOverride
 	}
 	if req.OutrateFloorFactorLowOverride != nil {
 		current.OutrateFloorFactorLowOverride = *req.OutrateFloorFactorLowOverride
@@ -2024,6 +2042,7 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	} else if current.InboundDiscountMinRetainedSpreadFracOverride > 0 {
 		current.InboundDiscountMinRetainedSpreadFracOverride = clampFloat(current.InboundDiscountMinRetainedSpreadFracOverride, 0.01, 0.50)
 	}
+	current.InboundDiscountExitShareMinOverride = normalizeInboundDiscountExitShareMinOverride(current.InboundDiscountExitShareMinOverride)
 	if current.OutrateFloorFactorLowOverride < 0 {
 		current.OutrateFloorFactorLowOverride = 0
 	} else if current.OutrateFloorFactorLowOverride > 0 {
@@ -3044,6 +3063,9 @@ type autofeeEngine struct {
 	channelMinPpm          map[uint64]int
 	priceExperiments       *autofeePriceExperimentRuntime
 	policyCache            map[string]lndclient.ChannelPolicy
+	inboundExits7d         map[uint64]map[uint64]int64
+	inboundExits21d        map[uint64]map[uint64]int64
+	channelFeePpm          map[uint64]int
 	ambossToken            string
 	ambossTokenErr         error
 	ambossTokenLoad        bool
@@ -3625,6 +3647,9 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 	if err != nil {
 		return result, err
 	}
+	if includeInbound {
+		engine.loadInboundExits(ctx, channels)
+	}
 
 	totalCap := int64(0)
 	totalLocal := int64(0)
@@ -3770,6 +3795,7 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 				ch.CapacitySat,
 				referencePpm,
 				targetPpm,
+				engine.inboundDiscountExitCapFor(ch.ChannelID, rebalStats7d, rebalStats21d, autofeeInboundRetainedSpreadFrac(cfg, engine.profile)).Ppm,
 			); applyInbound {
 				item.TargetInboundDiscount = targetInboundDiscount
 				item.InboundSource = inboundSource
@@ -4132,6 +4158,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	if err != nil {
 		return err
 	}
+	e.loadInboundExits(ctx, channels)
 	rebalStats7d := rebalStats
 	if e.cfg.LookbackDays != autofeeIdleRefreshWindowDays {
 		if stats7d, err := e.fetchRebalanceStats(ctx, autofeeIdleRefreshWindowDays); err == nil {
@@ -5584,7 +5611,13 @@ func normalizeStaleInboundDiscount(currentDiscount int, appliedPpm int, maxRatio
 	return currentDiscount, false
 }
 
-func advanceBalancedInboundDiscountLifecycle(candidateDiscount int, previousDiscount int, appliedPpm int, maxRatio float64, previousIneligibleRounds int) (int, int, []string) {
+// advanceBalancedInboundDiscountLifecycle walks a discount that is no longer
+// earned through grace and decay. exitCapPpm (0 = none) bounds the discount
+// that stays during grace/decay the same way it bounds a fresh one, and
+// fullCut (channel at or above the profile's HighOutThresh) drops it at once:
+// a full channel has nothing left to attract, and every round the discount
+// outlives the need is a round of forwards leaving cheaper exits at zero fee.
+func advanceBalancedInboundDiscountLifecycle(candidateDiscount int, previousDiscount int, appliedPpm int, maxRatio float64, previousIneligibleRounds int, exitCapPpm int, fullCut bool) (int, int, []string) {
 	if candidateDiscount > 0 {
 		return candidateDiscount, 0, nil
 	}
@@ -5595,11 +5628,18 @@ func advanceBalancedInboundDiscountLifecycle(candidateDiscount int, previousDisc
 	}
 
 	ineligibleRounds := maxInt(0, previousIneligibleRounds) + 1
+	if fullCut {
+		return 0, ineligibleRounds, []string{"inbound-cut-full"}
+	}
 	targetDiscount := previousDiscount
-	tags := make([]string, 0, 2)
+	tags := make([]string, 0, 3)
 	if normalizedDiscount, normalized := normalizeStaleInboundDiscount(targetDiscount, appliedPpm, maxRatio); normalized {
 		targetDiscount = normalizedDiscount
 		tags = append(tags, "inbound-normalize")
+	}
+	if exitCapPpm > 0 && targetDiscount > exitCapPpm {
+		targetDiscount = exitCapPpm
+		tags = append(tags, "inbound-exit-cap")
 	}
 	if targetDiscount <= 0 {
 		return 0, ineligibleRounds, tags
@@ -6085,7 +6125,7 @@ func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.
 	return d
 }
 
-func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfile, classLabel string, rawOutRatio float64, effectiveOutRatio float64, forward1d forwardStat, forward7d forwardStat, capacitySat int64, baseCostPpm int, appliedPpm int) (int, string, bool) {
+func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfile, classLabel string, rawOutRatio float64, effectiveOutRatio float64, forward1d forwardStat, forward7d forwardStat, capacitySat int64, baseCostPpm int, appliedPpm int, exitCapPpm int) (int, string, bool) {
 	if appliedPpm <= 0 || baseCostPpm <= 0 {
 		return 0, "", false
 	}
@@ -6147,6 +6187,10 @@ func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfi
 			inboundDiscountReachOutRatio,
 			inboundDiscountMinRetainedSpreadFrac,
 		)
+		if exitCapPpm > 0 && discount > exitCapPpm {
+			discount = exitCapPpm
+			source = source + "+exit-cap"
+		}
 		if discount <= 0 {
 			return 0, "", false
 		}
@@ -9041,6 +9085,9 @@ type decision struct {
 	Tags                    []string
 	InboundDiscount         int
 	PrevInboundDiscount     int
+	InboundExitCapPpm       int
+	InboundExitCapWindow    string
+	InboundExitCapChannelID uint64
 	SuperSourceActive       bool
 	OutRatio                float64
 	OutRatioEffective       float64
@@ -9479,6 +9526,9 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 	} else if d.InboundDiscount > 0 {
 		line = line + fmt.Sprintf(" | ↘️ inb %d", d.InboundDiscount)
 	}
+	if d.InboundExitCapPpm > 0 {
+		line = line + fmt.Sprintf(" cap≤%d(exit:%s)", d.InboundExitCapPpm, d.InboundExitCapWindow)
+	}
 	if d.NewInbound {
 		line = line + fmt.Sprintf(" | NEW inbound %.1fh", d.ChannelAgeHours)
 	}
@@ -9565,6 +9615,8 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		Tags:                    append([]string{}, d.Tags...),
 		InboundDiscount:         d.InboundDiscount,
 		PrevInboundDiscount:     d.PrevInboundDiscount,
+		InboundExitCapPpm:       d.InboundExitCapPpm,
+		InboundExitCapWindow:    d.InboundExitCapWindow,
 		ClassLabel:              d.ClassLabel,
 		LiquidityState:          d.LiquidityState,
 		SkipReason:              skipReason,
@@ -12407,6 +12459,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		inboundDiscountMinRetainedSpreadFrac = e.cfg.InboundDiscountMinRetainedSpreadFracOverride
 	}
 	inboundDiscount := 0
+	exitCap := inboundExitCapResult{}
+	fullCut := false
 	if e.cfg.OperationMode == autofeeOperationModeMarketRefill {
 		var inboundTags []string
 		inboundDiscount, inboundTags = computeMarketRefillInboundDiscount(
@@ -12443,6 +12497,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		case "balanced":
 			tags = appendAutofeeTagOnce(tags, "inbound-balanced")
 		}
+		exitCap = e.inboundDiscountExitCapFor(ch.ChannelID, rebalStats7d, rebalStats21d, inboundDiscountMinRetainedSpreadFrac)
+		if exitCap.Ppm > 0 && inboundDiscount > exitCap.Ppm {
+			inboundDiscount = exitCap.Ppm
+			tags = appendAutofeeTagOnce(tags, "inbound-exit-cap")
+		}
+		fullCut = inboundDiscountFullCut(outRatio, e.rebalanceRuntime[ch.ChannelID])
 	}
 	if normalizeAutofeeOperationMode(e.cfg.OperationMode) == autofeeOperationModeMarketRefill {
 		st.InboundStaleRounds = 0
@@ -12456,6 +12516,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			appliedPpm,
 			inboundDiscountMaxRatio,
 			st.InboundStaleRounds,
+			exitCap.Ppm,
+			fullCut,
 		)
 		for _, lifecycleTag := range lifecycleTags {
 			tags = appendAutofeeTagOnce(tags, lifecycleTag)
@@ -12611,6 +12673,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		Tags:                    tags,
 		InboundDiscount:         inboundDiscount,
 		PrevInboundDiscount:     prevInboundDiscount,
+		InboundExitCapPpm:       exitCap.Ppm,
+		InboundExitCapWindow:    exitCap.Window,
+		InboundExitCapChannelID: exitCap.ExitChannelID,
 		SuperSourceActive:       superSourceActive,
 		OutRatio:                rawOutRatio,
 		OutRatioEffective:       outRatio,

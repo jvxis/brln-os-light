@@ -980,6 +980,7 @@ export const updateAutofeeConfig = (payload: {
   inbound_discount_max_ratio_override?: number
   inbound_discount_reach_out_ratio_override?: number
   inbound_discount_min_retained_spread_frac_override?: number
+  inbound_discount_exit_share_min_override?: number
   outrate_floor_factor_low_override?: number
   soften_min_out_ratio_override?: number
   soften_max_drop_to_peg_frac_override?: number

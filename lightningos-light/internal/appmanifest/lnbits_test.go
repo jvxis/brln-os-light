@@ -1,9 +1,35 @@
 package appmanifest
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+func lnbitsTestPython(t *testing.T) string {
+	t.Helper()
+	for _, candidate := range []string{"python3", "python"} {
+		python, err := exec.LookPath(candidate)
+		if err == nil {
+			version, err := exec.Command(python, "--version").CombinedOutput()
+			if err == nil && strings.HasPrefix(string(version), "Python 3.") {
+				return python
+			}
+		}
+	}
+	t.Skip("Python 3 required for startup gate behavior tests")
+	return ""
+}
+
+func TestLNbitsStartupGateBehavior(t *testing.T) {
+	python := lnbitsTestPython(t)
+	cmd := exec.Command(python, "-B", "-I", "testdata/lnbits_wait_lnd_test.py")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("LNbits startup gate behavior: %v\n%s", err, output)
+	}
+}
 
 func canonicalLNbitsEnvForTest() []byte {
 	lines := make([]string, 0, len(LNbitsManagedEnv())+1)
@@ -135,6 +161,32 @@ func TestLNbitsComposeClosesRuntimeAndMountsOnlyDedicatedCredential(t *testing.T
 		if strings.Contains(compose, forbidden) {
 			t.Fatalf("compose contains forbidden input %q\n%s", forbidden, compose)
 		}
+	}
+}
+
+func TestLNbitsComposeWaitsForLNDOnEveryContainerStart(t *testing.T) {
+	compose := LNbitsCompose(LNbitsComposePaths{DataDir: "/apps-data/lnbits/data", LNDDir: "/snapshot/lnbits/lnd"})
+	for _, required := range []string{
+		"- /app/.venv/bin/python\n      - -I\n      - -c\n      - |\n",
+		"/v1/balance/channels",
+		"os.execv(\"/app/.venv/bin/lnbits\"",
+		"restart: unless-stopped",
+	} {
+		if !strings.Contains(compose, required) {
+			t.Errorf("LNbits boot/start readiness contract missing %q", required)
+		}
+	}
+	var document struct {
+		Services map[string]struct {
+			Command []string `yaml:"command"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(compose), &document); err != nil {
+		t.Fatal(err)
+	}
+	command := document.Services[LNbitsPrimaryService].Command
+	if len(command) != 4 || command[3] != lnbitsWaitLND {
+		t.Fatal("Compose YAML changed the embedded startup script")
 	}
 }
 

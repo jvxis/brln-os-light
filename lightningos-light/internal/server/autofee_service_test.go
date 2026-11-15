@@ -967,7 +967,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedEligible(t *testing.T) {
 		5_000_000,
 		500,
 		1000,
-			0,
+		inboundExitCapResult{},
 	)
 	if !apply || source != "balanced" {
 		t.Fatalf("expected balanced inbound refresh to apply, apply=%v source=%q", apply, source)
@@ -991,7 +991,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedPreservesIneligible(t *testi
 		5_000_000,
 		500,
 		1000,
-			0,
+		inboundExitCapResult{},
 	)
 	if apply || source != "" || discount != 0 {
 		t.Fatalf("expected ineligible balanced inbound refresh to preserve current setting, apply=%v source=%q discount=%d", apply, source, discount)
@@ -1012,7 +1012,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedLowSampleRecreatesTarget(t *
 		5_000_000,
 		300,
 		700,
-			0,
+		inboundExitCapResult{},
 	)
 	if !apply || source != "balanced-low-sample" {
 		t.Fatalf("expected balanced low-sample inbound refresh to apply, apply=%v source=%q", apply, source)
@@ -1079,7 +1079,7 @@ func TestAdvanceBalancedInboundDiscountLifecycle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			discount, rounds, tags := advanceBalancedInboundDiscountLifecycle(tt.candidate, tt.previous, tt.applied, tt.maxRatio, tt.previousRounds, 0, false)
+			discount, rounds, tags := advanceBalancedInboundDiscountLifecycle(tt.candidate, tt.previous, tt.applied, tt.maxRatio, tt.previousRounds, inboundExitCapResult{}, false)
 			if discount != tt.wantDiscount || rounds != tt.wantRounds || !reflect.DeepEqual(tags, tt.wantTags) {
 				t.Fatalf("got discount=%d rounds=%d tags=%v, want discount=%d rounds=%d tags=%v", discount, rounds, tags, tt.wantDiscount, tt.wantRounds, tt.wantTags)
 			}
@@ -1101,7 +1101,7 @@ func TestSelectAutofeeRefreshInboundDiscountRejectsNonSink(t *testing.T) {
 		5_000_000,
 		500,
 		1000,
-			0,
+		inboundExitCapResult{},
 	)
 	if apply || source != "" || discount != 0 {
 		t.Fatalf("expected non-sink refresh to preserve inbound policy, apply=%v source=%q discount=%d", apply, source, discount)
@@ -1139,7 +1139,7 @@ func TestSelectAutofeeRefreshInboundDiscountMarketRefillApplies(t *testing.T) {
 		5_000_000,
 		200,
 		1000,
-			0,
+		inboundExitCapResult{},
 	)
 	if !apply || source != "market-refill" {
 		t.Fatalf("expected market refill inbound refresh to apply, apply=%v source=%q", apply, source)

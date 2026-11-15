@@ -1090,13 +1090,13 @@ type RebalanceSovereignDecision struct {
 	// DiscoveryBackoffUntil is set when the ladder skipped this target because
 	// its last ladders all ran out of steps without a route.
 	DiscoveryBackoffUntil time.Time `json:"discovery_backoff_until,omitzero"`
-	IntentKind                  string  `json:"intent_kind,omitempty"`
-	IntentReason                string  `json:"intent_reason,omitempty"`
-	IntentConfidence            float64 `json:"intent_confidence,omitempty"`
-	IntentApplied               bool    `json:"intent_applied,omitempty"`
-	IntentShadow                bool    `json:"intent_shadow,omitempty"`
-	IntentScoreBefore           int64   `json:"intent_score_before,omitempty"`
-	IntentScoreAfter            int64   `json:"intent_score_after,omitempty"`
+	IntentKind            string    `json:"intent_kind,omitempty"`
+	IntentReason          string    `json:"intent_reason,omitempty"`
+	IntentConfidence      float64   `json:"intent_confidence,omitempty"`
+	IntentApplied         bool      `json:"intent_applied,omitempty"`
+	IntentShadow          bool      `json:"intent_shadow,omitempty"`
+	IntentScoreBefore     int64     `json:"intent_score_before,omitempty"`
+	IntentScoreAfter      int64     `json:"intent_score_after,omitempty"`
 }
 
 type RebalanceSovereignHistory struct {
@@ -1696,6 +1696,9 @@ type RebalanceService struct {
 	explorationStatsMu sync.Mutex
 	explorationStats   map[uint64]*explorationStat
 	explorationJobs    map[int64]uint64 // jobID → channelID (only set for exploration-marked jobs)
+
+	autoTargetHoldMu    sync.Mutex
+	autoTargetHoldNoted map[uint64]time.Time
 }
 
 // explorationStat tracks exploration outcomes for a single target channel in a
@@ -4924,6 +4927,11 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		// gets one probe above the cap, from its own budget.
 		if s.maybeQueueSovereignDiscovery(ctx, &decision, target, targetCfg, targetPolicy, discoveryRun, scanAt, live) {
 			noteSkip(decision.Reason)
+		} else if !decision.DiscoveryBackoffUntil.IsZero() {
+			// The ladder exists for this target but is in backoff after
+			// repeated no-route ladders: count it so the scan history shows
+			// why no probe was queued.
+			noteSkip(sovereignDiscoveryBackoffReason)
 		}
 		appendDecision(decision)
 	}
@@ -12793,6 +12801,7 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int, qu
 		{key: sovereignLowSuccessOpportunityReason, label: "low success opportunity below floor"},
 		{key: sovereignStockGateReason, label: "paid stock waiting for sales"},
 		{key: sovereignDiscoveryQueuedReason, label: "discovery probe queued"},
+		{key: sovereignDiscoveryBackoffReason, label: "discovery ladder in backoff"},
 		{key: sovereignBudgetEfficiencyOpportunityReason, label: "budget efficiency below floor"},
 		{key: "below_execute_min", label: "below execute min amount"},
 		{key: "budget_below_min", label: "budget below min amount"},

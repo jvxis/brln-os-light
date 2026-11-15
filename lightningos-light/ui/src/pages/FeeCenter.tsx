@@ -28,6 +28,7 @@ type AutofeeProfileDefaults = {
   inbound_discount_max_ratio?: number
   inbound_discount_reach_out_ratio?: number
   inbound_discount_min_retained_spread_frac?: number
+  inbound_discount_exit_share_min?: number
   outrate_floor_factor_low?: number
   soften_min_out_ratio?: number
   soften_max_drop_to_peg_frac?: number
@@ -50,6 +51,7 @@ type AutofeeConfig = {
   inbound_discount_max_ratio_override?: number
   inbound_discount_reach_out_ratio_override?: number
   inbound_discount_min_retained_spread_frac_override?: number
+  inbound_discount_exit_share_min_override?: number
   outrate_floor_factor_low_override?: number
   soften_min_out_ratio_override?: number
   soften_max_drop_to_peg_frac_override?: number
@@ -410,6 +412,7 @@ export default function FeeCenter() {
   const [inboundDiscountMaxRatioOverride, setInboundDiscountMaxRatioOverride] = useState('')
   const [inboundDiscountReachOutRatioOverride, setInboundDiscountReachOutRatioOverride] = useState('')
   const [inboundDiscountMinRetainedSpreadFracOverride, setInboundDiscountMinRetainedSpreadFracOverride] = useState('')
+  const [inboundDiscountExitShareMinOverride, setInboundDiscountExitShareMinOverride] = useState('')
   const [outrateFloorFactorLowOverride, setOutrateFloorFactorLowOverride] = useState('')
   const [softenMinOutRatioOverride, setSoftenMinOutRatioOverride] = useState('')
   const [softenMaxDropToPegFracOverride, setSoftenMaxDropToPegFracOverride] = useState('')
@@ -456,6 +459,7 @@ export default function FeeCenter() {
     setInboundDiscountMaxRatioOverride(pctOverrideToInput(cfg.inbound_discount_max_ratio_override))
     setInboundDiscountReachOutRatioOverride(pctOverrideToInput(cfg.inbound_discount_reach_out_ratio_override))
     setInboundDiscountMinRetainedSpreadFracOverride(pctOverrideToInput(cfg.inbound_discount_min_retained_spread_frac_override))
+    setInboundDiscountExitShareMinOverride(pctOverrideToInput(cfg.inbound_discount_exit_share_min_override))
     setOutrateFloorFactorLowOverride(pctOverrideToInput(cfg.outrate_floor_factor_low_override))
     setSoftenMinOutRatioOverride(pctOverrideToInput(cfg.soften_min_out_ratio_override))
     setSoftenMaxDropToPegFracOverride(pctOverrideToInput(cfg.soften_max_drop_to_peg_frac_override))
@@ -861,6 +865,7 @@ export default function FeeCenter() {
         inbound_discount_max_ratio_override: parsePercentOverride(inboundDiscountMaxRatioOverride, 5, 100),
         inbound_discount_reach_out_ratio_override: parsePercentOverride(inboundDiscountReachOutRatioOverride, 5, 50),
         inbound_discount_min_retained_spread_frac_override: parsePercentOverride(inboundDiscountMinRetainedSpreadFracOverride, 1, 50),
+        inbound_discount_exit_share_min_override: parsePercentOverride(inboundDiscountExitShareMinOverride, 1, 100),
         outrate_floor_factor_low_override: parsePercentOverride(outrateFloorFactorLowOverride, 50, 100),
         soften_min_out_ratio_override: parsePercentOverride(softenMinOutRatioOverride, 5, 95),
         soften_max_drop_to_peg_frac_override: parsePercentOverride(softenMaxDropToPegFracOverride, 50, 100),
@@ -1421,6 +1426,7 @@ export default function FeeCenter() {
                       <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeInboundDiscountMaxRatioOverride'), t('lightningOps.autofeeMovementHintInboundDiscountMaxRatio'))}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={inboundDiscountMaxRatioOverride} onChange={(event) => setInboundDiscountMaxRatioOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{movementDefaultLabel(defaultText(activeDefaults?.inbound_discount_max_ratio))}</span></label>
                       <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeInboundDiscountReachOutRatioOverride'), t('lightningOps.autofeeMovementHintInboundDiscountReachOutRatio'))}<input className="input-field mt-2" type="number" min={0} max={50} step="1" value={inboundDiscountReachOutRatioOverride} onChange={(event) => setInboundDiscountReachOutRatioOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{movementDefaultLabel(defaultText(activeDefaults?.inbound_discount_reach_out_ratio))}</span></label>
                       <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeInboundDiscountMinRetainedSpreadFracOverride'), t('lightningOps.autofeeMovementHintInboundDiscountMinRetainedSpread'))}<input className="input-field mt-2" type="number" min={0} max={50} step="1" value={inboundDiscountMinRetainedSpreadFracOverride} onChange={(event) => setInboundDiscountMinRetainedSpreadFracOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{movementDefaultLabel(defaultText(activeDefaults?.inbound_discount_min_retained_spread_frac))}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeInboundDiscountExitShareMinOverride'), t('lightningOps.autofeeMovementHintInboundDiscountExitShareMin'))}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={inboundDiscountExitShareMinOverride} onChange={(event) => setInboundDiscountExitShareMinOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{movementDefaultLabel(defaultText(activeDefaults?.inbound_discount_exit_share_min))}</span></label>
                       <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeOutrateFloorFactorLowOverride'), t('lightningOps.autofeeMovementHintLowFlowFloor'))}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={outrateFloorFactorLowOverride} onChange={(event) => setOutrateFloorFactorLowOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{movementDefaultLabel(defaultText(activeDefaults?.outrate_floor_factor_low))}</span></label>
                       <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeSoftenMinOutRatioOverride'), t('lightningOps.autofeeMovementHintGlobalLockMinOut'))}<input className="input-field mt-2" type="number" min={0} max={95} step="1" value={softenMinOutRatioOverride} onChange={(event) => setSoftenMinOutRatioOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{movementDefaultLabel(defaultText(activeDefaults?.soften_min_out_ratio))}</span></label>
                       <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeSoftenMaxDropToPegFracOverride'), t('lightningOps.autofeeMovementHintGlobalLockMaxDrop'))}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={softenMaxDropToPegFracOverride} onChange={(event) => setSoftenMaxDropToPegFracOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{movementDefaultLabel(defaultText(activeDefaults?.soften_max_drop_to_peg_frac))}</span></label>

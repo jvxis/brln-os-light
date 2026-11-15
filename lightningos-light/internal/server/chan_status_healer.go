@@ -19,6 +19,13 @@ const (
 	chanHealDefaultInterval = 300 * time.Second
 	chanHealConnectTimeout  = 8 * time.Second
 	chanHealMaxReconnects   = 5
+	// chanHealReconnectBackoffAfter: consecutive failed reconnects to one peer
+	// before the healer stops retrying it on every tick. Two peers that were
+	// never reachable (offline onion / dead clearnet) took 47 attempts a day
+	// each and crowded the per-tick reconnect budget.
+	chanHealReconnectBackoffAfter = 6
+	// chanHealReconnectBackoffMax caps the per-peer wait between attempts.
+	chanHealReconnectBackoffMax = 6 * time.Hour
 )
 
 type chanStatusHealPayload struct {
@@ -75,12 +82,20 @@ type chanHealRunStats struct {
 	reconnectDetails   []chanHealReconnectDetail
 }
 
+type chanHealReconnectBackoff struct {
+	failures int
+	until    time.Time
+}
+
 type ChanStatusHealer struct {
 	lnd           chanStatusLND
 	logger        *log.Logger
 	recovery      *chanPeerRecovery
 	recoveryPeers []chanRecoveryPeer
 	recoveryReset bool
+	// reconnectBackoff is owned by the serialized tick: per-peer consecutive
+	// reconnect failures and the time before which the peer is not retried.
+	reconnectBackoff map[string]*chanHealReconnectBackoff
 
 	mu                     sync.Mutex
 	enabled                bool
@@ -380,6 +395,7 @@ func (c *ChanStatusHealer) tick() {
 		} else {
 			connected := chanHealConnectedPeerSet(peers)
 			attempted := map[string]struct{}{}
+			now := time.Now()
 			for _, ch := range channels {
 				if stats.reconnectAttempted >= chanHealMaxReconnects {
 					break
@@ -395,9 +411,13 @@ func (c *ChanStatusHealer) tick() {
 					continue
 				}
 				if _, ok := connected[pubkey]; ok {
+					c.clearReconnectBackoff(pubkey)
 					continue
 				}
 				if _, ok := attempted[pubkey]; ok {
+					continue
+				}
+				if c.reconnectBackedOff(pubkey, now) {
 					continue
 				}
 				attempted[pubkey] = struct{}{}
@@ -407,11 +427,17 @@ func (c *ChanStatusHealer) tick() {
 				if err != nil {
 					stats.reconnectFailed++
 					stats.reconnectDetails = append(stats.reconnectDetails, detail)
+					until := c.noteReconnectFailure(pubkey, now, c.currentInterval())
 					if c.logger != nil {
-						c.logger.Printf("chan-heal: peer %s still unreachable after reconnect attempt: %v", shortIdentifier(pubkey), err)
+						if until.IsZero() {
+							c.logger.Printf("chan-heal: peer %s still unreachable after reconnect attempt: %v", shortIdentifier(pubkey), err)
+						} else {
+							c.logger.Printf("chan-heal: peer %s still unreachable after reconnect attempt: %v (next attempt after %s)", shortIdentifier(pubkey), err, until.UTC().Format(time.RFC3339))
+						}
 					}
 					continue
 				}
+				c.clearReconnectBackoff(pubkey)
 				stats.reconnected++
 				stats.reconnectDetails = append(stats.reconnectDetails, detail)
 				connected[pubkey] = struct{}{}
@@ -462,6 +488,51 @@ func (c *ChanStatusHealer) tick() {
 		return
 	}
 	c.recordSuccess(stats)
+}
+
+// chanHealReconnectBackoffUntil returns when a peer may be retried after the
+// given number of consecutive failures: no wait below the threshold, then the
+// tick interval doubled per extra failure, capped at chanHealReconnectBackoffMax.
+func chanHealReconnectBackoffUntil(failures int, interval time.Duration, now time.Time) time.Time {
+	if failures < chanHealReconnectBackoffAfter {
+		return time.Time{}
+	}
+	if interval <= 0 {
+		interval = chanHealDefaultInterval
+	}
+	wait := interval
+	for i := chanHealReconnectBackoffAfter; i < failures && wait < chanHealReconnectBackoffMax; i++ {
+		wait *= 2
+	}
+	if wait > chanHealReconnectBackoffMax {
+		wait = chanHealReconnectBackoffMax
+	}
+	return now.Add(wait)
+}
+
+func (c *ChanStatusHealer) reconnectBackedOff(pubkey string, now time.Time) bool {
+	entry := c.reconnectBackoff[pubkey]
+	return entry != nil && now.Before(entry.until)
+}
+
+func (c *ChanStatusHealer) noteReconnectFailure(pubkey string, now time.Time, interval time.Duration) time.Time {
+	if c.reconnectBackoff == nil {
+		c.reconnectBackoff = map[string]*chanHealReconnectBackoff{}
+	}
+	entry := c.reconnectBackoff[pubkey]
+	if entry == nil {
+		entry = &chanHealReconnectBackoff{}
+		c.reconnectBackoff[pubkey] = entry
+	}
+	entry.failures++
+	entry.until = chanHealReconnectBackoffUntil(entry.failures, interval, now)
+	return entry.until
+}
+
+func (c *ChanStatusHealer) clearReconnectBackoff(pubkey string) {
+	if c.reconnectBackoff != nil {
+		delete(c.reconnectBackoff, pubkey)
+	}
 }
 
 func (c *ChanStatusHealer) reconnectPeer(pubkey string) (chanHealReconnectDetail, error) {

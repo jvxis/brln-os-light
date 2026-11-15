@@ -45,6 +45,19 @@ const (
 	// target we literally cannot fill is pointless. Set above 0 success so a
 	// hard-to-refill-but-earning channel (kappa) still qualifies.
 	autoTargetDeadRouteAttempts = 8
+
+	// autoTargetDeadRouteMinAttempts / autoTargetDeadRouteMaxSuccessRate: a
+	// target that keeps failing almost every attempt over a large sample is as
+	// unrefillable as one with zero successes. bxm (1% success over 21k
+	// attempts) and coinos/bfx-lnd1 (1% local, structural cooldown) were
+	// raised 65→70 on sell-through alone; the higher target only inflated the
+	// deficit and the size of the first lot once a route reappeared.
+	autoTargetDeadRouteMinAttempts    = 20
+	autoTargetDeadRouteMaxSuccessRate = 0.02
+
+	// autoTargetRouteDeadHoldReason marks an UP that was earned on sales but
+	// held because the target currently cannot be refilled.
+	autoTargetRouteDeadHoldReason = "route_dead_hold"
 )
 
 // channelSellThrough is the per-target rebalance economics over the attribution
@@ -81,6 +94,9 @@ type autoTargetSignals struct {
 	HasHistory        bool    // has rebalance history (SentSat > 0) => sell-through is meaningful
 	NodeSellThrough   float64 // baseline snapshot, for audit
 	IsRoundCandidate  bool    // selected as a candidate this round => supply-limited
+	// InStructuralCooldown: the autopilot is currently skipping this target
+	// because every source failed on recent jobs (no route at any price).
+	InStructuralCooldown bool
 	// IdleSince is the last activity used by an idle_up decision (audit only).
 	IdleSince time.Time
 	// IdleInboundSat is the forwarded volume that entered through the channel
@@ -142,11 +158,11 @@ func decideAutoTargetAdjustment(sig autoTargetSignals, baseline autoTargetNodeBa
 
 	upThresh := baseline.SellThrough * cfg.AutoTargetUpSellThroughFactor
 	downThresh := baseline.SellThrough * cfg.AutoTargetDownSellThroughFactor
-	deadRoute := sig.Attempts >= autoTargetDeadRouteAttempts && sig.SuccessRate <= 0
+	deadRoute := autoTargetRouteDead(sig)
 
 	// UP: only supply-limited round candidates that earn and sell above baseline.
 	upReason := ""
-	if sig.IsRoundCandidate && sig.Revenue7dSat >= cfg.AutoTargetMinRevenue7dSat && !deadRoute {
+	if sig.IsRoundCandidate && sig.Revenue7dSat >= cfg.AutoTargetMinRevenue7dSat {
 		switch {
 		case sig.HasHistory && baseline.SellThrough > 0 && sig.SellThrough >= upThresh:
 			upReason = "sells_above_node"
@@ -158,6 +174,12 @@ func decideAutoTargetAdjustment(sig autoTargetSignals, baseline autoTargetNodeBa
 			// above-node earner that is actively draining.
 			upReason = "drain_first"
 		}
+	}
+	if upReason != "" && deadRoute {
+		// Earned on sales, but the target cannot be filled right now: hold at
+		// the current target instead of inflating the deficit.
+		dec.Reason = autoTargetRouteDeadHoldReason
+		return dec
 	}
 	if upReason != "" {
 		newT := cur + step
@@ -189,6 +211,20 @@ func decideAutoTargetAdjustment(sig autoTargetSignals, baseline autoTargetNodeBa
 		return dec
 	}
 	return dec
+}
+
+// autoTargetRouteDead reports whether raising the target would be pointless
+// because the autopilot cannot land liquidity on it: zero successes over a
+// small sample, a near-zero success rate over a large one, or an active
+// structural cooldown. It only gates UP; DOWN is unaffected.
+func autoTargetRouteDead(sig autoTargetSignals) bool {
+	if sig.InStructuralCooldown {
+		return true
+	}
+	if sig.Attempts >= autoTargetDeadRouteAttempts && sig.SuccessRate <= 0 {
+		return true
+	}
+	return sig.Attempts >= autoTargetDeadRouteMinAttempts && sig.SuccessRate < autoTargetDeadRouteMaxSuccessRate
 }
 
 // autoTargetIdleUpReason marks a time-based UP: the channel sat at or under
@@ -309,18 +345,23 @@ func (s *RebalanceService) evaluateAutoTarget(
 		}
 		rate, attempts := sovereignHistoricalSuccessRate(pairStats[snap.ChannelID])
 		st := sellThrough[snap.ChannelID]
+		inStructuralCooldown := false
+		if stat, ok := structuralCooldowns[snap.ChannelID]; ok {
+			inStructuralCooldown = shouldSkipSovereignTargetStructuralCooldown(stat, cfg, scanAt)
+		}
 		sig := autoTargetSignals{
-			ChannelID:         snap.ChannelID,
-			CurrentTargetPct:  snap.TargetOutboundPct,
-			CapacitySat:       snap.CapacitySat,
-			DrainRateSatPerHr: snap.DrainRateSatPerHour,
-			Revenue7dSat:      snap.Revenue7dSat,
-			SuccessRate:       rate,
-			Attempts:          attempts,
-			SellThrough:       st.SellThrough,
-			HasHistory:        st.SentSat > 0,
-			NodeSellThrough:   nodeSellThrough,
-			IsRoundCandidate:  isCandidate,
+			ChannelID:            snap.ChannelID,
+			CurrentTargetPct:     snap.TargetOutboundPct,
+			CapacitySat:          snap.CapacitySat,
+			DrainRateSatPerHr:    snap.DrainRateSatPerHour,
+			Revenue7dSat:         snap.Revenue7dSat,
+			SuccessRate:          rate,
+			Attempts:             attempts,
+			SellThrough:          st.SellThrough,
+			HasHistory:           st.SentSat > 0,
+			NodeSellThrough:      nodeSellThrough,
+			IsRoundCandidate:     isCandidate,
+			InStructuralCooldown: inStructuralCooldown,
 		}
 		dec := decideAutoTargetAdjustment(sig, baseline, cfg)
 		if dec.Direction == autoTargetNoop && lastActivity != nil {
@@ -367,7 +408,11 @@ func (s *RebalanceService) evaluateAutoTarget(
 				s.persistAutoTargetDecision(ctx, snap, sig, cfg, dec, true)
 			}
 		default:
-			// Plain hold: not persisted (keep the audit table lean).
+			if dec.Reason == autoTargetRouteDeadHoldReason && s.noteAutoTargetRouteDeadHold(snap.ChannelID, scanAt, interval) {
+				// An earned UP held by a dead route is worth one audit row per
+				// interval; a plain hold is not persisted (keep the table lean).
+				s.persistAutoTargetDecision(ctx, snap, sig, cfg, dec, false)
+			}
 		}
 	}
 
@@ -390,6 +435,22 @@ func (s *RebalanceService) evaluateAutoTarget(
 		processed[snap.ChannelID] = true
 		handle(snap, false)
 	}
+}
+
+// noteAutoTargetRouteDeadHold rate-limits the route_dead_hold audit row to one
+// per evaluation interval per channel (held decisions are not applied, so the
+// applied-only lastDecided gate would otherwise let them repeat every scan).
+func (s *RebalanceService) noteAutoTargetRouteDeadHold(channelID uint64, at time.Time, interval time.Duration) bool {
+	s.autoTargetHoldMu.Lock()
+	defer s.autoTargetHoldMu.Unlock()
+	if s.autoTargetHoldNoted == nil {
+		s.autoTargetHoldNoted = map[uint64]time.Time{}
+	}
+	if last, ok := s.autoTargetHoldNoted[channelID]; ok && at.Sub(last) < interval {
+		return false
+	}
+	s.autoTargetHoldNoted[channelID] = at
+	return true
 }
 
 // autoTargetMedianRevenue returns the median Revenue7dSat across active channels.
@@ -624,17 +685,18 @@ func (s *RebalanceService) persistAutoTargetDecision(ctx context.Context, snap R
 		return
 	}
 	signals := map[string]any{
-		"drain_rate_sat_per_hr": sig.DrainRateSatPerHr,
-		"success_rate":          sig.SuccessRate,
-		"attempts":              sig.Attempts,
-		"revenue_7d_sat":        sig.Revenue7dSat,
-		"sell_through":          sig.SellThrough,
-		"has_history":           sig.HasHistory,
-		"node_sell_through":     sig.NodeSellThrough,
-		"is_round_candidate":    sig.IsRoundCandidate,
-		"effective_max_pct":     dec.EffectiveMaxPct,
-		"capacity_sat":          sig.CapacitySat,
-		"reason":                dec.Reason,
+		"drain_rate_sat_per_hr":  sig.DrainRateSatPerHr,
+		"success_rate":           sig.SuccessRate,
+		"attempts":               sig.Attempts,
+		"revenue_7d_sat":         sig.Revenue7dSat,
+		"sell_through":           sig.SellThrough,
+		"has_history":            sig.HasHistory,
+		"node_sell_through":      sig.NodeSellThrough,
+		"is_round_candidate":     sig.IsRoundCandidate,
+		"in_structural_cooldown": sig.InStructuralCooldown,
+		"effective_max_pct":      dec.EffectiveMaxPct,
+		"capacity_sat":           sig.CapacitySat,
+		"reason":                 dec.Reason,
 	}
 	if !sig.IdleSince.IsZero() {
 		signals["idle_since"] = sig.IdleSince.UTC().Format(time.RFC3339)

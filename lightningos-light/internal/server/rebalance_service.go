@@ -1090,13 +1090,13 @@ type RebalanceSovereignDecision struct {
 	// DiscoveryBackoffUntil is set when the ladder skipped this target because
 	// its last ladders all ran out of steps without a route.
 	DiscoveryBackoffUntil time.Time `json:"discovery_backoff_until,omitzero"`
-	IntentKind                  string  `json:"intent_kind,omitempty"`
-	IntentReason                string  `json:"intent_reason,omitempty"`
-	IntentConfidence            float64 `json:"intent_confidence,omitempty"`
-	IntentApplied               bool    `json:"intent_applied,omitempty"`
-	IntentShadow                bool    `json:"intent_shadow,omitempty"`
-	IntentScoreBefore           int64   `json:"intent_score_before,omitempty"`
-	IntentScoreAfter            int64   `json:"intent_score_after,omitempty"`
+	IntentKind            string    `json:"intent_kind,omitempty"`
+	IntentReason          string    `json:"intent_reason,omitempty"`
+	IntentConfidence      float64   `json:"intent_confidence,omitempty"`
+	IntentApplied         bool      `json:"intent_applied,omitempty"`
+	IntentShadow          bool      `json:"intent_shadow,omitempty"`
+	IntentScoreBefore     int64     `json:"intent_score_before,omitempty"`
+	IntentScoreAfter      int64     `json:"intent_score_after,omitempty"`
 }
 
 type RebalanceSovereignHistory struct {
@@ -1151,6 +1151,7 @@ type RebalanceChannel struct {
 	RemotePct                  float64  `json:"remote_pct"`
 	OutgoingFeePpm             int64    `json:"outgoing_fee_ppm"`
 	OutgoingBaseMsat           int64    `json:"outgoing_base_msat"`
+	InboundFeePpm              int64    `json:"inbound_fee_ppm"`
 	PeerFeeRatePpm             int64    `json:"peer_fee_rate_ppm"`
 	PeerBaseMsat               int64    `json:"peer_base_msat"`
 	SpreadPpm                  int64    `json:"spread_ppm"`
@@ -1696,6 +1697,9 @@ type RebalanceService struct {
 	explorationStatsMu sync.Mutex
 	explorationStats   map[uint64]*explorationStat
 	explorationJobs    map[int64]uint64 // jobID → channelID (only set for exploration-marked jobs)
+
+	autoTargetHoldMu    sync.Mutex
+	autoTargetHoldNoted map[uint64]time.Time
 }
 
 // explorationStat tracks exploration outcomes for a single target channel in a
@@ -4924,6 +4928,11 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		// gets one probe above the cap, from its own budget.
 		if s.maybeQueueSovereignDiscovery(ctx, &decision, target, targetCfg, targetPolicy, discoveryRun, scanAt, live) {
 			noteSkip(decision.Reason)
+		} else if !decision.DiscoveryBackoffUntil.IsZero() {
+			// The ladder exists for this target but is in backoff after
+			// repeated no-route ladders: count it so the scan history shows
+			// why no probe was queued.
+			noteSkip(sovereignDiscoveryBackoffReason)
 		}
 		appendDecision(decision)
 	}
@@ -10521,6 +10530,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 
 	outgoingFee := int64(0)
 	outgoingBaseMsat := int64(0)
+	inboundFee := int64(0)
 	peerFeeRate := int64(0)
 	peerBaseMsat := int64(0)
 	peerPolicyKnown := false
@@ -10532,6 +10542,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		peerPolicyKnown = true
 		outgoingFee = policies.Local.FeeRatePpm
 		outgoingBaseMsat = policies.Local.BaseFeeMsat
+		inboundFee = policies.Local.InboundFeeRatePpm
 		peerFeeRate = policies.Remote.FeeRatePpm
 		peerBaseMsat = policies.Remote.BaseFeeMsat
 	}
@@ -10710,6 +10721,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		LocalPct:                   localPct,
 		RemotePct:                  remotePct,
 		OutgoingFeePpm:             outgoingFee,
+		InboundFeePpm:              inboundFee,
 		OutgoingBaseMsat:           outgoingBaseMsat,
 		PeerFeeRatePpm:             peerFeeRate,
 		PeerBaseMsat:               peerBaseMsat,
@@ -12793,6 +12805,7 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int, qu
 		{key: sovereignLowSuccessOpportunityReason, label: "low success opportunity below floor"},
 		{key: sovereignStockGateReason, label: "paid stock waiting for sales"},
 		{key: sovereignDiscoveryQueuedReason, label: "discovery probe queued"},
+		{key: sovereignDiscoveryBackoffReason, label: "discovery ladder in backoff"},
 		{key: sovereignBudgetEfficiencyOpportunityReason, label: "budget efficiency below floor"},
 		{key: "below_execute_min", label: "below execute min amount"},
 		{key: "budget_below_min", label: "budget below min amount"},

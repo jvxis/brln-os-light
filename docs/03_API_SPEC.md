@@ -854,12 +854,21 @@ POST /api/lnops/autofee/channels
 
 GET /api/lnops/autofee/config
 POST /api/lnops/autofee/config
+- Since 0.5.57, `inbound_discount_exit_share_min_override` selects the minimum
+  fraction of a channel's observed inbound flow through a paid-refill exit that
+  can cap its balanced inbound discount. `0` uses the profile default; positive
+  values are clamped to `0.01..1.0`; `1` disables this exit cap. Profile defaults
+  expose `inbound_discount_exit_share_min` (conservative 0.05, moderate 0.10,
+  aggressive 0.15). This setting does not enable AutoFee or inbound passive mode.
 - Since 0.5.38, `native_seed_v2_enabled` (boolean, default false) opts into corrected native-graph sampling when `native_seed_enabled` is enabled and the sample is sufficient. Otherwise the existing seed selection remains in use.
 - With native seed enabled, v2 is also calculated for comparison. Channel results can expose `seed_v2`, `seed_v2_ok`, `seed_v2_days`, `seed_v2_channels`, `seed_v2_self_excluded`, and `seed_v2_delta_pct`; optional zero-valued fields may be omitted.
 - Since 0.5.39, `seed_native_raw` exposes the legacy native reference before local caps when available. `seed_v2_delta_pct` compares against that reference, falling back to the applied seed when the legacy reference is unavailable. Comparative-mode samples also contribute to the v2 run counters.
 
 GET /api/lnops/autofee/results?runs=4
 - Returns the selected structured run `items` and rendered `lines`.
+- Since 0.5.57, channel items may include `inbound_exit_cap_ppm` and
+  `inbound_exit_cap_window` (`7d` or `21d`). These diagnostics describe an
+  observed paid-exit bound, not realized profit or a guarantee of future flow.
 - From 0.5.35, newly evaluated channel items optionally include `cost_evidence`:
   `{source, kind, reference_ppm, effective_ppm, min_adjusted, margin_actionable, forward_count, negative_margin_guard}`.
   This records the input used to compute margin, independently of the final floor.
@@ -1247,6 +1256,8 @@ POST /api/rebalance/config
 - Since 0.5.39, ranking items can expose `drained_since`, the first observation of the active drained/extreme-drained refill intent. The age check uses this timestamp when available, falling back to `liquidity_state_at`.
 
 GET /api/rebalance/channels
+- Since 0.5.57, each channel snapshot includes `inbound_fee_ppm`, the signed
+  local inbound policy when available (zero when unavailable or unset).
 - Returns live channel balances, local/peer policies, targets, eligibility and recent economics.
 - Economic diagnostics include `initiator`, `peer_policy_known`, `effective_econ_ratio`, `fee_budget_ppm`, `economic_fee_floor_ppm`, `economic_required_cost_ppm`, `economic_reference_amount_sat`, `economic_floor_reason`, and `economic_blocked_reason`.
 - For remote-opened channels that need paid refill, `economic_fee_floor_ppm` is the minimum outbound rate whose proportional budget can cover the peer's amount-normalized policy. Fresh total rebalance cost takes precedence when it is higher.
@@ -1571,6 +1582,12 @@ requests retain the standard session/CSRF checks when login is enabled.
   adapt to node size/liquidity. Unavailable sources are reported separately.
 - `POST /api/lnops/insights/recompute`: forces recomputation and returns the
   same payload. No financial action is executed.
+- Since 0.5.57, items may have `kind: "desconto_entrada"`, rule `R8`, and
+  `invalidate_when: "inbound_discount_set_or_refilled"`. This advisory identifies
+  productive depleted sinks without an inbound discount when AutoFee will not
+  apply one (inbound passive disabled or channel fees pinned). Evidence can
+  include `inbound_fee_ppm` and `inbound_discount_suggested_ppm`; suggestions are
+  estimates, not an applied policy. Unknown AutoFee configuration suppresses R8.
 - `POST /api/lnops/insights/{id}/status`: accepts
   `{"status":"open"|"dismissed"|"done","reason":"..."}` and returns
   `{"ok":true}`. A dismissed item requires `later`, `disagree` or

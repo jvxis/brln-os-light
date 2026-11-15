@@ -278,3 +278,70 @@ func (f *fakeChanStatusLND) UpdateChanStatus(ctx context.Context, channelPoint s
 	}
 	return f.updateErr
 }
+
+func TestChanHealReconnectBackoffUntil(t *testing.T) {
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	interval := 5 * time.Minute
+	if got := chanHealReconnectBackoffUntil(chanHealReconnectBackoffAfter-1, interval, now); !got.IsZero() {
+		t.Fatalf("below the threshold there is no backoff, got %s", got)
+	}
+	cases := map[int]time.Duration{
+		chanHealReconnectBackoffAfter:      5 * time.Minute,
+		chanHealReconnectBackoffAfter + 1:  10 * time.Minute,
+		chanHealReconnectBackoffAfter + 3:  40 * time.Minute,
+		chanHealReconnectBackoffAfter + 7:  chanHealReconnectBackoffMax,
+		chanHealReconnectBackoffAfter + 40: chanHealReconnectBackoffMax,
+	}
+	for failures, want := range cases {
+		if got := chanHealReconnectBackoffUntil(failures, interval, now).Sub(now); got != want {
+			t.Fatalf("failures=%d: want %s, got %s", failures, want, got)
+		}
+	}
+}
+
+func TestChanStatusHealerBacksOffPeerThatNeverReconnects(t *testing.T) {
+	const pubkey = "03284f7400000000000000000000000000000000000000000000000000572036e9"
+	channels := []lndclient.ChannelInfo{{ChannelPoint: "txid:9", RemotePubkey: pubkey, Active: false}}
+	seq := make([][]lndclient.ChannelInfo, 0, 20)
+	for i := 0; i < 20; i++ {
+		seq = append(seq, channels)
+	}
+	fake := &fakeChanStatusLND{
+		channelsSeq: seq,
+		details:     map[string]lndclient.NodeDetails{pubkey: {PubKey: pubkey, Addresses: []lndclient.NodeAddress{{Network: "tcp", Addr: "203.0.113.30:9735"}}}},
+		connectErr:  errors.New("dial tcp: connection refused"),
+	}
+	healer := &ChanStatusHealer{lnd: fake, enabled: true}
+	for i := 0; i < chanHealReconnectBackoffAfter+4; i++ {
+		healer.tick()
+	}
+	if got := len(fake.connectCalls); got != chanHealReconnectBackoffAfter {
+		t.Fatalf("expected %d reconnect attempts before the backoff holds, got %d", chanHealReconnectBackoffAfter, got)
+	}
+	entry := healer.reconnectBackoff[pubkey]
+	if entry == nil || entry.failures != chanHealReconnectBackoffAfter || entry.until.IsZero() {
+		t.Fatalf("unexpected backoff state: %+v", entry)
+	}
+	snap := healer.Snapshot()
+	if snap.LastReconnectAttempted != 0 || snap.LastReconnectFailed != 0 {
+		t.Fatalf("a backed-off tick must not count attempts: %+v", snap)
+	}
+
+	// Once the wait elapses the peer is retried and the backoff grows.
+	entry.until = time.Now().Add(-time.Second)
+	healer.tick()
+	if got := len(fake.connectCalls); got != chanHealReconnectBackoffAfter+1 {
+		t.Fatalf("expected a retry after the wait, got %d attempts", got)
+	}
+	if entry.failures != chanHealReconnectBackoffAfter+1 || time.Until(entry.until) < 9*time.Minute {
+		t.Fatalf("backoff must double after another failure: %+v", entry)
+	}
+
+	// A successful reconnect clears the state.
+	fake.connectErr = nil
+	entry.until = time.Now().Add(-time.Second)
+	healer.tick()
+	if healer.reconnectBackoff[pubkey] != nil {
+		t.Fatalf("success must clear the backoff, got %+v", healer.reconnectBackoff[pubkey])
+	}
+}

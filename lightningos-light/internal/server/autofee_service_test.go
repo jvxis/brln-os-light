@@ -967,6 +967,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedEligible(t *testing.T) {
 		5_000_000,
 		500,
 		1000,
+		inboundExitCapResult{},
 	)
 	if !apply || source != "balanced" {
 		t.Fatalf("expected balanced inbound refresh to apply, apply=%v source=%q", apply, source)
@@ -990,6 +991,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedPreservesIneligible(t *testi
 		5_000_000,
 		500,
 		1000,
+		inboundExitCapResult{},
 	)
 	if apply || source != "" || discount != 0 {
 		t.Fatalf("expected ineligible balanced inbound refresh to preserve current setting, apply=%v source=%q discount=%d", apply, source, discount)
@@ -1010,6 +1012,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedLowSampleRecreatesTarget(t *
 		5_000_000,
 		300,
 		700,
+		inboundExitCapResult{},
 	)
 	if !apply || source != "balanced-low-sample" {
 		t.Fatalf("expected balanced low-sample inbound refresh to apply, apply=%v source=%q", apply, source)
@@ -1076,7 +1079,7 @@ func TestAdvanceBalancedInboundDiscountLifecycle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			discount, rounds, tags := advanceBalancedInboundDiscountLifecycle(tt.candidate, tt.previous, tt.applied, tt.maxRatio, tt.previousRounds)
+			discount, rounds, tags := advanceBalancedInboundDiscountLifecycle(tt.candidate, tt.previous, tt.applied, tt.maxRatio, tt.previousRounds, inboundExitCapResult{}, false)
 			if discount != tt.wantDiscount || rounds != tt.wantRounds || !reflect.DeepEqual(tags, tt.wantTags) {
 				t.Fatalf("got discount=%d rounds=%d tags=%v, want discount=%d rounds=%d tags=%v", discount, rounds, tags, tt.wantDiscount, tt.wantRounds, tt.wantTags)
 			}
@@ -1098,6 +1101,7 @@ func TestSelectAutofeeRefreshInboundDiscountRejectsNonSink(t *testing.T) {
 		5_000_000,
 		500,
 		1000,
+		inboundExitCapResult{},
 	)
 	if apply || source != "" || discount != 0 {
 		t.Fatalf("expected non-sink refresh to preserve inbound policy, apply=%v source=%q discount=%d", apply, source, discount)
@@ -1135,6 +1139,7 @@ func TestSelectAutofeeRefreshInboundDiscountMarketRefillApplies(t *testing.T) {
 		5_000_000,
 		200,
 		1000,
+		inboundExitCapResult{},
 	)
 	if !apply || source != "market-refill" {
 		t.Fatalf("expected market refill inbound refresh to apply, apply=%v source=%q", apply, source)
@@ -4229,5 +4234,31 @@ func TestShouldHoldSurgeWithoutDemandEvidence(t *testing.T) {
 	}
 	if shouldHoldSurgeWithoutDemandEvidence(0, 0, true, false) || shouldHoldSurgeWithoutDemandEvidence(0, 0, false, true) {
 		t.Fatal("HTLC pressure is demand even without a settled forward")
+	}
+}
+
+func TestAutofeeInboundCostAnchorReplacesOutrateFallback(t *testing.T) {
+	// e960 (14/11): never refilled, cost fell back to its own sale price, so the
+	// inbound margin was negative by construction and no discount was budgeted.
+	if got, src := autofeeInboundCostAnchor(2867, "outrate", 1927, 0, 520); got != 1927 || src != "seed" {
+		t.Fatalf("outrate must be replaced by the seed: %d %s", got, src)
+	}
+	if got, src := autofeeInboundCostAnchor(2867, "outrate-mem", 0, 1800, 520); got != 1800 || src != "seed" {
+		t.Fatalf("outrate-mem must fall back to the remembered seed: %d %s", got, src)
+	}
+	if got, src := autofeeInboundCostAnchor(2867, "outrate", 0, 0, 520); got != 520 || src != "rebal-global" {
+		t.Fatalf("without a seed the node-wide cost anchors: %d %s", got, src)
+	}
+	if got, src := autofeeInboundCostAnchor(2867, "outrate", 0, 0, 0); got != 2867 || src != "outrate" {
+		t.Fatalf("nothing better than outrate keeps outrate: %d %s", got, src)
+	}
+	for _, src := range []string{"rebal", "rebal-21d", "rebal-mem", "seed", "rebal-global"} {
+		if got, gotSrc := autofeeInboundCostAnchor(1864, src, 1927, 0, 520); got != 1864 || gotSrc != src {
+			t.Fatalf("%s is a real anchor and must not change: %d %s", src, got, gotSrc)
+		}
+	}
+	// With the seed anchor the engine budgets a discount for the e960 case.
+	if budget := computeInboundDiscountBudget(1927, 2961, defaultInboundDiscountMaxRatio, 0.10); budget <= 0 {
+		t.Fatalf("seed anchor must leave room for a discount, got %d", budget)
 	}
 }

@@ -219,6 +219,10 @@ print('funding TLS/auth reads passed')`
 	waitApp()
 	checkFunding()
 	t.Log("fresh clean-data LNbits start and funding reads passed")
+	if os.Getenv("LOS_LNBITS_READINESS") == "1" {
+		validateLNbitsNativeStartupReadiness(t, ctx, broker, paths, waitApp)
+		checkFunding()
+	}
 	passwordBytes := make([]byte, 20)
 	if _, e := rand.Read(passwordBytes); e != nil {
 		t.Fatal(e)

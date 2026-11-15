@@ -23,7 +23,10 @@ const (
 
 	sovereignDiscoveryReason       = "sovereign-discovery"
 	sovereignDiscoveryQueuedReason = "discovery_queued"
-	sovereignDiscoveryShadowReason = "would_discover"
+	// sovereignDiscoveryBackoffReason is counted in the scan's skip reasons
+	// when a target's ladder is skipped because of the no-route backoff.
+	sovereignDiscoveryBackoffReason = "discovery_backoff"
+	sovereignDiscoveryShadowReason  = "would_discover"
 	// One probe per scan and one in flight at a time: each one is a broad
 	// pathfinding call, and a burst of them is what saturates LND.
 	sovereignDiscoveryMaxPerCycle = 1

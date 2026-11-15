@@ -1,6 +1,7 @@
 package appmanifest
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 	"regexp"
@@ -27,6 +28,14 @@ const (
 )
 
 var lnbitsEnvKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,127}$`)
+
+// Embedded in the exact catalog document, never loaded from app data or a
+// manager-supplied script. Docker runs it for UI starts AND automatic boot
+// starts, even when the Manager is not running. It exits via exec once ready;
+// it never revives a VoidWallet selected by upstream runtime safety checks.
+//
+//go:embed assets/lnbits_wait_lnd.py
+var lnbitsWaitLND string
 
 type LNbitsComposePaths struct {
 	DataDir string
@@ -213,12 +222,11 @@ func LNbitsCompose(paths LNbitsComposePaths) string {
       XDG_CACHE_HOME: /app/data/.cache
       PYTHONDONTWRITEBYTECODE: "1"
     command:
-      - /app/.venv/bin/lnbits
-      - --port
-      - "5000"
-      - --host
-      - "0.0.0.0"
-      - --forwarded-allow-ips=*
+      - /app/.venv/bin/python
+      - -I
+      - -c
+      - |
+%s
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
     volumes:
@@ -226,5 +234,5 @@ func LNbitsCompose(paths LNbitsComposePaths) string {
       - %s:/etc/lnd:ro
 
 `, LNbitsImage, LNbitsContainerUID, LNbitsContainerGID, LNbitsStopTimeout,
-		paths.DataDir, paths.LNDDir)
+		"        "+strings.ReplaceAll(strings.TrimRight(lnbitsWaitLND, "\n"), "\n", "\n        "), paths.DataDir, paths.LNDDir)
 }

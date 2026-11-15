@@ -106,17 +106,17 @@ func TestInboundDiscountExitCapForPicksLowerWindow(t *testing.T) {
 
 func TestAdvanceBalancedInboundDiscountLifecycleCapAndFullCut(t *testing.T) {
 	// Grace keeps the discount but the exit cap still bounds it.
-	discount, rounds, tags := advanceBalancedInboundDiscountLifecycle(0, 1869, 3500, 0.90, 0, 1167, false)
+	discount, rounds, tags := advanceBalancedInboundDiscountLifecycle(0, 1869, 3500, 0.90, 0, inboundExitCapResult{Ppm: 1167, ExitChannelID: 101}, false)
 	if discount != 1167 || rounds != 1 || !reflect.DeepEqual(tags, []string{"inbound-exit-cap", "inbound-grace"}) {
 		t.Fatalf("expected capped grace, got discount=%d rounds=%d tags=%v", discount, rounds, tags)
 	}
 	// Channel at or above its own rebalance target: dropped at once.
-	discount, rounds, tags = advanceBalancedInboundDiscountLifecycle(0, 1869, 3500, 0.90, 0, 1167, true)
+	discount, rounds, tags = advanceBalancedInboundDiscountLifecycle(0, 1869, 3500, 0.90, 0, inboundExitCapResult{Ppm: 1167, ExitChannelID: 101}, true)
 	if discount != 0 || rounds != 1 || !reflect.DeepEqual(tags, []string{"inbound-cut-full"}) {
 		t.Fatalf("expected full cut, got discount=%d rounds=%d tags=%v", discount, rounds, tags)
 	}
 	// A fresh eligible discount is untouched here (the cap is applied before).
-	if discount, _, _ := advanceBalancedInboundDiscountLifecycle(400, 600, 1000, 0.90, 3, 100, true); discount != 400 {
+	if discount, _, _ := advanceBalancedInboundDiscountLifecycle(400, 600, 1000, 0.90, 3, inboundExitCapResult{Ppm: 100, ExitChannelID: 101}, true); discount != 400 {
 		t.Fatalf("eligible candidate must pass through, got %d", discount)
 	}
 }
@@ -137,12 +137,29 @@ func TestSelectAutofeeRefreshInboundDiscountHonoursExitCap(t *testing.T) {
 	cfg := AutofeeConfig{InboundPassiveEnabled: true}
 	profile := autofeeProfiles["moderate"]
 	forward7d := forwardStat{FeeMsat: 3_000_000 * 3000, AmtMsat: 3_000_000 * 1000, Count: 12}
-	uncapped, source, apply := selectAutofeeRefreshInboundDiscount(cfg, profile, "sink", 0.05, 0.05, forwardStat{}, forward7d, 10_000_000, 1100, 3500, 0)
+	uncapped, source, apply := selectAutofeeRefreshInboundDiscount(cfg, profile, "sink", 0.05, 0.05, forwardStat{}, forward7d, 10_000_000, 1100, 3500, inboundExitCapResult{})
 	if !apply || uncapped <= 1167 {
 		t.Fatalf("fixture must produce a discount above the cap, got %d (%s, apply=%v)", uncapped, source, apply)
 	}
-	capped, source, apply := selectAutofeeRefreshInboundDiscount(cfg, profile, "sink", 0.05, 0.05, forwardStat{}, forward7d, 10_000_000, 1100, 3500, 1167)
+	capped, source, apply := selectAutofeeRefreshInboundDiscount(cfg, profile, "sink", 0.05, 0.05, forwardStat{}, forward7d, 10_000_000, 1100, 3500, inboundExitCapResult{Ppm: 1167, ExitChannelID: 101})
 	if !apply || capped != 1167 || source != "balanced+exit-cap" {
 		t.Fatalf("expected capped preview 1167 (balanced+exit-cap), got %d (%s, apply=%v)", capped, source, apply)
+	}
+}
+
+func TestInboundDiscountZeroRoundedPaidExitCapIsNotUnlimited(t *testing.T) {
+	capPpm, exit, _, _ := inboundDiscountExitCap(map[uint64]int64{101: 1000}, func(uint64) bool { return true }, func(uint64) int { return 1 }, 0.10, 0.12)
+	if capPpm != 0 || exit != 101 {
+		t.Fatalf("fixture must yield an active zero cap, got cap=%d exit=%d", capPpm, exit)
+	}
+	forward7d := forwardStat{FeeMsat: 3_000_000 * 3000, AmtMsat: 3_000_000 * 1000, Count: 12}
+	cap := inboundExitCapResult{Ppm: capPpm, ExitChannelID: exit}
+	discount, _, apply := selectAutofeeRefreshInboundDiscount(AutofeeConfig{InboundPassiveEnabled: true}, autofeeProfiles["moderate"], "sink", 0.05, 0.05, forwardStat{}, forward7d, 10_000_000, 1100, 3500, cap)
+	if !apply || discount != 0 {
+		t.Fatalf("a zero cap on a paid exit must clear the discount, not mean unlimited: discount=%d apply=%v", discount, apply)
+	}
+	discount, _, tags := advanceBalancedInboundDiscountLifecycle(0, 1977, 3500, 0.90, 0, cap, false)
+	if discount != 0 || !reflect.DeepEqual(tags, []string{"inbound-exit-cap"}) {
+		t.Fatalf("zero cap must also prevent grace from retaining the discount: discount=%d tags=%v", discount, tags)
 	}
 }

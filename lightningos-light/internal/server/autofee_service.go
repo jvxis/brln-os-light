@@ -3795,7 +3795,7 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 				ch.CapacitySat,
 				referencePpm,
 				targetPpm,
-				engine.inboundDiscountExitCapFor(ch.ChannelID, rebalStats7d, rebalStats21d, autofeeInboundRetainedSpreadFrac(cfg, engine.profile)).Ppm,
+				engine.inboundDiscountExitCapFor(ch.ChannelID, rebalStats7d, rebalStats21d, autofeeInboundRetainedSpreadFrac(cfg, engine.profile)),
 			); applyInbound {
 				item.TargetInboundDiscount = targetInboundDiscount
 				item.InboundSource = inboundSource
@@ -5612,12 +5612,12 @@ func normalizeStaleInboundDiscount(currentDiscount int, appliedPpm int, maxRatio
 }
 
 // advanceBalancedInboundDiscountLifecycle walks a discount that is no longer
-// earned through grace and decay. exitCapPpm (0 = none) bounds the discount
-// that stays during grace/decay the same way it bounds a fresh one, and
-// fullCut (channel at or above the profile's HighOutThresh) drops it at once:
+// earned through grace and decay. A nonzero exit channel identifies an active
+// cap, including a cap rounded to zero. It also bounds grace/decay discounts.
+// fullCut (channel at or above its Rebalance outbound target) drops it at once:
 // a full channel has nothing left to attract, and every round the discount
 // outlives the need is a round of forwards leaving cheaper exits at zero fee.
-func advanceBalancedInboundDiscountLifecycle(candidateDiscount int, previousDiscount int, appliedPpm int, maxRatio float64, previousIneligibleRounds int, exitCapPpm int, fullCut bool) (int, int, []string) {
+func advanceBalancedInboundDiscountLifecycle(candidateDiscount int, previousDiscount int, appliedPpm int, maxRatio float64, previousIneligibleRounds int, exitCap inboundExitCapResult, fullCut bool) (int, int, []string) {
 	if candidateDiscount > 0 {
 		return candidateDiscount, 0, nil
 	}
@@ -5637,8 +5637,8 @@ func advanceBalancedInboundDiscountLifecycle(candidateDiscount int, previousDisc
 		targetDiscount = normalizedDiscount
 		tags = append(tags, "inbound-normalize")
 	}
-	if exitCapPpm > 0 && targetDiscount > exitCapPpm {
-		targetDiscount = exitCapPpm
+	if exitCap.ExitChannelID != 0 && targetDiscount > exitCap.Ppm {
+		targetDiscount = exitCap.Ppm
 		tags = append(tags, "inbound-exit-cap")
 	}
 	if targetDiscount <= 0 {
@@ -6125,7 +6125,7 @@ func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.
 	return d
 }
 
-func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfile, classLabel string, rawOutRatio float64, effectiveOutRatio float64, forward1d forwardStat, forward7d forwardStat, capacitySat int64, baseCostPpm int, appliedPpm int, exitCapPpm int) (int, string, bool) {
+func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfile, classLabel string, rawOutRatio float64, effectiveOutRatio float64, forward1d forwardStat, forward7d forwardStat, capacitySat int64, baseCostPpm int, appliedPpm int, exitCap inboundExitCapResult) (int, string, bool) {
 	if appliedPpm <= 0 || baseCostPpm <= 0 {
 		return 0, "", false
 	}
@@ -6187,9 +6187,11 @@ func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfi
 			inboundDiscountReachOutRatio,
 			inboundDiscountMinRetainedSpreadFrac,
 		)
-		if exitCapPpm > 0 && discount > exitCapPpm {
-			discount = exitCapPpm
+		if exitCap.ExitChannelID != 0 && discount > exitCap.Ppm {
+			discount = exitCap.Ppm
 			source = source + "+exit-cap"
+			// An active zero cap must explicitly clear the old inbound fee.
+			return discount, source, true
 		}
 		if discount <= 0 {
 			return 0, "", false
@@ -9526,7 +9528,7 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 	} else if d.InboundDiscount > 0 {
 		line = line + fmt.Sprintf(" | ↘️ inb %d", d.InboundDiscount)
 	}
-	if d.InboundExitCapPpm > 0 {
+	if d.InboundExitCapChannelID != 0 {
 		line = line + fmt.Sprintf(" cap≤%d(exit:%s)", d.InboundExitCapPpm, d.InboundExitCapWindow)
 	}
 	if d.NewInbound {
@@ -12504,7 +12506,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = appendAutofeeTagOnce(tags, "inbound-balanced")
 		}
 		exitCap = e.inboundDiscountExitCapFor(ch.ChannelID, rebalStats7d, rebalStats21d, inboundDiscountMinRetainedSpreadFrac)
-		if exitCap.Ppm > 0 && inboundDiscount > exitCap.Ppm {
+		if exitCap.ExitChannelID != 0 && inboundDiscount > exitCap.Ppm {
 			inboundDiscount = exitCap.Ppm
 			tags = appendAutofeeTagOnce(tags, "inbound-exit-cap")
 		}
@@ -12522,7 +12524,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			appliedPpm,
 			inboundDiscountMaxRatio,
 			st.InboundStaleRounds,
-			exitCap.Ppm,
+			exitCap,
 			fullCut,
 		)
 		for _, lifecycleTag := range lifecycleTags {

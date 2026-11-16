@@ -193,6 +193,8 @@ type Notifier struct {
 	started                       bool
 	stop                          chan struct{}
 	lastCleanup                   time.Time
+	forwardPolicyLogMu            sync.Mutex
+	forwardPolicyLogAt            time.Time
 	backupSent                    map[string]time.Time
 	pendingSent                   map[string]time.Time
 	waitingCloseRecoveries        map[string]waitingCloseRecoveryInfo
@@ -708,7 +710,11 @@ create index if not exists payment_route_hops_cost_idx on payment_route_hops (co
   values (1)
   on conflict (id) do nothing;
   `)
-	return err
+	if err != nil {
+		return err
+	}
+	n.ensureForwardPolicySnapshotSchema(ctx)
+	return nil
 }
 
 func (n *Notifier) upsertNotification(ctx context.Context, eventKey string, evt Notification) (Notification, error) {
@@ -2618,8 +2624,8 @@ func (n *Notifier) runForwards() {
 				if feeMsat == 0 && amtInMsat > 0 && amtOutMsat > 0 && amtInMsat > amtOutMsat {
 					feeMsat = amtInMsat - amtOutMsat
 				}
-				inInfo, _ := channelMap[uint64(fwd.ChanIdIn)]
-				outInfo, _ := channelMap[uint64(fwd.ChanIdOut)]
+				inInfo, inKnown := channelMap[uint64(fwd.ChanIdIn)]
+				outInfo, outKnown := channelMap[uint64(fwd.ChanIdOut)]
 				evt := Notification{
 					OccurredAt:      occurredAt,
 					Type:            "forward",
@@ -2643,6 +2649,9 @@ func (n *Notifier) runForwards() {
 				eventKey := fmt.Sprintf("forward:%d:%d:%d", fwd.IncomingHtlcId, fwd.OutgoingHtlcId, tsKey)
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				_, _ = n.upsertNotification(ctx, eventKey, evt)
+				if snap, ok := computeForwardPolicySnapshot(amtInMsat, amtOutMsat, feeMsat, inInfo, inKnown, outInfo, outKnown); ok {
+					n.storeForwardPolicySnapshot(ctx, eventKey, occurredAt, int64(fwd.ChanIdIn), int64(fwd.ChanIdOut), feeMsat, snap)
+				}
 				cancel()
 			}
 

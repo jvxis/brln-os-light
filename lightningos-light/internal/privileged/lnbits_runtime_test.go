@@ -193,6 +193,20 @@ func TestLNbitsValidationRejectsDeclarationAndCredentialDrift(t *testing.T) {
 		{name: "compose", mutate: func(t *testing.T, fixture *testLNbitsFixture) {
 			mustWriteTestFile(t, fixture.composePath, []byte("services: {}\n"), 0640)
 		}},
+		{name: "backup into archived data", mutate: func(t *testing.T, fixture *testLNbitsFixture) {
+			raw, err := os.ReadFile(fixture.composePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustWriteTestFile(t, fixture.composePath, []byte(strings.Replace(string(raw), "working_dir: /run/lnbits", "working_dir: /app/data", 1)), 0640)
+		}},
+		{name: "public backup tmpfs", mutate: func(t *testing.T, fixture *testLNbitsFixture) {
+			raw, err := os.ReadFile(fixture.composePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustWriteTestFile(t, fixture.composePath, []byte(strings.Replace(string(raw), "mode=0700,uid=65532,gid=65532", "mode=0777,uid=65532,gid=65532", 1)), 0640)
+		}},
 		{name: "startup gate bypass", mutate: func(t *testing.T, fixture *testLNbitsFixture) {
 			raw, err := os.ReadFile(fixture.composePath)
 			if err != nil {

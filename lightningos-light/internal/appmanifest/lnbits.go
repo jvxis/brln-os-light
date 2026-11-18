@@ -199,7 +199,10 @@ func ValidateLNbitsEnv(raw []byte) error {
 // and receives a narrow read-only LND directory containing only its dedicated
 // macaroon and the public certificate mirrored by the privileged broker. The
 // directory mount lets certificate replacement remain visible to the running
-// container without exposing the native LND data directory.
+// container without exposing the native LND data directory. The private tmpfs
+// working directory lets upstream create its relative backup ZIP outside the
+// archived data, without making /app writable. Its maximum size is 25% of host
+// RAM, allocated on demand (normal host swap policy still applies).
 func LNbitsCompose(paths LNbitsComposePaths) string {
 	return fmt.Sprintf(`services:
   lnbits:
@@ -210,6 +213,7 @@ func LNbitsCompose(paths LNbitsComposePaths) string {
     stop_grace_period: %ds
     init: true
     read_only: true
+    working_dir: /run/lnbits
     cap_drop:
       - ALL
     security_opt:
@@ -229,6 +233,7 @@ func LNbitsCompose(paths LNbitsComposePaths) string {
 %s
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+      - /run/lnbits:rw,noexec,nosuid,nodev,size=25%%,mode=0700,uid=65532,gid=65532
     volumes:
       - %s:/app/data:rw
       - %s:/etc/lnd:ro

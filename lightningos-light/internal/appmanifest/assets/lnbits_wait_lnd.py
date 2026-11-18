@@ -55,7 +55,22 @@ def lnd_ready(endpoint, certificate, macaroon):
     return int(balance) >= 0
 
 
+def prepare_workdir():
+    # Upstream writes lnbits-backup.zip relative to cwd, but also opens
+    # lnbits/static relative to cwd. Keep the ZIP in private ephemeral storage
+    # and alias only the immutable image package, not the wallet data. Do not
+    # copy code, patch upstream, or change the process-wide umask/data modes.
+    if os.getcwd() != "/run/lnbits":
+        raise RuntimeError("LNbits private working directory is unavailable")
+    try:
+        os.symlink("/app/lnbits", "lnbits", target_is_directory=True)
+    except FileExistsError:
+        if not os.path.islink("lnbits") or os.readlink("lnbits") != "/app/lnbits":
+            raise RuntimeError("LNbits image package alias is invalid") from None
+
+
 def main():
+    prepare_workdir()
     attempt = 0
     while True:
         try:

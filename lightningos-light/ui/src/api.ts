@@ -538,6 +538,7 @@ export type ForwardHistoryTotals = {
   fee_sat: number
   fee_msat: number
   avg_ppm: number
+  inbound_discount_sat?: number
 }
 
 export type ForwardHistoryChannel = {
@@ -587,6 +588,9 @@ export type ForwardHistoryItem = {
   fee_sat: number
   fee_msat: number
   ppm: number
+  fee_policy_out_msat?: number
+  inbound_fee_msat?: number
+  inbound_discount_msat?: number
 }
 
 export type ForwardHistoryResponse = {

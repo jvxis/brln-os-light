@@ -88,7 +88,7 @@ class ReadinessTests(unittest.TestCase):
         states = [ConnectionRefusedError("secret-url"), ssl.SSLError("secret-cert"),
                   urllib.error.HTTPError("secret-url", 401, "secret", {}, None),
                   ValueError("secret-body")] + [False] * 24 + [True]
-        with patch.dict(main.__globals__, lnd_ready=MagicMock(side_effect=states)), \
+        with patch.dict(main.__globals__, lnd_ready=MagicMock(side_effect=states), prepare_workdir=MagicMock()), \
                 patch.dict("os.environ", {"LND_REST_ENDPOINT": "https://127.0.0.1:18080/"}), \
                 patch("os.execv") as execute, patch("time.sleep") as sleep:
             output = io.StringIO()
@@ -106,12 +106,39 @@ class ReadinessTests(unittest.TestCase):
 
     def test_interruption_does_not_launch_or_retry_app(self):
         main = gate["main"]
-        with patch.dict(main.__globals__, lnd_ready=MagicMock(return_value=False)), \
+        with patch.dict(main.__globals__, lnd_ready=MagicMock(return_value=False), prepare_workdir=MagicMock()), \
                 patch.dict("os.environ", {"LND_REST_ENDPOINT": "https://localhost/"}), \
                 patch("time.sleep", side_effect=KeyboardInterrupt), patch("os.execv") as execute:
             with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(KeyboardInterrupt):
                 main()
             execute.assert_not_called()
+
+    def test_private_workdir_alias_preserves_immutable_relative_assets(self):
+        with patch("os.getcwd", return_value="/run/lnbits"), patch("os.symlink") as link:
+            gate["prepare_workdir"]()
+            link.assert_called_once_with("/app/lnbits", "lnbits", target_is_directory=True)
+
+    def test_workdir_alias_is_idempotent_and_rejects_other_targets(self):
+        for is_link, target, valid in [(True, "/app/lnbits", True),
+                                       (True, "/app/data", False),
+                                       (False, "/app/lnbits", False)]:
+            with self.subTest(is_link=is_link, target=target), \
+                    patch("os.getcwd", return_value="/run/lnbits"), \
+                    patch("os.symlink", side_effect=FileExistsError), \
+                    patch("os.path.islink", return_value=is_link), \
+                    patch("os.readlink", return_value=target):
+                if valid:
+                    gate["prepare_workdir"]()
+                else:
+                    with self.assertRaises(RuntimeError):
+                        gate["prepare_workdir"]()
+
+    def test_no_fallback_to_readonly_app_or_archived_data_directory(self):
+        for cwd in ("/app", "/app/data", "/tmp"):
+            with patch("os.getcwd", return_value=cwd), patch("os.symlink") as link:
+                with self.assertRaises(RuntimeError):
+                    gate["prepare_workdir"]()
+                link.assert_not_called()
 
 
 if __name__ == "__main__":

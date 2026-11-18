@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Forward History backs the collapsible card on Lightning Ops that lets the
@@ -19,7 +20,7 @@ import (
 //
 // The data source is the notifications table: the Notifier already stores one
 // row per settled forward (type='forward') with both channel ids, msat
-// amounts, fee and the "in -> out" alias pair. No new table is needed.
+// amounts, fee and the "in -> out" alias pair. The policy snapshot is optional.
 
 const (
 	forwardHistoryDefaultLimit = 200
@@ -53,6 +54,9 @@ type forwardHistoryTotals struct {
 	FeeSat    int64 `json:"fee_sat"`
 	FeeMsat   int64 `json:"fee_msat"`
 	AvgPPM    int64 `json:"avg_ppm"`
+	// Inbound discount given away on the forwards of the slice (0.5.58 side
+	// table); only forwards recorded after the snapshot table exists count.
+	InboundDiscountSat int64 `json:"inbound_discount_sat"`
 }
 
 type forwardHistoryChannel struct {
@@ -102,6 +106,12 @@ type forwardHistoryItem struct {
 	FeeSat        int64     `json:"fee_sat"`
 	FeeMsat       int64     `json:"fee_msat"`
 	PPM           int64     `json:"ppm"`
+	// From forward_policy_snapshot (0.5.58): the outgoing policy fee, the
+	// inbound policy component (negative = discount) and the discount actually
+	// given away. Absent on forwards recorded before the snapshot existed.
+	FeePolicyOutMsat    *int64 `json:"fee_policy_out_msat,omitempty"`
+	InboundFeeMsat      *int64 `json:"inbound_fee_msat,omitempty"`
+	InboundDiscountMsat *int64 `json:"inbound_discount_msat,omitempty"`
 }
 
 type forwardHistoryResponse struct {
@@ -386,15 +396,46 @@ func forwardHistoryBaseWhere(opts forwardHistoryOptions, withChannels bool) forw
 const forwardHistoryFeeMsatExpr = "(case when fee_msat > 0 then fee_msat else fee_sat * 1000 end)"
 const forwardHistoryAmountMsatExpr = "coalesce(nullif(amount_out_msat, 0), amount_sat * 1000)"
 
+// Scalar lookups into the 0.5.58 side table. The snapshot shares column names
+// with notifications (occurred_at, chan ids), so a join would make the shared
+// where clause ambiguous; a primary-key subselect per row keeps the base
+// query untouched and costs one index probe per returned forward.
+const forwardPolicyDiscountExpr = "(select p.inbound_discount_msat from forward_policy_snapshot p where p.event_key = notifications.event_key)"
+const forwardPolicyOutExpr = "(select p.fee_policy_out_msat from forward_policy_snapshot p where p.event_key = notifications.event_key)"
+const forwardPolicyInboundExpr = "(select p.inbound_fee_msat from forward_policy_snapshot p where p.event_key = notifications.event_key)"
+
+// Old installations and roles without access to the optional snapshot must
+// still be able to read notifications. Do not mask connection/timeout errors.
+func forwardPolicySnapshotUnavailable(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	switch pgErr.Code {
+	case "42P01", "42703", "42501": // missing table/column, insufficient privilege
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) forwardHistoryTotals(ctx context.Context, opts forwardHistoryOptions, withChannels bool) (forwardHistoryTotals, error) {
 	w := forwardHistoryBaseWhere(opts, withChannels)
 	var out forwardHistoryTotals
-	err := s.db.QueryRow(ctx, `select count(*), coalesce(sum(amount_sat), 0)::bigint, coalesce(sum(fee_sat), 0)::bigint, coalesce(sum(`+forwardHistoryFeeMsatExpr+`), 0)::bigint from notifications where `+w.sql(), w.args...).
-		Scan(&out.Count, &out.AmountSat, &out.FeeSat, &out.FeeMsat)
+	var discountMsat int64
+	query := func(discountExpr string) error {
+		return s.db.QueryRow(ctx, `select count(*), coalesce(sum(amount_sat), 0)::bigint, coalesce(sum(fee_sat), 0)::bigint, coalesce(sum(`+forwardHistoryFeeMsatExpr+`), 0)::bigint, `+discountExpr+` from notifications where `+w.sql(), w.args...).
+			Scan(&out.Count, &out.AmountSat, &out.FeeSat, &out.FeeMsat, &discountMsat)
+	}
+	err := query(`coalesce(sum(` + forwardPolicyDiscountExpr + `), 0)::bigint`)
+	if forwardPolicySnapshotUnavailable(err) {
+		err = query("0::bigint")
+	}
 	if err != nil {
 		return out, err
 	}
 	out.AvgPPM = forwardHistoryAvgPPM(out.FeeMsat, out.AmountSat)
+	out.InboundDiscountSat = discountMsat / 1000
 	return out, nil
 }
 
@@ -579,10 +620,19 @@ func forwardHistoryOrderBy(opts forwardHistoryOptions) string {
 }
 
 func (s *Server) forwardHistoryItems(ctx context.Context, opts forwardHistoryOptions, known map[uint64]forwardChannelIdentity) ([]forwardHistoryItem, bool, error) {
+	items, hasMore, err := s.queryForwardHistoryItems(ctx, opts, known, forwardPolicyOutExpr, forwardPolicyInboundExpr, forwardPolicyDiscountExpr)
+	if forwardPolicySnapshotUnavailable(err) {
+		items, hasMore, err = s.queryForwardHistoryItems(ctx, opts, known, "null::bigint", "null::bigint", "null::bigint")
+	}
+	return items, hasMore, err
+}
+
+func (s *Server) queryForwardHistoryItems(ctx context.Context, opts forwardHistoryOptions, known map[uint64]forwardChannelIdentity, outExpr, inExpr, discountExpr string) ([]forwardHistoryItem, bool, error) {
 	w := forwardHistoryBaseWhere(opts, true)
 	query := fmt.Sprintf(`select id, occurred_at, coalesce(chan_id_in, 0), coalesce(chan_id_out, 0), amount_sat, fee_sat, fee_msat,
-		coalesce(amount_in_msat, 0), coalesce(amount_out_msat, 0), coalesce(peer_alias, ''), coalesce(peer_pubkey_in, ''), coalesce(peer_pubkey_out, '')
-		from notifications where %s order by %s limit %d offset %d`, w.sql(), forwardHistoryOrderBy(opts), opts.Limit+1, opts.Offset)
+		coalesce(amount_in_msat, 0), coalesce(amount_out_msat, 0), coalesce(peer_alias, ''), coalesce(peer_pubkey_in, ''), coalesce(peer_pubkey_out, ''),
+		%s, %s, %s
+		from notifications where %s order by %s limit %d offset %d`, outExpr, inExpr, discountExpr, w.sql(), forwardHistoryOrderBy(opts), opts.Limit+1, opts.Offset)
 	rows, err := s.db.Query(ctx, query, w.args...)
 	if err != nil {
 		return nil, false, err
@@ -593,7 +643,7 @@ func (s *Server) forwardHistoryItems(ctx context.Context, opts forwardHistoryOpt
 		var item forwardHistoryItem
 		var chanIn, chanOut, amountInMsat, amountOutMsat int64
 		var aliasPair string
-		if err := rows.Scan(&item.ID, &item.OccurredAt, &chanIn, &chanOut, &item.AmountSat, &item.FeeSat, &item.FeeMsat, &amountInMsat, &amountOutMsat, &aliasPair, &item.PeerPubkeyIn, &item.PeerPubkeyOut); err != nil {
+		if err := rows.Scan(&item.ID, &item.OccurredAt, &chanIn, &chanOut, &item.AmountSat, &item.FeeSat, &item.FeeMsat, &amountInMsat, &amountOutMsat, &aliasPair, &item.PeerPubkeyIn, &item.PeerPubkeyOut, &item.FeePolicyOutMsat, &item.InboundFeeMsat, &item.InboundDiscountMsat); err != nil {
 			return nil, false, err
 		}
 		item.ChanIDIn, item.ChanIDOut = uint64(chanIn), uint64(chanOut)

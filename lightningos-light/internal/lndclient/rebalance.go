@@ -11,6 +11,8 @@ import (
 
 	"lightningos-light/lnrpc"
 	"lightningos-light/lnrpc/routerrpc"
+
+	"google.golang.org/grpc/status"
 )
 
 type RouteFailureError struct {
@@ -271,8 +273,41 @@ func (c *Client) queryRoutes(ctx context.Context, destPubkey string, amtSat int6
 	}
 	defer release()
 
-	client := lnrpc.NewLightningClient(conn)
+	return queryRoutesWithClient(ctx, lnrpc.NewLightningClient(conn), trimmedDest, amtSat, outgoingChanID, lastHopPubkey, targetChanID, feeLimitMsat, numRoutes, ignoredEdges, ignoredPairs)
+}
 
+// isQueryRoutesNoPath reports the pathfinder's "nothing within the
+// constraints" answer, as opposed to transport or argument errors.
+func isQueryRoutesNoPath(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(status.Convert(err).Message()))
+	return strings.Contains(msg, "unable to find a path") || msg == "no route" || msg == "no routes found"
+}
+
+// queryRoutesWithClient runs the route search against an already borrowed
+// client. It is split from queryRoutes so the fallback below can be tested
+// without a connection.
+//
+// The first search asks LND to weigh its mission control: with a payment
+// history the pathfinder prefers edges that recently carried HTLCs, which is
+// the right default for a circular payment. LND minimises fee plus a risk
+// term (routerrpc.attemptcost / attemptcostppm scaled by how unlikely the
+// route is), and when the cheapest *weighted* route exceeds the fee limit it
+// answers "unable to find a path" without looking for a cheaper, less
+// probable one. On a node with a heavy risk term or a mission control full
+// of recent failures that turns every fee-capped probe into a false
+// no-route, even when a route well inside the limit exists.
+//
+// So when the weighted search finds nothing at all, the same request is
+// repeated once without mission control. That search is fee-optimal and
+// blind to liquidity; the route it returns is only a candidate, and the
+// SendToRoute that follows is the real test — its outcome still feeds LND's
+// mission control and the service's own pair statistics. The retry never
+// happens once a route has been collected, and never for errors that are
+// not the pathfinder's own no-path answer.
+func queryRoutesWithClient(ctx context.Context, client lnrpc.LightningClient, trimmedDest string, amtSat int64, outgoingChanID uint64, lastHopPubkey string, targetChanID uint64, feeLimitMsat int64, numRoutes int32, ignoredEdges []*lnrpc.EdgeLocator, ignoredPairs []*lnrpc.NodePair) ([]*lnrpc.Route, error) {
 	routes := make([]*lnrpc.Route, 0, numRoutes)
 	mismatchedRoutes := make([]*lnrpc.Route, 0)
 	var targetRouteHints []*lnrpc.RouteHint
@@ -283,6 +318,14 @@ func (c *Client) queryRoutes(ctx context.Context, destPubkey string, amtSat int6
 		if edge, edgeErr := client.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{ChanId: targetChanID}); edgeErr == nil {
 			targetRouteHints = exactTargetRouteHints(edge, lastHopPubkey, trimmedDest)
 		}
+	}
+	var hopBytes []byte
+	if trimmedHop := strings.TrimSpace(lastHopPubkey); trimmedHop != "" {
+		decoded, err := hex.DecodeString(trimmedHop)
+		if err != nil {
+			return nil, fmt.Errorf("invalid last hop pubkey")
+		}
+		hopBytes = decoded
 	}
 	baseIgnoredEdges := make([]*lnrpc.EdgeLocator, 0, len(ignoredEdges))
 	if len(ignoredEdges) > 0 {
@@ -297,6 +340,7 @@ func (c *Client) queryRoutes(ctx context.Context, destPubkey string, amtSat int6
 		// that budget. Keep a hard bound to avoid pathological RPC loops.
 		maxQueries += 32
 	}
+	useMissionControl := true
 	for i := int32(0); i < maxQueries && int32(len(routes)) < numRoutes; i++ {
 		requestIgnoredEdges := baseIgnoredEdges
 		if len(ignoredByRoute) > 0 {
@@ -307,7 +351,7 @@ func (c *Client) queryRoutes(ctx context.Context, destPubkey string, amtSat int6
 			Amt:               amtSat,
 			IgnoredEdges:      requestIgnoredEdges,
 			IgnoredPairs:      ignoredPairs,
-			UseMissionControl: true,
+			UseMissionControl: useMissionControl,
 			RouteHints:        targetRouteHints,
 		}
 		if outgoingChanID != 0 {
@@ -318,22 +362,25 @@ func (c *Client) queryRoutes(ctx context.Context, destPubkey string, amtSat int6
 				Limit: &lnrpc.FeeLimit_FixedMsat{FixedMsat: feeLimitMsat},
 			}
 		}
-		if trimmedHop := strings.TrimSpace(lastHopPubkey); trimmedHop != "" {
-			hopBytes, err := hex.DecodeString(trimmedHop)
-			if err != nil {
-				return nil, fmt.Errorf("invalid last hop pubkey")
-			}
+		if len(hopBytes) > 0 {
 			req.LastHopPubkey = hopBytes
 		}
 
 		resp, err := client.QueryRoutes(ctx, req)
+		empty := err == nil && (resp == nil || len(resp.Routes) == 0)
+		if (err != nil || empty) && useMissionControl && len(routes) == 0 && len(mismatchedRoutes) == 0 && (empty || isQueryRoutesNoPath(err)) {
+			// Weighted search found nothing: repeat once, fee-optimal.
+			useMissionControl = false
+			i--
+			continue
+		}
 		if err != nil {
 			if len(routes) > 0 {
 				break
 			}
 			return nil, err
 		}
-		if resp == nil || len(resp.Routes) == 0 {
+		if empty {
 			break
 		}
 		route := resp.Routes[0]

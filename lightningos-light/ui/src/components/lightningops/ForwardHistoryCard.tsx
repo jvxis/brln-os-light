@@ -300,6 +300,9 @@ export default function ForwardHistoryCard() {
                   ratio
                 />
               </div>
+              {(subset.inbound_discount_sat ?? 0) > 0 && (
+                <p className="text-xs text-amber-200/70">{t('lightningOps.forwardHistoryDiscountTotal', { amount: formatSats(subset.inbound_discount_sat ?? 0) })}</p>
+              )}
 
               <div className="rounded-2xl border border-white/10 bg-ink/40 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -380,6 +383,7 @@ export default function ForwardHistoryCard() {
                           <SortableHeader label={t('lightningOps.forwardHistoryColAmount')} active={filters.sort === 'amount'} order={filters.order} onClick={() => toggleSort('amount')} align="right" />
                           <SortableHeader label={t('lightningOps.forwardHistoryColFee')} active={filters.sort === 'fee'} order={filters.order} onClick={() => toggleSort('fee')} align="right" />
                           <SortableHeader label="ppm" active={filters.sort === 'ppm'} order={filters.order} onClick={() => toggleSort('ppm')} align="right" />
+                          <th className="px-4 py-2 text-right font-medium" title={t('lightningOps.forwardHistoryColDiscountHint')}>{t('lightningOps.forwardHistoryColDiscount')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -410,6 +414,7 @@ export default function ForwardHistoryCard() {
                             <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-xs">{formatSats(item.amount_sat)}</td>
                             <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-xs text-emerald-200">{item.fee_msat % 1000 === 0 ? formatSats(item.fee_sat) : (item.fee_msat / 1000).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-xs text-fog/70">{item.ppm.toLocaleString(locale)}</td>
+                            <td className="whitespace-nowrap px-4 py-2 text-right font-mono text-xs text-amber-200/80">{item.inbound_discount_msat === undefined ? '—' : item.inbound_discount_msat > 0 ? formatSats(Math.round(item.inbound_discount_msat / 1000)) : '0'}</td>
                           </tr>
                         ))}
                       </tbody>

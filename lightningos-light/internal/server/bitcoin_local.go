@@ -508,6 +508,13 @@ func parseBitcoinBlockHeaderRPC(body []byte) (bitcoinCLIBlockHeader, error) {
 	return payload.Result, nil
 }
 
+type bitcoinRPCResponseReadError struct{ err error }
+
+func (e *bitcoinRPCResponseReadError) Error() string {
+	return "read Bitcoin RPC response: " + e.err.Error()
+}
+func (e *bitcoinRPCResponseReadError) Unwrap() error { return e.err }
+
 func doBitcoinRPCParams(ctx context.Context, url, user, pass, method string, params []any) ([]byte, error) {
 	payload := map[string]any{
 		"jsonrpc": "1.0",
@@ -530,7 +537,10 @@ func doBitcoinRPCParams(ctx context.Context, url, user, pass, method string, par
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, &bitcoinRPCResponseReadError{err: err}
+	}
 	if resp.StatusCode != http.StatusOK {
 		msg := parseRPCError(body)
 		return nil, rpcStatusError{statusCode: resp.StatusCode, message: msg}
@@ -551,7 +561,8 @@ func fetchBitcoinRPCParams(ctx context.Context, host, user, pass, method string,
 		return body, nil
 	}
 	var statusErr rpcStatusError
-	if err != nil && errors.As(err, &statusErr) {
+	var readErr *bitcoinRPCResponseReadError
+	if ctx.Err() != nil || errors.As(err, &statusErr) || errors.As(err, &readErr) {
 		return nil, err
 	}
 

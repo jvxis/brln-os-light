@@ -2,10 +2,17 @@ package server
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+)
+
+const (
+	graphCloseClassifierWriteReserve = 5 * time.Second
+	graphCloseCandidateTimeout       = 5 * time.Second
+	graphCloseRPCRetryDelay          = 10 * time.Minute
 )
 
 type graphCloseClassificationCandidate struct {
@@ -34,9 +41,12 @@ type graphCloseClassificationResolved struct {
 }
 
 type graphCloseClassificationAttempt struct {
-	EventID int64
-	Error   string
+	EventID   int64
+	Error     string
+	Retryable bool
 }
+
+type graphCloseBitcoinClassifier func(context.Context, graphCloseClassificationCandidate) (graphCloseClassificationResult, bool, string, error)
 
 func (s *GraphExplorerService) runCloseClassifierLoop(stopCh <-chan struct{}) {
 	if s == nil || s.db == nil {
@@ -81,27 +91,56 @@ func (s *GraphExplorerService) classifyPendingCloseEvents(ctx context.Context) e
 		return nil
 	}
 
+	// Do not give RPCs the context needed to commit completed work. The
+	// background cycle still has its original overall deadline.
+	deadline := time.Now().Add(graphCloseClassifierTimeout - graphCloseClassifierWriteReserve)
+	if outer, ok := ctx.Deadline(); ok && outer.Add(-graphCloseClassifierWriteReserve).Before(deadline) {
+		deadline = outer.Add(-graphCloseClassifierWriteReserve)
+	}
+	workCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+
 	// Check durable work before touching LND. Empty installations normally have
 	// no close events, so their classifier remains a PostgreSQL-only no-op.
-	candidates, err := loadPendingGraphCloseClassificationCandidates(ctx, s.db, "", graphCloseClassifierBatchSize)
+	candidates, err := loadPendingGraphCloseClassificationCandidates(workCtx, s.db, "", graphCloseClassifierBatchSize)
 	if err != nil || len(candidates) == 0 {
 		return err
 	}
 
-	localPubkey := s.loadLocalPubkey(ctx)
+	localPubkey := s.loadLocalPubkey(workCtx)
 	if localPubkey != "" {
-		candidates, err = loadPendingGraphCloseClassificationCandidates(ctx, s.db, localPubkey, graphCloseClassifierBatchSize)
+		candidates, err = loadPendingGraphCloseClassificationCandidates(workCtx, s.db, localPubkey, graphCloseClassifierBatchSize)
 		if err != nil || len(candidates) == 0 {
 			return err
 		}
 	}
-	localLookup := s.loadLocalClosedChannelLookup(ctx)
-	bitcoinCfg, bitcoinAvailable := bitcoinRPCConfig{}, false
-	if cfg, err := resolveBitcoinRPCConfigForClosedChannels(ctx); err == nil {
-		bitcoinCfg = cfg
-		bitcoinAvailable = true
+	localLookup := s.loadLocalClosedChannelLookup(workCtx)
+	var bitcoin graphCloseBitcoinClassifier
+	if cfg, err := resolveBitcoinRPCConfigForClosedChannels(workCtx); err == nil {
+		bitcoin = func(ctx context.Context, candidate graphCloseClassificationCandidate) (graphCloseClassificationResult, bool, string, error) {
+			return classifyGraphCloseCandidateWithBitcoin(ctx, candidate, cfg)
+		}
 	}
 
+	resolved, attempts := collectGraphCloseClassifications(workCtx, candidates, localPubkey, localLookup, bitcoin)
+	if err := s.persistGraphCloseClassifications(ctx, resolved, attempts); err != nil {
+		return err
+	}
+	if s.logger != nil {
+		rpcFailures := 0
+		for _, attempt := range attempts {
+			if attempt.Retryable {
+				rpcFailures++
+			}
+		}
+		if rpcFailures > 0 {
+			s.logger.Printf("graph close classifier: saved %d classifications; deferred %d events after Bitcoin RPC failures", len(resolved), rpcFailures)
+		}
+	}
+	return nil
+}
+
+func collectGraphCloseClassifications(ctx context.Context, candidates []graphCloseClassificationCandidate, localPubkey string, localLookup graphExplorerLocalClosedChannelLookup, bitcoin graphCloseBitcoinClassifier) ([]graphCloseClassificationResolved, []graphCloseClassificationAttempt) {
 	resolved := make([]graphCloseClassificationResolved, 0, len(candidates))
 	attempts := make([]graphCloseClassificationAttempt, 0, len(candidates))
 
@@ -114,13 +153,21 @@ func (s *GraphExplorerService) classifyPendingCloseEvents(ctx context.Context) e
 			continue
 		}
 
-		if !bitcoinAvailable {
+		if bitcoin == nil || ctx.Err() != nil {
 			continue
 		}
 
-		result, ok, attemptError, err := classifyGraphCloseCandidateWithBitcoin(ctx, candidate, bitcoinCfg)
+		candidateCtx, cancel := context.WithTimeout(ctx, graphCloseCandidateTimeout)
+		result, ok, attemptError, err := bitcoin(candidateCtx, candidate)
+		timedOut := errors.Is(candidateCtx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded)
+		cancel()
 		if err != nil {
-			return err
+			reason := "bitcoin_rpc_unavailable"
+			if timedOut {
+				reason = "bitcoin_rpc_timeout"
+			}
+			attempts = append(attempts, graphCloseClassificationAttempt{EventID: candidate.EventID, Error: reason, Retryable: true})
+			continue
 		}
 		if ok {
 			resolved = append(resolved, graphCloseClassificationResolved{
@@ -134,7 +181,10 @@ func (s *GraphExplorerService) classifyPendingCloseEvents(ctx context.Context) e
 			Error:   attemptError,
 		})
 	}
+	return resolved, attempts
+}
 
+func (s *GraphExplorerService) persistGraphCloseClassifications(ctx context.Context, resolved []graphCloseClassificationResolved, attempts []graphCloseClassificationAttempt) error {
 	if len(resolved) == 0 && len(attempts) == 0 {
 		return nil
 	}
@@ -156,7 +206,7 @@ func (s *GraphExplorerService) classifyPendingCloseEvents(ctx context.Context) e
 		}
 	}
 	for _, item := range attempts {
-		if err := markGraphCloseClassificationAttempt(ctx, tx, item.EventID, item.Error); err != nil {
+		if err := markGraphCloseClassificationAttempt(ctx, tx, item); err != nil {
 			return err
 		}
 	}
@@ -183,8 +233,10 @@ select
 from graph_close_events
 where classified_at is null
   and classification_attempts < $1
+  and (classification_retry_at is null or classification_retry_at <= now())
 order by
   case when $3 <> '' and (lower(coalesce(node1_pubkey, '')) = $3 or lower(coalesce(node2_pubkey, '')) = $3) then 0 else 1 end,
+  classification_rpc_failures asc,
   observed_at asc,
   id asc
 limit $2
@@ -282,17 +334,28 @@ func classifyGraphCloseCandidateWithBitcoin(ctx context.Context, candidate graph
 	}, true, "", nil
 }
 
-func markGraphCloseClassificationAttempt(ctx context.Context, tx pgx.Tx, eventID int64, classificationError string) error {
-	classificationError = strings.TrimSpace(classificationError)
+func markGraphCloseClassificationAttempt(ctx context.Context, tx pgx.Tx, attempt graphCloseClassificationAttempt) error {
+	if attempt.Retryable {
+		_, err := tx.Exec(ctx, `
+update graph_close_events
+set classification_error = $2,
+    classification_rpc_failures = classification_rpc_failures + 1,
+    classification_retry_at = now() + ($3::integer * interval '1 second')
+where id = $1 and classified_at is null
+`, attempt.EventID, attempt.Error, int(graphCloseRPCRetryDelay/time.Second))
+		return err
+	}
+	classificationError := strings.TrimSpace(attempt.Error)
 	if classificationError == "" {
 		classificationError = "classification_unresolved"
 	}
 	_, err := tx.Exec(ctx, `
 update graph_close_events
 set classification_error = $2,
+    classification_retry_at = null,
     classification_attempts = classification_attempts + 1
-where id = $1
-`, eventID, classificationError)
+where id = $1 and classified_at is null
+`, attempt.EventID, classificationError)
 	return err
 }
 
@@ -322,6 +385,7 @@ set close_type = case when $2 <> '' then $2 else close_type end,
     close_fee_sat = coalesce($8, close_fee_sat),
     classified_at = $9,
     classification_error = null,
+    classification_retry_at = null,
     classification_attempts = classification_attempts + 1
 where id = $1
 `, candidate.EventID, result.CloseType, result.CloseSource, result.CloseTxID, result.CloseClassifier, result.CloseConfidence, result.CloseReason, closeFeeSat, result.ClassifiedAt)

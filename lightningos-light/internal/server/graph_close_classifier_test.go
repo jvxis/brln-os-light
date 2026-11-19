@@ -1,6 +1,77 @@
 package server
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestBitcoinRPCParamsReportsTruncatedHTTPBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, _ = io.WriteString(w, `{"result":`)
+	}))
+	defer srv.Close()
+
+	for _, host := range []string{srv.URL, strings.TrimPrefix(srv.URL, "http://")} {
+		body, err := fetchBitcoinRPCParams(context.Background(), host, "", "", "getblock", nil)
+		if !errors.Is(err, io.ErrUnexpectedEOF) || body != nil {
+			t.Fatalf("want a wrapped read error and no partial body; got %q, %v", body, err)
+		}
+	}
+}
+
+func TestGraphCloseBatchRetainsProgressAndContinuesAfterRPCError(t *testing.T) {
+	candidates := []graphCloseClassificationCandidate{{EventID: 1}, {EventID: 2}, {EventID: 3}, {EventID: 4}}
+	resolved, attempts := collectGraphCloseClassifications(context.Background(), candidates, "", graphExplorerLocalClosedChannelLookup{}, func(ctx context.Context, c graphCloseClassificationCandidate) (graphCloseClassificationResult, bool, string, error) {
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > graphCloseCandidateTimeout {
+			t.Fatal("missing per-candidate RPC deadline")
+		}
+		switch c.EventID {
+		case 2:
+			return graphCloseClassificationResult{}, false, "", context.DeadlineExceeded
+		case 4:
+			return graphCloseClassificationResult{}, false, "invalid_chan_point", nil
+		default:
+			return graphCloseClassificationResult{CloseType: "mutual_close"}, true, "", nil
+		}
+	})
+	if len(resolved) != 2 || resolved[0].Candidate.EventID != 1 || resolved[1].Candidate.EventID != 3 {
+		t.Fatalf("healthy events before and after the failure must survive: %+v", resolved)
+	}
+	if len(attempts) != 2 || attempts[0] != (graphCloseClassificationAttempt{EventID: 2, Error: "bitcoin_rpc_timeout", Retryable: true}) ||
+		attempts[1] != (graphCloseClassificationAttempt{EventID: 4, Error: "invalid_chan_point"}) {
+		t.Fatalf("expected distinct retryable/ordinary attempts: %+v", attempts)
+	}
+}
+
+func TestGraphCloseBatchRetainsLocalResultsWhenRPCBudgetEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	localKey := "02" + strings.Repeat("a", 64)
+	lookup := graphExplorerLocalClosedChannelLookup{
+		byChanID: map[uint64]graphExplorerLocalClosedChannelInfo{3: {CloseType: "cooperative_close"}},
+	}
+	candidates := []graphCloseClassificationCandidate{{EventID: 1}, {EventID: 2}, {EventID: 3, ChanID: 3, Node1PubKey: localKey}}
+	resolved, attempts := collectGraphCloseClassifications(ctx, candidates, localKey, lookup, func(_ context.Context, c graphCloseClassificationCandidate) (graphCloseClassificationResult, bool, string, error) {
+		if c.EventID != 1 {
+			t.Fatalf("no further RPC should start after budget ends; got event %d", c.EventID)
+		}
+		cancel()
+		return graphCloseClassificationResult{}, false, "", context.DeadlineExceeded
+	})
+	if len(resolved) != 1 || resolved[0].Candidate.EventID != 3 || resolved[0].Result.CloseClassifier != "lnd" {
+		t.Fatalf("local classification must not depend on RPC budget: %+v", resolved)
+	}
+	if len(attempts) != 1 || attempts[0].EventID != 1 || !attempts[0].Retryable {
+		t.Fatalf("only the attempted RPC should be counted: %+v", attempts)
+	}
+}
 
 func TestParseGraphCloseFundingOutpoint(t *testing.T) {
 	txid, vout, err := parseGraphCloseFundingOutpoint("4157d99065512da061556906ff9a71fb40ebe5899113c3493a75751065e8a808:1")

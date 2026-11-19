@@ -5939,6 +5939,7 @@ type rebalanceMppPrepassContext struct {
 	shouldSkipCurrentJobSource func(uint64) bool
 	snapshotIgnoredRoutes      func() ([]*lnrpc.EdgeLocator, []*lnrpc.NodePair)
 	noteRouteFailureFromShard  func(*lnrpc.Route, uint32)
+	noteProbeFailureFromShard  func(*lnrpc.Route, uint32)
 	finishOnTimeout            func()
 	recordPairSuccess          func(context.Context, uint64, uint64, int64, int64, int64, []string)
 	recordPairFailure          func(context.Context, uint64, uint64, string)
@@ -7048,6 +7049,27 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		defer ignoredMu.Unlock()
 		noteRouteFailure(route, failureIndex)
 	}
+	// noteProbeFailure feeds the probe's liquidity verdict into the same
+	// ignored-edge list the real payments use, so the next source of this
+	// job is not routed through an edge the probe just saw refuse an HTLC.
+	logProbeFailure := func(route *lnrpc.Route, failureIndex uint32) {
+		if s.logger == nil || route == nil {
+			return
+		}
+		idx := int(failureIndex) - 1
+		if idx < 0 || idx >= len(route.Hops) || route.Hops[idx] == nil {
+			return
+		}
+		s.logger.Printf("rebalance job=%d: probe refused at hop %d chan=%d; edge ignored for this job", jobID, failureIndex, route.Hops[idx].ChanId)
+	}
+	noteProbeFailure := func(route *lnrpc.Route, failureIndex uint32) {
+		noteRouteFailure(route, failureIndex)
+		logProbeFailure(route, failureIndex)
+	}
+	noteProbeFailureFromShard := func(route *lnrpc.Route, failureIndex uint32) {
+		noteRouteFailureFromShard(route, failureIndex)
+		logProbeFailure(route, failureIndex)
+	}
 
 	reconcileTimeoutPayment := func(paymentHash string, feeLimitPpm int64, source RebalanceChannel, fallbackAmount int64) (bool, int64) {
 		if s.lnd == nil || strings.TrimSpace(paymentHash) == "" {
@@ -7268,7 +7290,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 			routeFeeLimitPpm := feeLimitPpm
 			activeRoute := route
 			if cfg.AmountProbeSteps > 0 {
-				maxAmount, probeErr := s.probeRoute(attemptCtx, route, amountTry, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, attemptTargetPolicy, sourcePolicy, feeCfg)
+				maxAmount, probeErr := s.probeRouteWithFailure(attemptCtx, route, amountTry, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, attemptTargetPolicy, sourcePolicy, feeCfg, noteProbeFailure)
 				if probeErr != nil {
 					lastErr = probeErr
 					continue
@@ -7406,7 +7428,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 				if routeFailure.Code == lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE &&
 					feeCfg.AmountProbeSteps > 0 &&
 					int(routeFailure.FailureSourceIndex) == len(activeRoute.Hops)-2 {
-					maxAmount, probeErr := s.probeRoute(attemptCtx, activeRoute, routeAmount, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, attemptTargetPolicy, sourcePolicy, feeCfg)
+					maxAmount, probeErr := s.probeRouteWithFailure(attemptCtx, activeRoute, routeAmount, minProbeSat, feeCfg.AmountProbeSteps, targetChannelID, attemptTargetPolicy, sourcePolicy, feeCfg, noteProbeFailure)
 					if probeErr == nil && maxAmount > 0 {
 						if feeCfg.MinSplitEnabled && minExecuteSat > 0 && maxAmount < minExecuteSat {
 							lastErr = errors.New("probe amount below execute minimum")
@@ -7931,6 +7953,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		shouldSkipCurrentJobSource: shouldSkipCurrentJobSource,
 		snapshotIgnoredRoutes:      snapshotIgnoredRoutes,
 		noteRouteFailureFromShard:  noteRouteFailureFromShard,
+		noteProbeFailureFromShard:  noteProbeFailureFromShard,
 		finishOnTimeout:            finishOnTimeout,
 		recordPairSuccess:          recordPairSuccess,
 		recordPairFailure:          recordPairFailure,
@@ -8509,7 +8532,7 @@ func (m *rebalanceMppPrepassContext) attemptShard(roundCtx context.Context, sour
 
 	routeAmount := amountTry
 	if feeCfg.AmountProbeSteps > 0 {
-		maxAmount, probeErr := s.probeRoute(attemptCtx, route, amountTry, st.minProbeSat, feeCfg.AmountProbeSteps, r.targetChannelID, m.targetPolicy, sourcePolicy, feeCfg)
+		maxAmount, probeErr := s.probeRouteWithFailure(attemptCtx, route, amountTry, st.minProbeSat, feeCfg.AmountProbeSteps, r.targetChannelID, m.targetPolicy, sourcePolicy, feeCfg, m.noteProbeFailureFromShard)
 		if probeErr != nil {
 			result.FailReason = probeErr.Error()
 			return result
@@ -12873,7 +12896,25 @@ func absoluteDeltaPPM(base int64, amt int64) int64 {
 	return delta
 }
 
+// routeProbeFailure remembers the last hop that refused a probe HTLC, so the
+// job can stop routing through it once the probe gives up.
+type routeProbeFailure struct {
+	route       *lnrpc.Route
+	sourceIndex uint32
+}
+
 func (s *RebalanceService) probeRoute(ctx context.Context, route *lnrpc.Route, amountSat int64, minAmountSat int64, steps int, targetChannelID uint64, targetPolicy lndclient.ChannelPolicySnapshot, sourcePolicy lndclient.ChannelPolicySnapshot, cfg RebalanceConfig) (int64, error) {
+	return s.probeRouteWithFailure(ctx, route, amountSat, minAmountSat, steps, targetChannelID, targetPolicy, sourcePolicy, cfg, nil)
+}
+
+// probeRouteWithFailure is probeRoute with a hook for the liquidity verdict.
+// The probe already receives, from LND, the index of the hop that failed the
+// fake-invoice HTLC; until 0.5.59 that index was dropped and the job kept
+// asking the pathfinder for the same dry edge from every other source. When
+// the probe ends without a usable amount, onHopFailure gets the probed route
+// and the failing hop, in the same shape the real SendToRoute path already
+// hands to the job's ignored-edge list.
+func (s *RebalanceService) probeRouteWithFailure(ctx context.Context, route *lnrpc.Route, amountSat int64, minAmountSat int64, steps int, targetChannelID uint64, targetPolicy lndclient.ChannelPolicySnapshot, sourcePolicy lndclient.ChannelPolicySnapshot, cfg RebalanceConfig, onHopFailure func(*lnrpc.Route, uint32)) (int64, error) {
 	if route == nil || amountSat <= 0 {
 		return 0, errors.New("route required")
 	}
@@ -12883,10 +12924,15 @@ func (s *RebalanceService) probeRoute(ctx context.Context, route *lnrpc.Route, a
 		good = -minAmountSat - 1
 		start = minAmountSat
 	}
-	return s.probeRouteRecursive(ctx, route, good, amountSat, start, steps, targetChannelID, targetPolicy, sourcePolicy, cfg)
+	last := &routeProbeFailure{}
+	maxAmount, err := s.probeRouteRecursive(ctx, route, good, amountSat, start, steps, targetChannelID, targetPolicy, sourcePolicy, cfg, last)
+	if onHopFailure != nil && last.route != nil && (err != nil || maxAmount <= 0) && ctx.Err() == nil {
+		onHopFailure(last.route, last.sourceIndex)
+	}
+	return maxAmount, err
 }
 
-func (s *RebalanceService) probeRouteRecursive(ctx context.Context, route *lnrpc.Route, goodAmount int64, badAmount int64, amount int64, steps int, targetChannelID uint64, targetPolicy lndclient.ChannelPolicySnapshot, sourcePolicy lndclient.ChannelPolicySnapshot, cfg RebalanceConfig) (int64, error) {
+func (s *RebalanceService) probeRouteRecursive(ctx context.Context, route *lnrpc.Route, goodAmount int64, badAmount int64, amount int64, steps int, targetChannelID uint64, targetPolicy lndclient.ChannelPolicySnapshot, sourcePolicy lndclient.ChannelPolicySnapshot, cfg RebalanceConfig, last *routeProbeFailure) (int64, error) {
 	if ctx.Err() != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) && goodAmount > 0 {
 			return goodAmount, nil
@@ -12918,7 +12964,7 @@ func (s *RebalanceService) probeRouteRecursive(ctx context.Context, route *lnrpc
 	}
 	if maxFeeMsat > 0 && probedRoute.TotalFeesMsat > maxFeeMsat {
 		nextAmount := amount + (badAmount-amount)/2
-		return s.probeRouteRecursive(ctx, route, -amount, badAmount, nextAmount, steps, targetChannelID, targetPolicy, sourcePolicy, cfg)
+		return s.probeRouteRecursive(ctx, route, -amount, badAmount, nextAmount, steps, targetChannelID, targetPolicy, sourcePolicy, cfg, last)
 	}
 
 	paymentHash := lndclient.RandomPaymentHash()
@@ -12939,8 +12985,11 @@ func (s *RebalanceService) probeRouteRecursive(ctx context.Context, route *lnrpc
 				return amount, nil
 			}
 			nextAmount := amount + (badAmount-amount)/2
-			return s.probeRouteRecursive(ctx, route, amount, badAmount, nextAmount, steps-1, targetChannelID, targetPolicy, sourcePolicy, cfg)
+			return s.probeRouteRecursive(ctx, route, amount, badAmount, nextAmount, steps-1, targetChannelID, targetPolicy, sourcePolicy, cfg, last)
 		case lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE:
+			if last != nil {
+				last.route, last.sourceIndex = probedRoute, attempt.Failure.FailureSourceIndex
+			}
 			if steps <= 1 {
 				if goodAmount <= 0 {
 					return 0, nil
@@ -12953,10 +13002,13 @@ func (s *RebalanceService) probeRouteRecursive(ctx context.Context, route *lnrpc
 			} else {
 				nextAmount = amount - (goodAmount+amount)/2
 			}
-			return s.probeRouteRecursive(ctx, route, goodAmount, amount, nextAmount, steps-1, targetChannelID, targetPolicy, sourcePolicy, cfg)
+			return s.probeRouteRecursive(ctx, route, goodAmount, amount, nextAmount, steps-1, targetChannelID, targetPolicy, sourcePolicy, cfg, last)
 		case lnrpc.Failure_FEE_INSUFFICIENT:
-			return s.probeRouteRecursive(ctx, route, goodAmount, badAmount, amount, steps, targetChannelID, targetPolicy, sourcePolicy, cfg)
+			return s.probeRouteRecursive(ctx, route, goodAmount, badAmount, amount, steps, targetChannelID, targetPolicy, sourcePolicy, cfg, last)
 		default:
+			if last != nil {
+				last.route, last.sourceIndex = probedRoute, attempt.Failure.FailureSourceIndex
+			}
 			return 0, fmt.Errorf("probe failed: %s", attempt.Failure.Code.String())
 		}
 	}

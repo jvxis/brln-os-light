@@ -33,7 +33,7 @@ import { PairStatsPanel } from '../components/rebalance/PairStatsPanel'
 import ChannelRebalanceControls from '../components/rebalance/ChannelRebalanceControls'
 import { RebalanceInAction } from '../components/rebalance/RebalanceInAction'
 import { manualRebalanceReason } from '../utils/manualRebalanceReason'
-import type { RebalanceInOverrides } from '../components/rebalance/RebalanceInAction'
+import type { RebalanceInOverrides, RebalanceSourceOption } from '../components/rebalance/RebalanceInAction'
 import { SettingsSubcard } from '../components/rebalance/SettingsSubcard'
 import type {
   RebalanceAttempt,
@@ -1426,6 +1426,22 @@ export default function RebalanceCenter() {
     }
   }
 
+  // Channels the manual form can offer as a fixed source. Excluded ones stay
+  // listed (marked) so the one-job exception can be used; whether a channel
+  // can actually give liquidity is the backend's call, shown in the preview.
+  const manualSourceOptions = useMemo<RebalanceSourceOption[]>(
+    () => channels
+      .filter((ch) => ch.active)
+      .map((ch) => ({
+        channelPoint: ch.channel_point,
+        channelId: ch.channel_id_str,
+        peerAlias: ch.peer_alias,
+        excluded: ch.excluded_as_source,
+        maxSourceSat: ch.max_source_sat
+      })),
+    [channels]
+  )
+
   const handleRunRebalance = async (channel: RebalanceChannel, overrides?: RebalanceInOverrides) => {
     if (channelParked(channel)) {
       setStatus(t('channelRanking.automationParkedDetail'))
@@ -1433,7 +1449,8 @@ export default function RebalanceCenter() {
     }
     const nextValue = editTargets[channelKey(channel)]
     const parsed = nextValue ? Number(nextValue) : channel.target_outbound_pct
-    const hasOverrides = overrides?.amountSat !== undefined || overrides?.feeLimitPpm !== undefined
+    const hasOverrides = overrides?.amountSat !== undefined || overrides?.feeLimitPpm !== undefined ||
+      overrides?.sourceChannelPoint !== undefined || overrides?.maxFeeMsat !== undefined
     const autoRestart = !hasOverrides && manualRestart[channel.channel_point] === true
     try {
       await runRebalance({
@@ -1441,13 +1458,22 @@ export default function RebalanceCenter() {
         target_outbound_pct: parsed,
         auto_restart: autoRestart,
         amount_sat: overrides?.amountSat,
-        fee_limit_ppm: overrides?.feeLimitPpm
+        fee_limit_ppm: overrides?.feeLimitPpm,
+        source_channel_point: overrides?.sourceChannelPoint,
+        allow_excluded_source: overrides?.allowExcludedSource,
+        max_fee_msat: overrides?.maxFeeMsat
       })
       void loadAll({ silent: true })
       return true
     } catch (err) {
       const message = err instanceof Error ? err.message : ''
-      if (message.includes('manual budget exhausted')) {
+      const fixedSource = message.match(/fixed source not usable: (\w+)/)
+      if (fixedSource) {
+        setStatus(t('rebalanceCenter.channels.rebalanceSourceBlocked', {
+          alias: '',
+          reason: t(`rebalanceCenter.channels.fixedSourceReason.${fixedSource[1]}`)
+        }))
+      } else if (message.includes('manual budget exhausted')) {
         setStatus(t('rebalanceCenter.runFailedBudgetExhausted'))
       } else if (message.includes('manual budget insufficient')) {
         setStatus(t('rebalanceCenter.runFailedBudgetInsufficient'))
@@ -4475,6 +4501,7 @@ export default function RebalanceCenter() {
                     targetOutboundPct={editTargets[channelKey(ch)] ? Number(editTargets[channelKey(ch)]) : ch.target_outbound_pct}
                     disabled={!ch.eligible_as_manual_target}
                     disabledReason={t(`rebalanceCenter.manualDisabled.${manualRebalanceReason(ch, config?.deadband_pct ?? 0)}`, { budget: ch.fee_budget_ppm })}
+                    sourceOptions={manualSourceOptions}
                     onRun={(overrides) => handleRunRebalance(ch, overrides)}
                   />
 
@@ -4712,6 +4739,7 @@ export default function RebalanceCenter() {
                         targetOutboundPct={editTargets[channelKey(ch)] ? Number(editTargets[channelKey(ch)]) : ch.target_outbound_pct}
                         disabled={!ch.eligible_as_manual_target}
                         disabledReason={t(`rebalanceCenter.manualDisabled.${manualRebalanceReason(ch, config?.deadband_pct ?? 0)}`, { budget: ch.fee_budget_ppm })}
+                        sourceOptions={manualSourceOptions}
                         onRun={(overrides) => handleRunRebalance(ch, overrides)}
                       />
 

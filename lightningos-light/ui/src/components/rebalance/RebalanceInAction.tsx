@@ -7,6 +7,17 @@ import type { RebalanceRunPreview } from '../../api'
 export type RebalanceInOverrides = {
   amountSat?: number
   feeLimitPpm?: number
+  sourceChannelPoint?: string
+  allowExcludedSource?: boolean
+  maxFeeMsat?: number
+}
+
+export type RebalanceSourceOption = {
+  channelPoint: string
+  channelId: string
+  peerAlias: string
+  excluded: boolean
+  maxSourceSat: number
 }
 
 type RebalanceInActionProps = {
@@ -15,6 +26,7 @@ type RebalanceInActionProps = {
   targetOutboundPct: number
   disabled?: boolean
   disabledReason?: string
+  sourceOptions?: RebalanceSourceOption[]
   onRun: (overrides?: RebalanceInOverrides) => Promise<boolean>
 }
 
@@ -25,12 +37,24 @@ const parseOptionalPositiveInteger = (raw: string) => {
   return value
 }
 
+// The absolute fee cap is typed in sats with up to three decimals and sent in
+// millisats, so nothing is rounded on the way.
+const parseOptionalFeeMsat = (raw: string) => {
+  const text = raw.trim().replace(',', '.')
+  if (!text) return undefined
+  if (!/^\d+(\.\d{1,3})?$/.test(text)) return null
+  const msat = Math.round(Number(text) * 1000)
+  if (!Number.isSafeInteger(msat) || msat <= 0) return null
+  return msat
+}
+
 export function RebalanceInAction({
   channelPoint,
   peerAlias,
   targetOutboundPct,
   disabled = false,
   disabledReason,
+  sourceOptions,
   onRun
 }: RebalanceInActionProps) {
   const { t } = useTranslation()
@@ -38,6 +62,9 @@ export function RebalanceInAction({
   const [open, setOpen] = useState(false)
   const [amount, setAmount] = useState('')
   const [feeLimit, setFeeLimit] = useState('')
+  const [source, setSource] = useState('')
+  const [allowExcluded, setAllowExcluded] = useState(false)
+  const [maxFee, setMaxFee] = useState('')
   const [preview, setPreview] = useState<RebalanceRunPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
@@ -47,8 +74,19 @@ export function RebalanceInAction({
 
   const parsedAmount = parseOptionalPositiveInteger(amount)
   const parsedFeeLimit = parseOptionalPositiveInteger(feeLimit)
-  const inputsValid = parsedAmount !== null && parsedFeeLimit !== null && (parsedFeeLimit === undefined || parsedFeeLimit <= 10_000)
-  const hasOverrides = parsedAmount !== undefined || parsedFeeLimit !== undefined
+  const parsedMaxFee = parseOptionalFeeMsat(maxFee)
+  const inputsValid = parsedAmount !== null && parsedFeeLimit !== null && parsedMaxFee !== null && (parsedFeeLimit === undefined || parsedFeeLimit <= 10_000)
+  const sources = useMemo(
+    () => (sourceOptions ?? [])
+      .filter((option) => option.channelPoint !== channelPoint)
+      .sort((a, b) => Number(a.excluded) - Number(b.excluded) || b.maxSourceSat - a.maxSourceSat),
+    [channelPoint, sourceOptions]
+  )
+  const selectedSource = sources.find((option) => option.channelPoint === source)
+  const sourcePoint = selectedSource?.channelPoint
+  const exceptionRequested = selectedSource?.excluded === true && allowExcluded
+  const hasOverrides = parsedAmount !== undefined || parsedFeeLimit !== undefined || sourcePoint !== undefined || parsedMaxFee !== undefined
+  const sourceBlocked = preview?.source !== undefined && !preview.source.eligible
 
   useEffect(() => {
     if (!open) return
@@ -66,7 +104,10 @@ export function RebalanceInAction({
         channel_point: channelPoint,
         target_outbound_pct: targetOutboundPct,
         amount_sat: parsedAmount,
-        fee_limit_ppm: parsedFeeLimit
+        fee_limit_ppm: parsedFeeLimit,
+        source_channel_point: sourcePoint,
+        allow_excluded_source: exceptionRequested || undefined,
+        max_fee_msat: parsedMaxFee ?? undefined
       })
         .then((next) => {
           if (!cancelled) setPreview(next)
@@ -85,11 +126,14 @@ export function RebalanceInAction({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [channelPoint, inputsValid, open, parsedAmount, parsedFeeLimit, t, targetOutboundPct])
+  }, [channelPoint, exceptionRequested, inputsValid, open, parsedAmount, parsedFeeLimit, parsedMaxFee, sourcePoint, t, targetOutboundPct])
 
   const openCustom = () => {
     setAmount('')
     setFeeLimit('')
+    setSource('')
+    setAllowExcluded(false)
+    setMaxFee('')
     setPreview(null)
     setPreviewError('')
     setOpen(true)
@@ -107,12 +151,15 @@ export function RebalanceInAction({
 
   const handleCustomRun = async (event: FormEvent) => {
     event.preventDefault()
-    if (!inputsValid || !preview || previewLoading || running) return
+    if (!inputsValid || !preview || previewLoading || running || sourceBlocked) return
     setRunning(true)
     try {
       const ok = await onRun({
         amountSat: parsedAmount,
-        feeLimitPpm: parsedFeeLimit
+        feeLimitPpm: parsedFeeLimit,
+        sourceChannelPoint: sourcePoint,
+        allowExcludedSource: exceptionRequested || undefined,
+        maxFeeMsat: parsedMaxFee ?? undefined
       })
       if (ok) setOpen(false)
     } finally {
@@ -205,6 +252,64 @@ export function RebalanceInAction({
               </label>
             </div>
 
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              {sources.length > 0 && (
+                <label className="block sm:col-span-2">
+                  <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.14em] text-fog/50">
+                    {t('rebalanceCenter.channels.rebalanceSource')}
+                  </span>
+                  <select
+                    className="input-field"
+                    value={source}
+                    onChange={(event) => {
+                      setSource(event.target.value)
+                      setAllowExcluded(false)
+                    }}
+                  >
+                    <option value="">{t('rebalanceCenter.channels.rebalanceSourceAuto')}</option>
+                    {sources.map((option) => (
+                      <option key={option.channelPoint} value={option.channelPoint}>
+                        {t(option.excluded ? 'rebalanceCenter.channels.rebalanceSourceOptionExcluded' : 'rebalanceCenter.channels.rebalanceSourceOption', {
+                          alias: option.peerAlias || option.channelId,
+                          id: option.channelId,
+                          amount: formatter.format(option.maxSourceSat)
+                        })}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mt-1 block text-[10px] text-fog/40">
+                    {t('rebalanceCenter.channels.rebalanceSourceHelp')}
+                  </span>
+                </label>
+              )}
+              {selectedSource?.excluded && (
+                <label className="flex items-start gap-2 text-xs text-amber-100/90 sm:col-span-2">
+                  <input
+                    className="mt-0.5"
+                    type="checkbox"
+                    checked={allowExcluded}
+                    onChange={(event) => setAllowExcluded(event.target.checked)}
+                  />
+                  <span>{t('rebalanceCenter.channels.rebalanceAllowExcluded')}</span>
+                </label>
+              )}
+              <label className="block sm:col-span-2">
+                <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.14em] text-fog/50">
+                  {t('rebalanceCenter.channels.rebalanceMaxFeeAbsolute')}
+                </span>
+                <input
+                  className="input-field"
+                  type="text"
+                  inputMode="decimal"
+                  value={maxFee}
+                  onChange={(event) => setMaxFee(event.target.value)}
+                />
+                <span className="mt-1 block text-[10px] text-fog/40">
+                  {t('rebalanceCenter.channels.rebalanceMaxFeeAbsoluteHelp')}
+                </span>
+              </label>
+            </div>
+
             {preview && (
               <div className="mt-4 space-y-2 rounded-xl border border-cyan-300/10 bg-cyan-300/[0.04] p-3 text-xs text-fog/70">
                 <div className="flex items-center justify-between gap-4">
@@ -215,8 +320,31 @@ export function RebalanceInAction({
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <span>{t('rebalanceCenter.channels.rebalanceMaxCost')}</span>
-                  <span className="font-medium text-fog">{formatter.format(preview.max_fee_sat)} sats</span>
+                  <span className="font-medium text-fog">
+                    {preview.fee_cap_absolute
+                      ? `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(preview.max_fee_msat / 1000)} sats`
+                      : `${formatter.format(preview.max_fee_sat)} sats`}
+                  </span>
                 </div>
+                {preview.fee_cap_absolute && (
+                  <div className="text-fog/60">{t('rebalanceCenter.channels.rebalanceMaxFeeAbsoluteBinds')}</div>
+                )}
+                {preview.source && preview.source.eligible && (
+                  <div className={preview.source.exclusion_exception ? 'text-amber-200' : 'text-fog/70'}>
+                    {t(preview.source.exclusion_exception ? 'rebalanceCenter.channels.rebalanceSourceException' : 'rebalanceCenter.channels.rebalanceSourceUsable', {
+                      alias: preview.source.peer_alias || selectedSource?.channelId || '',
+                      amount: formatter.format(preview.source.max_source_sat)
+                    })}
+                  </div>
+                )}
+                {preview.source && !preview.source.eligible && (
+                  <div className="text-rose-300">
+                    {t('rebalanceCenter.channels.rebalanceSourceBlocked', {
+                      alias: preview.source.peer_alias || selectedSource?.channelId || '',
+                      reason: t(`rebalanceCenter.channels.fixedSourceReason.${preview.source.blocked_reason || 'source_not_found'}`)
+                    })}
+                  </div>
+                )}
                 <p className="text-fog/60">{t('rebalanceCenter.manualFeeBudgetHelp')}</p>
                 {preview.amount_overrides_config && (
                   <div className="text-amber-200">{t('rebalanceCenter.channels.rebalanceAmountWarning')}</div>
@@ -241,7 +369,7 @@ export function RebalanceInAction({
               <button className="btn-secondary" type="button" onClick={() => setOpen(false)} disabled={running}>
                 {t('common.cancel')}
               </button>
-              <button className="btn-primary" type="submit" disabled={!inputsValid || !preview || previewLoading || running}>
+              <button className="btn-primary" type="submit" disabled={!inputsValid || !preview || previewLoading || running || sourceBlocked}>
                 {running ? t('common.loading') : t('rebalanceCenter.channels.rebalanceStartCustom')}
               </button>
             </div>

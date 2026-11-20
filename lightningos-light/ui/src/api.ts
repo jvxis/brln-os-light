@@ -1613,6 +1613,19 @@ export type RebalanceRunPayload = {
   auto_restart?: boolean
   amount_sat?: number
   fee_limit_ppm?: number
+  source_channel_point?: string
+  allow_excluded_source?: boolean
+  max_fee_msat?: number
+}
+
+export type RebalanceRunPreviewSource = {
+  channel_point: string
+  peer_alias?: string
+  excluded: boolean
+  exclusion_exception: boolean
+  eligible: boolean
+  blocked_reason?: string
+  max_source_sat: number
 }
 
 export type RebalanceRunPreview = {
@@ -1633,6 +1646,9 @@ export type RebalanceRunPreview = {
   amount_overrides_config: boolean
   amount_clamped: boolean
   fee_exceeds_outgoing: boolean
+  max_fee_msat: number
+  fee_cap_absolute: boolean
+  source?: RebalanceRunPreviewSource
 }
 
 export const previewRebalance = (payload: RebalanceRunPayload) =>

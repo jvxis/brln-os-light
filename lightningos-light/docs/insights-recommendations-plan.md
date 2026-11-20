@@ -223,6 +223,15 @@ direta, o canal é isca e a regra não dispara.
 
 Ação: "revisar no Fee Center" ou reset de referência do AutoFee (já existe).
 
+Caso "abaixo do piso" (fee `< 0,9 ×` piso implicado pelo custo de reposição):
+a fee é uma alavanca, o que o rebalance pode pagar é a outra. Quando o econ
+ratio do canal deixa a compra chegar quase à própria fee (ex.: 0,99), não
+sobra margem por construção. O cartão passa a trazer um terceiro passo,
+"Baixar o teto" (0.5.59): econ ratio sugerido = `1 / multiplicador do piso`
+do perfil (1,10 para router, 1,10 + margem de sink), arredondado para baixo
+em 0,05, só quando fica abaixo do ratio atual. Subir o max cost nunca é a
+resposta: ele aumenta o custo de reposição e piora a conta.
+
 ### R7. Bloqueio esperado (informativo)
 
 Lista recolhida, no fim da tela: canais que parecem parados, mas estão

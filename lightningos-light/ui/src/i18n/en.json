@@ -6700,6 +6700,7 @@
       "rebalance_target_disable": { "label": "Rebalance Center", "step": "Turn the channel off as a rebalance target until the paid lot sells." },
       "loop_in": { "label": "Loop In", "step": "Loop In of {{amount}} sat with the last hop at this peer (amount bounded by {{limit}}). Quote on click only: it calls an external service and includes the fee the peer charges to receive." },
       "econ_override": { "label": "Raise the cap", "step": "Try econ ratio {{ratio}} on this channel: new cap {{cap}} ppm, {{margin}}% margin left over the sale price." },
+      "econ_override_lower": { "label": "Lower the cap", "step": "The rebalance may pay up to {{currentCap}} ppm here (econ ratio {{currentRatio}}), almost the fee itself, so no margin is left whatever the price does. Try econ ratio {{ratio}} in the Rebalance Center: cap {{cap}} ppm, under the floor the refill cost implies." },
       "open_channel": { "label": "Lightning Ops", "step": "Preview a new channel with this peer in Lightning Ops." },
       "close_channel": { "label": "Lightning Ops", "step": "Consider a cooperative close in Lightning Ops. The close fee is ours only when we funded the channel." },
       "autofee_review": { "label": "Fee Center", "step": "Review the AutoFee parameters for this channel in the Fee Center (floor, profile, reference) against the real sale price." },

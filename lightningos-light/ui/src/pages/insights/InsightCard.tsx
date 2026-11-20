@@ -53,12 +53,18 @@ export default function InsightCard({ item, teach, busy, formatNumber, formatRel
   }
 
   const stepText = (action: InsightAction) => {
-    const key = action.tool === 'rebalance_target' && action.params?.suggest === 'disable_target' ? 'rebalance_target_disable' : action.tool
+    const key = action.tool === 'rebalance_target' && action.params?.suggest === 'disable_target'
+      ? 'rebalance_target_disable'
+      : action.tool === 'econ_override' && action.params?.suggest === 'lower'
+        ? 'econ_override_lower'
+        : action.tool
     const limit = action.params?.amount_limit
     return t(`insights.tool.${key}.step` as any, {
       ratio: action.params?.ratio,
       cap: action.params?.cap_ppm ? formatNumber(Number(action.params.cap_ppm)) : '',
       margin: action.params?.margin_pct,
+      currentRatio: action.params?.current_ratio,
+      currentCap: action.params?.current_cap ? formatNumber(Number(action.params.current_cap)) : '',
       reason: action.params?.reason,
       amount: action.params?.amount_sat ? formatNumber(Number(action.params.amount_sat)) : '',
       limit: limit ? t(`insights.card.amountLimit.${limit}` as any, { defaultValue: limit }) : '',

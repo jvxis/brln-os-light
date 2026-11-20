@@ -6700,6 +6700,7 @@
       "rebalance_target_disable": { "label": "Rebalance Center", "step": "Desligar o canal como alvo de rebalance até o lote pago vender." },
       "loop_in": { "label": "Loop In", "step": "Loop In de {{amount}} sat com último salto neste peer (montante limitado por {{limit}}). Cotação só por clique: chama um serviço externo e inclui a fee que o peer cobra para receber." },
       "econ_override": { "label": "Subir o teto", "step": "Tentar econ ratio {{ratio}} neste canal: teto novo {{cap}} ppm, sobra {{margin}}% sobre o preço de venda." },
+      "econ_override_lower": { "label": "Baixar o teto", "step": "O rebalance pode pagar até {{currentCap}} ppm aqui (econ ratio {{currentRatio}}), quase a própria fee, então não sobra margem faça o preço o que fizer. Tentar econ ratio {{ratio}} no Rebalance Center: teto {{cap}} ppm, abaixo do piso que o custo de reposição implica." },
       "open_channel": { "label": "Lightning Ops", "step": "Fazer o preview de um canal novo com este peer no Lightning Ops." },
       "close_channel": { "label": "Lightning Ops", "step": "Avaliar fechamento cooperativo no Lightning Ops. A taxa de fechamento é nossa só quando fomos nós que abrimos." },
       "autofee_review": { "label": "Fee Center", "step": "Rever no Fee Center os parâmetros do AutoFee deste canal (piso, perfil, referência) contra o preço real de venda." },

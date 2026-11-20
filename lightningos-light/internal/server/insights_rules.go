@@ -952,8 +952,47 @@ func insightPriceOff(ch *insightChannel, profile autofeeProfile, now time.Time) 
 		InsightAction{Step: 1, Tool: insightToolSetFee, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": direction}},
 		InsightAction{Step: 2, Tool: insightToolAutofeeReview, Params: map[string]string{"channel_point": reb.ChannelPoint, "direction": direction}},
 	)
+	if under {
+		// The fee is one lever; what the rebalance is allowed to pay is the
+		// other. When the channel's econ ratio lets the purchase run up to
+		// the fee itself there is no margin by construction, whatever the
+		// price does. Suggest the ratio at which the cap fits under the
+		// floor the profile implies (1 / floor multiplier), derived from the
+		// same margin the floor used, not a fixed number.
+		if ratio, capPpm, ok := insightEconRatioUnderFloor(reb.EffectiveEconRatio, fee, reb.RebalanceCost7dPpm, floor); ok {
+			ins.Actions = append(ins.Actions, InsightAction{Step: 3, Tool: insightToolEconOverride, Params: map[string]string{
+				"channel_point": reb.ChannelPoint,
+				"suggest":       "lower",
+				"ratio":         fmt.Sprintf("%.2f", ratio),
+				"cap_ppm":       fmt.Sprintf("%d", capPpm),
+				"current_ratio": fmt.Sprintf("%.2f", reb.EffectiveEconRatio),
+				"current_cap":   fmt.Sprintf("%d", int64(math.Round(reb.EffectiveEconRatio*float64(fee)))),
+			}})
+		}
+	}
 	ins.InvalidateWhen = "fee_within_band"
 	return ins, true
+}
+
+// insightEconRatioUnderFloor returns the econ ratio (rounded down to 0.05)
+// at which the rebalance cap on this channel sits under the AutoFee floor
+// implied by the refill cost, and the cap in ppm at that ratio. floor /
+// costPpm is the profile's floor multiplier (1.10, plus the sink margin), so
+// a cap of fee / multiplier keeps the next refill inside the margin the
+// floor asks for. Nothing to suggest when the current ratio already does.
+func insightEconRatioUnderFloor(currentRatio float64, feePpm int64, costPpm int64, floorPpm int) (float64, int64, bool) {
+	if currentRatio <= 0 || feePpm <= 0 || costPpm <= 0 || floorPpm <= 0 {
+		return 0, 0, false
+	}
+	mult := float64(floorPpm) / float64(costPpm)
+	if mult <= 1 {
+		return 0, 0, false
+	}
+	ratio := math.Floor((1/mult)*20) / 20
+	if ratio < 0.05 || ratio >= currentRatio-0.005 {
+		return 0, 0, false
+	}
+	return ratio, int64(math.Round(ratio * float64(feePpm))), true
 }
 
 // R8: a drained top seller that the rebalance cannot refill may refill for

@@ -273,7 +273,13 @@ func (c *Client) queryRoutes(ctx context.Context, destPubkey string, amtSat int6
 	}
 	defer release()
 
-	return queryRoutesWithClient(ctx, lnrpc.NewLightningClient(conn), trimmedDest, amtSat, outgoingChanID, lastHopPubkey, targetChanID, feeLimitMsat, numRoutes, ignoredEdges, ignoredPairs)
+	routes, rung, err := queryRoutesWithClient(ctx, lnrpc.NewLightningClient(conn), trimmedDest, amtSat, outgoingChanID, lastHopPubkey, targetChanID, feeLimitMsat, numRoutes, ignoredEdges, ignoredPairs)
+	if err == nil && rung > 0 && c.logger != nil {
+		// Counted after a deploy: how often the lnd.conf weights alone
+		// would have reported a false no-route.
+		c.logger.Printf("lndclient: route found at time_pref %g after no path at lnd.conf weights outgoing=%d target=%d amount=%d", queryRoutesLadder[rung], outgoingChanID, targetChanID, amtSat)
+	}
+	return routes, err
 }
 
 // isQueryRoutesNoPath reports the pathfinder's "nothing within the
@@ -287,27 +293,40 @@ func isQueryRoutesNoPath(err error) bool {
 }
 
 // queryRoutesWithClient runs the route search against an already borrowed
-// client. It is split from queryRoutes so the fallback below can be tested
-// without a connection.
+// client. It is split from queryRoutes so the search ladder below can be
+// tested without a connection.
 //
-// The first search asks LND to weigh its mission control: with a payment
-// history the pathfinder prefers edges that recently carried HTLCs, which is
-// the right default for a circular payment. LND minimises fee plus a risk
-// term (routerrpc.attemptcost / attemptcostppm scaled by how unlikely the
-// route is), and when the cheapest *weighted* route exceeds the fee limit it
+// LND minimises fee plus a risk term: (routerrpc.attemptcost +
+// attemptcostppm x amount) divided by the route's success probability, where
+// a hop with no history counts with the a-priori probability from lnd.conf.
+// When the cheapest *weighted* route exceeds the fee limit the pathfinder
 // answers "unable to find a path" without looking for a cheaper, less
-// probable one. On a node with a heavy risk term or a mission control full
-// of recent failures that turns every fee-capped probe into a false
-// no-route, even when a route well inside the limit exists.
+// probable one, so on a node with a heavy risk term every fee-capped probe
+// becomes a false no-route even when a route well inside the limit exists.
 //
-// So when the weighted search finds nothing at all, the same request is
-// repeated once without mission control. That search is fee-optimal and
-// blind to liquidity; the route it returns is only a candidate, and the
-// SendToRoute that follows is the real test — its outcome still feeds LND's
-// mission control and the service's own pair statistics. The retry never
-// happens once a route has been collected, and never for errors that are
-// not the pathfinder's own no-path answer.
-func queryRoutesWithClient(ctx context.Context, client lnrpc.LightningClient, trimmedDest string, amtSat int64, outgoingChanID uint64, lastHopPubkey string, targetChanID uint64, feeLimitMsat int64, numRoutes int32, ignoredEdges []*lnrpc.EdgeLocator, ignoredPairs []*lnrpc.NodePair) ([]*lnrpc.Route, error) {
+// The per-request time preference is LND's own knob for that trade-off
+// (lnd#6024): at 0 the lnd.conf values apply, at -1 the risk term is divided
+// by about 19, at +1 multiplied by 19. Mission control stays on in every
+// rung of the ladder: a hop whose last attempt failed recently has
+// probability zero and is dropped before any cost is computed, and
+// routerrpc.minrtprob still prunes improbable paths. So the second rung
+// asks for the cheapest route *that mission control does not know to be
+// dry*, which is what the circular-payment probe wants. Searching with
+// mission control off (0.5.58) returned the cheapest route on paper, which
+// on mainnet is the 0-1 ppm channel every other node has already drained;
+// measured on a production node it only added candidates mission control
+// had just seen fail.
+//
+// The route is still only a candidate: the SendToRoute probe that follows
+// is the real liquidity test and its outcome feeds mission control and the
+// service's own pair statistics. The next rung is only tried when the
+// previous one found nothing at all, never once a route has been collected,
+// and never for errors that are not the pathfinder's own no-path answer.
+// queryRoutesLadder lists the time preferences tried in order when a search
+// finds no path. Mission control is on for every rung; see the comment above.
+var queryRoutesLadder = []float64{0, -1}
+
+func queryRoutesWithClient(ctx context.Context, client lnrpc.LightningClient, trimmedDest string, amtSat int64, outgoingChanID uint64, lastHopPubkey string, targetChanID uint64, feeLimitMsat int64, numRoutes int32, ignoredEdges []*lnrpc.EdgeLocator, ignoredPairs []*lnrpc.NodePair) ([]*lnrpc.Route, int, error) {
 	routes := make([]*lnrpc.Route, 0, numRoutes)
 	mismatchedRoutes := make([]*lnrpc.Route, 0)
 	var targetRouteHints []*lnrpc.RouteHint
@@ -323,7 +342,7 @@ func queryRoutesWithClient(ctx context.Context, client lnrpc.LightningClient, tr
 	if trimmedHop := strings.TrimSpace(lastHopPubkey); trimmedHop != "" {
 		decoded, err := hex.DecodeString(trimmedHop)
 		if err != nil {
-			return nil, fmt.Errorf("invalid last hop pubkey")
+			return nil, 0, fmt.Errorf("invalid last hop pubkey")
 		}
 		hopBytes = decoded
 	}
@@ -340,7 +359,7 @@ func queryRoutesWithClient(ctx context.Context, client lnrpc.LightningClient, tr
 		// that budget. Keep a hard bound to avoid pathological RPC loops.
 		maxQueries += 32
 	}
-	useMissionControl := true
+	rung := 0
 	for i := int32(0); i < maxQueries && int32(len(routes)) < numRoutes; i++ {
 		requestIgnoredEdges := baseIgnoredEdges
 		if len(ignoredByRoute) > 0 {
@@ -351,7 +370,8 @@ func queryRoutesWithClient(ctx context.Context, client lnrpc.LightningClient, tr
 			Amt:               amtSat,
 			IgnoredEdges:      requestIgnoredEdges,
 			IgnoredPairs:      ignoredPairs,
-			UseMissionControl: useMissionControl,
+			UseMissionControl: true,
+			TimePref:          queryRoutesLadder[rung],
 			RouteHints:        targetRouteHints,
 		}
 		if outgoingChanID != 0 {
@@ -368,9 +388,9 @@ func queryRoutesWithClient(ctx context.Context, client lnrpc.LightningClient, tr
 
 		resp, err := client.QueryRoutes(ctx, req)
 		empty := err == nil && (resp == nil || len(resp.Routes) == 0)
-		if (err != nil || empty) && useMissionControl && len(routes) == 0 && len(mismatchedRoutes) == 0 && (empty || isQueryRoutesNoPath(err)) {
-			// Weighted search found nothing: repeat once, fee-optimal.
-			useMissionControl = false
+		if (err != nil || empty) && rung+1 < len(queryRoutesLadder) && len(routes) == 0 && len(mismatchedRoutes) == 0 && (empty || isQueryRoutesNoPath(err)) {
+			// This rung found nothing: climb down to a lighter risk term.
+			rung++
 			i--
 			continue
 		}
@@ -378,7 +398,7 @@ func queryRoutesWithClient(ctx context.Context, client lnrpc.LightningClient, tr
 			if len(routes) > 0 {
 				break
 			}
-			return nil, err
+			return nil, rung, err
 		}
 		if empty {
 			break
@@ -401,11 +421,11 @@ func queryRoutesWithClient(ctx context.Context, client lnrpc.LightningClient, tr
 		if len(mismatchedRoutes) > 0 {
 			// Preserve the candidates so the service can report the exact
 			// requested/actual channel mismatch instead of a generic no-route.
-			return mismatchedRoutes, nil
+			return mismatchedRoutes, rung, nil
 		}
-		return nil, errors.New("no route")
+		return nil, rung, errors.New("no route")
 	}
-	return routes, nil
+	return routes, rung, nil
 }
 
 func (c *Client) SendToRoute(ctx context.Context, paymentHash string, route *lnrpc.Route) (*lnrpc.HTLCAttempt, error) {

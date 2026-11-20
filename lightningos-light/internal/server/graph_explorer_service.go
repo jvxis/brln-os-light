@@ -294,6 +294,8 @@ alter table graph_close_events add column if not exists close_reason text;
 alter table graph_close_events add column if not exists classified_at timestamptz;
 alter table graph_close_events add column if not exists classification_error text;
 alter table graph_close_events add column if not exists classification_attempts integer not null default 0;
+alter table graph_close_events add column if not exists classification_rpc_failures integer not null default 0;
+alter table graph_close_events add column if not exists classification_retry_at timestamptz;
 create index if not exists graph_close_events_chan_idx on graph_close_events (chan_id, observed_at desc);
 create index if not exists graph_close_events_chan_point_idx on graph_close_events (chan_point) where chan_point is not null;
 create index if not exists graph_close_events_pending_idx on graph_close_events (classified_at, classification_attempts, observed_at desc);

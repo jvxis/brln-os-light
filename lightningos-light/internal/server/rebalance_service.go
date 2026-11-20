@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -8701,6 +8702,21 @@ func applyMppRecord(route *lnrpc.Route, paymentAddr []byte, amountSat int64) {
 	}
 }
 
+// isRouteAmountOutOfRange reports whether BuildRoute refused a route only
+// because the requested amount is outside a hop's policy. LND answers "no
+// matching outgoing channel available for node index N" when no channel
+// between hop N-1 and hop N accepts the amount (min_htlc / max_htlc). The
+// probe starts at min_probe_sat, well below the min_htlc some routing nodes
+// advertise, so without this distinction every probe through such a hop
+// died before its first HTLC and was recorded as a structural pair failure.
+func isRouteAmountOutOfRange(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	msg := strings.ToLower(status.Convert(err).Message())
+	return strings.Contains(msg, "no matching outgoing channel")
+}
+
 func (s *RebalanceService) rebuildRouteForAmount(ctx context.Context, route *lnrpc.Route, amountSat int64) (*lnrpc.Route, error) {
 	if s.lnd == nil {
 		return nil, errors.New("lnd unavailable")
@@ -12956,6 +12972,19 @@ func (s *RebalanceService) probeRouteRecursive(ctx context.Context, route *lnrpc
 
 	probedRoute, err := s.rebuildRouteForTargetAmount(ctx, route, amount, targetChannelID)
 	if err != nil {
+		if isRouteAmountOutOfRange(err) {
+			// BuildRoute refused this amount because it is outside a hop's
+			// policy (below its min_htlc, or above every parallel channel's
+			// max_htlc). No HTLC was sent, so this says nothing about
+			// liquidity: keep what the probe has already proven, otherwise
+			// move the probe up towards the attempt amount, like the
+			// fee branch below.
+			if goodAmount > 0 {
+				return goodAmount, nil
+			}
+			nextAmount := amount + (badAmount-amount)/2
+			return s.probeRouteRecursive(ctx, route, -amount, badAmount, nextAmount, steps, targetChannelID, targetPolicy, sourcePolicy, cfg, last)
+		}
 		return 0, err
 	}
 	maxFeeMsat, err := calcFeeLimitMsat(amount*1000, targetPolicy, &sourcePolicy, cfg)

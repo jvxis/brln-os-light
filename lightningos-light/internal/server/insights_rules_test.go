@@ -266,7 +266,7 @@ func TestInsightPriceOffBothDirections(t *testing.T) {
 	rebs := []RebalanceChannel{
 		{ChannelID: 1, ChannelPoint: "over:0", OutgoingFeePpm: 1300, SalePricePpm: 900, SalePriceSource: "7d", LocalPct: 40},
 		{ChannelID: 2, ChannelPoint: "auto:0", OutgoingFeePpm: 1300, SalePricePpm: 900, SalePriceSource: "7d", LocalPct: 40},
-		{ChannelID: 3, ChannelPoint: "under:0", OutgoingFeePpm: 500, RebalanceCost7dPpm: 600, RebalanceAmount7dSat: 700_000, LocalPct: 40},
+		{ChannelID: 3, ChannelPoint: "under:0", OutgoingFeePpm: 500, RebalanceCost7dPpm: 600, RebalanceAmount7dSat: 700_000, LocalPct: 40, EffectiveEconRatio: 0.99},
 		{ChannelID: 4, ChannelPoint: "near:0", OutgoingFeePpm: 372, RebalanceCost7dPpm: 329, RebalanceAmount7dSat: 700_000, LocalPct: 40},
 	}
 	in := insightsInput{Ranking: append(insightTestBackground(), over, autofeeManaged, under, nearFloor), Rebalance: rebs, AutofeeProfile: autofeeProfiles[autofeeProfileDefault]}
@@ -280,6 +280,49 @@ func TestInsightPriceOffBothDirections(t *testing.T) {
 	}
 	if dirs["over"] != "over:0" || dirs["under"] != "under:0" {
 		t.Fatalf("AutoFee-managed over-price and a 1%% floor gap must stay silent, got %v", dirs)
+	}
+	for _, ins := range r6 {
+		switch ins.ChannelPoint {
+		case "over:0":
+			if len(ins.Actions) != 2 {
+				t.Fatalf("over-price keeps the two fee actions, got %+v", ins.Actions)
+			}
+		case "under:0":
+			// Sink floor = cost x (1.10 + sink margin); the suggested ratio
+			// is 1 / that multiplier rounded down to 0.05, below the 0.99
+			// the channel runs at.
+			if len(ins.Actions) != 3 || ins.Actions[2].Tool != insightToolEconOverride || ins.Actions[2].Params["suggest"] != "lower" {
+				t.Fatalf("under-floor adds the rebalance cap lever, got %+v", ins.Actions)
+			}
+			if ins.Actions[2].Params["ratio"] == "" || ins.Actions[2].Params["ratio"] >= "0.99" || ins.Actions[2].Params["current_ratio"] != "0.99" {
+				t.Fatalf("suggested ratio must sit below the current one, got %+v", ins.Actions[2].Params)
+			}
+		}
+	}
+}
+
+func TestInsightEconRatioUnderFloor(t *testing.T) {
+	// Router floor multiplier 1.10 -> 1/1.10 = 0.909 -> 0.90.
+	if ratio, capPpm, ok := insightEconRatioUnderFloor(0.99, 1000, 1000, 1100); !ok || ratio != 0.90 || capPpm != 900 {
+		t.Fatalf("router: got %.2f %d %v", ratio, capPpm, ok)
+	}
+	// Sink multiplier 1.16 -> 0.862 -> 0.85.
+	if ratio, _, ok := insightEconRatioUnderFloor(0.99, 1000, 1000, 1160); !ok || ratio != 0.85 {
+		t.Fatalf("sink: got %.2f %v", ratio, ok)
+	}
+	// Already at or under the suggested ratio: nothing to say.
+	if _, _, ok := insightEconRatioUnderFloor(0.90, 1000, 1000, 1100); ok {
+		t.Fatalf("ratio already under the floor multiplier must not suggest")
+	}
+	if _, _, ok := insightEconRatioUnderFloor(0.80, 1000, 1000, 1100); ok {
+		t.Fatalf("lower ratio must not suggest")
+	}
+	// Missing inputs.
+	if _, _, ok := insightEconRatioUnderFloor(0, 1000, 1000, 1100); ok {
+		t.Fatalf("unknown current ratio must not suggest")
+	}
+	if _, _, ok := insightEconRatioUnderFloor(0.99, 1000, 0, 0); ok {
+		t.Fatalf("no cost must not suggest")
 	}
 }
 

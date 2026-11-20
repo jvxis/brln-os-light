@@ -343,6 +343,11 @@ const (
 )
 
 type RebalanceConfig struct {
+	// operatorFeeCap is set only on the copy of the config a manual job with
+	// an absolute fee cap runs with. Unexported: never serialized, never
+	// persisted, nil for every other job.
+	operatorFeeCap *operatorFeeCap
+
 	AutoEnabled                           bool    `json:"auto_enabled"`
 	Profile                               string  `json:"profile"`
 	SchedulerMode                         string  `json:"scheduler_mode"`
@@ -1293,6 +1298,11 @@ type RebalanceRunPreview struct {
 	AmountOverridesConfig bool    `json:"amount_overrides_config"`
 	AmountClamped         bool    `json:"amount_clamped"`
 	FeeExceedsOutgoing    bool    `json:"fee_exceeds_outgoing"`
+	// MaxFeeMsat is the most the job may pay in total: the ppm limit over the
+	// amount, or the operator's absolute cap when that is smaller.
+	MaxFeeMsat     int64                      `json:"max_fee_msat"`
+	FeeCapAbsolute bool                       `json:"fee_cap_absolute"`
+	Source         *RebalanceRunPreviewSource `json:"source,omitempty"`
 }
 
 type RebalanceAttempt struct {
@@ -5701,7 +5711,7 @@ func buildOperatorRebalancePreview(target lndclient.ChannelInfo, targetPct float
 	return preview, nil
 }
 
-func (s *RebalanceService) PreviewOperatorJob(ctx context.Context, targetChannelID uint64, targetPctOverride *float64, amountOverride *int64, feeLimitOverride *int64) (RebalanceRunPreview, error) {
+func (s *RebalanceService) PreviewOperatorJob(ctx context.Context, targetChannelID uint64, targetPctOverride *float64, amountOverride *int64, feeLimitOverride *int64, opts operatorJobOptions) (RebalanceRunPreview, error) {
 	cfg, err := s.loadConfig(ctx)
 	if err != nil {
 		return RebalanceRunPreview{}, err
@@ -5734,7 +5744,34 @@ func (s *RebalanceService) PreviewOperatorJob(ctx context.Context, targetChannel
 	if targetPctOverride != nil {
 		targetPct = *targetPctOverride
 	}
-	return buildOperatorRebalancePreview(target, targetPct, cfg, setting, amountOverride, feeLimitOverride)
+	preview, err := buildOperatorRebalancePreview(target, targetPct, cfg, setting, amountOverride, feeLimitOverride)
+	if err != nil {
+		return preview, err
+	}
+	applyOperatorFeeCapToPreview(&preview, opts.MaxFeeMsat)
+	if opts.SourceChannelID != 0 {
+		source, err := s.operatorSourceSnapshot(ctx, cfg, opts.SourceChannelID)
+		if err != nil {
+			return preview, err
+		}
+		preview.Source = buildRunPreviewSource(source, targetChannelID, opts.AllowExcludedSource)
+	}
+	return preview, nil
+}
+
+// applyOperatorFeeCapToPreview states the job's total fee ceiling: the ppm
+// limit over the amount, or the absolute cap when the operator set a smaller
+// one. The cap is never rounded up.
+func applyOperatorFeeCapToPreview(preview *RebalanceRunPreview, maxFeeMsat int64) {
+	if preview == nil {
+		return
+	}
+	preview.MaxFeeMsat = preview.EffectiveAmountSat * preview.EffectiveFeeLimitPpm / 1000
+	if maxFeeMsat > 0 && maxFeeMsat < preview.MaxFeeMsat {
+		preview.MaxFeeMsat = maxFeeMsat
+		preview.FeeCapAbsolute = true
+		preview.MaxFeeSat = (maxFeeMsat + 999) / 1000
+	}
 }
 
 type operatorRebalanceOverrides struct {
@@ -5744,6 +5781,11 @@ type operatorRebalanceOverrides struct {
 	FeeLimitPpm       int64
 	TargetPctSet      bool
 	TargetPct         float64
+	// Fixed source, its one-job exclusion exception and the absolute fee cap
+	// (see operatorJobOptions). Zero values mean "not set".
+	SourceChannelID     uint64
+	AllowExcludedSource bool
+	MaxFeeMsat          int64
 }
 
 func (s *RebalanceService) startJob(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool) (int64, error) {
@@ -5757,13 +5799,16 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 // limit (applied later in runJob) still hold. Only this button path sets
 // operatorInitiated; the manual-restart watch, scheduled restarts, and the
 // auto/rules scan are unaffected.
-func (s *RebalanceService) startOperatorJob(targetChannelID uint64, targetPct float64, amountOverride *int64, feeLimitPpm *int64, manualAutoRestart bool) (int64, error) {
+func (s *RebalanceService) startOperatorJob(targetChannelID uint64, targetPct float64, amountOverride *int64, feeLimitPpm *int64, manualAutoRestart bool, opts operatorJobOptions) (int64, error) {
 	overrides := operatorRebalanceOverrides{
-		OperatorInitiated: true,
-		AmountSet:         amountOverride != nil,
-		FeeLimitSet:       feeLimitPpm != nil,
-		TargetPctSet:      true,
-		TargetPct:         targetPct,
+		OperatorInitiated:   true,
+		AmountSet:           amountOverride != nil,
+		FeeLimitSet:         feeLimitPpm != nil,
+		TargetPctSet:        true,
+		TargetPct:           targetPct,
+		SourceChannelID:     opts.SourceChannelID,
+		AllowExcludedSource: opts.SourceChannelID != 0 && opts.AllowExcludedSource,
+		MaxFeeMsat:          opts.MaxFeeMsat,
 	}
 	var amount int64
 	if amountOverride != nil {
@@ -6395,6 +6440,13 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	if r.overrides.FeeLimitSet {
 		feeCfg.FeeLimitPpm = r.overrides.FeeLimitPpm
 	}
+	if r.overrides.OperatorInitiated && r.overrides.MaxFeeMsat > 0 {
+		// One budget shared by every fee limit this job computes, whichever
+		// copy of the config the call site happens to hold.
+		feeCap := newOperatorFeeCap(r.overrides.MaxFeeMsat)
+		feeCfg.operatorFeeCap = feeCap
+		cfg.operatorFeeCap = feeCap
+	}
 	minExecuteSat = effectiveMinExecuteSat(feeCfg)
 	minProbeSat = effectiveMinProbeSat(feeCfg)
 	startAmountSat := effectiveStartAmountSat(feeCfg)
@@ -6518,6 +6570,20 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	targetHasParallelPeer := rebalancePeerHasParallelChannels(targetSnapshot, channelSnapshots)
 
 	sources := filterSources(channelSnapshots, targetChannelID)
+	if r.overrides.OperatorInitiated && r.overrides.SourceChannelID != 0 {
+		// The operator fixed the source of this job. It is that channel or
+		// nothing: no other source is ever substituted, and the only gate
+		// the one-job exception lifts is the persistent source exclusion.
+		fixed, blocked := resolveFixedRebalanceSource(channelSnapshots, targetChannelID, r.overrides.SourceChannelID, r.overrides.AllowExcludedSource)
+		if blocked != "" {
+			s.finishJob(jobID, "failed", "fixed source not usable: "+blocked)
+			return
+		}
+		sources = []RebalanceChannel{fixed}
+		if s.logger != nil {
+			s.logger.Printf("rebalance job=%d: operator fixed source chan=%d exclusion_exception=%t max_fee_msat=%d", jobID, fixed.ChannelID, fixed.ExcludedAsSource, r.overrides.MaxFeeMsat)
+		}
+	}
 	if useRecentFailureCache {
 		sourceCooldowns := s.loadRecentSourceCooldowns(ctx, time.Now().Add(-recentCooldownWindow))
 		routeabilityTTL := sourceRouteabilityTTLForConfig(cfg)
@@ -6699,6 +6765,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		}
 	}
 	recordPairSuccess := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, amountSat int64, feePpm int64, feePaidSat int64, routeHops []string) {
+		st.feeCfg.operatorFeeCap.spendSat(feePaidSat)
 		s.recordPairSuccess(ctx, sourceChannelID, targetChannelID, amountSat, feePpm, feePaidSat, routeHops)
 		delete(currentJobBlockedPairs, sourceChannelID)
 		now := time.Now()
@@ -8168,8 +8235,12 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 	}
 
 	if anySuccess {
-		s.finishJob(jobID, "partial", fmt.Sprintf("remaining %d sats", remaining))
-		s.broadcast(RebalanceEvent{Type: "job", JobID: jobID, Status: "partial"})
+		reason := fmt.Sprintf("remaining %d sats", remaining)
+		if st.feeCfg.operatorFeeCap.exhausted() {
+			reason = "fee cap reached, " + reason
+		}
+		s.finishJob(jobID, "partial", reason)
+		s.broadcast(RebalanceEvent{Type: "job", JobID: jobID, Status: "partial", Message: reason})
 		return
 	}
 
@@ -8194,6 +8265,12 @@ func (m *rebalanceMppPrepassContext) run() (bool, bool) {
 		return false, false
 	}
 	if !shouldRunMppExecute(feeCfg, r.jobSource) {
+		return false, false
+	}
+	if feeCfg.operatorFeeCap != nil {
+		// Shards of a round are sent concurrently and would each be granted
+		// what is left of the operator's absolute cap. The sequential loop
+		// charges the cap lot by lot instead.
 		return false, false
 	}
 	if *m.remaining <= 0 {
@@ -10991,7 +11068,18 @@ func rebalancePeerHasParallelChannels(target RebalanceChannel, channels []Rebala
 	return false
 }
 
+// calcFeeLimitMsat is the fee limit of one attempt. On a manual job with an
+// absolute fee cap the policy limit is clamped to what is left of that cap,
+// and the call fails once the cap is spent.
 func calcFeeLimitMsat(amountMsat int64, targetPolicy lndclient.ChannelPolicySnapshot, sourcePolicy *lndclient.ChannelPolicySnapshot, cfg RebalanceConfig) (int64, error) {
+	feeMsat, err := calcPolicyFeeLimitMsat(amountMsat, targetPolicy, sourcePolicy, cfg)
+	if err != nil || cfg.operatorFeeCap == nil || feeMsat <= 0 {
+		return feeMsat, err
+	}
+	return cfg.operatorFeeCap.clamp(feeMsat)
+}
+
+func calcPolicyFeeLimitMsat(amountMsat int64, targetPolicy lndclient.ChannelPolicySnapshot, sourcePolicy *lndclient.ChannelPolicySnapshot, cfg RebalanceConfig) (int64, error) {
 	if amountMsat <= 0 {
 		return 0, nil
 	}

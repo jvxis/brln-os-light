@@ -130,6 +130,38 @@ type rebalanceRunPayload struct {
 	AutoRestart       *bool    `json:"auto_restart,omitempty"`
 	AmountSat         *int64   `json:"amount_sat,omitempty"`
 	FeeLimitPpm       *int64   `json:"fee_limit_ppm,omitempty"`
+	// One-job choices of the manual form. The UI addresses the source by
+	// channel point (a channel id does not survive a JS number).
+	SourceChannelID     uint64 `json:"source_channel_id,omitempty"`
+	SourceChannelPoint  string `json:"source_channel_point,omitempty"`
+	AllowExcludedSource bool   `json:"allow_excluded_source,omitempty"`
+	MaxFeeMsat          *int64 `json:"max_fee_msat,omitempty"`
+}
+
+func (p rebalanceRunPayload) hasFixedSource() bool {
+	return p.SourceChannelID != 0 || strings.TrimSpace(p.SourceChannelPoint) != ""
+}
+
+// resolveOperatorJobOptions turns the manual form's one-job choices into
+// service options, resolving the fixed source the same way the target is.
+func (s *Server) resolveOperatorJobOptions(ctx context.Context, payload rebalanceRunPayload, targetChannelID uint64) (operatorJobOptions, error) {
+	opts := operatorJobOptions{}
+	if payload.MaxFeeMsat != nil {
+		opts.MaxFeeMsat = *payload.MaxFeeMsat
+	}
+	if !payload.hasFixedSource() {
+		return opts, nil
+	}
+	sourceID, _, err := s.rebalance.ResolveChannel(ctx, payload.SourceChannelID, payload.SourceChannelPoint)
+	if err != nil {
+		return opts, fmt.Errorf("source channel: %w", err)
+	}
+	if sourceID == targetChannelID {
+		return opts, errors.New("source channel must differ from the target channel")
+	}
+	opts.SourceChannelID = sourceID
+	opts.AllowExcludedSource = payload.AllowExcludedSource
+	return opts, nil
 }
 
 type rebalanceChannelTargetPayload struct {
@@ -1164,13 +1196,25 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	autoRestart := payload.AutoRestart != nil && *payload.AutoRestart
-	if autoRestart && (payload.AmountSat != nil || payload.FeeLimitPpm != nil) {
+	if autoRestart && (payload.AmountSat != nil || payload.FeeLimitPpm != nil || payload.hasFixedSource() || payload.MaxFeeMsat != nil) {
 		writeError(w, http.StatusBadRequest, "auto_restart cannot be combined with one-job overrides")
 		return
 	}
-	preview, err := s.rebalance.PreviewOperatorJob(ctx, resolvedID, targetPct, payload.AmountSat, payload.FeeLimitPpm)
+	opts, err := s.resolveOperatorJobOptions(ctx, payload, resolvedID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	preview, err := s.rebalance.PreviewOperatorJob(ctx, resolvedID, targetPct, payload.AmountSat, payload.FeeLimitPpm, opts)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if preview.Source != nil && !preview.Source.Eligible {
+		// The operator fixed a source that cannot give liquidity. Refuse here,
+		// before anything is queued or the saved target is touched: the job
+		// would never fall back to another channel.
+		writeError(w, http.StatusConflict, "fixed source not usable: "+preview.Source.BlockedReason)
 		return
 	}
 	if targetPct != nil {
@@ -1182,7 +1226,7 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 	// Operator-triggered "Manual Rebal In": bypasses budget/cooldown gates (the
 	// operator is acting deliberately) — just queues and executes. The busy
 	// guard and per-route fee limit still apply.
-	jobID, err := s.rebalance.startOperatorJob(resolvedID, preview.TargetOutboundPct, payload.AmountSat, payload.FeeLimitPpm, autoRestart)
+	jobID, err := s.rebalance.startOperatorJob(resolvedID, preview.TargetOutboundPct, payload.AmountSat, payload.FeeLimitPpm, autoRestart, opts)
 	if err != nil {
 		switch {
 		case errors.Is(err, errChannelAutomationParked), errors.Is(err, errManualRestartCooldown), errors.Is(err, errManualBudgetExhausted), errors.Is(err, errManualBudgetInsufficient):
@@ -1228,7 +1272,12 @@ func (s *Server) handleRebalanceRunPreview(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	preview, err := s.rebalance.PreviewOperatorJob(ctx, resolvedID, payload.TargetOutboundPct, payload.AmountSat, payload.FeeLimitPpm)
+	opts, err := s.resolveOperatorJobOptions(ctx, payload, resolvedID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	preview, err := s.rebalance.PreviewOperatorJob(ctx, resolvedID, payload.TargetOutboundPct, payload.AmountSat, payload.FeeLimitPpm, opts)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1242,6 +1291,12 @@ func validateRebalanceRunOverrides(payload rebalanceRunPayload) error {
 	}
 	if payload.FeeLimitPpm != nil && (*payload.FeeLimitPpm <= 0 || *payload.FeeLimitPpm > 10_000) {
 		return errors.New("fee_limit_ppm must be between 1 and 10000")
+	}
+	if payload.MaxFeeMsat != nil && *payload.MaxFeeMsat <= 0 {
+		return errors.New("max_fee_msat must be greater than zero")
+	}
+	if payload.AllowExcludedSource && !payload.hasFixedSource() {
+		return errors.New("allow_excluded_source requires a fixed source channel")
 	}
 	return nil
 }

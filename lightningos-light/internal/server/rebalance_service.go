@@ -1634,6 +1634,7 @@ type RebalanceService struct {
 	cfg                             RebalanceConfig
 	cfgLoaded                       bool
 	mcHalfLifeApplied               int64
+	refusedEdges                    *refusedEdgeMemory
 	lastScan                        time.Time
 	lastScanStatus                  string
 	lastScanDetail                  string
@@ -6917,6 +6918,17 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 	ignoredPairs := make([]*lnrpc.NodePair, 0)
 	maxIgnoredEntries := 500
 	ignoredMu := sync.Mutex{}
+	// Start from the directions earlier jobs were refused at and that are
+	// still remembered. Half of the job's own list stays free for what this
+	// job learns.
+	refusedEdgeSeed := s.refusedEdgeSeed(ctx, cfg)
+	for _, edge := range s.refusedEdgeStore().active(time.Now(), maxIgnoredEntries/2) {
+		ignoredEdgeSet[fmt.Sprintf("%d:%t", edge.ChannelId, edge.DirectionReverse)] = struct{}{}
+		ignoredEdges = append(ignoredEdges, edge)
+	}
+	if len(ignoredEdges) > 0 && s.logger != nil {
+		s.logger.Printf("rebalance job=%d: starts with %d directions refused in earlier jobs", jobID, len(ignoredEdges))
+	}
 
 	sleepWithContext := func(d time.Duration) bool {
 		if d <= 0 {
@@ -7064,8 +7076,18 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		}
 		ignoredEdgeSet[key] = struct{}{}
 		ignoredEdges = append(ignoredEdges, edge)
+		remembered := false
+		s.refusedEdgeStore().clearForwarded(route, int(failureIndex), selfPubkey)
+		if refusedEdgeSeed > 0 && !rebalanceProbeFailureOnOwnChannel(route, failureIndex, selfPubkey) {
+			s.refusedEdgeStore().note(edge, time.Now(), refusedEdgeSeed)
+			remembered = true
+		}
 		if s.logger != nil {
-			s.logger.Printf("rebalance job=%d: probe refused by node at position %d on outgoing chan=%d; direction ignored for this job", jobID, failureIndex, edge.ChannelId)
+			scope := "direction ignored for this job"
+			if remembered {
+				scope = "direction ignored for this job and remembered for the next ones"
+			}
+			s.logger.Printf("rebalance job=%d: probe refused by node at position %d on outgoing chan=%d; %s", jobID, failureIndex, edge.ChannelId, scope)
 		}
 	}
 
@@ -7297,6 +7319,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 					lastErr = errors.New("probe returned no amount")
 					continue
 				}
+				s.refusedEdgeStore().clearForwarded(route, -1, selfPubkey)
 				if maxAmount > routeAmount {
 					maxAmount = routeAmount
 				}

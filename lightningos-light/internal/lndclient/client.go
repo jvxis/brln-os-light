@@ -371,6 +371,37 @@ func (c *Client) ImportMissionControl(ctx context.Context, updates []MissionCont
 	return err
 }
 
+// MissionControlHalfLife returns the half-life LND currently applies to a
+// routing failure: the apriori estimator's penalty half-life, or the bimodal
+// estimator's decay time.
+func (c *Client) MissionControlHalfLife(ctx context.Context) (time.Duration, error) {
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+
+	resp, err := routerrpc.NewRouterClient(conn).GetMissionControlConfig(ctx, &routerrpc.GetMissionControlConfigRequest{})
+	if err != nil {
+		return 0, err
+	}
+	return missionControlHalfLife(resp.GetConfig()), nil
+}
+
+func missionControlHalfLife(cfg *routerrpc.MissionControlConfig) time.Duration {
+	if cfg == nil {
+		return 0
+	}
+	seconds := cfg.GetHalfLifeSeconds()
+	if apriori := cfg.GetApriori(); apriori != nil && apriori.GetHalfLifeSeconds() > 0 {
+		seconds = apriori.GetHalfLifeSeconds()
+	}
+	if bimodal := cfg.GetBimodal(); bimodal != nil && bimodal.GetDecayTime() > 0 {
+		seconds = bimodal.GetDecayTime()
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func (c *Client) UpdateMissionControlHalfLife(ctx context.Context, halfLifeSec int64) error {
 	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {

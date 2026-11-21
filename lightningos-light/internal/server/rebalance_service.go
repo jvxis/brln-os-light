@@ -6177,6 +6177,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 						continue
 					}
 					sourceUsed = htlc.Route.Hops[0].ChanId
+					s.refusedEdgeStore().clearForwarded(htlc.Route, -1, selfPub)
 					for _, hop := range htlc.Route.Hops {
 						if hop.PubKey != "" {
 							routeHops = append(routeHops, hop.PubKey)
@@ -6271,6 +6272,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 			continue
 		}
 		sourceUsed = htlc.Route.Hops[0].ChanId
+		s.refusedEdgeStore().clearForwarded(htlc.Route, -1, selfPub)
 		for _, hop := range htlc.Route.Hops {
 			if hop.PubKey != "" {
 				routeHops = append(routeHops, hop.PubKey)
@@ -7221,6 +7223,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 							_ = s.applyRebalanceLedger(ctx, targetChannelID, amountTry, feePaidSat)
 							_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 							cachedRouteMax := s.maxAmountOnRouteSat(attemptCtx, cachedRoute, selfPubkey)
+							s.refusedEdgeStore().clearForwarded(cachedRoute, -1, selfPubkey)
 							if s.logger != nil {
 								s.logger.Printf("rebalance job=%d: cached route fast-path succeeded source=%d amount=%d hops=%d", jobID, source.ChannelID, amountTry, len(stat.LastSuccessRouteHops))
 							}

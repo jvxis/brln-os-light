@@ -6621,6 +6621,7 @@
       "reason": {
         "sales_7d": "{{count}} sales in 7 days",
         "observed_days": "{{count}} days observed",
+        "stock_before_pct": "{{count}}% of the channel held before this week",
         "route_hits_30d": "{{count}} routes in 30 days",
         "candidate_confidence": "candidate confidence {{count}}"
       }

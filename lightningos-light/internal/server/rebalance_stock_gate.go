@@ -41,12 +41,26 @@ type sovereignStockLevel struct {
 	// LocalSat is the peer's current local balance (all channels together).
 	LocalSat   int64
 	WindowDays float64
+	// The two fields below are per channel, unlike the peer totals above.
+	//
+	// SiblingLocalSat is the local balance of the other channels to the same
+	// peer that can serve this channel's sales: active, and priced at or below
+	// this channel's outgoing fee. LND forwards through any channel of the
+	// peer whose policy the HTLC satisfies, so that balance already is stock
+	// for whoever would pay this channel's fee, paid by the autopilot or not.
+	SiblingLocalSat int64
+	// OwnUnsoldSat is the unsold remainder of the lots bought into this very
+	// channel, capped by its local balance. Lots bought into a sibling are
+	// already inside SiblingLocalSat.
+	OwnUnsoldSat int64
 }
 
 type sovereignStockChannel struct {
 	ChannelID       uint64
 	PeerPubkey      string
 	LocalBalanceSat int64
+	OutgoingFeePpm  int64
+	Active          bool
 }
 
 // sovereignStockGateWindow: how far back paid lots count as stock. Demand
@@ -117,6 +131,7 @@ func buildSovereignStockLevels(lots []rebalanceAttributionLot, forwards []rebala
 		lots   int
 		demand int64
 	}
+	ownUnsold := map[uint64]int64{}
 	peers := map[string]*peerStock{}
 	stockOf := func(channelID uint64) *peerStock {
 		peer, ok := peerOf[channelID]
@@ -141,6 +156,7 @@ func buildSovereignStockLevels(lots []rebalanceAttributionLot, forwards []rebala
 			continue
 		}
 		stock.unsold += remaining
+		ownUnsold[lot.TargetChannelID] += remaining
 		// A lot counts as unsold while more than half of it is still there.
 		if remaining*2 >= lot.SentSat {
 			stock.lots++
@@ -155,9 +171,35 @@ func buildSovereignStockLevels(lots []rebalanceAttributionLot, forwards []rebala
 		}
 	}
 
+	// Per channel: what its siblings hold that can serve the same sales, and
+	// what is left of the lots bought into the channel itself.
+	siblingLocal := map[uint64]int64{}
+	ownLocal := map[uint64]int64{}
+	for _, ch := range channels {
+		if ch.ChannelID == 0 {
+			continue
+		}
+		if ch.LocalBalanceSat > 0 {
+			ownLocal[ch.ChannelID] = ch.LocalBalanceSat
+		}
+		for _, sibling := range channels {
+			if sibling.ChannelID == 0 || sibling.ChannelID == ch.ChannelID || peerOf[sibling.ChannelID] != peerOf[ch.ChannelID] {
+				continue
+			}
+			if !sibling.Active || sibling.LocalBalanceSat <= 0 || sibling.OutgoingFeePpm > ch.OutgoingFeePpm {
+				continue
+			}
+			siblingLocal[ch.ChannelID] += sibling.LocalBalanceSat
+		}
+	}
+
 	windowDays := window.Hours() / 24
 	for channelID, peer := range peerOf {
-		level := sovereignStockLevel{Known: true, WindowDays: windowDays, LocalSat: peerLocal[peer]}
+		level := sovereignStockLevel{Known: true, WindowDays: windowDays, LocalSat: peerLocal[peer], SiblingLocalSat: siblingLocal[channelID]}
+		level.OwnUnsoldSat = ownUnsold[channelID]
+		if local := ownLocal[channelID]; level.OwnUnsoldSat > local {
+			level.OwnUnsoldSat = local
+		}
 		if stock := peers[peer]; stock != nil {
 			level.UnsoldSat = stock.unsold
 			level.UnsoldLots = stock.lots
@@ -217,14 +259,36 @@ func sovereignStockGateAllowedSat(level sovereignStockLevel, capacitySat int64, 
 // sovereignStockGateBlocks reports whether a new Sovereign purchase must wait
 // for sales. It never fires before the peer holds sovereignStockGateMinLots
 // unsold lots, so a drained channel always receives its first refills.
+//
+// 0.5.60: that exemption is for a drained peer. A channel whose siblings
+// already hold the allowed stock is not one: its sales leave through the
+// siblings, so a lot bought into it only piles up next to them (three
+// channels to one peer, the two small ones holding four weeks of the peer's
+// demand and selling without a refill, while 1M lots were bought into the
+// large one and stayed there). The limit is the same allowed stock; only
+// what counts against it changes.
 func sovereignStockGateBlocks(level sovereignStockLevel, capacitySat int64, cfg RebalanceConfig) bool {
 	if !cfg.StockGateEnabled || !level.Known || capacitySat <= 0 {
 		return false
 	}
+	allowed := sovereignStockGateAllowedSat(level, capacitySat, cfg)
+	if sovereignStockGateSiblingsCover(level, allowed) {
+		return true
+	}
 	if level.UnsoldLots < sovereignStockGateMinLots {
 		return false
 	}
-	return level.UnsoldSat >= sovereignStockGateAllowedSat(level, capacitySat, cfg)
+	return level.UnsoldSat >= allowed
+}
+
+// sovereignStockGateSiblingsCover reports whether the sibling channels, plus
+// what is left of this channel's own paid lots, already hold the allowed
+// stock. A peer with a single channel has no siblings and is never affected.
+func sovereignStockGateSiblingsCover(level sovereignStockLevel, allowedSat int64) bool {
+	if level.SiblingLocalSat <= 0 || allowedSat <= 0 {
+		return false
+	}
+	return level.SiblingLocalSat+level.OwnUnsoldSat >= allowedSat
 }
 
 // loadSovereignStockLevels loads the attribution inputs for the Sovereign
@@ -265,6 +329,8 @@ func (s *RebalanceService) loadSovereignStockLevels(ctx context.Context, cfg Reb
 			ChannelID:       snapshot.ChannelID,
 			PeerPubkey:      snapshot.RemotePubkey,
 			LocalBalanceSat: snapshot.LocalBalanceSat,
+			OutgoingFeePpm:  snapshot.OutgoingFeePpm,
+			Active:          snapshot.Active,
 		})
 		ids = append(ids, snapshot.ChannelID)
 	}

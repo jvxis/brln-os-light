@@ -5614,6 +5614,7 @@
       "inventoryProbe": "Reduced inventory exploration: {{value}}",
       "keepaliveRefill": "Keepalive refill (anti-churn): {{value}}",
       "stockGate": "Paid stock not sold yet: {{unsold}} (purchases pause at {{allowed}})",
+      "stockGateSiblings": "Other channels to this peer already hold {{value}} at the same fee or lower (counts as stock)",
       "discovery": "Discovery probe, step {{step}}: {{value}} with a {{ppm}} ppm fee cap",
       "targetClass": "Class: {{value}}",
       "targetClasses": {

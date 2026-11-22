@@ -190,7 +190,7 @@ func TestStockGateAggregatesChannelsOfTheSamePeer(t *testing.T) {
 		stockGateLot(3, 2, now.Add(-10*time.Hour), 700_000),
 	}
 	levels := buildSovereignStockLevels(lots, nil, channels, cfg, now)
-	if levels[1].UnsoldSat != 1_500_000 || levels[1].UnsoldLots != 3 || levels[2] != levels[1] {
+	if levels[1].UnsoldSat != 1_500_000 || levels[1].UnsoldLots != 3 || levels[2].UnsoldSat != levels[1].UnsoldSat || levels[2].UnsoldLots != levels[1].UnsoldLots || levels[2].LocalSat != levels[1].LocalSat {
 		t.Fatalf("both channels must see the peer total: %+v %+v", levels[1], levels[2])
 	}
 	// The 7M channel bought only 100k itself, but its peer already holds 1.5M
@@ -335,5 +335,122 @@ func TestStockGateRemembersStockOlderThanTheInventoryWindow(t *testing.T) {
 	stale := []rebalanceAttributionLot{stockGateLot(3, 1, now.Add(-15*24*time.Hour), 600_000), stockGateLot(4, 1, now.Add(-16*24*time.Hour), 600_000)}
 	if got := buildSovereignStockLevels(stale, nil, channels, cfg, now)[1]; got.UnsoldSat != 0 {
 		t.Fatalf("lots older than the gate window must not count: %+v", got)
+	}
+}
+
+// Three channels to one peer at the same fee: the two small ones hold weeks of
+// the peer's demand, the large one is drained. Nothing was bought yet, so the
+// "first refills" exemption used to let two lots through.
+func TestStockGateCountsSiblingBalanceAsStock(t *testing.T) {
+	cfg := stockGateTestConfig()
+	now := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	channels := []sovereignStockChannel{
+		{ChannelID: 1, PeerPubkey: "peer", LocalBalanceSat: 3_400_000, OutgoingFeePpm: 1600, Active: true},
+		{ChannelID: 2, PeerPubkey: "peer", LocalBalanceSat: 4_400_000, OutgoingFeePpm: 1600, Active: true},
+		{ChannelID: 3, PeerPubkey: "peer", LocalBalanceSat: 3_900_000, OutgoingFeePpm: 1600, Active: true},
+		{ChannelID: 9, PeerPubkey: "single", LocalBalanceSat: 100_000, OutgoingFeePpm: 500, Active: true},
+	}
+	// The peer sold 2M in the window, through the siblings.
+	forwards := []rebalanceAttributionForward{
+		{ID: 1, TargetChannelID: 2, OccurredAt: now.Add(-60 * time.Hour), AmountSat: 1_200_000},
+		{ID: 2, TargetChannelID: 3, OccurredAt: now.Add(-30 * time.Hour), AmountSat: 800_000},
+	}
+	levels := buildSovereignStockLevels(nil, forwards, channels, cfg, now)
+	large := levels[1]
+	if large.SiblingLocalSat != 8_300_000 || large.OwnUnsoldSat != 0 || large.UnsoldLots != 0 {
+		t.Fatalf("large channel must see its siblings' balance and no paid stock: %+v", large)
+	}
+	const capacity = int64(50_000_000)
+	if allowed := sovereignStockGateAllowedSat(large, capacity, cfg); allowed != 2_000_000 {
+		t.Fatalf("the limit must stay the peer's demand, got %d", allowed)
+	}
+	if !sovereignStockGateBlocks(large, capacity, cfg) {
+		t.Fatal("siblings holding four times the allowed stock must hold the very first lot back")
+	}
+	// A peer with one channel keeps the first-refills exemption untouched.
+	single := levels[9]
+	if single.SiblingLocalSat != 0 || sovereignStockGateBlocks(single, 5_000_000, cfg) {
+		t.Fatalf("a single-channel peer must be unaffected: %+v", single)
+	}
+	// With the gate off nothing blocks.
+	off := cfg
+	off.StockGateEnabled = false
+	if sovereignStockGateBlocks(large, capacity, off) {
+		t.Fatal("gate off must not block")
+	}
+}
+
+func TestStockGateSiblingMustBeAbleToServeTheSale(t *testing.T) {
+	cfg := stockGateTestConfig()
+	now := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	const capacity = int64(50_000_000)
+	forwards := []rebalanceAttributionForward{{ID: 1, TargetChannelID: 2, OccurredAt: now.Add(-30 * time.Hour), AmountSat: 2_000_000}}
+	build := func(sibling sovereignStockChannel) sovereignStockLevel {
+		channels := []sovereignStockChannel{
+			{ChannelID: 1, PeerPubkey: "peer", LocalBalanceSat: 3_400_000, OutgoingFeePpm: 1600, Active: true},
+			sibling,
+		}
+		return buildSovereignStockLevels(nil, forwards, channels, cfg, now)[1]
+	}
+
+	// Priced above the target: whoever pays the target's fee cannot use it.
+	dearer := build(sovereignStockChannel{ChannelID: 2, PeerPubkey: "peer", LocalBalanceSat: 8_000_000, OutgoingFeePpm: 1601, Active: true})
+	if dearer.SiblingLocalSat != 0 || sovereignStockGateBlocks(dearer, capacity, cfg) {
+		t.Fatalf("a dearer sibling must not count: %+v", dearer)
+	}
+	// Inactive: it serves nothing.
+	inactive := build(sovereignStockChannel{ChannelID: 2, PeerPubkey: "peer", LocalBalanceSat: 8_000_000, OutgoingFeePpm: 1600})
+	if inactive.SiblingLocalSat != 0 || sovereignStockGateBlocks(inactive, capacity, cfg) {
+		t.Fatalf("an inactive sibling must not count: %+v", inactive)
+	}
+	// Cheaper and active: it counts.
+	cheaper := build(sovereignStockChannel{ChannelID: 2, PeerPubkey: "peer", LocalBalanceSat: 8_000_000, OutgoingFeePpm: 900, Active: true})
+	if cheaper.SiblingLocalSat != 8_000_000 || !sovereignStockGateBlocks(cheaper, capacity, cfg) {
+		t.Fatalf("a cheaper active sibling must count: %+v", cheaper)
+	}
+	// The dearer channel does not lend its balance to the cheaper one's view,
+	// but sees the cheaper one's balance itself.
+	channels := []sovereignStockChannel{
+		{ChannelID: 1, PeerPubkey: "peer", LocalBalanceSat: 3_000_000, OutgoingFeePpm: 1600, Active: true},
+		{ChannelID: 2, PeerPubkey: "peer", LocalBalanceSat: 8_000_000, OutgoingFeePpm: 900, Active: true},
+	}
+	levels := buildSovereignStockLevels(nil, forwards, channels, cfg, now)
+	if levels[1].SiblingLocalSat != 8_000_000 || levels[2].SiblingLocalSat != 0 {
+		t.Fatalf("sibling stock must follow the fee order: %+v %+v", levels[1], levels[2])
+	}
+}
+
+func TestStockGateReopensWhenSiblingsRunLow(t *testing.T) {
+	cfg := stockGateTestConfig()
+	now := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	const capacity = int64(50_000_000)
+	forwards := []rebalanceAttributionForward{{ID: 1, TargetChannelID: 2, OccurredAt: now.Add(-30 * time.Hour), AmountSat: 2_000_000}}
+	level := func(targetLocal, siblingLocal int64, lots []rebalanceAttributionLot) sovereignStockLevel {
+		channels := []sovereignStockChannel{
+			{ChannelID: 1, PeerPubkey: "peer", LocalBalanceSat: targetLocal, OutgoingFeePpm: 1600, Active: true},
+			{ChannelID: 2, PeerPubkey: "peer", LocalBalanceSat: siblingLocal, OutgoingFeePpm: 1600, Active: true},
+		}
+		return buildSovereignStockLevels(lots, forwards, channels, cfg, now)[1]
+	}
+
+	// The sibling sold down to 500k and the peer no longer holds the working
+	// stock: the drained channel gets its refills again.
+	low := level(100_000, 500_000, nil)
+	if sovereignStockGateBlocks(low, capacity, cfg) {
+		t.Fatalf("siblings below the allowed stock must not block: %+v", low)
+	}
+	// One lot bought into the target itself counts next to the sibling: 1.2M
+	// in the sibling plus 1M unsold here reaches the 2M allowed.
+	lot := []rebalanceAttributionLot{stockGateLot(1, 1, now.Add(-2*time.Hour), 1_000_000)}
+	both := level(4_000_000, 1_200_000, lot)
+	if both.OwnUnsoldSat != 1_000_000 || !sovereignStockGateBlocks(both, capacity, cfg) {
+		t.Fatalf("own unsold lot plus sibling balance must add up: %+v", both)
+	}
+	// A lot bought into the sibling is already inside the sibling's balance
+	// and is not counted twice for the target.
+	siblingLot := []rebalanceAttributionLot{stockGateLot(1, 2, now.Add(-2*time.Hour), 1_000_000)}
+	once := level(4_000_000, 1_200_000, siblingLot)
+	if once.OwnUnsoldSat != 0 || once.SiblingLocalSat != 1_200_000 || sovereignStockGateBlocks(once, capacity, cfg) {
+		t.Fatalf("a sibling's lot must count once: %+v", once)
 	}
 }

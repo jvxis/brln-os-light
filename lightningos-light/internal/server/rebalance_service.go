@@ -1084,6 +1084,7 @@ type RebalanceSovereignDecision struct {
 	StockUnsoldSat              int64   `json:"stock_unsold_sat,omitempty"`
 	StockAllowedSat             int64   `json:"stock_allowed_sat,omitempty"`
 	StockDemandSat              int64   `json:"stock_demand_sat,omitempty"`
+	StockSiblingLocalSat        int64   `json:"stock_sibling_local_sat,omitempty"`
 	Discovery                   bool    `json:"discovery,omitempty"`
 	DiscoveryStep               int     `json:"discovery_step,omitempty"`
 	DiscoveryFeeCapPpm          int64   `json:"discovery_fee_cap_ppm,omitempty"`
@@ -4745,6 +4746,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			decision.StockUnsoldSat = stockLevel.UnsoldSat
 			decision.StockAllowedSat = sovereignStockGateAllowedSat(stockLevel, target.Channel.CapacitySat, targetCfg)
 			decision.StockDemandSat = stockLevel.DemandSat
+			decision.StockSiblingLocalSat = stockLevel.SiblingLocalSat
 		}
 		if target.AutomationIntent != nil {
 			decision.IntentKind = target.AutomationIntent.Kind

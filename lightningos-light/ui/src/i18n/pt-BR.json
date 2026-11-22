@@ -5614,6 +5614,7 @@
       "inventoryProbe": "Exploração reduzida por estoque: {{value}}",
       "keepaliveRefill": "Refill keepalive (anti-churn): {{value}}",
       "stockGate": "Estoque pago ainda não vendido: {{unsold}} (compras pausam em {{allowed}})",
+      "stockGateSiblings": "Outros canais com este peer já têm {{value}} na mesma taxa ou menor (conta como estoque)",
       "discovery": "Sonda de descoberta, degrau {{step}}: {{value}} com teto de fee de {{ppm}} ppm",
       "targetClass": "Classe: {{value}}",
       "targetClasses": {

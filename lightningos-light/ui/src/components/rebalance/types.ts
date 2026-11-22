@@ -168,6 +168,7 @@ export type RebalanceSovereignDecision = {
   stock_unsold_sat?: number
   stock_allowed_sat?: number
   stock_demand_sat?: number
+  stock_sibling_local_sat?: number
   discovery?: boolean
   discovery_step?: number
   discovery_fee_cap_ppm?: number

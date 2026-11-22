@@ -1774,6 +1774,9 @@ export default function RebalanceCenter() {
             })}
           </span>
         )}
+        {(decision.stock_sibling_local_sat ?? 0) > 0 && (
+          <span>{t('rebalanceCenter.autopilot.stockGateSiblings', { value: formatSats(decision.stock_sibling_local_sat ?? 0) })}</span>
+        )}
         {decision.discovery && (
           <span>
             {t('rebalanceCenter.autopilot.discovery', {

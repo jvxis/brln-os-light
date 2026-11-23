@@ -1067,9 +1067,10 @@ PostgreSQL major version, Bitcoin source selection and Tor integration follow
 the existing LOS configuration. BTCPay's upstream Docker deployment changes do
 not regenerate the separate LOS-managed stack.
 
-### Updating Store-managed Bitcoin Core (0.5.50)
+### Updating Store-managed Bitcoin Core (0.5.50, 31.3 in 0.5.60)
 
-The Store offers **Bitcoin Core 31.2**. Updating LOS updates the available
+The Store offers **Bitcoin Core 31.3** (since 0.5.60; it fixes CVE-2026-117348,
+a temporary stall from duplicate orphan announcements). Updating LOS updates the available
 version; it does not automatically replace a running Bitcoin container.
 
 1. Open **Apps → Bitcoin Core** and check the installed/available versions.

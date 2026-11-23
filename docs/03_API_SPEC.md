@@ -1095,7 +1095,7 @@ POST /api/apps/{id}/install
 - Mempool uses a closed lightweight default of `MEMPOOL_INDEXING_BLOCKS_AMOUNT=8` to avoid saturating shared rotational storage during its initial history load. Arbitrary environment overrides remain rejected.
 
 POST /api/apps/{id}/start
-- In 0.5.50, Store-managed Bitcoin Core uses the pinned, authenticated 31.2 image. A normal local 31.1 runtime must first be stopped; it remains observable and does not require legacy-migration confirmation. Start preserves enrolled storage/configuration/credentials and reports success only after mainnet RPC, expected version and loopback RPC/ZMQ checks pass. Verification errors are not recorded as an applied catalog version. A failed start can be retried; this is not an automatic binary-downgrade contract.
+- In 0.5.60, Store-managed Bitcoin Core uses the pinned, authenticated 31.3 image (0.5.50 introduced this flow with 31.2). A normal local 31.1 or 31.2 runtime must first be stopped; it remains observable and does not require legacy-migration confirmation. Start preserves enrolled storage/configuration/credentials and reports success only after mainnet RPC, expected version and loopback RPC/ZMQ checks pass. Verification errors are not recorded as an applied catalog version. A failed start can be retried; this is not an automatic binary-downgrade contract.
 - Starting a detected legacy `bitcoincore` runtime requires `{"confirm_legacy_migration":true}` and follows the same transactional migration and rollback contract as installation.
 - Starting `electrs` against App Store Bitcoin accepts the same
   `confirm_bitcoin_restart` body and restart policy as installation.

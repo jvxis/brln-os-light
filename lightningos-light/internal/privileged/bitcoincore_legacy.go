@@ -398,8 +398,8 @@ func (manager *ComposeAppManager) probeMigratedBitcoinCore(ctx context.Context, 
 	}
 	raw, err := manager.runBitcoinCoreCLI(ctx, containerID, "getnetworkinfo")
 	var network bitcoinCoreNetworkStatus
-	if err != nil || decodeBitcoinCoreCLIStatus(raw, &network) != nil || network.Version != 310200 {
-		return errors.New("Bitcoin Core RPC did not confirm the expected 31.2 version; update was not recorded as successful")
+	if err != nil || decodeBitcoinCoreCLIStatus(raw, &network) != nil || network.Version != appmanifest.BitcoinCoreRPCVersion {
+		return errors.New("Bitcoin Core RPC did not confirm the expected " + appmanifest.BitcoinCoreRelease + " version; update was not recorded as successful")
 	}
 	for _, port := range []int{8332, 28332, 28333} {
 		connection, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
@@ -501,8 +501,14 @@ func isLegacyBitcoinCoreImage(image string) bool {
 	}
 }
 
-// Observing this old runtime does not authorize its image for a new start.
-// Starts always require the current catalog release attestation.
+// Observing these older broker-built runtimes does not authorize their images
+// for a new start. Starts always require the current catalog release
+// attestation; a node still on 31.1 can go straight to the current release.
 func isPreviousManagedBitcoinCoreImage(image string) bool {
-	return image == "lightningos/bitcoin-core:31.1"
+	switch image {
+	case "lightningos/bitcoin-core:31.1", "lightningos/bitcoin-core:31.2":
+		return true
+	default:
+		return false
+	}
 }

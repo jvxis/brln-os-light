@@ -20,9 +20,9 @@ func TestBitcoinCoreReleaseArtifactsAreClosedByArchitecture(t *testing.T) {
 		archive string
 		hash    string
 	}{
-		{arch: "amd64", archive: "bitcoin-31.2-x86_64-linux-gnu.tar.gz", hash: "2f38996afaa74dfa469a23bf4727887133dfc09784df1f21ddf1c74d0dc82300"},
-		{arch: "arm64", archive: "bitcoin-31.2-aarch64-linux-gnu.tar.gz", hash: "1d7d8916719ed8de0f49937f8702ec5895b0af24d936e9c4d72b58f15afe3731"},
-		{arch: "arm", archive: "bitcoin-31.2-arm-linux-gnueabihf.tar.gz", hash: "dd579760f72ff24212f1a13f18ee419670fe8538465034370b5a07e624273f5e"},
+		{arch: "amd64", archive: "bitcoin-31.3-x86_64-linux-gnu.tar.gz", hash: "864a06a5106e437a1b87b3c048cd7f14ee6140555262aae9d0e9e3b7bea87568"},
+		{arch: "arm64", archive: "bitcoin-31.3-aarch64-linux-gnu.tar.gz", hash: "c7ea41ae5d4bd103306ca0d326f017b11bc35686d697c1d1d237a7041dba2021"},
+		{arch: "arm", archive: "bitcoin-31.3-arm-linux-gnueabihf.tar.gz", hash: "a531f6c4dc7762120c95630afdd04c6b52588dd543b98805d4fd067a2540ff60"},
 	} {
 		artifact, err := BitcoinCoreArtifactForGOARCH(test.arch)
 		if err != nil || artifact.GOARCH != test.arch || artifact.Archive != test.archive || artifact.ArchiveSHA256 != test.hash {
@@ -62,7 +62,7 @@ func TestNormalizeBitcoinCoreDataDirUsesClosedPathPolicy(t *testing.T) {
 }
 
 func TestBitcoinCoreUsesLocalImageAndIndependentTrustedBuilderList(t *testing.T) {
-	if BitcoinCoreImage != "lightningos/bitcoin-core:31.2" || strings.Contains(BitcoinCoreImage, "bitcoin/bitcoin") {
+	if BitcoinCoreImage != "lightningos/bitcoin-core:31.3" || strings.Contains(BitcoinCoreImage, "bitcoin/bitcoin") {
 		t.Fatalf("unexpected Bitcoin Core image: %q", BitcoinCoreImage)
 	}
 	fingerprintPattern := regexp.MustCompile(`^[A-F0-9]{40}$`)
@@ -91,7 +91,7 @@ func TestBitcoinCoreImageRecipeDropsPrivilegesWithoutNetworkInstall(t *testing.T
 	dockerfile := BitcoinCoreDockerfile(artifact.BaseImage)
 	for _, expected := range []string{
 		"FROM " + artifact.BaseImage,
-		"COPY bitcoin-31.2/bin/ /usr/local/bin/",
+		"COPY bitcoin-31.3/bin/ /usr/local/bin/",
 		"useradd --uid 101 --gid 101",
 		`ENTRYPOINT ["/entrypoint.sh"]`,
 	} {

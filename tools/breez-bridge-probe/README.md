@@ -23,4 +23,18 @@ Preencha `BASE_RECIPIENT` com o endereço público de uma carteira de teste na B
 
 ## Empacotamento
 
-O binário de desenvolvimento pode depender de caminhos do cache de Go. Na compilação cruzada com Zig no Windows, a inspeção ELF encontrou tanto `RUNPATH` como uma entrada `NEEDED` com o caminho absoluto da biblioteca no host de build. Copiar apenas o executável e a biblioteca não corrige esse binário. Antes de empacotar um processo separado, validar um binário relocável construído em Linux, conferir dependências ELF e executar o comando em ambiente limpo. O Manager não importa esse módulo. [Plano e critérios de liberação](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)
+Na compilação cruzada com Zig no Windows, a inspeção ELF encontrou `RUNPATH` e `NEEDED` com caminhos absolutos do host de build. O build nativo em Ubuntu 24.04.3 amd64 com Go 1.26.10 gerou `NEEDED` com o nome da biblioteca e `RUNPATH` apontando para o cache de módulos.
+
+No laboratório, o empacotamento abaixo foi validado com `patchelf` 0.18.0. O comando carregou a biblioteca do próprio diretório, sem `LD_LIBRARY_PATH`. Falhou no carregador quando a biblioteca foi retirada do diretório e voltou a funcionar depois de restaurá-la.
+
+```bash
+bundle=$(mktemp -d)
+module_dir=$(go list -m -f '{{.Dir}}' github.com/breez/breez-sdk-spark-go)
+cp /tmp/breez-bridge-probe "$bundle/"
+cp "$module_dir/breez_sdk_spark/lib/linux-amd64/libbreez_sdk_spark_bindings.so" "$bundle/"
+patchelf --set-rpath '$ORIGIN' "$bundle/breez-bridge-probe"
+objdump -p "$bundle/breez-bridge-probe" | grep -E 'NEEDED|RUNPATH'
+env -u LD_LIBRARY_PATH "$bundle/breez-bridge-probe" --check-bindings
+```
+
+Para distribuição como serviço, a instalação deverá verificar a procedência do executável e da biblioteca e impedir escrita no diretório do bundle pelo usuário do serviço. O Manager não importa esse módulo. [Plano e critérios de liberação](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)

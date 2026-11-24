@@ -17,7 +17,7 @@ CGO_ENABLED=1 go build -o /tmp/breez-bridge-probe .
 timeout 30s /tmp/breez-bridge-probe "$BASE_RECIPIENT" "$LIGHTNING_RECIPIENT"
 ```
 
-Preencha `BASE_RECIPIENT` com o endereço público de uma carteira de teste na Base. Para a consulta de retorno, use um destinatário Lightning de teste. Uma Lightning Address é o formato documentado pelo Breez. Validar se uma invoice BOLT11 do LND pode ser usada como destino exige um teste específico. [Destinatários documentados](https://sdk-doc-spark.breez.technology/guide/bridging.html#recipients)
+Preencha `BASE_RECIPIENT` com o endereço público de uma carteira de teste na Base. Para a consulta de retorno, use um destinatário Lightning de teste. Use uma Lightning Address como destinatário de retorno. O SDK v0.28.6 rejeita uma invoice BOLT11 como destinatário do bridge. [Parser do SDK v0.28.6](https://github.com/breez/spark-sdk/blob/5bb1ca5229cd4d6d4e8cf66dfe9d01224db6cd2d/crates/breez-sdk/core/src/sdk/bridging/mod.rs#L407)
 
 `--check-bindings` verifica apenas que o executável carrega a biblioteca e inicializa os bindings. A consulta também exige uma chave válida e rede. A presença de uma rota indica que foi anunciada pelo provedor. Cotação, entrega e recuperação exigem validação própria.
 

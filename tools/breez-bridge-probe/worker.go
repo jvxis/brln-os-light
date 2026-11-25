@@ -23,6 +23,7 @@ type bridgeCommand struct {
 	StatusToken string `json:"status_token"`
 	Cluster     string `json:"cluster"`
 	Transaction string `json:"transaction"`
+	Reference   string `json:"reference"`
 }
 
 type bridgeResult struct {
@@ -46,6 +47,7 @@ type bridgeResult struct {
 	Blockhash          string     `json:"blockhash,omitempty"`
 	NetworkFeeMicros   int64      `json:"network_fee_micros,omitempty"`
 	NetworkFeeLamports int64      `json:"network_fee_lamports,omitempty"`
+	Slot               uint64     `json:"slot,omitempty"`
 }
 
 type bridgeFee struct {
@@ -63,6 +65,13 @@ func bridgeWorker(input io.Reader, output io.Writer) error {
 	}
 	if req.Action == "health" && req == (bridgeCommand{Action: "health"}) {
 		return json.NewEncoder(output).Encode(bridgeResult{Status: "ready"})
+	}
+	if req.Action == "solana-proof" && req.APIKey == "" {
+		result, err := solanaProofRequest(req)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(result)
 	}
 	if len(req.APIKey) < 1 || len(req.APIKey) > 4096 || strings.ContainsAny(req.APIKey, "\r\n\x00") {
 		return errors.New("invalid bridge credential")

@@ -1,7 +1,7 @@
 import {
   AccountRole, address, appendTransactionMessageInstructions, blockhash,
   compileTransaction, createTransactionMessage, getAddressEncoder,
-  getProgramDerivedAddress, setTransactionMessageFeePayer,
+  getProgramDerivedAddress, getTransactionDecoder, getTransactionEncoder, setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash
 } from '@solana/kit'
 
@@ -100,4 +100,42 @@ export async function compileSponsoredDeposit(reviewed) {
   message = setTransactionMessageFeePayer(reviewed.sponsor, message)
   message = setTransactionMessageLifetimeUsingBlockhash(reviewed.lifetime, message)
   return compileTransaction(appendTransactionMessageInstructions(instructions, message))
+}
+
+export function encodeSolanaTransaction(transaction) {
+  return btoa(String.fromCharCode(...getTransactionEncoder().encode(transaction)))
+}
+
+export async function quoteTransactionWithoutSponsorFee(order) {
+  const reviewed = reviewSponsoredDeposit(order)
+  const compiled = await compileSponsoredDeposit({ ...reviewed, fee: 0n, total: reviewed.usdc })
+  return encodeSolanaTransaction(compiled)
+}
+
+// Run at the receiving end of the file handoff. Derive the message from the
+// stored quote, so a user-supplied transaction cannot choose a different
+// fee payer, mint, transfer, authority, destination or fee.
+export async function verifyPartiallySignedDeposit(order, signed) {
+  const reviewed = reviewSponsoredDeposit(order)
+  const submitted = signed?.transaction
+  if (signed?.version !== 1 || signed.id !== reviewed.id || signed.cluster !== reviewed.cluster ||
+      typeof submitted !== 'string' || submitted.length > 1644) {
+    throw new Error('Signed transaction does not match this Solana order')
+  }
+  const bytes = Uint8Array.from(atob(submitted), char => char.charCodeAt(0))
+  if (bytes.length > 1232) throw new Error('Invalid Solana transaction size')
+  const transaction = getTransactionDecoder().decode(bytes)
+  const expected = await compileSponsoredDeposit(reviewed)
+  const exactMessage = expected.messageBytes.length === transaction.messageBytes.length &&
+    expected.messageBytes.every((byte, index) => byte === transaction.messageBytes[index])
+  const signature = transaction.signatures[reviewed.wallet]
+  if (!exactMessage || encodeSolanaTransaction(transaction) !== submitted || !signature ||
+      transaction.signatures[reviewed.sponsor] !== null) {
+    throw new Error('Signed transaction does not match this Solana order')
+  }
+  const publicKey = await crypto.subtle.importKey('raw', encoder.encode(reviewed.wallet), 'Ed25519', false, ['verify'])
+  if (!await crypto.subtle.verify('Ed25519', publicKey, signature, transaction.messageBytes)) {
+    throw new Error('Invalid signature from the wallet')
+  }
+  return submitted
 }

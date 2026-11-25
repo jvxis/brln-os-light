@@ -16,8 +16,8 @@ Em 25 de novembro de 2026, o Breez Spark SDK v0.28.6 retornou as duas rotas Ligh
 
 | Sentido | Depósito cotado | Recebimento esperado | Taxa do provedor já incluída |
 | --- | ---: | ---: | ---: |
-| Lightning → Solana | 1.937 sats, antes da taxa de roteamento | 1,020000 USDC | 0,118315 USDC |
-| Solana → Lightning | 1,065741 USDC, antes do custo de taxa de rede | 1.721 sats | 0,021045 USDC |
+| Lightning → Solana | 1.937 sats, antes da taxa de roteamento | 1,020000 USDC | 0,117534 USDC |
+| Solana → Lightning | 1,065005 USDC, antes do custo de taxa de rede | 1.721 sats | 0,021045 USDC |
 
 Os números são uma amostra para valor solicitado de 1 USDC, com taxa adicionada pelo provedor. As duas cotações usam unidades inteiras nas menores unidades de cada ativo. A validade é curta e o valor de recebimento pode mudar dentro da tolerância indicada. A amostra precisa ser seguida de liquidação financiada e prova de reembolso.
 
@@ -39,4 +39,6 @@ O piloto anterior entregou 1,007394 USDC na Base ao endereço criado pelo usuár
 
 ## Validação para integração
 
-A descoberta das rotas e o piloto local de carteira são incrementos da PR. A versão de catálogo depende do assinador restrito à transação cotada, da integração do patrocinador de rede com custo total visível, da ida e volta em mainnet com autorização de fundos própria, de recuperação demonstrada e dos testes reais de App Store em Linux amd64. Testes com transações sintéticas usam o laboratório descartável.
+O navegador real validou criação, recuperação em uma sessão nova e assinatura do depósito após a exibição do custo total. Em Ubuntu amd64 descartável, o LiteSVM executou a transação SPL com duas assinaturas. O patrocinador pagou a rede e a criação da conta do destinatário. Foram debitados 1,075005 USDC de teste, com 1,065005 USDC no destino e 0,010000 USDC no endereço da taxa. A carteira usuária continuou com zero SOL.
+
+O teste sintético ainda precisa ser repetido com um patrocinador real em devnet. A versão de catálogo também depende da integração no Manager e das provas de ida, volta e reembolso em mainnet com autorização de fundos própria, além do lifecycle real da loja em Linux amd64.

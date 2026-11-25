@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { decompileTransactionMessage, getAddressEncoder, getCompiledTransactionMessageDecoder, getTransactionDecoder } from '@solana/kit'
 import { createSolanaBackup, maxBackupBytes, recoverSolanaAddress, signSponsoredDeposit } from './wallet.mjs'
-import { associatedTokenProgram, tokenProgram, usdcAccount, usdcMint } from './sponsored.mjs'
+import { associatedTokenProgram, quoteTransactionWithoutSponsorFee, tokenProgram, usdcAccount, usdcMint, verifyPartiallySignedDeposit } from './sponsored.mjs'
 
 test('creates distinct Solana keys, then recovers using only the encrypted wallet and password', async () => {
   const password = 'a synthetic wallet password'
@@ -32,6 +32,7 @@ test('partially signs an exact USDC transfer with the sponsor as Solana fee paye
   }
   const signed = await signSponsoredDeposit(backup,password,order)
   assert.equal(signed.id,order.id)
+  assert.equal(await verifyPartiallySignedDeposit(order,signed),signed.transaction)
   const tx = getTransactionDecoder().decode(Buffer.from(signed.transaction,'base64'))
   assert.deepEqual(Object.keys(tx.signatures), [sponsor,wallet])
   assert.equal(tx.signatures[sponsor],null)
@@ -54,4 +55,12 @@ test('partially signs an exact USDC transfer with the sponsor as Solana fee paye
   await assert.rejects(signSponsoredDeposit(backup,password,{...order,totalMicros:'1065005'}),/differ/)
   await assert.rejects(signSponsoredDeposit(backup,password,{...order,wallet:deposit,deposit:wallet}),/backup does not match/)
   await assert.rejects(signSponsoredDeposit(backup,password,{...order,expiresAt:1}),/expired/)
+  await assert.rejects(verifyPartiallySignedDeposit({...order,depositMicros:'1055005',totalMicros:'1065005'},signed),/does not match/)
+  await assert.rejects(verifyPartiallySignedDeposit({...order,cluster:'devnet'},signed),/does not match/)
+  const image = Buffer.from(signed.transaction,'base64')
+  image[65] ^= 1
+  await assert.rejects(verifyPartiallySignedDeposit(order,{...signed,transaction:image.toString('base64')}),/signature/i)
+  const unsigned = getTransactionDecoder().decode(Buffer.from(await quoteTransactionWithoutSponsorFee(order),'base64'))
+  assert(Object.values(unsigned.signatures).every(signature=>signature===null))
+  assert.equal(getCompiledTransactionMessageDecoder().decode(unsigned.messageBytes).instructions.length,2)
 })

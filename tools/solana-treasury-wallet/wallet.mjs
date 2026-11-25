@@ -112,8 +112,7 @@ async function withSolanaWallet(backup, password, use) {
     secret.fill(0)
   }
 }
-import { getTransactionEncoder } from '@solana/kit'
-import { compileSponsoredDeposit, reviewSponsoredDeposit } from './sponsored.mjs'
+import { compileSponsoredDeposit, encodeSolanaTransaction, reviewSponsoredDeposit } from './sponsored.mjs'
 
 
 export function recoverSolanaAddress(backup, password) {
@@ -128,9 +127,9 @@ export async function signSponsoredDeposit(backup, password, order) {
     }
     const transaction = await compileSponsoredDeposit(reviewed)
     const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', privateKey, transaction.messageBytes))
-    const bytes = getTransactionEncoder().encode({
+    const encoded = encodeSolanaTransaction({
       ...transaction, signatures: { ...transaction.signatures, [address]: signature }
     })
-    return { version: 1, id: reviewed.id, cluster: reviewed.cluster, transaction: btoa(String.fromCharCode(...bytes)) }
+    return { version: 1, id: reviewed.id, cluster: reviewed.cluster, transaction: encoded }
   })
 }

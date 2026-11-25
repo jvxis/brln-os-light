@@ -27,17 +27,21 @@ func matchingSolanaRoutes(routes []sdk.BridgeRoutePair, toSolana bool) []sdk.Bri
 }
 
 func validSolanaAddress(address string) bool {
-	if len(address) < 32 || len(address) > 44 {
+	return validSolanaBase58(address, 32, 32, 44)
+}
+
+func validSolanaBase58(valueText string, byteCount, minimum, maximum int) bool {
+	if len(valueText) < minimum || len(valueText) > maximum {
 		return false
 	}
 	value, radix := new(big.Int), big.NewInt(58)
-	for i := 0; i < len(address); i++ {
-		digit := strings.IndexByte(solanaBase58, address[i])
+	for i := 0; i < len(valueText); i++ {
+		digit := strings.IndexByte(solanaBase58, valueText[i])
 		if digit < 0 {
 			return false
 		}
 		value.Mul(value, radix).Add(value, big.NewInt(int64(digit)))
 	}
-	zeros := len(address) - len(strings.TrimLeft(address, "1"))
-	return value.Sign() > 0 && zeros+len(value.Bytes()) == 32
+	zeros := len(valueText) - len(strings.TrimLeft(valueText, "1"))
+	return value.Sign() > 0 && zeros+len(value.Bytes()) == byteCount
 }

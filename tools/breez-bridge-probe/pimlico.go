@@ -66,7 +66,9 @@ func (s sponsorRPC) call(method string, params any, result any) error {
 		return errors.New("invalid sponsor RPC request")
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+s.key)
+	if s.key != "" {
+		request.Header.Set("Authorization", "Bearer "+s.key)
+	}
 	resp, err := s.http.Do(request)
 	if err != nil {
 		return errors.New("Solana fee sponsor unavailable")

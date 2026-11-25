@@ -544,6 +544,12 @@ func (a *AuthService) reauth(w http.ResponseWriter, r *http.Request, sessionID s
 }
 
 func authScopeValid(scope string) bool {
+	if strings.HasPrefix(scope, treasuryPaymentScopePrefix) {
+		return financialIntentIDValid(strings.TrimPrefix(scope, treasuryPaymentScopePrefix))
+	}
+	if scope == treasuryConfigScope {
+		return true
+	}
 	if strings.HasPrefix(scope, financialIntentScopePrefix) {
 		return financialIntentIDValid(strings.TrimPrefix(scope, financialIntentScopePrefix))
 	}

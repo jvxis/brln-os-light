@@ -1,0 +1,15 @@
+[Unit]
+Description=LightningOS Breez bridge socket
+
+[Socket]
+ListenStream=/run/lightningos-treasury/bridge.sock
+DirectoryMode=0755
+SocketMode=0660
+SocketUser=root
+SocketGroup=lightningos
+Accept=yes
+MaxConnections=4
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

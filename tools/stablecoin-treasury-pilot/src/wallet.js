@@ -1,7 +1,8 @@
 import { getAddress } from 'ethers/address'
+import { Interface } from 'ethers/abi'
 import { computeAddress } from 'ethers/transaction'
 import { hexlify } from 'ethers/utils'
-import { decryptKeystoreJson, encryptKeystoreJson } from 'ethers/wallet'
+import { Wallet, decryptKeystoreJson, encryptKeystoreJson } from 'ethers/wallet'
 
 export const maximumBackupBytes = 8 * 1024
 const scrypt = { N: 2 ** 17, r: 8, p: 1 }
@@ -21,7 +22,7 @@ export async function createBaseBackup(password) {
   }
 }
 
-export async function restoreBaseAddress(backup, password) {
+async function openBaseBackup(backup, password) {
   if (new TextEncoder().encode(backup).byteLength > maximumBackupBytes || password.length > 128) {
     throw new Error('Invalid backup or password')
   }
@@ -48,5 +49,62 @@ export async function restoreBaseAddress(backup, password) {
   if (recovered !== expected) {
     throw new Error('Backup does not match its address')
   }
-  return recovered
+  return account
+}
+
+export async function restoreBaseAddress(backup, password) {
+  const account = await openBaseBackup(backup, password)
+  return getAddress(account.address)
+}
+
+export const baseChainId = 8453
+export const baseUSDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+const usdcABI = new Interface(['function transfer(address recipient, uint256 amount)'])
+
+function positiveInteger(value) {
+  if (typeof value !== 'string' || !/^[1-9][0-9]{0,29}$/.test(value)) {
+    throw new Error('Invalid transaction amount or fee')
+  }
+  return BigInt(value)
+}
+
+// Only the one Base USDC transfer the operator reviewed can be signed here.
+// The caller supplies fee and nonce estimates but never a contract or calldata.
+export function validateBaseUSDCTransfer(details, now = Date.now()) {
+  const { from, recipient, micros, chainId, expiresAt, nonce, gasLimit,
+    maxFeePerGas, maxPriorityFeePerGas, maximumGasWei } = details
+  if (chainId !== baseChainId || !Number.isSafeInteger(expiresAt) || expiresAt <= now ||
+      !Number.isSafeInteger(nonce) || nonce < 0) {
+    throw new Error('Invalid or expired Base transfer')
+  }
+  const destination = getAddress(recipient)
+  const source = getAddress(from)
+  if (destination === source || /^0x0{40}$/.test(destination)) {
+    throw new Error('Invalid USDC deposit address')
+  }
+  const amount = positiveInteger(micros)
+  const gas = positiveInteger(gasLimit)
+  const fee = positiveInteger(maxFeePerGas)
+  const priorityFee = positiveInteger(maxPriorityFeePerGas)
+  if (gas < 21000n || gas > 200000n || priorityFee > fee || gas * fee > positiveInteger(maximumGasWei)) {
+    throw new Error('Base gas exceeds the approved limit')
+  }
+  return { destination, source, amount, gas, fee, priorityFee }
+}
+
+export async function signBaseUSDCTransfer(backup, password, details) {
+  const { destination, source, amount, gas, fee, priorityFee } = validateBaseUSDCTransfer(details)
+  const account = await openBaseBackup(backup, password)
+  const wallet = new Wallet(account.privateKey)
+  if (wallet.address !== source) {
+    throw new Error('Backup does not match the quoted wallet')
+  }
+  if (Date.now() >= details.expiresAt) {
+    throw new Error('Quote expired while unlocking the wallet')
+  }
+  return wallet.signTransaction({
+    type: 2, chainId: baseChainId, nonce: details.nonce, to: baseUSDC, value: 0,
+    gasLimit: gas, maxFeePerGas: fee, maxPriorityFeePerGas: priorityFee,
+    data: usdcABI.encodeFunctionData('transfer', [destination, amount]),
+  })
 }

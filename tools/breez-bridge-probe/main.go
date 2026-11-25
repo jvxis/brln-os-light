@@ -43,6 +43,9 @@ func validBaseAddress(address string) bool {
 }
 
 func run(args []string) error {
+	if len(args) == 1 && args[0] == "--bridge-worker" {
+		return bridgeWorker(os.Stdin, os.Stdout)
+	}
 	if len(args) == 1 && args[0] == "--check-bindings" {
 		// Importing the binding verifies its native ABI during package initialization.
 		fmt.Println("Breez native bindings loaded")

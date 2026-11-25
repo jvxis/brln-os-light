@@ -108,6 +108,7 @@ const internalRoutes: Record<string, string> = {
   tapd: 'taproot-assets',
   loop: 'lightning-loop',
   'loopout-brln': 'loop-out-brln',
+  'stablecoin-treasury': 'stablecoin-treasury',
   'magma-sales': 'magma-sales'
 }
 

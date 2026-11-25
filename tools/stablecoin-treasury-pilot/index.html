@@ -12,12 +12,13 @@
       <header>
         <div class="brand"><span aria-hidden="true"></span> LightningOS</div>
         <h1>Tesouraria</h1>
-        <p>Crie ou recupere uma carteira de autocustódia para receber USDC na rede Base.</p>
+        <p>Crie, recupere ou use sua carteira de autocustódia de USDC na Base.</p>
       </header>
 
       <div class="modes" id="modes" hidden>
         <button type="button" id="show-create" class="mode" aria-pressed="true">Criar carteira</button>
         <button type="button" id="show-restore" class="mode" aria-pressed="false">Recuperar carteira</button>
+        <button type="button" id="show-sign" class="mode" aria-pressed="false">Assinar envio</button>
       </div>
 
       <form id="create" hidden>
@@ -26,7 +27,7 @@
         <input id="new-password" type="password" autocomplete="new-password" minlength="14" maxlength="128" aria-describedby="password-help" required>
         <label for="confirm-password">Confirme a senha</label>
         <input id="confirm-password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required>
-        <button class="primary" type="submit">Gerar carteira</button>
+        <button class="primary" type="button">Gerar carteira</button>
       </form>
 
       <section id="backup" hidden aria-labelledby="backup-title">
@@ -40,7 +41,7 @@
         <input id="backup-file" type="file" accept=".json,application/json" required>
         <label for="restore-password">Senha do backup</label>
         <input id="restore-password" type="password" autocomplete="off" maxlength="128" required>
-        <button class="primary" type="submit" id="verify">Recuperar endereço</button>
+        <button class="primary" type="button" id="verify">Recuperar endereço</button>
       </form>
 
       <div id="status" role="status" aria-live="polite"></div>
@@ -51,7 +52,25 @@
         <label for="address">Seu endereço público</label>
         <input type="text" id="address" readonly spellcheck="false">
         <button class="primary" id="copy" type="button">Copiar endereço</button>
-        <p class="hint">Para recuperar esta carteira em outro dispositivo, use o backup e a senha. Este piloto gera o endereço de recebimento. O envio de USDC pela tela da Tesouraria é uma etapa posterior.</p>
+        <p class="hint">Para recuperar esta carteira em outro dispositivo, use o backup e a senha.</p>
+      </section>
+      <section id="sign" hidden aria-labelledby="sign-title">
+        <h2 id="sign-title">Assinar envio de USDC na Base</h2>
+        <p>Importe os dados do depósito. Confira o valor e o endereço antes de assinar.</p>
+        <label for="transfer-file">Arquivo da ordem</label>
+        <input id="transfer-file" type="file" accept=".json,application/json">
+        <form id="sign-confirm" hidden>
+          <p id="sign-details"></p>
+          <label for="sign-backup">Arquivo de backup da Tesouraria</label>
+          <input id="sign-backup" type="file" accept=".json,application/json" required>
+          <label for="sign-password">Senha do backup</label>
+          <input id="sign-password" type="password" autocomplete="off" maxlength="128" required>
+          <button class="primary" type="button">Assinar depósito</button>
+        </form>
+        <div id="signed-transfer" hidden>
+          <p>Transação assinada. Importe o arquivo no LightningOS para transmitir à Base.</p>
+          <button class="primary" type="button" id="download-transfer">Baixar transação assinada</button>
+        </div>
       </section>
       <noscript>Ative o JavaScript local para criar ou recuperar a carteira.</noscript>
     </main>

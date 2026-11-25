@@ -1725,6 +1725,69 @@ export type AppStoreInfo = {
 }
 
 export const getApps = (): Promise<AppStoreInfo[]> => request('/api/apps')
+
+export type TreasuryDirection = 'to_base' | 'to_lightning'
+export type TreasuryStatus = {
+  installed: boolean
+  enabled: boolean
+  configured: boolean
+  provider_available: boolean
+  lightning_address: string
+}
+export type TreasuryOrder = {
+  id: string
+  direction: TreasuryDirection
+  wallet: string
+  lightning_address?: string
+  deposit_address?: string
+  amount_in: number
+  amount_out: number
+  provider_fee?: { amount: number; asset: 'sat' | 'USDC'; decimals: number }
+  max_routing_sat?: number
+  actual_routing_msat?: number
+  actual_base_fee_wei?: string
+  delivered_amount?: number
+  state: string
+  expires_at: string
+  created_at: string
+  delivery_ref?: string
+}
+export type TreasurySigningRequest = {
+  version: number
+  id: string
+  from: string
+  recipient: string
+  micros: string
+  chainId: number
+  expiresAt: number
+  nonce: number
+  gasLimit: string
+  maxFeePerGas: string
+  maxPriorityFeePerGas: string
+  maximumGasWei: string
+  l1EstimateWei: string
+  operatorEstimateWei: string
+  estimatedTotalWei: string
+  availableEthWei: string
+}
+const treasuryAPI = '/api/apps/stablecoin-treasury'
+export const getTreasuryStatus = (): Promise<TreasuryStatus> => request(`${treasuryAPI}/status`)
+export const getTreasuryOrders = (): Promise<TreasuryOrder[]> => request(`${treasuryAPI}/orders`)
+const postTreasury = (path: string, body: object = {}) => request(`${treasuryAPI}${path}`, {
+  method: 'POST', body: JSON.stringify(body)
+})
+export const configureTreasury = (apiKey: string, address: string, password: string): Promise<{ configured: boolean }> =>
+  postTreasury('/config', { api_key: apiKey, lightning_address: address, confirm_password: password })
+export const quoteTreasury = (direction: TreasuryDirection, wallet: string, micros: number, fee: number): Promise<TreasuryOrder> =>
+  postTreasury('/orders', { direction, wallet, usdc_micros: micros, max_routing_sat: fee })
+export const payTreasury = (id: string, password: string): Promise<TreasuryOrder> =>
+  postTreasury(`/orders/${encodeURIComponent(id)}/pay`, { confirm_password: password })
+export const reconcileTreasury = (id: string): Promise<TreasuryOrder> =>
+  postTreasury(`/orders/${encodeURIComponent(id)}/reconcile`)
+export const prepareTreasuryBase = (id: string): Promise<TreasurySigningRequest> =>
+  postTreasury(`/orders/${encodeURIComponent(id)}/base-prepare`)
+export const broadcastTreasuryBase = (id: string, raw: string, password: string): Promise<{tx_hash: string}> =>
+  postTreasury(`/orders/${encodeURIComponent(id)}/base-broadcast`, { raw, confirm_password: password })
 export const getAppOperations = (): Promise<Record<string, AppOperationInfo>> => request('/api/apps/operations')
 export const getBarkWalletRevealAuthorization = () =>
   request('/api/apps/bark-wallet/reveal-authorization')

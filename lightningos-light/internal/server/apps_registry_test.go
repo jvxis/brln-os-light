@@ -115,6 +115,7 @@ func TestConfiguredAppsHaveExplicitRuntimeSecurityClass(t *testing.T) {
 		"fswap":        {class: "manager", reason: "manager-integrated feature without a separately privileged runtime"},
 		"loopout-brln": {class: "manager", reason: "native LightningOS workflow executed through typed manager services"},
 		"magma-sales":  {class: "manager", reason: "native LightningOS workflow executed through typed manager services"},
+		treasuryAppID:  {class: "manager", reason: "authenticated Manager workflow using an isolated provider worker without LND credentials"},
 	}
 
 	apps, err := (&Server{}).appRegistry()

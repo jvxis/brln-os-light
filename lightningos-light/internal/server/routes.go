@@ -102,6 +102,16 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/tor/upgrade/start", s.handleTorUpgradeStart)
 	r.Post("/api/tor/lnd-rest/ensure", s.handleTorLNDRESTEnsure)
 	r.Get("/api/apps", s.handleAppsList)
+	r.Route("/api/apps/stablecoin-treasury", func(r chi.Router) {
+		r.Get("/status", s.handleTreasuryStatus)
+		r.Post("/config", s.handleTreasuryConfigure)
+		r.Get("/orders", s.handleTreasuryOrders)
+		r.Post("/orders", s.handleTreasuryQuote)
+		r.Post("/orders/{id}/pay", s.handleTreasuryPay)
+		r.Post("/orders/{id}/base-prepare", s.handleTreasuryBasePreparation)
+		r.Post("/orders/{id}/base-broadcast", s.handleTreasuryBaseBroadcast)
+		r.Post("/orders/{id}/reconcile", s.handleTreasuryReconcile)
+	})
 	r.Get("/api/apps/operations", s.handleAppOperations)
 	r.Get("/api/apps/storage-targets", s.handleAppStorageTargets)
 	r.Get("/api/apps/peerswap/elements-source", s.handlePeerswapElementsSourceGet)
@@ -398,9 +408,22 @@ func (s *Server) routes() http.Handler {
 	r.HandleFunc("/terminal/*", s.handleTerminalProxy)
 
 	staticDir := s.cfg.UI.StaticDir
+	r.Get("/treasury-signer.html", serveTreasurySigner(staticDir))
 	r.Get("/*", s.handleSPA(staticDir))
 
 	return r
+}
+
+func serveTreasurySigner(staticDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setNoStore(w)
+		// The generated HTML further pins both inline assets by SHA-256.
+		// An opaque origin keeps Manager cookies, storage and APIs out of reach.
+		w.Header().Set("Content-Security-Policy", "sandbox allow-scripts allow-downloads; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		http.ServeFile(w, r, filepath.Join(staticDir, "treasury-signer.html"))
+	}
 }
 
 func (s *Server) handleSPA(staticDir string) http.HandlerFunc {

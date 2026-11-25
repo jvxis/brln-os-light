@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/build-treasury-signer.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -20,6 +20,7 @@
     "@types/qrcode": "^1.5.6",
     "d3-force": "^3.0.0",
     "dagre": "^0.8.5",
+    "ethers": "6.17.0",
     "i18next": "^23.12.1",
     "qr-scanner": "^1.4.2",
     "qrcode": "^1.5.4",

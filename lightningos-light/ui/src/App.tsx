@@ -30,6 +30,7 @@ import Notifications from './pages/Notifications'
 import AuditLog from './pages/AuditLog'
 import LndConfig from './pages/LndConfig'
 import AppStore from './pages/AppStore'
+import StablecoinTreasury from './pages/StablecoinTreasury'
 import HardwalletOpen from './pages/HardwalletOpen'
 import Terminal from './pages/Terminal'
 import Shortcuts from './pages/Shortcuts'
@@ -245,6 +246,9 @@ export default function App() {
         : []),
       ...(installedAppIDs.has('loopout-brln')
         ? [{ key: 'loop-out-brln', label: t('nav.loopOutBrln'), element: <LoopOutBRLN />, group: 'apps' as const }]
+        : []),
+      ...(installedAppIDs.has('stablecoin-treasury')
+        ? [{ key: 'stablecoin-treasury', label: t('nav.stablecoinTreasury'), element: <StablecoinTreasury />, group: 'apps' as const }]
         : []),
       ...(installedAppIDs.has('magma-sales')
         ? [{ key: 'magma-sales', label: t('nav.magmaSales'), element: <MagmaSales />, group: 'apps' as const }]

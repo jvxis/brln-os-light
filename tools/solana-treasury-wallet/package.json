@@ -1,0 +1,18 @@
+{
+  "name": "lightningos-solana-treasury-wallet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "test": "node --test",
+    "build": "esbuild page.mjs --bundle --format=esm --platform=browser --outfile=dist/page.js --minify",
+    "preview": "node serve.mjs"
+  },
+  "dependencies": {
+    "@solana/kit": "8.6.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

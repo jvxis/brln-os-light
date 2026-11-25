@@ -30,7 +30,6 @@ func (s *Server) appRegistry() ([]appHandler, error) {
 		newLoopApp(s),
 		newMeshApp(s),
 		newLoopOutBRLNApp(s),
-		treasuryApp{server: s},
 		newMagmaApp(s),
 	}
 	if err := validateAppRegistry(apps); err != nil {

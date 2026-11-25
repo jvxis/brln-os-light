@@ -21,22 +21,31 @@ type bridgeCommand struct {
 	Amount      int64  `json:"amount"`
 	BridgeID    string `json:"bridge_id"`
 	StatusToken string `json:"status_token"`
+	Cluster     string `json:"cluster"`
+	Transaction string `json:"transaction"`
 }
 
 type bridgeResult struct {
-	BridgeID    string     `json:"bridge_id,omitempty"`
-	StatusToken string     `json:"status_token,omitempty"`
-	Invoice     string     `json:"invoice,omitempty"`
-	Deposit     string     `json:"deposit,omitempty"`
-	AmountIn    int64      `json:"amount_in,omitempty"`
-	AmountOut   int64      `json:"amount_out,omitempty"`
-	ExpiresAt   int64      `json:"expires_at,omitempty"`
-	Status      string     `json:"status,omitempty"`
-	OrderID     string     `json:"order_id,omitempty"`
-	DepositRef  string     `json:"deposit_ref,omitempty"`
-	DeliveryRef string     `json:"delivery_ref,omitempty"`
-	RefundRef   string     `json:"refund_ref,omitempty"`
-	ProviderFee *bridgeFee `json:"provider_fee,omitempty"`
+	BridgeID           string     `json:"bridge_id,omitempty"`
+	StatusToken        string     `json:"status_token,omitempty"`
+	Invoice            string     `json:"invoice,omitempty"`
+	Deposit            string     `json:"deposit,omitempty"`
+	AmountIn           int64      `json:"amount_in,omitempty"`
+	AmountOut          int64      `json:"amount_out,omitempty"`
+	ExpiresAt          int64      `json:"expires_at,omitempty"`
+	Status             string     `json:"status,omitempty"`
+	OrderID            string     `json:"order_id,omitempty"`
+	DepositRef         string     `json:"deposit_ref,omitempty"`
+	DeliveryRef        string     `json:"delivery_ref,omitempty"`
+	RefundRef          string     `json:"refund_ref,omitempty"`
+	ProviderFee        *bridgeFee `json:"provider_fee,omitempty"`
+	Cluster            string     `json:"cluster,omitempty"`
+	Mint               string     `json:"mint,omitempty"`
+	Sponsor            string     `json:"sponsor,omitempty"`
+	FeeAccount         string     `json:"fee_account,omitempty"`
+	Blockhash          string     `json:"blockhash,omitempty"`
+	NetworkFeeMicros   int64      `json:"network_fee_micros,omitempty"`
+	NetworkFeeLamports int64      `json:"network_fee_lamports,omitempty"`
 }
 
 type bridgeFee struct {
@@ -57,6 +66,13 @@ func bridgeWorker(input io.Reader, output io.Writer) error {
 	}
 	if len(req.APIKey) < 1 || len(req.APIKey) > 4096 || strings.ContainsAny(req.APIKey, "\r\n\x00") {
 		return errors.New("invalid bridge credential")
+	}
+	if req.Action == "sponsor-preflight" || req.Action == "sponsor-estimate" {
+		result, err := sponsorRequest(req)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(result)
 	}
 	client, err := sdk.NewBridgingClient(sdk.DefaultBridgingConfig(req.APIKey))
 	if err != nil {
@@ -79,20 +95,20 @@ func bridgeWorker(input io.Reader, output io.Writer) error {
 }
 
 func workerQuote(client *sdk.BridgingClient, req bridgeCommand) (bridgeResult, error) {
-	toBase := req.Direction == "to_base"
-	if !toBase && req.Direction != "to_lightning" || req.Amount <= 0 ||
+	toSolana := req.Direction == "to_solana"
+	if !toSolana && req.Direction != "to_lightning" || req.Amount <= 0 ||
 		req.Recipient == "" || req.Refund == "" || len(req.Recipient) > 320 || len(req.Refund) > 4096 {
 		return bridgeResult{}, errors.New("invalid bridge quote")
 	}
-	if toBase && (!validBaseAddress(req.Recipient) || !strings.HasPrefix(req.Refund, "lnbc")) ||
-		!toBase && (!validBaseAddress(req.Refund) || !strings.Contains(req.Recipient, "@")) {
+	if toSolana && (!validSolanaAddress(req.Recipient) || !strings.HasPrefix(req.Refund, "lnbc")) ||
+		!toSolana && (!validSolanaAddress(req.Refund) || !strings.Contains(req.Recipient, "@")) {
 		return bridgeResult{}, errors.New("invalid bridge destination")
 	}
 	res, err := client.GetRoutes(sdk.GetBridgeRoutesRequest{Recipient: req.Recipient})
 	if err != nil {
 		return bridgeResult{}, errors.New("bridge routes unavailable")
 	}
-	routes := matchingRoutes(res.Routes, toBase)
+	routes := matchingSolanaRoutes(res.Routes, toSolana)
 	if len(routes) != 1 {
 		return bridgeResult{}, errors.New("bridge route unavailable or ambiguous")
 	}
@@ -113,13 +129,14 @@ func workerQuote(client *sdk.BridgingClient, req bridgeCommand) (bridgeResult, e
 	if result.BridgeID == "" || result.StatusToken == "" || result.AmountIn <= 0 || result.AmountOut <= 0 {
 		return bridgeResult{}, errors.New("invalid provider quote")
 	}
-	if toBase {
+	if toSolana {
 		if info.DestinationAsset != "USDC" || !strings.HasPrefix(quote.PaymentRequest, "lnbc") || quote.PaymentRequest != info.DepositAddress {
 			return bridgeResult{}, errors.New("invalid provider invoice")
 		}
 		result.Invoice = quote.PaymentRequest
 	} else {
-		if info.DestinationAsset != "BTC" || !validBaseAddress(info.DepositAddress) {
+		if info.DestinationAsset != "BTC" || !validSolanaAddress(info.DepositAddress) ||
+			quote.PaymentRequest != info.DepositAddress {
 			return bridgeResult{}, errors.New("invalid provider deposit")
 		}
 		result.Deposit = info.DepositAddress

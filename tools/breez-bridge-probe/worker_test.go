@@ -26,6 +26,34 @@ func TestTreasuryWorkerHealthDoesNotRequireACredential(t *testing.T) {
 	}
 }
 
+func TestTreasuryWorkerFiltersBothDirectionsToOfficialSolanaUSDC(t *testing.T) {
+	mint := solanaUSDCMint
+	otherMint := "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+	official := sdk.BridgeRoutePairSide{Chain: "solana", Asset: "USDC", Decimals: 6, ContractAddress: &mint}
+	other := official
+	other.ContractAddress = &otherMint
+	lightning := sdk.BridgeRoutePairSide{Chain: "lightning", Asset: "BTC"}
+	wrongChain := official
+	wrongChain.Chain = "base"
+	routes := []sdk.BridgeRoutePair{
+		{Source: lightning, Destination: official},
+		{Source: official, Destination: lightning},
+		{Source: lightning, Destination: other},
+		{Source: wrongChain, Destination: lightning},
+		{Source: official, Destination: other},
+	}
+	if got := matchingSolanaRoutes(routes, true); len(got) != 1 || got[0].Destination.ContractAddress != &mint {
+		t.Fatal("incorrect native USDC destination")
+	}
+	if got := matchingSolanaRoutes(routes, false); len(got) != 1 || got[0].Source.ContractAddress != &mint {
+		t.Fatal("incorrect native USDC source")
+	}
+	if !validSolanaAddress(mint) || validSolanaAddress(strings.Repeat("1", 32)) ||
+		validSolanaAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") || validSolanaAddress(mint[:30]) {
+		t.Fatal("incorrect Solana public address validation")
+	}
+}
+
 func TestTreasuryWorkerPreservesReportedFeeUnits(t *testing.T) {
 	usdc := "USDC"
 	six := uint32(6)

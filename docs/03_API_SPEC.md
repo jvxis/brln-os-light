@@ -1181,27 +1181,6 @@ POST /api/apps/loopout-brln/jobs/{id}/strike-return
 - The operation is idempotent per job and never sweeps unrelated Strike funds or falls back to a paid tier.
 - Requires recent `loopout_brln` reauthentication.
 
-### Stablecoin Treasury
-
-The app is available on Linux amd64 with login protection, PostgreSQL and the isolated Breez bridge socket. Session cookies and CSRF are required for mutations. The provider key and lookup tokens remain server-side. The separate `GET /treasury-signer.html` serves the local wallet in an opaque sandbox with networking disabled.
-
-```text
-GET  /api/apps/stablecoin-treasury/status
-POST /api/apps/stablecoin-treasury/config
-GET  /api/apps/stablecoin-treasury/orders
-POST /api/apps/stablecoin-treasury/orders
-POST /api/apps/stablecoin-treasury/orders/{id}/pay
-POST /api/apps/stablecoin-treasury/orders/{id}/base-prepare
-POST /api/apps/stablecoin-treasury/orders/{id}/base-broadcast
-POST /api/apps/stablecoin-treasury/orders/{id}/reconcile
-```
-
-Configuration accepts `api_key`, `lightning_address` and `confirm_password`. An empty key preserves the stored key. Quote creation accepts `direction`, `wallet`, `usdc_micros` and `max_routing_sat`. Use `to_base` for Lightning to Base with a positive routing fee limit, or `to_lightning` for Base to Lightning with a zero routing fee limit. Amounts in order responses use sats on the Lightning side and USDC millionths on Base. When available, `provider_fee` includes the amount, asset and decimals.
-
-The pay endpoint accepts `confirm_password` and claims a quote once. Base preparation returns the transaction inputs and the Base fee estimates in wei. Base broadcast accepts an already signed `raw` transaction and `confirm_password`. It verifies the approved Base USDC transfer and claims the same quote once. A successful submission response records the attempt. Read the exact order after reconciliation to verify delivery or refund.
-
-### App administration
-
 POST /api/apps/{id}/reset-admin
 GET /api/apps/{id}/admin-password
 - Password read is supported for LNDg, Fedimint Gateway, and Bark Wallet.

@@ -1,5 +1,9 @@
 # Breez Bridge Probe
 
+O protocolo privado `--bridge-worker` usa USDC nativo na Solana nos dois sentidos. As ações `quote` e `status` recebem JSON via stdin. O worker não executa pagamentos. Ele limita a cotação ao mint oficial da Circle e retorna depósito, valor líquido esperado, validade e taxa do provedor quando informada. A ação `health` verifica carregamento sem exigir uma credencial. A interface pública de linha de comando abaixo reproduz apenas o piloto anterior na Base. [Plano atual da Tesouraria](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)
+
+As ações `sponsor-preflight` e `sponsor-estimate` consultam o Pimlico com uma chave do patrocinador, distinta da chave do Breez. Use `cluster` igual a `devnet` para validação sem fundos reais. A consulta retorna a conta que paga SOL, o destino de cobrança e a taxa em unidades inteiras de USDC. O worker mantém a chave no cabeçalho de autorização. [API de patrocínio Solana](https://docs.pimlico.io/references/paymaster/solana/endpoints)
+
 Prova técnica isolada da Tesouraria em Stablecoins. Consulta as rotas BTC Lightning → USDC nativo na Base e USDC nativo na Base → BTC Lightning. O comando exibe apenas a contagem de rotas compatíveis por direção. Ele usa a rede Base com chain ID 8453 e o contrato publicado pela Circle. [Contrato do USDC](https://developers.circle.com/stablecoins/usdc-contract-addresses)
 
 A consulta de rotas é o modo padrão. O modo opcional de cotação cria ordens sem movimentar fundos. A consulta envia os destinatários públicos ao provedor. Use destinatários de teste e injete a chave do Breez a partir de seu armazenamento de segredos como variável de ambiente `BREEZ_API_KEY`. [Bridging no SDK Breez](https://sdk-doc-spark.breez.technology/guide/bridging.html)
@@ -53,6 +57,4 @@ env -u LD_LIBRARY_PATH "$bundle/breez-bridge-probe" --check-bindings
 
 Para distribuição como serviço, a instalação deverá verificar a procedência do executável e da biblioteca e impedir escrita no diretório do bundle pelo usuário do serviço. O Manager não importa esse módulo. [Plano e critérios de liberação](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)
 
-`bash package-linux.sh NEW_OUTPUT_DIRECTORY` monta o bundle nativo Linux amd64 com os dois arquivos de runtime, as units systemd e um manifesto SHA-256. Execute a partir do checkout revisado com compilador C e `patchelf`. O manifesto verifica o conteúdo do pacote. A distribuição precisa atrelar esse manifesto ao commit revisado e verificar a procedência antes de instalar.
-
-O layout de implantação usa `/opt/lightningos/treasury/` para o executável e a biblioteca root-owned e `/etc/systemd/system/` para a socket e a unit correspondente. O socket `/run/lightningos-treasury/bridge.sock` restringe conexões ao Manager. Cada requisição roda com usuário dinâmico dedicado e sem acesso aos dados ou credenciais do LND. A instalação pelo catálogo habilita o estado da Tesouraria no Manager quando o bundle já estiver implantado. Parar pelo catálogo bloqueia novas operações e mantém a conciliação de ordens.
+`bash package-linux.sh NEW_OUTPUT_DIRECTORY` monta o bundle nativo Linux amd64, as units systemd e o manifesto SHA-256. A socket aceita apenas conexões do grupo do Manager. Cada pedido roda com usuário dinâmico dedicado e sem acesso às credenciais do LND.

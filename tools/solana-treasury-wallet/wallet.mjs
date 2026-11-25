@@ -112,7 +112,10 @@ async function withSolanaWallet(backup, password, use) {
     secret.fill(0)
   }
 }
-import { compileSponsoredDeposit, encodeSolanaTransaction, reviewSponsoredDeposit } from './sponsored.mjs'
+import {
+  compileDirectDeposit, compileSponsoredDeposit, encodeSolanaTransaction,
+  reviewDirectDeposit, reviewSponsoredDeposit
+} from './sponsored.mjs'
 
 
 export function recoverSolanaAddress(backup, password) {
@@ -120,12 +123,20 @@ export function recoverSolanaAddress(backup, password) {
 }
 
 export async function signSponsoredDeposit(backup, password, order) {
-  const reviewed = reviewSponsoredDeposit(order)
+  return signDeposit(backup, password, reviewSponsoredDeposit(order), compileSponsoredDeposit)
+}
+
+export async function signDirectDeposit(backup, password, order) {
+  return signDeposit(backup, password, reviewDirectDeposit(order), compileDirectDeposit)
+}
+
+async function signDeposit(backup, password, reviewed, compile) {
   return withSolanaWallet(backup, password, async (address, privateKey) => {
     if (reviewed.wallet !== address || Date.now() >= reviewed.expiresAt) {
       throw new Error('The backup does not match the order or the quote expired')
     }
-    const transaction = await compileSponsoredDeposit(reviewed)
+    const transaction = await compile(reviewed)
+    if (Date.now() >= reviewed.expiresAt) throw new Error('The quote expired')
     const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', privateKey, transaction.messageBytes))
     const encoded = encodeSolanaTransaction({
       ...transaction, signatures: { ...transaction.signatures, [address]: signature }

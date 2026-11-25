@@ -1,6 +1,6 @@
 # Carteira Solana da Tesouraria
 
-Piloto local para criar e recuperar uma carteira Solana em autocustódia e assinar uma transferência com patrocinador. Use Node.js 22 ou superior e um navegador com WebCrypto Ed25519.
+Piloto local para criar e recuperar uma carteira Solana em autocustódia e assinar um depósito de USDC. Use Node.js 22.12 ou superior e um navegador com WebCrypto Ed25519.
 
 ```sh
 npm ci
@@ -13,7 +13,11 @@ Abra `http://127.0.0.1:4176/`. Defina uma senha exclusiva de pelo menos 14 carac
 
 O navegador gera a chave Ed25519 e protege o backup com AES-256-GCM e PBKDF2-SHA256. O servidor local só entrega arquivos estáticos e a página bloqueia conexões externas. A criação e a recuperação funcionam sem consultar a rede Solana.
 
-Para testar a assinatura, importe uma ordem sintética e confira o depósito, a taxa do patrocinador e o total em USDC. A carteira assina apenas as instruções necessárias ao envio aprovado. O arquivo exportado fica pendente da assinatura do patrocinador para transmitir na Solana. Use chaves de teste enquanto a transmissão e a liquidação estiverem em validação. [Plano da Tesouraria](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)
+Para o fluxo com pagamento em SOL, gere a ordem a partir de uma cotação vigente de USDC para Lightning. Passe por stdin a identificação local `id` (32 caracteres hexadecimais), `wallet`, `deposit`, `depositMicros`, `expectedSats`, `lightningAddress`, `expiresAt` em milissegundos e, quando disponível, `providerFeeMicros` a `node prepare-direct-order.mjs`. Informe os valores de USDC e sats como strings nas menores unidades. O comando consulta a rede para verificar saldos, estimar o custo em SOL e gerar um JSON com validade de até 60 segundos.
+
+Com o backup e a senha à mão, importe a ordem e confira o destino Lightning, o total em USDC, os sats esperados e o custo em SOL. O arquivo exportado contém a transação assinada. Valide o arquivo com `verifyDirectDeposit` e simule a transação antes de transmitir. [Plano da Tesouraria](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)
+
+O fluxo experimental com patrocinador continua disponível para ordens de teste. Nelas, a carteira exibe a taxa do patrocinador em USDC e exporta uma transação que requer a segunda assinatura.
 
 Para repetir a prova contábil em Linux amd64, instale a dependência de teste e execute o simulador. O teste confirma a criação da conta de destino, o crédito do depósito, a cobrança exata da taxa e o saldo original de zero SOL na carteira usuária.
 

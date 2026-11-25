@@ -47,6 +47,37 @@ export function reviewSponsoredDeposit(order, now = Date.now()) {
   }
 }
 
+export function reviewDirectDeposit(order, now = Date.now()) {
+  if (order?.feeMode !== 'wallet' || order.version !== 1 || !/^[a-f0-9]{32}$/.test(order.id) ||
+      !['mainnet', 'devnet'].includes(order.cluster) ||
+      !Number.isSafeInteger(order.expiresAt) || order.expiresAt <= now || order.expiresAt - now > 600_000 ||
+      !Number.isSafeInteger(order.lastValidBlockHeight) || order.lastValidBlockHeight <= 0 ||
+      typeof order.createDepositAccount !== 'boolean' ||
+      typeof order.lightningAddress !== 'string' ||
+      !/^[a-z0-9_.-]{1,64}@[a-z0-9.-]{1,200}$/i.test(order.lightningAddress)) {
+    throw new Error('Invalid or expired Solana order')
+  }
+  const wallet = address(order.wallet)
+  const deposit = address(order.deposit)
+  const usdc = amount(order.depositMicros)
+  const feeLamports = amount(order.feeLamports)
+  const accountLamports = amount(order.accountLamports)
+  const expectedSats = amount(order.expectedSats)
+  const providerFee = order.providerFeeMicros === undefined ? undefined : amount(order.providerFeeMicros)
+  if (wallet === deposit || usdc <= 0n || usdc > 100_000_000n || expectedSats <= 0n ||
+      feeLamports <= 0n || (accountLamports > 0n) !== order.createDepositAccount ||
+      feeLamports + accountLamports > 10_000_000n || (providerFee !== undefined && providerFee >= usdc)) {
+    throw new Error('Invalid deposit or Solana costs')
+  }
+  return {
+    id: order.id, wallet, deposit, usdc, feeLamports, accountLamports, expectedSats, providerFee,
+    lightningAddress: order.lightningAddress,
+    cluster: order.cluster, mint: order.cluster === 'devnet' ? devnetUsdcMint : usdcMint,
+    expiresAt: order.expiresAt, createDepositAccount: order.createDepositAccount,
+    lifetime: { blockhash: blockhash(order.blockhash), lastValidBlockHeight: BigInt(order.lastValidBlockHeight) }
+  }
+}
+
 export async function usdcAccount(owner, mint = usdcMint) {
   const [ata] = await getProgramDerivedAddress({
     programAddress: associatedTokenProgram,
@@ -73,31 +104,45 @@ function transfer(source, target, owner, amount, mint) {
 }
 
 export async function compileSponsoredDeposit(reviewed) {
-  const [source, deposit, feeRecipient] = await Promise.all([
-    usdcAccount(reviewed.wallet, reviewed.mint), usdcAccount(reviewed.deposit, reviewed.mint),
-    usdcAccount(reviewed.sponsorFeeAccount, reviewed.mint)
+  const { source, instructions } = await depositInstructions(reviewed, reviewed.sponsor)
+  if (reviewed.fee > 0n) {
+    const feeRecipient = await usdcAccount(reviewed.sponsorFeeAccount, reviewed.mint)
+    instructions.push(transfer(source, feeRecipient, reviewed.wallet, reviewed.fee, reviewed.mint))
+  }
+  return compileDepositMessage(reviewed, reviewed.sponsor, instructions)
+}
+
+export async function compileDirectDeposit(reviewed) {
+  const { instructions } = await depositInstructions(reviewed, reviewed.wallet)
+  return compileDepositMessage(reviewed, reviewed.wallet, instructions)
+}
+
+async function depositInstructions(reviewed, payer) {
+  const [source, deposit] = await Promise.all([
+    usdcAccount(reviewed.wallet, reviewed.mint), usdcAccount(reviewed.deposit, reviewed.mint)
   ])
   const instructions = []
   if (reviewed.createDepositAccount) {
     instructions.push({
       programAddress: associatedTokenProgram,
       accounts: [
-        { address: reviewed.sponsor, role: AccountRole.WRITABLE_SIGNER },
+        { address: payer, role: AccountRole.WRITABLE_SIGNER },
         { address: deposit, role: AccountRole.WRITABLE },
         { address: reviewed.deposit, role: AccountRole.READONLY },
         { address: reviewed.mint, role: AccountRole.READONLY },
         { address: systemProgram, role: AccountRole.READONLY },
         { address: tokenProgram, role: AccountRole.READONLY },
       ],
-      data: new Uint8Array([1]) // Idempotent creation, paid by the sponsor.
+      data: new Uint8Array([1]) // Idempotent creation.
     })
   }
   instructions.push(transfer(source, deposit, reviewed.wallet, reviewed.usdc, reviewed.mint))
-  if (reviewed.fee > 0n) {
-    instructions.push(transfer(source, feeRecipient, reviewed.wallet, reviewed.fee, reviewed.mint))
-  }
+  return { source, instructions }
+}
+
+function compileDepositMessage(reviewed, payer, instructions) {
   let message = createTransactionMessage({ version: 'legacy' })
-  message = setTransactionMessageFeePayer(reviewed.sponsor, message)
+  message = setTransactionMessageFeePayer(payer, message)
   message = setTransactionMessageLifetimeUsingBlockhash(reviewed.lifetime, message)
   return compileTransaction(appendTransactionMessageInstructions(instructions, message))
 }
@@ -117,6 +162,15 @@ export async function quoteTransactionWithoutSponsorFee(order) {
 // fee payer, mint, transfer, authority, destination or fee.
 export async function verifyPartiallySignedDeposit(order, signed) {
   const reviewed = reviewSponsoredDeposit(order)
+  return verifySignedMessage(reviewed, signed, compileSponsoredDeposit, reviewed.sponsor)
+}
+
+export async function verifyDirectDeposit(order, signed) {
+  const reviewed = reviewDirectDeposit(order)
+  return verifySignedMessage(reviewed, signed, compileDirectDeposit)
+}
+
+async function verifySignedMessage(reviewed, signed, compile, unsignedSponsor) {
   const submitted = signed?.transaction
   if (signed?.version !== 1 || signed.id !== reviewed.id || signed.cluster !== reviewed.cluster ||
       typeof submitted !== 'string' || submitted.length > 1644) {
@@ -125,12 +179,12 @@ export async function verifyPartiallySignedDeposit(order, signed) {
   const bytes = Uint8Array.from(atob(submitted), char => char.charCodeAt(0))
   if (bytes.length > 1232) throw new Error('Invalid Solana transaction size')
   const transaction = getTransactionDecoder().decode(bytes)
-  const expected = await compileSponsoredDeposit(reviewed)
+  const expected = await compile(reviewed)
   const exactMessage = expected.messageBytes.length === transaction.messageBytes.length &&
     expected.messageBytes.every((byte, index) => byte === transaction.messageBytes[index])
   const signature = transaction.signatures[reviewed.wallet]
   if (!exactMessage || encodeSolanaTransaction(transaction) !== submitted || !signature ||
-      transaction.signatures[reviewed.sponsor] !== null) {
+      (unsignedSponsor && transaction.signatures[unsignedSponsor] !== null)) {
     throw new Error('Signed transaction does not match this Solana order')
   }
   const publicKey = await crypto.subtle.importKey('raw', encoder.encode(reviewed.wallet), 'Ed25519', false, ['verify'])

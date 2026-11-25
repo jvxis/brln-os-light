@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { decompileTransactionMessage, getAddressEncoder, getCompiledTransactionMessageDecoder, getTransactionDecoder } from '@solana/kit'
-import { createSolanaBackup, maxBackupBytes, recoverSolanaAddress, signSponsoredDeposit } from './wallet.mjs'
-import { associatedTokenProgram, quoteTransactionWithoutSponsorFee, tokenProgram, usdcAccount, usdcMint, verifyPartiallySignedDeposit } from './sponsored.mjs'
+import { createSolanaBackup, maxBackupBytes, recoverSolanaAddress, signDirectDeposit, signSponsoredDeposit } from './wallet.mjs'
+import { associatedTokenProgram, quoteTransactionWithoutSponsorFee, tokenProgram, usdcAccount, usdcMint, verifyDirectDeposit, verifyPartiallySignedDeposit } from './sponsored.mjs'
 
 test('creates distinct Solana keys, then recovers using only the encrypted wallet and password', async () => {
   const password = 'a synthetic wallet password'
@@ -63,4 +63,35 @@ test('partially signs an exact USDC transfer with the sponsor as Solana fee paye
   const unsigned = getTransactionDecoder().decode(Buffer.from(await quoteTransactionWithoutSponsorFee(order),'base64'))
   assert(Object.values(unsigned.signatures).every(signature=>signature===null))
   assert.equal(getCompiledTransactionMessageDecoder().decode(unsigned.messageBytes).instructions.length,2)
+})
+
+test('signs only the approved USDC transfer with the wallet paying SOL fees', async () => {
+  const password = 'a synthetic wallet password'
+  const { address: wallet, backup } = await createSolanaBackup(password)
+  const { address: deposit } = await createSolanaBackup(password)
+  const order = {
+    version: 1, feeMode: 'wallet', id: '0123456789abcdef0123456789abcdef',
+    cluster: 'mainnet', wallet, deposit, depositMicros: '1065005', providerFeeMicros: '21044',
+    feeLamports: '5000', accountLamports: '1488432', expectedSats: '1679',
+    lightningAddress: 'treasury@example.com', expiresAt: Date.now() + 60_000,
+    blockhash: deposit, lastValidBlockHeight: 123, createDepositAccount: true,
+  }
+  const signed = await signDirectDeposit(backup, password, order)
+  assert.equal(await verifyDirectDeposit(order, signed), signed.transaction)
+  const tx = getTransactionDecoder().decode(Buffer.from(signed.transaction, 'base64'))
+  assert.deepEqual(Object.keys(tx.signatures), [wallet])
+  const message = decompileTransactionMessage(getCompiledTransactionMessageDecoder().decode(tx.messageBytes))
+  assert.equal(message.feePayer.address, wallet)
+  const [create, transfer] = message.instructions
+  assert.deepEqual(message.instructions.map(ix => ix.programAddress), [associatedTokenProgram, tokenProgram])
+  assert.equal(create.accounts[0].address, wallet)
+  assert.equal(create.accounts[1].address, await usdcAccount(deposit))
+  assert.deepEqual(transfer.accounts.map(account => account.address), [await usdcAccount(wallet), usdcMint, await usdcAccount(deposit), wallet])
+  assert.equal(new DataView(transfer.data.buffer, transfer.data.byteOffset, transfer.data.byteLength).getBigUint64(1, true), 1065005n)
+  await assert.rejects(verifyDirectDeposit({ ...order, depositMicros: '1065006' }, signed), /does not match/)
+  await assert.rejects(signDirectDeposit(backup, password, { ...order, accountLamports: '10000001' }), /costs/)
+  const existingAccount = { ...order, createDepositAccount: false, accountLamports: '0' }
+  const existingSigned = await signDirectDeposit(backup, password, existingAccount)
+  const existingTx = getTransactionDecoder().decode(Buffer.from(existingSigned.transaction, 'base64'))
+  assert.equal(getCompiledTransactionMessageDecoder().decode(existingTx.messageBytes).instructions.length, 1)
 })

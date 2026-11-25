@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { LiteSVM } from 'litesvm'
 import { getAddressDecoder, getAddressEncoder, getTransactionDecoder } from '@solana/kit'
-import { createSolanaBackup, signSponsoredDeposit } from './wallet.mjs'
-import { devnetUsdcMint, tokenProgram, usdcAccount, verifyPartiallySignedDeposit } from './sponsored.mjs'
+import { createSolanaBackup, signDirectDeposit, signSponsoredDeposit } from './wallet.mjs'
+import { devnetUsdcMint, tokenProgram, usdcAccount, verifyDirectDeposit, verifyPartiallySignedDeposit } from './sponsored.mjs'
 
 const svm = new LiteSVM()
 const password = 'synthetic zero-lamport wallet'
@@ -49,4 +49,25 @@ assert.equal(amount(destination),1065005n)
 assert.equal(amount(fee),10000n)
 assert.equal(svm.getBalance(wallet)??0n,0n)
 assert(svm.getBalance(sponsor)<1000000000n)
-console.log('PASS: Linux LiteSVM executed a dual-signed SPL transfer, created destination ATA, charged exactly the displayed USDC fee, and spent zero SOL from the user.')
+console.log('PASS: LiteSVM executed a dual-signed SPL transfer, created the destination ATA, charged the displayed USDC fee, and spent zero SOL from the user.')
+
+const { address: directDeposit } = await createSolanaBackup(password)
+const directTarget = await usdcAccount(directDeposit, mint)
+const accountReserve = svm.minimumBalanceForRentExemption(165n)
+svm.airdrop(wallet, 10_000_000n)
+const directPlan = {
+  version: 1, feeMode: 'wallet', id: 'fd23456789abcdef0123456789abcdef',
+  cluster: 'devnet', wallet, deposit: directDeposit, depositMicros: '1065005',
+  feeLamports: '5000', accountLamports: String(accountReserve), expectedSats: '1679',
+  lightningAddress: 'treasury@example.com', expiresAt: Date.now() + 60_000,
+  blockhash: svm.latestBlockhash(), lastValidBlockHeight: 123, createDepositAccount: true,
+}
+const directlySigned = await signDirectDeposit(backup, password, directPlan)
+const directlyEncoded = await verifyDirectDeposit(directPlan, directlySigned)
+const directResult = svm.sendTransaction(getTransactionDecoder().decode(Buffer.from(directlyEncoded, 'base64')))
+if ('err' in directResult) throw Error('SVM rejected the direct deposit: ' + directResult.err())
+assert.equal(amount(source), 2_859_990n)
+assert.equal(amount(directTarget), 1_065_005n)
+assert.equal(amount(fee), 10_000n)
+assert.equal(svm.getBalance(wallet), 10_000_000n - 5_000n - accountReserve)
+console.log('PASS: LiteSVM executed a one-signature SPL transfer and charged the wallet the exact SOL network fee and ATA deposit.')

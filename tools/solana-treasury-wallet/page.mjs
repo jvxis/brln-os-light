@@ -1,5 +1,5 @@
-import { createSolanaBackup, maxBackupBytes, recoverSolanaAddress, signSponsoredDeposit } from './wallet.mjs'
-import { reviewSponsoredDeposit } from './sponsored.mjs'
+import { createSolanaBackup, maxBackupBytes, recoverSolanaAddress, signDirectDeposit, signSponsoredDeposit } from './wallet.mjs'
+import { reviewDirectDeposit, reviewSponsoredDeposit } from './sponsored.mjs'
 
 const control = id => document.getElementById(id)
 const create = control('create')
@@ -22,6 +22,10 @@ function formatUSDC(micros) {
   return `${micros / 1_000_000n},${String(micros % 1_000_000n).padStart(6, '0')} USDC`
 }
 
+function formatSOL(lamports) {
+  return `${lamports / 1_000_000_000n},${String(lamports % 1_000_000_000n).padStart(9, '0')} SOL`
+}
+
 function enableSigning() {
   const file = control('order')
   const form = control('authorize')
@@ -42,16 +46,28 @@ function enableSigning() {
       if (input.size > maxBackupBytes) throw new Error()
       const documentValue = JSON.parse(await input.text())
       if (input !== file.files?.[0]) return
-      const terms = reviewSponsoredDeposit(documentValue)
+      const direct = documentValue?.feeMode === 'wallet'
+      const terms = direct ? reviewDirectDeposit(documentValue) : reviewSponsoredDeposit(documentValue)
+      const costs = direct ? [
+        ['Débito total em USDC', formatUSDC(terms.usdc)],
+        ['Taxa de conversão incluída', terms.providerFee === undefined ? 'Não discriminada pelo provedor' : formatUSDC(terms.providerFee)],
+        ['Endereço Lightning informado na ordem', terms.lightningAddress],
+        ['Recebimento estimado', `${terms.expectedSats} sats`],
+        ['Taxa estimada da rede', formatSOL(terms.feeLamports)],
+        ['Reserva para a conta de USDC do destino', formatSOL(terms.accountLamports)],
+        ['Total estimado em SOL', formatSOL(terms.feeLamports + terms.accountLamports)],
+      ] : [
+        ['Taxa do patrocinador', formatUSDC(terms.fee)],
+        ['Débito total', formatUSDC(terms.total)],
+        ['Conta que recebe a taxa', terms.sponsorFeeAccount],
+      ]
       const list = control('costs')
       list.replaceChildren()
       for (const [label, value] of [
         ['Rede', terms.cluster === 'devnet' ? 'Solana devnet · USDC de teste' : 'Solana mainnet'],
         ['Depósito para conversão', formatUSDC(terms.usdc)],
-        ['Taxa do patrocinador', formatUSDC(terms.fee)],
-        ['Débito total', formatUSDC(terms.total)],
+        ...costs,
         ['Destino na Solana', terms.deposit],
-        ['Conta que recebe a taxa', terms.sponsorFeeAccount],
         ['Criação de conta de token', terms.createDepositAccount ? 'Incluída na ordem' : 'Conta existente'],
       ]) {
         const title = document.createElement('dt')
@@ -77,11 +93,15 @@ function enableSigning() {
     file.disabled = true
     confirm.disabled = true
     try {
-      signed = await signSponsoredDeposit(await backup.text(), password, reviewedFile)
+      const direct = reviewedFile.feeMode === 'wallet'
+      const sign = direct ? signDirectDeposit : signSponsoredDeposit
+      signed = await sign(await backup.text(), password, reviewedFile)
       reviewedFile = undefined
       form.hidden = true
       download.hidden = false
-      status.textContent = 'Ordem assinada. A transmissão depende da assinatura do patrocinador.'
+      status.textContent = direct
+        ? 'Ordem assinada. Baixe o arquivo para transmitir a transação.'
+        : 'Ordem assinada. A transmissão depende da assinatura do patrocinador.'
     } catch {
       status.textContent = 'Não foi possível assinar. Verifique o backup, a senha e a validade da ordem.'
     } finally {

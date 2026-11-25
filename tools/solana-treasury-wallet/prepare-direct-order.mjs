@@ -1,0 +1,75 @@
+import { address } from '@solana/kit'
+import { compileDirectDeposit, reviewDirectDeposit, tokenProgram, usdcAccount, usdcMint } from './sponsored.mjs'
+
+async function rpc(method, ...params) {
+  const response = await fetch('https://api.mainnet-beta.solana.com', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw new Error(`Solana RPC unavailable (${method})`)
+  const body = await response.json()
+  if (body.error || body.result === undefined) throw new Error(`Solana RPC rejected ${method}`)
+  return body.result
+}
+
+function accountTokenInfo(account, owner) {
+  const info = account?.data?.parsed?.info
+  if (account?.owner !== tokenProgram || info?.owner !== owner || info.mint !== usdcMint ||
+      info.state !== 'initialized' || info.tokenAmount?.decimals !== 6 ||
+      typeof info.tokenAmount.amount !== 'string' || !/^[0-9]+$/.test(info.tokenAmount.amount)) {
+    throw new Error('Unexpected USDC account')
+  }
+  return info.tokenAmount.amount
+}
+
+async function prepare(quote) {
+  const wallet = address(quote.wallet)
+  const deposit = address(quote.deposit)
+  const [source, target] = await Promise.all([usdcAccount(wallet), usdcAccount(deposit)])
+  const [
+    { value: [sourceAccount, targetAccount] }, { value: balance },
+    { value: latestBlock }, systemReserve,
+  ] = await Promise.all([
+    rpc('getMultipleAccounts', [source, target], { commitment: 'confirmed', encoding: 'jsonParsed' }),
+    rpc('getBalance', wallet, { commitment: 'confirmed' }),
+    rpc('getLatestBlockhash', { commitment: 'confirmed' }),
+    rpc('getMinimumBalanceForRentExemption', 0, { commitment: 'confirmed' }),
+  ])
+  if (!sourceAccount || BigInt(accountTokenInfo(sourceAccount, wallet)) < BigInt(quote.depositMicros)) {
+    throw new Error('Wallet has insufficient USDC')
+  }
+  if (targetAccount) accountTokenInfo(targetAccount, deposit)
+  const accountLamports = targetAccount ? 0 : await rpc('getMinimumBalanceForRentExemption', 165, { commitment: 'confirmed' })
+  const order = {
+    version: 1, feeMode: 'wallet', cluster: 'mainnet', id: quote.id,
+    wallet, deposit, depositMicros: quote.depositMicros, providerFeeMicros: quote.providerFeeMicros,
+    expectedSats: quote.expectedSats, lightningAddress: quote.lightningAddress,
+    expiresAt: Math.min(quote.expiresAt, Date.now() + 60_000),
+    ...latestBlock, createDepositAccount: !targetAccount, accountLamports: String(accountLamports),
+    feeLamports: '1',
+  }
+  const transaction = await compileDirectDeposit(reviewDirectDeposit(order))
+  const { value: fee } = await rpc('getFeeForMessage', Buffer.from(transaction.messageBytes).toString('base64'), { commitment: 'confirmed' })
+  if (!Number.isSafeInteger(fee) || balance < fee + accountLamports + systemReserve) {
+    throw new Error('Wallet has insufficient SOL or fee could not be estimated')
+  }
+  order.feeLamports = String(fee)
+  reviewDirectDeposit(order)
+  return order
+}
+
+try {
+  let input = ''
+  process.stdin.setEncoding('utf8')
+  for await (const chunk of process.stdin) {
+    input += chunk
+    if (input.length > 4096) throw new Error('Quote exceeds the maximum size')
+  }
+  const quote = JSON.parse(input)
+  process.stdout.write(JSON.stringify(await prepare(quote)) + '\n')
+} catch (error) {
+  process.stderr.write(`${error.message}\n`)
+  process.exitCode = 1
+}

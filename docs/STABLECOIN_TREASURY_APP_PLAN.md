@@ -24,6 +24,8 @@ Os números são uma amostra para valor solicitado de 1 USDC, com taxa adicionad
 
 O piloto anterior entregou 1,007394 USDC na Base ao endereço criado pelo usuário, cerca de 11 minutos e 31 segundos após a liquidação de 1.751 sats. A taxa Lightning foi 1.751 msat. O Breez só passou a reconhecer o depósito após cerca de dez minutos. Essa experiência justifica separar débito, reconhecimento do provedor e crédito final. Uma ordem financiada permanece em reconciliação até que a entrega ou o reembolso seja comprovado.
 
+Em 25 de novembro de 2026, o piloto Lightning → Solana liquidou 2.051 sats e 2.051 msat de taxa de roteamento no LND. A Breez informou 1,115221 USDC entregues. O RPC da Solana confirmou a transação finalizada, o mint oficial, a carteira destinatária e o crédito exato. A preparação da volta, ainda sem assinatura, retornou 1,064372 USDC de débito para 1.678 sats esperados, com 0,021044 USDC de taxa de conversão incluída, 0,000005000 SOL de taxa de rede e 0,001488440 SOL para criar a conta de USDC do destino nessa cotação.
+
 ## Fluxo de ida, volta e custos
 
 - **Lightning → USDC.** Vincular a cotação ao destino Solana e ao reembolso em uma invoice sem valor do LND. Exibir o depósito em sats, a taxa do provedor quando discriminada, o teto de roteamento e o máximo a debitar. Conferir rota, hash, valor, rede e expiração antes de executar pelo LND, com reautenticação e autorização de uso único. Verificar na Solana a assinatura da transação, o mint oficial, o dono da conta de token e a diferença exata de saldo.
@@ -42,7 +44,9 @@ O piloto anterior entregou 1,007394 USDC na Base ao endereço criado pelo usuár
 
 O navegador real validou criação, recuperação em uma sessão nova e assinatura do depósito após a exibição do custo total. Em Ubuntu amd64 descartável, o LiteSVM executou a transação SPL com duas assinaturas. O patrocinador pagou a rede e a criação da conta do destinatário. Foram debitados 1,075005 USDC de teste, com 1,065005 USDC no destino e 0,010000 USDC no endereço da taxa. A carteira usuária continuou com zero SOL.
 
-Para a versão de catálogo, adaptar o assinador ao pagamento direto da taxa em SOL, testar a volta em devnet e integrar ao Manager. Os critérios de liberação incluem provas de ida, volta e reembolso em mainnet com autorização de fundos própria e o teste do ciclo de vida da loja em Linux amd64.
+O assinador local também aceita uma ordem que usa a própria carteira para pagar a rede em SOL. Em Chromium, uma ordem sintética exibiu o débito em USDC, a taxa de conversão, os sats esperados, a taxa de rede e a reserva da conta de token. O navegador assinou localmente e a verificação independente confirmou o débito e destino do arquivo exportado. O gerador da ordem consulta o saldo, a taxa da mensagem e a reserva da conta na Solana. [Fluxo do assinador local](../tools/solana-treasury-wallet/README.md)
+
+Para a versão de catálogo, integrar o assinador ao Manager e validar a volta em devnet. Os critérios de liberação incluem provas de ida, volta e reembolso em mainnet com autorização de fundos própria e o teste do ciclo de vida da loja em Linux amd64.
 
 ## Próximas redes
 

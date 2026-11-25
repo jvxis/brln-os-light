@@ -1081,6 +1081,7 @@ type RebalanceSovereignDecision struct {
 	RealizedEconomicsMultiplier float64 `json:"realized_economics_multiplier,omitempty"`
 	ExplorationSlot             bool    `json:"exploration_slot,omitempty"`
 	KeepaliveRefill             bool    `json:"keepalive_refill,omitempty"`
+	SecondChance                bool    `json:"second_chance,omitempty"`
 	StockUnsoldSat              int64   `json:"stock_unsold_sat,omitempty"`
 	StockAllowedSat             int64   `json:"stock_allowed_sat,omitempty"`
 	StockDemandSat              int64   `json:"stock_demand_sat,omitempty"`
@@ -4223,7 +4224,7 @@ func (s *RebalanceService) runAutoScan() {
 		// construction) and lower channels that stopped selling. Reuses the
 		// snapshots, pair stats and structural cooldowns already loaded above.
 		if cfg.AutoTargetEnabled && shouldEvaluateAutoTarget(schedulerMode) {
-			s.evaluateAutoTarget(ctx, cfg, scanAt, snapshots, settings, sovereignPlan.Candidates, sovereignPairStats, sovereignStructuralCooldowns)
+			s.evaluateAutoTarget(ctx, cfg, scanAt, snapshots, settings, withoutSecondChanceOnlyTargets(sovereignPlan.Candidates), sovereignPairStats, sovereignStructuralCooldowns)
 		}
 		reservedSlots := 0
 		if guaranteedSlot.Queued {
@@ -4666,8 +4667,8 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		if inventoryProbe {
 			targetAmount = inventoryAmount
 			budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
-			estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, targetCfg)
-			target.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
+			estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount))
+			target.ExpectedGainSat = estimateTargetGainForConfig(sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount), target.Channel, targetAmount)
 			target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
 		}
 		// Keepalive refill (anti-churn): a sink that AutoFee has flagged as
@@ -4682,8 +4683,8 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			if keepaliveAmount := sovereignKeepaliveRefillAmount(target.Channel, targetCfg); keepaliveAmount > 0 && keepaliveAmount < targetAmount {
 				targetAmount = keepaliveAmount
 				budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
-				estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, targetCfg)
-				target.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
+				estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount))
+				target.ExpectedGainSat = estimateTargetGainForConfig(sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount), target.Channel, targetAmount)
 				target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
 			}
 		}
@@ -4691,6 +4692,20 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		// profit minimum, with profit >= 0). The route gates (route-dead source
 		// share, low-success dead ban) stay in force: a keepalive probe against
 		// a target nothing can reach only quarantines the sources.
+		// Second chance: a target held back on an assumed cost that drew the
+		// exploration slot buys one lot at the operator's start amount, enough
+		// to measure its route price and whether it sells, under the usual fee
+		// cap.
+		secondChance := target.SecondChanceOnly && target.ExplorationSlot
+		if secondChance && !keepalive {
+			if lot := sovereignSecondChanceAmountSat(targetCfg, targetAmount); lot < targetAmount {
+				targetAmount = lot
+				budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
+				estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount))
+				target.ExpectedGainSat = estimateTargetGainForConfig(sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount), target.Channel, targetAmount)
+				target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
+			}
+		}
 		bypassEconomics := target.ExplorationSlot || keepalive
 		historicalSuccessRate, historicalAttempts := sovereignHistoricalSuccessRate(target.PairStats)
 		expectedProfit := target.ExpectedGainSat - estimatedCost
@@ -4740,6 +4755,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			RealizedEconomicsMultiplier: target.RealizedEconomicsMultiplier,
 			ExplorationSlot:             target.ExplorationSlot,
 			KeepaliveRefill:             keepalive,
+			SecondChance:                secondChance,
 		}
 		if targetCfg.StockGateEnabled && stockLevel.Known {
 			decision.StockUnsoldSat = stockLevel.UnsoldSat
@@ -4779,6 +4795,9 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		case stockBlocked:
 			decision.Reason = sovereignStockGateReason
 			noteSkip(decision.Reason)
+		case target.SecondChanceOnly && !secondChance:
+			decision.Reason = "roi_guardrail"
+			noteSkip(decision.Reason)
 		case inventoryProbe && targetCfg.ROIMin > 0 && decision.ExpectedROIValid && decision.ExpectedROI < targetCfg.ROIMin:
 			decision.Reason = "roi_guardrail"
 			noteSkip(decision.Reason)
@@ -4798,7 +4817,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		// antes da lógica de exploration ter efeito visível. Resultado: pool
 		// efetivo travado nos top-score targets, que se queimam em
 		// target_structural_cooldown e somem do scan por 6h.
-		case !(bypassEconomics && expectedProfit >= 0) && expectedProfit < cfg.SovereignMinExpectedProfitSat:
+		case !(bypassEconomics && (expectedProfit >= 0 || secondChance)) && expectedProfit < cfg.SovereignMinExpectedProfitSat:
 			decision.Reason = "expected_profit_below_min"
 			noteSkip(decision.Reason)
 		case !bypassEconomics && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
@@ -4843,10 +4862,10 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					continue
 				}
 				decision.AmountSat = targetAmount
-				resizedEstimatedCost := applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, targetCfg)
+				resizedEstimatedCost := applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount))
 				decision.EstimatedCostSat = resizedEstimatedCost
 				decision.BudgetCostSat = budgetCost
-				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
+				decision.ExpectedGainSat = estimateTargetGainForConfig(sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount), target.Channel, targetAmount)
 				decision.ExpectedProfitSat = decision.ExpectedGainSat - decision.EstimatedCostSat
 				decision.ExpectedROI, decision.ExpectedROIValid = estimateTargetROI(decision.ExpectedGainSat, decision.EstimatedCostSat, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
 				if inventoryProbe && targetCfg.ROIMin > 0 && decision.ExpectedROIValid && decision.ExpectedROI < targetCfg.ROIMin {
@@ -4855,7 +4874,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					appendDecision(decision)
 					continue
 				}
-				if !(bypassEconomics && decision.ExpectedProfitSat >= 0) && decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
+				if !(bypassEconomics && (decision.ExpectedProfitSat >= 0 || secondChance)) && decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
 					decision.Reason = "expected_profit_below_min"
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -5183,6 +5202,10 @@ type rebalanceTarget struct {
 	// exploration mechanism. These bypassed the score sort to give a
 	// historically-deprioritized candidate a chance to be tried.
 	ExplorationSlot bool
+	// SecondChanceOnly: the candidate failed the ROI/profit guardrail on an
+	// assumed cost (sovereignSecondChanceEligible). It runs only on an
+	// exploration slot, at the operator's start amount.
+	SecondChanceOnly bool
 	// PeerHasParallelChannels: the peer has another channel with us. The
 	// delegated fast path cannot pin the incoming channel then, so a
 	// discovery probe (fast path only) would be skipped before trying.
@@ -5369,10 +5392,20 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		} else {
 			estimatedCost = estimateHistoricalCost(targetAmount, snapshot.RebalanceCost7dPpm)
 		}
-		estimatedCost = applyPeerFeeCostFloor(estimatedCost, targetAmount, snapshot.PeerFeeRatePpm, targetCfg)
-		expectedGain := estimateTargetGainForConfig(targetCfg, snapshot, targetAmount)
+		econCfg := targetCfg
+		if input.SovereignRanking {
+			econCfg = sovereignTargetEconomicsConfig(targetCfg, snapshot, targetAmount)
+		}
+		estimatedCost = applyPeerFeeCostFloor(estimatedCost, targetAmount, snapshot.PeerFeeRatePpm, econCfg)
+		expectedGain := estimateTargetGainForConfig(econCfg, snapshot, targetAmount)
 		expectedROI, roiValid := estimateTargetROI(expectedGain, estimatedCost, targetAmount, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
-		if input.Cfg.ROIMin > 0 && roiValid && expectedROI < input.Cfg.ROIMin {
+		// A target that fails the entry guardrails on an assumed cost stays in
+		// the list for the exploration draw only; the sovereign loop holds it
+		// at roi_guardrail unless it receives the slot.
+		secondChanceOnly := input.SovereignRanking &&
+			rebalanceCandidateFailsEntryEconomics(input.Cfg, expectedGain, estimatedCost, expectedROI, roiValid) &&
+			sovereignSecondChanceEligible(input.Cfg, snapshot, targetAmount, expectedGain)
+		if !secondChanceOnly && input.Cfg.ROIMin > 0 && roiValid && expectedROI < input.Cfg.ROIMin {
 			plan.ROISkipped++
 			noteSkip("roi_guardrail")
 			plan.SkippedDetails = append(plan.SkippedDetails, RebalanceSkipDetail{
@@ -5395,7 +5428,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		// their configured floor — defer to roi_guardrail above. We still fire
 		// when ROIMin is unset (<=0) or >= 1 so default behavior is preserved.
 		lossTolerantROI := input.Cfg.ROIMin > 0 && input.Cfg.ROIMin < 1
-		if !lossTolerantROI && expectedGain > 0 && estimatedCost > 0 && expectedGain < estimatedCost {
+		if !secondChanceOnly && !lossTolerantROI && expectedGain > 0 && estimatedCost > 0 && expectedGain < estimatedCost {
 			plan.ProfitSkipped++
 			noteSkip("profit_guardrail")
 			plan.SkippedDetails = append(plan.SkippedDetails, RebalanceSkipDetail{
@@ -5441,6 +5474,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			UnsoldLiquidity:         input.SovereignUnsoldLiquidity[snapshot.ChannelID],
 			TargetClass:             classifySovereignTarget(pairStats, input.Cfg),
 			PeerHasParallelChannels: rebalancePeerHasParallelChannels(snapshot, input.Channels),
+			SecondChanceOnly:        secondChanceOnly,
 		})
 		if !plan.TopScoreSet || score > plan.TopScore {
 			plan.TopScore = score

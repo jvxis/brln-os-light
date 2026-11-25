@@ -59,6 +59,14 @@ Em 25 de novembro de 2026, o probe consultou mainnet com uma chave do Breez, con
 
 A descoberta e as cotações comprovam disponibilidade para os destinos de teste. A volta foi cotada para uma Lightning Address pública. O teste de liquidação no próprio LND e as condições de recuperação continuam pendentes. A validade observada foi de cerca de dois minutos. A integração precisa lidar com tempo de confirmação externo e com depósitos tardios, sem enviar outra vez quando uma ordem estiver indeterminada. [Estados da ordem](https://sdk-doc-spark.breez.technology/guide/bridging.html#tracking-a-bridge)
 
+### Piloto financiado de Lightning para USDC
+
+Em 25 de novembro de 2026, o LOS-TEST2 não encontrou rota para a invoice do Breez. Com autorização específica, o HUB validou uma rota e o Manager vinculou a invoice a uma intenção de pagamento com reautenticação. O LND registrou a liquidação de 1.751 sats mais 1.751 msat de taxa, abaixo do teto de 2.000 sats. O destino cotado era 1 USDC nativo na Base na carteira criada pelo operador no piloto.
+
+Após o vencimento da cotação, o Breez ainda retornava `Created`, sem depósito, ID de ordem ou transação de entrega. A Base não mostrava crédito do contrato nativo do USDC e a invoice de reembolso do HUB permanecia aberta, com zero recebido. A divergência foi encaminhada à Flashnet por um canal privado para comprovar a entrega ou o reembolso. [Procedimento de suporte do Breez](https://sdk-doc-spark.breez.technology/guide/reporting_an_issue.html#usdcusdt-orders)
+
+O aplicativo deve registrar a liquidação do LND e a entrega do provedor como eventos independentes. Uma invoice liquidada com resposta `Created` do provedor, inclusive após o vencimento da cotação, exige conciliação. Preservar a evidência de pagamento, a credencial de consulta e o destino de reembolso sob controle de acesso. Bloquear nova tentativa de financiamento da mesma operação até comprovar a entrega ou o reembolso. Para confirmar a entrega na Base, verificar o recibo bem-sucedido na rede 8453 e o evento de transferência do contrato oficial do USDC para a carteira cotada, com o valor correspondente.
+
 ### Retorno ao LND via Lightning Address do clube
 
 O serviço existente em `pay.br-ln.com` permite receber diretamente no LND com a configuração de REST via Tor e um macaroon dedicado de invoices. O operador faz essa configuração e fornece a Lightning Address ao app. O Manager mantém os fluxos autenticados na interface local. A Tesouraria não precisa registrar endereços nem receber as credenciais que o operador entrega ao serviço. [REST via Tor e credencial de invoices](TEST_0.5.55_TOR_LND_REST.md) · [Satdress do BRLN](https://github.com/jvxis/satdress/blob/3279e6b21673e5a6bb0c3bc8345ef7482c3c9708/makeinvoice.go)

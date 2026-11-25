@@ -2,7 +2,7 @@
 
 Prova técnica isolada da Tesouraria em Stablecoins. Consulta as rotas BTC Lightning → USDC nativo na Base e USDC nativo na Base → BTC Lightning. O comando exibe apenas a contagem de rotas compatíveis por direção. Ele usa a rede Base com chain ID 8453 e o contrato publicado pela Circle. [Contrato do USDC](https://developers.circle.com/stablecoins/usdc-contract-addresses)
 
-O código chama somente descoberta de rotas. A criação de cotações, ordens e pagamentos fica para uma etapa posterior. A consulta envia os destinatários públicos ao provedor. Use destinatários de teste e injete a chave do Breez a partir de seu armazenamento de segredos como variável de ambiente `BREEZ_API_KEY`. [Bridging no SDK Breez](https://sdk-doc-spark.breez.technology/guide/bridging.html)
+A consulta de rotas é o modo padrão. O modo opcional de cotação cria ordens sem movimentar fundos. A consulta envia os destinatários públicos ao provedor. Use destinatários de teste e injete a chave do Breez a partir de seu armazenamento de segredos como variável de ambiente `BREEZ_API_KEY`. [Bridging no SDK Breez](https://sdk-doc-spark.breez.technology/guide/bridging.html)
 
 ## Executar em Linux amd64
 
@@ -20,6 +20,20 @@ timeout 30s /tmp/breez-bridge-probe "$BASE_RECIPIENT" "$LIGHTNING_RECIPIENT"
 Preencha `BASE_RECIPIENT` com o endereço público de uma carteira de teste na Base. Para a consulta de retorno, use um destinatário Lightning de teste. Use uma Lightning Address como destinatário de retorno. O SDK v0.28.6 rejeita uma invoice BOLT11 como destinatário do bridge. [Parser do SDK v0.28.6](https://github.com/breez/spark-sdk/blob/5bb1ca5229cd4d6d4e8cf66dfe9d01224db6cd2d/crates/breez-sdk/core/src/sdk/bridging/mod.rs#L407)
 
 `--check-bindings` verifica apenas que o executável carrega a biblioteca e inicializa os bindings. A consulta também exige uma chave válida e rede. A presença de uma rota indica que foi anunciada pelo provedor. Cotação, entrega e recuperação exigem validação própria.
+
+## Cotação sem financiamento
+
+O modo padrão só consulta rotas. Para testar cotações, use a opção abaixo com destinos de teste e endereços de reembolso explícitos. O Breez cria uma ordem por direção e o probe confirma o estado inicial sem pagamento. Os dados impressos incluem valores e validade. As instruções de pagamento e credenciais de consulta ficam fora da saída do probe.
+
+```bash
+timeout 45s /tmp/breez-bridge-probe \
+  --quote-usdc-micros 10000000 \
+  --base-refund "$BASE_REFUND" \
+  --lightning-refund "$LIGHTNING_REFUND" \
+  "$BASE_RECIPIENT" "$LIGHTNING_RECIPIENT"
+```
+
+O modo usa 100 basis points de tolerância solicitada e adiciona a taxa ao valor de depósito. O montante pedido está em milionésimos de USDC. Use o valor de depósito e o recebimento esperado retornados pelo provedor, pois podem divergir do valor solicitado. A validade da cotação regula o preço. O provedor documenta que alguns depósitos on-chain tardios ainda podem ser aceitos por outro valor. [Cotação e acompanhamento no Breez](https://sdk-doc-spark.breez.technology/guide/bridging.html#tracking-a-bridge)
 
 ## Empacotamento
 

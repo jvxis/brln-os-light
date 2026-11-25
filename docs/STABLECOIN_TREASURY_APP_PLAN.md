@@ -44,6 +44,17 @@ Usar `origin/agent/0.5.60-release` como base da branch de trabalho `agent/0.5.60
 
 A [ferramenta de descoberta](../tools/breez-bridge-probe/README.md) usa o SDK Breez fixado em v0.28.6. Ela consulta as duas direções do par e contabiliza somente rotas entre BTC Lightning e o contrato oficial do USDC na Base. A ferramenta opera fora do Manager e da App Store. A presença da rota é o primeiro teste. Cotação, liquidação, prazo e recuperação exigem validação própria.
 
+### Evidência de cotações no Breez
+
+Em 25 de novembro de 2026, o probe consultou mainnet com uma chave do Breez, confirmou uma rota por direção e obteve duas cotações de referência com valor solicitado de 10 USDC. As ordens tinham credencial de consulta e o provedor retornou o estado inicial sem pagamento.
+
+| Sentido | Depósito cotado | Recebimento esperado |
+| --- | ---: | ---: |
+| Lightning → USDC na Base | 17.063 sats | 10,000000 USDC |
+| USDC na Base → Lightning | 10,261501 USDC | 16.971 sats |
+
+A descoberta e as cotações comprovam disponibilidade para os destinos de teste. A volta foi cotada para uma Lightning Address pública. O teste de liquidação no próprio LND e as condições de recuperação continuam pendentes. A validade observada foi de cerca de dois minutos. A integração precisa lidar com tempo de confirmação externo e com depósitos tardios, sem enviar outra vez quando uma ordem estiver indeterminada. [Estados da ordem](https://sdk-doc-spark.breez.technology/guide/bridging.html#tracking-a-bridge)
+
 ## Sequência e critérios de liberação
 
 1. **Prova técnica do provedor.** Verificar conta e chave de produção, elegibilidade dos operadores no Brasil, rotas nos dois sentidos, valores mínimos, custo total, identificação da transação, prazos e procedimento de suporte. Demonstrar as condições de reembolso em cada etapa, inclusive falha após a troca, e confirmar que a validade da invoice de devolução cobre o prazo do provedor. Resolver empacotamento e procedência em Linux amd64. Sem rota ou recuperação verificável, manter o app fora do catálogo público.

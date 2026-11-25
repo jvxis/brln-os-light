@@ -1,8 +1,9 @@
-// breez-bridge-probe checks route discovery without creating orders or paying.
+// breez-bridge-probe checks route discovery and optional unfunded quotes.
 package main
 
 import (
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -22,15 +23,15 @@ func isLightningBTC(side sdk.BridgeRoutePairSide) bool {
 	return side.Chain == "lightning" && side.Asset == "BTC"
 }
 
-func matchingRouteCount(routes []sdk.BridgeRoutePair, toBase bool) int {
-	count := 0
+func matchingRoutes(routes []sdk.BridgeRoutePair, toBase bool) []sdk.BridgeRoutePair {
+	var matches []sdk.BridgeRoutePair
 	for _, route := range routes {
 		if toBase && isLightningBTC(route.Source) && isBaseUSDC(route.Destination) ||
 			!toBase && isBaseUSDC(route.Source) && isLightningBTC(route.Destination) {
-			count++
+			matches = append(matches, route)
 		}
 	}
-	return count
+	return matches
 }
 
 func validBaseAddress(address string) bool {
@@ -48,6 +49,18 @@ func run(args []string) error {
 		return nil
 	}
 
+	var quote quoteOptions
+	flags := flag.NewFlagSet("breez-bridge-probe", flag.ContinueOnError)
+	flags.Uint64Var(&quote.amount, "quote-usdc-micros", 0, "create unfunded quotes using this amount in USDC micros")
+	flags.StringVar(&quote.baseRefund, "base-refund", "", "Base refund destination for the reverse quote")
+	flags.StringVar(&quote.lightningRefund, "lightning-refund", "", "Lightning refund destination for the forward quote")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if err := quote.validate(); err != nil {
+		return err
+	}
+	args = flags.Args()
 	if len(args) != 2 || !validBaseAddress(args[0]) || strings.TrimSpace(args[1]) == "" {
 		return fmt.Errorf("usage: breez-bridge-probe <Base recipient address> <Lightning recipient>")
 	}
@@ -75,9 +88,22 @@ func run(args []string) error {
 		if err != nil {
 			return fmt.Errorf("%s: route lookup failed", check.label)
 		}
-		count := matchingRouteCount(response.Routes, check.toBase)
-		fmt.Printf("%s: %d matching route(s)\n", check.label, count)
-		missing = missing || count == 0
+		routes := matchingRoutes(response.Routes, check.toBase)
+		fmt.Printf("%s: %d matching route(s)\n", check.label, len(routes))
+		missing = missing || len(routes) == 0
+		if quote.amount == 0 || len(routes) == 0 {
+			continue
+		}
+		if len(routes) != 1 {
+			return fmt.Errorf("%s: quote mode requires one unambiguous route", check.label)
+		}
+		refund := quote.baseRefund
+		if check.toBase {
+			refund = quote.lightningRefund
+		}
+		if err := quoteUnfunded(client, routes[0], check.recipient, refund, check.toBase, quote.amount); err != nil {
+			return fmt.Errorf("%s: %w", check.label, err)
+		}
 	}
 	if missing {
 		return fmt.Errorf("at least one required route is unavailable")

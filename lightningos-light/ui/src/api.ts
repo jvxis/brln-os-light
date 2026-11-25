@@ -1744,6 +1744,7 @@ export type TreasuryOrder = {
   amount_out: number
   provider_fee?: { amount: number; asset: 'sat' | 'USDC'; decimals: number }
   max_routing_sat?: number
+  estimated_routing_msat?: number
   actual_routing_msat?: number
   actual_base_fee_wei?: string
   delivered_amount?: number

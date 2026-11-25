@@ -40,6 +40,7 @@ type treasuryOrder struct {
 	AmountOut        int64                `json:"amount_out"`
 	ProviderFee      *treasuryProviderFee `json:"provider_fee,omitempty"`
 	MaxFee           int64                `json:"max_routing_sat,omitempty"`
+	EstimatedFeeMsat int64                `json:"estimated_routing_msat,omitempty"`
 	Expires          time.Time            `json:"expires_at"`
 	Created          time.Time            `json:"created_at"`
 	State            string               `json:"state"`
@@ -154,6 +155,14 @@ func (s *Server) makeTreasuryQuote(ctx context.Context, session string, request 
 			return treasuryOrder{}, errors.New("the provider invoice differs from the quote")
 		}
 		private.Invoice, invoiceHash = quote.Invoice, &invoice.PaymentHash
+		routeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		preview, err := s.lnd.PreviewPayment(routeCtx, quote.Invoice, nil, request.MaxFee, 3)
+		cancel()
+		if err != nil || !preview.LiquidityValidated || preview.ValidatedRouteCount == 0 ||
+			preview.SuggestedMaxFeeMsat > request.MaxFee*1000 || time.Until(order.Expires) < 15*time.Second {
+			return treasuryOrder{}, errors.New("no Lightning route validated within the quoted fee limit")
+		}
+		order.EstimatedFeeMsat = preview.SuggestedMaxFeeMsat
 	} else {
 		order.Deposit = treasuryBaseAddress(quote.Deposit)
 		if order.Deposit == "" || order.Deposit == order.Wallet || order.AmountIn > treasuryMaximumUSDCMicros*2 ||

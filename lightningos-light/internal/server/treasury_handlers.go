@@ -99,7 +99,8 @@ func (s *Server) handleTreasuryConfigure(w http.ResponseWriter, r *http.Request)
 		var active bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM stablecoin_treasury_orders
 		    WHERE state NOT IN ('completed','refunded','failed','expired') AND
-		    (state <> 'quoted' OR direction='to_lightning' OR expires_at > now()))`).Scan(&active); err != nil || active {
+		    (state <> 'quoted' OR expires_at > now() OR
+		    (direction='to_lightning' AND expires_at > now()-interval '1 day')))`).Scan(&active); err != nil || active {
 			writeError(w, http.StatusConflict, "resolve pending treasury orders before changing the key")
 			return
 		}

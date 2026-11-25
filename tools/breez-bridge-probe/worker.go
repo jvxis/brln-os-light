@@ -49,9 +49,14 @@ func bridgeWorker(input io.Reader, output io.Writer) error {
 	var req bridgeCommand
 	reader := json.NewDecoder(io.LimitReader(input, 16<<10))
 	reader.DisallowUnknownFields()
-	if reader.Decode(&req) != nil || reader.Decode(new(any)) != io.EOF ||
-		len(req.APIKey) < 1 || len(req.APIKey) > 4096 || strings.ContainsAny(req.APIKey, "\r\n\x00") {
+	if reader.Decode(&req) != nil || reader.Decode(new(any)) != io.EOF {
 		return errors.New("invalid bridge request")
+	}
+	if req.Action == "health" && req == (bridgeCommand{Action: "health"}) {
+		return json.NewEncoder(output).Encode(bridgeResult{Status: "ready"})
+	}
+	if len(req.APIKey) < 1 || len(req.APIKey) > 4096 || strings.ContainsAny(req.APIKey, "\r\n\x00") {
+		return errors.New("invalid bridge credential")
 	}
 	client, err := sdk.NewBridgingClient(sdk.DefaultBridgingConfig(req.APIKey))
 	if err != nil {

@@ -52,3 +52,7 @@ env -u LD_LIBRARY_PATH "$bundle/breez-bridge-probe" --check-bindings
 ```
 
 Para distribuição como serviço, a instalação deverá verificar a procedência do executável e da biblioteca e impedir escrita no diretório do bundle pelo usuário do serviço. O Manager não importa esse módulo. [Plano e critérios de liberação](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)
+
+`bash package-linux.sh NEW_OUTPUT_DIRECTORY` monta o bundle nativo Linux amd64 com os dois arquivos de runtime, as units systemd e um manifesto SHA-256. Execute a partir do checkout revisado com compilador C e `patchelf`. O manifesto verifica o conteúdo do pacote. A distribuição precisa atrelar esse manifesto ao commit revisado e verificar a procedência antes de instalar.
+
+O layout de implantação usa `/opt/lightningos/treasury/` para o executável e a biblioteca root-owned e `/etc/systemd/system/` para a socket e a unit correspondente. O socket `/run/lightningos-treasury/bridge.sock` restringe conexões ao Manager. Cada requisição roda com usuário dinâmico dedicado e sem acesso aos dados ou credenciais do LND. A instalação pelo catálogo habilita o estado da Tesouraria no Manager quando o bundle já estiver implantado. Parar pelo catálogo bloqueia novas operações e mantém a conciliação de ordens.

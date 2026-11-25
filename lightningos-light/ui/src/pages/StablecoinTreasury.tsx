@@ -221,6 +221,7 @@ export default function StablecoinTreasury() {
         <dd>{new Intl.NumberFormat(getLocale(i18n.language), { maximumFractionDigits: 2 }).format(
           order.direction === 'to_base' ? order.amount_in * 1e6 / order.amount_out : order.amount_out * 1e6 / order.amount_in)} sats/USDC</dd>
         {order.direction === 'to_base' && <>
+          {order.estimated_routing_msat !== undefined && <><dt>{label('Suggested routing fee', 'Taxa de roteamento sugerida')}</dt><dd>{amountFmt(order.estimated_routing_msat, 3)} sats</dd></>}
           <dt>{label('Routing fee cap', 'Teto da taxa de roteamento')}</dt><dd>{order.max_routing_sat} sats</dd>
           <dt>{label('Maximum total debit', 'Débito total máximo')}</dt><dd>{((order.max_routing_sat ?? 0) + order.amount_in).toLocaleString(getLocale(i18n.language))} sats</dd>
         </>}

@@ -220,6 +220,12 @@ func (s *Server) submitTreasuryBase(ctx context.Context, id, session, raw string
 		return "", errors.New("signed Base quote unavailable, expired or already used")
 	}
 	signing := record.private.BaseSigning
+	var active bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM stablecoin_treasury_orders
+		WHERE id <> $1 AND direction='to_lightning' AND public_data->>'wallet'=$2
+		AND state NOT IN ('quoted','completed','refunded','failed','expired'))`, id, record.Wallet).Scan(&active); err != nil || active {
+		return "", errors.New("reconcile the active transfer from this Base wallet before sending again")
+	}
 	available, have := new(big.Int).SetString(signing.AvailableETH, 10)
 	total, expect := new(big.Int).SetString(signing.EstimatedTotal, 10)
 	if !have || !expect || available.Cmp(total) < 0 {

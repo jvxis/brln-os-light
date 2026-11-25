@@ -33,12 +33,15 @@
     </section>
     <section id="sign" aria-labelledby="sign-title">
       <h2 id="sign-title">Assinar depósito de USDC</h2>
-      <label for="order">Ordem da Tesouraria</label>
-      <input id="order" type="file" accept=".json,application/json">
+      <div id="import-order">
+        <label for="order">Ordem da Tesouraria</label>
+        <input id="order" type="file" accept=".json,application/json">
+      </div>
       <form id="authorize" hidden>
         <dl id="costs"></dl>
         <label for="sign-wallet">Arquivo de backup</label>
         <input id="sign-wallet" type="file" accept=".json,application/json" required>
+        <button id="pilot-quote" type="button" hidden>Gerar cotação para voltar ao LOS-TEST2</button>
         <label for="sign-password">Senha do backup</label>
         <input id="sign-password" type="password" autocomplete="off" minlength="14" maxlength="128" required>
         <button type="submit">Assinar valores exibidos</button>

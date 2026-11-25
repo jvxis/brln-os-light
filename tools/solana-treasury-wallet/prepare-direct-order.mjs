@@ -1,7 +1,8 @@
 import { address } from '@solana/kit'
+import { pathToFileURL } from 'node:url'
 import { compileDirectDeposit, reviewDirectDeposit, tokenProgram, usdcAccount, usdcMint } from './sponsored.mjs'
 
-async function rpc(method, ...params) {
+export async function directOrderRpc(method, ...params) {
   const response = await fetch('https://api.mainnet-beta.solana.com', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -24,7 +25,7 @@ function accountTokenInfo(account, owner) {
   return info.tokenAmount.amount
 }
 
-async function prepare(quote) {
+export async function prepareDirectOrder(quote) {
   const wallet = address(quote.wallet)
   const deposit = address(quote.deposit)
   const [source, target] = await Promise.all([usdcAccount(wallet), usdcAccount(deposit)])
@@ -32,16 +33,16 @@ async function prepare(quote) {
     { value: [sourceAccount, targetAccount] }, { value: balance },
     { value: latestBlock }, systemReserve,
   ] = await Promise.all([
-    rpc('getMultipleAccounts', [source, target], { commitment: 'confirmed', encoding: 'jsonParsed' }),
-    rpc('getBalance', wallet, { commitment: 'confirmed' }),
-    rpc('getLatestBlockhash', { commitment: 'confirmed' }),
-    rpc('getMinimumBalanceForRentExemption', 0, { commitment: 'confirmed' }),
+    directOrderRpc('getMultipleAccounts', [source, target], { commitment: 'confirmed', encoding: 'jsonParsed' }),
+    directOrderRpc('getBalance', wallet, { commitment: 'confirmed' }),
+    directOrderRpc('getLatestBlockhash', { commitment: 'confirmed' }),
+    directOrderRpc('getMinimumBalanceForRentExemption', 0, { commitment: 'confirmed' }),
   ])
   if (!sourceAccount || BigInt(accountTokenInfo(sourceAccount, wallet)) < BigInt(quote.depositMicros)) {
     throw new Error('Wallet has insufficient USDC')
   }
   if (targetAccount) accountTokenInfo(targetAccount, deposit)
-  const accountLamports = targetAccount ? 0 : await rpc('getMinimumBalanceForRentExemption', 165, { commitment: 'confirmed' })
+  const accountLamports = targetAccount ? 0 : await directOrderRpc('getMinimumBalanceForRentExemption', 165, { commitment: 'confirmed' })
   const order = {
     version: 1, feeMode: 'wallet', cluster: 'mainnet', id: quote.id,
     wallet, deposit, depositMicros: quote.depositMicros, providerFeeMicros: quote.providerFeeMicros,
@@ -51,7 +52,7 @@ async function prepare(quote) {
     feeLamports: '1',
   }
   const transaction = await compileDirectDeposit(reviewDirectDeposit(order))
-  const { value: fee } = await rpc('getFeeForMessage', Buffer.from(transaction.messageBytes).toString('base64'), { commitment: 'confirmed' })
+  const { value: fee } = await directOrderRpc('getFeeForMessage', Buffer.from(transaction.messageBytes).toString('base64'), { commitment: 'confirmed' })
   if (!Number.isSafeInteger(fee) || balance < fee + accountLamports + systemReserve) {
     throw new Error('Wallet has insufficient SOL or fee could not be estimated')
   }
@@ -60,16 +61,18 @@ async function prepare(quote) {
   return order
 }
 
-try {
-  let input = ''
-  process.stdin.setEncoding('utf8')
-  for await (const chunk of process.stdin) {
-    input += chunk
-    if (input.length > 4096) throw new Error('Quote exceeds the maximum size')
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    let input = ''
+    process.stdin.setEncoding('utf8')
+    for await (const chunk of process.stdin) {
+      input += chunk
+      if (input.length > 4096) throw new Error('Quote exceeds the maximum size')
+    }
+    const quote = JSON.parse(input)
+    process.stdout.write(JSON.stringify(await prepareDirectOrder(quote)) + '\n')
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`)
+    process.exitCode = 1
   }
-  const quote = JSON.parse(input)
-  process.stdout.write(JSON.stringify(await prepare(quote)) + '\n')
-} catch (error) {
-  process.stderr.write(`${error.message}\n`)
-  process.exitCode = 1
 }

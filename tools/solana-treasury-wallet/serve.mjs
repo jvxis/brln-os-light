@@ -1,5 +1,10 @@
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
+import { directPilot, readPilotJson } from './direct-pilot.mjs'
+
+const pilot = process.argv[2] ? directPilot(await readPilotJson(process.argv[2])) : undefined
+const port = pilot ? 4177 : 4176
+const host = `127.0.0.1:${port}`
 
 const files = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -13,10 +18,19 @@ const headers = {
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'no-referrer'
 }
+if (pilot) headers['Content-Security-Policy'] += "; connect-src 'self'"
 
 createServer(async (request, response) => {
+  if (pilot && request.headers.host === host && request.method === 'POST' &&
+      request.headers.origin === `http://${host}` && request.headers['x-lightningos-pilot'] === '1' &&
+      ['/pilot/quote', '/pilot/submit'].includes(request.url)) {
+    for (const [name, value] of Object.entries(headers)) response.setHeader(name, value)
+    response.setHeader('Content-Type', 'application/json; charset=utf-8')
+    await pilot(request, response)
+    return
+  }
   const target = files.get(request.url)
-  if (request.method !== 'GET' || request.headers.host !== '127.0.0.1:4176' || !target) {
+  if (request.method !== 'GET' || request.headers.host !== host || !target) {
     response.writeHead(404, headers).end()
     return
   }
@@ -26,4 +40,4 @@ createServer(async (request, response) => {
   } catch {
     response.writeHead(500, headers).end()
   }
-}).listen(4176, '127.0.0.1', () => process.stdout.write('Carteira Solana em http://127.0.0.1:4176/\n'))
+}).listen(port, '127.0.0.1', () => process.stdout.write(`Carteira Solana em http://${host}/\n`))

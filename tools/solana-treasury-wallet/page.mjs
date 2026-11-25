@@ -31,8 +31,90 @@ function enableSigning() {
   const form = control('authorize')
   const status = control('sign-status')
   const download = control('save-signature')
+  const quote = control('pilot-quote')
+  const passwordInput = control('sign-password')
+  const confirm = form.querySelector('button[type="submit"]')
+  const pilot = location.port === '4177'
   let reviewedFile
   let signed
+
+  function review(documentValue) {
+    const direct = documentValue?.feeMode === 'wallet'
+    const terms = direct ? reviewDirectDeposit(documentValue) : reviewSponsoredDeposit(documentValue)
+    const costs = direct ? [
+      ['Débito total em USDC', formatUSDC(terms.usdc)],
+      ['Taxa de conversão incluída', terms.providerFee === undefined ? 'Não discriminada pelo provedor' : formatUSDC(terms.providerFee)],
+      ['Endereço Lightning informado na ordem', terms.lightningAddress],
+      ['Recebimento estimado', `${terms.expectedSats} sats`],
+      ['Taxa estimada da rede', formatSOL(terms.feeLamports)],
+      ['Reserva para a conta de USDC do destino', formatSOL(terms.accountLamports)],
+      ['Total estimado em SOL', formatSOL(terms.feeLamports + terms.accountLamports)],
+    ] : [
+      ['Taxa do patrocinador', formatUSDC(terms.fee)],
+      ['Débito total', formatUSDC(terms.total)],
+      ['Conta que recebe a taxa', terms.sponsorFeeAccount],
+    ]
+    const list = control('costs')
+    list.replaceChildren()
+    for (const [label, value] of [
+      ['Rede', terms.cluster === 'devnet' ? 'Solana devnet · USDC de teste' : 'Solana mainnet'],
+      ['Depósito para conversão', formatUSDC(terms.usdc)],
+      ...costs,
+      ['Destino na Solana', terms.deposit],
+      ['Criação de conta de token', terms.createDepositAccount ? 'Incluída na ordem' : 'Conta existente'],
+    ]) {
+      const title = document.createElement('dt')
+      const details = document.createElement('dd')
+      title.textContent = label
+      details.textContent = value
+      list.append(title, details)
+    }
+    reviewedFile = documentValue
+    form.hidden = false
+    if (pilot) confirm.disabled = false
+  }
+
+  async function pilotRequest(path, body) {
+    const response = await fetch(path, {
+      method: 'POST', headers: { 'X-LightningOS-Pilot': '1', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) throw new Error('Pilot request failed')
+    return response.json()
+  }
+
+  if (pilot) {
+    control('import-order').hidden = true
+    quote.hidden = false
+    form.hidden = false
+    confirm.disabled = true
+    confirm.textContent = 'Assinar e transmitir os valores exibidos'
+    quote.addEventListener('click', async () => {
+      if (busy) return
+      const backup = control('sign-wallet').files?.[0]
+      if (!backup || backup.size > maxBackupBytes) {
+        status.textContent = 'Selecione o backup da carteira Solana antes de cotar.'
+        return
+      }
+      busy = true
+      quote.disabled = true
+      confirm.disabled = true
+      reviewedFile = undefined
+      control('costs').replaceChildren()
+      status.textContent = 'Consultando a cotação e os custos de rede…'
+      try {
+        review(await pilotRequest('/pilot/quote', {}))
+        status.textContent = 'Confira os valores e assine dentro de 60 segundos.'
+        passwordInput.focus()
+      } catch {
+        status.textContent = 'Cotação indisponível. Se já enviou uma transação, aguarde a verificação.'
+      } finally {
+        busy = false
+        quote.disabled = false
+      }
+    })
+  }
+
   file.addEventListener('change', async () => {
     reviewedFile = undefined
     signed = undefined
@@ -44,40 +126,8 @@ function enableSigning() {
     if (!input) return
     try {
       if (input.size > maxBackupBytes) throw new Error()
-      const documentValue = JSON.parse(await input.text())
-      if (input !== file.files?.[0]) return
-      const direct = documentValue?.feeMode === 'wallet'
-      const terms = direct ? reviewDirectDeposit(documentValue) : reviewSponsoredDeposit(documentValue)
-      const costs = direct ? [
-        ['Débito total em USDC', formatUSDC(terms.usdc)],
-        ['Taxa de conversão incluída', terms.providerFee === undefined ? 'Não discriminada pelo provedor' : formatUSDC(terms.providerFee)],
-        ['Endereço Lightning informado na ordem', terms.lightningAddress],
-        ['Recebimento estimado', `${terms.expectedSats} sats`],
-        ['Taxa estimada da rede', formatSOL(terms.feeLamports)],
-        ['Reserva para a conta de USDC do destino', formatSOL(terms.accountLamports)],
-        ['Total estimado em SOL', formatSOL(terms.feeLamports + terms.accountLamports)],
-      ] : [
-        ['Taxa do patrocinador', formatUSDC(terms.fee)],
-        ['Débito total', formatUSDC(terms.total)],
-        ['Conta que recebe a taxa', terms.sponsorFeeAccount],
-      ]
-      const list = control('costs')
-      list.replaceChildren()
-      for (const [label, value] of [
-        ['Rede', terms.cluster === 'devnet' ? 'Solana devnet · USDC de teste' : 'Solana mainnet'],
-        ['Depósito para conversão', formatUSDC(terms.usdc)],
-        ...costs,
-        ['Destino na Solana', terms.deposit],
-        ['Criação de conta de token', terms.createDepositAccount ? 'Incluída na ordem' : 'Conta existente'],
-      ]) {
-        const title = document.createElement('dt')
-        const details = document.createElement('dd')
-        title.textContent = label
-        details.textContent = value
-        list.append(title, details)
-      }
-      reviewedFile = documentValue
-      form.hidden = false
+      const value = JSON.parse(await input.text())
+      if (input === file.files?.[0]) review(value)
     } catch {
       if (input === file.files?.[0]) status.textContent = 'Ordem inválida ou expirada.'
     }
@@ -86,28 +136,38 @@ function enableSigning() {
     event.preventDefault()
     const backup = control('sign-wallet').files?.[0]
     if (busy || !reviewedFile || !backup || backup.size > maxBackupBytes) return
-    const password = control('sign-password').value
-    const confirm = form.querySelector('button')
-    form.reset()
+    const password = passwordInput.value
+    if (pilot) passwordInput.value = ''
+    else form.reset()
     busy = true
     file.disabled = true
     confirm.disabled = true
+    let submitting = false
     try {
       const direct = reviewedFile.feeMode === 'wallet'
       const sign = direct ? signDirectDeposit : signSponsoredDeposit
       signed = await sign(await backup.text(), password, reviewedFile)
       reviewedFile = undefined
+      if (pilot) {
+        submitting = true
+        const result = await pilotRequest('/pilot/submit', signed)
+        status.textContent = `Transação enviada à Solana. Assinatura: ${result.signature}`
+        quote.disabled = true
+        return
+      }
       form.hidden = true
       download.hidden = false
       status.textContent = direct
         ? 'Ordem assinada. Baixe o arquivo para transmitir a transação.'
         : 'Ordem assinada. A transmissão depende da assinatura do patrocinador.'
     } catch {
-      status.textContent = 'Não foi possível assinar. Verifique o backup, a senha e a validade da ordem.'
+      status.textContent = submitting
+        ? 'A transmissão ainda precisa ser verificada. Aguarde a conferência antes de repetir.'
+        : 'Não foi possível assinar. Verifique o backup, a senha e a validade da ordem.'
     } finally {
       busy = false
       file.disabled = false
-      confirm.disabled = false
+      confirm.disabled = pilot && !reviewedFile
     }
   })
   download.addEventListener('click', () => {
@@ -121,6 +181,11 @@ if (!isSecureContext || location.hostname !== '127.0.0.1' || window !== window.t
   control('sign').hidden = true
   status.textContent = 'Abra o piloto diretamente em 127.0.0.1.'
 } else {
+  if (location.port === '4177') {
+    create.hidden = true
+    recover.hidden = true
+    document.querySelector('main > p').textContent = 'Converta USDC da carteira do piloto em sats no LOS-TEST2.'
+  }
   enableSigning()
   create.addEventListener('submit', async event => {
     event.preventDefault()

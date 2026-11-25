@@ -17,6 +17,8 @@ Para o fluxo com pagamento em SOL, gere a ordem a partir de uma cotação vigent
 
 Com o backup e a senha à mão, importe a ordem e confira o destino Lightning, o total em USDC, os sats esperados e o custo em SOL. O arquivo exportado contém a transação assinada. Valide o arquivo com `verifyDirectDeposit` e simule a transação antes de transmitir. [Plano da Tesouraria](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)
 
+O piloto local de volta também oferece cotação e transmissão pela tela, em `http://127.0.0.1:4177/`. Inicie com `node serve.mjs <configuração-privada.json>`. A configuração do operador contém `worker`, `apiKeyFile`, `submissionFile`, `wallet`, `recipient`, `quoteMicros`, `maxUsdcMicros`, `minSats` e `maxLamports`. Selecione primeiro o backup, gere a cotação e confira os custos antes de assinar e transmitir. Apenas a transação assinada vai ao serviço local. A assinatura para reconciliação é gravada em `submissionFile` antes da transmissão. Se esse arquivo existir, consulte a ordem e a rede para verificar o resultado antes de iniciar outro piloto.
+
 O fluxo experimental com patrocinador continua disponível para ordens de teste. Nelas, a carteira exibe a taxa do patrocinador em USDC e exporta uma transação que requer a segunda assinatura.
 
 Para repetir a prova contábil em Linux amd64, instale a dependência de teste e execute o simulador. O teste confirma a criação da conta de destino, o crédito do depósito, a cobrança exata da taxa e o saldo original de zero SOL na carteira usuária.

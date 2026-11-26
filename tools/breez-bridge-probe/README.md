@@ -68,9 +68,12 @@ Para distribuição como serviço, a instalação deverá verificar a procedênc
 
 ### Runtime da Loja
 
-No Linux amd64, compile o pacote a partir do checkout revisado usando Go, gcc,
-patchelf, Node.js 24 e npm. O diretório de saída deve ser novo. Provisione o
-pacote pelo administrador do host e instale **Tesouraria USDC** na Loja.
+No Linux amd64, a instalação ou atualização padrão do LOS provisiona o pacote
+do worker. Abra a Loja e instale **Tesouraria USDC**. Se a provisão falhar,
+o restante do LOS continua disponível.
+
+Para montar ou reinstalar manualmente o pacote, use um checkout revisado com
+Go, gcc, patchelf, Node.js 24 e npm. O diretório de saída deve ser novo.
 
 ```bash
 bash tools/breez-bridge-probe/package-linux.sh /tmp/lightningos-treasury-bundle

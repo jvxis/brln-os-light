@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
+  exit 0
+fi
+if [[ $(id -u) != 0 || $# != 2 || $1 != /* || $2 != /* || ! -x $1 || ! -x $2 ]]; then
+  echo 'Expected root and the verified absolute Go and npm paths.' >&2
+  exit 1
+fi
+source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+export PATH="$(dirname -- "$1"):$(dirname -- "$2"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export GOTOOLCHAIN=local
+export CI=1
+
+[[ ! -L /opt/lightningos ]]
+install -d -o root -g root -m 0755 -- /opt/lightningos
+stage=$(mktemp -d /opt/lightningos/treasury-build.XXXXXXXX)
+cleanup() {
+  if [[ "$stage" == /opt/lightningos/treasury-build.* && -d "$stage" && ! -L "$stage" ]]; then
+    rm -rf -- "$stage"
+  fi
+}
+trap cleanup EXIT
+
+if ! command -v gcc >/dev/null; then
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-remove --no-install-recommends build-essential
+fi
+if ! command -v patchelf >/dev/null; then
+  # Reuse APT's signed distribution metadata without installing a host package.
+  mkdir -- "$stage/dependency"
+  (
+    cd -- "$stage/dependency"
+    apt-get download patchelf
+    shopt -s nullglob
+    packages=(patchelf_*.deb)
+    [[ "${#packages[@]}" == 1 ]]
+    dpkg-deb -x -- "${packages[0]}" unpacked
+  )
+  export PATH="$stage/dependency/unpacked/usr/bin:$PATH"
+fi
+bash "$source_dir/package-linux.sh" "$stage/bundle"
+bash "$source_dir/install-linux.sh" "$stage/bundle"

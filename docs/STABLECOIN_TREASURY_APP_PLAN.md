@@ -40,7 +40,7 @@ Quando a Loja informar a Tesouraria como instalada, o grupo Apps ganha o menu **
 
 A confirmação mostra destino, valor de débito, recebimento esperado e taxa da ponte. A ida detalha o teto da taxa de roteamento e o débito máximo em sats. A volta detalha a taxa Solana, eventual reserva para a conta de token e o total em SOL. A referência BTC/USD e a diferença do recebimento aparecem quando a cotação inclui dados de mercado. A atividade mostra o estado do pedido e o reembolso quando disponível.
 
-O Manager registra o ciclo da Loja, serve o assinador com autenticação e política de conteúdo restrita e encaminha o trabalho de ponte pelo socket Unix. O runtime está disponível em Linux amd64 com login ativo e pacote provisionado. O app mantém o histórico e a conciliação ao parar ou desinstalar. [Preparar o runtime da Loja](../tools/breez-bridge-probe/README.md#runtime-da-loja)
+O Manager registra o ciclo da Loja, serve o assinador com autenticação e política de conteúdo restrita e encaminha o trabalho de ponte pelo socket Unix. A instalação e a atualização do LOS provisionam o pacote em Linux amd64. O runtime exige login ativo. Se a provisão falhar, a Loja indica a indisponibilidade da Tesouraria. O app mantém o histórico e a conciliação ao parar ou desinstalar. [Preparar o runtime da Loja](../tools/breez-bridge-probe/README.md#runtime-da-loja)
 
 ## Controles e distribuição
 

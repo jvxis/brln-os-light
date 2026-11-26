@@ -1031,6 +1031,7 @@ source "$project_dir/scripts/install-artifact-verification.sh"
 source "$project_dir/scripts/prepare-go-toolchain.sh"
 lightningos_prepare_go "$project_dir" || die "Go preparation failed; application was not replaced."
 source "$project_dir/scripts/prepare-node-upgrade.sh"
+TREASURY_AFTER_CUTOVER=1
 lightningos_prepare_node || die "Node preparation failed; application was not replaced."
 print_ok "Build toolchains ready"
 bash "$project_dir/scripts/install-kernel-tcp-mitigation.sh"
@@ -1190,4 +1191,9 @@ finalize_legacy_manager_identity
 
 printf '%s\n' committed > /var/lib/lightningos/rollback/0.5.3-privilege-cutover/transaction-state
 cutover_prepared=0
+
+treasury="$project_dir/../tools/breez-bridge-probe/provision-release-linux.sh"
+if validate_root_regular_file "$treasury"; then
+  bash "$treasury" "$GO_BIN" "$NPM_BIN" || print_warn "USDC Treasury runtime unavailable"
+fi
 print_ok "App upgrade complete to ${VERSION} (${TAG})"

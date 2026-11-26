@@ -320,6 +320,18 @@ lightningos_node_install() (
   fi
 )
 
+# Older Managers embed their own updater, but source the verified release's
+# toolchain preparation. Provision the first Treasury runtime on that path.
+lightningos_node_first_treasury_upgrade() {
+  [[ "${TREASURY_AFTER_CUTOVER:-}" != 1 && "${EXPECTED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || return 0
+  [[ -n "${project_dir:-}" && "$(uname -m)" == x86_64 ]] || return 0
+  declare -F validate_root_regular_file >/dev/null || return 0
+  [[ ! -S /run/lightningos-treasury/bridge.sock || ! -d /opt/lightningos/treasury-app ]] || return 0
+  local helper="$project_dir/../tools/breez-bridge-probe/provision-release-linux.sh"
+  validate_root_regular_file "$helper" || return 0
+  bash "$helper" "${GO_BIN:-}" "$NPM_BIN" || printf '%s\n' '[WARN] USDC Treasury runtime unavailable'
+}
+
 lightningos_prepare_node() {
   local required
   [[ "$EUID" == 0 && "$(uname -s)" == Linux && -f /etc/debian_version ]] || { lightningos_node_error 'root on Debian/Ubuntu Linux is required'; return 1; }
@@ -335,6 +347,7 @@ lightningos_prepare_node() {
     unset NODE_OPTIONS NODE_PATH NODE_ENV npm_config_prefix NPM_CONFIG_PREFIX npm_config_omit NPM_CONFIG_OMIT
     printf '[OK] Compatible global Node %s / npm %s retained; no packages or repositories changed\n' "$LOS_NODE_ACTUAL_VERSION" "$LOS_NPM_ACTUAL_VERSION"
     lightningos_node_security_notice
+    lightningos_node_first_treasury_upgrade
     return 0
   fi
   lightningos_node_install || return 1
@@ -343,6 +356,7 @@ lightningos_prepare_node() {
   unset NODE_OPTIONS NODE_PATH NODE_ENV npm_config_prefix NPM_CONFIG_PREFIX npm_config_omit NPM_CONFIG_OMIT
   printf '[OK] Global Node %s / npm %s installed and verified (%s)\n' "$LOS_NODE_VERSION" "$LOS_NPM_VERSION" "$LOS_NODE_ARCH"
   lightningos_node_runtime_notice
+  lightningos_node_first_treasury_upgrade
 }
 
 lightningos_node_upgrade_main() (

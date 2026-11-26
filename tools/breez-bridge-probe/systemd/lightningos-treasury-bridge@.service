@@ -4,7 +4,7 @@ Description=Isolated LightningOS Breez bridge request
 [Service]
 Type=exec
 DynamicUser=yes
-ExecStart=/opt/lightningos/treasury/breez-bridge-probe --bridge-worker
+ExecStart=/opt/lightningos/treasury-app/breez-bridge-probe --bridge-worker
 StandardInput=socket
 StandardOutput=socket
 StandardError=null

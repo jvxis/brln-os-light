@@ -13,17 +13,19 @@ import (
 // The worker's one-shot protocol is private to the Manager. Keys and lookup
 // tokens arrive on stdin so they do not appear in command-line arguments.
 type bridgeCommand struct {
-	Action      string `json:"action"`
-	APIKey      string `json:"api_key"`
-	Direction   string `json:"direction"`
-	Recipient   string `json:"recipient"`
-	Refund      string `json:"refund"`
-	Amount      int64  `json:"amount"`
-	BridgeID    string `json:"bridge_id"`
-	StatusToken string `json:"status_token"`
-	Cluster     string `json:"cluster"`
-	Transaction string `json:"transaction"`
-	Reference   string `json:"reference"`
+	Action      string           `json:"action"`
+	APIKey      string           `json:"api_key"`
+	Direction   string           `json:"direction"`
+	Recipient   string           `json:"recipient"`
+	Refund      string           `json:"refund"`
+	Amount      int64            `json:"amount"`
+	BridgeID    string           `json:"bridge_id"`
+	StatusToken string           `json:"status_token"`
+	Cluster     string           `json:"cluster"`
+	Transaction string           `json:"transaction"`
+	Reference   string           `json:"reference"`
+	Order       *json.RawMessage `json:"order,omitempty"`
+	Signed      *json.RawMessage `json:"signed,omitempty"`
 }
 
 type bridgeResult struct {
@@ -74,6 +76,10 @@ func bridgeWorker(input io.Reader, output io.Writer) error {
 		}
 		return json.NewEncoder(output).Encode(result)
 	}
+	switch req.Action {
+	case "solana-prepare", "solana-validate", "solana-broadcast", "solana-finality", "solana-balance":
+		return solanaWorker(req, output)
+	}
 	if len(req.APIKey) < 1 || len(req.APIKey) > 4096 || strings.ContainsAny(req.APIKey, "\r\n\x00") {
 		return errors.New("invalid bridge credential")
 	}
@@ -104,13 +110,17 @@ func bridgeWorker(input io.Reader, output io.Writer) error {
 	return json.NewEncoder(output).Encode(result)
 }
 
+func mainnetBridgeInvoice(invoice string) bool {
+	return len(invoice) > 4 && strings.HasPrefix(invoice, "lnbc") && invoice[4] >= '0' && invoice[4] <= '9'
+}
+
 func workerQuote(client *sdk.BridgingClient, req bridgeCommand) (bridgeResult, error) {
 	toSolana := req.Direction == "to_solana"
 	if !toSolana && req.Direction != "to_lightning" || req.Amount <= 0 ||
 		req.Recipient == "" || req.Refund == "" || len(req.Recipient) > 320 || len(req.Refund) > 4096 {
 		return bridgeResult{}, errors.New("invalid bridge quote")
 	}
-	if toSolana && (!validSolanaAddress(req.Recipient) || !strings.HasPrefix(req.Refund, "lnbc")) ||
+	if toSolana && (!validSolanaAddress(req.Recipient) || !mainnetBridgeInvoice(req.Refund)) ||
 		!toSolana && (!validSolanaAddress(req.Refund) || !strings.Contains(req.Recipient, "@")) {
 		return bridgeResult{}, errors.New("invalid bridge destination")
 	}
@@ -140,7 +150,7 @@ func workerQuote(client *sdk.BridgingClient, req bridgeCommand) (bridgeResult, e
 		return bridgeResult{}, errors.New("invalid provider quote")
 	}
 	if toSolana {
-		if info.DestinationAsset != "USDC" || !strings.HasPrefix(quote.PaymentRequest, "lnbc") || quote.PaymentRequest != info.DepositAddress {
+		if info.DestinationAsset != "USDC" || !mainnetBridgeInvoice(quote.PaymentRequest) || quote.PaymentRequest != info.DepositAddress {
 			return bridgeResult{}, errors.New("invalid provider invoice")
 		}
 		result.Invoice = quote.PaymentRequest

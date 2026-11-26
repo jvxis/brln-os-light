@@ -40,7 +40,7 @@ Quando a Loja informar a Tesouraria como instalada, o grupo Apps ganha o menu **
 
 A confirmação mostra destino, valor de débito, recebimento esperado e taxa da ponte. A ida detalha o teto da taxa de roteamento e o débito máximo em sats. A volta detalha a taxa Solana, eventual reserva para a conta de token e o total em SOL. A referência BTC/USD e a diferença do recebimento aparecem quando a cotação inclui dados de mercado. A atividade mostra o estado do pedido e o reembolso quando disponível.
 
-O frontend e a navegação foram testados no navegador contra uma API de teste. A integração do Manager ainda precisa registrar o ciclo na Loja, implementar os endpoints da Tesouraria e servir o assinador isolado. A tela deve permanecer inacessível pelo catálogo até a validação desse fluxo.
+O Manager registra o ciclo da Loja, serve o assinador com autenticação e política de conteúdo restrita e encaminha o trabalho de ponte pelo socket Unix. O runtime está disponível em Linux amd64 com login ativo e pacote provisionado. O app mantém o histórico e a conciliação ao parar ou desinstalar. [Preparar o runtime da Loja](../tools/breez-bridge-probe/README.md#runtime-da-loja)
 
 ## Controles e distribuição
 
@@ -55,7 +55,7 @@ O navegador real validou criação, recuperação em uma sessão nova e assinatu
 
 O assinador local também aceita uma ordem que usa a própria carteira para pagar a rede em SOL. Em Chromium, uma ordem sintética exibiu o débito em USDC, a taxa de conversão, os sats esperados, a taxa de rede e a reserva da conta de token. O navegador assinou localmente e a verificação independente confirmou o débito e destino do arquivo exportado. O gerador da ordem consulta o saldo, a taxa da mensagem e a reserva da conta na Solana. [Fluxo do assinador local](../tools/solana-treasury-wallet/README.md)
 
-Para a versão de catálogo, integrar o assinador ao Manager e validar a volta em devnet. Os critérios de liberação incluem provas de ida, volta e reembolso em mainnet com autorização de fundos própria e o teste do ciclo de vida da loja em Linux amd64.
+O pacote nativo inclui o worker, a biblioteca Breez, o assinador e o auxiliar Solana. O laboratório em Linux amd64 cobre a instalação do runtime, o catálogo autenticado e a persistência. O piloto mainnet anterior confirmou o crédito em USDC, a volta para o LND e um reembolso. A prova financiada de ambos os sentidos pelo novo app integrado ainda precisa ser realizada com autorização própria.
 
 ## Próximas redes
 

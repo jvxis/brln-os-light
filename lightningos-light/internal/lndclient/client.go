@@ -1809,6 +1809,27 @@ func (c *Client) CreateInvoice(ctx context.Context, amountSat int64, memo string
 	}, nil
 }
 
+// SettledInvoiceAmountSat verifies a credit against one known LND invoice hash.
+func (c *Client) SettledInvoiceAmountSat(ctx context.Context, paymentHash string) (int64, error) {
+	hash, err := hex.DecodeString(paymentHash)
+	if err != nil || len(hash) != 32 {
+		return 0, errors.New("invalid invoice hash")
+	}
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	invoice, err := lnrpc.NewLightningClient(conn).LookupInvoice(ctx, &lnrpc.PaymentHash{RHash: hash})
+	if err != nil {
+		return 0, err
+	}
+	if invoice.State != lnrpc.Invoice_SETTLED || invoice.AmtPaidMsat < 1000 {
+		return 0, errors.New("invoice is not settled")
+	}
+	return invoice.AmtPaidMsat / 1000, nil
+}
+
 func (c *Client) NewAddress(ctx context.Context) (string, error) {
 	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {

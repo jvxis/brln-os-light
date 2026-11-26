@@ -24,4 +24,18 @@ install -m 0644 -- "$module/breez_sdk_spark/lib/linux-amd64/libbreez_sdk_spark_b
 patchelf --set-rpath '$ORIGIN' "$output/breez-bridge-probe"
 install -m 0644 -- systemd/lightningos-treasury-bridge.socket systemd/lightningos-treasury-bridge@.service "$output/"
 env -u LD_LIBRARY_PATH -u LD_PRELOAD "$output/breez-bridge-probe" --check-bindings
-(cd "$output" && sha256sum breez-bridge-probe libbreez_sdk_spark_bindings.so lightningos-treasury-bridge.socket lightningos-treasury-bridge@.service > SHA256SUMS)
+wallet_dir=$(realpath ../solana-treasury-wallet)
+(
+  cd -- "$wallet_dir"
+  npm ci --ignore-scripts
+  npm test
+  ./node_modules/.bin/esbuild signer.mjs --bundle --format=iife --platform=browser --minify --outfile="$output/signer.js"
+  ./node_modules/.bin/esbuild solana-worker.mjs --bundle --format=cjs --platform=node --target=node24 --minify --outfile="$output/solana-worker.cjs"
+  node --check "$output/solana-worker.cjs"
+  install -m 0644 -- signer.html signer.css "$output/"
+)
+(
+  cd -- "$output"
+  sha256sum breez-bridge-probe libbreez_sdk_spark_bindings.so solana-worker.cjs signer.html signer.js signer.css \
+    lightningos-treasury-bridge.socket lightningos-treasury-bridge@.service > SHA256SUMS
+)

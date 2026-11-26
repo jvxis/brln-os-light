@@ -1,6 +1,6 @@
 # Breez Bridge Probe
 
-O protocolo privado `--bridge-worker` usa USDC nativo na Solana nos dois sentidos. As ações `quote` e `status` recebem JSON via stdin. O worker não executa pagamentos. Ele limita a cotação ao mint oficial da Circle e retorna depósito, valor líquido esperado, validade e taxa do provedor quando informada. A ação `health` verifica carregamento sem exigir uma credencial. A interface pública de linha de comando abaixo reproduz apenas o piloto anterior na Base. [Plano atual da Tesouraria](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)
+O protocolo privado `--bridge-worker` usa USDC nativo na Solana nos dois sentidos. As ações `quote` e `status` recebem JSON via stdin. A cotação e a consulta de status não movimentam fundos. O Manager paga invoices pelo LND. Na volta, o worker transmite apenas a transação Solana cuja assinatura e mensagem foram verificadas contra a cotação. Ele limita a cotação ao mint oficial da Circle e retorna depósito, valor líquido esperado, validade e taxa do provedor quando informada. A ação `health` verifica carregamento sem exigir uma credencial. A interface pública de linha de comando abaixo reproduz apenas o piloto anterior na Base. [Plano atual da Tesouraria](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)
 
 As ações `sponsor-preflight` e `sponsor-estimate` consultam o Pimlico com uma chave do patrocinador, distinta da chave do Breez. Use `cluster` igual a `devnet` para validação sem fundos reais. A consulta retorna a conta que paga SOL, o destino de cobrança e a taxa em unidades inteiras de USDC. O worker mantém a chave no cabeçalho de autorização. [API de patrocínio Solana](https://docs.pimlico.io/references/paymaster/solana/endpoints)
 
@@ -64,3 +64,22 @@ env -u LD_LIBRARY_PATH "$bundle/breez-bridge-probe" --check-bindings
 Para distribuição como serviço, a instalação deverá verificar a procedência do executável e da biblioteca e impedir escrita no diretório do bundle pelo usuário do serviço. O Manager não importa esse módulo. [Plano e critérios de liberação](../../docs/STABLECOIN_TREASURY_APP_PLAN.md)
 
 `bash package-linux.sh NEW_OUTPUT_DIRECTORY` monta o bundle nativo Linux amd64, as units systemd e o manifesto SHA-256. A socket aceita apenas conexões do grupo do Manager. Cada pedido roda com usuário dinâmico dedicado e sem acesso às credenciais do LND.
+
+
+### Runtime da Loja
+
+No Linux amd64, compile o pacote a partir do checkout revisado usando Go, gcc,
+patchelf, Node.js 24 e npm. O diretório de saída deve ser novo. Provisione o
+pacote pelo administrador do host e instale **Tesouraria USDC** na Loja.
+
+```bash
+bash tools/breez-bridge-probe/package-linux.sh /tmp/lightningos-treasury-bundle
+sudo bash tools/breez-bridge-probe/install-linux.sh /tmp/lightningos-treasury-bundle
+```
+
+O socket local pertence ao grupo do Manager. O serviço por conexão usa
+identidade temporária e mantém os caminhos do LND e do Manager inacessíveis.
+O histórico fica no PostgreSQL. A chave Breez é cifrada com o arquivo local
+de modo 0600 `/var/lib/lightningos/treasury-credential.key`. Preserve esse
+arquivo junto ao backup do banco para recuperar ordens abertas. A desinstalação
+fecha a UI para novas ordens e mantém a conciliação.

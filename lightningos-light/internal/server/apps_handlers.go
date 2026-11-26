@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -319,6 +320,8 @@ func isAppHiddenFromStore(id string) bool {
 	switch id {
 	case depixBuyAppID:
 		return true
+	case treasuryAppID:
+		return runtime.GOOS != "linux" || runtime.GOARCH != "amd64"
 	default:
 		return false
 	}
@@ -370,7 +373,7 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	// This in-process app persists its state only in PostgreSQL. In particular,
 	// installation must not depend on the privileged storage-root operation.
-	if appID == "opreturn" {
+	if appID == "opreturn" || appID == treasuryAppID {
 		if err := app.Install(r.Context()); err != nil {
 			writeAppOperationError(w, http.StatusInternalServerError, err)
 			return

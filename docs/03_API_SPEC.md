@@ -1605,3 +1605,18 @@ return 500. Result estimates and rule verdicts are experimental, not guaranteed
 profit or proof of causality. Prefilled shortcuts still require review and
 confirmation on the destination screen. See `insights_handlers.go`,
 `insights_service.go`, `insights_outcomes.go` and the typed helpers in `api.ts`.
+
+
+### USDC Treasury
+
+The native App Store runtime requires Linux amd64, the provisioned Treasury
+bundle and LightningOS login protection. App lifecycle uses app ID
+`stablecoin-treasury`. The Manager serves the restricted browser wallet at
+`/apps/stablecoin-treasury/signer`.
+
+- `GET /api/apps/stablecoin-treasury/status` returns available balances, public wallet address, saved Lightning recipient and recent orders.
+- `POST /api/apps/stablecoin-treasury/breez-key` accepts `api_key` and `confirm_password`. The encrypted key is omitted from responses.
+- `POST /api/apps/stablecoin-treasury/wallet` accepts the public `wallet` and `confirm_password`.
+- `POST /api/apps/stablecoin-treasury/quote` accepts `direction`, `amount` in millionths of USDC in either direction, and `lightning_address` for the return. It returns debit, estimated credit, costs, expiry and a market comparison when available.
+- `POST /api/apps/stablecoin-treasury/prepare` accepts `quote_id` and refreshes the unsigned Solana transaction if its costs still match.
+- `POST /api/apps/stablecoin-treasury/execute` accepts `quote_id` and `confirm_password` for Lightning debit, or `quote_id` and the `signed` transaction for Solana debit. The session-bound quote funds at most one order. HTTP 202 returns an order for reconciliation.

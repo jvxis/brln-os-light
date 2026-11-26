@@ -553,7 +553,7 @@ func authScopeValid(scope string) bool {
 		return err == nil && len(decoded) == sha256.Size && suffix == strings.ToLower(suffix)
 	}
 	switch strings.TrimSpace(scope) {
-	case authScopeOnchainGuardPolicy, authScopeSpendingGuardPolicy, authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeLNDConfig, authScopeBarkSeedReveal, authScopeBRLNCommunitySigner:
+	case authScopeOnchainGuardPolicy, authScopeSpendingGuardPolicy, authScopeMesh, "opreturn_publish", authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeTerminalControl, authScopeLightningFunds, authScopeLNDMaintenance, authScopeLNDConfig, authScopeBarkSeedReveal, authScopeBRLNCommunitySigner, treasuryAppID:
 		return true
 	default:
 		return false
@@ -752,7 +752,7 @@ func sessionIDFromRequest(r *http.Request) string {
 }
 
 func authProtectedPath(path string) bool {
-	if strings.HasPrefix(path, "/terminal") {
+	if path == treasurySignerPath || strings.HasPrefix(path, "/terminal") {
 		return true
 	}
 	if !strings.HasPrefix(path, "/api/") {

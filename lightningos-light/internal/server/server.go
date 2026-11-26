@@ -101,6 +101,9 @@ type Server struct {
 	depixMu                     sync.Mutex
 	depix                       *DepixService
 	depixErr                    string
+	treasuryQuoteMu             sync.Mutex
+	treasurySchemaMu            sync.Mutex
+	treasurySchemaReady         bool
 	loopOutBRLNInitAt           time.Time
 	loopOutBRLNMu               sync.Mutex
 	loopOutBRLN                 *LoopOutBRLNService
@@ -310,6 +313,7 @@ func (s *Server) Run() error {
 	if s.loopOutBRLN != nil {
 		s.loopOutBRLN.Start(runCtx)
 	}
+	go s.treasuryMonitor(runCtx)
 	if s.magma != nil {
 		s.magma.Start(runCtx)
 	}

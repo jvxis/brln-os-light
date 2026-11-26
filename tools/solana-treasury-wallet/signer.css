@@ -1,0 +1,9 @@
+:root { color-scheme: dark light; font-family: system-ui, sans-serif; }
+html, body { margin: 0; background: transparent; color: #b9c3d3; }
+@media (prefers-color-scheme: light) { html, body { color: #465268; } }
+main { display: grid; gap: 0.75rem; padding: 0.25rem; }
+form, section { display: grid; gap: 0.5rem; }
+input, button { font: inherit; color: inherit; border: 1px solid currentColor; border-radius: 0.65rem; background: transparent; padding: 0.5rem; }
+button { cursor: pointer; width: fit-content; }
+p { margin: 0; overflow-wrap: anywhere; }
+[hidden] { display: none !important; }

@@ -8,6 +8,7 @@ import (
 func (s *Server) appRegistry() ([]appHandler, error) {
 	apps := []appHandler{
 		newOPReturnApp(s),
+		treasuryApp{s},
 		newBitcoinCoreApp(s),
 		newBarkWalletApp(s),
 		newBRLNCommunityApp(s),

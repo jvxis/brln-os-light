@@ -113,6 +113,7 @@ func TestConfiguredAppsHaveExplicitRuntimeSecurityClass(t *testing.T) {
 
 		"depixbuy":     {class: "manager", reason: "manager-integrated feature without a separately privileged runtime"},
 		"fswap":        {class: "manager", reason: "manager-integrated feature without a separately privileged runtime"},
+		treasuryAppID:  {class: "manager", reason: "Manager financial authorization with isolated socket-activated bridge and browser signer"},
 		"loopout-brln": {class: "manager", reason: "native LightningOS workflow executed through typed manager services"},
 		"magma-sales":  {class: "manager", reason: "native LightningOS workflow executed through typed manager services"},
 	}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { executeTreasury, getTreasuryStatus, quoteTreasury, saveTreasuryBreezKey, type TreasuryAmount, type TreasuryDirection, type TreasuryOrder, type TreasuryQuote, type TreasuryStatus } from '../api'
+import { executeTreasury, getTreasuryStatus, prepareTreasurySolana, quoteTreasury, saveTreasuryBreezKey, saveTreasuryWallet, type TreasuryAmount, type TreasuryDirection, type TreasuryOrder, type TreasuryQuote, type TreasuryStatus } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
 
 const breezForm = 'https://breez.technology/request-api-key/#contact-us-form-sdk'
@@ -9,16 +9,16 @@ const terminal = new Set<TreasuryOrder['state']>(['delivered', 'refunded', 'depo
 const validCost = (value: number | undefined): value is number => value !== undefined && Number.isSafeInteger(value) && value >= 0
 type Label = (en: string, pt: string) => string
 
-function parseAmount(input: string, direction: TreasuryDirection) {
+function parseAmount(input: string) {
   const normalized = input.trim().replace(',', '.')
-  if (!(direction === 'to_solana' ? /^\d+$/ : /^\d+(\.\d{1,6})?$/).test(normalized)) return 0
+  if (!/^\d+(\.\d{1,6})?$/.test(normalized)) return 0
   const [whole, fraction = ''] = normalized.split('.')
-  const amount = direction === 'to_solana' ? Number(whole) : Number(whole + fraction.padEnd(6, '0'))
+  const amount = Number(whole + fraction.padEnd(6, '0'))
   return Number.isSafeInteger(amount) && amount > 0 ? amount : 0
 }
 
 function money(value: TreasuryAmount, locale: string) {
-  const digits = { sats: 0, USDC: 6, SOL: 9 }[value.asset]
+  const digits = { sats: 0, msats: 0, USDC: 6, SOL: 9 }[value.asset]
   return new Intl.NumberFormat(locale, { maximumFractionDigits: digits }).format(value.atoms / 10 ** digits) + ' ' + value.asset
 }
 
@@ -69,8 +69,10 @@ export default function StablecoinTreasury() {
   const [amount, setAmount] = useState('')
   const [recipient, setRecipient] = useState<string>()
   const [quote, setQuote] = useState<TreasuryQuote>()
-  const [modal, setModal] = useState<'key' | 'lightning'>()
+  const [modal, setModal] = useState<'key' | 'lightning' | 'wallet'>()
   const [key, setKey] = useState('')
+  const [newWallet, setNewWallet] = useState('')
+  const signerFrame = useRef<HTMLIFrameElement>(null)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -99,7 +101,7 @@ export default function StablecoinTreasury() {
   }, [quote])
 
   const returnAddress = recipient ?? status?.saved_recipient ?? ''
-  const parsed = parseAmount(amount, direction)
+  const parsed = parseAmount(amount)
   const pending = status?.orders.some(order => !terminal.has(order.state)) ?? false
   const ready = !!status?.enabled && !unavailable && !!status.breez_configured && !!status.solana_address
   const current = !!quote && quote.direction === direction && Date.parse(quote.expires_at) > now &&
@@ -117,6 +119,60 @@ export default function StablecoinTreasury() {
     refunded: label('Refunded', 'Reembolsado'),
     deposit_failed: label('Deposit failed', 'Falha no depósito'),
   })[state]
+
+  useEffect(() => {
+    if (!signer) return
+    let live = true
+    const receive = async (event: MessageEvent) => {
+      const frame = signerFrame.current?.contentWindow
+      if (!frame || event.origin !== 'null' || event.source !== frame || event.data?.treasury !== true) return
+      const data = event.data
+      if (signer === 'setup' && data.type === 'wallet' && typeof data.address === 'string' &&
+          /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(data.address)) {
+        setNewWallet(data.address)
+        setSigner(undefined)
+        setError('')
+        setModal('wallet')
+      }
+      if (signer !== 'return' || !quote || data.id !== quote.id || !current || !costsKnown || !ready || pending || inFlight.current) return
+      if (data.type === 'prepare') {
+        if (data.address !== status.solana_address) {
+          frame.postMessage({ treasury: true, type: 'order', id: quote.id }, '*')
+          return
+        }
+        inFlight.current = true
+        try {
+          const order = await prepareTreasurySolana(quote.id)
+          if (live) frame.postMessage({ treasury: true, type: 'order', id: quote.id, order }, '*')
+        } catch {
+          if (live) frame.postMessage({ treasury: true, type: 'order', id: quote.id }, '*')
+        } finally {
+          inFlight.current = false
+        }
+      }
+      if (data.type === 'signed' && typeof data.signed?.transaction === 'string' &&
+          data.signed?.id === quote.id && data.signed.transaction.length <= 1644) {
+        inFlight.current = true
+        setBusy(true)
+        try {
+          const order = await executeTreasury(quote.id, '', data.signed)
+          if (live) {
+            setStatus(previous => previous && ({ ...previous, orders: [order, ...previous.orders.filter(item => item.id !== order.id)] }))
+            setQuote(undefined)
+            setSigner(undefined)
+          }
+        } catch {
+          if (live) setError(pt ? 'Confira a atividade antes de repetir. Se os custos mudarem, gere outra cotação.' : 'Check the activity before repeating. If the costs changed, get another quote.')
+        } finally {
+          inFlight.current = false
+          setBusy(false)
+          void refresh()
+        }
+      }
+    }
+    window.addEventListener('message', receive)
+    return () => { live = false; window.removeEventListener('message', receive) }
+  }, [signer, quote, status?.solana_address, current, costsKnown, ready, pending, pt, refresh])
 
   function invalidate() {
     setQuote(undefined)
@@ -139,6 +195,7 @@ export default function StablecoinTreasury() {
   function closeModal() {
     setModal(undefined)
     setKey('')
+    setNewWallet('')
     setPassword('')
     setError('')
   }
@@ -187,6 +244,8 @@ export default function StablecoinTreasury() {
     try {
       if (modal === 'key') {
         await saveTreasuryBreezKey(key.trim(), password)
+      } else if (modal === 'wallet') {
+        await saveTreasuryWallet(newWallet, password)
       } else if (quote) {
         const order = await executeTreasury(quote.id, password)
         setStatus(previous => previous && ({ ...previous, orders: [order, ...previous.orders.filter(item => item.id !== order.id)] }))
@@ -198,7 +257,9 @@ export default function StablecoinTreasury() {
       setPassword('')
       setError(modal === 'key'
         ? label('Could not save the key. Check the key and the LightningOS password.', 'Não foi possível salvar a chave. Confira a chave e a senha do LightningOS.')
-        : label('Check conversion activity before submitting again.', 'Confira a atividade da conversão antes de tentar novamente.'))
+        : modal === 'wallet'
+          ? label('Could not link the wallet. Check the LightningOS password.', 'Não foi possível vincular a carteira. Confira a senha do LightningOS.')
+          : label('Check conversion activity before submitting again.', 'Confira a atividade da conversão antes de tentar novamente.'))
       await refresh()
     } finally {
       setBusy(false)
@@ -224,6 +285,10 @@ export default function StablecoinTreasury() {
           <button type="button" className="btn-primary" onClick={() => { setError(''); setModal('key') }}>{label('Enter API key', 'Informar chave de API')}</button>
         </div>
       </div>}
+      {status.breez_configured && <details className="text-sm">
+        <summary className="cursor-pointer font-medium">{label('Breez settings', 'Configuração da Breez')}</summary>
+        <button type="button" className="btn-secondary mt-2" disabled={pending} onClick={() => { setError(''); setModal('key') }}>{label('Change API key', 'Alterar a chave de API')}</button>
+      </details>}
       {!status.solana_address && <button type="button" className="btn-secondary" onClick={() => setSigner('setup')}>
         {label('Create or recover Solana wallet', 'Criar ou recuperar carteira Solana')}
       </button>}
@@ -237,7 +302,7 @@ export default function StablecoinTreasury() {
           <p className="mt-1 text-lg font-semibold">{atoms === undefined ? '—' : money({ atoms, asset }, locale)}</p>
         </div>)}
       </div>}
-      {status.solana_address && <details className="text-sm" open={status.sol_lamports === 0 || undefined}>
+      {status.solana_address && <details className="text-sm" open={(status.sol_lamports === undefined || status.sol_lamports === 0) || undefined}>
         <summary className="cursor-pointer font-medium">{label('Receive SOL on Solana', 'Receber SOL na Solana')}</summary>
         <p className="mt-2">{label('Suggested starting balance: 0.01 SOL. Send SOL on the Solana network to this address before converting back. Your quote shows the amount required.', 'Saldo inicial sugerido: 0,01 SOL. Envie SOL pela rede Solana para este endereço antes de converter de volta. A cotação mostra o valor necessário.')}</p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -257,8 +322,8 @@ export default function StablecoinTreasury() {
             <button type="button" className={direction === 'to_lightning' ? 'btn-primary' : 'btn-secondary'} aria-pressed={direction === 'to_lightning'} disabled={busy} onClick={() => { if (direction !== 'to_lightning') { setDirection('to_lightning'); setAmount(''); invalidate() } }}>{label('Convert to bitcoin', 'Voltar para bitcoin')}</button>
           </div>
           <label className="block text-sm">
-            {direction === 'to_solana' ? label('Amount in sats', 'Valor em sats') : label('Amount in USDC', 'Valor em USDC')}
-            <input className="input-field mt-1 w-full" inputMode={direction === 'to_solana' ? 'numeric' : 'decimal'} value={amount} maxLength={24} disabled={busy} required onChange={event => { setAmount(event.target.value); invalidate() }} />
+                             {direction === 'to_solana' ? label('USDC to save', 'Quanto deseja guardar em USDC') : label('USDC to convert', 'Quanto deseja converter em USDC')}
+            <input className="input-field mt-1 w-full" inputMode="decimal"  value={amount} maxLength={24} disabled={busy} required onChange={event => { setAmount(event.target.value); invalidate() }} />
           </label>
           {direction === 'to_lightning' && <label className="block text-sm">
             {label('Lightning Address to receive sats', 'Lightning Address para receber os sats')}
@@ -282,8 +347,8 @@ export default function StablecoinTreasury() {
         <h2 className="text-lg font-semibold">{label('Solana wallet', 'Carteira Solana')}</h2>
         <button className="btn-secondary" type="button" onClick={() => { setSigner(undefined); void refresh() }}>{t('common.close')}</button>
       </div>
-      <iframe className="block min-h-[26rem] w-full border-0" title={label('Isolated Solana wallet', 'Carteira Solana isolada')} sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer"
-        src={signer === 'setup' ? signerPath : signerPath + '?quote=' + encodeURIComponent(quote?.id ?? '')} />
+      <iframe ref={signerFrame} className="block min-h-[26rem] w-full border-0" title={label('Isolated Solana wallet', 'Carteira Solana isolada')} sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer"
+        src={signerPath + '?lang=' + (pt ? 'pt-BR' : 'en') + (signer === 'return' ? '&quote=' + encodeURIComponent(quote?.id ?? '') : '')} />
     </section>}
 
     {status?.orders.length ? <section className="section-card space-y-3">
@@ -292,6 +357,7 @@ export default function StablecoinTreasury() {
         {status.orders.map(order => <li key={order.id} className="border-t border-white/10 pt-3 text-sm">
           <p className="font-medium">{money(order.debit, locale)}{order.receive && ' → ' + money(order.receive, locale)} · {stateLabel(order.state)}</p>
           <p className="break-all text-fog/65">{order.destination}</p>
+          {order.actual_fee && <p>{label('Actual network cost', 'Custo efetivo de rede')} · {money(order.actual_fee, locale)}</p>}
           {order.refund && <p>{label('Refund', 'Reembolso')} · {money(order.refund, locale)}</p>}
         </li>)}
       </ul>
@@ -299,16 +365,20 @@ export default function StablecoinTreasury() {
 
     {!modal && error && <p role="alert" className="text-rose-300">{error}</p>}
     <SensitiveActionModal open={!!modal}
-      title={modal === 'key' ? label('Save Breez API key', 'Salvar chave de API da Breez') : label('Confirm Lightning conversion', 'Confirmar conversão Lightning')}
+      title={modal === 'key' ? label('Save Breez API key', 'Salvar chave de API da Breez') : modal === 'wallet'
+        ? label('Link Solana wallet', 'Vincular carteira Solana') : label('Confirm Lightning conversion', 'Confirmar conversão Lightning')}
       description={label('Confirm with your LightningOS password.', 'Confirme com a senha do LightningOS.')}
       password={password} onPasswordChange={setPassword} busy={busy} error={error}
-      confirmDisabled={!password || !status?.enabled || unavailable || (modal === 'key' ? !key.trim() : !current || !ready || pending || !costsKnown)}
-      confirmLabel={modal === 'key' ? label('Save key', 'Salvar chave') : label('Convert balance', 'Converter saldo')}
+      confirmDisabled={!password || !status?.enabled || unavailable || (modal === 'key' ? !key.trim() : modal === 'wallet'
+        ? !newWallet : !current || !ready || pending || !costsKnown)}
+      confirmLabel={modal === 'key' ? label('Save key', 'Salvar chave') : modal === 'wallet'
+        ? label('Link wallet', 'Vincular carteira') : label('Convert balance', 'Converter saldo')}
       onClose={closeModal} onConfirm={confirm}>
       {modal === 'key' && <label className="mt-4 block text-sm">
         {label('Breez SDK API key', 'Chave de API do SDK Breez')}
         <input className="input-field mt-1 w-full" type="password" autoComplete="off" maxLength={4096} value={key} onChange={event => setKey(event.target.value)} />
       </label>}
+      {modal === 'wallet' && <p className="mt-3 break-all font-mono text-sm">{newWallet}</p>}
       {modal === 'lightning' && quote && <div className="mt-4"><Review quote={quote} locale={locale} label={label} /></div>}
     </SensitiveActionModal>
   </div>

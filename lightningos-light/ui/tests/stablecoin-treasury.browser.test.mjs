@@ -52,7 +52,7 @@ async function api(path, method, body) {
   if (path === appPath + '/quote' && method === 'POST') {
     quoteRequests++
     const toSolana = body.direction === 'to_solana'
-    assert.equal(body.amount, toSolana ? 1700 : 1000000)
+    assert.equal(body.amount, 1000000)
     if (!toSolana) assert.equal(body.lightning_address, address)
     const debit = toSolana ? { atoms: 1700, asset: 'sats' } : { atoms: 1065174, asset: 'USDC' }
     const receive = toSolana ? { atoms: 1000000, asset: 'USDC' } : { atoms: 1674, asset: 'sats' }
@@ -180,9 +180,9 @@ try {
   await waitText('0.00149344 SOL')
   await waitText('Estimated receipt vs. reference')
   await click('Sign with Solana wallet')
-  assert(await exists('iframe[sandbox="allow-scripts allow-downloads"][src$="?quote=test-quote"]'))
+  assert(await exists('iframe[sandbox="allow-scripts allow-downloads"][src$="&quote=test-quote"]'))
   await click('Save in USDC')
-  await input('input[inputmode=numeric]', '1700')
+  await input('input[inputmode=decimal]', '1')
   await click('Review quote and fees')
   await waitText('1,710 sats')
   await click('Confirm conversion')

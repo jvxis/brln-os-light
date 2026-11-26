@@ -45,5 +45,8 @@ if ! command -v patchelf >/dev/null; then
   )
   export PATH="$stage/dependency/unpacked/usr/bin:$PATH"
 fi
-bash "$source_dir/package-linux.sh" "$stage/bundle"
+# A non-interactive installer may run without HOME. Keep the build caches
+# inside the private staging directory so Go and npm have writable paths.
+GOMODCACHE="$stage/go-mod" GOCACHE="$stage/go-build" npm_config_cache="$stage/npm-cache" \
+  bash "$source_dir/package-linux.sh" "$stage/bundle"
 bash "$source_dir/install-linux.sh" "$stage/bundle"

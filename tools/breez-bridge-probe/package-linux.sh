@@ -18,7 +18,7 @@ go mod verify
 go test ./...
 go vet ./...
 mkdir -- "$output"
-go build -trimpath -mod=readonly -o "$output/breez-bridge-probe" .
+go build -trimpath -buildvcs=false -mod=readonly -o "$output/breez-bridge-probe" .
 module=$(go list -m -f '{{.Dir}}' github.com/breez/breez-sdk-spark-go)
 install -m 0644 -- "$module/breez_sdk_spark/lib/linux-amd64/libbreez_sdk_spark_bindings.so" "$output/"
 patchelf --set-rpath '$ORIGIN' "$output/breez-bridge-probe"

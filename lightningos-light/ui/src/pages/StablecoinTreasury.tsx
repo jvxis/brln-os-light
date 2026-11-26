@@ -104,7 +104,7 @@ export default function StablecoinTreasury() {
   const parsed = parseAmount(amount)
   const pending = status?.orders.some(order => !terminal.has(order.state)) ?? false
   const canSign = window.isSecureContext && !!window.crypto?.subtle
-  const secureWalletMessage = label('Open LightningOS over HTTPS with a certificate your browser trusts to use the Solana wallet.', 'Para usar a carteira Solana, abra o LightningOS por HTTPS com um certificado confi?vel para o navegador.')
+  const secureWalletMessage = label('Open LightningOS over HTTPS with a certificate your browser trusts to use the Solana wallet.', 'Para usar a carteira Solana, abra o LightningOS por HTTPS com um certificado confiável para o navegador.')
   const ready = !!status?.enabled && !unavailable && !!status.breez_configured && !!status.solana_address
   const current = !!quote && quote.direction === direction && Date.parse(quote.expires_at) > now &&
     quote.destination === (direction === 'to_solana' ? status?.solana_address : returnAddress)

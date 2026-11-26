@@ -7,3 +7,8 @@ input, button { font: inherit; color: inherit; border: 1px solid currentColor; b
 button { cursor: pointer; width: fit-content; }
 p { margin: 0; overflow-wrap: anywhere; }
 [hidden] { display: none !important; }
+button:disabled { cursor: wait; opacity: 0.7; }
+#message { display: flex; align-items: center; gap: 0.5rem; }
+#message-spinner { width: 0.85rem; height: 0.85rem; flex-shrink: 0; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: signer-spin 0.8s linear infinite; }
+@keyframes signer-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #message-spinner { animation: none; } }

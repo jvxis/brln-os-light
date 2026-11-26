@@ -9,6 +9,13 @@ const terminal = new Set<TreasuryOrder['state']>(['delivered', 'refunded', 'depo
 const validCost = (value: number | undefined): value is number => value !== undefined && Number.isSafeInteger(value) && value >= 0
 type Label = (en: string, pt: string) => string
 
+function TreasuryProgress({ text }: { text: string }) {
+  return <span role="status" className="inline-flex items-center gap-2 text-sm">
+    <span aria-hidden="true" className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none" />
+    {text}
+  </span>
+}
+
 function parseAmount(input: string) {
   const normalized = input.trim().replace(',', '.')
   if (!/^\d+(\.\d{1,6})?$/.test(normalized)) return 0
@@ -74,7 +81,8 @@ export default function StablecoinTreasury() {
   const [newWallet, setNewWallet] = useState('')
   const signerFrame = useRef<HTMLIFrameElement>(null)
   const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<'quote' | 'submit' | 'settings'>()
+  const busy = progress !== undefined
   const [error, setError] = useState('')
   const [signer, setSigner] = useState<'setup' | 'return'>()
   const [copied, setCopied] = useState(false)
@@ -155,7 +163,7 @@ export default function StablecoinTreasury() {
       if (data.type === 'signed' && typeof data.signed?.transaction === 'string' &&
           data.signed?.id === quote.id && data.signed.transaction.length <= 1644) {
         inFlight.current = true
-        setBusy(true)
+        setProgress('submit')
         try {
           const order = await executeTreasury(quote.id, '', data.signed)
           if (live) {
@@ -167,7 +175,7 @@ export default function StablecoinTreasury() {
           if (live) setError(pt ? 'Confira a atividade antes de repetir. Se os custos mudarem, gere outra cotação.' : 'Check the activity before repeating. If the costs changed, get another quote.')
         } finally {
           inFlight.current = false
-          setBusy(false)
+          setProgress(undefined)
           void refresh()
         }
       }
@@ -205,7 +213,7 @@ export default function StablecoinTreasury() {
   async function loadQuote() {
     if (!ready || pending || inFlight.current || !parsed) return
     inFlight.current = true
-    setBusy(true)
+    setProgress('quote')
     invalidate()
     try {
       const [account, domain, ...rest] = returnAddress.trim().split('@')
@@ -236,7 +244,7 @@ export default function StablecoinTreasury() {
       setError(message ?? label('Could not get a quote. Check the amount, destination and balances.', 'Não foi possível cotar. Confira valor, destino e saldos.'))
     } finally {
       inFlight.current = false
-      setBusy(false)
+      setProgress(undefined)
     }
   }
 
@@ -245,7 +253,7 @@ export default function StablecoinTreasury() {
         (modal === 'key' && !key.trim())) return
     if (modal === 'lightning' && (!current || !ready || pending || !costsKnown || !quote || Date.parse(quote.expires_at) <= Date.now())) return
     inFlight.current = true
-    setBusy(true)
+    setProgress(modal === 'lightning' ? 'submit' : 'settings')
     setError('')
     try {
       if (modal === 'key') {
@@ -268,7 +276,7 @@ export default function StablecoinTreasury() {
           : label('Check conversion activity before submitting again.', 'Confira a atividade da conversão antes de tentar novamente.'))
       await refresh()
     } finally {
-      setBusy(false)
+      setProgress(undefined)
       inFlight.current = false
     }
   }
@@ -279,6 +287,7 @@ export default function StablecoinTreasury() {
       <p className="mt-2 text-fog/70">{label('Keep part of your Lightning balance in USDC on Solana and convert it back to bitcoin when you choose.', 'Guarde parte do seu saldo Lightning em USDC na Solana e converta de volta para bitcoin quando quiser.')}</p>
     </header>
 
+    {!status && !unavailable && <TreasuryProgress text={label('Loading Treasury balances…', 'Carregando saldos da Tesouraria…')} />}
     {unavailable && <p role="status" className="section-card">{label('Treasury status is unavailable. The page will check again shortly.', 'O status da Tesouraria está indisponível. A página consultará novamente em instantes.')}</p>}
     {status && !status.enabled && <p role="status" className="section-card">{label('Start USDC Treasury from the App Store to make a conversion.', 'Inicie a Tesouraria USDC na Loja para fazer uma conversão.')}</p>}
 
@@ -322,7 +331,7 @@ export default function StablecoinTreasury() {
 
     {ready && <section className="section-card space-y-4">
       <h2 className="text-lg font-semibold">{label('Convert balance', 'Converter saldo')}</h2>
-      {pending ? <p role="status">{label('The active conversion is shown below. Delivery can take around an hour or more. Wait for delivery or refund before repeating the conversion.', 'A conversão em andamento aparece abaixo. A entrega pode levar cerca de uma hora ou mais. Aguarde a entrega ou o reembolso antes de repetir.')}</p>
+      {pending ? <TreasuryProgress text={label('Delivery can take around an hour or more. Wait for delivery or refund before repeating the conversion.', 'A entrega pode levar cerca de uma hora ou mais. Aguarde a entrega ou o reembolso antes de repetir.')} />
         : <form className="space-y-4" onSubmit={event => { event.preventDefault(); void loadQuote() }}>
           <div className="flex flex-wrap gap-2" role="group" aria-label={label('Direction', 'Sentido da conversão')}>
             <button type="button" className={direction === 'to_solana' ? 'btn-primary' : 'btn-secondary'} aria-pressed={direction === 'to_solana'} disabled={busy} onClick={() => { if (direction !== 'to_solana') { setDirection('to_solana'); setAmount(''); invalidate() } }}>{label('Save in USDC', 'Guardar em USDC')}</button>
@@ -336,7 +345,10 @@ export default function StablecoinTreasury() {
             {label('Lightning Address to receive sats', 'Lightning Address para receber os sats')}
             <input className="input-field mt-1 w-full" inputMode="email" autoComplete="off" spellCheck={false} value={returnAddress} maxLength={265} disabled={busy} required onChange={event => { setRecipient(event.target.value); invalidate() }} />
           </label>}
-          <button type="submit" className="btn-primary" disabled={busy || !parsed}>{label('Review quote and fees', 'Conferir cotação e custos')}</button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="submit" className="btn-primary" disabled={busy || !parsed} aria-busy={progress === 'quote'}>{label('Review quote and fees', 'Conferir cotação e custos')}</button>
+            {progress === 'quote' && <TreasuryProgress text={label('Getting quote and checking fees…', 'Consultando cotação e calculando custos…')} />}
+          </div>
         </form>}
       {quote && !pending && <div className="space-y-4 border-t border-white/10 pt-4">
         <Review quote={quote} locale={locale} label={label} />
@@ -350,10 +362,12 @@ export default function StablecoinTreasury() {
       </div>}
     </section>}
 
+    {!modal && progress === 'submit' && <TreasuryProgress text={label('Submitting your conversion…', 'Enviando sua conversão…')} />}
+
     {status?.enabled && !unavailable && signer && (signer === 'setup' || (quote && current && costsKnown && !pending)) && <section className="section-card space-y-3">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">{label('Solana wallet', 'Carteira Solana')}</h2>
-        <button className="btn-secondary" type="button" onClick={() => { setSigner(undefined); void refresh() }}>{t('common.close')}</button>
+        <button className="btn-secondary" type="button" disabled={progress === 'submit'} onClick={() => { setSigner(undefined); void refresh() }}>{t('common.close')}</button>
       </div>
       <iframe ref={signerFrame} className="block min-h-[26rem] w-full border-0" title={label('Isolated Solana wallet', 'Carteira Solana isolada')} sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer"
         src={signerPath + '?lang=' + (pt ? 'pt-BR' : 'en') + (signer === 'return' ? '&quote=' + encodeURIComponent(quote?.id ?? '') : '')} />
@@ -388,6 +402,10 @@ export default function StablecoinTreasury() {
       </label>}
       {modal === 'wallet' && <p className="mt-3 break-all font-mono text-sm">{newWallet}</p>}
       {modal === 'lightning' && quote && <div className="mt-4"><Review quote={quote} locale={locale} label={label} /></div>}
+      {busy && <div className="mt-4">
+        <TreasuryProgress text={progress === 'submit' ? label('Submitting your conversion…', 'Enviando sua conversão…')
+          : label('Saving Treasury settings…', 'Salvando a configuração da Tesouraria…')} />
+      </div>}
     </SensitiveActionModal>
   </div>
 }

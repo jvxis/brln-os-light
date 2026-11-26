@@ -17,6 +17,7 @@ let walletReady = false
 let pending = false
 let quoteRequests = 0
 let submitted = 0
+let waitForQuote
 const mime = {
   '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
   '.woff2': 'font/woff2', '.png': 'image/png', '.svg': 'image/svg+xml',
@@ -51,6 +52,7 @@ async function api(path, method, body) {
   }
   if (path === appPath + '/quote' && method === 'POST') {
     quoteRequests++
+    await waitForQuote
     const toSolana = body.direction === 'to_solana'
     assert.equal(body.amount, 1000000)
     if (!toSolana) assert.equal(body.lightning_address, address)
@@ -176,8 +178,19 @@ try {
   await click('Convert to bitcoin')
   assert.equal(await evaluate('document.querySelector(\'input[inputmode="email"]\').value'), address)
   await input('input[inputmode=decimal]', '1')
-  await click('Review quote and fees')
+  let releaseQuote
+  waitForQuote = new Promise(resolve => { releaseQuote = resolve })
+  try {
+    await click('Review quote and fees')
+    await waitText('Getting quote and checking fees…')
+    assert(await evaluate(button('Review quote and fees') + '.disabled'))
+    assert(await exists('[role=status] .animate-spin'))
+  } finally {
+    releaseQuote()
+    waitForQuote = undefined
+  }
   await waitText('0.00149344 SOL')
+  assert.equal(await text('Getting quote and checking fees…'), false)
   await waitText('Estimated receipt vs. reference')
   await click('Sign with Solana wallet')
   assert(await exists('iframe[sandbox="allow-scripts allow-downloads"][src$="&quote=test-quote"]'))

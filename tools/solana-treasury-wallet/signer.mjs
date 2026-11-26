@@ -6,7 +6,10 @@ const origin = new URL(location.href).origin
 const quoteID = params.get('quote')
 const en = params.get('lang') === 'en'
 const label = (english, portuguese) => en ? english : portuguese
-const message = text => { get('message').textContent = text }
+function message(text, loading = false) {
+  get('message-text').textContent = text
+  get('message-spinner').hidden = !loading
+}
 const send = (type, payload = {}) => parent.postMessage({ treasury: true, type, ...payload }, origin)
 let created
 let preparing
@@ -18,7 +21,7 @@ if (en) {
 }
 if (quoteID) {
   get('setup').hidden = true
-  get('submit').textContent = label('Sign reviewed conversion', 'Assinar convers?o revisada')
+  get('submit').textContent = label('Sign reviewed conversion', 'Assinar conversão revisada')
 }
 
 for (const [form, button] of [['create', 'create-wallet'], ['recover', 'submit']]) {
@@ -39,15 +42,18 @@ get('create-wallet').addEventListener('click', async () => {
   }
   get('create').reset()
   working = true
+  get('create-wallet').disabled = true
+  message(label('Creating your wallet…', 'Criando sua carteira…'), true)
   try {
     created = await createSolanaBackup(password)
     get('create').hidden = true
     get('save').hidden = false
     message(label('Download the backup and keep it separate from its password.', 'Baixe o backup e guarde a senha separadamente.'))
   } catch {
-    message(label('This browser could not create the wallet.', 'O navegador n?o conseguiu criar a carteira.'))
+    message(label('This browser could not create the wallet.', 'O navegador não conseguiu criar a carteira.'))
   } finally {
     working = false
+    get('create-wallet').disabled = false
   }
 })
 
@@ -75,6 +81,8 @@ get('submit').addEventListener('click', async () => {
   get('password').value = ''
   working = true
   get('submit').disabled = true
+  message(label('Checking your encrypted backup…', 'Verificando seu backup criptografado…'), true)
+  let submitted = false
   try {
     const backup = await file.text()
     // Checking the backup before refreshing keeps the fresh blockhash available
@@ -84,6 +92,7 @@ get('submit').addEventListener('click', async () => {
       send('wallet', { address })
       return
     }
+    message(label('Checking the quote and Solana fees…', 'Conferindo a cotação e os custos da Solana…'), true)
     const fresh = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Quote refresh timed out')), 35_000)
       preparing = data => {
@@ -94,15 +103,17 @@ get('submit').addEventListener('click', async () => {
       send('prepare', { id: quoteID, address })
     })
     if (fresh.id !== quoteID || fresh.wallet !== address || fresh.cluster !== 'mainnet') throw new Error('Order mismatch')
+    message(label('Signing the conversion…', 'Assinando a conversão…'), true)
     const signed = await signDirectDeposit(backup, password, fresh)
     send('signed', { id: quoteID, signed })
-    message(label('Signed. The Treasury is checking the deposit.', 'Assinatura conclu?da. A Tesouraria est? conferindo o dep?sito.'))
+    submitted = true
+    message(label('Signed. Follow the conversion in Treasury.', 'Assinatura concluída. Acompanhe a conversão na Tesouraria.'))
   } catch {
-    message(label('Check the backup, password and quote, then try again.', 'Confira o backup, a senha e a cota??o antes de tentar novamente.'))
+    message(label('Check the backup, password and quote, then try again.', 'Confira o backup, a senha e a cotação antes de tentar novamente.'))
   } finally {
     preparing = undefined
     working = false
-    get('submit').disabled = false
+    get('submit').disabled = submitted
   }
 })
 

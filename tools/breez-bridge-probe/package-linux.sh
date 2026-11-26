@@ -25,8 +25,12 @@ patchelf --set-rpath '$ORIGIN' "$output/breez-bridge-probe"
 install -m 0644 -- systemd/lightningos-treasury-bridge.socket systemd/lightningos-treasury-bridge@.service "$output/"
 env -u LD_LIBRARY_PATH -u LD_PRELOAD "$output/breez-bridge-probe" --check-bindings
 wallet_dir=$(realpath ../solana-treasury-wallet)
+wallet_build=$(mktemp -d "$output/.wallet-build.XXXXXXXX")
+trap 'rm -rf -- "$wallet_build"' EXIT
+install -m 0644 -- "$wallet_dir"/package.json "$wallet_dir"/package-lock.json \
+  "$wallet_dir"/*.mjs "$wallet_dir"/signer.html "$wallet_dir"/signer.css "$wallet_build/"
 (
-  cd -- "$wallet_dir"
+  cd -- "$wallet_build"
   npm ci --ignore-scripts
   npm test
   ./node_modules/.bin/esbuild signer.mjs --bundle --format=iife --platform=browser --minify --outfile="$output/signer.js"

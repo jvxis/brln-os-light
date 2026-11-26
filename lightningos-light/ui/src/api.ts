@@ -80,11 +80,11 @@ export const getTreasuryStatus = (): Promise<TreasuryStatus> => request(treasury
 export const saveTreasuryBreezKey = (api_key: string, confirm_password: string): Promise<void> =>
   request(treasuryAPI + '/breez-key', { method: 'POST', body: JSON.stringify({ api_key, confirm_password }) })
 export const quoteTreasury = (payload: { direction: TreasuryDirection; amount: number; lightning_address?: string }): Promise<TreasuryQuote> =>
-  request(treasuryAPI + '/quote', { method: 'POST', body: JSON.stringify(payload) })
+  requestRaw(treasuryAPI + '/quote', { method: 'POST', body: JSON.stringify(payload) })
 export const executeTreasury = (quote_id: string, confirm_password: string, signed?: unknown): Promise<TreasuryOrder> =>
   request(treasuryAPI + '/execute', { method: 'POST', body: JSON.stringify({ quote_id, confirm_password, signed }) })
 export const prepareTreasurySolana = (quote_id: string): Promise<unknown> =>
-  request(treasuryAPI + '/prepare', { method: 'POST', body: JSON.stringify({ quote_id }) })
+  requestRaw(treasuryAPI + '/prepare', { method: 'POST', body: JSON.stringify({ quote_id }) })
 export const saveTreasuryWallet = (wallet: string, confirm_password: string): Promise<void> =>
   request(treasuryAPI + '/wallet', { method: 'POST', body: JSON.stringify({ wallet, confirm_password }) })
 

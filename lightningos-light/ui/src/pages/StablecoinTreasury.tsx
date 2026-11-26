@@ -103,6 +103,8 @@ export default function StablecoinTreasury() {
   const returnAddress = recipient ?? status?.saved_recipient ?? ''
   const parsed = parseAmount(amount)
   const pending = status?.orders.some(order => !terminal.has(order.state)) ?? false
+  const canSign = window.isSecureContext && !!window.crypto?.subtle
+  const secureWalletMessage = label('Open LightningOS over HTTPS with a certificate your browser trusts to use the Solana wallet.', 'Para usar a carteira Solana, abra o LightningOS por HTTPS com um certificado confi?vel para o navegador.')
   const ready = !!status?.enabled && !unavailable && !!status.breez_configured && !!status.solana_address
   const current = !!quote && quote.direction === direction && Date.parse(quote.expires_at) > now &&
     quote.destination === (direction === 'to_solana' ? status?.solana_address : returnAddress)
@@ -225,9 +227,13 @@ export default function StablecoinTreasury() {
       setQuote(newQuote)
     } catch (cause) {
       const code = typeof cause === 'object' && cause && 'code' in cause ? cause.code : undefined
-      setError(code === 'insufficient_sol'
-        ? label('Add SOL on the Solana network before trying again.', 'Deposite SOL pela rede Solana antes de tentar novamente.')
-        : label('Could not get a quote. Check the amount, destination and balances.', 'Não foi possível cotar. Confira valor, destino e saldos.'))
+      const messages: Record<string, string> = {
+        insufficient_sol: label('Add SOL on the Solana network before trying again.', 'Deposite SOL pela rede Solana antes de tentar novamente.'),
+        insufficient_usdc: label('The wallet does not have enough USDC for this quote.', 'A carteira tem USDC insuficiente para esta cotação.'),
+        solana_estimate_unavailable: label('The Solana fee estimate is unavailable. Try getting a quote again in a moment.', 'A estimativa da taxa da Solana está indisponível. Tente cotar novamente em instantes.'),
+      }
+      const message = typeof code === 'string' && Object.prototype.hasOwnProperty.call(messages, code) ? messages[code] : undefined
+      setError(message ?? label('Could not get a quote. Check the amount, destination and balances.', 'Não foi possível cotar. Confira valor, destino e saldos.'))
     } finally {
       inFlight.current = false
       setBusy(false)
@@ -289,7 +295,8 @@ export default function StablecoinTreasury() {
         <summary className="cursor-pointer font-medium">{label('Breez settings', 'Configuração da Breez')}</summary>
         <button type="button" className="btn-secondary mt-2" disabled={pending} onClick={() => { setError(''); setModal('key') }}>{label('Change API key', 'Alterar a chave de API')}</button>
       </details>}
-      {!status.solana_address && <button type="button" className="btn-secondary" onClick={() => setSigner('setup')}>
+      {!status.solana_address && !canSign && <p role="status">{secureWalletMessage}</p>}
+      {!status.solana_address && <button disabled={!canSign} type="button" className="btn-secondary" onClick={() => setSigner('setup')}>
         {label('Create or recover Solana wallet', 'Criar ou recuperar carteira Solana')}
       </button>}
       {status.solana_address && <div className="grid gap-4 text-sm sm:grid-cols-3">
@@ -335,7 +342,8 @@ export default function StablecoinTreasury() {
         <Review quote={quote} locale={locale} label={label} />
         {!current && <p role="status">{label('This quote expired. Get a fresh quote to continue.', 'A cotação expirou. Gere outra cotação para continuar.')}</p>}
         {current && !costsKnown && <p role="status">{label('The full cost is unavailable. Get a fresh quote to continue.', 'O custo total está indisponível. Gere outra cotação para continuar.')}</p>}
-        <button type="button" className="btn-primary" disabled={!current || !costsKnown || busy} onClick={() => {
+        {direction === 'to_lightning' && !canSign && <p role="status">{secureWalletMessage}</p>}
+        <button type="button" className="btn-primary" disabled={!current || !costsKnown || busy || (direction === 'to_lightning' && !canSign)} onClick={() => {
           if (direction === 'to_solana') setModal('lightning')
           else setSigner('return')
         }}>{direction === 'to_solana' ? label('Confirm conversion', 'Confirmar conversão') : label('Sign with Solana wallet', 'Assinar com a carteira Solana')}</button>

@@ -24,35 +24,46 @@ function accountTokenInfo(account, owner) {
   return info.tokenAmount.amount
 }
 
-export async function prepareDirectOrder(quote) {
+export async function prepareDirectOrder(quote, rpc = directOrderRpc) {
   const wallet = address(quote.wallet)
   const deposit = address(quote.deposit)
   const [source, target] = await Promise.all([usdcAccount(wallet), usdcAccount(deposit)])
   const [
-    { value: [sourceAccount, targetAccount] }, { value: balance },
-    { value: latestBlock }, systemReserve,
+    { value: [sourceAccount, targetAccount] }, { value: balance }, systemReserve,
   ] = await Promise.all([
-    directOrderRpc('getMultipleAccounts', [source, target], { commitment: 'confirmed', encoding: 'jsonParsed' }),
-    directOrderRpc('getBalance', wallet, { commitment: 'confirmed' }),
-    directOrderRpc('getLatestBlockhash', { commitment: 'confirmed' }),
-    directOrderRpc('getMinimumBalanceForRentExemption', 0, { commitment: 'confirmed' }),
+    rpc('getMultipleAccounts', [source, target], { commitment: 'confirmed', encoding: 'jsonParsed' }),
+    rpc('getBalance', wallet, { commitment: 'confirmed' }),
+    rpc('getMinimumBalanceForRentExemption', 0, { commitment: 'confirmed' }),
   ])
   if (!sourceAccount || BigInt(accountTokenInfo(sourceAccount, wallet)) < BigInt(quote.depositMicros)) {
     throw Object.assign(new Error('Wallet has insufficient USDC'), { code: 'insufficient_usdc' })
   }
   if (targetAccount) accountTokenInfo(targetAccount, deposit)
-  const accountLamports = targetAccount ? 0 : await directOrderRpc('getMinimumBalanceForRentExemption', 165, { commitment: 'confirmed' })
+  const accountLamports = targetAccount ? 0 : await rpc('getMinimumBalanceForRentExemption', 165, { commitment: 'confirmed' })
   const order = {
     version: 1, feeMode: 'wallet', cluster: 'mainnet', id: quote.id,
     wallet, deposit, depositMicros: quote.depositMicros, providerFeeMicros: quote.providerFeeMicros,
     expectedSats: quote.expectedSats, lightningAddress: quote.lightningAddress,
-    expiresAt: Math.min(quote.expiresAt, Date.now() + 60_000),
-    ...latestBlock, createDepositAccount: !targetAccount, accountLamports: String(accountLamports),
-    feeLamports: '1',
+    createDepositAccount: !targetAccount, accountLamports: String(accountLamports), feeLamports: '1',
   }
-  const transaction = await compileDirectDeposit(reviewDirectDeposit(order))
-  const { value: fee } = await directOrderRpc('getFeeForMessage', Buffer.from(transaction.messageBytes).toString('base64'), { commitment: 'confirmed' })
-  if (!Number.isSafeInteger(fee)) throw new Error('Network fee could not be estimated')
+
+  let fee
+  // The public RPC can route the fee request to a backend that has yet to
+  // observe a confirmed blockhash. A finalized hash gives it a common view.
+  for (const commitment of ['confirmed', 'finalized']) {
+    const latest = await rpc('getLatestBlockhash', { commitment })
+    order.blockhash = latest.value.blockhash
+    order.lastValidBlockHeight = latest.value.lastValidBlockHeight
+    order.expiresAt = Math.min(quote.expiresAt, Date.now() + 60_000)
+    const transaction = await compileDirectDeposit(reviewDirectDeposit(order))
+    const minContextSlot = latest.context?.slot
+    const result = await rpc('getFeeForMessage', Buffer.from(transaction.messageBytes).toString('base64'), {
+      commitment, ...(Number.isSafeInteger(minContextSlot) ? { minContextSlot } : {}),
+    })
+    fee = result.value
+    if (fee !== null) break
+  }
+  if (!Number.isSafeInteger(fee) || fee <= 0) throw new Error('Network fee could not be estimated')
   if (balance < fee + accountLamports + systemReserve) {
     throw Object.assign(new Error('Wallet has insufficient SOL'), { code: 'insufficient_sol' })
   }

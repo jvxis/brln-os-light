@@ -407,7 +407,13 @@ func treasuryPrepareSolana(ctx context.Context, order treasuryOrder) (json.RawMe
 		request["providerFeeMicros"] = strconv.FormatInt(q.BridgeFee.Atoms, 10)
 	}
 	body, _ := json.Marshal(request)
-	res, err := treasuryCall(ctx, treasuryWorkerRequest{Action: "solana-prepare", Order: body})
+	workerRequest := treasuryWorkerRequest{Action: "solana-prepare", Order: body}
+	res, err := treasuryCall(ctx, workerRequest)
+	// Preparation only reads chain state. Reuse the same provider quote if
+	// the socket or RPC failed and there is time left to review the result.
+	if err != nil && ctx.Err() == nil && time.Until(q.ExpiresAt) > 35*time.Second {
+		res, err = treasuryCall(ctx, workerRequest)
+	}
 	if res.Status == "insufficient_sol" || res.Status == "insufficient_usdc" {
 		return nil, 0, 0, res.Status
 	}

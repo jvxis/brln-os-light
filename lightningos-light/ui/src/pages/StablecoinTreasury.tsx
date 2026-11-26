@@ -405,7 +405,7 @@ export default function StablecoinTreasury() {
         </section>}
 
       </div>
-      {status?.enabled && <section className={panel + ' space-y-4'} aria-labelledby="treasury-history-heading">
+      {status?.enabled && <section className={panel + ' space-y-4'}>
         <h2 id="treasury-history-heading" className="text-lg font-semibold">{label('Conversion history', 'Histórico de conversões')}</h2>
         {status.orders.length ? <div role="region" aria-labelledby="treasury-history-heading" tabIndex={0} className="max-h-[25rem] overflow-y-auto overscroll-contain pr-2 [scrollbar-color:rgb(245_158_11_/_0.45)_transparent] [scrollbar-gutter:stable]">
           <ul className="space-y-2">

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { executeTreasury, getTreasuryStatus, prepareTreasurySolana, quoteTreasury, saveTreasuryBreezKey, saveTreasuryWallet, type TreasuryAmount, type TreasuryDirection, type TreasuryOrder, type TreasuryQuote, type TreasuryStatus } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
 
+const breezHome = 'https://breez.technology/'
 const breezForm = 'https://breez.technology/request-api-key/#contact-us-form-sdk'
 const signerPath = '/apps/stablecoin-treasury/signer'
 const terminal = new Set<TreasuryOrder['state']>(['delivered', 'refunded', 'deposit_failed'])
@@ -49,6 +50,12 @@ function TreasuryFlow({ label }: { label: Label }) {
         </li>)}
       </ol>
     </div>)}
+    <p className="border-t border-white/10 pt-2 text-xs text-fog/65">
+      {label('Conversions via', 'Conversões via')}{' '}
+      <a href={breezHome} target="_blank" rel="noopener noreferrer" className="font-medium text-glow underline underline-offset-2 hover:text-fog">
+        Breez Technology <span aria-hidden="true">↗</span>
+      </a>
+    </p>
   </section>
 }
 

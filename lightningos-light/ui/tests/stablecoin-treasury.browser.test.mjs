@@ -175,6 +175,8 @@ try {
   assert(await evaluate('document.querySelector("main h1").textContent === "BR⚡LN Reserve"'))
   assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BR⚡LN Reserve')`))
   await waitText('You control the wallet key with your encrypted backup and password.')
+  assert(await exists('#treasury-how-it-works a[href="https://breez.technology/"][target="_blank"][rel~="noopener"]'))
+  await waitText('Conversions via Breez Technology')
   const conversionPaths = () => evaluate(`[...document.querySelectorAll('#treasury-how-it-works ol')].map(row =>
     [...row.querySelectorAll('li')].map(step => step.textContent.trim()))`)
   assert.deepEqual(await conversionPaths(), [
@@ -232,6 +234,7 @@ try {
   await call('Page.reload', {})
   await waitText('Aguarde a entrega ou o reembolso')
   await waitText('USDC em autocustódia na Solana')
+  await waitText('Conversões via Breez Technology')
   assert.deepEqual(await conversionPaths(), [
     ['Seu nó Lightning', 'Breez / Orchestra', 'Sua carteira Solana'],
     ['Sua carteira Solana', 'Breez / Orchestra', 'Lightning Address escolhido'],

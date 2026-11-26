@@ -102,3 +102,77 @@ test('binds the chosen address to a fresh quote and records the exact signature 
     await rmdir(dir)
   }
 })
+
+test('resumes from a saved submission and distinguishes deposit, delivery and verified refund', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'los-direct-status-'))
+  const apiKeyFile = join(dir, 'key')
+  const submissionFile = join(dir, 'submission.json')
+  let now = Date.now()
+  t.mock.method(Date, 'now', () => now)
+  try {
+    await writeFile(apiKeyFile, 'synthetic key')
+    const order = {
+      lightningAddress: 'payee@example.com', cluster: 'mainnet', deposit: 'bridge-wallet',
+      wallet: 'user-wallet', depositMicros: '1065000', expectedSats: '1680',
+      feeLamports: '5000', accountLamports: '1488440',
+    }
+    let depositFinal = false
+    let refundFinal = false
+    let bridge = { status: 'pending', amount_in: 1065000, deposit_ref: 'source-signature' }
+    const deps = {
+      rpc: async (method) => {
+        assert.equal(method, 'getSignatureStatuses')
+        return { value: [null] }
+      },
+      requestStatus: async (_worker, args) => {
+        if (args.action === 'solana-proof') {
+          assert.equal(args.reference, 'source-signature')
+          assert.equal(args.recipient, order.deposit)
+          if (!depositFinal) throw new Error('proof pending')
+          return { status: 'verified', delivery_ref: args.reference, amount_out: 1065000 }
+        }
+        if (args.action === 'solana-refund-proof') {
+          assert.equal(args.recipient, order.wallet)
+          assert.equal(args.reference, 'refund-signature')
+          if (!refundFinal) throw new Error('proof pending')
+          return { status: 'verified', delivery_ref: args.reference, amount_out: 1064000 }
+        }
+        assert.equal(args.action, 'status')
+        return bridge
+      },
+    }
+    const config = { worker: 'unused', apiKeyFile, submissionFile }
+    assert.equal((await request(directPilot(config, deps), '/pilot/status')).result.state, 'idle')
+    await writeFile(submissionFile, JSON.stringify({
+      order, quote: { bridge_id: 'synthetic-order', status_token: 'private-token' }, signature: 'source-signature',
+    }))
+    const handler = directPilot(config, deps)
+    const read = async () => {
+      now += 9_000
+      const { status, result } = await request(handler, '/pilot/status')
+      assert.equal(status, 200)
+      assert.equal(result.lightningAddress, order.lightningAddress)
+      assert(!JSON.stringify(result).includes('private-token'))
+      return result
+    }
+    assert.equal((await read()).state, 'deposit_pending')
+    depositFinal = true
+    assert.equal((await read()).state, 'delivery_pending')
+    assert.equal((await request(handler, '/pilot/quote')).result.error, 'reconcile')
+    bridge = { ...bridge, status: 'completed', delivery_ref: 'delivery-id', amount_out: 1681, deposit_ref: 'unrelated' }
+    assert.equal((await read()).state, 'delivery_pending')
+    bridge.deposit_ref = 'source-signature'
+    assert.equal((await read()).deliveredSats, 1681)
+    assert.equal((await read()).state, 'delivered')
+    bridge = { ...bridge, status: 'refunded', refund_ref: 'refund-signature' }
+    assert.equal((await read()).state, 'refund_pending')
+    refundFinal = true
+    const refund = await read()
+    assert.equal(refund.state, 'refunded')
+    assert.equal(refund.refundedMicros, '1064000')
+  } finally {
+    await unlink(submissionFile).catch(error => { if (error.code !== 'ENOENT') throw error })
+    await unlink(apiKeyFile)
+    await rmdir(dir)
+  }
+})

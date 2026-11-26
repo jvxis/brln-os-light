@@ -2,8 +2,9 @@ import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { directPilot, readPilotJson } from './direct-pilot.mjs'
 
-const pilot = process.argv[2] ? directPilot(await readPilotJson(process.argv[2])) : undefined
-const port = pilot ? 4177 : 4176
+const pilotConfig = process.argv[2] ? await readPilotJson(process.argv[2]) : undefined
+const pilot = pilotConfig ? directPilot(pilotConfig) : undefined
+const port = pilotConfig?.parallel === true ? 4178 : pilot ? 4177 : 4176
 const host = `127.0.0.1:${port}`
 
 const files = new Map([
@@ -23,7 +24,7 @@ if (pilot) headers['Content-Security-Policy'] += "; connect-src 'self'"
 createServer(async (request, response) => {
   if (pilot && request.headers.host === host && request.method === 'POST' &&
       request.headers.origin === `http://${host}` && request.headers['x-lightningos-pilot'] === '1' &&
-      ['/pilot/quote', '/pilot/refresh', '/pilot/submit'].includes(request.url)) {
+      ['/pilot/quote', '/pilot/refresh', '/pilot/submit', '/pilot/status'].includes(request.url)) {
     for (const [name, value] of Object.entries(headers)) response.setHeader(name, value)
     response.setHeader('Content-Type', 'application/json; charset=utf-8')
     await pilot(request, response)

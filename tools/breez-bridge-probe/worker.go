@@ -67,7 +67,7 @@ func bridgeWorker(input io.Reader, output io.Writer) error {
 	if req.Action == "health" && req == (bridgeCommand{Action: "health"}) {
 		return json.NewEncoder(output).Encode(bridgeResult{Status: "ready"})
 	}
-	if req.Action == "solana-proof" && req.APIKey == "" {
+	if (req.Action == "solana-proof" || req.Action == "solana-refund-proof") && req.APIKey == "" {
 		result, err := solanaProofRequest(req)
 		if err != nil {
 			return err

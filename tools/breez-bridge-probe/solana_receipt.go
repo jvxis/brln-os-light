@@ -50,6 +50,7 @@ func solanaProofRequest(req bridgeCommand) (bridgeResult, error) {
 }
 
 func (s sponsorRPC) verifySolanaCredit(req bridgeCommand, mint, genesis string) (bridgeResult, error) {
+	refund := req.Action == "solana-refund-proof"
 	if !validSolanaAddress(req.Recipient) || !validSolanaBase58(req.Reference, 64, 64, 88) || req.Amount <= 0 {
 		return bridgeResult{}, errors.New("invalid Solana receipt parameters")
 	}
@@ -69,11 +70,15 @@ func (s sponsorRPC) verifySolanaCredit(req bridgeCommand, mint, genesis string) 
 	}
 	before, beforeErr := solanaBalanceSum(tx.Meta.Before, req.Recipient, mint)
 	after, afterErr := solanaBalanceSum(tx.Meta.After, req.Recipient, mint)
-	if beforeErr != nil || afterErr != nil || after < before || after-before != uint64(req.Amount) {
+	if beforeErr != nil || afterErr != nil || after <= before {
+		return bridgeResult{}, errors.New("Solana transaction did not credit the expected wallet and USDC mint")
+	}
+	credit := after - before
+	if credit > uint64(req.Amount) || !refund && credit != uint64(req.Amount) {
 		return bridgeResult{}, errors.New("Solana transaction did not credit the quoted wallet and USDC amount")
 	}
 	return bridgeResult{
-		Cluster: req.Cluster, Mint: mint, Status: "verified", AmountOut: req.Amount,
+		Cluster: req.Cluster, Mint: mint, Status: "verified", AmountOut: int64(credit),
 		DeliveryRef: req.Reference, Slot: tx.Slot,
 	}, nil
 }

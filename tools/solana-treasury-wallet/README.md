@@ -21,6 +21,8 @@ O piloto local de volta também oferece cotação e transmissão pela tela, em `
 
 O fluxo experimental com patrocinador continua disponível para ordens de teste. Nelas, a carteira exibe a taxa do patrocinador em USDC e exporta uma transação que requer a segunda assinatura.
 
+Ao reabrir o assinador, uma submissão gravada mostra o acompanhamento da ordem. O painel distingue confirmação do depósito, entrega informada pela ponte e reembolso comprovado na Solana. A ordem local continua em conciliação durante uma indisponibilidade de consulta. Um piloto independente na porta 4178 pode ser iniciado com `parallel: true` e um `submissionFile` próprio.
+
 Para repetir a prova contábil em Linux amd64, instale a dependência de teste e execute o simulador. O teste confirma a criação da conta de destino, o crédito do depósito, a cobrança exata da taxa e o saldo original de zero SOL na carteira usuária.
 
 ```sh

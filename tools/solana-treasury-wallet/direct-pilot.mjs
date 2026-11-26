@@ -53,11 +53,34 @@ function reply(response, status, body) {
 
 export function directPilot(config, {
   rpc = directOrderRpc, requestQuote = workerRequest, prepare = prepareDirectOrder,
+  requestStatus = workerRequest,
 } = {}) {
   let active
   let busy = false
+  let latestStatus
+  let verifiedDeposit
 
   return async (request, response) => {
+    if (request.url === '/pilot/status') {
+      try {
+        await requestBody(request)
+        const saved = await priorSubmission(config.submissionFile)
+        if (!saved) {
+          reply(response, 200, { state: 'idle' })
+          return
+        }
+        if (latestStatus?.signature !== saved.signature || latestStatus.checkedAt + 8_000 <= Date.now()) {
+          latestStatus = {
+            signature: saved.signature, checkedAt: Date.now(),
+            result: reconcile(saved),
+          }
+        }
+        reply(response, 200, await latestStatus.result)
+      } catch {
+        reply(response, 503, { error: 'status_unavailable' })
+      }
+      return
+    }
     if (busy) {
       reply(response, 409, { error: 'busy' })
       return
@@ -144,6 +167,66 @@ export function directPilot(config, {
     } finally {
       busy = false
     }
+  }
+
+  async function reconcile(saved) {
+    const { order, quote, signature } = saved
+    const amount = Number(order.depositMicros)
+    const status = {
+      state: 'deposit_pending', lightningAddress: order.lightningAddress,
+      depositMicros: order.depositMicros, expectedSats: order.expectedSats,
+      feeLamports: order.feeLamports, accountLamports: order.accountLamports,
+    }
+    if (verifiedDeposit !== signature) {
+      try {
+        const proof = await requestStatus(config.worker, {
+          action: 'solana-proof', cluster: order.cluster, recipient: order.deposit, reference: signature, amount,
+        })
+        if (proof.status === 'verified' && proof.amount_out === amount && proof.delivery_ref === signature) {
+          verifiedDeposit = signature
+        }
+      } catch {
+        // Until an exact credit is verified, the order stays in reconciliation.
+      }
+    }
+    if (verifiedDeposit !== signature) {
+      try {
+        const { value: [tx] } = await rpc('getSignatureStatuses', [signature], { searchTransactionHistory: true })
+        if (tx?.confirmationStatus === 'finalized' && tx.err != null) status.state = 'deposit_failed'
+      } catch {
+        status.checkDelayed = true
+      }
+      return status
+    }
+    status.state = 'delivery_pending'
+    try {
+      const apiKey = (await readFile(config.apiKeyFile, 'utf8')).trim()
+      const bridge = await requestStatus(config.worker, {
+        action: 'status', api_key: apiKey, bridge_id: quote.bridge_id, status_token: quote.status_token,
+      })
+      // A provider's terminal state must refer to this exact on-chain deposit.
+      if (bridge.deposit_ref !== signature || bridge.amount_in !== amount) return status
+      if (bridge.status === 'completed' && bridge.delivery_ref && Number.isSafeInteger(bridge.amount_out) && bridge.amount_out > 0) {
+        status.state = 'delivered'
+        status.deliveredSats = bridge.amount_out
+      }
+      if (bridge.status === 'refunding' || bridge.status === 'refunded') status.state = 'refund_pending'
+      if (bridge.status === 'failed' || bridge.status === 'expired') status.state = 'delivery_issue'
+      if (bridge.status === 'refunded' && bridge.refund_ref) {
+        const proof = await requestStatus(config.worker, {
+          action: 'solana-refund-proof', cluster: order.cluster, recipient: order.wallet,
+          reference: bridge.refund_ref, amount,
+        })
+        if (proof.status === 'verified' && proof.delivery_ref === bridge.refund_ref &&
+            Number.isSafeInteger(proof.amount_out) && proof.amount_out > 0 && proof.amount_out <= amount) {
+          status.state = 'refunded'
+          status.refundedMicros = String(proof.amount_out)
+        }
+      }
+    } catch {
+      status.checkDelayed = true
+    }
+    return status
   }
 }
 

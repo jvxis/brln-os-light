@@ -6,6 +6,7 @@ const create = control('create')
 const recover = control('recover')
 const save = control('save')
 const status = control('status')
+const pilot = ['4177', '4178'].includes(location.port)
 let pending
 let busy = false
 
@@ -38,6 +39,16 @@ const pilotErrors = {
   busy: 'O assinador está processando outra ação. Aguarde alguns segundos.',
 }
 
+const progressLabels = {
+  deposit_pending: 'Aguardando confirmação do depósito na Solana.',
+  deposit_failed: 'A Solana registrou uma falha na transação.',
+  delivery_pending: 'Depósito confirmado. Aguardando a entrega pela ponte.',
+  delivered: 'Entrega informada pela ponte.',
+  refund_pending: 'Depósito confirmado. Aguardando a confirmação do reembolso na Solana.',
+  refunded: 'Reembolso confirmado na carteira Solana.',
+  delivery_issue: 'A ponte encerrou a entrega. A ordem segue em conciliação.',
+}
+
 function sameReviewedTerms(previous, next) {
   const fields = ['id', 'cluster', 'wallet', 'deposit', 'depositMicros', 'providerFeeMicros',
     'expectedSats', 'lightningAddress', 'feeLamports', 'accountLamports', 'createDepositAccount', 'feeMode']
@@ -53,9 +64,9 @@ function enableSigning() {
   const recipientInput = control('pilot-recipient')
   const passwordInput = control('sign-password')
   const confirm = form.querySelector('button[type="submit"]')
-  const pilot = location.port === '4177'
   let reviewedFile
   let signed
+  let following = false
 
   function review(documentValue) {
     const direct = documentValue?.feeMode === 'wallet'
@@ -105,6 +116,54 @@ function enableSigning() {
     return response.json()
   }
 
+  async function followOrder() {
+    if (following) return
+    following = true
+    const panel = control('pilot-progress')
+    const state = control('pilot-progress-state')
+    const details = control('pilot-progress-details')
+    let previousState
+
+    async function check() {
+      try {
+        const snapshot = await pilotRequest('/pilot/status', {})
+        if (snapshot.state === 'idle') {
+          following = false
+          return
+        }
+        form.hidden = true
+        panel.hidden = false
+        const message = progressLabels[snapshot.state] + (snapshot.checkDelayed ? ' Atualização da rede pendente.' : '')
+        if (state.textContent !== message) state.textContent = message
+        if (snapshot.state !== previousState) {
+          details.replaceChildren()
+          const rows = [
+            ['Lightning Address de retorno', snapshot.lightningAddress],
+            ['Valor da ordem', formatUSDC(BigInt(snapshot.depositMicros))],
+            ['Taxa de rede e reserva estimadas', formatSOL(BigInt(snapshot.feeLamports) + BigInt(snapshot.accountLamports))],
+          ]
+          if (snapshot.deliveredSats !== undefined) rows.push(['Entrega informada', `${snapshot.deliveredSats} sats`])
+          if (snapshot.refundedMicros !== undefined) rows.push(['Reembolso confirmado', formatUSDC(BigInt(snapshot.refundedMicros))])
+          for (const [label, value] of rows) {
+            const term = document.createElement('dt')
+            const description = document.createElement('dd')
+            term.textContent = label
+            description.textContent = value
+            details.append(term, description)
+          }
+          previousState = snapshot.state
+        }
+        if (['delivered', 'refunded', 'deposit_failed'].includes(snapshot.state)) return
+      } catch {
+        panel.hidden = false
+        state.textContent = 'A atualização do estado está indisponível. Nova consulta automática em instantes.'
+      }
+      setTimeout(check, 15_000)
+    }
+
+    await check()
+  }
+
   if (pilot) {
     control('import-order').hidden = true
     control('pilot-recipient-field').hidden = false
@@ -113,6 +172,7 @@ function enableSigning() {
     form.hidden = false
     confirm.disabled = true
     confirm.textContent = 'Assinar e transmitir os valores exibidos'
+    followOrder()
     recipientInput.addEventListener('input', () => {
       reviewedFile = undefined
       confirm.disabled = true
@@ -142,6 +202,7 @@ function enableSigning() {
         status.textContent = 'Confira os valores e assine. A validade da transação será renovada na confirmação.'
         passwordInput.focus()
       } catch (error) {
+        if (error.message === 'reconcile') followOrder()
         status.textContent = pilotErrors[error.message] ?? 'Cotação indisponível. Tente novamente em alguns segundos.'
       } finally {
         busy = false
@@ -204,6 +265,7 @@ function enableSigning() {
         const result = await pilotRequest('/pilot/submit', signed)
         status.textContent = `Transação enviada à Solana. Assinatura: ${result.signature}`
         quote.disabled = true
+        followOrder()
         return
       }
       form.hidden = true
@@ -212,6 +274,7 @@ function enableSigning() {
         ? 'Ordem assinada. Baixe o arquivo para transmitir a transação.'
         : 'Ordem assinada. A transmissão depende da assinatura do patrocinador.'
     } catch (error) {
+      if (submitting || error.message === 'reconcile') followOrder()
       status.textContent = pilotErrors[error.message] ?? (submitting
         ? 'O serviço não respondeu à transmissão. Aguarde a conferência antes de repetir.'
         : 'Não foi possível assinar. Confira o backup e a senha.')
@@ -233,7 +296,7 @@ if (!isSecureContext || location.hostname !== '127.0.0.1' || window !== window.t
   control('sign').hidden = true
   status.textContent = 'Abra o piloto diretamente em 127.0.0.1.'
 } else {
-  if (location.port === '4177') {
+  if (pilot) {
     create.hidden = true
     recover.hidden = true
     document.querySelector('main > p').textContent = 'Confira o endereço Lightning e os custos da conversão antes de assinar.'

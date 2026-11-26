@@ -1,5 +1,5 @@
 import { createSolanaBackup, maxBackupBytes, recoverSolanaAddress, signDirectDeposit, signSponsoredDeposit } from './wallet.mjs'
-import { reviewDirectDeposit, reviewSponsoredDeposit } from './sponsored.mjs'
+import { normalizeLightningAddress, reviewDirectDeposit, reviewSponsoredDeposit } from './sponsored.mjs'
 
 const control = id => document.getElementById(id)
 const create = control('create')
@@ -27,6 +27,8 @@ function formatSOL(lamports) {
 }
 
 const pilotErrors = {
+  invalid_lightning_address: 'Informe um Lightning Address no formato nome@dominio.com.',
+  recipient_changed: 'O destino da cotação mudou. Confira o endereço e gere uma nova cotação.',
   quote_expired: 'A cotação expirou. Gere uma nova para conferir os valores.',
   invalid_signature_or_order: 'O serviço rejeitou a assinatura ou a ordem. Nenhum envio foi iniciado.',
   simulation_unavailable: 'A rede não respondeu à simulação. Nenhum envio foi iniciado.',
@@ -48,6 +50,7 @@ function enableSigning() {
   const status = control('sign-status')
   const download = control('save-signature')
   const quote = control('pilot-quote')
+  const recipientInput = control('pilot-recipient')
   const passwordInput = control('sign-password')
   const confirm = form.querySelector('button[type="submit"]')
   const pilot = location.port === '4177'
@@ -104,10 +107,19 @@ function enableSigning() {
 
   if (pilot) {
     control('import-order').hidden = true
+    control('pilot-recipient-field').hidden = false
+    recipientInput.required = true
     quote.hidden = false
     form.hidden = false
     confirm.disabled = true
     confirm.textContent = 'Assinar e transmitir os valores exibidos'
+    recipientInput.addEventListener('input', () => {
+      reviewedFile = undefined
+      confirm.disabled = true
+      control('costs').replaceChildren()
+      passwordInput.value = ''
+      status.textContent = ''
+    })
     quote.addEventListener('click', async () => {
       if (busy) return
       const backup = control('sign-wallet').files?.[0]
@@ -117,12 +129,16 @@ function enableSigning() {
       }
       busy = true
       quote.disabled = true
+      recipientInput.disabled = true
       confirm.disabled = true
       reviewedFile = undefined
       control('costs').replaceChildren()
       status.textContent = 'Consultando a cotação e os custos de rede…'
       try {
-        review(await pilotRequest('/pilot/quote', {}))
+        const recipient = normalizeLightningAddress(recipientInput.value)
+        const order = await pilotRequest('/pilot/quote', { recipient })
+        if (order.lightningAddress !== recipient) throw new Error('recipient_changed')
+        review(order)
         status.textContent = 'Confira os valores e assine. A validade da transação será renovada na confirmação.'
         passwordInput.focus()
       } catch (error) {
@@ -130,6 +146,7 @@ function enableSigning() {
       } finally {
         busy = false
         quote.disabled = false
+        recipientInput.disabled = false
       }
     })
   }
@@ -161,10 +178,16 @@ function enableSigning() {
     busy = true
     file.disabled = true
     confirm.disabled = true
+    if (pilot) recipientInput.disabled = true
     let submitting = false
     try {
       if (pilot) {
         const current = await pilotRequest('/pilot/refresh', { id: reviewedFile.id })
+        if (current.lightningAddress !== reviewedFile.lightningAddress) {
+          reviewedFile = undefined
+          control('costs').replaceChildren()
+          throw new Error('recipient_changed')
+        }
         if (!sameReviewedTerms(reviewedFile, current)) {
           review(current)
           status.textContent = 'Os valores da rede mudaram. Confira a cotação atualizada antes de assinar.'
@@ -196,6 +219,7 @@ function enableSigning() {
       busy = false
       file.disabled = false
       confirm.disabled = pilot && !reviewedFile
+      if (pilot && !quote.disabled) recipientInput.disabled = false
     }
   })
   download.addEventListener('click', () => {
@@ -212,7 +236,7 @@ if (!isSecureContext || location.hostname !== '127.0.0.1' || window !== window.t
   if (location.port === '4177') {
     create.hidden = true
     recover.hidden = true
-    document.querySelector('main > p').textContent = 'Converta USDC da carteira do piloto em sats no LOS-TEST2.'
+    document.querySelector('main > p').textContent = 'Confira o endereço Lightning e os custos da conversão antes de assinar.'
   }
   enableSigning()
   create.addEventListener('submit', async event => {

@@ -47,14 +47,22 @@ export function reviewSponsoredDeposit(order, now = Date.now()) {
   }
 }
 
+export function normalizeLightningAddress(value) {
+  if (typeof value !== 'string') throw new Error('invalid_lightning_address')
+  const match = /^([a-z0-9_.-]{1,64})@([a-z0-9.-]{1,200})$/i.exec(value.trim())
+  if (!match || !match[2].includes('.') ||
+      !match[2].split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))) {
+    throw new Error('invalid_lightning_address')
+  }
+  return `${match[1]}@${match[2].toLowerCase()}`
+}
+
 export function reviewDirectDeposit(order, now = Date.now()) {
   if (order?.feeMode !== 'wallet' || order.version !== 1 || !/^[a-f0-9]{32}$/.test(order.id) ||
       !['mainnet', 'devnet'].includes(order.cluster) ||
       !Number.isSafeInteger(order.expiresAt) || order.expiresAt <= now || order.expiresAt - now > 600_000 ||
       !Number.isSafeInteger(order.lastValidBlockHeight) || order.lastValidBlockHeight <= 0 ||
-      typeof order.createDepositAccount !== 'boolean' ||
-      typeof order.lightningAddress !== 'string' ||
-      !/^[a-z0-9_.-]{1,64}@[a-z0-9.-]{1,200}$/i.test(order.lightningAddress)) {
+      typeof order.createDepositAccount !== 'boolean') {
     throw new Error('Invalid or expired Solana order')
   }
   const wallet = address(order.wallet)
@@ -63,6 +71,7 @@ export function reviewDirectDeposit(order, now = Date.now()) {
   const feeLamports = amount(order.feeLamports)
   const accountLamports = amount(order.accountLamports)
   const expectedSats = amount(order.expectedSats)
+  const lightningAddress = normalizeLightningAddress(order.lightningAddress)
   const providerFee = order.providerFeeMicros === undefined ? undefined : amount(order.providerFeeMicros)
   if (wallet === deposit || usdc <= 0n || usdc > 100_000_000n || expectedSats <= 0n ||
       feeLamports <= 0n || (accountLamports > 0n) !== order.createDepositAccount ||
@@ -71,7 +80,7 @@ export function reviewDirectDeposit(order, now = Date.now()) {
   }
   return {
     id: order.id, wallet, deposit, usdc, feeLamports, accountLamports, expectedSats, providerFee,
-    lightningAddress: order.lightningAddress,
+    lightningAddress,
     cluster: order.cluster, mint: order.cluster === 'devnet' ? devnetUsdcMint : usdcMint,
     expiresAt: order.expiresAt, createDepositAccount: order.createDepositAccount,
     lifetime: { blockhash: blockhash(order.blockhash), lastValidBlockHeight: BigInt(order.lastValidBlockHeight) }

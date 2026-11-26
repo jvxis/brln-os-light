@@ -41,7 +41,12 @@
         <dl id="costs"></dl>
         <label for="sign-wallet">Arquivo de backup</label>
         <input id="sign-wallet" type="file" accept=".json,application/json" required>
-        <button id="pilot-quote" type="button" hidden>Gerar cotação para voltar ao LOS-TEST2</button>
+        <div id="pilot-recipient-field" hidden>
+          <label for="pilot-recipient">Lightning Address de retorno</label>
+          <input id="pilot-recipient" type="text" placeholder="nome@dominio.com" maxlength="265"
+                 inputmode="email" autocomplete="off" spellcheck="false">
+        </div>
+        <button id="pilot-quote" type="button" hidden>Gerar cotação para Lightning</button>
         <label for="sign-password">Senha do backup</label>
         <input id="sign-password" type="password" autocomplete="off" minlength="14" maxlength="128" required>
         <button type="submit">Assinar valores exibidos</button>

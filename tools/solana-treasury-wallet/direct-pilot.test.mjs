@@ -21,7 +21,7 @@ async function request(handler, url, body = {}) {
   return { status, result }
 }
 
-test('refreshes the same quote, rejects the old signature and records the new one before sending', async () => {
+test('binds the chosen address to a fresh quote and records the exact signature before sending', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'los-direct-pilot-'))
   const apiKeyFile = join(dir, 'key')
   const submissionFile = join(dir, 'submission.json')
@@ -32,14 +32,14 @@ test('refreshes the same quote, rejects the old signature and records the new on
     const { address: deposit } = await createSolanaBackup(password)
     const { address: nextHash } = await createSolanaBackup(password)
     let prepared = 0
-    let quoted = 0
+    const recipients = []
     const calls = []
     const handler = directPilot({
       worker: 'unused', apiKeyFile, submissionFile, wallet, recipient: 'pilot@example.com',
       quoteMicros: 1_000_000, maxUsdcMicros: 1_090_000, minSats: 1500, maxLamports: 3_000_000,
     }, {
       requestQuote: async (_worker, args) => {
-        quoted++
+        recipients.push(args.recipient)
         assert.equal(args.refund, wallet)
         return {
           bridge_id: 'synthetic-bridge', status_token: 'private-token', deposit,
@@ -63,11 +63,13 @@ test('refreshes the same quote, rejects the old signature and records the new on
         const saved = await readPilotJson(submissionFile)
         assert.equal(saved.signature, signature)
         assert.equal(saved.submission, 'submitted_reconcile')
+        assert.equal(saved.order.lightningAddress, 'Other@pay.example.com')
         return signature
       },
     })
     const first = await request(handler, '/pilot/quote')
     assert.equal(first.status, 200)
+    assert.equal(first.result.lightningAddress, 'pilot@example.com')
     assert.equal(first.result.status_token, undefined)
     const oldSignature = await signDirectDeposit(backup, password, first.result)
     const updated = await request(handler, '/pilot/refresh', { id: first.result.id })
@@ -76,10 +78,21 @@ test('refreshes the same quote, rejects the old signature and records the new on
     assert.equal(updated.result.deposit, first.result.deposit)
     assert.equal(updated.result.depositMicros, first.result.depositMicros)
     assert.notEqual(updated.result.blockhash, first.result.blockhash)
-    assert.equal(quoted, 1)
+    assert.deepEqual(recipients, ['pilot@example.com'])
     assert.equal((await request(handler, '/pilot/submit', oldSignature)).result.error, 'invalid_signature_or_order')
     assert.deepEqual(calls, [])
-    const signed = await signDirectDeposit(backup, password, updated.result)
+    const invalid = await request(handler, '/pilot/quote', { recipient: 'https://example.com' })
+    assert.equal(invalid.result.error, 'invalid_lightning_address')
+    assert.deepEqual(recipients, ['pilot@example.com'])
+    const alternate = await request(handler, '/pilot/quote', { recipient: ' Other@PAY.example.com ' })
+    assert.equal(alternate.status, 200)
+    assert.equal(alternate.result.lightningAddress, 'Other@pay.example.com')
+    assert.notEqual(alternate.result.id, updated.result.id)
+    assert.deepEqual(recipients, ['pilot@example.com', 'Other@pay.example.com'])
+    assert.equal((await request(handler, '/pilot/refresh', { id: updated.result.id })).result.error, 'quote_expired')
+    const oldDestinationSignature = await signDirectDeposit(backup, password, updated.result)
+    assert.equal((await request(handler, '/pilot/submit', oldDestinationSignature)).result.error, 'invalid_signature_or_order')
+    const signed = await signDirectDeposit(backup, password, alternate.result)
     assert.equal((await request(handler, '/pilot/submit', signed)).status, 200)
     assert.equal((await request(handler, '/pilot/submit', signed)).result.error, 'reconcile')
     assert.deepEqual(calls, ['simulateTransaction', 'sendTransaction'])

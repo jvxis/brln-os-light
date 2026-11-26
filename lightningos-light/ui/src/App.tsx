@@ -40,6 +40,7 @@ import LightningLoop from './pages/LightningLoop'
 import LOSMesh from './pages/LOSMesh'
 import LoopOutBRLN from './pages/LoopOutBRLN'
 import OPReturn from './pages/OPReturn'
+import StablecoinTreasury from './pages/StablecoinTreasury'
 import MagmaSales from './pages/MagmaSales'
 import {
   getAuthState,
@@ -100,7 +101,7 @@ type MenuConfig = {
 
 const MENU_CONFIG_KEY = 'los-menu-config'
 const MENU_CONFIG_VERSION = 1
-const OPTIONAL_MENU_ROUTE_KEYS = ['hardwallet-open', 'los-mesh', 'pay-boleto', 'taproot-assets', 'lightning-loop', 'loop-out-brln', 'magma-sales', 'opreturn']
+const OPTIONAL_MENU_ROUTE_KEYS = ['hardwallet-open', 'los-mesh', 'pay-boleto', 'taproot-assets', 'lightning-loop', 'loop-out-brln', 'magma-sales', 'opreturn', 'stablecoin-treasury']
 
 const readMenuConfig = (): MenuConfig | null => {
   try {
@@ -245,6 +246,9 @@ export default function App() {
         : []),
       ...(installedAppIDs.has('loopout-brln')
         ? [{ key: 'loop-out-brln', label: t('nav.loopOutBrln'), element: <LoopOutBRLN />, group: 'apps' as const }]
+        : []),
+      ...(installedAppIDs.has('stablecoin-treasury')
+        ? [{ key: 'stablecoin-treasury', label: t('nav.stablecoinTreasury'), element: <StablecoinTreasury />, group: 'apps' as const }]
         : []),
       ...(installedAppIDs.has('magma-sales')
         ? [{ key: 'magma-sales', label: t('nav.magmaSales'), element: <MagmaSales />, group: 'apps' as const }]

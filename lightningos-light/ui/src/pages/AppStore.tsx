@@ -108,7 +108,8 @@ const internalRoutes: Record<string, string> = {
   tapd: 'taproot-assets',
   loop: 'lightning-loop',
   'loopout-brln': 'loop-out-brln',
-  'magma-sales': 'magma-sales'
+  'magma-sales': 'magma-sales',
+  'stablecoin-treasury': 'stablecoin-treasury'
 }
 
 const statusStyles: Record<string, string> = {
@@ -1018,7 +1019,9 @@ export default function AppStore() {
                 ? t('nav.loopOutBrln')
               : app.id === 'magma-sales'
                 ? t('nav.magmaSales')
-              : t('appStore.internal')
+                : app.id === 'stablecoin-treasury'
+                  ? t('nav.stablecoinTreasury')
+                  : t('appStore.internal')
           const openUrl = app.external_url || (app.port && app.id !== 'brln-hardwallet' ? `${app.scheme || 'http'}://${host}:${app.port}` : '')
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`
           const publicPoolStratumEndpoint = `${host}:${publicPoolStratumPort}`

@@ -34,6 +34,14 @@ Em 25 de novembro de 2026, o piloto Lightning → Solana liquidou 2.051 sats e 2
 - **Total da volta.** Exibir separadamente o débito em USDC, a taxa de transação em SOL e a reserva para criar a conta de token do destino, quando necessário. Discriminar estimativa e valor efetivo. Conferir o saldo disponível e preservar a confirmação para a cotação exibida. O piloto de patrocínio com cobrança em USDC é uma possibilidade para uma versão posterior. [Modelo de patrocínio da Solana](https://solana.com/docs/payments/send-payments/payment-processing/fee-abstraction)
 - **Sugestão por ganhos.** Usar lucro líquido de roteamento dos Reports no período e timezone escolhidos como referência para preencher um valor manual. Tratar resultado zero, negativo ou indisponível e descontar conversões já reservadas para o mesmo período. [Métricas de roteamento](../lightningos-light/internal/reports/lnd_metrics.go)
 
+## Interface no LightningOS
+
+Quando a Loja informar a Tesouraria como instalada, o grupo Apps ganha o menu **Tesouraria USDC**. O botão Abrir da Loja navega para a mesma tela no LOS. A configuração reúne o formulário oficial da Breez, a entrada da chave com confirmação da senha do LOS e o acesso à carteira isolada. Depois da configuração, a tela apresenta os saldos e as ações **Guardar em USDC** e **Voltar para bitcoin**. Preenche o último Lightning Address confirmado quando disponível e permite editá-lo antes de cotar.
+
+A confirmação mostra destino, valor de débito, recebimento esperado e taxa da ponte. A ida detalha o teto da taxa de roteamento e o débito máximo em sats. A volta detalha a taxa Solana, eventual reserva para a conta de token e o total em SOL. A referência BTC/USD e a diferença do recebimento aparecem quando a cotação inclui dados de mercado. A atividade mostra o estado do pedido e o reembolso quando disponível.
+
+O frontend e a navegação foram testados no navegador contra uma API de teste. A integração do Manager ainda precisa registrar o ciclo na Loja, implementar os endpoints da Tesouraria e servir o assinador isolado. A tela deve permanecer inacessível pelo catálogo até a validação desse fluxo.
+
 ## Controles e distribuição
 
 - App interno no Manager, sem porta pública, com runtime de intermediação do Breez separado em socket Unix, identidade temporária e sem dados ou credenciais do LND. Empacotar a biblioteca e o executável pelo commit revisado e verificar o manifesto e a instalação em Linux amd64. A API do Manager exige login, CSRF, reautenticação para gastos e mudanças sensíveis, limites e auditoria sanitizada. [Protocolo do broker](34_PRIVILEGED_BROKER_PROTOCOL.md) · [Pacote experimental do worker Breez](../tools/breez-bridge-probe/README.md)

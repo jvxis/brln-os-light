@@ -125,6 +125,8 @@ export default function StablecoinTreasury() {
   const [key, setKey] = useState('')
   const [newWallet, setNewWallet] = useState('')
   const signerFrame = useRef<HTMLIFrameElement>(null)
+  const quoteHeading = useRef<HTMLHeadingElement>(null)
+  const signerHeading = useRef<HTMLHeadingElement>(null)
   const [password, setPassword] = useState('')
   const [progress, setProgress] = useState<'quote' | 'submit' | 'settings'>()
   const busy = progress !== undefined
@@ -149,18 +151,27 @@ export default function StablecoinTreasury() {
   }, [refresh])
   useEffect(() => {
     if (!quote) return
+    quoteHeading.current?.focus()
     const timer = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(timer)
   }, [quote])
 
+  useEffect(() => {
+    if (signer) signerHeading.current?.focus()
+  }, [signer])
+
   const returnAddress = recipient ?? status?.saved_recipient ?? ''
   const parsed = parseAmount(amount)
+  const sourceBalance = direction === 'to_solana' ? status?.lightning_sats : status?.usdc_micros
+  const sourceAsset = direction === 'to_solana' ? 'sats' : 'USDC'
   const pending = status?.orders.some(order => !terminal.has(order.state)) ?? false
   const canSign = window.isSecureContext && !!window.crypto?.subtle
   const secureWalletMessage = label('Open LightningOS over HTTPS with a certificate your browser trusts to use the Solana wallet.', 'Para usar a carteira Solana, abra o LightningOS por HTTPS com um certificado confiável para o navegador.')
   const ready = !!status?.enabled && !unavailable && !!status.breez_configured && !!status.solana_address
   const current = !!quote && quote.direction === direction && Date.parse(quote.expires_at) > now &&
     quote.destination === (direction === 'to_solana' ? status?.solana_address : returnAddress)
+  const secondsRemaining = quote && current ? Math.ceil((Date.parse(quote.expires_at) - now) / 1_000) : 0
+  const quoteCountdown = Math.floor(secondsRemaining / 60) + ':' + String(secondsRemaining % 60).padStart(2, '0')
   const costsKnown = quote?.direction === 'to_solana'
     ? validCost(quote.lightning_fee_limit_sats) && Number.isSafeInteger(quote.lightning_fee_limit_sats + quote.debit.atoms)
     : validCost(quote?.solana_fee_lamports) && validCost(quote?.solana_account_lamports)
@@ -393,29 +404,54 @@ export default function StablecoinTreasury() {
                 <button type="button" className={directionButton + ' ' + (direction === 'to_solana' ? activeDirection : idleDirection)} aria-pressed={direction === 'to_solana'} disabled={busy} onClick={() => { if (direction !== 'to_solana') { setDirection('to_solana'); setAmount(''); invalidate() } }}>{label('Save in USDC', 'Guardar em USDC')}</button>
                 <button type="button" className={directionButton + ' ' + (direction === 'to_lightning' ? activeDirection : idleDirection)} aria-pressed={direction === 'to_lightning'} disabled={busy} onClick={() => { if (direction !== 'to_lightning') { setDirection('to_lightning'); setAmount(''); invalidate() } }}>{label('Convert to bitcoin', 'Voltar para bitcoin')}</button>
               </div>
-              <label className="block text-sm">
-                {direction === 'to_solana' ? label('USDC to save', 'Quanto deseja guardar em USDC') : label('USDC to convert', 'Quanto deseja converter em USDC')}
-                <input className="input-field mt-2 w-full" inputMode="decimal" placeholder={pt ? '0,00' : '0.00'} value={amount} maxLength={24} disabled={busy} required onChange={event => { setAmount(event.target.value); invalidate() }} />
-              </label>
-              {direction === 'to_lightning' && <label className="block text-sm">
-                {label('Lightning Address to receive sats', 'Lightning Address para receber os sats')}
-                <input className="input-field mt-2 w-full" inputMode="email" autoComplete="off" spellCheck={false} value={returnAddress} maxLength={265} disabled={busy} required onChange={event => { setRecipient(event.target.value); invalidate() }} />
-              </label>}
+              <div className="text-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <label htmlFor="treasury-amount" className="font-medium">{direction === 'to_solana' ? label('Amount to save', 'Valor para guardar') : label('Amount to convert', 'Valor para converter')}</label>
+                  {sourceBalance !== undefined && <span className="text-xs text-fog/65">
+                    {label('Available', 'Disponível')} · {money({ atoms: sourceBalance, asset: sourceAsset }, locale)}
+                  </span>}
+                </div>
+                <div className="relative mt-2">
+                  <input id="treasury-amount" className="input-field w-full !pr-16 text-lg tabular-nums" inputMode="decimal" aria-describedby="treasury-amount-unit"
+                    placeholder={pt ? '0,00' : '0.00'} value={amount} maxLength={24} disabled={busy} required
+                    onChange={event => { setAmount(event.target.value); invalidate() }} />
+                  <span id="treasury-amount-unit" className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-semibold text-fog/70">USDC</span>
+                </div>
+              </div>
+              {direction === 'to_lightning' && <div className="text-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <label htmlFor="treasury-lightning-address" className="font-medium">{label('Lightning Address to receive sats', 'Lightning Address para receber os sats')}</label>
+                  {status.saved_recipient && status.saved_recipient === returnAddress && <span className="text-xs font-medium text-brass">
+                    {label('Last successful destination', 'Último destino confirmado')}
+                  </span>}
+                </div>
+                <input id="treasury-lightning-address" className="input-field mt-2 w-full" inputMode="email" autoComplete="off" spellCheck={false} placeholder={label('name@example.com', 'nome@exemplo.com')}
+                  value={returnAddress} maxLength={265} disabled={busy} required onChange={event => { setRecipient(event.target.value); invalidate() }} />
+              </div>}
               <div className="flex flex-wrap items-center gap-3">
                 <button type="submit" className="btn-primary" disabled={busy || !parsed} aria-busy={progress === 'quote'}>{label('Review quote and fees', 'Conferir cotação e custos')}</button>
                 {progress === 'quote' && <TreasuryProgress text={label('Getting quote and checking fees…', 'Consultando cotação e calculando custos…')} />}
               </div>
             </form>}
           {quote && !pending && <div className="space-y-4 border-t border-white/10 pt-4">
-            <h3 className="text-base font-semibold">{label('Quote and costs', 'Cotação e custos')}</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 ref={quoteHeading} tabIndex={-1} className="scroll-mt-24 rounded text-base font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-glow">
+                {label('Quote and costs', 'Cotação e custos')}
+              </h3>
+              {current && <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs tabular-nums text-fog/75">
+                {label('Valid for', 'Válida por')} {quoteCountdown}
+              </span>}
+            </div>
             <Review quote={quote} locale={locale} label={label} />
             {!current && <p role="status">{label('This quote expired. Get a fresh quote to continue.', 'A cotação expirou. Gere outra cotação para continuar.')}</p>}
             {current && !costsKnown && <p role="status">{label('The full cost is unavailable. Get a fresh quote to continue.', 'O custo total está indisponível. Gere outra cotação para continuar.')}</p>}
             {direction === 'to_lightning' && !canSign && <p role="status">{secureWalletMessage}</p>}
-            <button type="button" className="btn-primary" disabled={!current || !costsKnown || busy || (direction === 'to_lightning' && !canSign)} onClick={() => {
+            {!current ? <button type="button" className="btn-secondary" disabled={busy} onClick={() => void loadQuote()}>
+              {label('Refresh quote', 'Renovar cotação')}
+            </button> : <button type="button" className="btn-primary" disabled={!costsKnown || busy || (direction === 'to_lightning' && !canSign)} onClick={() => {
               if (direction === 'to_solana') setModal('lightning')
               else setSigner('return')
-            }}>{direction === 'to_solana' ? label('Confirm conversion', 'Confirmar conversão') : label('Sign with Solana wallet', 'Assinar com a carteira Solana')}</button>
+            }}>{direction === 'to_solana' ? label('Confirm conversion', 'Confirmar conversão') : label('Sign with Solana wallet', 'Assinar com a carteira Solana')}</button>}
           </div>}
         </section>}
 
@@ -424,7 +460,9 @@ export default function StablecoinTreasury() {
 
         {status?.enabled && !unavailable && signer && (signer === 'setup' || (quote && current && costsKnown && !pending)) && <section className="section-card space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold">{label('Solana wallet', 'Carteira Solana')}</h2>
+            <h2 ref={signerHeading} tabIndex={-1} className="scroll-mt-24 rounded text-lg font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-glow">
+              {label('Solana wallet', 'Carteira Solana')}
+            </h2>
             <button className="btn-secondary" type="button" disabled={progress === 'submit'} onClick={() => { setSigner(undefined); void refresh() }}>{t('common.close')}</button>
           </div>
           <iframe ref={signerFrame} className="block min-h-[26rem] w-full border-0" title={label('Isolated Solana wallet', 'Carteira Solana isolada')} sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer"
@@ -437,7 +475,8 @@ export default function StablecoinTreasury() {
         {status.orders.length ? <div role="region" aria-labelledby="treasury-history-heading" tabIndex={0} className="max-h-[25rem] overflow-y-auto overscroll-contain pr-2 [scrollbar-color:rgb(245_158_11_/_0.45)_transparent] [scrollbar-gutter:stable]">
           <ul className="space-y-2">
             {status.orders.map(order => <li key={order.id} className="space-y-2 rounded-2xl border border-white/10 bg-black/15 p-3 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-medium text-fog/65">{order.direction === 'to_solana' ? 'Lightning → Solana' : 'Solana → Lightning'}</span>
                 <span className={`rounded-full border px-2 py-1 text-xs font-medium ${historyTone[order.state]}`}>{stateLabel(order.state)}</span>
               </div>
               <p className="break-words font-semibold tabular-nums">{money(order.debit, locale)}{order.receive && ' → ' + money(order.receive, locale)}</p>

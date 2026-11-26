@@ -19,6 +19,7 @@ let oldOrders = []
 let quoteRequests = 0
 let submitted = 0
 let waitForQuote
+let quoteLifetimeMS = 60_000
 const mime = {
   '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
   '.woff2': 'font/woff2', '.png': 'image/png', '.svg': 'image/svg+xml',
@@ -61,7 +62,7 @@ async function api(path, method, body) {
     const receive = toSolana ? { atoms: 1000000, asset: 'USDC' } : { atoms: 1674, asset: 'sats' }
     return {
       id: quoteId, direction: body.direction, destination: toSolana ? wallet : address,
-      expires_at: new Date(Date.now() + 60_000).toISOString(), debit, receive,
+      expires_at: new Date(Date.now() + quoteLifetimeMS).toISOString(), debit, receive,
       bridge_fee: { atoms: 21045, asset: 'USDC' },
       ...(toSolana ? { lightning_fee_limit_sats: 10 } : { solana_fee_lamports: 5000, solana_account_lamports: 1488440 }),
       market: { btc_usd: 60000, reference_receive: receive, difference_bps: -42 },
@@ -188,6 +189,8 @@ try {
   await click('Save key')
   await waitText('Suggested starting balance: 0.01 SOL')
   await click('Convert to bitcoin')
+  await waitText('Available · 10 USDC')
+  await waitText('Last successful destination')
   assert.equal(await evaluate('document.querySelector(\'input[inputmode="email"]\').value'), address)
   await input('input[inputmode=decimal]', '1')
   let releaseQuote
@@ -202,9 +205,12 @@ try {
     waitForQuote = undefined
   }
   await waitText('0.00149344 SOL')
+  await waitText('Valid for')
+  assert.equal(await evaluate('document.activeElement.textContent.trim()'), 'Quote and costs')
   assert.equal(await text('Getting quote and checking fees…'), false)
   await waitText('Estimated receipt vs. reference')
   await click('Sign with Solana wallet')
+  assert.equal(await evaluate('document.activeElement.textContent.trim()'), 'Solana wallet')
   assert(await exists('iframe[sandbox="allow-scripts allow-downloads"][src$="&quote=test-quote"]'))
   await click('Save in USDC')
   await input('input[inputmode=decimal]', '1')
@@ -252,6 +258,15 @@ try {
   await waitText('HTTPS com um certificado confiável')
   assert.equal(await evaluate(button('Assinar com a carteira Solana') + '.disabled'), true)
   assert.equal(quoteRequests, 3)
+  quoteLifetimeMS = 150
+  await click('Conferir cotação e custos')
+  await waitText('A cotação expirou.')
+  assert(await evaluate(button('Assinar com a carteira Solana') + ' === undefined'))
+  quoteLifetimeMS = 60_000
+  await click('Renovar cotação')
+  await waitText('Válida por')
+  assert.equal(await evaluate('document.activeElement.textContent.trim()'), 'Cotação e custos')
+  assert.equal(quoteRequests, 5)
   assert.equal(submitted, 1)
   await call('Page.navigate', { url: base + '/#apps' })
   await until('Portuguese App Store title', () => evaluate(`[...document.querySelectorAll('main h3')].some(h => h.textContent === 'BR⚡LN Reserva')`))

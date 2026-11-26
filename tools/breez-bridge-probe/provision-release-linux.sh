@@ -32,7 +32,7 @@ if ! command -v gcc >/dev/null; then
     zig_archive=zig-x86_64-linux-0.17.1.tar.xz
     zig_sha256=3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a
     curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-      --connect-timeout 15 --max-time 240 --retry 2 "https://ziglang.org/download/0.17.1/$zig_archive" -o "$stage/$zig_archive"
+      --connect-timeout 15 --max-time 600 --retry 2 "https://ziglang.org/download/0.17.1/$zig_archive" -o "$stage/$zig_archive"
     printf '%s  %s\n' "$zig_sha256" "$stage/$zig_archive" | sha256sum --strict --check
     tar --no-same-owner --no-same-permissions -xf "$stage/$zig_archive" -C "$stage"
     export CC="$stage/zig-x86_64-linux-0.17.1/zig cc -target x86_64-linux-gnu.2.34"

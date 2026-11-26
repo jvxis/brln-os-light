@@ -77,3 +77,19 @@ func TestTreasuryWorkerPreservesReportedFeeUnits(t *testing.T) {
 		})
 	}
 }
+
+func TestTreasuryWorkerProviderStage(t *testing.T) {
+	if got := bridgeProviderStage(nil); got != "" {
+		t.Fatalf("missing stage returned %q", got)
+	}
+	for _, stage := range []string{"processing", "awaiting-payment", "payment_pending"} {
+		if got := bridgeProviderStage(&stage); got != stage {
+			t.Fatalf("stage changed from %q to %q", stage, got)
+		}
+	}
+	for _, invalid := range []string{"processing\n", "payment pending", strings.Repeat("x", 65)} {
+		if got := bridgeProviderStage(&invalid); got != "" {
+			t.Fatalf("invalid stage returned %q", got)
+		}
+	}
+}

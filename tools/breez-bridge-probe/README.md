@@ -6,6 +6,8 @@ As ações `sponsor-preflight` e `sponsor-estimate` consultam o Pimlico com uma 
 
 `solana-proof` consulta o RPC público e exige transação finalizada, identidade da rede, mint oficial, programa SPL Token, dono da conta e crédito líquido igual ao valor cotado. A prova não requer chave do provedor. [Confirmação em Solana](https://solana.com/developers/docs/payments/checkout/backend)
 
+A resposta privada de `status` inclui `provider_status` quando o provedor informa uma etapa. A etapa ajuda a acompanhar uma ordem pendente. A confirmação do depósito e a entrega continuam registradas em campos próprios. [Estados da ponte](https://sdk-doc-spark.breez.technology/guide/bridging.html#tracking-a-bridge)
+
 Prova técnica isolada da Tesouraria em Stablecoins. Consulta as rotas BTC Lightning → USDC nativo na Base e USDC nativo na Base → BTC Lightning. O comando exibe apenas a contagem de rotas compatíveis por direção. Ele usa a rede Base com chain ID 8453 e o contrato publicado pela Circle. [Contrato do USDC](https://developers.circle.com/stablecoins/usdc-contract-addresses)
 
 A consulta de rotas é o modo padrão. O modo opcional de cotação cria ordens sem movimentar fundos. A consulta envia os destinatários públicos ao provedor. Use destinatários de teste e injete a chave do Breez a partir de seu armazenamento de segredos como variável de ambiente `BREEZ_API_KEY`. [Bridging no SDK Breez](https://sdk-doc-spark.breez.technology/guide/bridging.html)

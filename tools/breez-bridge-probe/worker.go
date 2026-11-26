@@ -35,6 +35,7 @@ type bridgeResult struct {
 	AmountOut          int64      `json:"amount_out,omitempty"`
 	ExpiresAt          int64      `json:"expires_at,omitempty"`
 	Status             string     `json:"status,omitempty"`
+	ProviderStatus     string     `json:"provider_status,omitempty"`
 	OrderID            string     `json:"order_id,omitempty"`
 	DepositRef         string     `json:"deposit_ref,omitempty"`
 	DeliveryRef        string     `json:"delivery_ref,omitempty"`
@@ -199,9 +200,24 @@ func workerStatus(client *sdk.BridgingClient, req bridgeCommand) (bridgeResult, 
 	}
 	return bridgeResult{
 		Status: status, OrderID: bridgeString(res.OrderId), AmountIn: bridgeOptionalAmount(res.AmountIn),
-		AmountOut: bridgeOptionalAmount(res.AmountOut), DepositRef: bridgeString(res.DepositTxHash),
+		ProviderStatus: bridgeProviderStage(res.ProviderStatus),
+		AmountOut:      bridgeOptionalAmount(res.AmountOut), DepositRef: bridgeString(res.DepositTxHash),
 		DeliveryRef: bridgeString(res.DeliveryTxHash), RefundRef: bridgeString(res.RefundTxHash),
 	}, nil
+}
+
+func bridgeProviderStage(raw *string) string {
+	stage := bridgeString(raw)
+	if len(stage) > 64 {
+		return ""
+	}
+	for _, ch := range stage {
+		if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') &&
+			(ch < '0' || ch > '9') && ch != '_' && ch != '-' {
+			return ""
+		}
+	}
+	return stage
 }
 
 func bridgeString(v *string) string {

@@ -3,7 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Carteira Solana</title>
-<style>__SIGNER_CSS__</style>
+<style nonce="__SIGNER_STYLE_NONCE__">__SIGNER_CSS__</style>
 <main>
   <section id="setup">
     <form id="create">
@@ -11,7 +11,7 @@
       <input id="new-password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required>
       <label for="repeat" data-en="Repeat password">Repita a senha</label>
       <input id="repeat" type="password" autocomplete="new-password" minlength="14" maxlength="128" required>
-      <button data-en="Create wallet">Criar carteira</button>
+      <button id="create-wallet" type="button" data-en="Create wallet">Criar carteira</button>
     </form>
     <button id="save" type="button" hidden data-en="Download backup and use wallet">Baixar backup e usar carteira</button>
   </section>
@@ -20,7 +20,7 @@
     <input id="backup" type="file" accept=".json,application/json" required>
     <label for="password" data-en="Backup password">Senha do backup</label>
     <input id="password" type="password" autocomplete="off" minlength="14" maxlength="128" required>
-    <button id="submit" data-en="Recover wallet from backup">Recuperar carteira pelo backup</button>
+    <button id="submit" type="button" data-en="Recover wallet from backup">Recuperar carteira pelo backup</button>
   </form>
   <p id="message" role="status"></p>
 </main>

@@ -21,9 +21,17 @@ if (quoteID) {
   get('submit').textContent = label('Sign reviewed conversion', 'Assinar convers?o revisada')
 }
 
-get('create').addEventListener('submit', async event => {
-  event.preventDefault()
-  if (working || quoteID) return
+for (const [form, button] of [['create', 'create-wallet'], ['recover', 'submit']]) {
+  get(form).addEventListener('keydown', event => {
+    if (event.key === 'Enter' && event.target.type === 'password') {
+      event.preventDefault()
+      get(button).click()
+    }
+  })
+}
+
+get('create-wallet').addEventListener('click', async () => {
+  if (working || quoteID || !get('create').reportValidity()) return
   const password = get('new-password').value
   if (password !== get('repeat').value) {
     message(label('The passwords must match.', 'As senhas precisam ser iguais.'))
@@ -56,9 +64,8 @@ get('save').addEventListener('click', () => {
   get('save').hidden = true
 })
 
-get('recover').addEventListener('submit', async event => {
-  event.preventDefault()
-  if (working) return
+get('submit').addEventListener('click', async () => {
+  if (working || !get('recover').reportValidity()) return
   const file = get('backup').files?.[0]
   if (!file || file.size > maxBackupBytes) {
     message(label('Select a LightningOS backup.', 'Selecione um backup do LightningOS.'))

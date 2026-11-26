@@ -445,12 +445,17 @@ func (s *Server) handleTreasurySigner(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	const signerPolicy = "default-src 'none'; script-src 'sha256-%s'; style-src 'sha256-%s'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; sandbox allow-scripts allow-downloads"
-	w.Header().Set("Content-Security-Policy", fmt.Sprintf(signerPolicy, treasuryCSPHash(js), treasuryCSPHash(css)))
+	nonce, err := treasuryID()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Treasury signer unavailable")
+		return
+	}
+	const signerPolicy = "default-src 'none'; script-src 'sha256-%s'; style-src 'nonce-%s'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; sandbox allow-scripts allow-downloads"
+	w.Header().Set("Content-Security-Policy", fmt.Sprintf(signerPolicy, treasuryCSPHash(js), nonce))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	html := strings.NewReplacer("__SIGNER_JS__", string(js), "__SIGNER_CSS__", string(css)).Replace(string(page))
+	html := strings.NewReplacer("__SIGNER_JS__", string(js), "__SIGNER_CSS__", string(css), "__SIGNER_STYLE_NONCE__", nonce).Replace(string(page))
 	_, _ = w.Write([]byte(html))
 }
 

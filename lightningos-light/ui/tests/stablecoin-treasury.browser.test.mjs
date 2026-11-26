@@ -15,6 +15,7 @@ let installed = false
 let configured = false
 let walletReady = false
 let pending = false
+let oldOrders = []
 let quoteRequests = 0
 let submitted = 0
 let waitForQuote
@@ -23,7 +24,7 @@ const mime = {
   '.woff2': 'font/woff2', '.png': 'image/png', '.svg': 'image/svg+xml',
 }
 const app = () => ({
-  id: 'stablecoin-treasury', name: 'USDC Treasury', description: 'Native USDC on Solana',
+  id: 'stablecoin-treasury', name: 'BRLN Reserva', description: 'Native USDC on Solana',
   installed, available: true, status: installed ? 'running' : 'not_installed', port: 0,
 })
 const order = () => ({
@@ -31,7 +32,7 @@ const order = () => ({
   debit: { atoms: 1700, asset: 'sats' }, receive: { atoms: 1000000, asset: 'USDC' },
 })
 const status = () => ({
-  enabled: installed, breez_configured: configured, orders: pending ? [order()] : [],
+  enabled: installed, breez_configured: configured, orders: pending ? [order(), ...oldOrders] : oldOrders,
   ...(walletReady && { solana_address: wallet, saved_recipient: address, lightning_sats: 5000, usdc_micros: 10000000, sol_lamports: 0 }),
 })
 
@@ -168,7 +169,9 @@ try {
   await click('Install')
   await until('App Store opening link and installed menu', () => evaluate('document.querySelectorAll(\'a[href="#stablecoin-treasury"]\').length >= 2'))
   await evaluate('document.querySelector(\'main a[href="#stablecoin-treasury"]\').click()')
-  await waitText('Set up your Treasury')
+  await waitText('Set up BRLN Reserva')
+  assert(await evaluate('document.querySelector("main h1").textContent === "BRLN Reserva"'))
+  await waitText('Your conversions will appear here.')
   assert(await exists('a[href="https://breez.technology/request-api-key/#contact-us-form-sdk"]'))
   await click('Enter API key')
   await input('[role=dialog] input[type=password][autocomplete=off]', 'fixture-key')
@@ -206,11 +209,22 @@ try {
   assert.equal(quoteRequests, 2)
   assert.equal(submitted, 1)
   assert.equal(await evaluate(button('Review quote and fees') + ' === undefined'), true)
+  oldOrders = Array.from({ length: 12 }, (_, i) => ({
+    ...order(), id: 'history-' + i, state: 'delivered', destination: 'history-' + i + '@example.com',
+  }))
   await evaluate('localStorage.setItem("los-lang", "pt-BR")')
   await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 860, deviceScaleFactor: 1, mobile: true })
   await call('Page.reload', {})
   await waitText('Aguarde a entrega ou o reembolso')
   assert(await evaluate('document.documentElement.scrollWidth <= innerWidth'))
+  const history = 'document.querySelector("[role=region][aria-labelledby=treasury-history-heading]")'
+  await until('scrollable conversion history', () => evaluate(`${history}?.scrollHeight > ${history}?.clientHeight`))
+  assert.equal(await evaluate(`getComputedStyle(${history}).overflowY`), 'auto')
+  assert(await evaluate(`(() => {
+    const region = ${history}
+    region.scrollTop = region.scrollHeight
+    return region.scrollTop > 0 && region.querySelector('li:last-child').textContent.includes('history-11@example.com')
+  })()`))
   pending = false
   await call('Page.reload', {})
   await waitText('Converter saldo')

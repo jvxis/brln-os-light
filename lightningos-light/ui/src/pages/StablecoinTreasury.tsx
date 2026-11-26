@@ -9,6 +9,20 @@ const terminal = new Set<TreasuryOrder['state']>(['delivered', 'refunded', 'depo
 const validCost = (value: number | undefined): value is number => value !== undefined && Number.isSafeInteger(value) && value >= 0
 type Label = (en: string, pt: string) => string
 
+const directionButton = 'rounded-xl px-4 py-2.5 text-left text-sm font-medium transition disabled:opacity-60'
+const activeDirection = 'bg-glow text-ink shadow-[0_8px_24px_rgba(34,211,238,.12)]'
+const idleDirection = 'text-fog/65 hover:bg-white/5 hover:text-fog'
+const panel = 'section-card min-w-0'
+const historyTone: Record<TreasuryOrder['state'], string> = {
+  deposit_pending: 'border-glow/20 bg-glow/10 text-glow',
+  delivery_pending: 'border-glow/20 bg-glow/10 text-glow',
+  delivery_issue: 'border-brass/20 bg-brass/10 text-brass',
+  delivered: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
+  refund_pending: 'border-brass/20 bg-brass/10 text-brass',
+  refunded: 'border-brass/20 bg-brass/10 text-brass',
+  deposit_failed: 'border-rose-400/25 bg-rose-400/10 text-rose-300',
+}
+
 function TreasuryProgress({ text }: { text: string }) {
   return <span role="status" className="inline-flex items-center gap-2 text-sm">
     <span aria-hidden="true" className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none" />
@@ -32,11 +46,11 @@ function money(value: TreasuryAmount, locale: string) {
 function Review({ quote, locale, label }: { quote: TreasuryQuote; locale: string; label: Label }) {
   const sol = (atoms: number) => money({ atoms, asset: 'SOL' }, locale)
   const shown = (amount?: TreasuryAmount) => amount ? money(amount, locale) : label('Not provided', 'Não informada')
-  const rows = [
+  const totals = [
     [label('Conversion debit', 'Débito da conversão'), shown(quote.debit)],
     [label('Estimated amount received', 'Recebimento estimado'), shown(quote.receive)],
-    [label('Conversion fee included in quote', 'Taxa de conversão incluída na cotação'), shown(quote.bridge_fee)],
   ]
+  const rows = [[label('Conversion fee included in quote', 'Taxa de conversão incluída na cotação'), shown(quote.bridge_fee)]]
   if (quote.direction === 'to_solana') {
     const limit = quote.lightning_fee_limit_sats
     rows.push([label('Maximum Lightning routing fee', 'Teto de taxa de roteamento Lightning'), limit === undefined
@@ -58,10 +72,18 @@ function Review({ quote, locale, label }: { quote: TreasuryQuote; locale: string
     rows.push([label('Market reference', 'Referência de mercado'), label('Unavailable for this quote', 'Indisponível nesta cotação')])
   }
   rows.push([label('Destination', 'Destino'), quote.destination])
-  return <dl className="space-y-2 text-sm">
-    {rows.map(([term, value]) => <div key={term} className="grid gap-1 sm:grid-cols-2">
-      <dt className="text-fog/65">{term}</dt><dd className="break-all font-medium sm:text-right">{value}</dd>
-    </div>)}
+  return <dl className="space-y-3 text-sm">
+    <div className="grid gap-2 sm:grid-cols-2">
+      {totals.map(([term, value], index) => <div key={term} className={`min-w-0 rounded-2xl border p-3 ${index ? 'border-brass/25 bg-brass/[.08]' : 'border-white/10 bg-black/15'}`}>
+        <dt className="text-xs text-fog/65">{term}</dt>
+        <dd className="mt-1 break-words text-lg font-semibold tabular-nums">{value}</dd>
+      </div>)}
+    </div>
+    <div className="divide-y divide-white/10 rounded-2xl border border-white/10 bg-black/15 px-3">
+      {rows.map(([term, value]) => <div key={term} className="grid gap-1 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <dt className="text-fog/65">{term}</dt><dd className="break-words font-medium tabular-nums sm:text-right">{value}</dd>
+      </div>)}
+    </div>
   </dl>
 }
 
@@ -282,17 +304,32 @@ export default function StablecoinTreasury() {
   }
 
   return <div className="space-y-6">
-    <header>
-      <h1 className="text-2xl font-semibold">{t('nav.stablecoinTreasury')}</h1>
-      <p className="mt-2 text-fog/70">{label('Keep part of your Lightning balance in USDC on Solana and convert it back to bitcoin when you choose.', 'Guarde parte do seu saldo Lightning em USDC na Solana e converta de volta para bitcoin quando quiser.')}</p>
+    <header className="rounded-[2rem] border border-brass/20 bg-[radial-gradient(circle_at_12%_0%,rgba(245,158,11,.2),transparent_40%),radial-gradient(circle_at_92%_20%,rgba(34,211,238,.1),transparent_36%),linear-gradient(135deg,rgba(13,17,23,.99),rgba(21,25,32,.96))] p-6 shadow-panel sm:p-8">
+      <div className="flex flex-wrap items-center gap-4 sm:gap-5">
+        <span aria-hidden="true" className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-brass/25 bg-brass/10 text-3xl font-semibold text-brass sm:h-16 sm:w-16">$</span>
+        <div className="min-w-0">
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{t('nav.stablecoinTreasury')}</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-fog/70">{label('Save part of your Lightning balance in USDC on Solana. Convert back to bitcoin whenever you choose.', 'Guarde parte do seu saldo Lightning em USDC na Solana. Volte para bitcoin quando quiser.')}</p>
+        </div>
+      </div>
     </header>
 
-    {!status && !unavailable && <TreasuryProgress text={label('Loading Treasury balances…', 'Carregando saldos da Tesouraria…')} />}
-    {unavailable && <p role="status" className="section-card">{label('Treasury status is unavailable. The page will check again shortly.', 'O status da Tesouraria está indisponível. A página consultará novamente em instantes.')}</p>}
-    {status && !status.enabled && <p role="status" className="section-card">{label('Start USDC Treasury from the App Store to make a conversion.', 'Inicie a Tesouraria USDC na Loja para fazer uma conversão.')}</p>}
+    {!status && !unavailable && <TreasuryProgress text={label('Loading Treasury balances…', 'Carregando saldos do BRLN Reserva…')} />}
+    {unavailable && <p role="status" className="section-card">{label('BRLN Reserva status is unavailable. The page will check again shortly.', 'O BRLN Reserva está indisponível. A página consultará novamente em instantes.')}</p>}
+    {status && !status.enabled && <p role="status" className="section-card">{label('Start BRLN Reserva from the App Store to make a conversion.', 'Inicie o BRLN Reserva na Loja para fazer uma conversão.')}</p>}
 
     {status?.enabled && <section className="section-card space-y-4">
-      <h2 className="text-lg font-semibold">{status.solana_address ? label('Balances', 'Saldos') : label('Set up your Treasury', 'Configure sua Tesouraria')}</h2>
+      <h2 className="text-lg font-semibold">{status.solana_address ? label('Balances', 'Saldos') : label('Set up BRLN Reserva', 'Configure o BRLN Reserva')}</h2>
+      {status.solana_address && <div className="grid gap-2 text-sm sm:grid-cols-3">
+        {([
+          ['Lightning', status.lightning_sats, 'sats'],
+          ['USDC · Solana', status.usdc_micros, 'USDC'],
+          ['SOL · Solana', status.sol_lamports, 'SOL'],
+        ] as const).map(([title, atoms, asset]) => <div key={asset} className="min-w-0 rounded-2xl border border-white/10 bg-black/15 p-3">
+          <p className="text-fog/60">{title}</p>
+          <p className="mt-1 break-words text-xl font-semibold tabular-nums">{atoms === undefined ? '—' : money({ atoms, asset }, locale)}</p>
+        </div>)}
+      </div>}
       {!status.breez_configured && <div className="space-y-2">
         <p>{label('Request an SDK API key using the official Breez form. Select the SDK option, fill in your contact information and paste the key here when Breez sends it.', 'Solicite uma chave de API do SDK pelo formulário oficial da Breez. Selecione a opção do SDK, preencha seu contato e cole aqui a chave quando a Breez enviar.')}</p>
         <div className="flex flex-wrap gap-2">
@@ -308,16 +345,6 @@ export default function StablecoinTreasury() {
       {!status.solana_address && <button disabled={!canSign} type="button" className="btn-secondary" onClick={() => setSigner('setup')}>
         {label('Create or recover Solana wallet', 'Criar ou recuperar carteira Solana')}
       </button>}
-      {status.solana_address && <div className="grid gap-4 text-sm sm:grid-cols-3">
-        {([
-          ['Lightning', status.lightning_sats, 'sats'],
-          ['USDC · Solana', status.usdc_micros, 'USDC'],
-          ['SOL · Solana', status.sol_lamports, 'SOL'],
-        ] as const).map(([title, atoms, asset]) => <div key={asset}>
-          <p className="text-fog/60">{title}</p>
-          <p className="mt-1 text-lg font-semibold">{atoms === undefined ? '—' : money({ atoms, asset }, locale)}</p>
-        </div>)}
-      </div>}
       {status.solana_address && <details className="text-sm" open={(status.sol_lamports === undefined || status.sol_lamports === 0) || undefined}>
         <summary className="cursor-pointer font-medium">{label('Receive SOL on Solana', 'Receber SOL na Solana')}</summary>
         <p className="mt-2">{label('Suggested starting balance: 0.01 SOL. Send SOL on the Solana network to this address before converting back. Your quote shows the amount required.', 'Saldo inicial sugerido: 0,01 SOL. Envie SOL pela rede Solana para este endereço antes de converter de volta. A cotação mostra o valor necessário.')}</p>
@@ -329,63 +356,73 @@ export default function StablecoinTreasury() {
       </details>}
     </section>}
 
-    {ready && <section className="section-card space-y-4">
-      <h2 className="text-lg font-semibold">{label('Convert balance', 'Converter saldo')}</h2>
-      {pending ? <TreasuryProgress text={label('Delivery can take around an hour or more. Wait for delivery or refund before repeating the conversion.', 'A entrega pode levar cerca de uma hora ou mais. Aguarde a entrega ou o reembolso antes de repetir.')} />
-        : <form className="space-y-4" onSubmit={event => { event.preventDefault(); void loadQuote() }}>
-          <div className="flex flex-wrap gap-2" role="group" aria-label={label('Direction', 'Sentido da conversão')}>
-            <button type="button" className={direction === 'to_solana' ? 'btn-primary' : 'btn-secondary'} aria-pressed={direction === 'to_solana'} disabled={busy} onClick={() => { if (direction !== 'to_solana') { setDirection('to_solana'); setAmount(''); invalidate() } }}>{label('Save in USDC', 'Guardar em USDC')}</button>
-            <button type="button" className={direction === 'to_lightning' ? 'btn-primary' : 'btn-secondary'} aria-pressed={direction === 'to_lightning'} disabled={busy} onClick={() => { if (direction !== 'to_lightning') { setDirection('to_lightning'); setAmount(''); invalidate() } }}>{label('Convert to bitcoin', 'Voltar para bitcoin')}</button>
-          </div>
-          <label className="block text-sm">
-                             {direction === 'to_solana' ? label('USDC to save', 'Quanto deseja guardar em USDC') : label('USDC to convert', 'Quanto deseja converter em USDC')}
-            <input className="input-field mt-1 w-full" inputMode="decimal"  value={amount} maxLength={24} disabled={busy} required onChange={event => { setAmount(event.target.value); invalidate() }} />
-          </label>
-          {direction === 'to_lightning' && <label className="block text-sm">
-            {label('Lightning Address to receive sats', 'Lightning Address para receber os sats')}
-            <input className="input-field mt-1 w-full" inputMode="email" autoComplete="off" spellCheck={false} value={returnAddress} maxLength={265} disabled={busy} required onChange={event => { setRecipient(event.target.value); invalidate() }} />
-          </label>}
-          <div className="flex flex-wrap items-center gap-3">
-            <button type="submit" className="btn-primary" disabled={busy || !parsed} aria-busy={progress === 'quote'}>{label('Review quote and fees', 'Conferir cotação e custos')}</button>
-            {progress === 'quote' && <TreasuryProgress text={label('Getting quote and checking fees…', 'Consultando cotação e calculando custos…')} />}
-          </div>
-        </form>}
-      {quote && !pending && <div className="space-y-4 border-t border-white/10 pt-4">
-        <Review quote={quote} locale={locale} label={label} />
-        {!current && <p role="status">{label('This quote expired. Get a fresh quote to continue.', 'A cotação expirou. Gere outra cotação para continuar.')}</p>}
-        {current && !costsKnown && <p role="status">{label('The full cost is unavailable. Get a fresh quote to continue.', 'O custo total está indisponível. Gere outra cotação para continuar.')}</p>}
-        {direction === 'to_lightning' && !canSign && <p role="status">{secureWalletMessage}</p>}
-        <button type="button" className="btn-primary" disabled={!current || !costsKnown || busy || (direction === 'to_lightning' && !canSign)} onClick={() => {
-          if (direction === 'to_solana') setModal('lightning')
-          else setSigner('return')
-        }}>{direction === 'to_solana' ? label('Confirm conversion', 'Confirmar conversão') : label('Sign with Solana wallet', 'Assinar com a carteira Solana')}</button>
-      </div>}
-    </section>}
+    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]">
+      <div className="min-w-0 space-y-4">
+        {ready && <section className={panel + ' space-y-4'}>
+          <h2 className="text-lg font-semibold">{label('Convert balance', 'Converter saldo')}</h2>
+          {pending ? <TreasuryProgress text={label('Delivery can take around an hour or more. Wait for delivery or refund before repeating the conversion.', 'A entrega pode levar cerca de uma hora ou mais. Aguarde a entrega ou o reembolso antes de repetir.')} />
+            : <form className="space-y-4" onSubmit={event => { event.preventDefault(); void loadQuote() }}>
+              <div className="grid gap-1 rounded-2xl border border-white/10 bg-black/15 p-1 sm:grid-cols-2" role="group" aria-label={label('Direction', 'Sentido da conversão')}>
+                <button type="button" className={directionButton + ' ' + (direction === 'to_solana' ? activeDirection : idleDirection)} aria-pressed={direction === 'to_solana'} disabled={busy} onClick={() => { if (direction !== 'to_solana') { setDirection('to_solana'); setAmount(''); invalidate() } }}>{label('Save in USDC', 'Guardar em USDC')}</button>
+                <button type="button" className={directionButton + ' ' + (direction === 'to_lightning' ? activeDirection : idleDirection)} aria-pressed={direction === 'to_lightning'} disabled={busy} onClick={() => { if (direction !== 'to_lightning') { setDirection('to_lightning'); setAmount(''); invalidate() } }}>{label('Convert to bitcoin', 'Voltar para bitcoin')}</button>
+              </div>
+              <label className="block text-sm">
+                {direction === 'to_solana' ? label('USDC to save', 'Quanto deseja guardar em USDC') : label('USDC to convert', 'Quanto deseja converter em USDC')}
+                <input className="input-field mt-2 w-full" inputMode="decimal" placeholder={pt ? '0,00' : '0.00'} value={amount} maxLength={24} disabled={busy} required onChange={event => { setAmount(event.target.value); invalidate() }} />
+              </label>
+              {direction === 'to_lightning' && <label className="block text-sm">
+                {label('Lightning Address to receive sats', 'Lightning Address para receber os sats')}
+                <input className="input-field mt-2 w-full" inputMode="email" autoComplete="off" spellCheck={false} value={returnAddress} maxLength={265} disabled={busy} required onChange={event => { setRecipient(event.target.value); invalidate() }} />
+              </label>}
+              <div className="flex flex-wrap items-center gap-3">
+                <button type="submit" className="btn-primary" disabled={busy || !parsed} aria-busy={progress === 'quote'}>{label('Review quote and fees', 'Conferir cotação e custos')}</button>
+                {progress === 'quote' && <TreasuryProgress text={label('Getting quote and checking fees…', 'Consultando cotação e calculando custos…')} />}
+              </div>
+            </form>}
+          {quote && !pending && <div className="space-y-4 border-t border-white/10 pt-4">
+            <h3 className="text-base font-semibold">{label('Quote and costs', 'Cotação e custos')}</h3>
+            <Review quote={quote} locale={locale} label={label} />
+            {!current && <p role="status">{label('This quote expired. Get a fresh quote to continue.', 'A cotação expirou. Gere outra cotação para continuar.')}</p>}
+            {current && !costsKnown && <p role="status">{label('The full cost is unavailable. Get a fresh quote to continue.', 'O custo total está indisponível. Gere outra cotação para continuar.')}</p>}
+            {direction === 'to_lightning' && !canSign && <p role="status">{secureWalletMessage}</p>}
+            <button type="button" className="btn-primary" disabled={!current || !costsKnown || busy || (direction === 'to_lightning' && !canSign)} onClick={() => {
+              if (direction === 'to_solana') setModal('lightning')
+              else setSigner('return')
+            }}>{direction === 'to_solana' ? label('Confirm conversion', 'Confirmar conversão') : label('Sign with Solana wallet', 'Assinar com a carteira Solana')}</button>
+          </div>}
+        </section>}
 
-    {!modal && progress === 'submit' && <TreasuryProgress text={label('Submitting your conversion…', 'Enviando sua conversão…')} />}
+        {!modal && error && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-200">{error}</p>}
+        {!modal && progress === 'submit' && <TreasuryProgress text={label('Submitting your conversion…', 'Enviando sua conversão…')} />}
 
-    {status?.enabled && !unavailable && signer && (signer === 'setup' || (quote && current && costsKnown && !pending)) && <section className="section-card space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">{label('Solana wallet', 'Carteira Solana')}</h2>
-        <button className="btn-secondary" type="button" disabled={progress === 'submit'} onClick={() => { setSigner(undefined); void refresh() }}>{t('common.close')}</button>
+        {status?.enabled && !unavailable && signer && (signer === 'setup' || (quote && current && costsKnown && !pending)) && <section className="section-card space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">{label('Solana wallet', 'Carteira Solana')}</h2>
+            <button className="btn-secondary" type="button" disabled={progress === 'submit'} onClick={() => { setSigner(undefined); void refresh() }}>{t('common.close')}</button>
+          </div>
+          <iframe ref={signerFrame} className="block min-h-[26rem] w-full border-0" title={label('Isolated Solana wallet', 'Carteira Solana isolada')} sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer"
+            src={signerPath + '?lang=' + (pt ? 'pt-BR' : 'en') + (signer === 'return' ? '&quote=' + encodeURIComponent(quote?.id ?? '') : '')} />
+        </section>}
+
       </div>
-      <iframe ref={signerFrame} className="block min-h-[26rem] w-full border-0" title={label('Isolated Solana wallet', 'Carteira Solana isolada')} sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer"
-        src={signerPath + '?lang=' + (pt ? 'pt-BR' : 'en') + (signer === 'return' ? '&quote=' + encodeURIComponent(quote?.id ?? '') : '')} />
-    </section>}
+      {status?.enabled && <section className={panel + ' space-y-4'} aria-labelledby="treasury-history-heading">
+        <h2 id="treasury-history-heading" className="text-lg font-semibold">{label('Conversion history', 'Histórico de conversões')}</h2>
+        {status.orders.length ? <div role="region" aria-labelledby="treasury-history-heading" tabIndex={0} className="max-h-[25rem] overflow-y-auto overscroll-contain pr-2 [scrollbar-color:rgb(245_158_11_/_0.45)_transparent] [scrollbar-gutter:stable]">
+          <ul className="space-y-2">
+            {status.orders.map(order => <li key={order.id} className="space-y-2 rounded-2xl border border-white/10 bg-black/15 p-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded-full border px-2 py-1 text-xs font-medium ${historyTone[order.state]}`}>{stateLabel(order.state)}</span>
+              </div>
+              <p className="break-words font-semibold tabular-nums">{money(order.debit, locale)}{order.receive && ' → ' + money(order.receive, locale)}</p>
+              <p className="break-all text-xs text-fog/65">{order.destination}</p>
+              {order.actual_fee && <p className="text-xs text-fog/70">{label('Actual network cost', 'Custo efetivo de rede')} · {money(order.actual_fee, locale)}</p>}
+              {order.refund && <p className="text-xs text-fog/70">{label('Refund', 'Reembolso')} · {money(order.refund, locale)}</p>}
+            </li>)}
+          </ul>
+        </div> : <p className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-fog/65">{label('Your conversions will appear here.', 'Suas conversões vão aparecer aqui.')}</p>}
+      </section>}
+    </div>
 
-    {status?.orders.length ? <section className="section-card space-y-3">
-      <h2 className="text-lg font-semibold">{label('Conversion activity', 'Atividade de conversão')}</h2>
-      <ul className="space-y-3">
-        {status.orders.map(order => <li key={order.id} className="border-t border-white/10 pt-3 text-sm">
-          <p className="font-medium">{money(order.debit, locale)}{order.receive && ' → ' + money(order.receive, locale)} · {stateLabel(order.state)}</p>
-          <p className="break-all text-fog/65">{order.destination}</p>
-          {order.actual_fee && <p>{label('Actual network cost', 'Custo efetivo de rede')} · {money(order.actual_fee, locale)}</p>}
-          {order.refund && <p>{label('Refund', 'Reembolso')} · {money(order.refund, locale)}</p>}
-        </li>)}
-      </ul>
-    </section> : null}
-
-    {!modal && error && <p role="alert" className="text-rose-300">{error}</p>}
     <SensitiveActionModal open={!!modal}
       title={modal === 'key' ? label('Save Breez API key', 'Salvar chave de API da Breez') : modal === 'wallet'
         ? label('Link Solana wallet', 'Vincular carteira Solana') : label('Confirm Lightning conversion', 'Confirmar conversão Lightning')}
@@ -404,7 +441,7 @@ export default function StablecoinTreasury() {
       {modal === 'lightning' && quote && <div className="mt-4"><Review quote={quote} locale={locale} label={label} /></div>}
       {busy && <div className="mt-4">
         <TreasuryProgress text={progress === 'submit' ? label('Submitting your conversion…', 'Enviando sua conversão…')
-          : label('Saving Treasury settings…', 'Salvando a configuração da Tesouraria…')} />
+          : label('Saving BRLN Reserva settings…', 'Salvando a configuração do BRLN Reserva…')} />
       </div>}
     </SensitiveActionModal>
   </div>

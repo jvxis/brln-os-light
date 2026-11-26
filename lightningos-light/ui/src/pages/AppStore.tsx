@@ -1045,7 +1045,9 @@ export default function AppStore() {
               <div className="flex items-start justify-between gap-4">
                 <div className="flex min-w-0 items-start gap-4">
                   <div className="h-12 w-12 rounded-2xl bg-transparent flex items-center justify-center overflow-hidden shrink-0">
-                    {icon ? (
+                    {app.id === 'stablecoin-treasury' ? (
+                      <span aria-hidden="true" className="flex h-12 w-12 items-center justify-center rounded-2xl border border-brass/25 bg-brass/10 text-2xl font-semibold text-brass">$</span>
+                    ) : icon ? (
                       <img
                         src={icon}
                         alt={`${app.name} icon`}

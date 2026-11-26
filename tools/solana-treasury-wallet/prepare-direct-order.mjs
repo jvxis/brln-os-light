@@ -39,7 +39,7 @@ export async function prepareDirectOrder(quote) {
     directOrderRpc('getMinimumBalanceForRentExemption', 0, { commitment: 'confirmed' }),
   ])
   if (!sourceAccount || BigInt(accountTokenInfo(sourceAccount, wallet)) < BigInt(quote.depositMicros)) {
-    throw new Error('Wallet has insufficient USDC')
+    throw Object.assign(new Error('Wallet has insufficient USDC'), { code: 'insufficient_usdc' })
   }
   if (targetAccount) accountTokenInfo(targetAccount, deposit)
   const accountLamports = targetAccount ? 0 : await directOrderRpc('getMinimumBalanceForRentExemption', 165, { commitment: 'confirmed' })
@@ -53,8 +53,9 @@ export async function prepareDirectOrder(quote) {
   }
   const transaction = await compileDirectDeposit(reviewDirectDeposit(order))
   const { value: fee } = await directOrderRpc('getFeeForMessage', Buffer.from(transaction.messageBytes).toString('base64'), { commitment: 'confirmed' })
-  if (!Number.isSafeInteger(fee) || balance < fee + accountLamports + systemReserve) {
-    throw new Error('Wallet has insufficient SOL or fee could not be estimated')
+  if (!Number.isSafeInteger(fee)) throw new Error('Network fee could not be estimated')
+  if (balance < fee + accountLamports + systemReserve) {
+    throw Object.assign(new Error('Wallet has insufficient SOL'), { code: 'insufficient_sol' })
   }
   order.feeLamports = String(fee)
   reviewDirectDeposit(order)

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { getBase58Decoder, getTransactionDecoder } from '@solana/kit'
 import { directOrderRpc, prepareDirectOrder } from './prepare-direct-order.mjs'
 import { normalizeLightningAddress, verifyDirectDeposit } from './sponsored.mjs'
@@ -47,6 +47,18 @@ async function requestBody(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
+const terminalStates = new Set(['delivered', 'refunded', 'deposit_failed'])
+
+async function saveRecipient(path, wallet, lightningAddress) {
+  const temporary = path + '.' + randomUUID()
+  await writeFile(temporary, JSON.stringify({ wallet, lightningAddress }), { flag: 'wx', mode: 0o600 })
+  try {
+    await rename(temporary, path)
+  } finally {
+    await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error })
+  }
+}
+
 function reply(response, status, body) {
   response.writeHead(status).end(JSON.stringify(body))
 }
@@ -59,6 +71,22 @@ export function directPilot(config, {
   let busy = false
   let latestStatus
   let verifiedDeposit
+  const recipientFile = config.recipientFile ?? config.submissionFile + '.recipient.json'
+
+  async function savedRecipient() {
+    const saved = await priorSubmission(recipientFile)
+    if (saved?.wallet && saved.wallet === config.wallet) return normalizeLightningAddress(saved.lightningAddress)
+  }
+
+  function currentStatus(saved) {
+    if (latestStatus?.signature !== saved.signature || latestStatus.checkedAt + 8_000 <= Date.now()) {
+      latestStatus = {
+        signature: saved.signature, checkedAt: Date.now(),
+        result: reconcile(saved),
+      }
+    }
+    return latestStatus.result
+  }
 
   return async (request, response) => {
     if (request.url === '/pilot/status') {
@@ -66,16 +94,10 @@ export function directPilot(config, {
         await requestBody(request)
         const saved = await priorSubmission(config.submissionFile)
         if (!saved) {
-          reply(response, 200, { state: 'idle' })
+          reply(response, 200, { state: 'idle', savedRecipient: await savedRecipient() })
           return
         }
-        if (latestStatus?.signature !== saved.signature || latestStatus.checkedAt + 8_000 <= Date.now()) {
-          latestStatus = {
-            signature: saved.signature, checkedAt: Date.now(),
-            result: reconcile(saved),
-          }
-        }
-        reply(response, 200, await latestStatus.result)
+        reply(response, 200, await currentStatus(saved))
       } catch {
         reply(response, 503, { error: 'status_unavailable' })
       }
@@ -89,14 +111,34 @@ export function directPilot(config, {
     let phase = 'quote_unavailable'
     try {
       phase = 'reconcile'
-      if (await priorSubmission(config.submissionFile)) {
+      const saved = await priorSubmission(config.submissionFile)
+      if (request.url === '/pilot/next') {
+        await requestBody(request)
+        if (saved) {
+          const current = await currentStatus(saved)
+          if (!terminalStates.has(current.state)) {
+            reply(response, 409, { error: phase })
+            return
+          }
+          if (current.state === 'delivered' && saved.order.wallet === config.wallet && saved.order.cluster === 'mainnet') {
+            await saveRecipient(recipientFile, config.wallet, current.lightningAddress)
+          }
+          await rename(config.submissionFile, config.submissionFile + '.' + randomUUID() + '.archive.json')
+          active = undefined
+          latestStatus = undefined
+          verifiedDeposit = undefined
+        }
+        reply(response, 200, { state: 'idle', savedRecipient: await savedRecipient() })
+        return
+      }
+      if (saved) {
         reply(response, 409, { error: phase })
         return
       }
       if (request.url === '/pilot/quote') {
         phase = 'invalid_lightning_address'
         const body = await requestBody(request)
-        const recipient = normalizeLightningAddress(Object.hasOwn(body, 'recipient') ? body.recipient : config.recipient)
+        const recipient = normalizeLightningAddress(Object.hasOwn(body, 'recipient') ? body.recipient : (await savedRecipient()) ?? config.recipient)
         phase = 'quote_unavailable'
         if (active && active.order.lightningAddress !== recipient) active = undefined
         if (!active || active.quote.expires_at * 1000 <= Date.now() + 15_000) {
@@ -155,13 +197,14 @@ export function directPilot(config, {
       phase = 'reconcile'
       await writeFile(config.submissionFile, JSON.stringify({
         ...active, signature, submission: 'submitted_reconcile',
-      }), { flag: 'wx' })
+      }), { flag: 'wx', mode: 0o600 })
       const sent = await rpc('sendTransaction', transaction, {
         encoding: 'base64', skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3,
       })
       if (sent !== signature) throw new Error('Submission requires reconciliation')
       reply(response, 200, { signature })
-    } catch {
+    } catch (error) {
+      if (['insufficient_sol', 'insufficient_usdc'].includes(error.code)) phase = error.code
       process.stderr.write(`Pilot request failed at ${phase}\n`)
       reply(response, 409, { error: phase })
     } finally {

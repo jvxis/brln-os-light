@@ -30,6 +30,8 @@ function formatSOL(lamports) {
 const pilotErrors = {
   invalid_lightning_address: 'Informe um Lightning Address no formato nome@dominio.com.',
   recipient_changed: 'O destino da cotação mudou. Confira o endereço e gere uma nova cotação.',
+  insufficient_sol: 'Saldo insuficiente para a taxa e a reserva da rede. Envie SOL pela rede Solana para o endereço da carteira. Sugerimos começar com 0,01 SOL.',
+  insufficient_usdc: 'Saldo de USDC na Solana insuficiente para esta cotação.',
   quote_expired: 'A cotação expirou. Gere uma nova para conferir os valores.',
   invalid_signature_or_order: 'O serviço rejeitou a assinatura ou a ordem. Nenhum envio foi iniciado.',
   simulation_unavailable: 'A rede não respondeu à simulação. Nenhum envio foi iniciado.',
@@ -42,7 +44,7 @@ const pilotErrors = {
 const progressLabels = {
   deposit_pending: 'Aguardando confirmação do depósito na Solana.',
   deposit_failed: 'A Solana registrou uma falha na transação.',
-  delivery_pending: 'Depósito confirmado. Aguardando a entrega pela ponte.',
+  delivery_pending: 'Depósito confirmado. A entrega pode levar cerca de uma hora ou mais. Acompanhe esta ordem aqui e aguarde a entrega ou o reembolso antes de repetir.',
   delivered: 'Entrega informada pela ponte.',
   refund_pending: 'Depósito confirmado. Aguardando a confirmação do reembolso na Solana.',
   refunded: 'Reembolso confirmado na carteira Solana.',
@@ -67,6 +69,10 @@ function enableSigning() {
   let reviewedFile
   let signed
   let following = false
+
+  function loadRecipient(savedRecipient) {
+    if (savedRecipient && !recipientInput.value.trim()) recipientInput.value = savedRecipient
+  }
 
   function review(documentValue) {
     const direct = documentValue?.feeMode === 'wallet'
@@ -122,12 +128,14 @@ function enableSigning() {
     const panel = control('pilot-progress')
     const state = control('pilot-progress-state')
     const details = control('pilot-progress-details')
+    const next = control('pilot-next')
     let previousState
 
     async function check() {
       try {
         const snapshot = await pilotRequest('/pilot/status', {})
         if (snapshot.state === 'idle') {
+          loadRecipient(snapshot.savedRecipient)
           following = false
           return
         }
@@ -153,7 +161,11 @@ function enableSigning() {
           }
           previousState = snapshot.state
         }
-        if (['delivered', 'refunded', 'deposit_failed'].includes(snapshot.state)) return
+        if (['delivered', 'refunded', 'deposit_failed'].includes(snapshot.state)) {
+          next.hidden = false
+          following = false
+          return
+        }
       } catch {
         panel.hidden = false
         state.textContent = 'A atualização do estado está indisponível. Nova consulta automática em instantes.'
@@ -173,6 +185,32 @@ function enableSigning() {
     confirm.disabled = true
     confirm.textContent = 'Assinar e transmitir os valores exibidos'
     followOrder()
+    const next = control('pilot-next')
+    next.addEventListener('click', async () => {
+      next.disabled = true
+      try {
+        const snapshot = await pilotRequest('/pilot/next', {})
+        reviewedFile = undefined
+        signed = undefined
+        recipientInput.value = ''
+        recipientInput.disabled = false
+        quote.disabled = false
+        loadRecipient(snapshot.savedRecipient)
+        control('costs').replaceChildren()
+        passwordInput.value = ''
+        confirm.disabled = true
+        status.textContent = ''
+        control('pilot-progress').hidden = true
+        next.hidden = true
+        form.hidden = false
+        recipientInput.focus()
+      } catch {
+        control('pilot-progress-state').textContent = 'A ordem anterior ainda precisa ser conferida. Consulte o andamento e tente novamente.'
+        followOrder()
+      } finally {
+        next.disabled = false
+      }
+    })
     recipientInput.addEventListener('input', () => {
       reviewedFile = undefined
       confirm.disabled = true

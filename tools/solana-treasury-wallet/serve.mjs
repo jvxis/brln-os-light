@@ -24,7 +24,7 @@ if (pilot) headers['Content-Security-Policy'] += "; connect-src 'self'"
 createServer(async (request, response) => {
   if (pilot && request.headers.host === host && request.method === 'POST' &&
       request.headers.origin === `http://${host}` && request.headers['x-lightningos-pilot'] === '1' &&
-      ['/pilot/quote', '/pilot/refresh', '/pilot/submit', '/pilot/status'].includes(request.url)) {
+      ['/pilot/quote', '/pilot/refresh', '/pilot/submit', '/pilot/status', '/pilot/next'].includes(request.url)) {
     for (const [name, value] of Object.entries(headers)) response.setHeader(name, value)
     response.setHeader('Content-Type', 'application/json; charset=utf-8')
     await pilot(request, response)

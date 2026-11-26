@@ -30,6 +30,9 @@
     <section id="receive" hidden aria-label="Endereço da carteira">
       <label for="address">Seu endereço público na Solana</label>
       <input id="address" readonly spellcheck="false">
+      <p>Envie SOL pela rede Solana para este endereço antes de converter USDC de volta para Lightning.
+        Sugerimos come?ar com <strong>0,01 SOL</strong> para cobrir a taxa de rede e a eventual criação
+        da conta de USDC no destino. Confira a estimativa de cada conversão antes de assinar.</p>
     </section>
     <section id="sign" aria-labelledby="sign-title">
       <h2 id="sign-title">Assinar depósito de USDC</h2>
@@ -58,6 +61,7 @@
       <h2 id="pilot-progress-title">Acompanhamento da volta</h2>
       <dl id="pilot-progress-details"></dl>
       <p id="pilot-progress-state" role="status" aria-live="polite"></p>
+      <button id="pilot-next" type="button" hidden>Nova conversão</button>
     </section>
   </main>
 </body>

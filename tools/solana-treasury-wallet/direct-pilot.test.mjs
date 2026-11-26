@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -141,17 +141,17 @@ test('resumes from a saved submission and distinguishes deposit, delivery and ve
         return bridge
       },
     }
-    const config = { worker: 'unused', apiKeyFile, submissionFile }
+    const config = { worker: 'unused', apiKeyFile, submissionFile, wallet: order.wallet }
     assert.equal((await request(directPilot(config, deps), '/pilot/status')).result.state, 'idle')
     await writeFile(submissionFile, JSON.stringify({
       order, quote: { bridge_id: 'synthetic-order', status_token: 'private-token' }, signature: 'source-signature',
     }))
     const handler = directPilot(config, deps)
-    const read = async () => {
+    const read = async (recipient = order.lightningAddress) => {
       now += 9_000
       const { status, result } = await request(handler, '/pilot/status')
       assert.equal(status, 200)
-      assert.equal(result.lightningAddress, order.lightningAddress)
+      assert.equal(result.lightningAddress, recipient)
       assert(!JSON.stringify(result).includes('private-token'))
       return result
     }
@@ -159,20 +159,35 @@ test('resumes from a saved submission and distinguishes deposit, delivery and ve
     depositFinal = true
     assert.equal((await read()).state, 'delivery_pending')
     assert.equal((await request(handler, '/pilot/quote')).result.error, 'reconcile')
+    assert.equal((await request(handler, '/pilot/next')).status, 409)
+    assert.equal((await readdir(dir)).length, 2)
     bridge = { ...bridge, status: 'completed', delivery_ref: 'delivery-id', amount_out: 1681, deposit_ref: 'unrelated' }
     assert.equal((await read()).state, 'delivery_pending')
     bridge.deposit_ref = 'source-signature'
     assert.equal((await read()).deliveredSats, 1681)
     assert.equal((await read()).state, 'delivered')
+    const next = await request(handler, '/pilot/next')
+    assert.deepEqual(next, { status: 200, result: { state: 'idle', savedRecipient: order.lightningAddress } })
+    const files = await readdir(dir)
+    const archive = files.find(name => name.endsWith('.archive.json'))
+    assert(archive)
+    assert.equal((await readPilotJson(join(dir, archive))).signature, 'source-signature')
+    assert.equal((await request(directPilot(config, deps), '/pilot/status')).result.savedRecipient, order.lightningAddress)
+    assert.equal((await request(directPilot({ ...config, wallet: 'another-wallet' }, deps), '/pilot/status')).result.savedRecipient, undefined)
+    const refundOrder = { ...order, lightningAddress: 'different@example.com' }
+    await writeFile(submissionFile, JSON.stringify({
+      order: refundOrder, quote: { bridge_id: 'refund-order', status_token: 'private-token' }, signature: 'source-signature',
+    }))
     bridge = { ...bridge, status: 'refunded', refund_ref: 'refund-signature' }
-    assert.equal((await read()).state, 'refund_pending')
+    assert.equal((await read(refundOrder.lightningAddress)).state, 'refund_pending')
+    assert.equal((await request(handler, '/pilot/next')).status, 409)
     refundFinal = true
-    const refund = await read()
+    const refund = await read(refundOrder.lightningAddress)
     assert.equal(refund.state, 'refunded')
     assert.equal(refund.refundedMicros, '1064000')
+    assert.equal((await request(handler, '/pilot/next')).result.savedRecipient, order.lightningAddress)
   } finally {
-    await unlink(submissionFile).catch(error => { if (error.code !== 'ENOENT') throw error })
-    await unlink(apiKeyFile)
+    for (const name of await readdir(dir)) await rm(join(dir, name))
     await rmdir(dir)
   }
 })

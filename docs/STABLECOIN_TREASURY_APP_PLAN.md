@@ -36,7 +36,7 @@ Em 25 de novembro de 2026, o piloto Lightning → Solana liquidou 2.051 sats e 2
 
 ## Interface no LightningOS
 
-Quando a Loja informar a Tesouraria como instalada, o grupo Apps ganha o menu **BRLN Reserva**. O botão Abrir da Loja navega para a mesma tela no LOS. A configuração reúne o formulário oficial da Breez, a entrada da chave com confirmação da senha do LOS e o acesso à carteira isolada. Depois da configuração, a tela apresenta os saldos e as ações **Guardar em USDC** e **Voltar para bitcoin**. Preenche o último Lightning Address confirmado quando disponível e permite editá-lo antes de cotar.
+Quando a Loja informar a Tesouraria como instalada, o grupo Apps ganha o menu **BRLN Reserva** em português e **BRLN Reserve** em inglês. O botão Abrir da Loja navega para a mesma tela no LOS. A configuração reúne o formulário oficial da Breez, a entrada da chave com confirmação da senha do LOS e o acesso à carteira isolada. Depois da configuração, a tela apresenta os saldos e as ações **Guardar em USDC** e **Voltar para bitcoin**. Preenche o último Lightning Address confirmado quando disponível e permite editá-lo antes de cotar.
 
 A confirmação mostra destino, valor de débito, recebimento esperado e taxa da ponte. A ida detalha o teto da taxa de roteamento e o débito máximo em sats. A volta detalha a taxa Solana, eventual reserva para a conta de token e o total em SOL. A referência BTC/USD e a diferença do recebimento aparecem quando a cotação inclui dados de mercado. A atividade mostra o estado do pedido e o reembolso quando disponível.
 

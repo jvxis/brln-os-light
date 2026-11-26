@@ -314,12 +314,12 @@ export default function StablecoinTreasury() {
       </div>
     </header>
 
-    {!status && !unavailable && <TreasuryProgress text={label('Loading Treasury balances…', 'Carregando saldos do BRLN Reserva…')} />}
-    {unavailable && <p role="status" className="section-card">{label('BRLN Reserva status is unavailable. The page will check again shortly.', 'O BRLN Reserva está indisponível. A página consultará novamente em instantes.')}</p>}
-    {status && !status.enabled && <p role="status" className="section-card">{label('Start BRLN Reserva from the App Store to make a conversion.', 'Inicie o BRLN Reserva na Loja para fazer uma conversão.')}</p>}
+    {!status && !unavailable && <TreasuryProgress text={label('Loading BRLN Reserve balances…', 'Carregando saldos do BRLN Reserva…')} />}
+    {unavailable && <p role="status" className="section-card">{label('BRLN Reserve status is unavailable. The page will check again shortly.', 'O BRLN Reserva está indisponível. A página consultará novamente em instantes.')}</p>}
+    {status && !status.enabled && <p role="status" className="section-card">{label('Start BRLN Reserve from the App Store to make a conversion.', 'Inicie o BRLN Reserva na Loja para fazer uma conversão.')}</p>}
 
     {status?.enabled && <section className="section-card space-y-4">
-      <h2 className="text-lg font-semibold">{status.solana_address ? label('Balances', 'Saldos') : label('Set up BRLN Reserva', 'Configure o BRLN Reserva')}</h2>
+      <h2 className="text-lg font-semibold">{status.solana_address ? label('Balances', 'Saldos') : label('Set up BRLN Reserve', 'Configure o BRLN Reserva')}</h2>
       {status.solana_address && <div className="grid gap-2 text-sm sm:grid-cols-3">
         {([
           ['Lightning', status.lightning_sats, 'sats'],
@@ -441,7 +441,7 @@ export default function StablecoinTreasury() {
       {modal === 'lightning' && quote && <div className="mt-4"><Review quote={quote} locale={locale} label={label} /></div>}
       {busy && <div className="mt-4">
         <TreasuryProgress text={progress === 'submit' ? label('Submitting your conversion…', 'Enviando sua conversão…')
-          : label('Saving BRLN Reserva settings…', 'Salvando a configuração do BRLN Reserva…')} />
+          : label('Saving BRLN Reserve settings…', 'Salvando a configuração do BRLN Reserva…')} />
       </div>}
     </SensitiveActionModal>
   </div>

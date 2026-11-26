@@ -161,6 +161,7 @@ try {
   await call('Page.navigate', { url: base + '/#apps' })
   try {
     await waitText('Native USDC on Solana')
+    assert(await evaluate(`[...document.querySelectorAll('main h3')].some(h => h.textContent === 'BRLN Reserve')`))
   } catch (error) {
     console.error(await evaluate('document.body.innerText.slice(0, 1500)'))
     throw error
@@ -169,8 +170,9 @@ try {
   await click('Install')
   await until('App Store opening link and installed menu', () => evaluate('document.querySelectorAll(\'a[href="#stablecoin-treasury"]\').length >= 2'))
   await evaluate('document.querySelector(\'main a[href="#stablecoin-treasury"]\').click()')
-  await waitText('Set up BRLN Reserva')
-  assert(await evaluate('document.querySelector("main h1").textContent === "BRLN Reserva"'))
+  await waitText('Set up BRLN Reserve')
+  assert(await evaluate('document.querySelector("main h1").textContent === "BRLN Reserve"'))
+  assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BRLN Reserve')`))
   await waitText('Your conversions will appear here.')
   assert(await exists('a[href="https://breez.technology/request-api-key/#contact-us-form-sdk"]'))
   await click('Enter API key')
@@ -216,6 +218,8 @@ try {
   await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 860, deviceScaleFactor: 1, mobile: true })
   await call('Page.reload', {})
   await waitText('Aguarde a entrega ou o reembolso')
+  assert(await evaluate('document.querySelector("main h1").textContent === "BRLN Reserva"'))
+  assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BRLN Reserva')`))
   assert(await evaluate('document.documentElement.scrollWidth <= innerWidth'))
   const history = 'document.querySelector("[role=region][aria-labelledby=treasury-history-heading]")'
   await until('scrollable conversion history', () => evaluate(`${history}?.scrollHeight > ${history}?.clientHeight`))
@@ -237,7 +241,9 @@ try {
   assert.equal(await evaluate(button('Assinar com a carteira Solana') + '.disabled'), true)
   assert.equal(quoteRequests, 3)
   assert.equal(submitted, 1)
-  console.log('PASS: install, menu, embedded route, Breez instructions, fees, signer isolation, pending order, mobile pt-BR and quote without Web Crypto.')
+  await call('Page.navigate', { url: base + '/#apps' })
+  await until('Portuguese App Store title', () => evaluate(`[...document.querySelectorAll('main h3')].some(h => h.textContent === 'BRLN Reserva')`))
+  console.log('PASS: localized app name, install, menu, embedded route, Breez instructions, fees, signer isolation, pending order, mobile pt-BR and quote without Web Crypto.')
 } finally {
   ws?.close()
   child?.kill()

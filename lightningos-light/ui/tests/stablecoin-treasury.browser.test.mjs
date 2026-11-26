@@ -174,15 +174,8 @@ try {
   await waitText('Set up BR⚡LN Reserve')
   assert(await evaluate('document.querySelector("main h1").textContent === "BR⚡LN Reserve"'))
   assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BR⚡LN Reserve')`))
-  await waitText('You control the wallet key with your encrypted backup and password.')
-  assert(await exists('#treasury-how-it-works a[href="https://breez.technology/"][target="_blank"][rel~="noopener"]'))
-  await waitText('Conversions via Breez Technology')
-  const conversionPaths = () => evaluate(`[...document.querySelectorAll('#treasury-how-it-works ol')].map(row =>
-    [...row.querySelectorAll('li')].map(step => step.textContent.trim()))`)
-  assert.deepEqual(await conversionPaths(), [
-    ['Your Lightning node', 'Breez / Orchestra', 'Your Solana wallet'],
-    ['Your Solana wallet', 'Breez / Orchestra', 'Chosen Lightning Address'],
-  ])
+  await waitText('Self-custodied USDC on Solana')
+  const conversionPath = () => evaluate(`[...document.querySelectorAll('#treasury-how-it-works li')].map(step => step.textContent.trim())`)
   await waitText('Your conversions will appear here.')
   assert(await exists('a[href="https://breez.technology/request-api-key/#contact-us-form-sdk"]'))
   await click('Enter API key')
@@ -190,7 +183,15 @@ try {
   await input('[role=dialog] input[autocomplete=current-password]', 'fixture-password')
   await click('Save key')
   await waitText('Suggested starting balance: 0.01 SOL')
+  await waitText('You control the wallet key with your encrypted backup and password.')
+  assert(await exists('header dl[aria-label="Balances"]'))
+  assert(await exists('main a[href="https://breez.technology/"][target="_blank"][rel~="noopener"]'))
+  await waitText('Conversions via Breez Technology')
+  assert.deepEqual(await conversionPath(), ['Your Lightning node', 'Breez / Orchestra', 'Your Solana wallet'])
+  assert.equal(await evaluate('document.querySelectorAll("main input[inputmode=decimal]").length'), 1)
   await click('Convert to bitcoin')
+  assert.deepEqual(await conversionPath(), ['Your Solana wallet', 'Breez / Orchestra', 'Chosen Lightning Address'])
+  assert.equal(await evaluate('document.querySelectorAll("main input[inputmode=decimal]").length'), 1)
   await waitText('Available · 10 USDC')
   await waitText('Last successful destination')
   assert.equal(await evaluate('document.querySelector(\'input[inputmode="email"]\').value'), address)
@@ -235,10 +236,6 @@ try {
   await waitText('Aguarde a entrega ou o reembolso')
   await waitText('USDC em autocustódia na Solana')
   await waitText('Conversões via Breez Technology')
-  assert.deepEqual(await conversionPaths(), [
-    ['Seu nó Lightning', 'Breez / Orchestra', 'Sua carteira Solana'],
-    ['Sua carteira Solana', 'Breez / Orchestra', 'Lightning Address escolhido'],
-  ])
   assert(await evaluate('document.querySelector("main h1").textContent === "BR⚡LN Reserva"'))
   assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BR⚡LN Reserva')`))
   assert(await evaluate('document.documentElement.scrollWidth <= innerWidth'))
@@ -254,7 +251,10 @@ try {
   await call('Page.reload', {})
   await waitText('Converter saldo')
   assert(await evaluate("Object.defineProperty(crypto, 'subtle', { value: undefined }); typeof crypto.subtle === 'undefined'"))
+  assert.deepEqual(await conversionPath(), ['Seu nó Lightning', 'Breez / Orchestra', 'Sua carteira Solana'])
   await click('Voltar para bitcoin')
+  assert.deepEqual(await conversionPath(), ['Sua carteira Solana', 'Breez / Orchestra', 'Lightning Address escolhido'])
+  assert.equal(await evaluate('document.querySelectorAll("main input[inputmode=decimal]").length'), 1)
   await input('input[inputmode=decimal]', '1')
   await click('Conferir cotação e custos')
   await waitText('Recebimento estimado')

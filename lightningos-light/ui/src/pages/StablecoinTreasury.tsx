@@ -31,32 +31,18 @@ function TreasuryProgress({ text }: { text: string }) {
   </span>
 }
 
-function TreasuryFlow({ label }: { label: Label }) {
+function TreasuryFlow({ direction, label }: { direction: TreasuryDirection; label: Label }) {
   const wallet = label('Your Solana wallet', 'Sua carteira Solana')
-  const bridge = 'Breez / Orchestra'
-  const paths = [
-    { action: label('Save in USDC', 'Guardar em USDC'), steps: [label('Your Lightning node', 'Seu nó Lightning'), bridge, wallet] },
-    { action: label('Convert to bitcoin', 'Voltar para bitcoin'), steps: [wallet, bridge, label('Chosen Lightning Address', 'Lightning Address escolhido')] },
-  ]
+  const steps = direction === 'to_solana'
+    ? [label('Your Lightning node', 'Seu nó Lightning'), 'Breez / Orchestra', wallet]
+    : [wallet, 'Breez / Orchestra', label('Chosen Lightning Address', 'Lightning Address escolhido')]
 
-  return <section id="treasury-how-it-works" aria-labelledby="treasury-flow-heading" className="min-w-0 space-y-3 rounded-2xl border border-white/10 bg-black/20 p-3 sm:p-4">
-    <h2 id="treasury-flow-heading" className="text-sm font-semibold">{label('How it works', 'Como funciona')}</h2>
-    {paths.map(({ action, steps }) => <div key={action}>
-      <p className="mb-1.5 text-xs font-medium text-fog/75">{action}</p>
-      <ol aria-label={action} className="grid grid-cols-3 gap-3 sm:gap-5">
-        {steps.map((step, index) => <li key={step} className={`relative flex min-w-0 items-center justify-center rounded-xl border p-1.5 text-center text-xs leading-4 [overflow-wrap:anywhere] sm:p-2 ${step === wallet ? 'border-brass/30 bg-brass/10 text-brass' : 'border-white/10 bg-white/5 text-fog'}`}>
-          {step}
-          {index < steps.length - 1 && <span aria-hidden="true" className="absolute left-full top-1/2 ml-0.5 h-1.5 w-1.5 -translate-y-1/2 rotate-45 border-r border-t border-glow sm:ml-1.5" />}
-        </li>)}
-      </ol>
-    </div>)}
-    <p className="border-t border-white/10 pt-2 text-xs text-fog/65">
-      {label('Conversions via', 'Conversões via')}{' '}
-      <a href={breezHome} target="_blank" rel="noopener noreferrer" className="font-medium text-glow underline underline-offset-2 hover:text-fog">
-        Breez Technology <span aria-hidden="true">↗</span>
-      </a>
-    </p>
-  </section>
+  return <ol id="treasury-how-it-works" aria-label={label('Conversion path', 'Caminho da conversão')} className="grid grid-cols-3 gap-3 sm:gap-5">
+    {steps.map((step, index) => <li key={step} className={`relative flex min-w-0 items-center justify-center rounded-xl border px-1.5 py-2 text-center text-xs leading-4 [overflow-wrap:anywhere] sm:px-2 ${step === wallet ? 'border-brass/25 bg-brass/[.07] text-brass' : 'border-white/10 bg-white/[.025] text-fog/75'}`}>
+      {step}
+      {index < steps.length - 1 && <span aria-hidden="true" className="absolute left-full top-1/2 ml-0.5 h-1.5 w-1.5 -translate-y-1/2 rotate-45 border-r border-t border-glow sm:ml-1.5" />}
+    </li>)}
+  </ol>
 }
 
 function parseAmount(input: string) {
@@ -344,18 +330,26 @@ export default function StablecoinTreasury() {
     }
   }
 
-  return <div className="space-y-6">
-    <header className="rounded-[2rem] border border-brass/20 bg-[radial-gradient(circle_at_12%_0%,rgba(245,158,11,.2),transparent_40%),radial-gradient(circle_at_92%_20%,rgba(34,211,238,.1),transparent_36%),linear-gradient(135deg,rgba(13,17,23,.99),rgba(21,25,32,.96))] p-6 shadow-panel sm:p-8">
-      <div className="grid items-center gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,25rem)]">
-        <div className="flex flex-wrap items-start gap-4 sm:flex-nowrap sm:items-center sm:gap-5">
-          <span aria-hidden="true" className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-brass/25 bg-brass/10 text-3xl font-semibold text-brass sm:h-16 sm:w-16">$</span>
+  return <div className="space-y-4">
+    <header className="rounded-3xl border border-brass/20 bg-[linear-gradient(110deg,rgba(245,158,11,.1),transparent_55%)] p-4 shadow-panel sm:px-5">
+      <div className="grid items-center gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        <div className="flex items-center gap-3">
+          <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-brass/25 bg-brass/10 text-xl font-semibold text-brass">$</span>
           <div className="min-w-0">
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{appName}</h1>
-            <p className="mt-2 text-sm font-medium text-brass">{label('Self-custodied USDC on Solana', 'USDC em autocustódia na Solana')}</p>
-            <p className="mt-1 max-w-lg text-sm leading-6 text-fog/70">{label('You control the wallet key with your encrypted backup and password.', 'Você controla a chave da carteira com seu backup criptografado e sua senha.')}</p>
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{appName}</h1>
+            <p className="mt-1 text-xs font-medium text-brass sm:text-sm">{label('Self-custodied USDC on Solana', 'USDC em autocustódia na Solana')}</p>
           </div>
         </div>
-        <TreasuryFlow label={label} />
+        {status?.enabled && status.solana_address && <dl aria-label={label('Balances', 'Saldos')} className="grid min-w-0 grid-cols-3 gap-1.5 sm:gap-2">
+          {([
+            ['Lightning', status.lightning_sats, 'sats'],
+            ['USDC · Solana', status.usdc_micros, 'USDC'],
+            ['SOL · Solana', status.sol_lamports, 'SOL'],
+          ] as const).map(([title, atoms, asset]) => <div key={asset} className="min-w-0 rounded-xl border border-white/10 bg-black/15 px-2 py-2 sm:px-3">
+            <dt className="text-xs leading-4 text-fog/65">{title}</dt>
+            <dd className="mt-1 text-sm font-semibold tabular-nums [overflow-wrap:anywhere] sm:text-base">{atoms === undefined ? '—' : money({ atoms, asset }, locale)}</dd>
+          </div>)}
+        </dl>}
       </div>
     </header>
 
@@ -363,18 +357,8 @@ export default function StablecoinTreasury() {
     {unavailable && <p role="status" className="section-card">{label(`${appName} status is unavailable. The page will check again shortly.`, `O ${appName} está indisponível. A página consultará novamente em instantes.`)}</p>}
     {status && !status.enabled && <p role="status" className="section-card">{label(`Start ${appName} from the App Store to make a conversion.`, `Inicie o ${appName} na Loja para fazer uma conversão.`)}</p>}
 
-    {status?.enabled && <section className="section-card space-y-4">
-      <h2 className="text-lg font-semibold">{status.solana_address ? label('Balances', 'Saldos') : label(`Set up ${appName}`, `Configure o ${appName}`)}</h2>
-      {status.solana_address && <div className="grid gap-2 text-sm sm:grid-cols-3">
-        {([
-          ['Lightning', status.lightning_sats, 'sats'],
-          ['USDC · Solana', status.usdc_micros, 'USDC'],
-          ['SOL · Solana', status.sol_lamports, 'SOL'],
-        ] as const).map(([title, atoms, asset]) => <div key={asset} className="min-w-0 rounded-2xl border border-white/10 bg-black/15 p-3">
-          <p className="text-fog/60">{title}</p>
-          <p className="mt-1 break-words text-xl font-semibold tabular-nums">{atoms === undefined ? '—' : money({ atoms, asset }, locale)}</p>
-        </div>)}
-      </div>}
+    {status?.enabled && (!status.breez_configured || !status.solana_address) && <section className="section-card space-y-4">
+      <h2 className="text-lg font-semibold">{label(`Set up ${appName}`, `Configure o ${appName}`)}</h2>
       {!status.breez_configured && <div className="space-y-2">
         <p>{label('Request an SDK API key using the official Breez form. Select the SDK option, fill in your contact information and paste the key here when Breez sends it.', 'Solicite uma chave de API do SDK pelo formulário oficial da Breez. Selecione a opção do SDK, preencha seu contato e cole aqui a chave quando a Breez enviar.')}</p>
         <div className="flex flex-wrap gap-2">
@@ -382,35 +366,31 @@ export default function StablecoinTreasury() {
           <button type="button" className="btn-primary" onClick={() => { setError(''); setModal('key') }}>{label('Enter API key', 'Informar chave de API')}</button>
         </div>
       </div>}
-      {status.breez_configured && <details className="text-sm">
-        <summary className="cursor-pointer font-medium">{label('Breez settings', 'Configuração da Breez')}</summary>
-        <button type="button" className="btn-secondary mt-2" disabled={pending} onClick={() => { setError(''); setModal('key') }}>{label('Change API key', 'Alterar a chave de API')}</button>
-      </details>}
       {!status.solana_address && !canSign && <p role="status">{secureWalletMessage}</p>}
       {!status.solana_address && <button disabled={!canSign} type="button" className="btn-secondary" onClick={() => setSigner('setup')}>
         {label('Create or recover Solana wallet', 'Criar ou recuperar carteira Solana')}
       </button>}
-      {status.solana_address && <details className="text-sm" open={(status.sol_lamports === undefined || status.sol_lamports === 0) || undefined}>
-        <summary className="cursor-pointer font-medium">{label('Receive SOL on Solana', 'Receber SOL na Solana')}</summary>
-        <p className="mt-2">{label('Suggested starting balance: 0.01 SOL. Send SOL on the Solana network to this address before converting back. Your quote shows the amount required.', 'Saldo inicial sugerido: 0,01 SOL. Envie SOL pela rede Solana para este endereço antes de converter de volta. A cotação mostra o valor necessário.')}</p>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <input ref={walletAddressInput} className="input-field min-w-0 flex-1 font-mono" aria-label={label('Solana public address', 'Endereço público Solana')} readOnly value={status.solana_address} />
-          <button type="button" className="btn-secondary" onClick={() => void copyWalletAddress()}>{label('Copy address', 'Copiar endereço')}</button>
-          {copied && <span role="status">{label('Copied', 'Copiado')}</span>}
-        </div>
-      </details>}
     </section>}
 
-    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]">
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]">
       <div className="min-w-0 space-y-4">
         {ready && <section className={panel + ' space-y-4'}>
-          <h2 className="text-lg font-semibold">{label('Convert balance', 'Converter saldo')}</h2>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <h2 className="text-lg font-semibold">{label('Convert balance', 'Converter saldo')}</h2>
+            <p className="text-xs text-fog/65">
+              {label('Conversions via', 'Conversões via')}{' '}
+              <a href={breezHome} target="_blank" rel="noopener noreferrer" className="font-medium text-glow underline underline-offset-2 hover:text-fog">
+                Breez Technology <span aria-hidden="true">↗</span>
+              </a>
+            </p>
+          </div>
           {pending ? <TreasuryProgress text={label('Delivery can take around an hour or more. Wait for delivery or refund before repeating the conversion.', 'A entrega pode levar cerca de uma hora ou mais. Aguarde a entrega ou o reembolso antes de repetir.')} />
             : <form className="space-y-4" onSubmit={event => { event.preventDefault(); void loadQuote() }}>
               <div className="grid gap-1 rounded-2xl border border-white/10 bg-black/15 p-1 sm:grid-cols-2" role="group" aria-label={label('Direction', 'Sentido da conversão')}>
                 <button type="button" className={directionButton + ' ' + (direction === 'to_solana' ? activeDirection : idleDirection)} aria-pressed={direction === 'to_solana'} disabled={busy} onClick={() => { if (direction !== 'to_solana') { setDirection('to_solana'); setAmount(''); invalidate() } }}>{label('Save in USDC', 'Guardar em USDC')}</button>
                 <button type="button" className={directionButton + ' ' + (direction === 'to_lightning' ? activeDirection : idleDirection)} aria-pressed={direction === 'to_lightning'} disabled={busy} onClick={() => { if (direction !== 'to_lightning') { setDirection('to_lightning'); setAmount(''); invalidate() } }}>{label('Convert to bitcoin', 'Voltar para bitcoin')}</button>
               </div>
+              <TreasuryFlow direction={direction} label={label} />
               <div className="text-sm">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                   <label htmlFor="treasury-amount" className="font-medium">{direction === 'to_solana' ? label('Amount to save', 'Valor para guardar') : label('Amount to convert', 'Valor para converter')}</label>
@@ -477,23 +457,42 @@ export default function StablecoinTreasury() {
         </section>}
 
       </div>
-      {status?.enabled && <section className={panel + ' space-y-4'}>
-        <h2 id="treasury-history-heading" className="text-lg font-semibold">{label('Conversion history', 'Histórico de conversões')}</h2>
-        {status.orders.length ? <div role="region" aria-labelledby="treasury-history-heading" tabIndex={0} className="max-h-[25rem] overflow-y-auto overscroll-contain pr-2 [scrollbar-color:rgb(245_158_11_/_0.45)_transparent] [scrollbar-gutter:stable]">
-          <ul className="space-y-2">
-            {status.orders.map(order => <li key={order.id} className="space-y-2 rounded-2xl border border-white/10 bg-black/15 p-3 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-medium text-fog/65">{order.direction === 'to_solana' ? 'Lightning → Solana' : 'Solana → Lightning'}</span>
-                <span className={`rounded-full border px-2 py-1 text-xs font-medium ${historyTone[order.state]}`}>{stateLabel(order.state)}</span>
-              </div>
-              <p className="break-words font-semibold tabular-nums">{money(order.debit, locale)}{order.receive && ' → ' + money(order.receive, locale)}</p>
-              <p className="break-all text-xs text-fog/65">{order.destination}</p>
-              {order.actual_fee && <p className="text-xs text-fog/70">{label('Actual network cost', 'Custo efetivo de rede')} · {money(order.actual_fee, locale)}</p>}
-              {order.refund && <p className="text-xs text-fog/70">{label('Refund', 'Reembolso')} · {money(order.refund, locale)}</p>}
-            </li>)}
-          </ul>
-        </div> : <p className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-fog/65">{label('Your conversions will appear here.', 'Suas conversões vão aparecer aqui.')}</p>}
-      </section>}
+      {status?.enabled && <div className="min-w-0 space-y-4">
+        <section className={panel + ' space-y-4'}>
+          <h2 id="treasury-history-heading" className="text-lg font-semibold">{label('Conversion history', 'Histórico de conversões')}</h2>
+          {status.orders.length ? <div role="region" aria-labelledby="treasury-history-heading" tabIndex={0} className="max-h-[25rem] overflow-y-auto overscroll-contain pr-2 [scrollbar-color:rgb(245_158_11_/_0.45)_transparent] [scrollbar-gutter:stable]">
+            <ul className="space-y-2">
+              {status.orders.map(order => <li key={order.id} className="space-y-2 rounded-2xl border border-white/10 bg-black/15 p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-fog/65">{order.direction === 'to_solana' ? 'Lightning → Solana' : 'Solana → Lightning'}</span>
+                  <span className={`rounded-full border px-2 py-1 text-xs font-medium ${historyTone[order.state]}`}>{stateLabel(order.state)}</span>
+                </div>
+                <p className="break-words font-semibold tabular-nums">{money(order.debit, locale)}{order.receive && ' → ' + money(order.receive, locale)}</p>
+                <p className="break-all text-xs text-fog/65">{order.destination}</p>
+                {order.actual_fee && <p className="text-xs text-fog/70">{label('Actual network cost', 'Custo efetivo de rede')} · {money(order.actual_fee, locale)}</p>}
+                {order.refund && <p className="text-xs text-fog/70">{label('Refund', 'Reembolso')} · {money(order.refund, locale)}</p>}
+              </li>)}
+            </ul>
+          </div> : <p className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-fog/65">{label('Your conversions will appear here.', 'Suas conversões vão aparecer aqui.')}</p>}
+        </section>
+        {(status.breez_configured || status.solana_address) && <section className={panel + ' space-y-3'}>
+          <h2 className="text-base font-semibold">{label('Wallet and settings', 'Carteira e configurações')}</h2>
+          {status.solana_address && <p className="text-xs leading-5 text-fog/65">{label('You control the wallet key with your encrypted backup and password.', 'Você controla a chave da carteira com seu backup criptografado e sua senha.')}</p>}
+          {status.solana_address && <details className="rounded-xl border border-white/10 bg-black/10 p-3 text-sm" open={(status.sol_lamports === undefined || status.sol_lamports === 0) || undefined}>
+            <summary className="cursor-pointer font-medium">{label('Receive SOL on Solana', 'Receber SOL na Solana')}</summary>
+            <p className="mt-2">{label('Suggested starting balance: 0.01 SOL. Send SOL on the Solana network to this address before converting back. Your quote shows the amount required.', 'Saldo inicial sugerido: 0,01 SOL. Envie SOL pela rede Solana para este endereço antes de converter de volta. A cotação mostra o valor necessário.')}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input ref={walletAddressInput} className="input-field min-w-0 flex-1 font-mono" aria-label={label('Solana public address', 'Endereço público Solana')} readOnly value={status.solana_address} />
+              <button type="button" className="btn-secondary" onClick={() => void copyWalletAddress()}>{label('Copy address', 'Copiar endereço')}</button>
+              {copied && <span role="status">{label('Copied', 'Copiado')}</span>}
+            </div>
+          </details>}
+          {status.breez_configured && <details className="rounded-xl border border-white/10 bg-black/10 p-3 text-sm">
+            <summary className="cursor-pointer font-medium">{label('Breez settings', 'Configuração da Breez')}</summary>
+            <button type="button" className="btn-secondary mt-2" disabled={pending} onClick={() => { setError(''); setModal('key') }}>{label('Change API key', 'Alterar a chave de API')}</button>
+          </details>}
+        </section>}
+      </div>}
     </div>
 
     <SensitiveActionModal open={!!modal}

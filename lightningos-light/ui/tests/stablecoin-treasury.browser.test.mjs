@@ -24,7 +24,7 @@ const mime = {
   '.woff2': 'font/woff2', '.png': 'image/png', '.svg': 'image/svg+xml',
 }
 const app = () => ({
-  id: 'stablecoin-treasury', name: 'BRLN Reserva', description: 'Native USDC on Solana',
+  id: 'stablecoin-treasury', name: 'BR⚡LN Reserva', description: 'Native USDC on Solana',
   installed, available: true, status: installed ? 'running' : 'not_installed', port: 0,
 })
 const order = () => ({
@@ -160,8 +160,8 @@ try {
   await call('Runtime.enable', {})
   await call('Page.navigate', { url: base + '/#apps' })
   try {
-    await waitText('Native USDC on Solana')
-    assert(await evaluate(`[...document.querySelectorAll('main h3')].some(h => h.textContent === 'BRLN Reserve')`))
+    await waitText('Convert Lightning sats to self-custodied USDC on Solana and back.')
+    assert(await evaluate(`[...document.querySelectorAll('main h3')].some(h => h.textContent === 'BR⚡LN Reserve')`))
   } catch (error) {
     console.error(await evaluate('document.body.innerText.slice(0, 1500)'))
     throw error
@@ -170,9 +170,16 @@ try {
   await click('Install')
   await until('App Store opening link and installed menu', () => evaluate('document.querySelectorAll(\'a[href="#stablecoin-treasury"]\').length >= 2'))
   await evaluate('document.querySelector(\'main a[href="#stablecoin-treasury"]\').click()')
-  await waitText('Set up BRLN Reserve')
-  assert(await evaluate('document.querySelector("main h1").textContent === "BRLN Reserve"'))
-  assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BRLN Reserve')`))
+  await waitText('Set up BR⚡LN Reserve')
+  assert(await evaluate('document.querySelector("main h1").textContent === "BR⚡LN Reserve"'))
+  assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BR⚡LN Reserve')`))
+  await waitText('You control the wallet key with your encrypted backup and password.')
+  const conversionPaths = () => evaluate(`[...document.querySelectorAll('#treasury-how-it-works ol')].map(row =>
+    [...row.querySelectorAll('li')].map(step => step.textContent.trim()))`)
+  assert.deepEqual(await conversionPaths(), [
+    ['Your Lightning node', 'Breez / Orchestra', 'Your Solana wallet'],
+    ['Your Solana wallet', 'Breez / Orchestra', 'Chosen Lightning Address'],
+  ])
   await waitText('Your conversions will appear here.')
   assert(await exists('a[href="https://breez.technology/request-api-key/#contact-us-form-sdk"]'))
   await click('Enter API key')
@@ -218,8 +225,13 @@ try {
   await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 860, deviceScaleFactor: 1, mobile: true })
   await call('Page.reload', {})
   await waitText('Aguarde a entrega ou o reembolso')
-  assert(await evaluate('document.querySelector("main h1").textContent === "BRLN Reserva"'))
-  assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BRLN Reserva')`))
+  await waitText('USDC em autocustódia na Solana')
+  assert.deepEqual(await conversionPaths(), [
+    ['Seu nó Lightning', 'Breez / Orchestra', 'Sua carteira Solana'],
+    ['Sua carteira Solana', 'Breez / Orchestra', 'Lightning Address escolhido'],
+  ])
+  assert(await evaluate('document.querySelector("main h1").textContent === "BR⚡LN Reserva"'))
+  assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BR⚡LN Reserva')`))
   assert(await evaluate('document.documentElement.scrollWidth <= innerWidth'))
   const history = 'document.querySelector("[role=region][aria-labelledby=treasury-history-heading]")'
   await until('scrollable conversion history', () => evaluate(`${history}?.scrollHeight > ${history}?.clientHeight`))
@@ -242,7 +254,7 @@ try {
   assert.equal(quoteRequests, 3)
   assert.equal(submitted, 1)
   await call('Page.navigate', { url: base + '/#apps' })
-  await until('Portuguese App Store title', () => evaluate(`[...document.querySelectorAll('main h3')].some(h => h.textContent === 'BRLN Reserva')`))
+  await until('Portuguese App Store title', () => evaluate(`[...document.querySelectorAll('main h3')].some(h => h.textContent === 'BR⚡LN Reserva')`))
   console.log('PASS: localized app name, install, menu, embedded route, Breez instructions, fees, signer isolation, pending order, mobile pt-BR and quote without Web Crypto.')
 } finally {
   ws?.close()

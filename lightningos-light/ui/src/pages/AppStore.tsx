@@ -1027,6 +1027,9 @@ export default function AppStore() {
           const publicPoolStratumEndpoint = `${host}:${publicPoolStratumPort}`
           const fedimintGatewayApiUrl = `http://${host}:${fedimintGatewayUIPort}/v1`
           const appName = app.id === 'stablecoin-treasury' ? t('nav.stablecoinTreasury') : app.name
+          const appDescription = app.id === 'stablecoin-treasury'
+            ? t('appStore.stablecoinTreasuryDescription')
+            : app.id === 'brln-hardwallet' ? t('appStore.hardwallet.description') : app.description
           const icon = iconMap[app.id]
           const unavailable = app.available === false
           const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
@@ -1084,7 +1087,7 @@ export default function AppStore() {
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-fog/60">{app.id === 'brln-hardwallet' ? t('appStore.hardwallet.description') : app.description}</p>
+                    <p className="text-sm text-fog/60">{appDescription}</p>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">

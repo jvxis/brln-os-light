@@ -30,6 +30,28 @@ function TreasuryProgress({ text }: { text: string }) {
   </span>
 }
 
+function TreasuryFlow({ label }: { label: Label }) {
+  const wallet = label('Your Solana wallet', 'Sua carteira Solana')
+  const bridge = 'Breez / Orchestra'
+  const paths = [
+    { action: label('Save in USDC', 'Guardar em USDC'), steps: [label('Your Lightning node', 'Seu nó Lightning'), bridge, wallet] },
+    { action: label('Convert to bitcoin', 'Voltar para bitcoin'), steps: [wallet, bridge, label('Chosen Lightning Address', 'Lightning Address escolhido')] },
+  ]
+
+  return <section id="treasury-how-it-works" aria-labelledby="treasury-flow-heading" className="min-w-0 space-y-3 rounded-2xl border border-white/10 bg-black/20 p-3 sm:p-4">
+    <h2 id="treasury-flow-heading" className="text-sm font-semibold">{label('How it works', 'Como funciona')}</h2>
+    {paths.map(({ action, steps }) => <div key={action}>
+      <p className="mb-1.5 text-xs font-medium text-fog/75">{action}</p>
+      <ol aria-label={action} className="grid grid-cols-3 gap-3 sm:gap-5">
+        {steps.map((step, index) => <li key={step} className={`relative flex min-w-0 items-center justify-center rounded-xl border p-1.5 text-center text-xs leading-4 [overflow-wrap:anywhere] sm:p-2 ${step === wallet ? 'border-brass/30 bg-brass/10 text-brass' : 'border-white/10 bg-white/5 text-fog'}`}>
+          {step}
+          {index < steps.length - 1 && <span aria-hidden="true" className="absolute left-full top-1/2 ml-0.5 h-1.5 w-1.5 -translate-y-1/2 rotate-45 border-r border-t border-glow sm:ml-1.5" />}
+        </li>)}
+      </ol>
+    </div>)}
+  </section>
+}
+
 function parseAmount(input: string) {
   const normalized = input.trim().replace(',', '.')
   if (!/^\d+(\.\d{1,6})?$/.test(normalized)) return 0
@@ -92,6 +114,7 @@ export default function StablecoinTreasury() {
   const pt = i18n.language.startsWith('pt')
   const locale = pt ? 'pt-BR' : 'en-US'
   const label: Label = (en, br) => pt ? br : en
+  const appName = t('nav.stablecoinTreasury')
   const [status, setStatus] = useState<TreasuryStatus>()
   const [unavailable, setUnavailable] = useState(false)
   const [direction, setDirection] = useState<TreasuryDirection>('to_solana')
@@ -305,21 +328,25 @@ export default function StablecoinTreasury() {
 
   return <div className="space-y-6">
     <header className="rounded-[2rem] border border-brass/20 bg-[radial-gradient(circle_at_12%_0%,rgba(245,158,11,.2),transparent_40%),radial-gradient(circle_at_92%_20%,rgba(34,211,238,.1),transparent_36%),linear-gradient(135deg,rgba(13,17,23,.99),rgba(21,25,32,.96))] p-6 shadow-panel sm:p-8">
-      <div className="flex flex-wrap items-center gap-4 sm:gap-5">
-        <span aria-hidden="true" className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-brass/25 bg-brass/10 text-3xl font-semibold text-brass sm:h-16 sm:w-16">$</span>
-        <div className="min-w-0">
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{t('nav.stablecoinTreasury')}</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-fog/70">{label('Save part of your Lightning balance in USDC on Solana. Convert back to bitcoin whenever you choose.', 'Guarde parte do seu saldo Lightning em USDC na Solana. Volte para bitcoin quando quiser.')}</p>
+      <div className="grid items-center gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,25rem)]">
+        <div className="flex flex-wrap items-start gap-4 sm:flex-nowrap sm:items-center sm:gap-5">
+          <span aria-hidden="true" className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-brass/25 bg-brass/10 text-3xl font-semibold text-brass sm:h-16 sm:w-16">$</span>
+          <div className="min-w-0">
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{appName}</h1>
+            <p className="mt-2 text-sm font-medium text-brass">{label('Self-custodied USDC on Solana', 'USDC em autocustódia na Solana')}</p>
+            <p className="mt-1 max-w-lg text-sm leading-6 text-fog/70">{label('You control the wallet key with your encrypted backup and password.', 'Você controla a chave da carteira com seu backup criptografado e sua senha.')}</p>
+          </div>
         </div>
+        <TreasuryFlow label={label} />
       </div>
     </header>
 
-    {!status && !unavailable && <TreasuryProgress text={label('Loading BRLN Reserve balances…', 'Carregando saldos do BRLN Reserva…')} />}
-    {unavailable && <p role="status" className="section-card">{label('BRLN Reserve status is unavailable. The page will check again shortly.', 'O BRLN Reserva está indisponível. A página consultará novamente em instantes.')}</p>}
-    {status && !status.enabled && <p role="status" className="section-card">{label('Start BRLN Reserve from the App Store to make a conversion.', 'Inicie o BRLN Reserva na Loja para fazer uma conversão.')}</p>}
+    {!status && !unavailable && <TreasuryProgress text={label(`Loading ${appName} balances…`, `Carregando saldos do ${appName}…`)} />}
+    {unavailable && <p role="status" className="section-card">{label(`${appName} status is unavailable. The page will check again shortly.`, `O ${appName} está indisponível. A página consultará novamente em instantes.`)}</p>}
+    {status && !status.enabled && <p role="status" className="section-card">{label(`Start ${appName} from the App Store to make a conversion.`, `Inicie o ${appName} na Loja para fazer uma conversão.`)}</p>}
 
     {status?.enabled && <section className="section-card space-y-4">
-      <h2 className="text-lg font-semibold">{status.solana_address ? label('Balances', 'Saldos') : label('Set up BRLN Reserve', 'Configure o BRLN Reserva')}</h2>
+      <h2 className="text-lg font-semibold">{status.solana_address ? label('Balances', 'Saldos') : label(`Set up ${appName}`, `Configure o ${appName}`)}</h2>
       {status.solana_address && <div className="grid gap-2 text-sm sm:grid-cols-3">
         {([
           ['Lightning', status.lightning_sats, 'sats'],
@@ -441,7 +468,7 @@ export default function StablecoinTreasury() {
       {modal === 'lightning' && quote && <div className="mt-4"><Review quote={quote} locale={locale} label={label} /></div>}
       {busy && <div className="mt-4">
         <TreasuryProgress text={progress === 'submit' ? label('Submitting your conversion…', 'Enviando sua conversão…')
-          : label('Saving BRLN Reserve settings…', 'Salvando a configuração do BRLN Reserva…')} />
+          : label(`Saving ${appName} settings…`, `Salvando a configuração do ${appName}…`)} />
       </div>}
     </SensitiveActionModal>
   </div>

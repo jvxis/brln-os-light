@@ -791,7 +791,7 @@
     "lightningOps": "Lightning Ops",
     "lightningLoop": "Lightning Loop",
     "loopOutBrln": "Loop Out BR⚡LN",
-    "stablecoinTreasury": "BRLN Reserve",
+    "stablecoinTreasury": "BR⚡LN Reserve",
     "magmaSales": "Magma Sales",
     "feeCenter": "Fee Center",
     "channelRanking": "Channel Ranking",
@@ -1342,6 +1342,7 @@
     }
   },
   "appStore": {
+    "stablecoinTreasuryDescription": "Convert Lightning sats to self-custodied USDC on Solana and back.",
     "hardwallet": {
       "description": "Bitcoin wallet with BR⚡LN LightningOS and BR⚡LN Signer. Keys stay on Signer; LightningOS queries Electrum and broadcasts signed transactions.",
       "experimental": "Experimental pilot without an independent audit: use only small amounts you can afford to lose.",

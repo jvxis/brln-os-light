@@ -43,7 +43,7 @@ WHERE state IN ('deposit_pending','delivery_pending','delivery_issue','refund_pe
 type treasuryApp struct{ s *Server }
 
 func (a treasuryApp) Definition() appDefinition {
-	return appDefinition{ID: treasuryAppID, Name: "BRLN Reserva", Description: "Convert Lightning sats to native USDC on Solana and back."}
+	return appDefinition{ID: treasuryAppID, Name: "BR⚡LN Reserva", Description: "Convert Lightning sats to self-custodied USDC on Solana and back."}
 }
 
 func treasuryRuntimeReady() bool {
@@ -67,7 +67,7 @@ func (a treasuryApp) Info(ctx context.Context) (appInfo, error) {
 	result := newAppInfo(a.Definition())
 	if !treasuryRuntimeReady() || a.s.auth == nil || !a.s.auth.Enabled() {
 		result.Available = false
-		result.UnavailableMessage = "Requires the BRLN Reserva runtime on Linux amd64 and LightningOS login protection."
+		result.UnavailableMessage = "Requires the BR⚡LN Reserva runtime on Linux amd64 and LightningOS login protection."
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return result, nil
@@ -89,11 +89,11 @@ func (a treasuryApp) Info(ctx context.Context) (appInfo, error) {
 func (a treasuryApp) set(ctx context.Context, installed, enabled, requireInstalled bool) error {
 	if installed && enabled {
 		if !treasuryRuntimeReady() || a.s.auth == nil || !a.s.auth.Enabled() {
-			return errors.New("BRLN Reserva runtime or login protection unavailable")
+			return errors.New("BR⚡LN Reserva runtime or login protection unavailable")
 		}
 		out, err := treasuryCall(ctx, treasuryWorkerRequest{Action: "health"})
 		if err != nil || out.Status != "ready" {
-			return errors.New("BRLN Reserva worker unavailable")
+			return errors.New("BR⚡LN Reserva worker unavailable")
 		}
 	}
 	if err := a.s.ensureTreasurySchema(ctx); err != nil {
@@ -101,7 +101,7 @@ func (a treasuryApp) set(ctx context.Context, installed, enabled, requireInstall
 	}
 	result, err := a.s.db.Exec(ctx, "UPDATE stablecoin_treasury_settings SET installed=$1, enabled=$2 WHERE id=1 AND (NOT $3 OR installed)", installed, enabled, requireInstalled)
 	if err == nil && result.RowsAffected() != 1 {
-		return errors.New("BRLN Reserva is not installed")
+		return errors.New("BR⚡LN Reserva is not installed")
 	}
 	return err
 }

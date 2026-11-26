@@ -26,6 +26,22 @@ function formatSOL(lamports) {
   return `${lamports / 1_000_000_000n},${String(lamports % 1_000_000_000n).padStart(9, '0')} SOL`
 }
 
+const pilotErrors = {
+  quote_expired: 'A cotação expirou. Gere uma nova para conferir os valores.',
+  invalid_signature_or_order: 'O serviço rejeitou a assinatura ou a ordem. Nenhum envio foi iniciado.',
+  simulation_unavailable: 'A rede não respondeu à simulação. Nenhum envio foi iniciado.',
+  simulation_rejected: 'A rede rejeitou a simulação. Nenhum envio foi iniciado.',
+  refresh_unavailable: 'Não foi possível renovar a validade. Gere uma nova cotação.',
+  reconcile: 'A transmissão precisa ser conferida. Aguarde a verificação antes de repetir.',
+  busy: 'O assinador está processando outra ação. Aguarde alguns segundos.',
+}
+
+function sameReviewedTerms(previous, next) {
+  const fields = ['id', 'cluster', 'wallet', 'deposit', 'depositMicros', 'providerFeeMicros',
+    'expectedSats', 'lightningAddress', 'feeLamports', 'accountLamports', 'createDepositAccount', 'feeMode']
+  return fields.every(field => previous[field] === next[field])
+}
+
 function enableSigning() {
   const file = control('order')
   const form = control('authorize')
@@ -79,7 +95,10 @@ function enableSigning() {
       method: 'POST', headers: { 'X-LightningOS-Pilot': '1', 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!response.ok) throw new Error('Pilot request failed')
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}))
+      throw new Error(result.error ?? 'pilot_unavailable')
+    }
     return response.json()
   }
 
@@ -104,10 +123,10 @@ function enableSigning() {
       status.textContent = 'Consultando a cotação e os custos de rede…'
       try {
         review(await pilotRequest('/pilot/quote', {}))
-        status.textContent = 'Confira os valores e assine dentro de 60 segundos.'
+        status.textContent = 'Confira os valores e assine. A validade da transação será renovada na confirmação.'
         passwordInput.focus()
-      } catch {
-        status.textContent = 'Cotação indisponível. Se já enviou uma transação, aguarde a verificação.'
+      } catch (error) {
+        status.textContent = pilotErrors[error.message] ?? 'Cotação indisponível. Tente novamente em alguns segundos.'
       } finally {
         busy = false
         quote.disabled = false
@@ -144,6 +163,15 @@ function enableSigning() {
     confirm.disabled = true
     let submitting = false
     try {
+      if (pilot) {
+        const current = await pilotRequest('/pilot/refresh', { id: reviewedFile.id })
+        if (!sameReviewedTerms(reviewedFile, current)) {
+          review(current)
+          status.textContent = 'Os valores da rede mudaram. Confira a cotação atualizada antes de assinar.'
+          return
+        }
+        reviewedFile = current
+      }
       const direct = reviewedFile.feeMode === 'wallet'
       const sign = direct ? signDirectDeposit : signSponsoredDeposit
       signed = await sign(await backup.text(), password, reviewedFile)
@@ -160,10 +188,10 @@ function enableSigning() {
       status.textContent = direct
         ? 'Ordem assinada. Baixe o arquivo para transmitir a transação.'
         : 'Ordem assinada. A transmissão depende da assinatura do patrocinador.'
-    } catch {
-      status.textContent = submitting
-        ? 'A transmissão ainda precisa ser verificada. Aguarde a conferência antes de repetir.'
-        : 'Não foi possível assinar. Verifique o backup, a senha e a validade da ordem.'
+    } catch (error) {
+      status.textContent = pilotErrors[error.message] ?? (submitting
+        ? 'O serviço não respondeu à transmissão. Aguarde a conferência antes de repetir.'
+        : 'Não foi possível assinar. Confira o backup e a senha.')
     } finally {
       busy = false
       file.disabled = false

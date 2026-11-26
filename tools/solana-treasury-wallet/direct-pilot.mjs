@@ -27,14 +27,13 @@ function workerRequest(worker, request) {
   })
 }
 
-async function ensureUnsubmitted(path) {
+async function priorSubmission(path) {
   try {
-    await readFile(path)
+    return await readPilotJson(path)
   } catch (error) {
     if (error.code === 'ENOENT') return
     throw error
   }
-  throw new Error('A previous submission needs reconciliation')
 }
 
 async function signedBody(request) {
@@ -48,23 +47,34 @@ async function signedBody(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-export function directPilot(config) {
+function reply(response, status, body) {
+  response.writeHead(status).end(JSON.stringify(body))
+}
+
+export function directPilot(config, {
+  rpc = directOrderRpc, requestQuote = workerRequest, prepare = prepareDirectOrder,
+} = {}) {
   let active
   let busy = false
 
   return async (request, response) => {
     if (busy) {
-      response.writeHead(409).end()
+      reply(response, 409, { error: 'busy' })
       return
     }
     busy = true
-    const quoting = request.url === '/pilot/quote'
+    let phase = 'quote_unavailable'
     try {
-      await ensureUnsubmitted(config.submissionFile)
-      if (quoting) {
-        if (!active || active.order.expiresAt <= Date.now() + 15_000) {
+      phase = 'reconcile'
+      if (await priorSubmission(config.submissionFile)) {
+        reply(response, 409, { error: phase })
+        return
+      }
+      if (request.url === '/pilot/quote') {
+        phase = 'quote_unavailable'
+        if (!active || active.quote.expires_at * 1000 <= Date.now() + 15_000) {
           const apiKey = (await readFile(config.apiKeyFile, 'utf8')).trim()
-          const quote = await workerRequest(config.worker, {
+          const quote = await requestQuote(config.worker, {
             action: 'quote', api_key: apiKey, direction: 'to_lightning',
             recipient: config.recipient, refund: config.wallet, amount: config.quoteMicros,
           })
@@ -73,43 +83,75 @@ export function directPilot(config) {
               !Number.isSafeInteger(quote.amount_out) || quote.amount_out < config.minSats) {
             throw new Error('Quote outside pilot bounds')
           }
-          const order = await prepareDirectOrder({
-            id: randomUUID().replaceAll('-', ''), wallet: config.wallet, deposit: quote.deposit,
-            depositMicros: String(quote.amount_in), expectedSats: String(quote.amount_out),
-            providerFeeMicros: quote.provider_fee?.asset === 'USDC' ? String(quote.provider_fee.amount) : undefined,
-            lightningAddress: config.recipient, expiresAt: quote.expires_at * 1000,
-          })
-          if (Number(order.feeLamports) + Number(order.accountLamports) > config.maxLamports) {
-            throw new Error('Network cost outside pilot bounds')
-          }
+          const order = await prepareOrder(config, quote, randomUUID().replaceAll('-', ''), prepare)
           active = { order, quote }
+        } else if (active.order.expiresAt <= Date.now() + 15_000) {
+          active.order = await prepareOrder(config, active.quote, active.order.id, prepare)
         }
-        response.writeHead(200).end(JSON.stringify(active.order))
+        reply(response, 200, active.order)
         return
       }
+      if (request.url === '/pilot/refresh') {
+        phase = 'quote_expired'
+        const { id } = await signedBody(request)
+        if (!active || active.order.id !== id || active.quote.expires_at * 1000 <= Date.now() + 10_000) {
+          reply(response, 409, { error: phase })
+          return
+        }
+        phase = 'refresh_unavailable'
+        active.order = await prepareOrder(config, active.quote, id, prepare)
+        reply(response, 200, active.order)
+        return
+      }
+      phase = 'invalid_signature_or_order'
       if (!active) throw new Error('No active quote')
       const signed = await signedBody(request)
+      if (active.order.expiresAt <= Date.now()) {
+        reply(response, 409, { error: 'quote_expired' })
+        return
+      }
       const transaction = await verifyDirectDeposit(active.order, signed)
       const decoded = getTransactionDecoder().decode(Buffer.from(transaction, 'base64'))
       const signature = getBase58Decoder().decode(decoded.signatures[active.order.wallet])
-      const simulation = await directOrderRpc('simulateTransaction', transaction, {
+      phase = 'simulation_unavailable'
+      const simulation = await rpc('simulateTransaction', transaction, {
         encoding: 'base64', sigVerify: true, commitment: 'confirmed',
       })
-      if (simulation.value?.err !== null || active.order.expiresAt <= Date.now()) {
-        throw new Error('Unable to simulate the current transaction')
+      if (simulation.value?.err !== null) {
+        reply(response, 409, { error: 'simulation_rejected' })
+        return
       }
+      if (active.order.expiresAt <= Date.now()) {
+        reply(response, 409, { error: 'quote_expired' })
+        return
+      }
+      phase = 'reconcile'
       await writeFile(config.submissionFile, JSON.stringify({
         ...active, signature, submission: 'submitted_reconcile',
       }), { flag: 'wx' })
-      const sent = await directOrderRpc('sendTransaction', transaction, {
+      const sent = await rpc('sendTransaction', transaction, {
         encoding: 'base64', skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3,
       })
       if (sent !== signature) throw new Error('Submission requires reconciliation')
-      response.writeHead(200).end(JSON.stringify({ signature }))
+      reply(response, 200, { signature })
     } catch {
-      response.writeHead(409).end()
+      process.stderr.write(`Pilot request failed at ${phase}\n`)
+      reply(response, 409, { error: phase })
     } finally {
       busy = false
     }
   }
+}
+
+async function prepareOrder(config, quote, id, prepare) {
+  const order = await prepare({
+    id, wallet: config.wallet, deposit: quote.deposit,
+    depositMicros: String(quote.amount_in), expectedSats: String(quote.amount_out),
+    providerFeeMicros: quote.provider_fee?.asset === 'USDC' ? String(quote.provider_fee.amount) : undefined,
+    lightningAddress: config.recipient, expiresAt: quote.expires_at * 1000,
+  })
+  if (Number(order.feeLamports) + Number(order.accountLamports) > config.maxLamports) {
+    throw new Error('Network cost outside pilot bounds')
+  }
+  return { ...order, quoteExpiresAt: quote.expires_at * 1000 }
 }

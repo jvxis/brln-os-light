@@ -27,10 +27,19 @@ if ! command -v gcc >/dev/null; then
   [[ -z "$(dpkg --audit)" ]] || { echo 'Treasury cannot prepare a compiler with pending dpkg changes.' >&2; exit 1; }
   plan="$(LC_ALL=C apt-get --simulate --no-remove install --no-install-recommends build-essential)"
   if grep -Eq '^Remv |^Inst [^ ]+ \[' <<<"$plan"; then
-    echo 'Treasury compiler dependencies would change an installed package.' >&2
-    exit 1
+    # The Go bridge uses CGO. A private compiler avoids upgrading host libraries and restarting services.
+    echo 'Preparing an isolated Treasury compiler.'
+    zig_archive=zig-x86_64-linux-0.17.1.tar.xz
+    zig_sha256=3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a
+    curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+      --connect-timeout 15 --max-time 240 --retry 2 "https://ziglang.org/download/0.17.1/$zig_archive" -o "$stage/$zig_archive"
+    printf '%s  %s\n' "$zig_sha256" "$stage/$zig_archive" | sha256sum --strict --check
+    tar --no-same-owner --no-same-permissions -xf "$stage/$zig_archive" -C "$stage"
+    export CC="$stage/zig-x86_64-linux-0.17.1/zig cc -target x86_64-linux-gnu.2.34"
+    export ZIG_GLOBAL_CACHE_DIR="$stage/zig-global" ZIG_LOCAL_CACHE_DIR="$stage/zig-local"
+  else
+    DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-remove --no-install-recommends build-essential
   fi
-  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-remove --no-install-recommends build-essential
 fi
 if ! command -v patchelf >/dev/null; then
   # Reuse APT's signed distribution metadata without installing a host package.

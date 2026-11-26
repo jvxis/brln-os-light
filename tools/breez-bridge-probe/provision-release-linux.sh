@@ -24,6 +24,12 @@ cleanup() {
 trap cleanup EXIT
 
 if ! command -v gcc >/dev/null; then
+  [[ -z "$(dpkg --audit)" ]] || { echo 'Treasury cannot prepare a compiler with pending dpkg changes.' >&2; exit 1; }
+  plan="$(LC_ALL=C apt-get --simulate --no-remove install --no-install-recommends build-essential)"
+  if grep -Eq '^Remv |^Inst [^ ]+ \[' <<<"$plan"; then
+    echo 'Treasury compiler dependencies would change an installed package.' >&2
+    exit 1
+  fi
   DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-remove --no-install-recommends build-essential
 fi
 if ! command -v patchelf >/dev/null; then

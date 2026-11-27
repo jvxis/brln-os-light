@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import QRCode from 'qrcode'
 import { executeTreasury, getTreasuryStatus, prepareTreasurySolana, quoteTreasury, saveTreasuryBreezKey, saveTreasuryWallet, type TreasuryAmount, type TreasuryDirection, type TreasuryOrder, type TreasuryQuote, type TreasuryStatus } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
 
@@ -127,6 +128,8 @@ export default function StablecoinTreasury() {
   const [signer, setSigner] = useState<'setup' | 'return'>()
   const [copied, setCopied] = useState(false)
   const walletAddressInput = useRef<HTMLInputElement>(null)
+  const walletAddress = status?.solana_address
+  const [walletQr, setWalletQr] = useState<{ address: string; url: string }>()
   const [now, setNow] = useState(Date.now())
   const inFlight = useRef(false)
   const refresh = useCallback(async () => {
@@ -142,6 +145,14 @@ export default function StablecoinTreasury() {
     const timer = window.setInterval(() => { void refresh() }, 12_000)
     return () => window.clearInterval(timer)
   }, [refresh])
+  useEffect(() => {
+    if (!walletAddress) return
+    let active = true
+    QRCode.toDataURL(walletAddress, { width: 220, margin: 4 })
+      .then(url => { if (active) setWalletQr({ address: walletAddress, url }) })
+      .catch(() => { if (active) setWalletQr(undefined) })
+    return () => { active = false }
+  }, [walletAddress])
   useEffect(() => {
     if (!quote) return
     quoteHeading.current?.focus()
@@ -486,6 +497,8 @@ export default function StablecoinTreasury() {
               <button type="button" className="btn-secondary" onClick={() => void copyWalletAddress()}>{label('Copy address', 'Copiar endereço')}</button>
               {copied && <span role="status">{label('Copied', 'Copiado')}</span>}
             </div>
+            {walletQr && walletQr.address === walletAddress &&
+              <img src={walletQr.url} alt={label('Solana address QR code', 'QR Code do endereço Solana')} width={220} height={220} className="mx-auto mt-3 h-auto max-w-full rounded-lg bg-white" />}
           </details>}
           {status.breez_configured && <details className="rounded-xl border border-white/10 bg-black/10 p-3 text-sm">
             <summary className="cursor-pointer font-medium">{label('Breez settings', 'Configuração da Breez')}</summary>

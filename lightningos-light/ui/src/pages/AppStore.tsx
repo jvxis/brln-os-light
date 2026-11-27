@@ -108,7 +108,8 @@ const internalRoutes: Record<string, string> = {
   tapd: 'taproot-assets',
   loop: 'lightning-loop',
   'loopout-brln': 'loop-out-brln',
-  'magma-sales': 'magma-sales'
+  'magma-sales': 'magma-sales',
+  'stablecoin-treasury': 'stablecoin-treasury'
 }
 
 const statusStyles: Record<string, string> = {
@@ -1018,11 +1019,17 @@ export default function AppStore() {
                 ? t('nav.loopOutBrln')
               : app.id === 'magma-sales'
                 ? t('nav.magmaSales')
-              : t('appStore.internal')
+                : app.id === 'stablecoin-treasury'
+                  ? t('nav.stablecoinTreasury')
+                  : t('appStore.internal')
           const openUrl = app.external_url || (app.port && app.id !== 'brln-hardwallet' ? `${app.scheme || 'http'}://${host}:${app.port}` : '')
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`
           const publicPoolStratumEndpoint = `${host}:${publicPoolStratumPort}`
           const fedimintGatewayApiUrl = `http://${host}:${fedimintGatewayUIPort}/v1`
+          const appName = app.id === 'stablecoin-treasury' ? t('nav.stablecoinTreasury') : app.name
+          const appDescription = app.id === 'stablecoin-treasury'
+            ? t('appStore.stablecoinTreasuryDescription')
+            : app.id === 'brln-hardwallet' ? t('appStore.hardwallet.description') : app.description
           const icon = iconMap[app.id]
           const unavailable = app.available === false
           const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
@@ -1042,10 +1049,12 @@ export default function AppStore() {
               <div className="flex items-start justify-between gap-4">
                 <div className="flex min-w-0 items-start gap-4">
                   <div className="h-12 w-12 rounded-2xl bg-transparent flex items-center justify-center overflow-hidden shrink-0">
-                    {icon ? (
+                    {app.id === 'stablecoin-treasury' ? (
+                      <span aria-hidden="true" className="flex h-12 w-12 items-center justify-center rounded-2xl border border-brass/25 bg-brass/10 text-2xl font-semibold text-brass">$</span>
+                    ) : icon ? (
                       <img
                         src={icon}
-                        alt={`${app.name} icon`}
+                        alt={`${appName} icon`}
                         className={`h-12 w-12 rounded-2xl ${app.id === 'bark-wallet' ? 'bg-white p-2 object-contain' : app.id === 'electrs' || app.id === 'btcpay' || app.id === 'brln-community' ? 'object-contain' : 'object-cover'}`}
                       />
                     ) : (
@@ -1054,7 +1063,7 @@ export default function AppStore() {
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-lg font-semibold">{app.id === 'brln-hardwallet' ? 'BR⚡LN Hardwallet' : app.name}</h3>
+                      <h3 className="text-lg font-semibold">{app.id === 'brln-hardwallet' ? 'BR⚡LN Hardwallet' : appName}</h3>
                       {app.id === 'bark-wallet' && (
                         <>
                           <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-200">{t('appStore.barkWalletBeta')}</span>
@@ -1078,7 +1087,7 @@ export default function AppStore() {
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-fog/60">{app.id === 'brln-hardwallet' ? t('appStore.hardwallet.description') : app.description}</p>
+                    <p className="text-sm text-fog/60">{appDescription}</p>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -1088,8 +1097,8 @@ export default function AppStore() {
                       className="rounded-full border border-white/10 p-1.5 text-fog/45 transition hover:border-white/25 hover:text-fog disabled:cursor-not-allowed disabled:opacity-40"
                       disabled={appPreferenceBusy === app.id || (!isHidden && !canHide)}
                       onClick={() => void setAppHidden(app.id, !isHidden)}
-                      title={t(isHidden ? 'appStore.unhideApp' : 'appStore.hideApp', { app: app.name })}
-                      aria-label={t(isHidden ? 'appStore.unhideApp' : 'appStore.hideApp', { app: app.name })}
+                      title={t(isHidden ? 'appStore.unhideApp' : 'appStore.hideApp', { app: appName })}
+                      aria-label={t(isHidden ? 'appStore.unhideApp' : 'appStore.hideApp', { app: appName })}
                     >
                       {isHidden ? (
                         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">

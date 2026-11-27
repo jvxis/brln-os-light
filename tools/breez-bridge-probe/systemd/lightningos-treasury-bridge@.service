@@ -1,0 +1,36 @@
+[Unit]
+Description=Isolated LightningOS Breez bridge request
+
+[Service]
+Type=exec
+DynamicUser=yes
+ExecStart=/opt/lightningos/treasury-app/breez-bridge-probe --bridge-worker
+StandardInput=socket
+StandardOutput=socket
+StandardError=null
+RuntimeMaxSec=35
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=-/data/lnd -/var/lib/lightningos -/etc/lightningos -/opt/lightningos/manager
+MemoryMax=192M
+TasksMax=32
+UMask=0077

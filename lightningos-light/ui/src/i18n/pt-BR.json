@@ -791,6 +791,7 @@
     "lightningOps": "Operações Lightning",
     "lightningLoop": "Lightning Loop",
     "loopOutBrln": "Loop Out BR⚡LN",
+    "stablecoinTreasury": "BR⚡LN Reserva",
     "magmaSales": "Magma Sales",
     "feeCenter": "Central de Fees",
     "channelRanking": "Ranking de Canais",
@@ -1341,6 +1342,7 @@
     }
   },
   "appStore": {
+    "stablecoinTreasuryDescription": "Converta sats da Lightning em USDC em autocustódia na Solana e volte para bitcoin.",
     "hardwallet": {
       "description": "Carteira Bitcoin com BR⚡LN LightningOS e BR⚡LN Signer. As chaves ficam no Signer; o LightningOS consulta o Electrum e transmite transações assinadas.",
       "experimental": "Piloto experimental sem auditoria independente: use apenas valores pequenos, que você aceita perder.",
@@ -5614,6 +5616,7 @@
       "inventoryProbe": "Exploração reduzida por estoque: {{value}}",
       "keepaliveRefill": "Refill keepalive (anti-churn): {{value}}",
       "stockGate": "Estoque pago ainda não vendido: {{unsold}} (compras pausam em {{allowed}})",
+      "stockGateSiblings": "Outros canais com este peer já têm {{value}} na mesma taxa ou menor (conta como estoque)",
       "discovery": "Sonda de descoberta, degrau {{step}}: {{value}} com teto de fee de {{ppm}} ppm",
       "targetClass": "Classe: {{value}}",
       "targetClasses": {
@@ -5920,7 +5923,28 @@
         "rebalanceStartCustom": "Iniciar custom",
         "rebalancePreviewLoading": "Calculando padrões efetivos…",
         "rebalancePreviewUnavailable": "Não foi possível calcular o preview.",
-        "rebalanceCustomInvalid": "Informe inteiros positivos; a taxa máxima aceita é 10.000 ppm.",
+        "rebalanceCustomInvalid": "Informe inteiros positivos; a taxa máxima aceita é 10.000 ppm. A fee total aceita até 3 casas decimais.",
+        "rebalanceSource": "Canal de origem",
+        "rebalanceSourceAuto": "Automática (origens aptas)",
+        "rebalanceSourceOption": "{{alias}} · {{id}} · até {{amount}} sats",
+        "rebalanceSourceOptionExcluded": "{{alias}} · {{id}} · até {{amount}} sats · excluído",
+        "rebalanceSourceHelp": "A origem fixa nunca é trocada por outro canal. Se não puder ser usada, o job para e diz o motivo.",
+        "rebalanceAllowExcluded": "Usar este canal excluído como origem só neste job. A exclusão continua valendo e as outras proteções de origem também.",
+        "rebalanceMaxFeeAbsolute": "Fee total máxima (sats)",
+        "rebalanceMaxFeeAbsoluteHelp": "Opcional, até 3 casas decimais. Vale o menor entre este valor e o limite em ppm, sobre o job inteiro, somando todos os lotes.",
+        "rebalanceMaxFeeAbsoluteBinds": "O teto de fee total está abaixo do limite em ppm e vale para o job inteiro.",
+        "rebalanceSourceUsable": "Origem fixa {{alias}}: pode ceder até {{amount}} sats.",
+        "rebalanceSourceException": "A origem fixa {{alias}} está excluída e será usada só neste job, até {{amount}} sats.",
+        "rebalanceSourceBlocked": "A origem fixa {{alias}} não pode ser usada: {{reason}}",
+        "fixedSourceReason": {
+          "source_not_found": "o canal não está aberto.",
+          "source_is_target": "é o próprio canal que está sendo abastecido.",
+          "source_inactive": "o canal está inativo.",
+          "source_parked": "o canal está estacionado.",
+          "source_quarantined": "a liquidez dele acabou de ser comprada e ainda está em quarentena.",
+          "source_no_free_liquidity": "não tem liquidez acima do piso de origem e da proteção de liquidez paga.",
+          "source_excluded": "está excluído como origem. Marque a exceção só para este job para usá-lo."
+        },
         "manualRestartBudgetWarning": "Manual restart pode ser bloqueado: custo estimado {{cost}} excede orçamento útil {{budget}}.",
         "manualRestartBudgetWarningChunk": "Manual restart pode ser bloqueado: mesmo um pedaço de max amount custa {{cost}}, acima do orçamento útil {{budget}} (o reabastecimento roda em pedaços).",
         "bulkAuto": "Auto (todos)",
@@ -6621,6 +6645,7 @@
       "reason": {
         "sales_7d": "{{count}} vendas em 7 dias",
         "observed_days": "{{count}} dias observados",
+        "stock_before_pct": "{{count}}% do canal em estoque antes desta semana",
         "route_hits_30d": "{{count}} rotas em 30 dias",
         "candidate_confidence": "confiança do candidato {{count}}"
       }

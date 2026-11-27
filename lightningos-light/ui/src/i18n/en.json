@@ -791,6 +791,7 @@
     "lightningOps": "Lightning Ops",
     "lightningLoop": "Lightning Loop",
     "loopOutBrln": "Loop Out BR⚡LN",
+    "stablecoinTreasury": "BR⚡LN Reserve",
     "magmaSales": "Magma Sales",
     "feeCenter": "Fee Center",
     "channelRanking": "Channel Ranking",
@@ -1341,6 +1342,7 @@
     }
   },
   "appStore": {
+    "stablecoinTreasuryDescription": "Convert Lightning sats to self-custodied USDC on Solana and back.",
     "hardwallet": {
       "description": "Bitcoin wallet with BR⚡LN LightningOS and BR⚡LN Signer. Keys stay on Signer; LightningOS queries Electrum and broadcasts signed transactions.",
       "experimental": "Experimental pilot without an independent audit: use only small amounts you can afford to lose.",
@@ -5614,6 +5616,7 @@
       "inventoryProbe": "Reduced inventory exploration: {{value}}",
       "keepaliveRefill": "Keepalive refill (anti-churn): {{value}}",
       "stockGate": "Paid stock not sold yet: {{unsold}} (purchases pause at {{allowed}})",
+      "stockGateSiblings": "Other channels to this peer already hold {{value}} at the same fee or lower (counts as stock)",
       "discovery": "Discovery probe, step {{step}}: {{value}} with a {{ppm}} ppm fee cap",
       "targetClass": "Class: {{value}}",
       "targetClasses": {
@@ -5920,7 +5923,28 @@
         "rebalanceStartCustom": "Start custom",
         "rebalancePreviewLoading": "Calculating effective defaults…",
         "rebalancePreviewUnavailable": "Unable to calculate the preview.",
-        "rebalanceCustomInvalid": "Enter positive integers; the maximum accepted fee is 10,000 ppm.",
+        "rebalanceCustomInvalid": "Enter positive integers; the maximum accepted fee is 10,000 ppm. The total fee accepts up to 3 decimals.",
+        "rebalanceSource": "Source channel",
+        "rebalanceSourceAuto": "Automatic (eligible sources)",
+        "rebalanceSourceOption": "{{alias}} · {{id}} · up to {{amount}} sats",
+        "rebalanceSourceOptionExcluded": "{{alias}} · {{id}} · up to {{amount}} sats · excluded",
+        "rebalanceSourceHelp": "A fixed source is never swapped for another channel. If it cannot be used, the job stops and says why.",
+        "rebalanceAllowExcluded": "Use this excluded channel as the source for this job only. Its exclusion stays in place and the other source guards still apply.",
+        "rebalanceMaxFeeAbsolute": "Maximum total fee (sats)",
+        "rebalanceMaxFeeAbsoluteHelp": "Optional, up to 3 decimals. The lower of this and the ppm limit applies to the whole job, across every lot.",
+        "rebalanceMaxFeeAbsoluteBinds": "The total fee cap is below the ppm limit and applies to the whole job.",
+        "rebalanceSourceUsable": "Fixed source {{alias}}: can give up to {{amount}} sats.",
+        "rebalanceSourceException": "Fixed source {{alias}} is excluded and will be used for this job only, up to {{amount}} sats.",
+        "rebalanceSourceBlocked": "Fixed source {{alias}} cannot be used: {{reason}}",
+        "fixedSourceReason": {
+          "source_not_found": "the channel is not open.",
+          "source_is_target": "it is the channel being refilled.",
+          "source_inactive": "the channel is inactive.",
+          "source_parked": "the channel is parked.",
+          "source_quarantined": "its liquidity was just bought and is still in quarantine.",
+          "source_no_free_liquidity": "it has no liquidity above the source floor and the paid-liquidity protection.",
+          "source_excluded": "it is excluded as a source. Tick the one-job exception to use it."
+        },
         "manualRestartBudgetWarning": "Manual restart may be blocked: estimated cost {{cost}} exceeds usable budget {{budget}}.",
         "manualRestartBudgetWarningChunk": "Manual restart may be blocked: even one max-amount chunk costs {{cost}}, above the usable budget {{budget}} (the top-up runs in chunks).",
         "bulkAuto": "Auto all",
@@ -6621,6 +6645,7 @@
       "reason": {
         "sales_7d": "{{count}} sales in 7 days",
         "observed_days": "{{count}} days observed",
+        "stock_before_pct": "{{count}}% of the channel held before this week",
         "route_hits_30d": "{{count}} routes in 30 days",
         "candidate_confidence": "candidate confidence {{count}}"
       }

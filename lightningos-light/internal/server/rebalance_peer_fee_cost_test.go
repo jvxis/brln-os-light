@@ -55,9 +55,12 @@ func peerFeeCostPlan(t *testing.T, peerFeeAsCost bool) rebalanceAutoScanCandidat
 }
 
 func TestPeerFeeAsCostKeepsMeasuredSellerOutOfROIGuardrail(t *testing.T) {
+	// Since 0.5.60 a measured seller has the peer hop counted once even with
+	// the option off (sovereignTargetEconomicsConfig): its own cost and its own
+	// sales cover the lot, no prior is involved.
 	legacy := peerFeeCostPlan(t, false)
-	if legacy.ROISkipped != 1 || len(legacy.Candidates) != 0 {
-		t.Fatalf("legacy model should drop the seller at roi_guardrail: roi_skipped=%d candidates=%d", legacy.ROISkipped, len(legacy.Candidates))
+	if legacy.ROISkipped != 0 || len(legacy.Candidates) != 1 || legacy.Candidates[0].SecondChanceOnly {
+		t.Fatalf("a measured seller must pass with the option off: roi_skipped=%d candidates=%+v", legacy.ROISkipped, legacy.Candidates)
 	}
 	counted := peerFeeCostPlan(t, true)
 	if counted.ROISkipped != 0 || len(counted.Candidates) != 1 {

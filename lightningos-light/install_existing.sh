@@ -1518,6 +1518,12 @@ main() {
   if prompt_yes_no "Build and install UI now?" "y"; then
     ensure_node
     build_ui
+    local treasury_provision="$REPO_ROOT/../tools/breez-bridge-probe/provision-release-linux.sh"
+    if [[ -f "$treasury_provision" && ! -L "$treasury_provision" ]]; then
+      if ! bash "$treasury_provision" "${GO_BIN:-}" "${NPM_BIN:-}"; then
+        print_warn "USDC Treasury runtime unavailable. The rest of LightningOS is installed."
+      fi
+    fi
   fi
 
   if prompt_yes_no "Run reports backfill now?" "n"; then

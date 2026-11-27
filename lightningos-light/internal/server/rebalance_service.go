@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -343,6 +344,11 @@ const (
 )
 
 type RebalanceConfig struct {
+	// operatorFeeCap is set only on the copy of the config a manual job with
+	// an absolute fee cap runs with. Unexported: never serialized, never
+	// persisted, nil for every other job.
+	operatorFeeCap *operatorFeeCap
+
 	AutoEnabled                           bool    `json:"auto_enabled"`
 	Profile                               string  `json:"profile"`
 	SchedulerMode                         string  `json:"scheduler_mode"`
@@ -1081,9 +1087,11 @@ type RebalanceSovereignDecision struct {
 	RealizedEconomicsMultiplier float64 `json:"realized_economics_multiplier,omitempty"`
 	ExplorationSlot             bool    `json:"exploration_slot,omitempty"`
 	KeepaliveRefill             bool    `json:"keepalive_refill,omitempty"`
+	SecondChance                bool    `json:"second_chance,omitempty"`
 	StockUnsoldSat              int64   `json:"stock_unsold_sat,omitempty"`
 	StockAllowedSat             int64   `json:"stock_allowed_sat,omitempty"`
 	StockDemandSat              int64   `json:"stock_demand_sat,omitempty"`
+	StockSiblingLocalSat        int64   `json:"stock_sibling_local_sat,omitempty"`
 	Discovery                   bool    `json:"discovery,omitempty"`
 	DiscoveryStep               int     `json:"discovery_step,omitempty"`
 	DiscoveryFeeCapPpm          int64   `json:"discovery_fee_cap_ppm,omitempty"`
@@ -1293,6 +1301,11 @@ type RebalanceRunPreview struct {
 	AmountOverridesConfig bool    `json:"amount_overrides_config"`
 	AmountClamped         bool    `json:"amount_clamped"`
 	FeeExceedsOutgoing    bool    `json:"fee_exceeds_outgoing"`
+	// MaxFeeMsat is the most the job may pay in total: the ppm limit over the
+	// amount, or the operator's absolute cap when that is smaller.
+	MaxFeeMsat     int64                      `json:"max_fee_msat"`
+	FeeCapAbsolute bool                       `json:"fee_cap_absolute"`
+	Source         *RebalanceRunPreviewSource `json:"source,omitempty"`
 }
 
 type RebalanceAttempt struct {
@@ -1634,6 +1647,7 @@ type RebalanceService struct {
 	cfg                             RebalanceConfig
 	cfgLoaded                       bool
 	mcHalfLifeApplied               int64
+	refusedEdges                    *refusedEdgeMemory
 	lastScan                        time.Time
 	lastScanStatus                  string
 	lastScanDetail                  string
@@ -4223,7 +4237,7 @@ func (s *RebalanceService) runAutoScan() {
 		// construction) and lower channels that stopped selling. Reuses the
 		// snapshots, pair stats and structural cooldowns already loaded above.
 		if cfg.AutoTargetEnabled && shouldEvaluateAutoTarget(schedulerMode) {
-			s.evaluateAutoTarget(ctx, cfg, scanAt, snapshots, settings, sovereignPlan.Candidates, sovereignPairStats, sovereignStructuralCooldowns)
+			s.evaluateAutoTarget(ctx, cfg, scanAt, snapshots, settings, withoutSecondChanceOnlyTargets(sovereignPlan.Candidates), sovereignPairStats, sovereignStructuralCooldowns)
 		}
 		reservedSlots := 0
 		if guaranteedSlot.Queued {
@@ -4666,8 +4680,8 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		if inventoryProbe {
 			targetAmount = inventoryAmount
 			budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
-			estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, targetCfg)
-			target.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
+			estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount))
+			target.ExpectedGainSat = estimateTargetGainForConfig(sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount), target.Channel, targetAmount)
 			target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
 		}
 		// Keepalive refill (anti-churn): a sink that AutoFee has flagged as
@@ -4682,8 +4696,8 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			if keepaliveAmount := sovereignKeepaliveRefillAmount(target.Channel, targetCfg); keepaliveAmount > 0 && keepaliveAmount < targetAmount {
 				targetAmount = keepaliveAmount
 				budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
-				estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, targetCfg)
-				target.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
+				estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount))
+				target.ExpectedGainSat = estimateTargetGainForConfig(sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount), target.Channel, targetAmount)
 				target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
 			}
 		}
@@ -4691,6 +4705,20 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		// profit minimum, with profit >= 0). The route gates (route-dead source
 		// share, low-success dead ban) stay in force: a keepalive probe against
 		// a target nothing can reach only quarantines the sources.
+		// Second chance: a target held back on an assumed cost that drew the
+		// exploration slot buys one lot at the operator's start amount, enough
+		// to measure its route price and whether it sells, under the usual fee
+		// cap.
+		secondChance := target.SecondChanceOnly && target.ExplorationSlot
+		if secondChance && !keepalive {
+			if lot := sovereignSecondChanceAmountSat(targetCfg, targetAmount); lot < targetAmount {
+				targetAmount = lot
+				budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
+				estimatedCost = applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount))
+				target.ExpectedGainSat = estimateTargetGainForConfig(sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount), target.Channel, targetAmount)
+				target.ExpectedROI, target.ExpectedROIValid = estimateTargetROI(target.ExpectedGainSat, estimatedCost, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
+			}
+		}
 		bypassEconomics := target.ExplorationSlot || keepalive
 		historicalSuccessRate, historicalAttempts := sovereignHistoricalSuccessRate(target.PairStats)
 		expectedProfit := target.ExpectedGainSat - estimatedCost
@@ -4740,11 +4768,13 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 			RealizedEconomicsMultiplier: target.RealizedEconomicsMultiplier,
 			ExplorationSlot:             target.ExplorationSlot,
 			KeepaliveRefill:             keepalive,
+			SecondChance:                secondChance,
 		}
 		if targetCfg.StockGateEnabled && stockLevel.Known {
 			decision.StockUnsoldSat = stockLevel.UnsoldSat
 			decision.StockAllowedSat = sovereignStockGateAllowedSat(stockLevel, target.Channel.CapacitySat, targetCfg)
 			decision.StockDemandSat = stockLevel.DemandSat
+			decision.StockSiblingLocalSat = stockLevel.SiblingLocalSat
 		}
 		if target.AutomationIntent != nil {
 			decision.IntentKind = target.AutomationIntent.Kind
@@ -4779,6 +4809,9 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		case stockBlocked:
 			decision.Reason = sovereignStockGateReason
 			noteSkip(decision.Reason)
+		case target.SecondChanceOnly && !secondChance:
+			decision.Reason = "roi_guardrail"
+			noteSkip(decision.Reason)
 		case inventoryProbe && targetCfg.ROIMin > 0 && decision.ExpectedROIValid && decision.ExpectedROI < targetCfg.ROIMin:
 			decision.Reason = "roi_guardrail"
 			noteSkip(decision.Reason)
@@ -4798,7 +4831,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 		// antes da lógica de exploration ter efeito visível. Resultado: pool
 		// efetivo travado nos top-score targets, que se queimam em
 		// target_structural_cooldown e somem do scan por 6h.
-		case !(bypassEconomics && expectedProfit >= 0) && expectedProfit < cfg.SovereignMinExpectedProfitSat:
+		case !(bypassEconomics && (expectedProfit >= 0 || secondChance)) && expectedProfit < cfg.SovereignMinExpectedProfitSat:
 			decision.Reason = "expected_profit_below_min"
 			noteSkip(decision.Reason)
 		case !bypassEconomics && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
@@ -4843,10 +4876,10 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					continue
 				}
 				decision.AmountSat = targetAmount
-				resizedEstimatedCost := applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, targetCfg)
+				resizedEstimatedCost := applyPeerFeeCostFloor(estimateSovereignTargetCostWithReference(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, plan.ReferenceCostPpm, targetCfg), targetAmount, target.Channel.PeerFeeRatePpm, sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount))
 				decision.EstimatedCostSat = resizedEstimatedCost
 				decision.BudgetCostSat = budgetCost
-				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
+				decision.ExpectedGainSat = estimateTargetGainForConfig(sovereignTargetEconomicsConfig(targetCfg, target.Channel, targetAmount), target.Channel, targetAmount)
 				decision.ExpectedProfitSat = decision.ExpectedGainSat - decision.EstimatedCostSat
 				decision.ExpectedROI, decision.ExpectedROIValid = estimateTargetROI(decision.ExpectedGainSat, decision.EstimatedCostSat, targetAmount, target.Channel.OutgoingFeePpm, target.Channel.PeerFeeRatePpm)
 				if inventoryProbe && targetCfg.ROIMin > 0 && decision.ExpectedROIValid && decision.ExpectedROI < targetCfg.ROIMin {
@@ -4855,7 +4888,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					appendDecision(decision)
 					continue
 				}
-				if !(bypassEconomics && decision.ExpectedProfitSat >= 0) && decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
+				if !(bypassEconomics && (decision.ExpectedProfitSat >= 0 || secondChance)) && decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
 					decision.Reason = "expected_profit_below_min"
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -5183,6 +5216,10 @@ type rebalanceTarget struct {
 	// exploration mechanism. These bypassed the score sort to give a
 	// historically-deprioritized candidate a chance to be tried.
 	ExplorationSlot bool
+	// SecondChanceOnly: the candidate failed the ROI/profit guardrail on an
+	// assumed cost (sovereignSecondChanceEligible). It runs only on an
+	// exploration slot, at the operator's start amount.
+	SecondChanceOnly bool
 	// PeerHasParallelChannels: the peer has another channel with us. The
 	// delegated fast path cannot pin the incoming channel then, so a
 	// discovery probe (fast path only) would be skipped before trying.
@@ -5369,10 +5406,20 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		} else {
 			estimatedCost = estimateHistoricalCost(targetAmount, snapshot.RebalanceCost7dPpm)
 		}
-		estimatedCost = applyPeerFeeCostFloor(estimatedCost, targetAmount, snapshot.PeerFeeRatePpm, targetCfg)
-		expectedGain := estimateTargetGainForConfig(targetCfg, snapshot, targetAmount)
+		econCfg := targetCfg
+		if input.SovereignRanking {
+			econCfg = sovereignTargetEconomicsConfig(targetCfg, snapshot, targetAmount)
+		}
+		estimatedCost = applyPeerFeeCostFloor(estimatedCost, targetAmount, snapshot.PeerFeeRatePpm, econCfg)
+		expectedGain := estimateTargetGainForConfig(econCfg, snapshot, targetAmount)
 		expectedROI, roiValid := estimateTargetROI(expectedGain, estimatedCost, targetAmount, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
-		if input.Cfg.ROIMin > 0 && roiValid && expectedROI < input.Cfg.ROIMin {
+		// A target that fails the entry guardrails on an assumed cost stays in
+		// the list for the exploration draw only; the sovereign loop holds it
+		// at roi_guardrail unless it receives the slot.
+		secondChanceOnly := input.SovereignRanking &&
+			rebalanceCandidateFailsEntryEconomics(input.Cfg, expectedGain, estimatedCost, expectedROI, roiValid) &&
+			sovereignSecondChanceEligible(input.Cfg, snapshot, targetAmount, expectedGain)
+		if !secondChanceOnly && input.Cfg.ROIMin > 0 && roiValid && expectedROI < input.Cfg.ROIMin {
 			plan.ROISkipped++
 			noteSkip("roi_guardrail")
 			plan.SkippedDetails = append(plan.SkippedDetails, RebalanceSkipDetail{
@@ -5395,7 +5442,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		// their configured floor — defer to roi_guardrail above. We still fire
 		// when ROIMin is unset (<=0) or >= 1 so default behavior is preserved.
 		lossTolerantROI := input.Cfg.ROIMin > 0 && input.Cfg.ROIMin < 1
-		if !lossTolerantROI && expectedGain > 0 && estimatedCost > 0 && expectedGain < estimatedCost {
+		if !secondChanceOnly && !lossTolerantROI && expectedGain > 0 && estimatedCost > 0 && expectedGain < estimatedCost {
 			plan.ProfitSkipped++
 			noteSkip("profit_guardrail")
 			plan.SkippedDetails = append(plan.SkippedDetails, RebalanceSkipDetail{
@@ -5441,6 +5488,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			UnsoldLiquidity:         input.SovereignUnsoldLiquidity[snapshot.ChannelID],
 			TargetClass:             classifySovereignTarget(pairStats, input.Cfg),
 			PeerHasParallelChannels: rebalancePeerHasParallelChannels(snapshot, input.Channels),
+			SecondChanceOnly:        secondChanceOnly,
 		})
 		if !plan.TopScoreSet || score > plan.TopScore {
 			plan.TopScore = score
@@ -5701,7 +5749,7 @@ func buildOperatorRebalancePreview(target lndclient.ChannelInfo, targetPct float
 	return preview, nil
 }
 
-func (s *RebalanceService) PreviewOperatorJob(ctx context.Context, targetChannelID uint64, targetPctOverride *float64, amountOverride *int64, feeLimitOverride *int64) (RebalanceRunPreview, error) {
+func (s *RebalanceService) PreviewOperatorJob(ctx context.Context, targetChannelID uint64, targetPctOverride *float64, amountOverride *int64, feeLimitOverride *int64, opts operatorJobOptions) (RebalanceRunPreview, error) {
 	cfg, err := s.loadConfig(ctx)
 	if err != nil {
 		return RebalanceRunPreview{}, err
@@ -5734,7 +5782,34 @@ func (s *RebalanceService) PreviewOperatorJob(ctx context.Context, targetChannel
 	if targetPctOverride != nil {
 		targetPct = *targetPctOverride
 	}
-	return buildOperatorRebalancePreview(target, targetPct, cfg, setting, amountOverride, feeLimitOverride)
+	preview, err := buildOperatorRebalancePreview(target, targetPct, cfg, setting, amountOverride, feeLimitOverride)
+	if err != nil {
+		return preview, err
+	}
+	applyOperatorFeeCapToPreview(&preview, opts.MaxFeeMsat)
+	if opts.SourceChannelID != 0 {
+		source, err := s.operatorSourceSnapshot(ctx, cfg, opts.SourceChannelID)
+		if err != nil {
+			return preview, err
+		}
+		preview.Source = buildRunPreviewSource(source, targetChannelID, opts.AllowExcludedSource)
+	}
+	return preview, nil
+}
+
+// applyOperatorFeeCapToPreview states the job's total fee ceiling: the ppm
+// limit over the amount, or the absolute cap when the operator set a smaller
+// one. The cap is never rounded up.
+func applyOperatorFeeCapToPreview(preview *RebalanceRunPreview, maxFeeMsat int64) {
+	if preview == nil {
+		return
+	}
+	preview.MaxFeeMsat = preview.EffectiveAmountSat * preview.EffectiveFeeLimitPpm / 1000
+	if maxFeeMsat > 0 && maxFeeMsat < preview.MaxFeeMsat {
+		preview.MaxFeeMsat = maxFeeMsat
+		preview.FeeCapAbsolute = true
+		preview.MaxFeeSat = (maxFeeMsat + 999) / 1000
+	}
 }
 
 type operatorRebalanceOverrides struct {
@@ -5744,6 +5819,11 @@ type operatorRebalanceOverrides struct {
 	FeeLimitPpm       int64
 	TargetPctSet      bool
 	TargetPct         float64
+	// Fixed source, its one-job exclusion exception and the absolute fee cap
+	// (see operatorJobOptions). Zero values mean "not set".
+	SourceChannelID     uint64
+	AllowExcludedSource bool
+	MaxFeeMsat          int64
 }
 
 func (s *RebalanceService) startJob(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool) (int64, error) {
@@ -5757,13 +5837,16 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 // limit (applied later in runJob) still hold. Only this button path sets
 // operatorInitiated; the manual-restart watch, scheduled restarts, and the
 // auto/rules scan are unaffected.
-func (s *RebalanceService) startOperatorJob(targetChannelID uint64, targetPct float64, amountOverride *int64, feeLimitPpm *int64, manualAutoRestart bool) (int64, error) {
+func (s *RebalanceService) startOperatorJob(targetChannelID uint64, targetPct float64, amountOverride *int64, feeLimitPpm *int64, manualAutoRestart bool, opts operatorJobOptions) (int64, error) {
 	overrides := operatorRebalanceOverrides{
-		OperatorInitiated: true,
-		AmountSet:         amountOverride != nil,
-		FeeLimitSet:       feeLimitPpm != nil,
-		TargetPctSet:      true,
-		TargetPct:         targetPct,
+		OperatorInitiated:   true,
+		AmountSet:           amountOverride != nil,
+		FeeLimitSet:         feeLimitPpm != nil,
+		TargetPctSet:        true,
+		TargetPct:           targetPct,
+		SourceChannelID:     opts.SourceChannelID,
+		AllowExcludedSource: opts.SourceChannelID != 0 && opts.AllowExcludedSource,
+		MaxFeeMsat:          opts.MaxFeeMsat,
 	}
 	var amount int64
 	if amountOverride != nil {
@@ -6176,6 +6259,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 						continue
 					}
 					sourceUsed = htlc.Route.Hops[0].ChanId
+					s.refusedEdgeStore().clearForwarded(htlc.Route, -1, selfPub)
 					for _, hop := range htlc.Route.Hops {
 						if hop.PubKey != "" {
 							routeHops = append(routeHops, hop.PubKey)
@@ -6270,6 +6354,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 			continue
 		}
 		sourceUsed = htlc.Route.Hops[0].ChanId
+		s.refusedEdgeStore().clearForwarded(htlc.Route, -1, selfPub)
 		for _, hop := range htlc.Route.Hops {
 			if hop.PubKey != "" {
 				routeHops = append(routeHops, hop.PubKey)
@@ -6395,6 +6480,13 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	if r.overrides.FeeLimitSet {
 		feeCfg.FeeLimitPpm = r.overrides.FeeLimitPpm
 	}
+	if r.overrides.OperatorInitiated && r.overrides.MaxFeeMsat > 0 {
+		// One budget shared by every fee limit this job computes, whichever
+		// copy of the config the call site happens to hold.
+		feeCap := newOperatorFeeCap(r.overrides.MaxFeeMsat)
+		feeCfg.operatorFeeCap = feeCap
+		cfg.operatorFeeCap = feeCap
+	}
 	minExecuteSat = effectiveMinExecuteSat(feeCfg)
 	minProbeSat = effectiveMinProbeSat(feeCfg)
 	startAmountSat := effectiveStartAmountSat(feeCfg)
@@ -6518,6 +6610,20 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	targetHasParallelPeer := rebalancePeerHasParallelChannels(targetSnapshot, channelSnapshots)
 
 	sources := filterSources(channelSnapshots, targetChannelID)
+	if r.overrides.OperatorInitiated && r.overrides.SourceChannelID != 0 {
+		// The operator fixed the source of this job. It is that channel or
+		// nothing: no other source is ever substituted, and the only gate
+		// the one-job exception lifts is the persistent source exclusion.
+		fixed, blocked := resolveFixedRebalanceSource(channelSnapshots, targetChannelID, r.overrides.SourceChannelID, r.overrides.AllowExcludedSource)
+		if blocked != "" {
+			s.finishJob(jobID, "failed", "fixed source not usable: "+blocked)
+			return
+		}
+		sources = []RebalanceChannel{fixed}
+		if s.logger != nil {
+			s.logger.Printf("rebalance job=%d: operator fixed source chan=%d exclusion_exception=%t max_fee_msat=%d", jobID, fixed.ChannelID, fixed.ExcludedAsSource, r.overrides.MaxFeeMsat)
+		}
+	}
 	if useRecentFailureCache {
 		sourceCooldowns := s.loadRecentSourceCooldowns(ctx, time.Now().Add(-recentCooldownWindow))
 		routeabilityTTL := sourceRouteabilityTTLForConfig(cfg)
@@ -6699,6 +6805,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		}
 	}
 	recordPairSuccess := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, amountSat int64, feePpm int64, feePaidSat int64, routeHops []string) {
+		st.feeCfg.operatorFeeCap.spendSat(feePaidSat)
 		s.recordPairSuccess(ctx, sourceChannelID, targetChannelID, amountSat, feePpm, feePaidSat, routeHops)
 		delete(currentJobBlockedPairs, sourceChannelID)
 		now := time.Now()
@@ -6917,6 +7024,17 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 	ignoredPairs := make([]*lnrpc.NodePair, 0)
 	maxIgnoredEntries := 500
 	ignoredMu := sync.Mutex{}
+	// Start from the directions earlier jobs were refused at and that are
+	// still remembered. Half of the job's own list stays free for what this
+	// job learns.
+	refusedEdgeSeed := s.refusedEdgeSeed(ctx, cfg)
+	for _, edge := range s.refusedEdgeStore().active(time.Now(), maxIgnoredEntries/2) {
+		ignoredEdgeSet[fmt.Sprintf("%d:%t", edge.ChannelId, edge.DirectionReverse)] = struct{}{}
+		ignoredEdges = append(ignoredEdges, edge)
+	}
+	if len(ignoredEdges) > 0 && s.logger != nil {
+		s.logger.Printf("rebalance job=%d: starts with %d directions refused in earlier jobs", jobID, len(ignoredEdges))
+	}
 
 	sleepWithContext := func(d time.Duration) bool {
 		if d <= 0 {
@@ -7064,8 +7182,18 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		}
 		ignoredEdgeSet[key] = struct{}{}
 		ignoredEdges = append(ignoredEdges, edge)
+		remembered := false
+		s.refusedEdgeStore().clearForwarded(route, int(failureIndex), selfPubkey)
+		if refusedEdgeSeed > 0 && !rebalanceProbeFailureOnOwnChannel(route, failureIndex, selfPubkey) {
+			s.refusedEdgeStore().note(edge, time.Now(), refusedEdgeSeed)
+			remembered = true
+		}
 		if s.logger != nil {
-			s.logger.Printf("rebalance job=%d: probe refused by node at position %d on outgoing chan=%d; direction ignored for this job", jobID, failureIndex, edge.ChannelId)
+			scope := "direction ignored for this job"
+			if remembered {
+				scope = "direction ignored for this job and remembered for the next ones"
+			}
+			s.logger.Printf("rebalance job=%d: probe refused by node at position %d on outgoing chan=%d; %s", jobID, failureIndex, edge.ChannelId, scope)
 		}
 	}
 
@@ -7199,6 +7327,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 							_ = s.applyRebalanceLedger(ctx, targetChannelID, amountTry, feePaidSat)
 							_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 							cachedRouteMax := s.maxAmountOnRouteSat(attemptCtx, cachedRoute, selfPubkey)
+							s.refusedEdgeStore().clearForwarded(cachedRoute, -1, selfPubkey)
 							if s.logger != nil {
 								s.logger.Printf("rebalance job=%d: cached route fast-path succeeded source=%d amount=%d hops=%d", jobID, source.ChannelID, amountTry, len(stat.LastSuccessRouteHops))
 							}
@@ -7297,6 +7426,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 					lastErr = errors.New("probe returned no amount")
 					continue
 				}
+				s.refusedEdgeStore().clearForwarded(route, -1, selfPubkey)
 				if maxAmount > routeAmount {
 					maxAmount = routeAmount
 				}
@@ -8168,8 +8298,12 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 	}
 
 	if anySuccess {
-		s.finishJob(jobID, "partial", fmt.Sprintf("remaining %d sats", remaining))
-		s.broadcast(RebalanceEvent{Type: "job", JobID: jobID, Status: "partial"})
+		reason := fmt.Sprintf("remaining %d sats", remaining)
+		if st.feeCfg.operatorFeeCap.exhausted() {
+			reason = "fee cap reached, " + reason
+		}
+		s.finishJob(jobID, "partial", reason)
+		s.broadcast(RebalanceEvent{Type: "job", JobID: jobID, Status: "partial", Message: reason})
 		return
 	}
 
@@ -8194,6 +8328,12 @@ func (m *rebalanceMppPrepassContext) run() (bool, bool) {
 		return false, false
 	}
 	if !shouldRunMppExecute(feeCfg, r.jobSource) {
+		return false, false
+	}
+	if feeCfg.operatorFeeCap != nil {
+		// Shards of a round are sent concurrently and would each be granted
+		// what is left of the operator's absolute cap. The sequential loop
+		// charges the cap lot by lot instead.
 		return false, false
 	}
 	if *m.remaining <= 0 {
@@ -8697,6 +8837,21 @@ func applyMppRecord(route *lnrpc.Route, paymentAddr []byte, amountSat int64) {
 		PaymentAddr:  paymentAddr,
 		TotalAmtMsat: amountSat * 1000,
 	}
+}
+
+// isRouteAmountOutOfRange reports whether BuildRoute refused a route only
+// because the requested amount is outside a hop's policy. LND answers "no
+// matching outgoing channel available for node index N" when no channel
+// between hop N-1 and hop N accepts the amount (min_htlc / max_htlc). The
+// probe starts at min_probe_sat, well below the min_htlc some routing nodes
+// advertise, so without this distinction every probe through such a hop
+// died before its first HTLC and was recorded as a structural pair failure.
+func isRouteAmountOutOfRange(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	msg := strings.ToLower(status.Convert(err).Message())
+	return strings.Contains(msg, "no matching outgoing channel")
 }
 
 func (s *RebalanceService) rebuildRouteForAmount(ctx context.Context, route *lnrpc.Route, amountSat int64) (*lnrpc.Route, error) {
@@ -10991,7 +11146,18 @@ func rebalancePeerHasParallelChannels(target RebalanceChannel, channels []Rebala
 	return false
 }
 
+// calcFeeLimitMsat is the fee limit of one attempt. On a manual job with an
+// absolute fee cap the policy limit is clamped to what is left of that cap,
+// and the call fails once the cap is spent.
 func calcFeeLimitMsat(amountMsat int64, targetPolicy lndclient.ChannelPolicySnapshot, sourcePolicy *lndclient.ChannelPolicySnapshot, cfg RebalanceConfig) (int64, error) {
+	feeMsat, err := calcPolicyFeeLimitMsat(amountMsat, targetPolicy, sourcePolicy, cfg)
+	if err != nil || cfg.operatorFeeCap == nil || feeMsat <= 0 {
+		return feeMsat, err
+	}
+	return cfg.operatorFeeCap.clamp(feeMsat)
+}
+
+func calcPolicyFeeLimitMsat(amountMsat int64, targetPolicy lndclient.ChannelPolicySnapshot, sourcePolicy *lndclient.ChannelPolicySnapshot, cfg RebalanceConfig) (int64, error) {
 	if amountMsat <= 0 {
 		return 0, nil
 	}
@@ -12979,6 +13145,19 @@ func (s *RebalanceService) probeRouteRecursive(ctx context.Context, route *lnrpc
 
 	probedRoute, err := s.rebuildRouteForTargetAmount(ctx, route, amount, targetChannelID)
 	if err != nil {
+		if isRouteAmountOutOfRange(err) {
+			// BuildRoute refused this amount because it is outside a hop's
+			// policy (below its min_htlc, or above every parallel channel's
+			// max_htlc). No HTLC was sent, so this says nothing about
+			// liquidity: keep what the probe has already proven, otherwise
+			// move the probe up towards the attempt amount, like the
+			// fee branch below.
+			if goodAmount > 0 {
+				return goodAmount, nil
+			}
+			nextAmount := amount + (badAmount-amount)/2
+			return s.probeRouteRecursive(ctx, route, -amount, badAmount, nextAmount, steps, targetChannelID, targetPolicy, sourcePolicy, cfg, last)
+		}
 		return 0, err
 	}
 	maxFeeMsat, err := calcFeeLimitMsat(amount*1000, targetPolicy, &sourcePolicy, cfg)

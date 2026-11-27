@@ -178,6 +178,48 @@ func TestInsightStopBuyingUnsoldStock(t *testing.T) {
 	}
 }
 
+// The channel was empty until this week's purchases: the lot has been on sale
+// for less than the window, whatever the channel's age.
+func TestInsightStopBuyingYoungStockIsLowConfidence(t *testing.T) {
+	now := insightTestNow()
+	build := func(localPct float64, received int64) Insight {
+		rank := insightTestRank("young:0", "young", 117, 50_000, 5_000_000, localPct)
+		rank.ForwardOutCount7d = 1
+		rank.RebalFee7dSat = 2_552
+		rank.RebalAmt7dSat = 1_200_000
+		rank.ForwardInAmountSat7d = received
+		reb := RebalanceChannel{ChannelID: 1, ChannelPoint: "young:0", AutoEnabled: true, LocalPct: localPct, TargetOutboundPct: 30}
+		in := insightsInput{Ranking: append(insightTestBackground(), rank), Rebalance: []RebalanceChannel{reb}}
+		r3 := insightsByRule(buildInsights(in, now))["R3"]
+		if len(r3) != 1 {
+			t.Fatalf("expected one R3, got %+v", r3)
+		}
+		return r3[0]
+	}
+
+	// 24% local, 1.2M bought and 50k sold in the window: about 1% before it.
+	young := build(24, 0)
+	if young.Confidence != insightConfidenceLow || young.ConfidenceReason["stock_before_pct"] != 1 {
+		t.Fatalf("stock younger than the window must be low confidence: %s %+v", young.Confidence, young.ConfidenceReason)
+	}
+	// Same purchases on top of stock that was already there and did not sell.
+	old := build(45, 0)
+	if old.Confidence != insightConfidenceHigh {
+		t.Fatalf("stock older than the window keeps high confidence: %s %+v", old.Confidence, old.ConfidenceReason)
+	}
+	if _, ok := old.ConfidenceReason["stock_before_pct"]; ok {
+		t.Fatalf("the reason only appears when it lowers the confidence: %+v", old.ConfidenceReason)
+	}
+	// Balance that arrived through forwards in the window is young too.
+	arrived := build(45, 1_100_000)
+	if arrived.Confidence != insightConfidenceLow {
+		t.Fatalf("balance received in the window is not old stock: %s %+v", arrived.Confidence, arrived.ConfidenceReason)
+	}
+	if young.Priority >= old.Priority {
+		t.Fatalf("the low-confidence card must rank below: %v vs %v", young.Priority, old.Priority)
+	}
+}
+
 func TestInsightIdleCapitalRespectsGuards(t *testing.T) {
 	now := insightTestNow()
 	rank := insightTestRank("bfx:0", "bfx-lnd0", 0, 0, 20_000_000, 75)

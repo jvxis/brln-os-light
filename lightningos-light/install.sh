@@ -1651,6 +1651,12 @@ main() {
   install_systemd
   service_status_summary
   verify_manager_listener
+  local treasury_provision="$REPO_ROOT/../tools/breez-bridge-probe/provision-release-linux.sh"
+  if [[ -f "$treasury_provision" && ! -L "$treasury_provision" ]]; then
+    if ! bash "$treasury_provision" "${GO_BIN:-}" "${NPM_BIN:-}"; then
+      print_warn "USDC Treasury runtime unavailable. The rest of LightningOS is installed."
+    fi
+  fi
   local_ip=$(get_lan_ip)
   local_name=""
   if [[ -f /etc/lightningos/tls/access.env ]]; then

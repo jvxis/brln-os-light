@@ -22,7 +22,7 @@ try {
       const request = route.request(), path = new URL(request.url()).pathname
       if (path === '/api/auth/state') return route.fulfill({ json: { enabled: true, authenticated: true, csrf_token: 'fixture-csrf' } })
       if (path === '/api/apps') return route.fulfill({ json: [
-        { id: 'bitcoincore', name: 'Bitcoin Core', installed: true, status: running ? 'running' : 'stopped', installed_version: upgraded ? '31.2' : '31.1', available_version: '31.2', update_available: !upgraded },
+        { id: 'bitcoincore', name: 'Bitcoin Core', installed: true, status: running ? 'running' : 'stopped', installed_version: upgraded ? '31.3' : '31.2', available_version: '31.3', update_available: !upgraded },
         { id: 'robosats', name: 'RoboSats', installed: true, status: 'running' }
       ] })
       if (path === '/api/apps/operations') return route.fulfill({ json: {} })
@@ -44,7 +44,7 @@ try {
     await page.goto(base + '/tests/app-store-smoke.html')
     const core = page.locator('.section-card').filter({ has: page.getByRole('heading', { name: 'Bitcoin Core', exact: true }) })
     await core.getByText(tr.appStore.updateAvailable, { exact: true }).waitFor()
-    assert((await core.innerText()).includes(tr.appStore.bitcoinUpdateInstructions.replace('{{version}}', '31.2')))
+    assert((await core.innerText()).includes(tr.appStore.bitcoinUpdateInstructions.replace('{{version}}', '31.3')))
     assert.equal(calls.length, 0, 'opening the Store must not apply the update')
     await core.getByRole('button', { name: tr.common.stop, exact: true }).click()
     assert.equal(calls.length, 0, 'cancelled shutdown must not mutate the backend')

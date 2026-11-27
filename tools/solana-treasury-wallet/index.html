@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Carteira Solana • LightningOS</title>
+  <link rel="stylesheet" href="/wallet.css">
+  <script type="module" src="/page.js"></script>
+</head>
+<body>
+  <main>
+    <h1>Carteira Solana</h1>
+    <p>Crie ou recupere uma carteira em autocustódia para USDC na rede Solana.</p>
+    <form id="create">
+      <label for="password">Senha do backup</label>
+      <input id="password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required>
+      <label for="repeat">Confirme a senha</label>
+      <input id="repeat" type="password" autocomplete="new-password" minlength="14" maxlength="128" required>
+      <button type="submit">Criar carteira</button>
+    </form>
+    <button id="save" hidden>Baixar backup criptografado</button>
+    <form id="recover">
+      <label for="file">Arquivo de backup</label>
+      <input id="file" type="file" accept=".json,application/json" required>
+      <label for="recover-password">Senha do backup</label>
+      <input id="recover-password" type="password" autocomplete="off" minlength="14" maxlength="128" required>
+      <button type="submit">Verificar backup e recuperar endereço</button>
+    </form>
+    <p id="status" role="status" aria-live="polite"></p>
+    <section id="receive" hidden aria-label="Endereço da carteira">
+      <label for="address">Seu endereço público na Solana</label>
+      <input id="address" readonly spellcheck="false">
+      <p>Envie SOL pela rede Solana para este endereço antes de converter USDC de volta para Lightning.
+        Sugerimos come?ar com <strong>0,01 SOL</strong> para cobrir a taxa de rede e a eventual criação
+        da conta de USDC no destino. Confira a estimativa de cada conversão antes de assinar.</p>
+    </section>
+    <section id="sign" aria-labelledby="sign-title">
+      <h2 id="sign-title">Assinar depósito de USDC</h2>
+      <div id="import-order">
+        <label for="order">Ordem da Tesouraria</label>
+        <input id="order" type="file" accept=".json,application/json">
+      </div>
+      <form id="authorize" hidden>
+        <dl id="costs"></dl>
+        <label for="sign-wallet">Arquivo de backup</label>
+        <input id="sign-wallet" type="file" accept=".json,application/json" required>
+        <div id="pilot-recipient-field" hidden>
+          <label for="pilot-recipient">Lightning Address de retorno</label>
+          <input id="pilot-recipient" type="text" placeholder="nome@dominio.com" maxlength="265"
+                 inputmode="email" autocomplete="off" spellcheck="false">
+        </div>
+        <button id="pilot-quote" type="button" hidden>Gerar cotação para Lightning</button>
+        <label for="sign-password">Senha do backup</label>
+        <input id="sign-password" type="password" autocomplete="off" minlength="14" maxlength="128" required>
+        <button type="submit">Assinar valores exibidos</button>
+      </form>
+      <button id="save-signature" hidden>Baixar transação assinada</button>
+      <p id="sign-status" role="status" aria-live="polite"></p>
+    </section>
+    <section id="pilot-progress" aria-labelledby="pilot-progress-title" hidden>
+      <h2 id="pilot-progress-title">Acompanhamento da volta</h2>
+      <dl id="pilot-progress-details"></dl>
+      <p id="pilot-progress-state" role="status" aria-live="polite"></p>
+      <button id="pilot-next" type="button" hidden>Nova conversão</button>
+    </section>
+  </main>
+</body>
+</html>

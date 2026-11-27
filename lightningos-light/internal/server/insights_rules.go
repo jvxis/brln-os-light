@@ -798,6 +798,14 @@ func insightStopBuying(ch *insightChannel, scale insightScale, now time.Time) (I
 		ins.Confidence = insightConfidenceMedium
 	}
 	ins.ConfidenceReason = map[string]any{"observed_days": ch.rank.PeerSampleCount30d / 24}
+	// The days observed are the channel's, not the stock's. When the channel
+	// held no stock before this week's purchases, the lot has been on sale
+	// for less than the window the rule reads: too early to call it unsold.
+	stockBefore := insightStockBeforeWindowPct(ch.rank)
+	if stockBefore < insightStopBuyingMinStock {
+		ins.Confidence = insightConfidenceLow
+		ins.ConfidenceReason["stock_before_pct"] = int(math.Round(stockBefore))
+	}
 	ins.ValueSatDay = int64(math.Round(float64(ch.rank.RebalFee7dSat-ch.rank.ForwardFee7dSat) / 7))
 	ins.Evidence = append(ins.Evidence,
 		InsightEvidence{Key: "local_pct", Value: round1(ch.rank.LocalBalancePct), Unit: "pct", Source: "ranking"},
@@ -811,6 +819,24 @@ func insightStopBuying(ch *insightChannel, scale insightScale, now time.Time) (I
 	)
 	ins.InvalidateWhen = "lot_sold_50pct"
 	return ins, true
+}
+
+// insightStockBeforeWindowPct estimates the share of the channel that was on
+// our side before the 7-day window: today's balance minus what the window
+// brought in (rebalances and forwards received) plus what it sold. Payments
+// and use as a rebalance source are not in the ranking, so it is an estimate.
+func insightStockBeforeWindowPct(rank ChannelRankingItem) float64 {
+	if rank.CapacitySat <= 0 {
+		return 0
+	}
+	before := rank.LocalBalanceSat - rank.RebalAmt7dSat - rank.ForwardInAmountSat7d + rank.ForwardAmt7dSat
+	if before < 0 {
+		before = 0
+	}
+	if before > rank.CapacitySat {
+		before = rank.CapacitySat
+	}
+	return float64(before) / float64(rank.CapacitySat) * 100
 }
 
 // R4: most of the capital sits on our side and nothing sold in 30 days,

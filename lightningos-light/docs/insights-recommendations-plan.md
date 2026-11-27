@@ -187,6 +187,17 @@ canal, e a decisão de opção global vem da auditoria.
 Caso: alvo com peer caro comprado a ~1.500 ppm para vender a ≤1.685, com
 223 sats de venda em 7 dias.
 
+Confiança (0.5.60): os "dias observados" são do canal, não do estoque. A
+regra estima quanto do canal já estava do nosso lado antes da janela de 7
+dias (saldo de hoje, menos o que a janela trouxe por rebalance e por forwards
+recebidos, mais o que ela vendeu). Se esse saldo anterior fica abaixo do
+mesmo mínimo de estoque que a regra já exige, o lote está à venda há menos
+de uma janela: a recomendação continua aparecendo, mas com confiança baixa e
+o motivo `stock_before_pct`. Demanda em rajadas grandes e raras só é
+capturada com o canal abastecido, e um lote novo sem venda ainda não prova
+que ela não existe. Pagamentos e uso do canal como source não estão no
+Ranking, então o valor é uma estimativa.
+
 ### R4. Capital parado → candidato a fechar ou realocar
 
 Condição: `no_sale_30d`, ou estado `close` no Ranking por 14 dias, ou

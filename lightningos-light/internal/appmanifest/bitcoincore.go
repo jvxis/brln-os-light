@@ -10,12 +10,14 @@ import (
 
 const (
 	BitcoinCoreID      = "bitcoincore"
-	BitcoinCoreRelease = "31.2"
+	BitcoinCoreRelease = "31.3"
+	// BitcoinCoreRPCVersion is the getnetworkinfo version a started release must report.
+	BitcoinCoreRPCVersion = 310300
 
 	// BitcoinCoreImage is built locally by the privileged broker from the
 	// official bitcoincore.org release archive after checksum and multisignature
 	// verification. It is never pulled from a container registry.
-	BitcoinCoreImage = "lightningos/bitcoin-core:31.2"
+	BitcoinCoreImage = "lightningos/bitcoin-core:31.3"
 
 	BitcoinCoreImageNode AppImageVariant = "node"
 
@@ -66,20 +68,20 @@ type BitcoinCoreTrustedBuilder struct {
 var bitcoinCoreReleaseArtifacts = map[string]BitcoinCoreReleaseArtifact{
 	"amd64": {
 		GOARCH:        "amd64",
-		Archive:       "bitcoin-31.2-x86_64-linux-gnu.tar.gz",
-		ArchiveSHA256: "2f38996afaa74dfa469a23bf4727887133dfc09784df1f21ddf1c74d0dc82300",
+		Archive:       "bitcoin-31.3-x86_64-linux-gnu.tar.gz",
+		ArchiveSHA256: "864a06a5106e437a1b87b3c048cd7f14ee6140555262aae9d0e9e3b7bea87568",
 		BaseImage:     "debian:bookworm-slim@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143",
 	},
 	"arm64": {
 		GOARCH:        "arm64",
-		Archive:       "bitcoin-31.2-aarch64-linux-gnu.tar.gz",
-		ArchiveSHA256: "1d7d8916719ed8de0f49937f8702ec5895b0af24d936e9c4d72b58f15afe3731",
+		Archive:       "bitcoin-31.3-aarch64-linux-gnu.tar.gz",
+		ArchiveSHA256: "c7ea41ae5d4bd103306ca0d326f017b11bc35686d697c1d1d237a7041dba2021",
 		BaseImage:     "debian:bookworm-slim@sha256:817e6cf99d6fc127ff4ffe8580049b60deba0adfbbb2bd65ddc3ef8fbb7aade0",
 	},
 	"arm": {
 		GOARCH:        "arm",
-		Archive:       "bitcoin-31.2-arm-linux-gnueabihf.tar.gz",
-		ArchiveSHA256: "dd579760f72ff24212f1a13f18ee419670fe8538465034370b5a07e624273f5e",
+		Archive:       "bitcoin-31.3-arm-linux-gnueabihf.tar.gz",
+		ArchiveSHA256: "a531f6c4dc7762120c95630afdd04c6b52588dd543b98805d4fd067a2540ff60",
 		BaseImage:     "debian:bookworm-slim@sha256:67275dca5c395b1010017c291799bdb3e2d31bfdc4786c400f502e2ad3187c07",
 	},
 }

@@ -1095,7 +1095,7 @@ POST /api/apps/{id}/install
 - Mempool uses a closed lightweight default of `MEMPOOL_INDEXING_BLOCKS_AMOUNT=8` to avoid saturating shared rotational storage during its initial history load. Arbitrary environment overrides remain rejected.
 
 POST /api/apps/{id}/start
-- In 0.5.50, Store-managed Bitcoin Core uses the pinned, authenticated 31.2 image. A normal local 31.1 runtime must first be stopped; it remains observable and does not require legacy-migration confirmation. Start preserves enrolled storage/configuration/credentials and reports success only after mainnet RPC, expected version and loopback RPC/ZMQ checks pass. Verification errors are not recorded as an applied catalog version. A failed start can be retried; this is not an automatic binary-downgrade contract.
+- In 0.5.60, Store-managed Bitcoin Core uses the pinned, authenticated 31.3 image (0.5.50 introduced this flow with 31.2). A normal local 31.1 or 31.2 runtime must first be stopped; it remains observable and does not require legacy-migration confirmation. Start preserves enrolled storage/configuration/credentials and reports success only after mainnet RPC, expected version and loopback RPC/ZMQ checks pass. Verification errors are not recorded as an applied catalog version. A failed start can be retried; this is not an automatic binary-downgrade contract.
 - Starting a detected legacy `bitcoincore` runtime requires `{"confirm_legacy_migration":true}` and follows the same transactional migration and rollback contract as installation.
 - Starting `electrs` against App Store Bitcoin accepts the same
   `confirm_bitcoin_restart` body and restart policy as installation.
@@ -1605,3 +1605,18 @@ return 500. Result estimates and rule verdicts are experimental, not guaranteed
 profit or proof of causality. Prefilled shortcuts still require review and
 confirmation on the destination screen. See `insights_handlers.go`,
 `insights_service.go`, `insights_outcomes.go` and the typed helpers in `api.ts`.
+
+
+### USDC Treasury
+
+The native App Store runtime requires Linux amd64, the provisioned Treasury
+bundle and LightningOS login protection. App lifecycle uses app ID
+`stablecoin-treasury`. The Manager serves the restricted browser wallet at
+`/apps/stablecoin-treasury/signer`.
+
+- `GET /api/apps/stablecoin-treasury/status` returns available balances, public wallet address, saved Lightning recipient and recent orders.
+- `POST /api/apps/stablecoin-treasury/breez-key` accepts `api_key` and `confirm_password`. The encrypted key is omitted from responses.
+- `POST /api/apps/stablecoin-treasury/wallet` accepts the public `wallet` and `confirm_password`.
+- `POST /api/apps/stablecoin-treasury/quote` accepts `direction`, `amount` in millionths of USDC in either direction, and `lightning_address` for the return. It returns debit, estimated credit, costs, expiry and a market comparison when available.
+- `POST /api/apps/stablecoin-treasury/prepare` accepts `quote_id` and refreshes the unsigned Solana transaction if its costs still match.
+- `POST /api/apps/stablecoin-treasury/execute` accepts `quote_id` and `confirm_password` for Lightning debit, or `quote_id` and the `signed` transaction for Solana debit. The session-bound quote funds at most one order. HTTP 202 returns an order for reconciliation.

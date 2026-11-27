@@ -34,6 +34,60 @@ export const publishOPReturn = (preview_id: string, idempotency_key: string): Pr
 export const getOPReturnRecords = (): Promise<OPReturnRecord[]> => request('/api/apps/opreturn/records')
 export const getOPReturnRecord = (id: string): Promise<OPReturnRecord> => request(`/api/apps/opreturn/records/${encodeURIComponent(id)}`)
 
+
+export type TreasuryDirection = 'to_solana' | 'to_lightning'
+
+export type TreasuryAmount = { atoms: number; asset: 'sats' | 'msats' | 'USDC' | 'SOL' }
+
+export type TreasuryQuote = {
+  id: string
+  direction: TreasuryDirection
+  destination: string
+  expires_at: string
+  debit: TreasuryAmount
+  receive: TreasuryAmount
+  bridge_fee?: TreasuryAmount
+  lightning_fee_limit_sats?: number
+  solana_fee_lamports?: number
+  solana_account_lamports?: number
+  market?: { btc_usd: number; reference_receive: TreasuryAmount; difference_bps: number }
+}
+
+export type TreasuryOrder = {
+  id: string
+  direction: TreasuryDirection
+  state: 'deposit_pending' | 'delivery_pending' | 'delivery_issue' | 'delivered' | 'refund_pending' | 'refunded' | 'deposit_failed'
+  destination: string
+  debit: TreasuryAmount
+  receive?: TreasuryAmount
+  refund?: TreasuryAmount
+  actual_fee?: TreasuryAmount
+}
+
+export type TreasuryStatus = {
+  enabled: boolean
+  breez_configured: boolean
+  solana_address?: string
+  saved_recipient?: string
+  lightning_sats?: number
+  usdc_micros?: number
+  sol_lamports?: number
+  orders: TreasuryOrder[]
+}
+
+const treasuryAPI = '/api/apps/stablecoin-treasury'
+export const getTreasuryStatus = (): Promise<TreasuryStatus> => request(treasuryAPI + '/status')
+export const saveTreasuryBreezKey = (api_key: string, confirm_password: string): Promise<void> =>
+  request(treasuryAPI + '/breez-key', { method: 'POST', body: JSON.stringify({ api_key, confirm_password }) })
+export const quoteTreasury = (payload: { direction: TreasuryDirection; amount: number; lightning_address?: string }): Promise<TreasuryQuote> =>
+  requestRaw(treasuryAPI + '/quote', { method: 'POST', body: JSON.stringify(payload) })
+export const executeTreasury = (quote_id: string, confirm_password: string, signed?: unknown): Promise<TreasuryOrder> =>
+  request(treasuryAPI + '/execute', { method: 'POST', body: JSON.stringify({ quote_id, confirm_password, signed }) })
+export const prepareTreasurySolana = (quote_id: string): Promise<unknown> =>
+  requestRaw(treasuryAPI + '/prepare', { method: 'POST', body: JSON.stringify({ quote_id }) })
+export const saveTreasuryWallet = (wallet: string, confirm_password: string): Promise<void> =>
+  request(treasuryAPI + '/wallet', { method: 'POST', body: JSON.stringify({ wallet, confirm_password }) })
+
 let csrfToken = ''
 let lndStatusInFlight: Promise<any> | null = null
 let lndStatusCached: any = null
@@ -1613,6 +1667,19 @@ export type RebalanceRunPayload = {
   auto_restart?: boolean
   amount_sat?: number
   fee_limit_ppm?: number
+  source_channel_point?: string
+  allow_excluded_source?: boolean
+  max_fee_msat?: number
+}
+
+export type RebalanceRunPreviewSource = {
+  channel_point: string
+  peer_alias?: string
+  excluded: boolean
+  exclusion_exception: boolean
+  eligible: boolean
+  blocked_reason?: string
+  max_source_sat: number
 }
 
 export type RebalanceRunPreview = {
@@ -1633,6 +1700,9 @@ export type RebalanceRunPreview = {
   amount_overrides_config: boolean
   amount_clamped: boolean
   fee_exceeds_outgoing: boolean
+  max_fee_msat: number
+  fee_cap_absolute: boolean
+  source?: RebalanceRunPreviewSource
 }
 
 export const previewRebalance = (payload: RebalanceRunPayload) =>

@@ -69,7 +69,7 @@ func TestBitcoinCoreOperationAuditPersistsOutcomesWithoutSecrets(t *testing.T) {
 		if action == "app.bitcoincore.start" {
 			want = "success"
 		}
-		if metadata["status"] != want || metadata["catalog_version"] != "31.2" {
+		if metadata["status"] != want || metadata["catalog_version"] != "31.3" {
 			t.Fatal("incorrect lifecycle outcome/version label")
 		}
 	}

@@ -8,12 +8,13 @@ import { extname, join } from 'node:path'
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 const appPath = '/api/apps/stablecoin-treasury'
-const wallet = 'test-solana-address'
+const wallet = '11111111111111111111111111111112'
 const address = 'receiver@example.com'
 const quoteId = 'test-quote'
 let installed = false
 let configured = false
 let walletReady = false
+let solLamports = 0
 let pending = false
 let oldOrders = []
 let quoteRequests = 0
@@ -34,7 +35,7 @@ const order = () => ({
 })
 const status = () => ({
   enabled: installed, breez_configured: configured, orders: pending ? [order(), ...oldOrders] : oldOrders,
-  ...(walletReady && { solana_address: wallet, saved_recipient: address, lightning_sats: 5000, usdc_micros: 10000000, sol_lamports: 0 }),
+  ...(walletReady && { solana_address: wallet, saved_recipient: address, lightning_sats: 5000, usdc_micros: 10000000, sol_lamports: solLamports }),
 })
 
 async function api(path, method, body) {
@@ -92,6 +93,11 @@ const server = createServer(async (req, res) => {
     }
     if (pathname === '/apps/stablecoin-treasury/signer') {
       res.writeHead(200, { 'Content-Type': 'text/html' }).end('<p>Isolated signer fixture</p>')
+      return
+    }
+    if (pathname === '/qr-scanner.min.js' || pathname === '/qr-scanner-worker.min.js') {
+      const scanner = await readFile(join('node_modules', 'qr-scanner', pathname.slice(1)))
+      res.writeHead(200, { 'Content-Type': 'application/javascript' }).end(scanner)
       return
     }
     assert(!pathname.includes('..'))
@@ -175,6 +181,7 @@ try {
   assert(await evaluate('document.querySelector("main h1").textContent === "BR⚡LN Reserve"'))
   assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BR⚡LN Reserve')`))
   await waitText('Self-custodied USDC on Solana')
+  assert.equal(await exists('img[alt="Solana address QR code"]'), false)
   const conversionPath = () => evaluate(`[...document.querySelectorAll('#treasury-how-it-works li')].map(step => step.textContent.trim())`)
   await waitText('Your conversions will appear here.')
   assert(await exists('a[href="https://breez.technology/request-api-key/#contact-us-form-sdk"]'))
@@ -183,6 +190,26 @@ try {
   await input('[role=dialog] input[autocomplete=current-password]', 'fixture-password')
   await click('Save key')
   await waitText('Suggested starting balance: 0.01 SOL')
+  async function checkDepositQr(alt, addressLabel, copyLabel) {
+    const selector = JSON.stringify('img[alt="' + alt + '"]')
+    const image = 'document.querySelector(' + selector + ')'
+    await until(alt, () => evaluate(`${image}?.naturalWidth > 0 && ${image}.getBoundingClientRect().width > 0`))
+    assert(await evaluate(`${image}.src.startsWith('data:image/png;')`))
+    assert(await evaluate(button(copyLabel) + '.getBoundingClientRect().width > 0'))
+    const addressInput = JSON.stringify('input[aria-label="' + addressLabel + '"]')
+    assert.equal(await evaluate('document.querySelector(' + addressInput + ').value'), wallet)
+    assert.equal(await evaluate(`(async () => {
+      const { default: QrScanner } = await import('/qr-scanner.min.js')
+      return (await QrScanner.scanImage(${image}, { returnDetailedScanResult: true })).data
+    })()`), wallet)
+  }
+  await checkDepositQr('Solana address QR code', 'Solana public address', 'Copy address')
+  await evaluate(`Object.defineProperty(navigator.clipboard, 'writeText', {
+    value: async address => { window.copiedSolanaAddress = address }
+  })`)
+  await click('Copy address')
+  await waitText('Copied')
+  assert.equal(await evaluate('window.copiedSolanaAddress'), wallet)
   await waitText('You control the wallet key with your encrypted backup and password.')
   assert(await exists('header dl[aria-label="Balances"]'))
   assert(await exists('main a[href="https://breez.technology/"][target="_blank"][rel~="noopener"]'))
@@ -231,10 +258,17 @@ try {
     ...order(), id: 'history-' + i, state: 'delivered', destination: 'history-' + i + '@example.com',
   }))
   await evaluate('localStorage.setItem("los-lang", "pt-BR")')
+  solLamports = 10_000_000
   await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 860, deviceScaleFactor: 1, mobile: true })
   await call('Page.reload', {})
   await waitText('Aguarde a entrega ou o reembolso')
   await waitText('USDC em autocustódia na Solana')
+  await evaluate(`(() => {
+    const summary = [...document.querySelectorAll('summary')].find(element => element.textContent === 'Receber SOL na Solana')
+    if (summary.parentElement.open) throw new Error('Funded wallet deposit details should start closed')
+    summary.click()
+  })()`)
+  await checkDepositQr('QR Code do endereço Solana', 'Endereço público Solana', 'Copiar endereço')
   await waitText('Conversões via Breez Technology')
   assert(await evaluate('document.querySelector("main h1").textContent === "BR⚡LN Reserva"'))
   assert(await evaluate(`[...document.querySelectorAll('a[href="#stablecoin-treasury"]')].some(a => a.textContent.trim() === 'BR⚡LN Reserva')`))
@@ -273,7 +307,7 @@ try {
   assert.equal(submitted, 1)
   await call('Page.navigate', { url: base + '/#apps' })
   await until('Portuguese App Store title', () => evaluate(`[...document.querySelectorAll('main h3')].some(h => h.textContent === 'BR⚡LN Reserva')`))
-  console.log('PASS: localized app name, install, menu, embedded route, Breez instructions, fees, signer isolation, pending order, mobile pt-BR and quote without Web Crypto.')
+  console.log('PASS: localized app name, install, menu, embedded route, Solana deposit QR and copy, Breez instructions, fees, signer isolation, pending order, mobile pt-BR and quote without Web Crypto.')
 } finally {
   ws?.close()
   child?.kill()
